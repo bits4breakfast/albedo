@@ -17,6 +17,7 @@ const store = vi.hoisted(() => ({
   calls: 0,
   /** Makes the next repo_path lookup miss, to exercise the UNIQUE race path. */
   hideRepoPathOnce: false,
+  lastInsertSql: '',
 }));
 
 vi.mock('@tauri-apps/plugin-sql', () => ({
@@ -154,6 +155,7 @@ function runExecute(rawSql: string, binds: unknown[]): { rowsAffected: number; l
 
   let m = /^INSERT INTO (\w+) \((.+?)\) VALUES \((.+?)\)$/.exec(sql);
   if (m) {
+    store.lastInsertSql = sql;
     const tableName = m[1] as string;
     const cols = (m[2] as string).split(',').map((c) => c.trim());
     const slots = (m[3] as string).split(',').map((v) => v.trim());
@@ -210,6 +212,7 @@ beforeEach(() => {
   store.nextId = { projects: 1, tasks: 1 };
   store.calls = 0;
   store.hideRepoPathOnce = false;
+  store.lastInsertSql = '';
 });
 
 describe('path derivation — where the pure-SQLite version broke', () => {
@@ -502,6 +505,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'feat/retry',
       worktreePath: '/Users/x/www/worktrees/albedo/retry',
+      ownsWorktree: true,
     });
     expect(task.projectId).toBe(project.id);
     expect(store.tasks[0]?.['project_id']).toBe(project.id);
@@ -520,6 +524,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
+      ownsWorktree: true,
     });
     expect((await listTasks()).map((t) => t.projectId)).toEqual([project.id]);
   });
@@ -532,6 +537,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
+      ownsWorktree: true,
     });
     expect(task.projectId).toBeNull();
     expect((await getTask(task.id))?.projectId).toBeNull();
@@ -546,6 +552,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
+      ownsWorktree: true,
     });
     await updateTask(task.id, { projectId: project.id });
     expect((await getTask(task.id))?.projectId).toBe(project.id);
@@ -665,5 +672,57 @@ describe('normalizePromptTemplate', () => {
   it('keeps real content, trimmed', () => {
     expect(normalizePromptTemplate(' hi ')).toBe('hi');
     expect(normalizePromptTemplate('{key}')).toBe('{key}');
+  });
+});
+
+describe('ownsWorktree — the archive-safety flag', () => {
+  const TASK = {
+    title: 't',
+    projectId: null,
+    repoPath: '/Users/x/www/acme',
+    baseBranch: 'main',
+    branch: 'b',
+    worktreePath: '/Users/x/www/acme',
+  };
+
+  it('round-trips true for a worktree Albedo cut', async () => {
+    const t = await createTask({ ...TASK, worktreePath: '/wt/slug', ownsWorktree: true });
+    expect(t.ownsWorktree).toBe(true);
+    expect(store.tasks[0]?.['owns_worktree']).toBe(1);
+    expect((await getTask(t.id))?.ownsWorktree).toBe(true);
+  });
+
+  it('round-trips false for a resumed session in the user’s own checkout', async () => {
+    const t = await createTask({ ...TASK, ownsWorktree: false });
+    expect(t.ownsWorktree).toBe(false);
+    expect(store.tasks[0]?.['owns_worktree']).toBe(0);
+    expect((await getTask(t.id))?.ownsWorktree).toBe(false);
+    expect((await listTasks())[0]?.ownsWorktree).toBe(false);
+  });
+
+  it('WRITES the column explicitly, never relying on the schema default', async () => {
+    // The column default is 1, which exists to backfill pre-v4 rows. As a
+    // forward default it points the dangerous way: a task that fell through to
+    // it would let the archive flow offer `git worktree remove` on the user's
+    // main checkout. So every insert names the column.
+    store.lastInsertSql = '';
+    await createTask({ ...TASK, ownsWorktree: false });
+    expect(store.lastInsertSql).toContain('owns_worktree');
+    expect(store.tasks[0]?.['owns_worktree']).toBe(0);
+  });
+
+  it('converts the boolean to SQLite 0/1 on update too', async () => {
+    const t = await createTask({ ...TASK, ownsWorktree: true });
+    await updateTask(t.id, { ownsWorktree: false });
+    expect(store.tasks[0]?.['owns_worktree']).toBe(0);
+    expect((await getTask(t.id))?.ownsWorktree).toBe(false);
+  });
+
+  it('reads any non-zero stored value as true', async () => {
+    const t = await createTask({ ...TASK, ownsWorktree: true });
+    store.tasks[0]!['owns_worktree'] = 1;
+    expect((await getTask(t.id))?.ownsWorktree).toBe(true);
+    store.tasks[0]!['owns_worktree'] = 0;
+    expect((await getTask(t.id))?.ownsWorktree).toBe(false);
   });
 });

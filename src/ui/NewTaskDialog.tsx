@@ -209,6 +209,10 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
           baseBranch,
           branch,
           worktreePath,
+          // Albedo just cut this worktree, so it is Albedo's to remove on
+          // archive. A resumed session, which runs in a directory the user
+          // already had, sets this false and is never offered removal.
+          ownsWorktree: true,
         });
         writeLastProjectId(project.id);
         onCreated(task);

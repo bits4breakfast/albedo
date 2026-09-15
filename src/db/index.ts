@@ -98,6 +98,7 @@ interface TaskRow {
   branch: string;
   worktree_path: string;
   session_id: string | null;
+  owns_worktree: number;
   status: string;
   created_at: number;
   last_activity_at: number | null;
@@ -125,13 +126,14 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   branch: 'branch',
   worktreePath: 'worktree_path',
   sessionId: 'session_id',
+  ownsWorktree: 'owns_worktree',
   status: 'status',
   createdAt: 'created_at',
   lastActivityAt: 'last_activity_at',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, status, created_at, last_activity_at';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, status, created_at, last_activity_at';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -154,6 +156,8 @@ function toTask(r: TaskRow): Task {
     branch: r.branch,
     worktreePath: r.worktree_path,
     sessionId: r.session_id,
+    // SQLite has no boolean type; anything non-zero is true.
+    ownsWorktree: r.owns_worktree !== 0,
     status: (VALID_STATUSES.has(r.status) ? r.status : 'idle') as TaskStatus,
     createdAt: r.created_at,
     lastActivityAt: r.last_activity_at,
@@ -201,9 +205,22 @@ export async function createTask(t: NewTask): Promise<Task> {
   const db = await getDb();
   const createdAt = Date.now();
   const res = await db.execute(
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, 'idle', $7, NULL)`,
-    [t.title, t.projectId, t.repoPath, t.baseBranch, t.branch, t.worktreePath, createdAt],
+    // owns_worktree is written EXPLICITLY, never left to the column default.
+    // The schema default exists to backfill pre-v4 rows; as a forward default
+    // it points the dangerous way (1 = "Albedo may delete this directory"), so
+    // no insert from here is allowed to fall through to it.
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, 'idle', $8, NULL)`,
+    [
+      t.title,
+      t.projectId,
+      t.repoPath,
+      t.baseBranch,
+      t.branch,
+      t.worktreePath,
+      t.ownsWorktree ? 1 : 0,
+      createdAt,
+    ],
   );
   const id = res.lastInsertId;
   if (typeof id !== 'number') {
@@ -219,6 +236,7 @@ export async function createTask(t: NewTask): Promise<Task> {
     branch: t.branch,
     worktreePath: t.worktreePath,
     sessionId: null,
+    ownsWorktree: t.ownsWorktree,
     status: 'idle',
     createdAt,
     lastActivityAt: null,
@@ -235,7 +253,8 @@ export async function updateTask(id: number, patch: Partial<Task>): Promise<void
     // `undefined` means "not mentioned": spreading a partially-filled object
     // must not null out columns it never set. Explicit null still clears.
     if (patch[key] === undefined) continue;
-    binds.push(patch[key]);
+    const value = patch[key];
+    binds.push(typeof value === 'boolean' ? (value ? 1 : 0) : value);
     sets.push(`${column} = $${binds.length}`);
   }
   if (sets.length === 0) return;
@@ -589,6 +608,8 @@ export interface TranscriptFileRecord {
   sessionId: string;
   projectDir: string;
   cwd: string | null;
+  /** Session title from an `ai-title` / `custom-title` line, if one appeared. */
+  title: string | null;
   /** Byte offset of the first byte NOT yet ingested. Always a line boundary. */
   bytesIngested: number;
   /**
@@ -607,13 +628,15 @@ interface TranscriptFileRow {
   session_id: string;
   project_dir: string;
   cwd: string | null;
+  title: string | null;
   bytes_ingested: number;
   last_seq: number;
   mtime: number | null;
   updated_at: number;
 }
 
-const TRANSCRIPT_SELECT = 'path, session_id, project_dir, cwd, bytes_ingested, last_seq, mtime, updated_at';
+const TRANSCRIPT_SELECT =
+  'path, session_id, project_dir, cwd, title, bytes_ingested, last_seq, mtime, updated_at';
 
 function toTranscriptFile(r: TranscriptFileRow): TranscriptFileRecord {
   return {
@@ -621,6 +644,7 @@ function toTranscriptFile(r: TranscriptFileRow): TranscriptFileRecord {
     sessionId: r.session_id,
     projectDir: r.project_dir,
     cwd: r.cwd,
+    title: r.title,
     bytesIngested: r.bytes_ingested,
     lastSeq: r.last_seq,
     mtime: r.mtime,
@@ -651,12 +675,14 @@ export async function upsertTranscriptFile(
 ): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO transcript_files (path, session_id, project_dir, cwd, bytes_ingested, last_seq, mtime, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO transcript_files (path, session_id, project_dir, cwd, title, bytes_ingested, last_seq, mtime, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT(path) DO UPDATE SET
        session_id     = excluded.session_id,
        project_dir    = excluded.project_dir,
        cwd            = COALESCE(excluded.cwd, transcript_files.cwd),
+       -- a chunk carrying no title must not erase one seen earlier
+       title          = COALESCE(excluded.title, transcript_files.title),
        bytes_ingested = excluded.bytes_ingested,
        last_seq       = excluded.last_seq,
        mtime          = excluded.mtime,
@@ -666,6 +692,7 @@ export async function upsertTranscriptFile(
       rec.sessionId,
       rec.projectDir,
       rec.cwd,
+      rec.title,
       rec.bytesIngested,
       rec.lastSeq,
       rec.mtime,

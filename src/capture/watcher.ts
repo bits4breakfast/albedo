@@ -22,7 +22,7 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { exists, open, readDir, SeekMode, stat, watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
 
-import { countLines, cwdOf, parseTranscript, SEQ_STRIDE } from './adapter';
+import { countLines, cwdOf, lastTitleIn, parseTranscript, SEQ_STRIDE } from './adapter';
 import {
   adoptSessionIntoTask,
   findTaskByWorktreePath,
@@ -345,6 +345,7 @@ class Capture implements CaptureHandle {
     let offset = record?.bytesIngested ?? 0;
     let lastSeq = record?.lastSeq ?? -1;
     let knownCwd = record?.cwd ?? null;
+    let knownTitle = record?.title ?? null;
     let sessionId = record?.sessionId ?? sessionIdFromPath(path);
     let adopted = false;
 
@@ -388,6 +389,12 @@ class Capture implements CaptureHandle {
       const fromLine = lineIndexAfter(lastSeq);
       const rows = parseTranscript(text, fromLine);
       const nextLineIndex = fromLine + countLines(text);
+
+      // Title lines are bookkeeping and produce no message rows, so they are
+      // scanned separately. Latest in the chunk wins; a chunk with no title
+      // leaves whatever was already recorded alone.
+      const chunkTitle = lastTitleIn(text);
+      if (chunkTitle !== null) knownTitle = chunkTitle;
 
       // Resolve identity from the rows themselves. sessionId can change
       // mid-file after a resume or compaction, so the LAST row wins and the
@@ -439,6 +446,7 @@ class Capture implements CaptureHandle {
         sessionId,
         projectDir,
         cwd,
+        title: knownTitle,
         bytesIngested: offset,
         lastSeq,
         mtime: info.mtime?.getTime() ?? null,

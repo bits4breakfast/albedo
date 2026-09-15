@@ -87,6 +87,17 @@ export interface Task {
   worktreePath: string;
   /** Claude Code session id, once a transcript has been matched to the task. */
   sessionId: string | null;
+  /**
+   * True when ALBEDO created `worktreePath` and may therefore remove it.
+   *
+   * False for a resumed session, which runs in whatever cwd it originally
+   * used -- frequently the user's main checkout. The archive flow cannot tell
+   * the two apart from the path alone, and offering `git worktree remove` on
+   * the real repo would look entirely reasonable on the way past. So this is
+   * required on NewTask rather than defaulted: forgetting it is the dangerous
+   * direction, and the caller always knows which kind of task it is creating.
+   */
+  ownsWorktree: boolean;
   status: TaskStatus;
   createdAt: number;
   lastActivityAt: number | null;

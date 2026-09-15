@@ -170,6 +170,57 @@ export function parseDotGitFile(text: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Ownership: which directories Albedo is allowed to touch
+//
+// Albedo cuts a worktree for a task it creates, so removing it on archive is
+// safe -- it made it. A RESUMED session runs in whatever cwd it originally
+// used, frequently the user's main checkout. Removing that would be
+// catastrophic, and would look entirely reasonable on the way past, because
+// nothing else in the archive flow can tell the two apart.
+//
+// git itself refuses to remove a *main* working tree, even with --force, which
+// is a real floor under the worst case. It is happy to remove a hand-made
+// LINKED worktree though -- and that is exactly the layout this user has
+// (~/www/acme-worktree/...). So for linked worktrees the flag is the only
+// thing standing between a resumed session and a deleted directory.
+// ---------------------------------------------------------------------------
+
+/** As much of a task as the ownership rules need. */
+export interface OwnershipFacts {
+  status?: string;
+  worktreePath: string;
+  /**
+   * False when the directory was not created by Albedo. Optional only so this
+   * module does not have to wait on the column reaching `Task`; the database
+   * column is NOT NULL DEFAULT 1, so absent means owned, exactly as it does
+   * for every row that predates the flag.
+   */
+  ownsWorktree?: boolean;
+}
+
+/** True when Albedo created this directory and may therefore remove it. */
+export function albedoOwnsWorktree(task: OwnershipFacts): boolean {
+  return task.ownsWorktree !== false;
+}
+
+/**
+ * Worktree paths of archived tasks that Albedo may offer to reclaim.
+ *
+ * Pure and exported rather than inline in the reconcile view, because "may we
+ * delete this?" is the single most consequential predicate in this module and
+ * it belongs somewhere it can be tested. An archived *resumed* task is archived
+ * like any other, but its directory is the user's own and must never appear as
+ * an orphan with a remove button next to it.
+ */
+export function reclaimableTaskPaths(tasks: OwnershipFacts[]): string[] {
+  return tasks
+    .filter((t) => t.status === 'archived')
+    .filter(albedoOwnsWorktree)
+    .map((t) => t.worktreePath)
+    .filter((p): p is string => typeof p === 'string' && p.length > 0);
+}
+
+// ---------------------------------------------------------------------------
 // Worktree-root validation
 //
 // `worktreeRoot` is typed or picked by the user, and a bad one does not fail

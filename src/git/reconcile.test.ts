@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type ClassifyInput,
+  albedoOwnsWorktree,
   checkWorktreeRoot,
   type DiskCandidate,
   type RepoScan,
@@ -12,6 +13,7 @@ import {
   parseDotGitFile,
   pathKey,
   resolveAgainst,
+  reclaimableTaskPaths,
   rootContaining,
   validateWorktreeRoot,
 } from './reconcile';
@@ -576,5 +578,65 @@ describe('classifyOrphans with project roots', () => {
       home: HOME,
     });
     expect(out).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ownership
+// ---------------------------------------------------------------------------
+
+describe('reclaimableTaskPaths', () => {
+  const cut = (over: Partial<Parameters<typeof reclaimableTaskPaths>[0][number]> = {}) => ({
+    status: 'archived',
+    worktreePath: '/Users/m/agents/albedo/cut-by-albedo',
+    ownsWorktree: true,
+    ...over,
+  });
+
+  it('offers an archived worktree Albedo cut', () => {
+    expect(reclaimableTaskPaths([cut()])).toEqual(['/Users/m/agents/albedo/cut-by-albedo']);
+  });
+
+  it('never offers a directory Albedo did not create', () => {
+    // The catastrophic case: a resumed session whose cwd is the main checkout.
+    expect(
+      reclaimableTaskPaths([
+        cut({ worktreePath: '/Users/m/www/acme', ownsWorktree: false }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('does not offer it even when the resumed task is archived alongside owned ones', () => {
+    const paths = reclaimableTaskPaths([
+      cut(),
+      cut({ worktreePath: '/Users/m/www/acme', ownsWorktree: false }),
+      cut({ worktreePath: '/Users/m/www/acme-worktree/ACME-2398', ownsWorktree: false }),
+    ]);
+    expect(paths).toEqual(['/Users/m/agents/albedo/cut-by-albedo']);
+    // A hand-made LINKED worktree is the dangerous one: git will happily remove
+    // it, so the flag is the only thing protecting it.
+    expect(paths).not.toContain('/Users/m/www/acme-worktree/ACME-2398');
+  });
+
+  it('only considers archived tasks', () => {
+    for (const status of ['idle', 'running', 'blocked', 'done']) {
+      expect(reclaimableTaskPaths([cut({ status })]), status).toEqual([]);
+    }
+  });
+
+  it('treats an absent flag as owned, matching the NOT NULL DEFAULT 1 column', () => {
+    expect(reclaimableTaskPaths([cut({ ownsWorktree: undefined })])).toHaveLength(1);
+  });
+
+  it('drops empty paths rather than emitting them', () => {
+    expect(reclaimableTaskPaths([cut({ worktreePath: '' })])).toEqual([]);
+  });
+});
+
+describe('albedoOwnsWorktree', () => {
+  it('is false only for an explicit false', () => {
+    expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: false })).toBe(false);
+    expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: true })).toBe(true);
+    expect(albedoOwnsWorktree({ worktreePath: '/a' })).toBe(true);
   });
 });

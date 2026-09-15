@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { Task } from '../types';
+import { albedoOwnsWorktree } from '../git/reconcile';
 import {
   GitError,
   type WorkAtRisk,
@@ -78,6 +79,14 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
   const taskId = task?.id ?? null;
   const worktreePath = task?.worktreePath ?? '';
   const baseBranch = task?.baseBranch ?? '';
+  /**
+   * Whether Albedo created this directory. False for a resumed session, which
+   * runs in whatever cwd it originally used -- frequently the user's main
+   * checkout. When false this dialog offers no removal of any kind: not a
+   * disabled button, not an unselected radio. An option that dangerous should
+   * not exist on the screen at all.
+   */
+  const owned = task === null || albedoOwnsWorktree(task);
 
   // --- probe: the two kinds of work at risk -------------------------------
 
@@ -88,6 +97,14 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
       setAck(false);
       setError(null);
       setBusy(false);
+      return;
+    }
+    // Nothing is going to be removed, so there is nothing to quantify. Probing
+    // here would print the user's real working state under a heading about
+    // losing work, and a number next to a confirmation button reads as a
+    // warning however carefully it is labelled.
+    if (!owned) {
+      setProbe({ ...EMPTY_PROBE, done: true });
       return;
     }
     let cancelled = false;
@@ -115,7 +132,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
     return () => {
       cancelled = true;
     };
-  }, [taskId, worktreePath, baseBranch]);
+  }, [taskId, worktreePath, baseBranch, owned]);
 
   // Changing the plan changes what is destroyed, so a stale tick must not
   // carry over from a more dangerous option to a safer one and back.
@@ -142,7 +159,10 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
     setBusy(true);
     setError(null);
     try {
-      if (mode !== 'archive-only') {
+      // `owned` is checked here as well as in the render: the render decides
+      // what is offered, this decides what runs, and the two failing together
+      // is the only way a not-owned directory could be touched.
+      if (owned && mode !== 'archive-only') {
         await removeWorktree({
           repoPath: task.repoPath,
           path: task.worktreePath,
@@ -160,7 +180,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
     } finally {
       setBusy(false);
     }
-  }, [task, busy, mode, ack, onArchived]);
+  }, [task, busy, mode, ack, owned, onArchived]);
 
   if (!task) return null;
 
@@ -169,7 +189,9 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
     ahead: probe.ahead,
     aheadBase: probe.aheadBase,
   };
-  const removing = mode !== 'archive-only';
+  // Not owned means there is nothing to remove, so nothing is offered and the
+  // dialog is a different act with a different name. See the render below.
+  const removing = owned && mode !== 'archive-only';
   const loss = assessLoss(risk, { deleteBranch: mode === 'remove-delete-branch' });
   const needsAck = removing && loss.needsAck;
   const hasUnmerged = probe.ahead !== null && probe.ahead > 0;
@@ -209,7 +231,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title" id="wt-archive-title">
-            Archive task
+            {owned ? 'Archive task' : 'Remove from list'}
           </h2>
           <span className="wt-modal-sub">{task.title}</span>
         </div>
@@ -226,6 +248,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
               <span className="wt-derived-key">Worktree</span>
               <span className="wt-derived-val">{task.worktreePath}</span>
             </div>
+            {owned && (
             <div className="wt-derived-row">
               <span className="wt-derived-key">State</span>
               <span className="wt-derived-val" data-pending={!probe.done}>
@@ -245,9 +268,22 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
                     ].join(' · ')}
               </span>
             </div>
+            )}
           </div>
 
+          {/* --- not ours: say so plainly, offer nothing ---------------------- */}
+          {!owned && (
+            <div className="wt-notice" data-tone="safe" style={{ marginTop: 14 }}>
+              <strong>Nothing on disk is touched.</strong> This task is a resumed session, so
+              Albedo did not create <span className="wt-mono">{task.worktreePath}</span> — it is
+              your own working directory. No worktree is removed, no branch is deleted, and the
+              directory is not even inspected. Removing the task drops it from the list; the
+              conversation and its transcript are kept.
+            </div>
+          )}
+
           {/* --- the choice ------------------------------------------------ */}
+          {owned && (
           <div className="wt-field" style={{ marginTop: 14 }}>
             <span className="wt-label">What happens to the worktree</span>
 
@@ -289,6 +325,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
               </>,
             )}
           </div>
+          )}
 
           {/* --- loss 1: the working tree ---------------------------------- */}
           {removing && loss.dirty && probe.files && (
@@ -359,9 +396,11 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
 
         <div className="wt-modal-foot">
           <span className="wt-modal-sub">
-            {removing
-              ? 'The worktree is removed first; the task is archived only if that succeeds.'
-              : 'The task is archived. The worktree is left exactly as it is.'}
+            {!owned
+              ? 'Albedo only forgets the task. Your files and your branch are untouched.'
+              : removing
+                ? 'The worktree is removed first; the task is archived only if that succeeds.'
+                : 'The task is archived. The worktree is left exactly as it is.'}
           </span>
           <span className="wt-foot-spacer" />
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
@@ -374,12 +413,16 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
             onClick={() => void confirm()}
           >
             {busy
-              ? 'Archiving…'
-              : needsAck
-                ? 'Archive and discard work'
-                : removing
-                  ? 'Archive and remove worktree'
-                  : 'Archive only'}
+              ? owned
+                ? 'Archiving…'
+                : 'Removing…'
+              : !owned
+                ? 'Remove from list'
+                : needsAck
+                  ? 'Archive and discard work'
+                  : removing
+                    ? 'Archive and remove worktree'
+                    : 'Archive only'}
           </button>
         </div>
       </div>
