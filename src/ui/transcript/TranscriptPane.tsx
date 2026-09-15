@@ -13,7 +13,7 @@ import type { ReactNode } from 'react';
 import type { Message } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate } from '../../capture';
-import { hasLivePty, submitPty } from '../Terminal';
+import { hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import MessageRow from './MessageRow';
 import { isSidechain, toolUseId } from './ToolChip';
 import './transcript.css';
@@ -301,6 +301,9 @@ export default TranscriptPane;
 /** Auto-grow ceiling. Past this the composer scrolls instead of eating the pane. */
 const COMPOSER_MAX_PX = 140;
 
+/** How long to wait for a session that `startPty` said was on its way. */
+const START_TIMEOUT_MS = 12_000;
+
 /**
  * Send a message without switching panes.
  *
@@ -308,19 +311,38 @@ const COMPOSER_MAX_PX = 140;
  * input affordance than walking over to the terminal. The transcript stays the
  * read surface, so this is a foot -- one line tall until there is something to
  * say, and absent entirely when no task is selected.
+ *
+ * ## When there is no live session
+ *
+ * Selecting a task mounts its Terminal, so the usual reason liveness is false
+ * is not "no terminal" but "the pty exited" -- the session ended, or a resume
+ * was rejected. `startPty` brings one back in place, without switching panes or
+ * stealing focus, so the send becomes: try, start, retry.
+ *
+ * Exported for its tests: the retry below is the only untestable-by-inspection
+ * part of this pane, and reaching it through `<TranscriptPane>` would mean
+ * mocking the db and capture layers to assert nothing about them.
+ *
+ * That retry is the only new control flow here, and it is arranged to be
+ * exactly-once. The pending body lives in a ref that is TAKEN synchronously
+ * before the retry fires, so a presence event that arrives twice finds nothing
+ * the second time; an in-flight ref (not state, which updates too late) blocks
+ * a second Enter in the same tick; and the textarea is disabled while a send is
+ * pending so the draft cannot drift underneath it. Every failure path leaves
+ * the text exactly where the user typed it.
  */
-function Composer({ taskId, onSent }: { taskId: number; onSent: () => void }): ReactNode {
+export function Composer({ taskId, onSent }: { taskId: number; onSent: () => void }): ReactNode {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [awaiting, setAwaiting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [live, setLive] = useState(true);
-  const ref = useRef<HTMLTextAreaElement>(null);
 
-  // Clear the draft only when switching tasks -- never on a failed send.
-  useEffect(() => {
-    setText('');
-    setNotice(null);
-  }, [taskId]);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  /** The body waiting for a session. Taken, not read, so it can only fire once. */
+  const pendingRef = useRef<string | null>(null);
+  const inFlightRef = useRef(false);
+  const timerRef = useRef(0);
 
   const grow = useCallback(() => {
     const el = ref.current;
@@ -329,31 +351,113 @@ function Composer({ taskId, onSent }: { taskId: number; onSent: () => void }): R
     el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
   }, []);
 
+  const succeeded = useCallback(() => {
+    setText('');
+    setNotice(null);
+    requestAnimationFrame(grow);
+    onSent();
+  }, [grow, onSent]);
+
+  // Only a task switch discards a draft -- never a failed send.
+  useEffect(() => {
+    setText('');
+    setNotice(null);
+    setAwaiting(false);
+    pendingRef.current = null;
+    inFlightRef.current = false; // or a switch mid-await wedges the composer shut
+    window.clearTimeout(timerRef.current);
+    timerRef.current = 0;
+  }, [taskId]);
+
+  /** Send whatever is waiting, once a session exists. */
+  const flushPending = useCallback(async () => {
+    const body = pendingRef.current;
+    if (body === null) return;
+    pendingRef.current = null; // taken: a repeat presence event finds nothing
+    window.clearTimeout(timerRef.current);
+    timerRef.current = 0;
+    try {
+      if (await submitPty(taskId, body)) succeeded();
+      else setNotice('The session started but would not take the message. It is still here — press send to retry.');
+    } catch {
+      setNotice('Could not reach the session. Your message is kept here.');
+    } finally {
+      setAwaiting(false);
+      inFlightRef.current = false;
+    }
+  }, [taskId, succeeded]);
+
+  // Latest-callback ref so the subscription below does not churn on every keystroke.
+  const flushRef = useRef(flushPending);
+  useEffect(() => {
+    flushRef.current = flushPending;
+  }, [flushPending]);
+
+  /*
+     Presence, not a one-off check. `hasLivePty` answers "right now" and goes
+     stale the moment a session exits under an open composer -- telling someone
+     their session is gone only after they have written three paragraphs is the
+     bad version of that warning.
+  */
+  useEffect(() => {
+    setLive(hasLivePty(taskId));
+    return onPtyPresenceChange((id, isLive) => {
+      if (id !== taskId) return;
+      setLive(isLive);
+      if (isLive) void flushRef.current();
+    });
+  }, [taskId]);
+
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+
   const send = useCallback(async () => {
-    if (busy) return;
+    // A ref, because two Enters in one tick both see stale `busy` state.
+    if (inFlightRef.current) return;
     if (text.trim().length === 0) return;
+    inFlightRef.current = true;
     setBusy(true);
     try {
       // submitPty owns the bracketed-paste wrapper and the submitting \r (see
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
-      const ok = await submitPty(taskId, text);
-      if (ok) {
-        setText('');
-        setNotice(null);
-        setLive(true);
-        requestAnimationFrame(grow);
-        onSent();
-      } else {
-        setLive(false);
-        setNotice('No live session for this task — open the terminal pane to start it. Your message is kept here.');
+      if (await submitPty(taskId, text)) {
+        succeeded();
+        inFlightRef.current = false;
+        return;
       }
+      if (startPty(taskId)) {
+        // Coming up. Hold the body and let the presence event send it.
+        pendingRef.current = text;
+        setAwaiting(true);
+        setNotice('Starting the session — your message will send as soon as it is up.');
+        timerRef.current = window.setTimeout(() => {
+          if (pendingRef.current === null) return;
+          pendingRef.current = null;
+          setAwaiting(false);
+          inFlightRef.current = false;
+          setNotice('The session did not come up. Your message is kept here — press send to try again.');
+        }, START_TIMEOUT_MS);
+        // `startPty` also returns true when a pty is ALREADY live -- submitPty
+        // can fail on a write error alone. No presence event is coming in that
+        // case, so flush now; the take-discipline keeps it single-fire either way.
+        if (hasLivePty(taskId)) void flushRef.current();
+        return; // otherwise inFlightRef stays set until the retry or the timeout
+      }
+      setNotice('This task has no terminal open, so there is nothing to send to. Your message is kept here.');
+      inFlightRef.current = false;
     } catch {
       setNotice('Could not reach the session. Your message is kept here.');
+      inFlightRef.current = false;
     } finally {
       setBusy(false);
     }
-  }, [busy, text, taskId, grow, onSent]);
+  }, [text, taskId, succeeded]);
+
+  const placeholder = awaiting
+    ? 'Waiting for the session…'
+    : live
+      ? 'Message this session…'
+      : 'No live session — sending will start one';
 
   return (
     <div className="tx-composer">
@@ -363,9 +467,16 @@ function Composer({ taskId, onSent }: { taskId: number; onSent: () => void }): R
         className="tx-composer-input"
         rows={1}
         value={text}
-        placeholder={live ? 'Message this session…' : 'No live session — text is kept until one starts'}
+        /*
+           readOnly, not disabled: disabling a focused element blurs it, so the
+           user would lose the caret mid-send and have to click back in. This
+           still freezes the draft while a send is pending; `send` itself is
+           guarded by inFlightRef, so the Enter key that readOnly still delivers
+           cannot start a second one.
+        */
+        readOnly={awaiting}
+        placeholder={placeholder}
         spellCheck={false}
-        onFocus={() => setLive(hasLivePty(taskId))}
         onChange={(e) => {
           setText(e.target.value);
           grow();
@@ -383,10 +494,10 @@ function Composer({ taskId, onSent }: { taskId: number; onSent: () => void }): R
         type="button"
         className="tx-composer-send"
         onClick={() => void send()}
-        disabled={busy || text.trim().length === 0}
+        disabled={busy || awaiting || text.trim().length === 0}
         title="Enter to send, Shift+Enter for a newline"
       >
-        {busy ? '…' : 'send'}
+        {awaiting ? '…' : 'send'}
       </button>
     </div>
   );

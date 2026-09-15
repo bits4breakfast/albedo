@@ -38,12 +38,34 @@ const RESIZE_DEBOUNCE_MS = 100;
 
 const livePtys = new Map<number, string>();
 
+/**
+ * Per-task "start a session here". Registered by each mounted Terminal, which
+ * is the only thing that can actually spawn — see {@link startPty}.
+ */
+const starters = new Map<number, () => boolean>();
+
+/** Notified whenever a task gains or loses a live pty. */
+const presenceListeners = new Set<(taskId: number, live: boolean) => void>();
+
+function notifyPresence(taskId: number, live: boolean): void {
+  for (const cb of [...presenceListeners]) {
+    try {
+      cb(taskId, live);
+    } catch {
+      /* one listener failing must not stop the rest */
+    }
+  }
+}
+
 function registerPty(taskId: number, ptyId: string): void {
   livePtys.set(taskId, ptyId);
+  notifyPresence(taskId, true);
 }
 
 function unregisterPty(taskId: number, ptyId: string): void {
-  if (livePtys.get(taskId) === ptyId) livePtys.delete(taskId);
+  if (livePtys.get(taskId) !== ptyId) return;
+  livePtys.delete(taskId);
+  notifyPresence(taskId, false);
 }
 
 /**
@@ -114,6 +136,46 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
 /** True when the task has a spawned, un-exited pty. */
 export function hasLivePty(taskId: number): boolean {
   return livePtys.has(taskId);
+}
+
+/**
+ * Subscribe to liveness changing for any task.
+ *
+ * {@link hasLivePty} answers "right now", which is enough to warn someone
+ * BEFORE they type, but it goes stale the moment a session exits under an open
+ * composer. Telling somebody their session is gone after they have written
+ * three paragraphs is the bad version of this warning, so liveness is
+ * observable rather than only pollable.
+ */
+export function onPtyPresenceChange(
+  cb: (taskId: number, live: boolean) => void,
+): () => void {
+  presenceListeners.add(cb);
+  return () => {
+    presenceListeners.delete(cb);
+  };
+}
+
+/**
+ * Start a session for a task that has none, in place.
+ *
+ * Exists so a composer outside the terminal can OFFER to start rather than
+ * instructing the user to go and do it. Deliberately does NOT switch panes or
+ * move focus: starting is the thing that was actually wanted, and a caller that
+ * sends its message afterwards has no reason to drag the user to another pane.
+ *
+ * Returns true when a session is live or on its way, false only when there is
+ * no mounted Terminal for the task at all — i.e. the task is not open, which
+ * the caller cannot fix and should report rather than retry.
+ *
+ * Idempotent: safe to call when one is already live, and safe to call twice
+ * while a spawn is in flight.
+ */
+export function startPty(taskId: number): boolean {
+  if (livePtys.has(taskId)) return true;
+  const start = starters.get(taskId);
+  if (!start) return false;
+  return start();
 }
 
 type Phase = 'starting' | 'live' | 'exited' | 'failed';
@@ -280,6 +342,10 @@ export default function Terminal({
   const sawOutputRef = useRef(false);
   const usedResumeRef = useRef(false);
   const restartRef = useRef<((fresh: boolean) => void) | null>(null);
+  /** A spawn is in flight; a second start would orphan the first pty. */
+  const spawningRef = useRef(false);
+  /** Last attempt was a `--resume` the CLI rejected; retrying it would fail again. */
+  const resumeRejectedRef = useRef(false);
   const onFreshStartRef = useRef(onFreshStart);
   onFreshStartRef.current = onFreshStart;
   /** Live task, for decisions that must use current state, not mount state. */
@@ -412,6 +478,7 @@ export default function Terminal({
       setExitCode(null);
       setFailure(null);
       setPhase('starting');
+      spawningRef.current = true;
 
       try {
         const id = await spawnPty({
@@ -426,6 +493,7 @@ export default function Terminal({
           return;
         }
         ptyIdRef.current = id;
+        spawningRef.current = false;
         registerPty(task.id, id);
         setPhase('live');
 
@@ -445,6 +513,11 @@ export default function Terminal({
         ptyUnsubs.push(
           onPtyExit(id, (code) => {
             deadRef.current = true;
+            // A resume that died without producing a byte is a rejected
+            // session id. Recorded here so a later start does not retry the
+            // same dead id forever.
+            resumeRejectedRef.current =
+              usedResumeRef.current && !sawOutputRef.current && code !== 0;
             unregisterPty(task.id, id);
             setExitCode(code);
             setPhase('exited');
@@ -461,6 +534,7 @@ export default function Terminal({
       } catch (err) {
         if (disposed) return;
         const msg = message(err);
+        spawningRef.current = false;
         setFailure(msg);
         setPhase('failed');
         onErrorRef.current?.(msg);
@@ -472,6 +546,24 @@ export default function Terminal({
         }
       }
     };
+
+    /*
+     * Reachable from `startPty` so a composer elsewhere can start a session.
+     * Guarded twice: once on a pty already being live, once on a spawn already
+     * in flight — without the second, a click during the async spawn would
+     * produce a second pty for the same task and orphan the first.
+     */
+    starters.set(task.id, () => {
+      if (livePtys.has(task.id)) return true;
+      if (spawningRef.current) return true;
+      // RESUME rather than start fresh: someone starting a session from a
+      // composer is reading that conversation and wants to continue it, which
+      // is also what mounting would have done. The exception is a resume the
+      // CLI already rejected -- retrying that just fails again, so only then
+      // does this fall back to a fresh session.
+      restartRef.current?.(resumeRejectedRef.current);
+      return true;
+    });
 
     // Exposed so the "start a fresh session" affordance can reach it.
     restartRef.current = (fresh: boolean) => {
@@ -517,6 +609,8 @@ export default function Terminal({
       observer.disconnect();
       window.removeEventListener('resize', scheduleFit);
       restartRef.current = null;
+      spawningRef.current = false;
+      starters.delete(task.id);
       for (const off of [...unsubs, ...ptyUnsubs]) {
         try {
           off();
@@ -567,8 +661,7 @@ export default function Terminal({
    * id — a stale one, or a transcript Claude Code has pruned. The exit code
    * and "did anything arrive" are enough to tell; nothing reads the stream.
    */
-  const resumeRejected =
-    phase === 'exited' && usedResumeRef.current && !sawOutputRef.current && exitCode !== 0;
+  const resumeRejected = phase === 'exited' && resumeRejectedRef.current;
 
   return (
     <div className="term" hidden={!active} aria-hidden={!active}>

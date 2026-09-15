@@ -127,6 +127,8 @@
   outline: none;
 }
 .tx-composer-input::placeholder { color: var(--faint); }
+/* Frozen while a send is pending -- readOnly keeps the caret, this shows why. */
+.tx-composer-input:read-only { color: var(--muted); border-style: dashed; }
 
 .tx-composer-send {
   padding: 3px 10px;
