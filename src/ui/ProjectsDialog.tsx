@@ -18,20 +18,38 @@ import { useCallback, useEffect, useState } from 'react';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import type { Project } from '../types';
 import {
+  ProjectExistsError,
   archiveProject,
   createProject,
   listProjects,
   updateProject,
 } from '../db/projects';
-import { checkWorktreeRoot, validateWorktreeRoot } from '../git/reconcile';
+import { checkWorktreeRoot, expandTilde, validateWorktreeRoot } from '../git/reconcile';
 import { basename, defaultWorktreeRoot, listBranches, repoToplevel } from '../git/worktree';
+import { writeLastProjectId } from './projectPrefs';
 import './worktree.css';
 
 export interface ProjectsDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Fired after any create/edit/archive, so a caller can refresh its list. */
-  onChanged?: () => void;
+  /**
+   * Fired after any create/edit/archive so a caller can refresh. Carries the
+   * new project on a create, so the caller can select it rather than guess.
+   */
+  onChanged?: (created?: Project) => void;
+  /**
+   * Take the user straight into creating a task in the project they just made.
+   * Creating a project is never the goal -- it is the prerequisite for cutting
+   * a worktree -- so the user who just finished step one is exactly the user
+   * who wants step two.
+   *
+   * Supplied by NewTaskDialog when it opens this dialog from its "no projects
+   * yet" state. **A caller that opens this dialog on its own (the header's
+   * Projects control) should supply it too**, otherwise the onward step falls
+   * back to remembering the project and closing -- correct, but one press
+   * further away than it needs to be.
+   */
+  onCreateTaskIn?: (project: Project) => void;
 }
 
 /** The form, shared by "add" and "edit". */
@@ -42,15 +60,32 @@ interface Draft {
   repoPath: string;
   worktreeRoot: string;
   defaultBaseBranch: string;
+  /** Initial prompt sent to `claude` as argv on a task's first spawn. */
+  taskPromptTemplate: string;
   /** Whether the user has hand-edited the root, so we stop re-deriving it. */
   rootTouched: boolean;
 }
+
+/**
+ * Offered, never applied on its own. Silently prompting an agent the user has
+ * just launched is a side effect they did not ask for, so this is one click
+ * away rather than pre-filled.
+ */
+const SUGGESTED_PROMPT = 'Pick up {key}. Read the issue, plan the change, then implement it.';
+
+/** Placeholders the shell expands at spawn time. */
+const PROMPT_PLACEHOLDERS = ['{key}', '{title}', '{branch}'] as const;
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps) {
+export function ProjectsDialog({
+  open,
+  onClose,
+  onChanged,
+  onCreateTaskIn,
+}: ProjectsDialogProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -61,6 +96,10 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState<number | null>(null);
+  /** The project just created, so the dialog can visibly land on it. */
+  const [justCreated, setJustCreated] = useState<Project | null>(null);
+  /** Set when a create collided with an existing project, to offer "edit it". */
+  const [clash, setClash] = useState<Project | null>(null);
 
   // --- load ---------------------------------------------------------------
 
@@ -81,6 +120,8 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
       setDraft(null);
       setSaveError(null);
       setConfirmArchive(null);
+      setJustCreated(null);
+      setClash(null);
       return;
     }
     void reload();
@@ -119,15 +160,32 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
     }
   }, []);
 
+  /**
+   * The suggested root, already expanded when we know the home directory.
+   * Showing `~/agents/<name>` and then storing `/Users/x/agents/<name>` tells
+   * the user one thing and does another, which is its own "did that work?".
+   */
+  const suggestRoot = useCallback(
+    (name: string) => {
+      const suggestion = defaultWorktreeRoot(name);
+      return home ? expandTilde(suggestion, home) : suggestion;
+    },
+    [home],
+  );
+
   const startAdd = useCallback(async () => {
     setSaveError(null);
+    setClash(null);
     try {
       const picked = await openFileDialog({
         directory: true,
         multiple: false,
         title: 'Choose the project repository',
       });
+      // Cancelling the picker must not also clear the confirmation of what the
+      // user just did -- that would look like the app forgetting.
       if (typeof picked !== 'string') return;
+      setJustCreated(null);
 
       // Resolve to the git toplevel so a subdirectory pick still names the
       // repo, and so repo_path (which is UNIQUE) is stored in one canonical
@@ -145,25 +203,29 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
         id: null,
         name,
         repoPath,
-        worktreeRoot: defaultWorktreeRoot(name),
+        worktreeRoot: suggestRoot(name),
         defaultBaseBranch: '',
+        taskPromptTemplate: '',
         rootTouched: false,
       });
       void loadBranches(repoPath);
     } catch (e) {
       setSaveError(messageOf(e));
     }
-  }, [loadBranches]);
+  }, [loadBranches, suggestRoot]);
 
   const startEdit = useCallback(
     (p: Project) => {
       setSaveError(null);
+      setClash(null);
+      setJustCreated(null);
       setDraft({
         id: p.id,
         name: p.name,
         repoPath: p.repoPath,
         worktreeRoot: p.worktreeRoot,
         defaultBaseBranch: p.defaultBaseBranch ?? '',
+        taskPromptTemplate: p.taskPromptTemplate ?? '',
         rootTouched: true,
       });
       void loadBranches(p.repoPath);
@@ -195,10 +257,10 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
         name,
         // Keep the suggested root in step with the name until the user takes
         // it over; after that it is theirs and we never overwrite it.
-        worktreeRoot: draft.rootTouched ? draft.worktreeRoot : defaultWorktreeRoot(name),
+        worktreeRoot: draft.rootTouched ? draft.worktreeRoot : suggestRoot(name),
       });
     },
-    [draft],
+    [draft, suggestRoot],
   );
 
   // Live validation of the pure rules, so the reason appears as you type.
@@ -234,17 +296,32 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
         // Store the resolved, normalised form rather than whatever was typed.
         worktreeRoot: check.path,
         defaultBaseBranch: draft.defaultBaseBranch.trim() || null,
+        // '' and null both mean "no prompt"; the db layer collapses them, and
+        // sending one representation keeps that true from this end too.
+        taskPromptTemplate: draft.taskPromptTemplate.trim() || null,
       };
 
-      if (draft.id === null) await createProject(patch);
-      else await updateProject(draft.id, patch);
-
-      setDraft(null);
-      await reload();
-      onChanged?.();
+      if (draft.id === null) {
+        const created = await createProject(patch);
+        setDraft(null);
+        await reload();
+        // Land on it: the list is not enough on its own, because returning to
+        // a window that looks unchanged is exactly what read as "nothing
+        // happened". The strip above the list says what was made and offers
+        // the step the user is actually here for.
+        setJustCreated(created);
+        onChanged?.(created);
+      } else {
+        await updateProject(draft.id, patch);
+        setDraft(null);
+        await reload();
+        onChanged?.();
+      }
     } catch (e) {
-      // createProject rejects a duplicate repo_path; show it rather than
-      // silently adopting the existing row.
+      // createProject rejects a duplicate repo_path. Say which project already
+      // owns it and offer to edit that one, rather than leaving the user to
+      // work out why an apparently valid folder was refused.
+      if (e instanceof ProjectExistsError) setClash(e.existing);
       setSaveError(messageOf(e));
     } finally {
       setBusy(false);
@@ -254,6 +331,7 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
   const doArchive = useCallback(
     async (id: number) => {
       setBusy(true);
+      setJustCreated(null);
       try {
         await archiveProject(id);
         setConfirmArchive(null);
@@ -376,6 +454,47 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
               </div>
 
               <div className="wt-field">
+                <label className="wt-label" htmlFor="wt-proj-prompt">
+                  Initial prompt <span className="wt-label-optional">optional</span>
+                </label>
+                <textarea
+                  id="wt-proj-prompt"
+                  className="wt-input wt-textarea"
+                  rows={2}
+                  value={draft.taskPromptTemplate}
+                  spellCheck={false}
+                  placeholder="Left empty, the session starts with nothing typed."
+                  disabled={busy}
+                  onChange={(e) => setDraft({ ...draft, taskPromptTemplate: e.target.value })}
+                />
+                <div className="wt-hint">
+                  Passed to <span className="wt-mono">claude</span> as its prompt argument the
+                  first time a task in this project starts — never on a restart.{' '}
+                  {PROMPT_PLACEHOLDERS.map((ph) => (
+                    <span key={ph} className="wt-mono">
+                      {ph}{' '}
+                    </span>
+                  ))}
+                  are replaced.
+                </div>
+                {draft.taskPromptTemplate.trim() === '' && (
+                  <div className="wt-confirm-actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy}
+                      onClick={() =>
+                        setDraft({ ...draft, taskPromptTemplate: SUGGESTED_PROMPT })
+                      }
+                    >
+                      Use the suggested prompt
+                    </button>
+                    <span className="wt-modal-sub wt-mono">{SUGGESTED_PROMPT}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="wt-field">
                 <label className="wt-label" htmlFor="wt-proj-base">
                   Default base branch
                 </label>
@@ -409,24 +528,98 @@ export function ProjectsDialog({ open, onClose, onChanged }: ProjectsDialogProps
             <>
               {saveError && (
                 <div className="wt-error">
-                  <div className="wt-error-head">Could not open that folder</div>
+                  <div className="wt-error-head">
+                    {clash ? `${clash.name} already uses that repository` : 'Could not open that folder'}
+                  </div>
                   <pre className="wt-error-body">{saveError}</pre>
+                  {clash && (
+                    <div className="wt-error-actions">
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy}
+                        onClick={() => {
+                          setSaveError(null);
+                          startEdit(clash);
+                        }}
+                      >
+                        Edit {clash.name} instead
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {justCreated && (
+                <div className="wt-landed">
+                  <div className="wt-landed-head">
+                    Added <strong>{justCreated.name}</strong>
+                  </div>
+                  <div className="wt-landed-detail">
+                    Worktrees for this project will be created in{' '}
+                    <span className="wt-mono">{justCreated.worktreeRoot}</span>. Nothing has been
+                    written to disk yet — that happens when you create a task.
+                    {!onCreateTaskIn && ' New tasks will start in this project.'}
+                  </div>
+                  <div className="wt-confirm-actions">
+                    {/* Always offered, however this dialog was opened. With a
+                        handler we go straight into the task; without one we
+                        make the project the default and get out of the way,
+                        which is the most an isolated dialog can honestly do. */}
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={() => {
+                        writeLastProjectId(justCreated.id);
+                        if (onCreateTaskIn) onCreateTaskIn(justCreated);
+                        else onClose();
+                      }}
+                    >
+                      Create a task in {justCreated.name}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy}
+                      onClick={() => void startAdd()}
+                    >
+                      Add another project
+                    </button>
+                  </div>
                 </div>
               )}
 
               {!loading && projects.length === 0 && (
                 <div className="wt-empty">
                   <strong>No projects yet.</strong>
-                  Add the repository you work in and say where its worktrees should live.
+                  A project names the repository you work in and decides where its worktrees are
+                  created. Adding one takes about fifteen seconds.
+                  <div className="wt-confirm-actions" style={{ justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={() => void startAdd()}
+                    >
+                      Choose a repository…
+                    </button>
+                  </div>
                 </div>
               )}
 
               {projects.map((p) => (
-                <div key={p.id} className="wt-item" data-confirming={confirmArchive === p.id}>
+                <div
+                  key={p.id}
+                  className="wt-item"
+                  data-new={justCreated?.id === p.id}
+                  data-confirming={confirmArchive === p.id}
+                >
                   <div className="wt-item-top">
                     <span className="wt-item-path" title={p.repoPath}>
                       {p.name}
                     </span>
+                    {justCreated?.id === p.id && <span className="wt-chip" data-tone="new">new</span>}
                     <button
                       type="button"
                       className="btn"

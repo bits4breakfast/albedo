@@ -298,6 +298,7 @@ function windowData(over: Partial<WindowUsage> = {}): WindowUsage {
     windowEnd: now + (2 * 3600 + 47 * 60 + 13) * 1000,
     inputTokens: 1_420_000,
     outputTokens: 44_800,
+    cacheReadTokens: 186_000,
     resetsInMs: (2 * 3600 + 47 * 60 + 13) * 1000,
     burnRate: 31_400,
     ...over,
@@ -324,6 +325,16 @@ describe('WindowGauge', () => {
     expect(html).toContain('44.8k');
     expect(html).toContain('31.4k/h');
     expect(html).toContain('1,420,000');
+  });
+
+  it('names the rate as spend, not a bare "rate"', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    expect(html).toContain('spend/h');
+    expect(html).not.toMatch(/>rate</);
+    expect(html).toContain('tokens spent per hour');
+    expect(html).toContain('Cached re-read is not counted');
   });
 
   it('never shows a percentage of a plan limit', () => {
@@ -358,6 +369,89 @@ describe('WindowGauge', () => {
       />,
     );
     expect(html).toContain('59:00');
+  });
+
+  it('shows cached re-read as its own figure, never folded into the total', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    // Present, and labelled so it cannot be read as spend.
+    expect(html).toContain('186.0k');
+    expect(html).toContain('cached re-read');
+    expect(html).toContain('not spend');
+    // Never described as input -- that word is what made the old number look
+    // reasonable at 38x reality.
+    expect(html).not.toMatch(/cached[^<]*input/i);
+    // The rate tooltip's total is input + output ONLY (1,420,000 + 44,800).
+    expect(html).toContain('1,464,800');
+    // The poisoned sum (+ 186,000) must appear nowhere.
+    expect(html).not.toContain('1,650,800');
+    expect(html).not.toContain('1.65M');
+  });
+
+  it('does not describe input as including cache reads', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    expect(html).not.toMatch(/fresh \+ cache read/i);
+    expect(html).toContain('Excludes cached context re-read');
+  });
+
+  it('omits the cache line entirely rather than printing a zero', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="5h"
+        data={windowData({ cacheReadTokens: 0 })}
+        state="ready"
+        now={now}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).not.toContain('cached re-read');
+  });
+
+  it('survives a payload that predates the cacheReadTokens field', () => {
+    const stale = { ...windowData() } as Partial<WindowUsage>;
+    delete stale.cacheReadTokens;
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="5h"
+        data={stale as WindowUsage}
+        state="ready"
+        now={now}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).not.toContain('cached re-read');
+    expect(html).toContain('1.42M');   // spend still renders
+  });
+
+  it('reports the real-world magnitudes without inflating them', () => {
+    // The user's corrected 5h figures: 1.8k fresh + 4.89M cache writes spent
+    // on input, 1.01M output, against 186M of cached context re-read.
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="5h"
+        data={windowData({
+          inputTokens: 4_891_800,
+          outputTokens: 1_013_345,
+          cacheReadTokens: 221_000_000,
+          burnRate: 1_181_029, // (input + output) / 5h, per capture's contract
+        })}
+        state="ready"
+        now={now}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).toContain('4.89M');
+    expect(html).toContain('1.01M');
+    expect(html).toContain('5,905,145');      // spend total, the honest one
+    expect(html).not.toContain('226,905,145'); // spend + cache read, the old lie
+    expect(html).not.toContain('227.0M');
+    // Burn rate is spend/hour. If cache_read ever leaks back into it the
+    // figure jumps to ~45M/h, which this pins against.
+    expect(html).toContain('1.18M/h');
+    expect(html).not.toMatch(/4[0-9]\.\d+M\/h/);
   });
 
   it('renders unavailable rather than zeros when the call failed', () => {

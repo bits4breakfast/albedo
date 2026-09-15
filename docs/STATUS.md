@@ -1,9 +1,12 @@
 # Status — where the build got to
 
-Written at commit `21a1ba6`. Two commits, ~23,000 lines.
+Written at commit `0cd5bd3`+. Five commits.
 
 - `7a995af` — MVP M1–M4
 - `21a1ba6` — spec additions (touched files, file editing, usage gauges) + archive fix
+- `72d6d43` — this document
+- `0cd5bd3` — projects + the contrast pass
+- *(next)* — light/dark theming
 
 ---
 
@@ -12,11 +15,14 @@ Written at commit `21a1ba6`. Two commits, ~23,000 lines.
 | | |
 | --- | --- |
 | `npx tsc --noEmit` | clean |
-| `npx vitest run` | **522 passing**, 16 files |
+| `npx vitest run` | **571 passing**, 17 files |
 | `cargo test --lib` / `clippy` / `fmt` | 8 passing, clean, clean |
 | `cargo build` | links, 51MB debug binary |
 | App launch | runs under a Finder-like minimal PATH |
-| M1 capture, end-to-end | **38,398 messages, 115 transcripts, 41.8 days** |
+| M1 capture, end-to-end | **38,398+ messages, 115 transcripts, 41.8 days** |
+| Migration v2 (projects) | applies to the live 262MB database |
+| Contrast audit | **0 failures**, both palettes, flat and tinted grounds |
+| Theme toggle | verified live — switches without reload, persists |
 | FTS search | returns hits across that history |
 
 **What is NOT verified, and why it matters:**
@@ -198,3 +204,52 @@ Read `docs/INTERFACES.md` before changing anything crossing a module boundary �
 it carries the frozen contracts, the lead rulings and the reasoning behind them.
 `docs/TRANSCRIPT-FORMAT.md` documents the JSONL format as observed on
 Claude Code v2.1.272, including the allowlist rule.
+
+---
+
+## Added after the first run (commits `0cd5bd3` onward)
+
+**Projects.** A project names a repo once and says where its worktrees live,
+replacing the hardcoded `~/agents/<repo>/<slug>`. Add one via the `Projects`
+control in the header. Point one at `~/www/worktrees` and the worktrees already
+there become actionable in the reconcile view instead of untouchable "unknown".
+Schema is migration v2 — **`src/db/schema.sql` is v1 and is already applied to
+the live database; never edit it.** New schema goes in a new numbered file in
+`src/db/migrations/`, registered in `src-tauri/src/lib.rs`.
+
+**Contrast.** The whole palette was measured and raised; see the five rules in
+`CLAUDE.md`. `--muted` (most of the UI) went 3.18 → 6.26, the type scale up a
+notch. Three text tiers, all clearing AA, still distinct.
+
+**Light/dark.** Toggle in the sidebar footer (`auto / light / dark`), default
+system. Mechanism and required token structure are in `docs/INTERFACES.md` under
+"Theming". Theme state lives in exactly one module, `src/ui/theme.ts` — do not
+add a second resolver. `resolvedTheme()` reads the answer CSS already computed
+rather than re-deriving it from the attribute plus media query, so the cascade
+is the single source of truth.
+
+Notes that will save time later:
+
+- The **worst ground flips with the theme**: in dark it is the lightest surface
+  (hover and selected lift), in light the darkest (they sink).
+- **xterm is the only code that runs on a theme flip.** Shiki dual-tokenises, so
+  every other surface is a pure CSS repaint. If you find yourself adding a
+  subscription that rebuilds anything, something has drifted.
+- The **xterm ANSI palette is a per-theme constant pair, not tokens** — ANSI
+  white at `#ccd3de` is invisible on a white ground.
+
+## Bugs the contrast and theming passes found in already-shipped code
+
+Worth knowing these existed, because none would have been reported as a contrast
+problem:
+
+- Two borders in the worktree destructive-confirmation dialogs were below the UI
+  floor in the **shipped dark theme** (2.25 and 1.62).
+- The editor's current-search-match highlight put github-light's palest token at
+  **2.99:1** and dark at **2.45:1** — under the floor on the one match being read.
+  The dark half predated the light work.
+- `--hatch`, the marker that says a context number is *inferred rather than
+  measured*, cleared 3.0 in only 1 of 6 band/theme combinations. A marker nobody
+  can see is the same as not shipping one, except we would think we had.
+- The gauges bar's own extent measured 1.13 — you could not see where the bar
+  ended, which is precisely the headroom reading.

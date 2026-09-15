@@ -38,6 +38,24 @@ read it. Three rules came out of the fix:
 3. **Every surface belongs in the token block.** A ground invented locally is a
    text-contrast decision made by someone thinking only about a hover state.
    `--panel-hover` and `--panel-active` exist for exactly this.
+4. **Audit against tinted grounds, not only flat ones.** A token cleared at 4.5
+   against `--panel` stops being true the moment a component washes the ground
+   beneath it, and nothing in the variables shows it. Found twice, independently:
+   light `--add`/`--del`/`--accent` clear 5.0+ on white and fail at 4.2-4.35 on a
+   diff row tint; shell text tokens at exactly 4.5 on white measure 3.71-3.93 on
+   the worktree warning tints. Either give the token headroom (~5.4 on the flat
+   ground) or let the tinted surface carry its own text tiers. Say in the token
+   comment which grounds a value was cleared against.
+5. **Never `color-mix(… , transparent)` for a tint that must be legible.** It
+   composites against whatever happens to be behind it, so one declaration
+   darkens on a dark ground and *lightens* on a light one -- the ratio inverts
+   with the theme, silently. Name the ground: `color-mix(in srgb, var(--warn)
+   80%, var(--track))`. A p% mix with a ground is arithmetically identical to a
+   p% alpha composite over it, so naming it changes nothing except that it stays
+   correct when the theme flips.
+6. **An alpha is not theme-portable.** The same alpha over near-black and over
+   near-white lands a completely different separation, because the token beneath
+   it differs too. Every wash needs a measured value per theme.
 
 ## Layout
 

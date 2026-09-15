@@ -17,21 +17,68 @@
   background: var(--bg);
   color: var(--text);
 
-  /* The amber family, defined ONCE.
-     styles.css ships --accent-soft / --add-soft / --del-soft but no
-     --warn-soft, and this view needs one: it is what marks a file git found
-     that the transcript never mentioned. These three are local aliases, not
-     new global tokens, and their channels mirror --warn (#f0a33a) exactly —
-     so if the shell raises --warn, this is the one block to update, and if a
-     shared --warn-soft lands these three become `var(--warn-soft)` and
-     nothing else in the file changes.
+  /* ------------------------------------------------------------------ *
+     The amber family — the local palette for "git changed this file, the
+     transcript never mentioned it". Derived from tokens with color-mix()
+     (baseline for this repo, see the CSS baseline note in INTERFACES.md), so
+     a per-theme --warn flows through without a second definition here.
 
-     Measured against the current palette (see the header comment on the row
-     rules): the wash keeps --faint, the dimmest text tier, at 4.68 on the
-     resting row, which is the ceiling — 0.14 drops it to 4.49 and fails AA. */
-  --tf-warn-wash: rgba(240, 163, 58, 0.12);   /* row + badge ground */
-  --tf-warn-tint: rgba(240, 163, 58, 0.08);   /* notice ground */
-  --tf-warn-edge: rgba(240, 163, 58, 0.55);   /* 3.32 on the row ground */
+     Per docs/INTERFACES.md the base block carries the LIGHT values and the
+     two blocks below override for dark; nothing is defined only in a dark
+     block. The ALPHAS are per-theme because they are not transferable: an
+     overlay on near-black raises the ground's luminance, an overlay on
+     near-white lowers it, so the constraint inverts.
+
+       --tf-wash    row + badge ground
+       --tf-tint    notice ground
+       --tf-rule    3px row edge, notice/legend edge   (UI, needs 3.0)
+       --tf-hairline 1px badge edge                    (UI, needs 3.0)
+       --tf-ink     amber TEXT: badge label, notice detail
+       --tf-notice-ink / --tf-hand-ink   notice body, hand badge
+
+     LIGHT ceiling is 8% and it is set by OTHER PEOPLE'S TOKENS, not by
+     --faint: the wash darkens the row ground, and the shell's --add / --del
+     / --accent were measured against --bg and --panel-hover, not against a
+     ground this file invents. At 9% a dark light-theme --warn costs --add its
+     AA (4.15). Light therefore leans on the rule and the badge (5.3-9.9 and
+     6.5-10.1) and keeps the wash to a hint.
+
+     --tf-rule and --tf-ink mix toward --text-strong in light because raw
+     --warn is an amber tuned for a dark ground: as TEXT or a UI edge on white
+     it measures 1.9-3.7 and fails. In dark they stay exactly var(--warn), so
+     the dark numbers below are unchanged from the previous pass. */
+  --tf-wash: color-mix(in srgb, var(--warn) 8%, transparent);
+  --tf-tint: color-mix(in srgb, var(--warn) 5%, transparent);
+  --tf-rule: color-mix(in srgb, var(--warn) 55%, var(--text-strong));
+  --tf-hairline: color-mix(in srgb, var(--tf-rule) 80%, transparent);
+  --tf-ink: color-mix(in srgb, var(--warn) 45%, var(--text-strong));
+  /* Both themes: mixing toward --text-strong flips with the theme on its own,
+     which is what replaced the two hardcoded light-on-dark hexes here. */
+  --tf-notice-ink: color-mix(in srgb, var(--warn) 45%, var(--text-strong));
+  --tf-hand-ink: color-mix(in srgb, var(--accent) 40%, var(--text-strong));
+}
+
+/* DARK overrides. Both blocks carry the same values; the :not() guard is what
+   lets an explicit data-theme='light' win over the OS preference.
+
+   DARK ceiling is 12% and it is set by --faint, the dimmest text tier, which
+   sits at 4.68 on the washed row; 14% drops it to 4.49 and fails AA. That is
+   the opposite constraint to light, on the same overlay. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .tf-pane {
+    --tf-wash: color-mix(in srgb, var(--warn) 12%, transparent);
+    --tf-tint: color-mix(in srgb, var(--warn) 8%, transparent);
+    --tf-rule: var(--warn);
+    --tf-hairline: color-mix(in srgb, var(--warn) 55%, transparent);
+    --tf-ink: var(--warn);
+  }
+}
+:root[data-theme='dark'] .tf-pane {
+  --tf-wash: color-mix(in srgb, var(--warn) 12%, transparent);
+  --tf-tint: color-mix(in srgb, var(--warn) 8%, transparent);
+  --tf-rule: var(--warn);
+  --tf-hairline: color-mix(in srgb, var(--warn) 55%, transparent);
+  --tf-ink: var(--warn);
 }
 
 /* --------------------------------------------------------------------------
@@ -72,12 +119,9 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
-/* The hover cue is carried by the border and the text colour, both tokens.
-   The ground stays --panel-raised: a hardcoded hover hex is exactly how a
-   text tier silently drops below AA later, when someone lightens the ground
-   and nothing in the variables records that --muted is sitting on it.
-   Switch to var(--panel-hover) when the shell workstream lands it. */
-.tf-btn:hover { background: var(--panel-raised); color: var(--text); border-color: var(--border-strong); }
+/* --panel-hover landed in styles.css, so the hover ground is a token the
+   shell can audit against the text tiers rather than a hex typed in here. */
+.tf-btn:hover { background: var(--panel-hover); color: var(--text); border-color: var(--border-strong); }
 .tf-btn:disabled { color: var(--faint); background: transparent; }
 
 /* --------------------------------------------------------------------------
@@ -109,14 +153,16 @@
   flex: 0 0 auto;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
-  border-left: 2px solid var(--warn);   /* 8.23 on this ground */
-  background: var(--tf-warn-tint);
-  color: #f6d6a4;                       /* 12.54 on the tinted ground */
+  border-left: 2px solid var(--tf-rule);  /* UI edge: 8.32 dark / 5.4-10.3 light */
+  background: var(--tf-tint);
+  color: var(--tf-notice-ink);            /* 11.8 dark / 6.8-11.1 light */
   font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
-.tf-warn-detail { font-family: var(--font-mono); color: var(--warn); }
+/* Raw --warn as text is a dark-theme-only colour: on a light ground it
+   measures 3.7. --tf-ink is --warn in dark and a darkened amber in light. */
+.tf-warn-detail { font-family: var(--font-mono); color: var(--tf-ink); }
 
 /* The legend for `source: 'git'` rows. Present only when such a row exists —
    it explains the accent above the rows it applies to, rather than sitting
@@ -125,7 +171,7 @@
   flex: 0 0 auto;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
-  border-left: 2px solid var(--warn);
+  border-left: 2px solid var(--tf-rule);
   background: var(--panel);
   color: var(--muted);
   font-size: var(--fs-xs);
@@ -159,13 +205,17 @@
   font-size: var(--fs-sm);
 }
 
-.tf-row:hover { background: var(--panel-raised); }
+.tf-row:hover { background: var(--panel-hover); }
 .tf-row:hover .tf-name { color: var(--text-strong); }
 
-/* Hover lifts the dimmest tier. --faint is designed against the flat hover
-   ground (4.97 on --panel-raised); on a git row the amber wash sits on top of
-   that ground and takes it to 4.01, which fails AA. Lifting to --muted on
-   hover restores 5.54 and is a normal hover affordance anyway. */
+/* Hover lifts the dimmest tier, in BOTH themes and for the same reason.
+   --faint is tuned against the flat hover ground (4.64 on --panel-hover in
+   dark); the amber wash sits on top of that ground and takes it to 3.72 dark
+   / 4.38-4.65 light, i.e. under or on the AA line either way. Lifting to
+   --muted restores 5.14 dark / 5.88-6.55 light, and is a normal hover
+   affordance anyway. The lift is safe in both directions: --muted is nearer
+   the text end of the tier stack in each theme, so it never reduces
+   contrast. */
 .tf-row:hover .tf-dir,
 .tf-row:hover .tf-when,
 .tf-row:hover .tf-sep { color: var(--muted); }
@@ -176,24 +226,30 @@
    cross-checking git in the first place.
 
    Three carriers, deliberately, because no single one survives a palette
-   change on its own:
-     1. a 3px --warn left border  — 7.75 against the row's own ground;
-     2. the amber wash            — 1.20 against --bg;
-     3. the `worktree` badge, which says it in words.
-   The wash alone is NOT enough any more: at the old 0.05 it measured 1.06
-   against --bg and 1.06 against --panel-raised, i.e. a hovered ordinary row
-   was as light as a resting git row. The border does the load-bearing work;
-   the wash tells you the whole row belongs to it.
+   change on its own — and the theme split is exactly that palette change:
+
+                          dark            light (assumed palette)
+     1. 3px --tf-rule     7.75 on ground  5.3-9.9 on ground
+     2. the wash          1.196 vs --bg   1.06-1.12 vs --bg
+     3. `worktree` badge  says it in words, in both
+
+   In DARK the wash does real work and the rule confirms it. In LIGHT the
+   weights swap: the wash has to stay a hint (8%, see the ceiling note at the
+   top of this file) because it darkens a ground other people's colour tokens
+   were never measured against, so the rule and the badge carry the signal —
+   both clear their floors with room to spare. The hue helps in light too:
+   every other surface in the app is neutral grey, so a warm row reads as
+   different even at 1.06.
 
    The wash is a background-IMAGE layer over a background-COLOR ground, so
-   hover swaps only the ground (to the shell's --panel-raised) and the amber
-   stays constant on top. One wash, two grounds, no second rgba. */
+   hover swaps only the ground (to --panel-hover) and the amber stays constant
+   on top. One wash, two grounds, no second overlay to keep in sync. */
 .tf-row[data-source='git'] {
-  border-left-color: var(--warn);
+  border-left-color: var(--tf-rule);
   background-color: var(--bg);
-  background-image: linear-gradient(var(--tf-warn-wash), var(--tf-warn-wash));
+  background-image: linear-gradient(var(--tf-wash), var(--tf-wash));
 }
-.tf-row[data-source='git']:hover { background-color: var(--panel-raised); }
+.tf-row[data-source='git']:hover { background-color: var(--panel-hover); }
 
 .tf-status {
   font-family: var(--font-mono);
@@ -248,14 +304,18 @@
   padding: 0 4px;
   font-size: var(--fs-xs);
   line-height: 1.5;
-  color: var(--warn);                   /* 6.15 on its own ground */
-  background: var(--tf-warn-wash);
-  border: 1px solid var(--tf-warn-edge);
+  color: var(--tf-ink);                 /* 6.15 dark / 6.5-10.1 light */
+  background: var(--tf-wash);
+  border: 1px solid var(--tf-hairline);  /* 3.32 dark / 3.6-5.7 light */
   border-radius: var(--radius);
 }
 
+/* The blue counterpart. Was a hardcoded #bcd9ff, which is light-on-dark by
+   construction and would have been near-invisible on a light ground; mixing
+   --accent toward --text-strong flips with the theme by itself.
+   8.42 dark / 9.6-10.1 light on the accent wash. */
 .tf-badge-hand {
-  color: #bcd9ff;
+  color: var(--tf-hand-ink);
   background: var(--accent-soft);
   border-color: var(--accent-line);
 }

@@ -116,8 +116,18 @@ export function deriveContextUsage(input: ContextInput): ContextUsage | null {
   const usage = extractUsage(input.latestRawJson);
   if (usage === null) return null;
 
-  // All three counters. `input_tokens` alone is near zero under prompt
-  // caching and would report an empty context on a nearly full session.
+  // All three counters, INCLUDING cache_read. Two reasons, and they pull in
+  // opposite directions, so do not "fix" this to match usage.ts:
+  //
+  //  - `input_tokens` alone is near zero under prompt caching, so using it
+  //    would draw an empty gauge for a nearly full session.
+  //  - usage.ts deliberately EXCLUDES cache_read from its window totals,
+  //    because it is re-reported every turn and summing it across a window
+  //    counts the same cached content once per turn (~35x inflation).
+  //
+  // Both are right. This is ONE turn's prompt size -- occupancy -- where the
+  // three counters are disjoint parts of a single prompt. That is a different
+  // question from what a window SPENT. See the header of usage.ts.
   const used = contextUsedFrom(usage);
   const peak = Math.max(input.peakUsed, used);
   const { limit, limitBasis } = pickWindowTier(peak);

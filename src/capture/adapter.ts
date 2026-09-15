@@ -263,7 +263,15 @@ export function contextUsedSqlExpr(column = 'raw_json'): string {
   return CONTEXT_USAGE_FIELDS.map((field) => usageSqlExpr(field, column)).join(' + ');
 }
 
-/** Tokens occupying the context window on the turn this usage record describes. */
+/**
+ * Tokens occupying the context window on the turn this usage record describes.
+ *
+ * OCCUPANCY, not consumption. Valid for a SINGLE turn, where the three
+ * counters are disjoint parts of one prompt. Summing this across many turns
+ * double-counts cached context once per turn -- see the header of
+ * src/capture/usage.ts, which computes window totals a different way on
+ * purpose.
+ */
 export function contextUsedFrom(usage: LineUsage): number {
   return usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens;
 }

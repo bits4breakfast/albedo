@@ -30,6 +30,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 
 import {
   archiveProject,
+  normalizePromptTemplate,
   backfillProjectsFromTasks,
   createProject,
   deriveProjectDefaults,
@@ -199,6 +200,7 @@ const NEW = {
   repoPath: '/Users/x/www/albedo',
   worktreeRoot: '/Users/x/www/worktrees/albedo',
   defaultBaseBranch: null,
+  taskPromptTemplate: null,
 };
 
 beforeEach(() => {
@@ -547,5 +549,121 @@ describe('projectId survives the Task mapping in both directions', () => {
     });
     await updateTask(task.id, { projectId: project.id });
     expect((await getTask(task.id))?.projectId).toBe(project.id);
+  });
+});
+
+describe('taskPromptTemplate', () => {
+  const TEMPLATE = 'Work on {key}. Branch {branch}. Title: {title}';
+
+  it('round-trips through create and read', async () => {
+    const p = await createProject({ ...NEW, taskPromptTemplate: TEMPLATE });
+    expect(p.taskPromptTemplate).toBe(TEMPLATE);
+    expect(store.projects[0]?.['task_prompt_template']).toBe(TEMPLATE);
+    expect((await getProject(p.id))?.taskPromptTemplate).toBe(TEMPLATE);
+    expect((await listProjects())[0]?.taskPromptTemplate).toBe(TEMPLATE);
+  });
+
+  it('defaults to null — opt in, never prompt an agent unasked', async () => {
+    const p = await createProject(NEW);
+    expect(p.taskPromptTemplate).toBeNull();
+    expect((await getProject(p.id))?.taskPromptTemplate).toBeNull();
+  });
+
+  it('can be OMITTED entirely from NewProject', async () => {
+    // Optional on the write shape, required on the read shape. Creating a
+    // project without a prompt is the common case; forcing every caller to
+    // pass an explicit null is ceremony, and would make every future optional
+    // project field a breaking change.
+    const p = await createProject({
+      name: 'no-prompt',
+      repoPath: '/r/no-prompt',
+      worktreeRoot: '/wt/no-prompt',
+      defaultBaseBranch: null,
+    });
+    expect(p.taskPromptTemplate).toBeNull();
+    expect((await getProject(p.id))?.taskPromptTemplate).toBeNull();
+  });
+
+  it('is left alone by a patch that mentions it as undefined', async () => {
+    // Spreading a form object whose optional fields were never filled in must
+    // not wipe the stored template; clearing is done with null or ''.
+    const p = await createProject({ ...NEW, taskPromptTemplate: TEMPLATE });
+    await updateProject(p.id, { name: 'renamed', taskPromptTemplate: undefined });
+    const after = await getProject(p.id);
+    expect(after?.name).toBe('renamed');
+    expect(after?.taskPromptTemplate).toBe(TEMPLATE);
+  });
+
+  it('collapses empty and whitespace-only to null on create', async () => {
+    // NULL and '' both mean "no prompt"; storing both would leak a
+    // distinction nobody intended into every downstream truthiness check.
+    for (const [i, value] of ['', '   ', '\n\t '].entries()) {
+      const p = await createProject({
+        ...NEW,
+        repoPath: `/r/empty-${i}`,
+        taskPromptTemplate: value,
+      });
+      expect(p.taskPromptTemplate, `for ${JSON.stringify(value)}`).toBeNull();
+      expect(store.projects[i]?.['task_prompt_template']).toBeNull();
+    }
+  });
+
+  it('collapses empty to null on update, so clearing the field unsets it', async () => {
+    const p = await createProject({ ...NEW, taskPromptTemplate: TEMPLATE });
+    await updateProject(p.id, { taskPromptTemplate: '' });
+    expect((await getProject(p.id))?.taskPromptTemplate).toBeNull();
+
+    await updateProject(p.id, { taskPromptTemplate: TEMPLATE });
+    expect((await getProject(p.id))?.taskPromptTemplate).toBe(TEMPLATE);
+
+    await updateProject(p.id, { taskPromptTemplate: null });
+    expect((await getProject(p.id))?.taskPromptTemplate).toBeNull();
+  });
+
+  it('trims surrounding whitespace but preserves the template body', async () => {
+    const p = await createProject({ ...NEW, taskPromptTemplate: `  ${TEMPLATE}\n` });
+    expect(p.taskPromptTemplate).toBe(TEMPLATE);
+  });
+
+  it('keeps placeholders verbatim — substitution is not this layer’s job', async () => {
+    const p = await createProject({ ...NEW, taskPromptTemplate: '{key} {title} {branch} {unknown}' });
+    expect(p.taskPromptTemplate).toBe('{key} {title} {branch} {unknown}');
+  });
+
+  it('survives text a naive quoting scheme would break', async () => {
+    const nasty = `Fix {key}: it's "broken"; run \`npm test\` -- 100% $HOME \\ end`;
+    const p = await createProject({ ...NEW, taskPromptTemplate: nasty });
+    expect((await getProject(p.id))?.taskPromptTemplate).toBe(nasty);
+  });
+
+  it('is left alone by a patch that does not mention it', async () => {
+    const p = await createProject({ ...NEW, taskPromptTemplate: TEMPLATE });
+    await updateProject(p.id, { name: 'renamed' });
+    expect((await getProject(p.id))?.taskPromptTemplate).toBe(TEMPLATE);
+  });
+
+  it('is null on projects the backfill creates', async () => {
+    store.tasks.push({
+      id: 1, title: 't', project_id: null, repo_path: '/Users/x/www/albedo',
+      base_branch: 'main', branch: 'b', worktree_path: '/wt', session_id: null,
+      status: 'idle', created_at: 1, last_activity_at: null,
+    });
+    await backfillProjectsFromTasks();
+    expect((await listProjects())[0]?.taskPromptTemplate).toBeNull();
+  });
+});
+
+describe('normalizePromptTemplate', () => {
+  it('treats null, undefined, empty and blank as unset', () => {
+    expect(normalizePromptTemplate(null)).toBeNull();
+    expect(normalizePromptTemplate(undefined)).toBeNull();
+    expect(normalizePromptTemplate('')).toBeNull();
+    expect(normalizePromptTemplate('   ')).toBeNull();
+    expect(normalizePromptTemplate('\n\t')).toBeNull();
+  });
+
+  it('keeps real content, trimmed', () => {
+    expect(normalizePromptTemplate(' hi ')).toBe('hi');
+    expect(normalizePromptTemplate('{key}')).toBe('{key}');
   });
 });

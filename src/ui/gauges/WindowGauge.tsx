@@ -20,6 +20,19 @@
  * An empty window has `resetsInMs === 0`. That renders as "no usage in
  * window", never as `00:00`, which would read as "resetting now".
  *
+ * ## cacheReadTokens is never added to anything
+ *
+ * `cacheReadTokens` is true and answers a DIFFERENT question from the other
+ * two figures. A session holding 186k of cached context re-reads it on every
+ * turn, so over a window it accumulates to roughly 37x the tokens actually
+ * spent. Summing it into a total, a rate or a bar is precisely the arithmetic
+ * that had this panel reporting 227,000,000 against a real spend of 5,900,000.
+ *
+ * So it is rendered on its own demoted line, below the spend figures rather
+ * than beside them, with a label that carries the distinction. Not "input" --
+ * that word is what made the old number look reasonable. It never enters
+ * `total`, and `burnRate` excludes it upstream.
+ *
  * ## What is deliberately not here
  *
  * A percentage. Nothing on disk carries the plan's token allowance or its
@@ -95,7 +108,10 @@ export default function WindowGauge({ label, data, state, now, fetchedAt }: Wind
 
   const input = Number.isFinite(data.inputTokens) ? Math.max(0, data.inputTokens) : NaN;
   const output = Number.isFinite(data.outputTokens) ? Math.max(0, data.outputTokens) : NaN;
+  // Spend only. cacheRead is deliberately absent from this sum -- see the
+  // note at the top of the file; it is the sum that caused the 38x overstate.
   const total = (Number.isFinite(input) ? input : 0) + (Number.isFinite(output) ? output : 0);
+  const cacheRead = Number.isFinite(data.cacheReadTokens) ? Math.max(0, data.cacheReadTokens) : NaN;
 
   // Prefer the absolute instant: it stays correct however stale the fetch is.
   // `resetsInMs` is a fallback only, and then aged against the fetch.
@@ -138,15 +154,36 @@ export default function WindowGauge({ label, data, state, now, fetchedAt }: Wind
         <Stat
           value={abbreviateTokens(input)}
           label="input"
-          title={`${exactTokens(input)} input-side tokens (fresh + cache read + cache write)`}
+          title={`${exactTokens(input)} input tokens spent: fresh prompt + cache writes.\nExcludes cached context re-read, which is shown separately.`}
         />
         <Stat value={abbreviateTokens(output)} label="output" title={`${exactTokens(output)} output tokens`} />
         <Stat
           value={formatRate(data.burnRate)}
-          label="rate"
-          title={`${exactTokens(data.burnRate)} tokens/hour across all sessions.\nTotal in window: ${exactTokens(total)} tokens.`}
+          /* Not "rate". A bare "rate" invites exactly one question -- rate of
+             what? -- and that is the distinction this panel spent a round
+             getting right. The value keeps its own /h so it still reads
+             correctly quoted on its own. */
+          label="spend/h"
+          title={`${exactTokens(data.burnRate)} tokens spent per hour across all sessions (input + output).\nTotal spent in window: ${exactTokens(total)} tokens. Cached re-read is not counted.`}
         />
       </div>
+      {Number.isFinite(cacheRead) && cacheRead > 0 && (
+        <p
+          className="gz-cache"
+          title={
+            `${exactTokens(cacheRead)} tokens of already-cached context re-read from the cache.\n\n` +
+            'This is NOT spend and is deliberately kept out of the totals and the ' +
+            'rate above. A session holding a large context re-reads it on every ' +
+            'turn, so this accumulates to many times the tokens actually spent — ' +
+            'adding the two together is what made this panel overstate usage 38x.\n\n' +
+            'It is worth showing because it measures how much cached context the ' +
+            'fleet is carrying, which is a real cost of running several sessions.'
+          }
+        >
+          <span className="gz-cache-val">{abbreviateTokens(cacheRead)}</span>{' '}
+          <span className="gz-cache-key">cached re-read &middot; not spend</span>
+        </p>
+      )}
     </div>
   );
 }

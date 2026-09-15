@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from '../lib/pty';
 import type { Task } from '../types';
+import { onThemeChange, resolvedTheme } from './theme';
 
 /**
  * The embedded pty.
@@ -79,6 +80,12 @@ export interface TerminalProps {
   task: Task;
   /** False keeps the instance alive but hidden. */
   active?: boolean;
+  /**
+   * Passed to `claude` as a positional argv prompt on spawn. The caller is
+   * responsible for only supplying it on a task's FIRST spawn — see the ref
+   * snapshot below for why this component pins it at mount regardless.
+   */
+  initialPrompt?: string;
   onExit?: (code: number | null) => void;
   onError?: (message: string) => void;
 }
@@ -92,6 +99,52 @@ function cssVar(name: string, fallback: string): string {
   }
 }
 
+/**
+ * The 16 ANSI slots cannot come from the shell tokens -- there are sixteen of
+ * them and they are the TUI's own vocabulary, not the app's. They do have to
+ * be per-theme though: ANSI `white` at #ccd3de is *invisible* on a white
+ * background, so a light terminal has to map white/brightWhite to dark values.
+ * That is standard for light terminal themes, and it is the difference between
+ * a readable Claude Code session and a blank pane.
+ */
+const ANSI_DARK = {
+  black: '#0b0d10',
+  red: '#e35b56',
+  green: '#4cbf72',
+  yellow: '#f0a33a',
+  blue: '#4d9fff',
+  magenta: '#b98ce8',
+  cyan: '#3fb9c4',
+  white: '#ccd3de',
+  brightBlack: '#6d7684',
+  brightRed: '#ff7b74',
+  brightGreen: '#6fdd92',
+  brightYellow: '#ffc164',
+  brightBlue: '#79b9ff',
+  brightMagenta: '#d0abff',
+  brightCyan: '#5fd8e2',
+  brightWhite: '#f1f4f9',
+} as const;
+
+const ANSI_LIGHT = {
+  black: '#1e242c',
+  red: '#b32d27',
+  green: '#116b33',
+  yellow: '#7d520a',
+  blue: '#0b57bd',
+  magenta: '#8a3fa8',
+  cyan: '#0f6d78',
+  white: '#4a525e',
+  brightBlack: '#6b7380',
+  brightRed: '#d1443d',
+  brightGreen: '#1a8442',
+  brightYellow: '#9a6610',
+  brightBlue: '#1a6fd6',
+  brightMagenta: '#a052c0',
+  brightCyan: '#14828f',
+  brightWhite: '#0b0f14',
+} as const;
+
 /** Palette derived from the shell tokens in styles.css. */
 function terminalTheme(): ITheme {
   return {
@@ -99,23 +152,8 @@ function terminalTheme(): ITheme {
     foreground: cssVar('--text', '#ccd3de'),
     cursor: cssVar('--accent', '#4d9fff'),
     cursorAccent: cssVar('--panel-inset', '#090b0e'),
-    selectionBackground: 'rgba(77, 159, 255, 0.28)',
-    black: '#0b0d10',
-    red: '#e35b56',
-    green: '#4cbf72',
-    yellow: '#f0a33a',
-    blue: '#4d9fff',
-    magenta: '#b98ce8',
-    cyan: '#3fb9c4',
-    white: '#ccd3de',
-    brightBlack: '#6d7684',
-    brightRed: '#ff7b74',
-    brightGreen: '#6fdd92',
-    brightYellow: '#ffc164',
-    brightBlue: '#79b9ff',
-    brightMagenta: '#d0abff',
-    brightCyan: '#5fd8e2',
-    brightWhite: '#f1f4f9',
+    selectionBackground: cssVar('--term-selection', 'rgba(77, 159, 255, 0.28)'),
+    ...(resolvedTheme() === 'dark' ? ANSI_DARK : ANSI_LIGHT),
   };
 }
 
@@ -123,7 +161,7 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export default function Terminal({ task, active = true, onExit, onError }: TerminalProps) {
+export default function Terminal({ task, active = true, initialPrompt, onExit, onError }: TerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const ptyIdRef = useRef<string | null>(null);
@@ -137,6 +175,17 @@ export default function Terminal({ task, active = true, onExit, onError }: Termi
   onExitRef.current = onExit;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+
+  /**
+   * Pinned at mount, deliberately.
+   *
+   * The caller computes this from `task.sessionId === null`, and that flips to
+   * non-null the moment capture adopts the session — very likely before this
+   * component ever re-renders. Reading the live prop inside the spawn effect
+   * would make the prompt depend on a race. A ref initialised once is the
+   * mount-time value, full stop.
+   */
+  const initialPromptRef = useRef(initialPrompt);
 
   const [phase, setPhase] = useState<Phase>('starting');
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -175,6 +224,20 @@ export default function Terminal({ task, active = true, onExit, onError }: Termi
       /* links are a nicety, not a requirement */
     }
     term.open(host);
+
+    // Re-theme in place. Assigning `options.theme` repaints the screen and the
+    // scrollback from the existing buffer -- it does not touch the pty, so a
+    // running Claude Code session survives a theme flip exactly as it survives
+    // a task switch.
+    unsubs.push(
+      onThemeChange(() => {
+        try {
+          term.options.theme = terminalTheme();
+        } catch {
+          /* disposed between the notify and the frame */
+        }
+      }),
+    );
 
     /** Fit + tell the pty, but only when the size really moved. */
     const applyFit = () => {
@@ -230,10 +293,15 @@ export default function Terminal({ task, active = true, onExit, onError }: Termi
 
     void (async () => {
       try {
+        // The prompt goes in as argv, never as a pty write. Writing it would
+        // mean knowing when Claude Code has finished booting, and the only way
+        // to know that is to read terminal output -- the one thing this app
+        // never does. `claude [prompt]` sidesteps it entirely.
+        const prompt = initialPromptRef.current?.trim();
         const id = await spawnPty({
           cwd: task.worktreePath,
           command: 'claude',
-          args: [],
+          args: prompt ? [prompt] : [],
           cols: term.cols,
           rows: term.rows,
         });

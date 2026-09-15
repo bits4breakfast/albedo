@@ -28,11 +28,39 @@ export interface Project {
   worktreeRoot: string;
   /** Offered as the default base in the new-task dialog. Null = repo HEAD. */
   defaultBaseBranch: string | null;
+  /**
+   * Prompt handed to `claude` as argv on a task's FIRST spawn, with `{key}`,
+   * `{title}` and `{branch}` substituted. Null means no initial prompt, which
+   * is the default: prompting an agent the user has just launched is a side
+   * effect they did not ask for. Empty string is normalised to null on write,
+   * so "unset" has exactly one representation.
+   */
+  taskPromptTemplate: string | null;
   createdAt: number;
   archivedAt: number | null;
 }
 
-export type NewProject = Omit<Project, 'id' | 'createdAt' | 'archivedAt'>;
+/**
+ * Write shape for a project.
+ *
+ * `taskPromptTemplate` is OPTIONAL here while it is required on `Project`:
+ * a row always has the column, so a reader must handle the null; but creating
+ * a project without an initial prompt is the default and the common case, and
+ * making every call site pass an explicit null is ceremony that buys nothing.
+ *
+ * This is deliberately the opposite of `WindowUsage.cacheReadTokens`, which is
+ * required. The rule is: REQUIRED WHERE FORGETTING IS DANGEROUS, OPTIONAL
+ * WHERE FORGETTING IS CORRECT. Omitting `cacheReadTokens` silently
+ * reintroduces a 38x usage error, so the compiler must insist. Omitting a
+ * prompt template does exactly what the user wants, which is nothing.
+ */
+export type NewProject = Omit<
+  Project,
+  'id' | 'createdAt' | 'archivedAt' | 'taskPromptTemplate'
+> & {
+  /** Omit, or pass null/'' , for no initial prompt. Normalised on write. */
+  taskPromptTemplate?: string | null;
+};
 
 // ---------------------------------------------------------------------------
 // Tasks

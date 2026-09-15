@@ -442,3 +442,157 @@ assumed. Tauri uses the system WKWebView, so the real floor is the user's macOS.
 If a lower floor is ever needed, both workstreams hold measured pre-composited
 hex equivalents; ask rather than eyeballing replacements, because these values
 were each chosen against a specific ground.
+
+---
+
+# Theming
+
+The app was dark-only. Light is now a first-class theme, not a tint of the dark one.
+
+## Mechanism
+
+`data-theme` on `<html>`, written by the shell workstream:
+
+| attribute | meaning |
+| --- | --- |
+| *(absent)* or `data-theme="system"` | follow `prefers-color-scheme` |
+| `data-theme="light"` | force light |
+| `data-theme="dark"` | force dark |
+
+Token structure in `styles.css`, and **all three blocks are required**:
+
+```css
+:root                                   { /* full LIGHT palette */ }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light'])       { /* dark overrides */ }
+}
+:root[data-theme='dark']                { /* dark overrides, same values */ }
+```
+
+Guarding the media block with `:not([data-theme='light'])` is what makes the
+explicit choice win in both directions. **No colour may have its only definition
+inside a media or `[data-theme]` block** — a token defined only in the dark block
+is undefined in light, and renders as nothing rather than as wrong, which is
+harder to spot.
+
+Also set `color-scheme: light dark` so native scrollbars, form controls and the
+webview's own ground follow.
+
+## The bar is the same in both themes
+
+The contrast rules in `CLAUDE.md` are not dark-specific. A light palette must be
+measured the same way:
+
+- **4.5:1 for text, 3.0:1 for UI**, against the **worst ground** — in light that
+  is the light equivalent of `--panel-raised`, i.e. selected and hovered rows.
+- Three distinct text tiers. Light has the same problem inverted: the usable
+  range runs from 4.5 up to ~15 against white, so three tiers still fit.
+- **The dark palette must not regress.** Re-audit both after the split.
+
+Accent, status, add/del and warn/danger hues almost always need *different*
+values per theme, not the same value reused — a colour tuned for 4.5 on near
+black is usually 2-something on near white.
+
+## Shiki
+
+`src/lib/highlight.ts` hardcodes `THEME = 'github-dark-default'`. It needs a
+light counterpart. Two viable routes, transcript workstream's call:
+
+1. **Dual themes emitting CSS custom properties** (`--shiki-light`/`--shiki-dark`
+   per token, CSS picks). No re-tokenising on switch, no flash, and the token
+   cache stays theme-agnostic. Preferred.
+2. Re-tokenise on theme change and clear the LRU cache. Simpler; costs a
+   re-highlight on a rare action.
+
+Whichever is chosen, the diff view's add/del backgrounds and the editor must
+agree with it — a light editor showing dark-theme syntax colours is worse than
+no highlighting.
+
+## xterm
+
+`Terminal.tsx` builds its theme from `getComputedStyle` on the tokens, so it
+follows automatically — but it reads them **once at construction**. It must
+rebuild and re-apply on theme change, for every live terminal, without
+respawning the pty.
+
+---
+
+# Issue-keyed tasks
+
+The user names a task with a tracker issue key (`ACME-2398`, `PLATFORM-19T`,
+`HUB-429902396650`) and expects the branch, the worktree, the task row and the
+session itself to pick it up.
+
+## Albedo does NOT integrate the Linear API
+
+Deliberately. Claude Code already has Linear MCP configured on this machine, so
+the session can fetch the issue itself. Albedo only has to **name the issue in
+the initial prompt**; the agent does the lookup.
+
+That keeps Albedo free of tracker credentials, free of a second integration to
+maintain, and works unchanged for `HUB-*` or any other key family without
+Albedo knowing what those trackers are. It is also the spec's core rule applied
+to a new surface: wrap Claude Code, do not duplicate what it can already do.
+
+## `src/lib/issueKey.ts` — owner: worktree workstream
+
+```ts
+export interface IssueRef { key: string; rest: string }
+/** Pull a leading tracker key off a task title. Null when there isn't one. */
+export function parseIssueKey(title: string): IssueRef | null;
+```
+
+Pattern is `PROJ-SUFFIX` anchored at the start: uppercase alpha prefix, hyphen,
+alphanumeric suffix. Observed on this machine: `ACME-2398`, `ACME-2387`,
+`PLATFORM-19T`, `HUB-429902396650`. Be conservative — a title that merely starts
+with a capitalised word must not match.
+
+## Naming, once a key is found
+
+| | with a key | without |
+| --- | --- | --- |
+| branch | `ACME-2398` or `ACME-2398-<slug of rest>` | `<slug>` (unchanged) |
+| worktree dir | `<worktreeRoot>/ACME-2398` | `<worktreeRoot>/<slug>` |
+| task row | key as its own chip, title beside it | title only |
+
+Matches the user's existing branches (`ACME-2398`, `ACME-2398-followup`).
+
+## Initial prompt — `claude [prompt]`, not a pty write
+
+`claude` takes a positional prompt argument. Pass it at spawn as argv.
+
+Do **not** write the prompt into the pty after spawn: that needs to know when
+Claude Code has finished booting, and the only way to know is to read terminal
+output — which is the one thing this app never does. argv sidesteps it entirely.
+
+Per-project template placeholders, all four agreed across workstreams:
+
+| placeholder | value |
+| --- | --- |
+| `{key}` | the issue key (`ACME-2398`), empty when the title has none |
+| `{rest}` | the title minus the key; falls back to the full title when no key |
+| `{title}` | the full title exactly as typed |
+| `{branch}` | the branch the worktree was cut on |
+
+`{rest}` exists because a template like `"Fetch {key} and implement: {rest}"` has
+no other way to name the descriptive half without repeating the key.
+
+The template is stored on
+the project. Empty by default — opt-in, because silently prompting an agent the
+user has just launched is a side effect they did not ask for.
+
+**Send it only on a task's first spawn** — gate on `task.sessionId === null`.
+Re-spawning after a kill must not re-prompt; the session already has the context.
+
+The gate is enforced twice, deliberately: once where the prompt is computed, and
+once by pinning the value in a ref **at mount** rather than reading the live prop
+inside the spawn effect. The ref is load-bearing — the spawn is async and
+`sessionId` flips to non-null as soon as capture adopts the session, plausibly
+before the component next renders, so reading the prop inside the effect would
+make "did we prompt?" depend on a race.
+
+**Known edge case, accepted:** a task spawned that never writes a transcript
+(so `sessionId` stays null) will be prompted again after an app restart. That is
+the gate working as specified, and it is arguably right — the agent never got
+going. Avoiding it would need a separate `prompted_at` column, which is not worth
+a schema change for a case where the current behaviour is defensible.

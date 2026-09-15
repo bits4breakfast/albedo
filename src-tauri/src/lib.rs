@@ -9,6 +9,8 @@ const SCHEMA: &str = include_str!("../../src/db/schema.sql");
 /// v2: projects. schema.sql is v1 and is already applied to live databases, so
 /// it must never be edited -- additions go in a new migration file.
 const M0002_PROJECTS: &str = include_str!("../../src/db/migrations/0002_projects.sql");
+/// v3: per-project initial-prompt template, for issue-keyed tasks.
+const M0003_TASK_PROMPT: &str = include_str!("../../src/db/migrations/0003_task_prompt.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -22,6 +24,12 @@ pub fn run() {
             version: 2,
             description: "projects",
             sql: M0002_PROJECTS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 3,
+            description: "task prompt template",
+            sql: M0003_TASK_PROMPT,
             kind: MigrationKind::Up,
         },
     ];

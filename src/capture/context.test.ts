@@ -404,7 +404,7 @@ describe('deriveWindowUsage — boundary arithmetic', () => {
     expect(w.resetsInMs).toBe(0);
   });
 
-  it('sums all three input counters into inputTokens', () => {
+  it('sums only the SPENT input counters, holding cache_read aside', () => {
     const w = deriveWindowUsage(
       {
         inputTokens: 100,
@@ -416,7 +416,8 @@ describe('deriveWindowUsage — boundary arithmetic', () => {
       USAGE_WINDOW_MS,
       NOW,
     );
-    expect(w.inputTokens).toBe(420);
+    expect(w.inputTokens).toBe(120); // not 420
+    expect(w.cacheReadTokens).toBe(300);
     expect(w.outputTokens).toBe(7);
   });
 
@@ -535,8 +536,76 @@ describe('windowUsage aggregates across sessions', () => {
       },
     ];
     const s = await usageSummary(NOW);
-    expect(s.inputTokens).toBe(420);
+    expect(s.inputTokens).toBe(120); // 100 fresh + 20 cache_creation, NOT + 300
+    expect(s.cacheReadTokens).toBe(300);
     expect(s.sinceTs).toBe(NOW - USAGE_WINDOW_MS);
+  });
+
+  it('does NOT grow with turn count from the cache_read term', () => {
+    // The regression. A session holding a large cached context re-reports that
+    // same cache_read on every turn. Summing it across a window counted the
+    // same content once per turn: 872 turns x 186k produced 206M "tokens" in
+    // five hours. Spend must scale with what each turn actually added, not
+    // with how long the conversation is.
+    const CACHE = 186_000;
+    const build = (turns: number) =>
+      Array.from({ length: turns }, (_, i) => ({
+        sessionId: 's',
+        seq: i * 100,
+        rawJson: assistantLine({ input: 10, cacheCreation: 100, cacheRead: CACHE, output: 50 }),
+        ts: 1_000 + i,
+      }));
+
+    const ten = deriveWindowUsage(sumUsage(build(10), 0), USAGE_WINDOW_MS, NOW);
+    const eighty = deriveWindowUsage(sumUsage(build(80), 0), USAGE_WINDOW_MS, NOW);
+
+    // Fresh spend scales with turns: 8x the turns, 8x the spend.
+    expect(ten.inputTokens).toBe(10 * 110);
+    expect(eighty.inputTokens).toBe(80 * 110);
+
+    // And the cached context never enters that figure, at any turn count.
+    expect(ten.inputTokens).toBeLessThan(CACHE);
+    expect(eighty.inputTokens).toBeLessThan(CACHE);
+
+    // It is still reported, just separately and never added in.
+    expect(eighty.cacheReadTokens).toBe(80 * CACHE);
+    expect(eighty.inputTokens + eighty.outputTokens).toBeLessThan(eighty.cacheReadTokens / 100);
+  });
+
+  it('keeps the burn rate free of the same inflation', () => {
+    const oneHour = 3_600_000;
+    const w = deriveWindowUsage(
+      {
+        inputTokens: 1_000,
+        cacheCreationInputTokens: 500,
+        cacheReadInputTokens: 200_000_000, // the term that inflated everything
+        outputTokens: 500,
+        oldestTs: NOW - oneHour,
+      },
+      USAGE_WINDOW_MS,
+      NOW,
+    );
+    expect(w.burnRate).toBeCloseTo(2_000, 6); // 1000 + 500 + 500 over one hour
+  });
+
+  it('usageSummary reports spend and cache reads as separate figures', async () => {
+    state.handler = () => [
+      {
+        input_tokens: 1_744,
+        output_tokens: 965_174,
+        cache_creation_input_tokens: 4_827_054,
+        cache_read_input_tokens: 205_860_130,
+        line_count: 872,
+        oldest_ts: NOW - 3_600_000,
+      },
+    ];
+    const s = await usageSummary(NOW);
+    // The real five-hour numbers from the user's database.
+    expect(s.inputTokens).toBe(4_828_798); // 1,744 + 4,827,054
+    expect(s.outputTokens).toBe(965_174);
+    expect(s.cacheReadTokens).toBe(205_860_130);
+    // Previously this reported ~210,000,000 as one figure.
+    expect(s.inputTokens + s.outputTokens).toBeLessThan(6_000_000);
   });
 
   it('does not double-count the rows one line expands into', () => {

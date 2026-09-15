@@ -56,18 +56,20 @@ interface ProjectRow {
   repo_path: string;
   worktree_root: string;
   default_base_branch: string | null;
+  task_prompt_template: string | null;
   created_at: number;
   archived_at: number | null;
 }
 
 const PROJECT_SELECT =
-  'id, name, repo_path, worktree_root, default_base_branch, created_at, archived_at';
+  'id, name, repo_path, worktree_root, default_base_branch, task_prompt_template, created_at, archived_at';
 
 const PROJECT_COLUMN: Readonly<Record<keyof NewProject, string>> = {
   name: 'name',
   repoPath: 'repo_path',
   worktreeRoot: 'worktree_root',
   defaultBaseBranch: 'default_base_branch',
+  taskPromptTemplate: 'task_prompt_template',
 };
 
 function toProject(r: ProjectRow): Project {
@@ -77,6 +79,7 @@ function toProject(r: ProjectRow): Project {
     repoPath: r.repo_path,
     worktreeRoot: r.worktree_root,
     defaultBaseBranch: r.default_base_branch,
+    taskPromptTemplate: r.task_prompt_template,
     createdAt: r.created_at,
     archivedAt: r.archived_at,
   };
@@ -97,6 +100,20 @@ export function normalizeRepoPath(repoPath: string): string {
   const trimmed = repoPath.trim();
   const stripped = trimmed.replace(/\/+$/, '');
   return stripped.length > 0 ? stripped : trimmed.length > 0 ? '/' : '';
+}
+
+/**
+ * Collapse "no initial prompt" to a single representation.
+ *
+ * NULL and '' both mean unset, so storing both lets a distinction nobody
+ * intended leak into every `if (project.taskPromptTemplate)` downstream. A
+ * whitespace-only template is unset too -- it would expand to a prompt of
+ * spaces, which is worse than none.
+ */
+export function normalizePromptTemplate(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /** Folder basename of a repo path. `/a/b/` -> `b`, not `''`. */
@@ -198,19 +215,15 @@ export async function createProject(p: NewProject): Promise<Project> {
   if (existing !== null) throw new ProjectExistsError(existing);
 
   const createdAt = Date.now();
+  const name = p.name.trim().length > 0 ? p.name.trim() : projectNameFor(repoPath);
+  const taskPromptTemplate = normalizePromptTemplate(p.taskPromptTemplate);
   const db = await getDb();
   let res;
   try {
     res = await db.execute(
-      `INSERT INTO projects (name, repo_path, worktree_root, default_base_branch, created_at, archived_at)
-       VALUES ($1, $2, $3, $4, $5, NULL)`,
-      [
-        p.name.trim().length > 0 ? p.name.trim() : projectNameFor(repoPath),
-        repoPath,
-        p.worktreeRoot,
-        p.defaultBaseBranch,
-        createdAt,
-      ],
+      `INSERT INTO projects (name, repo_path, worktree_root, default_base_branch, task_prompt_template, created_at, archived_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NULL)`,
+      [name, repoPath, p.worktreeRoot, p.defaultBaseBranch, taskPromptTemplate, createdAt],
     );
   } catch (err: unknown) {
     // The check above races against another writer. The UNIQUE index is the
@@ -227,10 +240,11 @@ export async function createProject(p: NewProject): Promise<Project> {
   emitProjectsChanged();
   return {
     id,
-    name: p.name.trim().length > 0 ? p.name.trim() : projectNameFor(repoPath),
+    name,
     repoPath,
     worktreeRoot: p.worktreeRoot,
     defaultBaseBranch: p.defaultBaseBranch,
+    taskPromptTemplate,
     createdAt,
     archivedAt: null,
   };
@@ -244,6 +258,15 @@ export async function updateProject(id: number, patch: Partial<NewProject>): Pro
     const column = PROJECT_COLUMN[key];
     if (column === undefined) continue; // unknown field: ignore, never inject
     let value: unknown = patch[key];
+    // `undefined` means "not mentioned", so leave the column alone. Spreading a
+    // form object whose optional fields were never filled in must not wipe
+    // them. Clearing is done with null or '', which normalise to NULL.
+    if (value === undefined) continue;
+    if (key === 'taskPromptTemplate') {
+      // Same normalisation as createProject, so clearing the field in the UI
+      // stores NULL rather than ''.
+      value = normalizePromptTemplate(value as string | null | undefined);
+    }
     if (key === 'repoPath') {
       const norm = normalizeRepoPath(String(value));
       // Moving a project onto another project's repo would violate the UNIQUE
@@ -314,6 +337,7 @@ export async function backfillProjectsFromTasks(): Promise<number> {
         repoPath: defaults.repoPath,
         worktreeRoot: defaults.worktreeRoot,
         defaultBaseBranch: null,
+        taskPromptTemplate: null,
       });
       created += 1;
     }

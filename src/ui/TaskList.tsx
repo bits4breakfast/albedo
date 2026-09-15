@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
-import type { Task, TaskStatus } from '../types';
+import type { Project, Task, TaskStatus } from '../types';
 import StatusDot, { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
+import { parseIssueKey } from '../lib/issueKey';
 import type { ContextUsage } from '../capture';
 
 /**
@@ -29,9 +30,18 @@ export interface TaskListProps {
    * exists.
    */
   onManageProjects?: () => void;
+  /**
+   * Projects, name-ascending. Rendered as groups even when EMPTY: a project
+   * with no tasks still has to be visible, or creating one looks like nothing
+   * happened — which is exactly how it felt.
+   */
+  projects?: Project[];
+  /**
+   * The project this list is scoped to — the active tab, or the sole project
+   * when there is no tab bar. Null only when there are no projects at all.
+   */
+  activeProject?: Project | null;
 }
-
-type GroupKey = 'blocked' | 'active' | 'quiet' | 'archived';
 
 /** Row context menu. Destructive actions live here, never on the row itself. */
 interface RowMenu {
@@ -39,6 +49,13 @@ interface RowMenu {
   x: number;
   y: number;
 }
+
+/**
+ * Status is the PRIMARY axis inside the list. Project scoping happens a level
+ * up, in the tab bar, precisely so this grouping stays flat: "which session is
+ * waiting on me" must never be more than one glance deep.
+ */
+type GroupKey = 'blocked' | 'active' | 'quiet' | 'archived';
 
 const GROUP_ORDER: GroupKey[] = ['blocked', 'active', 'quiet', 'archived'];
 
@@ -71,6 +88,11 @@ export function relativeTime(ts: number | null, now: number): string {
   return `${d}d`;
 }
 
+function projectName(task: Task, projects: Project[] | undefined): string | null {
+  if (task.projectId === null) return null;
+  return projects?.find((p) => p.id === task.projectId)?.name ?? null;
+}
+
 function basename(path: string): string {
   const parts = path.split('/').filter(Boolean);
   return parts.length ? (parts[parts.length - 1] as string) : path;
@@ -84,6 +106,8 @@ export default function TaskList({
   onArchive,
   contextBySession,
   onManageProjects,
+  projects,
+  activeProject = null,
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
@@ -125,7 +149,17 @@ export default function TaskList({
     };
   }, [menu]);
 
-  const groups = useMemo(() => {
+  /**
+   * Two axes, deliberately not nested.
+   *
+   * Projects are the mental model the feature introduced, so they are the
+   * structure. But "which session is waiting on me" is the question this app
+   * exists to answer, and burying a blocked task three project headers down
+   * would answer it worse than the flat list did. So blocked tasks are LIFTED
+   * OUT into one triage group pinned above every project, carrying their
+   * project name on the row; the project groups hold everything else.
+   */
+  const sections = useMemo(() => {
     const buckets = new Map<GroupKey, Task[]>();
     for (const key of GROUP_ORDER) buckets.set(key, []);
     for (const task of tasks) buckets.get(groupOf(task.status))?.push(task);
@@ -138,7 +172,7 @@ export default function TaskList({
   }, [tasks]);
 
   /** Render order — the order arrow keys and ⌘1..9 walk. */
-  const ordered = useMemo(() => groups.flatMap((g) => g.tasks), [groups]);
+  const ordered = useMemo(() => sections.flatMap((g) => g.tasks), [sections]);
 
   const orderedRef = useRef(ordered);
   orderedRef.current = ordered;
@@ -226,22 +260,37 @@ export default function TaskList({
       </div>
 
       <div className="tasklist-scroll" ref={scrollRef}>
-        {ordered.length === 0 && (
-          <div className="tasklist-empty">
-            No tasks yet.
-            <br />
-            A task is cut from a <strong>project</strong> — a repo Albedo keeps worktrees for.
-            Once one exists, <span className="placeholder-key">⌘N</span> cuts a worktree and
-            starts a session in it.
-            {onManageProjects && (
-              <button className="btn tasklist-empty-action" onClick={onManageProjects}>
-                Add a project
-              </button>
-            )}
-          </div>
-        )}
+        {/* Three states, because one static block was the bug: it told the
+            user to add a project while they were looking at the project they
+            had just added. */}
+        {ordered.length === 0 &&
+          (activeProject ? (
+            <div className="tasklist-empty">
+              No tasks in <strong>{activeProject.name}</strong> yet.
+              <br />
+              <span className="placeholder-key">⌘N</span> cuts a worktree in{' '}
+              {activeProject.name} and starts a session in it.
+            </div>
+          ) : (projects?.length ?? 0) > 0 ? (
+            <div className="tasklist-empty">
+              No tasks yet.
+              <br />
+              <span className="placeholder-key">⌘N</span> cuts a worktree and starts a session.
+            </div>
+          ) : (
+            <div className="tasklist-empty">
+              No projects yet.
+              <br />
+              A task is cut from a <strong>project</strong> — a repo Albedo keeps worktrees for.
+              {onManageProjects && (
+                <button className="btn tasklist-empty-action" onClick={onManageProjects}>
+                  Add a project
+                </button>
+              )}
+            </div>
+          ))}
 
-        {groups.map((group) => (
+        {sections.map((group) => (
           <div key={group.key}>
             <div className="group-label" data-tone={group.key}>
               <span>{GROUP_TITLE[group.key]}</span>
@@ -250,6 +299,7 @@ export default function TaskList({
             </div>
             {group.tasks.map((task) => {
               const index = ordered.indexOf(task);
+              const issue = parseIssueKey(task.title);
               const ctx = task.sessionId ? contextBySession?.get(task.sessionId) : undefined;
               const ctxLevel = ctx ? contextLevel(ctx.fraction) : null;
               // Quiet sessions say nothing. The number appears only once it is
@@ -273,11 +323,34 @@ export default function TaskList({
                   <span className="task-dot-cell">
                     <StatusDot status={task.status} />
                   </span>
-                  <span className="task-title">{task.title}</span>
+                  {/* The key IS the task's identity to the user, so it reads
+                      as its own chip down the left edge instead of being the
+                      first few characters of a sentence. Identifier, not a
+                      sort axis -- grouping stays status-first. */}
+                  <span className="task-title">
+                    {issue ? (
+                      <>
+                        <span className="task-key">{issue.key}</span>
+                        {issue.rest && <span className="task-rest">{issue.rest}</span>}
+                      </>
+                    ) : (
+                      task.title
+                    )}
+                  </span>
                   <span className="task-age">{relativeTime(task.lastActivityAt, now)}</span>
                   <span className="task-meta">
-                    <span className="task-repo">{basename(task.repoPath)}</span>
-                    <span className="task-sep">/</span>
+                    {/* When a project tab is active the repo is already the
+                        tab; repeating it on every row is noise. On "All" it is
+                        the one thing you need, because rows come from
+                        everywhere. */}
+                    {(!activeProject || task.projectId !== activeProject.id) && (
+                      <>
+                        <span className="task-repo">
+                          {projectName(task, projects) ?? basename(task.repoPath)}
+                        </span>
+                        <span className="task-sep">/</span>
+                      </>
+                    )}
                     <span className="task-branch">{task.branch}</span>
                     <span className="task-meta-tail">
                       {ctx && ctxText && (
