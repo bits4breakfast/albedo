@@ -86,6 +86,18 @@ export interface TerminalProps {
    * snapshot below for why this component pins it at mount regardless.
    */
   initialPrompt?: string;
+  /**
+   * Full argv for `claude`, e.g. `['--resume', '<id>']`. Takes precedence over
+   * `initialPrompt` — a resumed session already has its context and must not
+   * also be handed the project's opening prompt.
+   */
+  spawnArgs?: string[];
+  /**
+   * Called when the user abandons a failed resume and starts fresh, so the
+   * caller can drop any stale resume args it is holding — otherwise a retry
+   * would re-attempt the same dead session id.
+   */
+  onFreshStart?: () => void;
   onExit?: (code: number | null) => void;
   onError?: (message: string) => void;
 }
@@ -161,7 +173,19 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export default function Terminal({ task, active = true, initialPrompt, onExit, onError }: TerminalProps) {
+function isResumeArgs(args: string[]): boolean {
+  return args.includes('--resume');
+}
+
+export default function Terminal({
+  task,
+  active = true,
+  initialPrompt,
+  spawnArgs,
+  onFreshStart,
+  onExit,
+  onError,
+}: TerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const ptyIdRef = useRef<string | null>(null);
@@ -186,6 +210,16 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
    * mount-time value, full stop.
    */
   const initialPromptRef = useRef(initialPrompt);
+  const spawnArgsRef = useRef(spawnArgs);
+  /** Did anything at all come back before it died? See the note in spawn(). */
+  const sawOutputRef = useRef(false);
+  const usedResumeRef = useRef(false);
+  const restartRef = useRef<((fresh: boolean) => void) | null>(null);
+  const onFreshStartRef = useRef(onFreshStart);
+  onFreshStartRef.current = onFreshStart;
+  /** Live task, for decisions that must use current state, not mount state. */
+  const taskRef = useRef(task);
+  taskRef.current = task;
 
   const [phase, setPhase] = useState<Phase>('starting');
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -198,6 +232,7 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
 
     let disposed = false;
     const unsubs: Array<() => void> = [];
+    let ptyUnsubs: Array<() => void> = [];
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const lastSize = { cols: 0, rows: 0 };
 
@@ -291,17 +326,33 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
     });
     unsubs.push(() => dataSub.dispose());
 
-    void (async () => {
+    /**
+     * Start (or restart) `claude`. Extracted so the failure path can run it a
+     * second time without re-creating the xterm or losing the scrollback.
+     */
+    const spawn = async (args: string[], isResume: boolean) => {
+      // Detach the previous pty's listeners before attaching new ones.
+      for (const off of ptyUnsubs) {
+        try {
+          off();
+        } catch {
+          /* ignore */
+        }
+      }
+      ptyUnsubs = [];
+
+      deadRef.current = false;
+      sawOutputRef.current = false;
+      usedResumeRef.current = isResume;
+      setExitCode(null);
+      setFailure(null);
+      setPhase('starting');
+
       try {
-        // The prompt goes in as argv, never as a pty write. Writing it would
-        // mean knowing when Claude Code has finished booting, and the only way
-        // to know that is to read terminal output -- the one thing this app
-        // never does. `claude [prompt]` sidesteps it entirely.
-        const prompt = initialPromptRef.current?.trim();
         const id = await spawnPty({
           cwd: task.worktreePath,
           command: 'claude',
-          args: prompt ? [prompt] : [],
+          args,
           cols: term.cols,
           rows: term.rows,
         });
@@ -313,9 +364,12 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
         registerPty(task.id, id);
         setPhase('live');
 
-        unsubs.push(
+        ptyUnsubs.push(
           onPtyOutput(id, (bytes) => {
-            // Bytes straight through. Do not decode.
+            // Counting that bytes arrived is not reading them. Nothing here
+            // interprets the stream -- it only distinguishes "died before it
+            // produced anything", which is what a rejected --resume looks like.
+            sawOutputRef.current = true;
             try {
               term.write(bytes);
             } catch {
@@ -323,7 +377,7 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
             }
           }),
         );
-        unsubs.push(
+        ptyUnsubs.push(
           onPtyExit(id, (code) => {
             deadRef.current = true;
             unregisterPty(task.id, id);
@@ -352,7 +406,37 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
           /* ignore */
         }
       }
-    })();
+    };
+
+    // Exposed so the "start a fresh session" affordance can reach it.
+    restartRef.current = (fresh: boolean) => {
+      if (fresh) {
+        term.write('\r\n\x1b[90m--- starting a fresh session ---\x1b[0m\r\n');
+        onFreshStartRef.current?.();
+      }
+      // The opening prompt goes to a genuinely fresh session only. If this
+      // task ever established a session, the agent has already been told --
+      // re-sending would make it start the work over, and that reads as the
+      // agent behaving bizarrely rather than as a spawn bug. Deliberately the
+      // LIVE sessionId, not the mount-time one: the whole point is what has
+      // happened since.
+      const neverStarted = taskRef.current.sessionId === null;
+      const prompt = neverStarted ? initialPromptRef.current?.trim() : undefined;
+      void spawn(fresh ? (prompt ? [prompt] : []) : buildArgs(), !fresh && isResumeArgs(buildArgs()));
+    };
+
+    function buildArgs(): string[] {
+      // The prompt goes in as argv, never as a pty write. Writing it would mean
+      // knowing when Claude Code has finished booting, and the only way to know
+      // that is to read terminal output -- the one thing this app never does.
+      const resumeArgs = spawnArgsRef.current;
+      if (resumeArgs && resumeArgs.length > 0) return resumeArgs;
+      const prompt = initialPromptRef.current?.trim();
+      return prompt ? [prompt] : [];
+    }
+
+    const first = buildArgs();
+    void spawn(first, isResumeArgs(first));
 
     return () => {
       disposed = true;
@@ -360,7 +444,8 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
       if (resizeTimer) clearTimeout(resizeTimer);
       observer.disconnect();
       window.removeEventListener('resize', scheduleFit);
-      for (const off of unsubs) {
+      restartRef.current = null;
+      for (const off of [...unsubs, ...ptyUnsubs]) {
         try {
           off();
         } catch {
@@ -403,16 +488,44 @@ export default function Terminal({ task, active = true, initialPrompt, onExit, o
   }, [active]);
 
   const tone = phase === 'failed' ? 'error' : phase === 'exited' ? 'exited' : 'live';
+  const dead = phase === 'exited' || phase === 'failed';
+
+  /**
+   * A resume that died before producing a single byte is a rejected session
+   * id — a stale one, or a transcript Claude Code has pruned. The exit code
+   * and "did anything arrive" are enough to tell; nothing reads the stream.
+   */
+  const resumeRejected =
+    phase === 'exited' && usedResumeRef.current && !sawOutputRef.current && exitCode !== 0;
 
   return (
     <div className="term" hidden={!active} aria-hidden={!active}>
       <div className="term-surface" ref={hostRef} />
       {phase === 'starting' && <div className="term-starting">starting claude in {task.worktreePath}…</div>}
-      {(phase === 'exited' || phase === 'failed') && (
-        <div className="term-status" data-tone={tone}>
-          {phase === 'exited'
-            ? `session ended${exitCode === null ? '' : ` (exit ${exitCode})`} — scrollback kept`
-            : `could not start: ${failure ?? 'unknown error'}`}
+
+      {/* Never a dead end. A task whose transcript aged out must not become
+          permanently unopenable, so every terminated pane offers a way back. */}
+      {dead && (
+        <div className="term-status" data-tone={resumeRejected ? 'error' : tone}>
+          <span className="term-status-text">
+            {resumeRejected ? (
+              <>
+                Could not resume the previous conversation — it may have been pruned.{' '}
+                <span className="term-status-calm">Your files and worktree are untouched.</span>
+              </>
+            ) : phase === 'failed' ? (
+              `could not start: ${failure ?? 'unknown error'}`
+            ) : (
+              `session ended${exitCode === null ? '' : ` (exit ${exitCode})`} — scrollback kept`
+            )}
+          </span>
+          <button
+            className="btn"
+            onClick={() => restartRef.current?.(true)}
+            title="Start a new claude session in this directory"
+          >
+            Start a fresh session
+          </button>
         </div>
       )}
     </div>

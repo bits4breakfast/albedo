@@ -26,6 +26,8 @@ import {
 } from '../db/projects';
 import { checkWorktreeRoot, expandTilde, validateWorktreeRoot } from '../git/reconcile';
 import { basename, defaultWorktreeRoot, listBranches, repoToplevel } from '../git/worktree';
+import { PROMPT_PLACEHOLDERS, fillPromptTemplate } from '../lib/issueKey';
+import { nameTask } from '../git/slug';
 import { writeLastProjectId } from './projectPrefs';
 import './worktree.css';
 
@@ -73,8 +75,12 @@ interface Draft {
  */
 const SUGGESTED_PROMPT = 'Pick up {key}. Read the issue, plan the change, then implement it.';
 
-/** Placeholders the shell expands at spawn time. */
-const PROMPT_PLACEHOLDERS = ['{key}', '{title}', '{branch}'] as const;
+/**
+ * The title the preview is rendered against. A worked example rather than a
+ * live task, because the placeholders ARE the interface here -- a user cannot
+ * tell what `{rest}` means from its name, but they can read it off a sentence.
+ */
+const PREVIEW_TITLE = 'UP-2398 fix the login redirect loop';
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -268,6 +274,15 @@ export function ProjectsDialog({
     draft && draft.worktreeRoot.trim()
       ? validateWorktreeRoot(draft.worktreeRoot, { repoPath: draft.repoPath, home })
       : null;
+
+  // Rendered through the same expander the shell uses at spawn, so the preview
+  // cannot drift from what the agent is actually told.
+  const promptPreview = draft
+    ? fillPromptTemplate(draft.taskPromptTemplate, {
+        title: PREVIEW_TITLE,
+        branch: nameTask(PREVIEW_TITLE).branch,
+      })
+    : null;
 
   const save = useCallback(async () => {
     if (!draft || busy) return;
@@ -469,23 +484,31 @@ export function ProjectsDialog({
                 />
                 <div className="wt-hint">
                   Passed to <span className="wt-mono">claude</span> as its prompt argument the
-                  first time a task in this project starts — never on a restart.{' '}
-                  {PROMPT_PLACEHOLDERS.map((ph) => (
-                    <span key={ph} className="wt-mono">
-                      {ph}{' '}
+                  first time a task in this project starts — never on a restart. Replaced:{' '}
+                  {PROMPT_PLACEHOLDERS.map((ph, i) => (
+                    <span key={ph}>
+                      {i > 0 && ', '}
+                      <span className="wt-mono">{ph}</span>
                     </span>
                   ))}
-                  are replaced.
+                  . Albedo does not read the issue itself — Claude Code looks it up.
                 </div>
-                {draft.taskPromptTemplate.trim() === '' && (
+
+                {promptPreview !== null ? (
+                  <div className="wt-preview">
+                    <div className="wt-preview-label">
+                      For a task called <span className="wt-mono">{PREVIEW_TITLE}</span>, the
+                      session would start with:
+                    </div>
+                    <div className="wt-preview-body">{promptPreview}</div>
+                  </div>
+                ) : (
                   <div className="wt-confirm-actions">
                     <button
                       type="button"
                       className="btn"
                       disabled={busy}
-                      onClick={() =>
-                        setDraft({ ...draft, taskPromptTemplate: SUGGESTED_PROMPT })
-                      }
+                      onClick={() => setDraft({ ...draft, taskPromptTemplate: SUGGESTED_PROMPT })}
                     >
                       Use the suggested prompt
                     </button>

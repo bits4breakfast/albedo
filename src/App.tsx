@@ -17,8 +17,9 @@ import FileEditor from './ui/editor/FileEditor';
 import { FileOpenContext } from './ui/editor/openFile';
 import UsagePanel from './ui/gauges/UsagePanel';
 import ProjectsDialog from './ui/ProjectsDialog';
+import SessionBrowser from './ui/SessionBrowser';
 import { backfillProjectsFromTasks } from './db/projects';
-import { parseIssueKey } from './lib/issueKey';
+import { fillPromptTemplate } from './lib/issueKey';
 
 /**
  * The frame.
@@ -229,19 +230,13 @@ function buildTabs(projects: Project[], tasks: Task[]): ProjectTab[] {
  * is a side effect they did not ask for, so the default is to say nothing.
  */
 function renderPromptTemplate(task: Task, project: Project | null): string | null {
-  const template = project?.taskPromptTemplate?.trim();
-  if (!template) return null;
-  const issue = parseIssueKey(task.title);
-  const filled = template
-    .replaceAll('{key}', issue?.key ?? '')
-    .replaceAll('{title}', task.title)
-    // Not in the interface doc, but parseIssueKey already hands it over and a
-    // template wanting "UP-2398: <the descriptive bit>" has no other way to
-    // get it. Falls back to the whole title when there is no key.
-    .replaceAll('{rest}', issue?.rest || task.title)
-    .replaceAll('{branch}', task.branch)
-    .trim();
-  return filled.length > 0 ? filled : null;
+  // Shared with the ProjectsDialog preview on purpose. A preview that drifts
+  // from what the agent is actually told is worse than no preview, and two
+  // expanders in two files is precisely how that drift happens.
+  return fillPromptTemplate(project?.taskPromptTemplate, {
+    title: task.title,
+    branch: task.branch,
+  });
 }
 
 function ProjectTabs({
@@ -323,6 +318,13 @@ export default function App() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  /**
+   * Resume argv for tasks created in THIS run. A fork lands under a new
+   * session id that the task does not yet know, so the args cannot be derived
+   * from the row until capture has adopted it.
+   */
+  const [pendingResume, setPendingResume] = useState<Map<number, string[]>>(() => new Map());
   const [activeProjectTabKey, setActiveProjectTabKey] = useState<string>(() =>
     readStored(LS.project, (raw) => raw || null, ''),
   );
@@ -389,6 +391,50 @@ export default function App() {
    * work over. That would read as bizarre agent behaviour rather than as a
    * spawn bug, which is exactly why the gate lives here and is stated twice.
    */
+  /**
+   * How this task's `claude` should be started.
+   *
+   * A task Albedo cut spawns fresh. A RESUMED task — `ownsWorktree === false`
+   * with a session id — resumes, and keeps resuming across restarts, which is
+   * what makes the feature survive closing the app. Deliberately scoped to
+   * not-owned tasks: making every task resume its own session on relaunch is
+   * arguably right too, but it is a behaviour change to existing tasks that
+   * nobody asked for, so it is a separate decision.
+   */
+  /**
+   * EVERY task with a session id resumes it — not only ones opened from the
+   * browser. A cockpit for long-lived sessions whose sessions evaporate on
+   * restart is not tracking them; before this, reopening a task started a
+   * fresh `claude` and quietly discarded the conversation, and the pane looked
+   * perfectly fine while the agent had no idea what it had been doing.
+   *
+   * `--resume` can legitimately fail (a pruned transcript), which the exit code
+   * reports without anything reading the stream. Terminal handles that by
+   * offering a fresh session rather than leaving a dead pane.
+   */
+  const spawnArgsFor = useCallback(
+    (task: Task): string[] | undefined => {
+      const pending = pendingResume.get(task.id);
+      if (pending) return pending;
+      if (task.sessionId !== null) return ['--resume', task.sessionId];
+      return undefined;
+    },
+    [pendingResume],
+  );
+
+  /**
+   * The user gave up on a failed resume. Drop any stale args so the retry
+   * starts clean instead of re-attempting the same dead session id.
+   */
+  const forgetResume = useCallback((taskId: number) => {
+    setPendingResume((prev) => {
+      if (!prev.has(taskId)) return prev;
+      const next = new Map(prev);
+      next.delete(taskId);
+      return next;
+    });
+  }, []);
+
   const initialPromptFor = useCallback(
     (task: Task): string | null => {
       if (task.sessionId !== null) return null;
@@ -571,6 +617,7 @@ export default function App() {
         onNewTask={() => setNewTaskOpen(true)}
         onReconcile={() => setReconcileOpen(true)}
         onProjects={() => setProjectsOpen(true)}
+        onSessions={() => setSessionsOpen(true)}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
       />
 
@@ -678,6 +725,8 @@ export default function App() {
                       task={task}
                       active={task.id === selectedId}
                       initialPrompt={initialPromptFor(task) ?? undefined}
+                      spawnArgs={spawnArgsFor(task)}
+                      onFreshStart={() => forgetResume(task.id)}
                     />
                   ))}
                 </div>
@@ -800,6 +849,10 @@ export default function App() {
           onClose={() => setNewTaskOpen(false)}
           onCreated={(task: Task) => {
             upsertTask(task);
+            // Switch scope BEFORE selecting: the auto-select effect re-picks
+            // from the active tab's list, so selecting into a tab that is not
+            // showing gets immediately undone.
+            if (task.projectId !== null) selectTab(`p${task.projectId}`);
             select(task.id);
             setNewTaskOpen(false);
           }}
@@ -824,7 +877,13 @@ export default function App() {
         <ProjectsDialog
           open={projectsOpen}
           onClose={() => setProjectsOpen(false)}
-          onChanged={() => void refresh()}
+          onChanged={(created) => {
+            void refresh();
+            // Follow the project that was just made. Without this the new tab
+            // appears but stays in the background, and a task created into it
+            // is filtered out of the active tab and silently deselected.
+            if (created) selectTab(`p${created.id}`);
+          }}
           onCreateTaskIn={(project) => {
             // The dialog already remembers the project it just created as the
             // new-task default, so this only has to switch to its tab and open
@@ -832,6 +891,30 @@ export default function App() {
             selectTab(`p${project.id}`);
             setProjectsOpen(false);
             setNewTaskOpen(true);
+          }}
+        />
+      </PaneErrorBoundary>
+
+      <PaneErrorBoundary label="Past sessions">
+        <SessionBrowser
+          open={sessionsOpen}
+          onClose={() => setSessionsOpen(false)}
+          projects={projects}
+          onOpenTask={(taskId) => {
+            const task = tasks.find((t) => t.id === taskId);
+            if (task?.projectId != null) selectTab(`p${task.projectId}`);
+            select(taskId);
+          }}
+          onResumed={(task, args) => {
+            setPendingResume((prev) => {
+              const next = new Map(prev);
+              next.set(task.id, args);
+              return next;
+            });
+            upsertTask(task);
+            if (task.projectId !== null) selectTab(`p${task.projectId}`);
+            select(task.id);
+            void refresh();
           }}
         />
       </PaneErrorBoundary>

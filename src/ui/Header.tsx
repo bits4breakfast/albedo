@@ -26,6 +26,8 @@ export interface HeaderProps {
   onReconcile: () => void;
   /** Opens the project manager. Tasks cannot exist without a project. */
   onProjects: () => void;
+  /** Opens the past-session browser. */
+  onSessions: () => void;
   blockedCount: number;
 }
 
@@ -42,7 +44,13 @@ function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1)}M`;
 }
 
-export default function Header({ onNewTask, onReconcile, onProjects, blockedCount }: HeaderProps) {
+export default function Header({
+  onNewTask,
+  onReconcile,
+  onProjects,
+  onSessions,
+  blockedCount,
+}: HeaderProps) {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -124,6 +132,13 @@ export default function Header({ onNewTask, onReconcile, onProjects, blockedCoun
       </div>
 
       <div className="header-actions">
+        <button
+          className="btn btn-ghost"
+          onClick={onSessions}
+          title="Browse and resume past Claude Code sessions"
+        >
+          History
+        </button>
         <button className="btn btn-ghost" onClick={onProjects} title="Manage projects">
           Projects
         </button>

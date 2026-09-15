@@ -48,6 +48,7 @@ export type GitFailureKind =
   | 'path-exists'
   | 'path-in-use'
   | 'branch-not-merged'
+  | 'main-worktree'
   | 'dirty'
   | 'not-found'
   | 'unknown';
@@ -102,6 +103,9 @@ export function classifyGitError(stderr: string): GitFailureKind {
   if (s.includes('is already used by worktree') || s.includes('is already checked out at')) {
     return 'branch-checked-out';
   }
+  // git refuses this even with --force, which makes it a genuine floor under
+  // the `ownsWorktree` flag rather than a second opinion.
+  if (s.includes('is a main working tree')) return 'main-worktree';
   if (s.includes('is already registered')) return 'path-in-use';
   if (
     s.includes('invalid reference') ||

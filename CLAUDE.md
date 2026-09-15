@@ -13,6 +13,13 @@ Claude Code, never replaces it. Spec: Notion "Albedo: MVP Spec".
 Violating this separation is the one architectural mistake that matters.
 If you find yourself regexing terminal bytes, stop — the answer is in SQLite.
 
+**One boolean is permitted, and it is not a precedent.** `Terminal.tsx` tracks
+whether the pty produced *any bytes at all*, to tell a rejected `--resume`
+(non-zero exit, zero output) from a session the user ended themselves. It counts
+that bytes arrived and never looks at them, so it is immune to any change in what
+Claude Code renders — which is the entire reason the rule exists. Looking *at*
+the bytes is still forbidden.
+
 ## Hard rules
 
 1. **Only `src/capture/adapter.ts` knows the JSONL format.** Everything else
@@ -76,3 +83,12 @@ npm test              # vitest
 npm run typecheck     # tsc --noEmit
 cargo fmt && cargo clippy --manifest-path src-tauri/Cargo.toml
 ```
+
+## Foreign keys are not enforced
+
+`tauri-plugin-sql` never issues `PRAGMA foreign_keys = ON`, so every
+`REFERENCES` clause in the schema is documentation. The test harness sets it OFF
+deliberately to match — a harness stricter than production fails on valid
+inserts and, worse, can pass on orderings production would reject. If it is ever
+turned on, expect fallout: `messages.task_id` and `tasks.project_id` are both
+written before the referent necessarily exists.

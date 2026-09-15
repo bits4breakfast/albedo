@@ -596,3 +596,86 @@ make "did we prompt?" depend on a race.
 the gate working as specified, and it is arguably right — the agent never got
 going. Avoiding it would need a separate `prompted_at` column, which is not worth
 a schema change for a case where the current behaviour is defensible.
+
+---
+
+# Resuming captured sessions
+
+Albedo has every past Claude Code session on disk indexed — 115 of them, 41.8
+days. `claude --resume <session-id>` reopens one, so this is a browsing problem
+more than an execution one.
+
+## The safety constraint, designed in rather than bolted on
+
+A task Albedo cut owns its worktree, so `git worktree remove` on archive is
+safe. **A resumed session runs in whatever cwd it originally used**, which is
+frequently the main repo checkout (`~/www/upsellguru`). Offering to remove that
+on archive would be catastrophic, and would look entirely reasonable on the way
+past — the archive flow cannot otherwise tell the difference.
+
+Migration v4 adds `tasks.owns_worktree INTEGER NOT NULL DEFAULT 1`. A resumed
+task sets it to 0, and:
+
+- `ArchiveTaskDialog` must not offer worktree removal or branch deletion at all
+  when `ownsWorktree` is false. Archive means "drop it from the list" and
+  nothing else, and the dialog should say so plainly.
+- `findOrphans` must never classify a not-owned path as reclaimable.
+
+## `src/db/sessions.ts` — owner: capture workstream
+
+```ts
+export interface PastSession {
+  sessionId: string;
+  cwd: string | null;
+  title: string | null;        // ai-title / custom-title, else null
+  firstTs: number;
+  lastTs: number;
+  messageCount: number;
+  taskId: number | null;       // already adopted by a task
+  cwdExists: boolean | null;   // null = not checked
+}
+
+export function listPastSessions(opts?: {
+  query?: string;              // FTS across message bodies
+  cwd?: string;
+  since?: number;
+  limit?: number;
+}): Promise<PastSession[]>;
+```
+
+Migration v4 also adds `transcript_files.title`. Claude Code writes `ai-title`
+and sometimes `custom-title` lines; the adapter skips them as bookkeeping, which
+is right for `messages` — but a browser listing 115 conversations needs better
+than the first 60 characters of the first prompt. Capture them into that column.
+
+## Resuming — argv, same as the initial prompt
+
+```
+claude --resume <session-id>
+```
+
+Spawned **in the session's recorded `cwd`**, not in a new worktree: the
+conversation's file paths refer to that directory. If the cwd no longer exists,
+say so and offer to resume elsewhere rather than failing at spawn.
+
+`--fork-session` starts a copy under a new session id. Worth offering as an
+explicit choice ("continue this session" vs "branch from it"), not a default.
+
+## Every task resumes, not just browsed ones
+
+A task's session survives the app closing. Selecting an existing task spawns
+`claude --resume <its sessionId>`, not a fresh `claude` — otherwise reopening
+Albedo silently discards the conversation, which defeats the point of a cockpit
+for long-running sessions.
+
+`spawnArgs` takes precedence over `initialPrompt`, which matters for the **fork**
+path specifically: a forked task lands under a new session id, so its
+`sessionId` is null and the prompt-template gate alone would let the project
+template fire alongside `--fork-session`. The precedence closes it; the
+`sessionId === null` gate is necessary but not sufficient.
+
+**Resume can fail** — a stale id, a transcript Claude Code has since pruned. The
+exit code carries it (no output parsing needed): on a non-zero exit from a
+resume spawn, offer to start a fresh session in the same directory and say why,
+rather than leaving a dead pane. A task must never become unopenable because
+its transcript aged out.

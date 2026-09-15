@@ -228,6 +228,33 @@
   color: var(--muted);
 }
 
+/* Prompt preview. Information-carrying: it is the only place the user sees
+   what the agent will actually be told. Uses the audited on-tint tiers. */
+.wt-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--wt-clean-line);
+  border-left-width: 2px;
+  border-radius: var(--radius);
+  background: var(--wt-clean-surface);
+}
+
+.wt-preview-label {
+  font-size: var(--fs-xs);
+  color: var(--wt-on-tint-muted);
+}
+
+.wt-preview-body {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--wt-on-tint-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 .wt-textarea {
   resize: vertical;
   min-height: 42px;
@@ -436,6 +463,19 @@
    list. The file list cannot show them — they are not in the working tree.
    `error` is the same treatment for a rejected value, e.g. a bad worktree
    root in the projects dialog. */
+/* The opposite of a warning: used where the dialog's job is to say that
+   nothing is going to happen to the user's files. Amber would undercut it. */
+.wt-notice[data-tone='safe'] {
+  border-color: var(--wt-clean-line);
+  border-left-color: var(--wt-clean-line);
+  background: var(--wt-clean-surface);
+  color: var(--wt-on-tint);
+}
+
+.wt-notice[data-tone='safe'] strong {
+  color: var(--wt-clean-text);
+}
+
 .wt-notice[data-tone='unmerged'],
 .wt-notice[data-tone='error'] {
   border-left-color: var(--wt-danger-line);

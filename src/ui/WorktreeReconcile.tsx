@@ -20,7 +20,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listTasks } from '../db';
 import { listProjects } from '../db/projects';
-import { type OrphanInfo, findOrphans, pathKey } from '../git/reconcile';
+import {
+  type OrphanInfo,
+  findOrphans,
+  pathKey,
+  reclaimableTaskPaths,
+} from '../git/reconcile';
 import {
   GitError,
   type WorkAtRisk,
@@ -109,10 +114,9 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
       // Nothing outside them is ever offered for removal.
       const worktreeRoots = [...new Set(projects.map((p) => p.worktreeRoot).filter(Boolean))];
       const knownPaths = tasks.map((t) => t.worktreePath).filter(Boolean);
-      const reclaimablePaths = tasks
-        .filter((t) => t.status === 'archived')
-        .map((t) => t.worktreePath)
-        .filter(Boolean);
+      // Archived AND created by Albedo. A resumed session's cwd is the user's
+      // own directory -- archived or not, it is never ours to offer up.
+      const reclaimablePaths = reclaimableTaskPaths(tasks);
 
       // An archived task knows the branch it was cut from; prefer that over
       // the repo's current branch when comparing for unmerged commits.

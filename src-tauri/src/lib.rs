@@ -11,6 +11,8 @@ const SCHEMA: &str = include_str!("../../src/db/schema.sql");
 const M0002_PROJECTS: &str = include_str!("../../src/db/migrations/0002_projects.sql");
 /// v3: per-project initial-prompt template, for issue-keyed tasks.
 const M0003_TASK_PROMPT: &str = include_str!("../../src/db/migrations/0003_task_prompt.sql");
+/// v4: resuming captured sessions -- worktree ownership, and session titles.
+const M0004_RESUME: &str = include_str!("../../src/db/migrations/0004_resume.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -30,6 +32,12 @@ pub fn run() {
             version: 3,
             description: "task prompt template",
             sql: M0003_TASK_PROMPT,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 4,
+            description: "resume: worktree ownership and session titles",
+            sql: M0004_RESUME,
             kind: MigrationKind::Up,
         },
     ];

@@ -20,6 +20,8 @@ import {
   SEQ_STRIDE,
   stopReasonOf,
   toolCallIdOf,
+  titleOf,
+  lastTitleIn,
   TURN_ENDING_STOP_REASONS,
 } from './adapter';
 import type { ParsedMessage } from '../types';
@@ -362,5 +364,65 @@ describe('format-aware accessors used by status.ts and usage.ts', () => {
     expect(cwdOf(bySeq(rows, 100).rawJson)).toBe(CWD);
     expect(cwdOf('{"type":"user"}')).toBeNull();
     expect(cwdOf('}{')).toBeNull();
+  });
+});
+
+describe('session titles — lifted out, never persisted as messages', () => {
+  const aiTitle = (t: string) => JSON.stringify({ type: 'ai-title', aiTitle: t, sessionId: 's' });
+  const customTitle = (t: string) =>
+    JSON.stringify({ type: 'custom-title', customTitle: t, sessionId: 's' });
+
+  it('reads both title line shapes', () => {
+    expect(titleOf(aiTitle('Fix the uploader'))).toBe('Fix the uploader');
+    expect(titleOf(customTitle('My own name'))).toBe('My own name');
+  });
+
+  it('still produces no message rows for a title line', () => {
+    // They are bookkeeping. Capturing the title must not start persisting them.
+    expect(parseLine(aiTitle('Fix the uploader'), 3)).toEqual([]);
+    expect(parseLine(customTitle('My own name'), 3)).toEqual([]);
+    expect(parseTranscript([aiTitle('a'), customTitle('b'), ''].join('\n'))).toEqual([]);
+  });
+
+  it('is null for anything that is not a title line', () => {
+    expect(titleOf('{"type":"user","message":{"role":"user","content":"hi"}}')).toBeNull();
+    expect(titleOf('{"type":"ai-title"}')).toBeNull(); // no value
+    expect(titleOf('{"type":"ai-title","aiTitle":42}')).toBeNull(); // wrong type
+    expect(titleOf('{ truncated')).toBeNull();
+    expect(titleOf('')).toBeNull();
+  });
+
+  it('treats a blank title as no title', () => {
+    expect(titleOf(aiTitle('   '))).toBeNull();
+    expect(titleOf(aiTitle(''))).toBeNull();
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(titleOf(aiTitle('  Fix the uploader \n'))).toBe('Fix the uploader');
+  });
+
+  it('takes the LAST title in a chunk, across both types', () => {
+    const chunk = [aiTitle('first'), customTitle('second'), aiTitle('third'), ''].join('\n');
+    expect(lastTitleIn(chunk)).toBe('third');
+
+    const customLast = [aiTitle('generated'), customTitle('user chose this'), ''].join('\n');
+    expect(lastTitleIn(customLast)).toBe('user chose this');
+  });
+
+  it('returns null for a chunk with no title line', () => {
+    expect(lastTitleIn(basic)).toBeNull();
+    expect(lastTitleIn('')).toBeNull();
+  });
+
+  it('finds a title among ordinary traffic', () => {
+    const chunk = basic.split('\n').slice(0, 3).concat(aiTitle('Add a retry'), '').join('\n');
+    expect(lastTitleIn(chunk)).toBe('Add a retry');
+  });
+
+  it('survives a truncated title line mid-append', () => {
+    expect(() => lastTitleIn('{"type":"ai-title","aiTit')).not.toThrow();
+    expect(lastTitleIn('{"type":"ai-title","aiTit')).toBeNull();
+    // and a good title earlier in the chunk still wins
+    expect(lastTitleIn([aiTitle('good'), '{"type":"ai-title","aiTit'].join('\n'))).toBe('good');
   });
 });

@@ -316,6 +316,55 @@ export const TURN_ENDING_STOP_REASONS: ReadonlySet<string> = new Set([
   'stop_sequence',
 ]);
 
+/**
+ * Session-title line types, mapped to the key each carries the title in.
+ *
+ * These stay OUT of `messages` -- they are bookkeeping, not conversation, and
+ * PERSISTED_LINE_TYPES deliberately excludes them. But a browser listing 115
+ * past sessions needs a real title rather than the first 60 characters of the
+ * first prompt, so the watcher lifts them into `transcript_files.title`.
+ *
+ * Observed on this machine: 3,149 `ai-title` lines `{type, aiTitle, sessionId}`
+ * and 578 `custom-title` lines `{type, customTitle, sessionId}`.
+ */
+export const TITLE_LINE_KEYS: Readonly<Record<string, string>> = {
+  'ai-title': 'aiTitle',
+  'custom-title': 'customTitle',
+};
+
+/** Title carried by a single line, or null if it is not a title line. */
+export function titleOf(rawLine: string): string | null {
+  const line = safeParse(rawLine);
+  if (!line) return null;
+  const type = line['type'];
+  if (typeof type !== 'string') return null;
+  const key = TITLE_LINE_KEYS[type];
+  if (key === undefined) return null;
+  const value = line[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Newest title in a chunk, or null if it carries none. Latest wins, whichever
+ * of the two line types it came from.
+ *
+ * Cheap on purpose: a substring test rejects the ~99% of lines that are not
+ * title lines before any JSON.parse happens, so scanning for titles does not
+ * double the cost of ingesting a chunk.
+ */
+export function lastTitleIn(text: string): string | null {
+  let found: string | null = null;
+  for (const line of text.split('\n')) {
+    if (line.length === 0) continue;
+    if (!line.includes('"aiTitle"') && !line.includes('"customTitle"')) continue;
+    const title = titleOf(line);
+    if (title !== null) found = title;
+  }
+  return found;
+}
+
 /** The `cwd` recorded on a line, used by the watcher to match a task. */
 export function cwdOf(rawJson: string): string | null {
   const line = safeParse(rawJson);
