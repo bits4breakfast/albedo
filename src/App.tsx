@@ -7,6 +7,7 @@ import useTasks from './ui/useTasks';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import { attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
+import { useShortcuts } from './ui/shortcuts';
 import StatusDot from './ui/StatusDot';
 import Terminal from './ui/Terminal';
 import NewTaskDialog from './ui/NewTaskDialog';
@@ -988,17 +989,39 @@ export default function App() {
 
   // --- shortcuts -----------------------------------------------------------
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === '\\') {
-        e.preventDefault();
-        setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty'));
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
+  /*
+   * Cycles only the tabs actually on the strip. `files` leaves it when the
+   * column is pinned and fits, and `editor` is there only with a file open --
+   * so a fixed list would step onto a tab that is not rendered and land the
+   * user on a silently-corrected `transcript`, twice in a row.
+   */
+  const readingTabs = useMemo<RightTab[]>(
+    () => [
+      'transcript' as const,
+      ...(filesColumnShown ? [] : (['files'] as const)),
+      ...(editorTask ? (['editor'] as const) : []),
+    ],
+    [filesColumnShown, editorTask],
+  );
+
+  const stepReadingTab = useCallback(
+    (delta: number) => {
+      const tabs = readingTabs;
+      if (tabs.length < 2) return;
+      const at = tabs.indexOf(activeTab);
+      const next = tabs[(((at === -1 ? 0 : at) + delta) % tabs.length + tabs.length) % tabs.length];
+      if (next) setRightTab(next);
+    },
+    [readingTabs, activeTab],
+  );
+
+  useShortcuts({
+    'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),
+    // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
+    // field, and this app has a composer, a title input and a code editor.
+    'mod+arrowleft': { run: () => stepReadingTab(-1), whenTyping: 'ignore' },
+    'mod+arrowright': { run: () => stepReadingTab(1), whenTyping: 'ignore' },
+  });
 
   // --- render --------------------------------------------------------------
 
@@ -1339,6 +1362,12 @@ export default function App() {
                     ✕
                   </button>
                 )}
+                {/* Labelled, not a bare ⇥. This is a preference that changes
+                    the whole reading layout and persists across restarts, and
+                    as a lone glyph behind a native tooltip nobody found it --
+                    it was asked for as a missing feature while already built.
+                    `aria-pressed` carries the state; the word carries what it
+                    does. */}
                 {!filesColumnShown && (
                   <button
                     className="pane-head-pin"
@@ -1347,11 +1376,11 @@ export default function App() {
                     title={
                       filesPinned
                         ? 'Files are pinned as a column; unpin to keep them as a tab'
-                        : 'Pin files as a column beside the transcript'
+                        : 'Keep files always visible as a column beside the transcript'
                     }
                     aria-pressed={filesPinned}
                   >
-                    ⇥
+                    ⇥ column
                   </button>
                 )}
               </div>
@@ -1415,7 +1444,7 @@ export default function App() {
                       title="Unpin — put files back in the tab strip"
                       aria-pressed
                     >
-                      ⇥
+                      ⇥ column
                     </button>
                   </div>
                   <div className="pane-body">
