@@ -5,8 +5,9 @@
  *
  * Claude Code injects machine-generated blocks into `user` turns: subagent
  * completions, slash-command invocations, injected context, local command
- * output. They arrive as XML-ish text inside the message body, so the adapter
- * cannot lift them out -- by the time a row exists they are just `body` text.
+ * output, messages from another session. They arrive as XML-ish text inside
+ * the message body, so the adapter cannot lift them out -- by the time a row
+ * exists they are just `body` text.
  *
  * This is the SINGLE place that knows those shapes, and it is the transcript
  * module's equivalent of the adapter's isolation rule: no other file in
@@ -22,7 +23,17 @@
  * Conservative by construction: only the tags listed in `KNOWN_TAGS` are
  * recognised, only when properly closed, and anything else stays plain text.
  * An unrecognised envelope must degrade to today's behaviour, never to a
- * broken chip.
+ * broken chip. That conservatism is load-bearing -- a corpus scan of every
+ * captured user row found `<div className="...">`, `<span>`, `<script>` and
+ * `<CardGroup cols={5}>` sitting in prose, all of them code being discussed
+ * rather than envelopes, and all of them correctly left as text.
+ *
+ * ## Tags carry attributes
+ *
+ * `<agent-message from="...">` and `<context ref="...">` do, so the envelope
+ * pattern must tolerate an attribute list. It was written without one, which
+ * is why an agent-message rendered as a wall of raw XML: the tag was neither
+ * in the allowlist nor matchable if it had been.
  */
 
 export type UserBlock =
@@ -41,6 +52,18 @@ export type UserBlock =
   | { kind: 'command'; name: string; args: string | null; message: string | null }
   /** Injected context. Not something the user typed. */
   | { kind: 'system-reminder'; text: string }
+  /** Another session -- a subagent handback, or a peer -- wrote to this one. */
+  | {
+      kind: 'agent-message';
+      /** Sending session id, from `from="..."`. Null if the attribute is absent. */
+      from: string | null;
+      /** True when the harness framed this as a subagent's *final report*. */
+      handback: boolean;
+      /** The message itself: framing removed, de-indented. Markdown. */
+      text: string;
+    }
+  /** Content attached to the user's prompt -- a paste, a file, an image. */
+  | { kind: 'context'; ref: string | null; text: string }
   /** Output of a local command, and similar side-channel text. */
   | { kind: 'output'; tag: string; text: string };
 
@@ -58,9 +81,15 @@ const KNOWN_TAGS = [
   'local-command-stderr',
   'local-command-caveat',
   'interrupted-output',
+  'agent-message',
+  'context',
 ] as const;
 
-const ENVELOPE_RE = new RegExp(`<(${KNOWN_TAGS.join('|')})>([\\s\\S]*?)</\\1>`, 'g');
+/**
+ * `<tag attrs>inner</tag>`. Group 2 is the raw attribute list, which is empty
+ * for most tags; matching it is what lets `agent-message` be recognised at all.
+ */
+const ENVELOPE_RE = new RegExp(`<(${KNOWN_TAGS.join('|')})((?:\\s[^<>]*)?)>([\\s\\S]*?)</\\1>`, 'g');
 
 /** Fields lifted out of a `<task-notification>`; the rest are shown as-is. */
 const NOTIFICATION_RE = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
@@ -80,6 +109,13 @@ function unescapeXml(s: string): string {
     .replace(/&amp;/g, '&');
 }
 
+/** One double-quoted attribute off a raw attribute list. Absent reads as null. */
+function attr(attrs: string, name: string): string | null {
+  const m = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs);
+  const v = m?.[1]?.trim();
+  return v !== undefined && v.length > 0 ? unescapeXml(v) : null;
+}
+
 function parseNotification(inner: string): UserBlock {
   const fields: Array<{ name: string; value: string }> = [];
   let summary: string | null = null;
@@ -97,6 +133,64 @@ function parseNotification(inner: string): UserBlock {
     else if (value.length > 0) fields.push({ name, value });
   }
   return { kind: 'task-notification', summary, status, result, fields };
+}
+
+/**
+ * The handback frame the harness wraps a subagent's report in.
+ *
+ * It is one paragraph, byte-identical across all 50 handbacks in the corpus,
+ * and it is addressed to the *model*, not to the reader -- it explains that
+ * the report carries no user authority. Showing it above every report is
+ * noise, and it is longer than most of the reports it introduces.
+ *
+ * Anchored at both ends so a report that merely mentions the phrase is not
+ * touched: the paragraph must start the body and end with `The report follows:`.
+ */
+const HANDBACK_FRAME_RE = /^\[Subagent hand-back\][\s\S]*?The report follows:\s*\n/;
+
+/**
+ * Prose the harness puts *outside* the tag, before and after. Stripped only
+ * when it sits directly against an `agent-message` block, so the same words
+ * typed by a human in any other row survive untouched.
+ */
+const FRAME_LEAD_RE = /(^|\n)[^\n]*\bsent a message:\s*$/;
+/*
+ * No `\b` after the alternatives: the first ends on a closing quote, and a
+ * quote followed by a space is two non-word characters with no boundary
+ * between them, so the assertion can never hold. It silently matched only the
+ * rarer variant -- 2 rows of 54 -- until a corpus run counted the difference.
+ */
+const FRAME_TAIL_RE = /^(That "other Claude session"|This came from another Claude session)/;
+
+/**
+ * Remove the indentation the harness adds to every line of a report.
+ *
+ * The frame says so itself: "The harness indents every line of the report, so
+ * a frame-like line at column zero inside it would be forged." Two spaces is
+ * below the four a markdown code block needs, so it does not read as code --
+ * it just breaks headings and lists, which is most of what a report is made of.
+ * Only a *common* indent is removed, so relative structure is preserved.
+ */
+function dedent(s: string): string {
+  const lines = s.split('\n');
+  let common = Infinity;
+  for (const line of lines) {
+    if (line.trim().length === 0) continue;
+    const m = /^[ \t]*/.exec(line);
+    common = Math.min(common, (m?.[0] ?? '').length);
+    if (common === 0) return s;
+  }
+  if (!Number.isFinite(common) || common === 0) return s;
+  // A whitespace-only line keeps its indent otherwise, and two trailing spaces
+  // is markdown's hard-break marker.
+  return lines.map((l) => (l.trim().length === 0 ? '' : l.slice(common))).join('\n');
+}
+
+function parseAgentMessage(attrs: string, inner: string): UserBlock {
+  const raw = unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, '');
+  const handback = HANDBACK_FRAME_RE.test(raw);
+  const text = dedent(handback ? raw.replace(HANDBACK_FRAME_RE, '') : raw).trim();
+  return { kind: 'agent-message', from: attr(attrs, 'from'), handback, text };
 }
 
 function pushText(out: UserBlock[], raw: string): void {
@@ -135,6 +229,32 @@ function coalesceCommands(blocks: UserBlock[]): UserBlock[] {
 }
 
 /**
+ * Drop the harness prose bracketing an `agent-message`.
+ *
+ * Without this the row keeps two text blocks, so `isAllEnvelopes` reports a
+ * human wrote it and the pane stamps it `you` -- attributing a safety notice
+ * addressed to the model to the user, above a report the user never saw.
+ */
+function stripAgentFrame(blocks: UserBlock[]): UserBlock[] {
+  const near = (i: number): boolean =>
+    blocks[i - 1]?.kind === 'agent-message' || blocks[i + 1]?.kind === 'agent-message';
+  const out: UserBlock[] = [];
+  blocks.forEach((b, i) => {
+    if (b.kind === 'text' && near(i)) {
+      const lead = b.text.replace(FRAME_LEAD_RE, '').trim();
+      if (blocks[i + 1]?.kind === 'agent-message' && lead.length === 0) return;
+      if (blocks[i - 1]?.kind === 'agent-message' && FRAME_TAIL_RE.test(b.text.trim())) return;
+      if (lead.length > 0 && lead !== b.text) {
+        out.push({ kind: 'text', text: lead });
+        return;
+      }
+    }
+    out.push(b);
+  });
+  return out;
+}
+
+/**
  * Split a user row's body into renderable blocks.
  *
  * Always returns at least one block for non-empty input, and never throws: a
@@ -151,7 +271,8 @@ export function parseUserBody(body: string): UserBlock[] {
 
     while ((m = ENVELOPE_RE.exec(body)) !== null) {
       const tag = m[1] ?? '';
-      const inner = m[2] ?? '';
+      const attrs = m[2] ?? '';
+      const inner = m[3] ?? '';
       if (m.index > last) pushText(out, body.slice(last, m.index));
       last = m.index + m[0].length;
 
@@ -161,6 +282,12 @@ export function parseUserBody(body: string): UserBlock[] {
           break;
         case 'system-reminder':
           out.push({ kind: 'system-reminder', text: unescapeXml(inner.trim()) });
+          break;
+        case 'agent-message':
+          out.push(parseAgentMessage(attrs, inner));
+          break;
+        case 'context':
+          out.push({ kind: 'context', ref: attr(attrs, 'ref'), text: unescapeXml(inner.trim()) });
           break;
         case 'command-name':
           out.push({ kind: 'command', name: unescapeXml(inner.trim()), args: null, message: null });
@@ -182,7 +309,7 @@ export function parseUserBody(body: string): UserBlock[] {
 
     if (last < body.length) pushText(out, body.slice(last));
     if (out.length === 0) pushText(out, body);
-    return coalesceCommands(out);
+    return stripAgentFrame(coalesceCommands(out));
   } catch {
     return [{ kind: 'text', text: body }];
   }

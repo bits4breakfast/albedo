@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatShellCommand, inputViewFor, type InputView } from './toolViews';
+import { formatShellCommand, inputViewFor, parseQuestionAnswers, type InputView } from './toolViews';
 
 const view = <K extends InputView['kind']>(v: InputView, kind: K) => {
   expect(v.kind).toBe(kind);
@@ -155,5 +155,61 @@ describe('inputViewFor', () => {
     expect(inputViewFor('MultiEdit', { edits: [] }).kind).toBe('json');
     expect(inputViewFor(null, {}).kind).toBe('json');
     expect(inputViewFor('Bash', {}).kind).toBe('json');
+  });
+});
+
+describe('AskUserQuestion', () => {
+  const input = {
+    questions: [
+      {
+        question: 'How should I handle it?',
+        header: 'Toolchain',
+        multiSelect: false,
+        options: [
+          { label: 'Install rustup now (Recommended)', description: 'Takes a minute.' },
+          { label: 'Skip', description: 'Leave it.', preview: 'no changes' },
+        ],
+      },
+    ],
+  };
+
+  it('reads the questions, options and previews', () => {
+    const v = view(inputViewFor('AskUserQuestion', input), 'questions');
+    expect(v.questions).toHaveLength(1);
+    expect(v.questions[0]).toMatchObject({ header: 'Toolchain', multiSelect: false });
+    expect(v.questions[0]?.options.map((o) => o.label)).toEqual(['Install rustup now (Recommended)', 'Skip']);
+    expect(v.questions[0]?.options[1]?.preview).toBe('no changes');
+    expect(v.questions[0]?.options[0]?.preview).toBeNull();
+  });
+
+  it('falls back to JSON when the shape is not what we expect', () => {
+    expect(inputViewFor('AskUserQuestion', {}).kind).toBe('json');
+    expect(inputViewFor('AskUserQuestion', { questions: 'nope' }).kind).toBe('json');
+    expect(inputViewFor('AskUserQuestion', { questions: [{ header: 'no question text' }] }).kind).toBe('json');
+  });
+
+  it('pairs each answer back to its question', () => {
+    const answers = parseQuestionAnswers(
+      'Your questions have been answered: "How should I handle it?"="Install rustup now (Recommended)". ' +
+        'You can now continue with these answers in mind.',
+    );
+    expect(answers.get('How should I handle it?')).toBe('Install rustup now (Recommended)');
+  });
+
+  it('keeps an answer that contains a comma', () => {
+    // Splitting the result on ", " would cut this answer in half.
+    const answers = parseQuestionAnswers(
+      'Your questions have been answered: "What scope?"="Single hotel_id (Recommended)", ' +
+        '"Report what?"="Commission only, via CommissionCalculatorService". You can now continue.',
+    );
+    expect(answers.size).toBe(2);
+    expect(answers.get('Report what?')).toBe('Commission only, via CommissionCalculatorService');
+  });
+
+  it('ignores the trailing preview echo and anything unparseable', () => {
+    const answers = parseQuestionAnswers('"Approve?"="Approve" selected preview:\nSCOPE: backend only');
+    expect([...answers]).toEqual([['Approve?', 'Approve']]);
+    expect(parseQuestionAnswers('').size).toBe(0);
+    expect(parseQuestionAnswers('no result yet').size).toBe(0);
   });
 });

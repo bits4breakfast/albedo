@@ -124,8 +124,25 @@ export type InputView =
   | { kind: 'fields'; fields: InputField[] }
   /** A file being written: path plus content in the file's own grammar. */
   | { kind: 'file'; path: string; content: string; lang: string; fields: InputField[] }
+  /** A question put to the user, with the options they chose between. */
+  | { kind: 'questions'; questions: QuestionView[] }
   /** Unknown shape: pretty-printed JSON, the honest fallback. */
   | { kind: 'json' };
+
+export interface QuestionOption {
+  label: string;
+  description: string | null;
+  /** A mockup, snippet or diff shown beside the option. */
+  preview: string | null;
+}
+
+export interface QuestionView {
+  /** Short chip label, e.g. "Auth method". */
+  header: string | null;
+  question: string;
+  multiSelect: boolean;
+  options: QuestionOption[];
+}
 
 type Obj = Record<string, unknown>;
 
@@ -208,7 +225,70 @@ export function inputViewFor(toolName: string | null, input: Obj): InputView {
       return { kind: 'file', path, content, lang: langForPath(path), fields: [] };
     }
 
+    /*
+     * A question put to the user. 320 calls in the corpus, and the one tool
+     * whose *result* is the point: the input is what was asked, the answer
+     * lives in the paired `tool_result` and is what a reader is looking for.
+     * `parseQuestionAnswers` pairs them back up.
+     */
+    case 'AskUserQuestion': {
+      const questions = asQuestions(input.questions);
+      if (questions.length === 0) return { kind: 'json' };
+      return { kind: 'questions', questions };
+    }
+
     default:
       return { kind: 'json' };
   }
+}
+
+function asQuestions(raw: unknown): QuestionView[] {
+  if (!Array.isArray(raw)) return [];
+  const out: QuestionView[] = [];
+  for (const q of raw) {
+    if (typeof q !== 'object' || q === null) continue;
+    const o = q as Obj;
+    const question = str(o.question);
+    if (question === null) continue;
+    const options: QuestionOption[] = [];
+    if (Array.isArray(o.options)) {
+      for (const op of o.options) {
+        if (typeof op !== 'object' || op === null) continue;
+        const oo = op as Obj;
+        const label = str(oo.label);
+        if (label === null) continue;
+        options.push({ label, description: str(oo.description), preview: str(oo.preview) });
+      }
+    }
+    out.push({ header: str(o.header), question, multiSelect: o.multiSelect === true, options });
+  }
+  return out;
+}
+
+/**
+ * The answers, read back out of the `tool_result`.
+ *
+ * The result is prose, not JSON -- `Your questions have been answered:
+ * "<question>"="<answer>", "<question>"="<answer>". You can now continue...`
+ * -- optionally followed by ` selected preview:` and the chosen option's
+ * preview text, which is ignored here because the option carries its own.
+ *
+ * Quote-delimited, so an answer containing a comma ("Commission only, via
+ * CommissionCalculatorService") survives; splitting on the comma would not.
+ * Keyed by question text, which is what links an answer back to its question
+ * when one call asked several.
+ */
+const ANSWER_RE = /"([^"]*)"="([^"]*)"/g;
+
+export function parseQuestionAnswers(resultText: string): Map<string, string> {
+  const out = new Map<string, string>();
+  if (typeof resultText !== 'string' || !resultText.includes('="')) return out;
+  ANSWER_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ANSWER_RE.exec(resultText)) !== null) {
+    const q = m[1] ?? '';
+    const a = m[2] ?? '';
+    if (q.length > 0 && a.length > 0) out.set(q, a);
+  }
+  return out;
 }
