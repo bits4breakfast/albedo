@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent
 import type { Project, Task, TaskStatus } from '../types';
 import StatusDot, { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import { parseIssueKey } from '../lib/issueKey';
+import EmptyState from './EmptyState';
 import type { ContextUsage } from '../capture';
 
 /**
@@ -41,6 +42,12 @@ export interface TaskListProps {
    * when there is no tab bar. Null only when there are no projects at all.
    */
   activeProject?: Project | null;
+  /**
+   * Whether this header is responsible for naming the project. False when a
+   * tab bar is above it already doing the naming — two labels saying the same
+   * thing is how a scope label stops being read.
+   */
+  nameProject?: boolean;
 }
 
 /** Row context menu. Destructive actions live here, never on the row itself. */
@@ -108,6 +115,7 @@ export default function TaskList({
   onManageProjects,
   projects,
   activeProject = null,
+  nameProject = false,
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
@@ -250,7 +258,23 @@ export default function TaskList({
   return (
     <div className="tasklist" tabIndex={0} onKeyDown={onKeyDown} role="listbox" aria-label="Tasks">
       <div className="tasklist-head">
-        <span className="tasklist-title">Tasks</span>
+        {/* Identity lives here because this strip is always visible, never
+            scrolls, and is already the scope label for the list beneath it.
+            It is a control, not a caption: someone asking "which project am I
+            in" is usually one keystroke from "and how do I change it". */}
+        <button
+          className="tasklist-scope"
+          data-named={nameProject && !!activeProject}
+          onClick={onManageProjects}
+          disabled={!onManageProjects}
+          title={
+            nameProject && activeProject
+              ? `${activeProject.name} — ${activeProject.repoPath}\nManage projects`
+              : 'Manage projects'
+          }
+        >
+          {nameProject && activeProject ? activeProject.name : 'Tasks'}
+        </button>
         <span className="tasklist-count" title={`${blockedCount} blocked of ${liveCount}`}>
           {blockedCount > 0 ? `${blockedCount}/${liveCount}` : liveCount}
         </span>
@@ -260,35 +284,15 @@ export default function TaskList({
       </div>
 
       <div className="tasklist-scroll" ref={scrollRef}>
-        {/* Three states, because one static block was the bug: it told the
-            user to add a project while they were looking at the project they
-            had just added. */}
-        {ordered.length === 0 &&
-          (activeProject ? (
-            <div className="tasklist-empty">
-              No tasks in <strong>{activeProject.name}</strong> yet.
-              <br />
-              <span className="placeholder-key">⌘N</span> cuts a worktree in{' '}
-              {activeProject.name} and starts a session in it.
-            </div>
-          ) : (projects?.length ?? 0) > 0 ? (
-            <div className="tasklist-empty">
-              No tasks yet.
-              <br />
-              <span className="placeholder-key">⌘N</span> cuts a worktree and starts a session.
-            </div>
-          ) : (
-            <div className="tasklist-empty">
-              No projects yet.
-              <br />
-              A task is cut from a <strong>project</strong> — a repo Albedo keeps worktrees for.
-              {onManageProjects && (
-                <button className="btn tasklist-empty-action" onClick={onManageProjects}>
-                  Add a project
-                </button>
-              )}
-            </div>
-          ))}
+        {ordered.length === 0 && (
+          <EmptyState
+            projectCount={projects?.length ?? 0}
+            activeProject={activeProject}
+            onAddProject={onManageProjects}
+            onNewTask={onNew}
+            variant="list"
+          />
+        )}
 
         {sections.map((group) => (
           <div key={group.key}>

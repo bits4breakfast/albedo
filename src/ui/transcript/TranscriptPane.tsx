@@ -62,11 +62,43 @@ export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): Reac
     pendingScrollRef.current = 'bottom';
   }, [selectorKey]);
 
+  /*
+     Window query. `taskId` alone is not merely sufficient, it is strictly more
+     correct: a task that continued one session and later forked has rows under
+     two session ids, and only the task-scoped query returns the whole story of
+     that task, ordered by ts. Conjoining both silently truncates the history at
+     the fork -- and, for a resumed pre-Albedo session whose rows predate the
+     task, returned nothing at all.
+
+     `sessionId` keeps its place for the taskId === null case: browsing a
+     session no task has adopted.
+  */
   const query = useMemo(() => {
     const q: { taskId?: number; sessionId?: string } = {};
     if (taskId !== null) q.taskId = taskId;
-    if (sessionId !== null) q.sessionId = sessionId;
+    else if (sessionId !== null) q.sessionId = sessionId;
     return q;
+  }, [taskId, sessionId]);
+
+  /*
+     The tail is read session-scoped even when the window above is task-scoped,
+     and that is not an inconsistency.
+
+     `seq` is `lineIndex * 100 + blockIndex` within ONE transcript file, so it
+     restarts at a fork. `afterSeq` therefore only means anything inside a
+     single session -- which is precisely what `messageOrderKeys` encodes when
+     it switches to seq-ordering only for a sessionId-without-taskId query. Ask
+     for the tail task-scoped after a fork and `seq > lastSeq` reads as a filter
+     against the OLD session's numbering: the page fills with already-held rows
+     from before the fork and the new ones never arrive.
+
+     Nothing is lost by scoping it: new rows only ever land in the session the
+     task currently points at.
+  */
+  const tailQuery = useMemo(() => {
+    if (sessionId !== null) return { sessionId };
+    if (taskId !== null) return { taskId };
+    return null;
   }, [taskId, sessionId]);
 
   const inactive = taskId === null && sessionId === null;
@@ -101,25 +133,33 @@ export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): Reac
   // --- tail follow ----------------------------------------------------------
   // Driven by the capture watcher rather than a timer: rows land, we read the
   // new tail. Held in a ref so a new row does not re-subscribe.
+  // Highest seq *within the tail's scope* -- not simply the last row, which
+  // after a fork belongs to the new session while older rows carry higher seqs.
   const lastSeqRef = useRef<number | null>(null);
   useEffect(() => {
-    lastSeqRef.current = messages.length > 0 ? (messages[messages.length - 1]?.seq ?? null) : null;
-  }, [messages]);
+    let max: number | null = null;
+    for (const m of messages) {
+      if (sessionId !== null && m.sessionId !== sessionId) continue;
+      if (max === null || m.seq > max) max = m.seq;
+    }
+    lastSeqRef.current = max;
+  }, [messages, sessionId]);
 
   useEffect(() => {
-    if (inactive) return;
+    if (inactive || tailQuery === null) return;
     let live = true;
     let timer = 0;
 
     const fetchTail = () => {
       const after = lastSeqRef.current;
       if (after === null) {
-        // Nothing loaded yet (a session that has only just started writing):
-        // re-run the window query instead of paging forward from nowhere.
+        // No rows in scope yet -- a session that has only just started writing,
+        // or the first rows after a fork. Re-run the window query rather than
+        // page forward from nowhere; it self-corrects on the next update.
         setReloadKey((k) => k + 1);
         return;
       }
-      void getMessages({ ...query, afterSeq: after, limit: TAIL_LIMIT })
+      void getMessages({ ...tailQuery, afterSeq: after, limit: TAIL_LIMIT })
         .then((rows) => {
           if (!live || rows.length === 0) return;
           // With `afterSeq` set, `limit` keeps the OLDEST rows after it, so
@@ -162,7 +202,7 @@ export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): Reac
       off();
       if (timer !== 0) window.clearTimeout(timer);
     };
-  }, [query, inactive, sessionId]);
+  }, [tailQuery, inactive, sessionId]);
 
   // --- scrolling ------------------------------------------------------------
   const loadOlder = useCallback(() => {

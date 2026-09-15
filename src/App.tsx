@@ -18,7 +18,11 @@ import { FileOpenContext } from './ui/editor/openFile';
 import UsagePanel from './ui/gauges/UsagePanel';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
-import { backfillProjectsFromTasks } from './db/projects';
+import EmptyState from './ui/EmptyState';
+import { archiveProject, backfillProjectsFromTasks } from './db/projects';
+import type { BackfillResult } from './db/projects';
+import { repoRootFor } from './git/worktree';
+import ImportProjects from './ui/ImportProjects';
 import { fillPromptTemplate } from './lib/issueKey';
 
 /**
@@ -76,6 +80,26 @@ function store(key: string, value: string): void {
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
+const DISMISSED_KEY = 'albedo.shell.dismissedNotices';
+
+function readDismissed(): string[] {
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDismissed(keys: string[]): void {
+  try {
+    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify(keys));
+  } catch {
+    /* a dismissed notice reappearing is not worth throwing over */
+  }
+}
 
 const THEME_LABEL: Record<ThemeChoice, string> = {
   system: 'auto',
@@ -330,6 +354,10 @@ export default function App() {
   );
   const { choice: themeChoice, setChoice: setThemeChoice } = useTheme();
   const [startupError, setStartupError] = useState<string | null>(null);
+  const [backfill, setBackfill] = useState<BackfillResult | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  /** Notices the user has waved away, so launch housekeeping cannot nag. */
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set(readDismissed()));
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
   const [dragging, setDragging] = useState<null | 'sidebar' | 'split'>(null);
 
@@ -423,6 +451,29 @@ export default function App() {
   );
 
   /**
+   * `--name` for this spawn, or undefined to leave the session's name alone.
+   *
+   * Naming happens exactly where we are CREATING a session:
+   *  - a brand new task (no session id yet)
+   *  - a fork, which is a new session under a new id — and marked as a fork so
+   *    the user can tell it from the original in their own /resume picker
+   *
+   * Never on a plain re-open, and never on a straight continue from the
+   * browser: those sessions already have whatever name their owner gave them,
+   * and overwriting it with something Albedo derived would be a quiet mutation
+   * of the user's own data.
+   */
+  const sessionNameFor = useCallback(
+    (task: Task): string | undefined => {
+      const pending = pendingResume.get(task.id);
+      if (pending) return pending.includes('--fork-session') ? `${task.title} (fork)` : undefined;
+      if (task.sessionId === null) return task.title;
+      return undefined;
+    },
+    [pendingResume],
+  );
+
+  /**
    * The user gave up on a failed resume. Drop any stale args so the retry
    * starts clean instead of re-attempting the same dead session id.
    */
@@ -466,8 +517,14 @@ export default function App() {
     let cancelled = false;
     void (async () => {
       try {
-        await backfillProjectsFromTasks();
-        if (!cancelled) setStartupError(null);
+        // The resolver is injected rather than imported by db/: resolving a
+        // repo root shells out to git, and the db layer has no business
+        // spawning subprocesses. It is required, not optional-with-a-fallback,
+        // because falling back to the raw path IS the bug it exists to fix.
+        const result = await backfillProjectsFromTasks(repoRootFor);
+        if (cancelled) return;
+        setBackfill(result);
+        setStartupError(null);
       } catch (err) {
         if (cancelled) return;
         const detail = err instanceof Error ? err.message : String(err);
@@ -602,6 +659,15 @@ export default function App() {
     : { flex: '1 1 auto' };
   const secondaryStyle = { flex: '1 1 0' };
 
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === selected?.projectId) ?? null,
+    [projects, selected],
+  );
+
+  /** The pane is showing work from a project the sidebar is not scoped to. */
+  const selectedProjectIsForeign =
+    showTabs && selectedProject !== null && selectedProject.id !== activeProject?.id;
+
   const noteFor = (tab: RightTab): string => {
     if (tab === 'files') return selected ? selected.branch : 'no task';
     if (tab === 'editor') return openRequest?.request.path ?? '';
@@ -609,6 +675,27 @@ export default function App() {
   };
 
   const banner = loadError ?? startupError ?? captureError;
+
+  /**
+   * Launch housekeeping, deliberately quiet.
+   *
+   * A user opening Albedo to get to work should not be interrupted by a modal
+   * about their database. These are one-line offers they can ignore forever,
+   * and dismissing one is remembered.
+   */
+  const unclaimed = (backfill?.unclaimed ?? []).filter((r) => !dismissed.has(`repo:${r.repoRoot}`));
+  const worktreeProjects = (backfill?.worktreeProjects ?? []).filter(
+    (f) => !dismissed.has(`wt:${f.project.id}`),
+  );
+
+  const dismiss = (key: string) => {
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      writeDismissed([...next]);
+      return next;
+    });
+  };
 
   return (
     <FileOpenContext.Provider value={openFile}>
@@ -633,6 +720,53 @@ export default function App() {
         </div>
       )}
 
+      {/* Detection, never correction: a project whose root is another
+          project's repo_path IS a linked worktree of it -- git says so. But
+          merging or deleting a row the user created, with the wrong survivor
+          picked automatically, costs far more to undo than the duplicate costs
+          to live with. So: say what it is, offer the reversible action. */}
+      {worktreeProjects.map((finding) => (
+        <div className="notice" key={`wt-${finding.project.id}`}>
+          <span className="notice-text">
+            <strong>{finding.project.name}</strong> looks like a worktree of{' '}
+            <strong>{finding.parent.name}</strong>. Archiving it re-associates its tasks.
+          </span>
+          <button
+            className="btn"
+            onClick={() => {
+              const id = finding.project.id;
+              dismiss(`wt:${id}`);
+              void archiveProject(id)
+                .then(() => refresh())
+                .catch(() => {});
+            }}
+          >
+            Archive it
+          </button>
+          <button className="btn btn-ghost" onClick={() => dismiss(`wt:${finding.project.id}`)}>
+            Dismiss
+          </button>
+        </div>
+      ))}
+
+      {unclaimed.length > 0 && (
+        <div className="notice">
+          <span className="notice-text">
+            {unclaimed.length} repositor{unclaimed.length === 1 ? 'y' : 'ies'} in your history{' '}
+            {unclaimed.length === 1 ? 'has' : 'have'} no project yet.
+          </span>
+          <button className="btn" onClick={() => setImportOpen(true)}>
+            Review
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => unclaimed.forEach((r) => dismiss(`repo:${r.repoRoot}`))}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="app-body">
         <aside className="sidebar" style={{ width: sidebarWidth, flexBasis: sidebarWidth }}>
           {showTabs && activeProjectTab && (
@@ -648,6 +782,7 @@ export default function App() {
             contextBySession={contextBySession}
             projects={projects}
             activeProject={activeProject}
+            nameProject={!showTabs}
           />
           {/* Pinned below the list, outside its scroller, so it is on screen
               permanently. The panel carries its own boundary for render
@@ -671,9 +806,29 @@ export default function App() {
 
         <main className="main">
           <div className="main-bar">
+            {/* These panes follow the SELECTED TASK, not the active tab, so
+                the task on screen can belong to a different project than the
+                sidebar is scoped to. The two can legitimately disagree, and
+                when they do that is precisely when it needs saying. */}
             <div className="main-ident">
               {selected ? (
                 <>
+                  {selectedProject && (
+                    <>
+                      <span
+                        className="main-ident-project"
+                        data-foreign={selectedProjectIsForeign}
+                        title={
+                          selectedProjectIsForeign
+                            ? `This task is in ${selectedProject.name}, not the project the list is showing`
+                            : selectedProject.repoPath
+                        }
+                      >
+                        {selectedProject.name}
+                      </span>
+                      <span className="task-sep">/</span>
+                    </>
+                  )}
                   <span className="main-ident-title">{selected.title}</span>
                   <span className="main-ident-path">{selected.worktreePath}</span>
                 </>
@@ -727,30 +882,28 @@ export default function App() {
                       initialPrompt={initialPromptFor(task) ?? undefined}
                       spawnArgs={spawnArgsFor(task)}
                       onFreshStart={() => forgetResume(task.id)}
+                      sessionName={sessionNameFor(task)}
                     />
                   ))}
                 </div>
                 {openTasks.length === 0 && (
                   <div className="placeholder">
                     {loading ? (
-                      'loading tasks…'
-                    ) : tasks.length === 0 ? (
-                      <>
-                        {/* One <p> per flex line: .placeholder is a column flex
-                            container, so a bare inline <span> would break out
-                            onto a line of its own mid-sentence. */}
-                        <p>Nothing running.</p>
-                        <p>
-                          A task is cut from a project — a repo Albedo keeps worktrees for — so
-                          there has to be one before <span className="placeholder-key">⌘N</span>{' '}
-                          has anywhere to go.
-                        </p>
-                        <button className="btn" onClick={() => setProjectsOpen(true)}>
-                          Add a project
-                        </button>
-                      </>
+                      <p>loading tasks…</p>
+                    ) : visibleTasks.length === 0 ? (
+                      /* Same decision as the sidebar, from the same module.
+                         This site previously keyed off tasks.length with no
+                         reference to projects at all, which is how it kept
+                         offering "Add a project" to someone who had one. */
+                      <EmptyState
+                        projectCount={projects.length}
+                        activeProject={activeProject}
+                        onAddProject={() => setProjectsOpen(true)}
+                        onNewTask={() => setNewTaskOpen(true)}
+                        variant="pane"
+                      />
                     ) : (
-                      'Pick a task to attach a terminal.'
+                      <p>Pick a task to attach a terminal.</p>
                     )}
                   </div>
                 )}
@@ -895,11 +1048,25 @@ export default function App() {
         />
       </PaneErrorBoundary>
 
+      <PaneErrorBoundary label="Import projects">
+        <ImportProjects
+          open={importOpen}
+          repos={unclaimed}
+          onClose={() => setImportOpen(false)}
+          onImported={(created) => {
+            // Imported repos are claimed now; stop offering them.
+            for (const p of created) dismiss(`repo:${p.repoPath}`);
+            void refresh();
+            const first = created[0];
+            if (first) selectTab(`p${first.id}`);
+          }}
+        />
+      </PaneErrorBoundary>
+
       <PaneErrorBoundary label="Past sessions">
         <SessionBrowser
           open={sessionsOpen}
           onClose={() => setSessionsOpen(false)}
-          projects={projects}
           onOpenTask={(taskId) => {
             const task = tasks.find((t) => t.id === taskId);
             if (task?.projectId != null) selectTab(`p${task.projectId}`);

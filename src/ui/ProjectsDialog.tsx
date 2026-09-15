@@ -25,7 +25,7 @@ import {
   updateProject,
 } from '../db/projects';
 import { checkWorktreeRoot, expandTilde, validateWorktreeRoot } from '../git/reconcile';
-import { basename, defaultWorktreeRoot, listBranches, repoToplevel } from '../git/worktree';
+import { basename, defaultWorktreeRoot, listBranches, repoRootFor } from '../git/worktree';
 import { PROMPT_PLACEHOLDERS, fillPromptTemplate } from '../lib/issueKey';
 import { nameTask } from '../git/slug';
 import { writeLastProjectId } from './projectPrefs';
@@ -193,12 +193,15 @@ export function ProjectsDialog({
       if (typeof picked !== 'string') return;
       setJustCreated(null);
 
-      // Resolve to the git toplevel so a subdirectory pick still names the
-      // repo, and so repo_path (which is UNIQUE) is stored in one canonical
-      // form rather than once per subdirectory the user happened to open.
+      // Resolve to the REPOSITORY, not the working tree. Picking a worktree
+      // folder here used to store the worktree as the project's repo_path,
+      // which then matched nothing else in that repository -- tasks in sibling
+      // worktrees got no project and landed in the "Other" tab. repoRootFor
+      // answers the same from the main checkout, a linked worktree, or any
+      // subdirectory of either, which is what makes repo_path a usable key.
       let repoPath = picked;
       try {
-        repoPath = await repoToplevel(picked);
+        repoPath = await repoRootFor(picked);
       } catch (e) {
         setSaveError(messageOf(e));
         return;
@@ -637,6 +640,21 @@ export function ProjectsDialog({
                   className="wt-item"
                   data-new={justCreated?.id === p.id}
                   data-confirming={confirmArchive === p.id}
+                  // Double-click is "click plus the obvious button", matching
+                  // the session browser. Edit is the only non-destructive row
+                  // action here, and it consults the same `busy` predicate the
+                  // Edit button does rather than keeping its own copy -- a
+                  // shortcut that stays live while its button is disabled is
+                  // how an accelerator becomes a bug.
+                  //
+                  // The session browser's "re-click must not discard an
+                  // in-progress edit" hazard cannot arise here: the list and
+                  // the form are mutually exclusive branches, so there is never
+                  // a draft open behind a visible row.
+                  onDoubleClick={() => {
+                    if (busy) return;
+                    startEdit(p);
+                  }}
                 >
                   <div className="wt-item-top">
                     <span className="wt-item-path" title={p.repoPath}>

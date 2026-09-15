@@ -644,7 +644,10 @@ function toTranscriptFile(r: TranscriptFileRow): TranscriptFileRecord {
     sessionId: r.session_id,
     projectDir: r.project_dir,
     cwd: r.cwd,
-    title: r.title,
+    // '' is an internal sentinel meaning "scanned for a title, found none",
+    // which is what stops the one-time backfill re-reading a titleless file on
+    // every launch. Callers only ever see `string | null`.
+    title: r.title === null || r.title.length === 0 ? null : r.title,
     bytesIngested: r.bytes_ingested,
     lastSeq: r.last_seq,
     mtime: r.mtime,
@@ -930,4 +933,27 @@ export async function getSessionBodyChars(sessionId: string): Promise<number> {
     [sessionId],
   );
   return rows[0]?.chars ?? 0;
+}
+
+/**
+ * Transcript files that have never been scanned for a title.
+ *
+ * NULL means "not scanned"; '' means "scanned, no title line in the file".
+ * Without that distinction the one-time backfill would re-read every titleless
+ * transcript on every launch -- 415 files and hundreds of megabytes here.
+ */
+export async function listTranscriptFilesNeedingTitle(): Promise<
+  { path: string; sessionId: string }[]
+> {
+  const db = await getDb();
+  return db.select<{ path: string; sessionId: string }[]>(
+    `SELECT path, session_id AS sessionId FROM transcript_files
+      WHERE title IS NULL ORDER BY COALESCE(mtime, 0) DESC`,
+  );
+}
+
+/** Record a scanned title, or '' to mark the file as scanned and titleless. */
+export async function setTranscriptTitle(path: string, title: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE transcript_files SET title = $1 WHERE path = $2`, [title ?? '', path]);
 }

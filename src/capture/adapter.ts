@@ -365,6 +365,45 @@ export function lastTitleIn(text: string): string | null {
   return found;
 }
 
+/**
+ * Prefixes marking a `user` row that Claude Code injected rather than the human
+ * typing it: slash-command envelopes (`<command-name>…`), system reminders, and
+ * interruption notices (`[Request interrupted…]`).
+ *
+ * Measured on this machine: 75 of 115 sessions open with one of these, and
+ * taking the naive first user row as a session label yields only 43 distinct
+ * labels across 115 sessions. Skipping them yields 79 distinct across 97.
+ */
+export const INJECTED_PROMPT_PREFIXES: readonly string[] = ['<', '['];
+
+/**
+ * SQLite predicate selecting user bodies the human actually typed.
+ *
+ * Lives here rather than in a query because "a body starting with `<` is an
+ * injected command envelope" is knowledge of Claude Code's format, and this
+ * file is the only one allowed to hold that.
+ */
+export function prosePromptSqlPredicate(column = 'body'): string {
+  const notPrefixed = INJECTED_PROMPT_PREFIXES.map(
+    (p) => `${column} NOT LIKE '${p}%'`,
+  ).join(' AND ');
+  return `${column} IS NOT NULL AND TRIM(${column}) != '' AND ${notPrefixed}`;
+}
+
+/** JSON path to the git branch recorded on a user/assistant line envelope. */
+export const GIT_BRANCH_JSON_PATH = '$.gitBranch';
+
+/** SQLite expression reading the branch off a raw_json column. */
+export function gitBranchSqlExpr(column = 'raw_json'): string {
+  return `json_extract(${column}, '${GIT_BRANCH_JSON_PATH}')`;
+}
+
+/** `isSidechain` — true for subagent traffic. See the watcher's scan comment. */
+export function isSidechainOf(rawJson: string): boolean {
+  const line = safeParse(rawJson);
+  return line?.['isSidechain'] === true;
+}
+
 /** The `cwd` recorded on a line, used by the watcher to match a task. */
 export function cwdOf(rawJson: string): string | null {
   const line = safeParse(rawJson);

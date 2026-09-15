@@ -679,3 +679,83 @@ exit code carries it (no output parsing needed): on a non-zero exit from a
 resume spawn, offer to start a fresh session in the same directory and say why,
 rather than leaving a dead pane. A task must never become unopenable because
 its transcript aged out.
+
+---
+
+# Repository identity vs working tree — two different questions
+
+A worktree's `git rev-parse --show-toplevel` returns **the worktree**, not the
+repository. Using it to answer "which project does this directory belong to"
+silently fails for every worktree, which is what put a resumed upsellguru
+session into the "Other" tab.
+
+| question | command |
+| --- | --- |
+| which repository is this part of? | `git rev-parse --path-format=absolute --git-common-dir`, then `dirname` |
+| what is the current working tree? | `git rev-parse --show-toplevel` |
+
+Verified: the first returns the same main repo root from inside a linked
+worktree **and** from the repo itself. `--path-format=absolute` matters — the
+common dir can come back relative otherwise, and a project whose `repo_path` is
+the literal string `.git` would be a memorable bug.
+
+`repoRootFor()` in `src/git/worktree.ts` is the only function that answers the
+first question. `uncommittedChanges` and friends correctly want the second.
+
+## What each path on a Task means
+
+Getting these confused resumes a conversation in the wrong directory, which is
+much worse than a mis-grouped tab:
+
+| field | value |
+| --- | --- |
+| `worktreePath` | where the session actually runs. For a resumed session, its original cwd, verbatim. |
+| `repoPath` | the origin **repository** — the resolved root, never the worktree. Its doc comment always said so; the resumed-task path was setting it to the cwd, contradicting the contract. |
+| `projectId` | resolved from `repoPath` via `findProjectByRepo`, which normalises. Null is a valid answer (a session in `~/Downloads`) and lands the task in "Other". Never invent a project. |
+
+---
+
+# What "the transcript" is
+
+The word had come to mean three different things, so: **a transcript is a
+task's complete record**, assembled from the rows in SQLite. It is not a file
+and it is not a session.
+
+| unit | what it is | why it is not the transcript |
+| --- | --- | --- |
+| **file** | `<project>/<uuid>.jsonl`, plus nested `subagents/*.jsonl` | an implementation detail. One session can span several files after a resume or compaction; one file holds one session's worth. |
+| **session** | one Claude Code conversation, identified by `sessionId` | a task can span several — continue, then fork. Rendering one session truncates the task's story at the fork. |
+| **task** | the unit the user named and cares about | ← this. |
+
+## What a task's transcript contains
+
+Everything with its `task_id`, ordered by `ts`:
+
+- **every session the task spanned.** Continuing a browsed session adopts that
+  session's whole history onto the task at creation, so a conversation started
+  in a terminal weeks ago becomes part of the task the moment it is resumed.
+- **subagent work, inline.** Sidechain rows carry the *parent's* `sessionId`
+  (verified: all 41 sidechain sessions on this machine also appear as main
+  sessions) and add an `agentId`. So they adopt with the parent automatically
+  and need no separate association. The pane collapses them into one expandable
+  group per run rather than interleaving them with the main thread.
+
+## The one deliberate gap
+
+A **fork** starts a new session and does **not** inherit the source's history —
+those messages belong to the session that produced them, and `adoptSessionIntoTask`
+is a single UPDATE with no inverse, so adopting on a fork would take history
+*away* from whichever task legitimately owned it.
+
+So a forked task's transcript legitimately begins at the fork point. That is
+correct, not a bug to fix in the pane — but it means the user loses sight of
+where the work came from, and an ancestry link ("forked from …") would be worth
+having. Not built.
+
+## Consequences that are easy to get wrong
+
+- Query by `taskId`, not `sessionId`, wherever the question is "what did this
+  task do". `sessionId` is right only when no task owns the rows — browsing
+  history in the session browser.
+- A task's row count can legitimately differ from its session's: larger when it
+  adopted a long history, smaller when it is a fork.

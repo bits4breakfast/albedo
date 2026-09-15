@@ -32,7 +32,6 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 import {
   archiveProject,
   normalizePromptTemplate,
-  backfillProjectsFromTasks,
   createProject,
   deriveProjectDefaults,
   findProjectByRepo,
@@ -413,88 +412,6 @@ describe('onProjectsChanged', () => {
   });
 });
 
-describe('backfillProjectsFromTasks', () => {
-  function seedTask(repoPath: string): void {
-    store.tasks.push({
-      id: store.nextId.tasks++,
-      title: `task for ${repoPath}`,
-      project_id: null,
-      repo_path: repoPath,
-      base_branch: 'main',
-      branch: 'feat',
-      worktree_path: `${repoPath}-wt`,
-      session_id: null,
-      status: 'idle',
-      created_at: 1,
-      last_activity_at: null,
-    });
-  }
-
-  it('creates one project per distinct repo path and links its tasks', async () => {
-    seedTask('/Users/x/www/albedo');
-    seedTask('/Users/x/www/albedo');
-    seedTask('/Users/x/www/upsellguru');
-
-    expect(await backfillProjectsFromTasks()).toBe(2);
-    const projects = await listProjects();
-    expect(projects.map((p) => p.name).sort()).toEqual(['albedo', 'upsellguru']);
-
-    const albedo = await findProjectByRepo('/Users/x/www/albedo');
-    const linked = store.tasks.filter((t) => t['project_id'] === albedo?.id);
-    expect(linked).toHaveLength(2);
-    expect(store.tasks.every((t) => t['project_id'] !== null)).toBe(true);
-  });
-
-  it('collapses paths that differ only by a trailing slash onto ONE project', async () => {
-    seedTask('/Users/x/www/albedo');
-    seedTask('/Users/x/www/albedo/');
-
-    expect(await backfillProjectsFromTasks()).toBe(1);
-    expect(await listProjects()).toHaveLength(1);
-    const p = (await listProjects())[0];
-    expect(p?.name).toBe('albedo'); // not '' as the SQL version produced
-    expect(p?.worktreeRoot).toBe('~/agents/albedo'); // not '~/agents/'
-    expect(store.tasks.every((t) => t['project_id'] === p?.id)).toBe(true);
-  });
-
-  it('is idempotent — running it again creates nothing', async () => {
-    seedTask('/Users/x/www/albedo');
-    expect(await backfillProjectsFromTasks()).toBe(1);
-    expect(await backfillProjectsFromTasks()).toBe(0);
-    expect(await backfillProjectsFromTasks()).toBe(0);
-    expect(store.projects).toHaveLength(1);
-  });
-
-  it('reuses a project the user already created for that repo', async () => {
-    const existing = await createProject(NEW);
-    seedTask('/Users/x/www/albedo');
-    expect(await backfillProjectsFromTasks()).toBe(0);
-    expect(store.tasks[0]?.['project_id']).toBe(existing.id);
-    // the user's chosen worktree root is not overwritten by the default
-    expect((await getProject(existing.id))?.worktreeRoot).toBe('/Users/x/www/worktrees/albedo');
-  });
-
-  it('leaves already-linked tasks alone', async () => {
-    seedTask('/Users/x/www/albedo');
-    store.tasks[0]!['project_id'] = 42;
-    expect(await backfillProjectsFromTasks()).toBe(0);
-    expect(store.tasks[0]?.['project_id']).toBe(42);
-  });
-
-  it('skips blank repo paths rather than making a junk project', async () => {
-    seedTask('   ');
-    seedTask('');
-    expect(await backfillProjectsFromTasks()).toBe(0);
-    expect(store.projects).toHaveLength(0);
-  });
-
-  it('does nothing, and issues no writes, when there is nothing to do', async () => {
-    store.calls = 0;
-    expect(await backfillProjectsFromTasks()).toBe(0);
-    expect(store.calls).toBe(1); // the single DISTINCT probe
-  });
-});
-
 describe('projectId survives the Task mapping in both directions', () => {
   it('persists on create and reads back', async () => {
     const project = await createProject(NEW);
@@ -649,15 +566,6 @@ describe('taskPromptTemplate', () => {
     expect((await getProject(p.id))?.taskPromptTemplate).toBe(TEMPLATE);
   });
 
-  it('is null on projects the backfill creates', async () => {
-    store.tasks.push({
-      id: 1, title: 't', project_id: null, repo_path: '/Users/x/www/albedo',
-      base_branch: 'main', branch: 'b', worktree_path: '/wt', session_id: null,
-      status: 'idle', created_at: 1, last_activity_at: null,
-    });
-    await backfillProjectsFromTasks();
-    expect((await listProjects())[0]?.taskPromptTemplate).toBeNull();
-  });
 });
 
 describe('normalizePromptTemplate', () => {

@@ -33,6 +33,9 @@ const ROW = {
   session_id: 'sess-1',
   cwd: '/Users/x/www/upsellguru',
   title: 'Fix the uploader retry',
+  branch: 'UP-2346',
+  first_prompt: 'fix the uploader retry logic',
+  top_files: '3\tsrc/uploader.ts\n1\tsrc/config.ts',
   first_ts: 1_000,
   last_ts: 9_000,
   message_count: 412,
@@ -53,6 +56,9 @@ describe('listPastSessions — mapping', () => {
       sessionId: 'sess-1',
       cwd: '/Users/x/www/upsellguru',
       title: 'Fix the uploader retry',
+      branch: 'UP-2346',
+      firstPrompt: 'fix the uploader retry logic',
+      topFiles: ['uploader.ts', 'config.ts'],
       firstTs: 1_000,
       lastTs: 9_000,
       messageCount: 412,
@@ -74,6 +80,14 @@ describe('listPastSessions — mapping', () => {
   it('carries a null title through rather than inventing one', async () => {
     state.rows = [{ ...ROW, title: null }];
     expect((await listPastSessions())[0]?.title).toBeNull();
+  });
+
+  it('does not crash when the driver omits a column entirely', async () => {
+    state.rows = [{ session_id: 'bare', first_ts: 1, last_ts: 2, message_count: 3 }];
+    const [s] = await listPastSessions();
+    expect(s?.branch).toBeNull();
+    expect(s?.firstPrompt).toBeNull();
+    expect(s?.topFiles).toEqual([]);
   });
 });
 

@@ -451,13 +451,38 @@ button {
   border-bottom: 1px solid var(--border);
 }
 
-.tasklist-title {
+/* Scope label AND the way to change scope. Quiet by default: this is an
+   identity label, not an alert — no motion, nothing that competes with the
+   blocked ping. It only has to be legible at a glance and silent otherwise. */
+.tasklist-scope {
   flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  padding: 1px 4px;
+  margin-left: -4px;
+  border-radius: var(--radius);
   font-size: var(--fs-xs);
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--faint);
 }
+
+/* Carrying a real name, so it earns a tier more contrast than the generic
+   "TASKS" caption it replaces. */
+.tasklist-scope[data-named='true'] {
+  color: var(--muted);
+  /* A project name is the user's own text, not a caption. Upper-casing it
+     would shout it and destroy its real casing ("MyRepo" -> "MYREPO"). */
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.tasklist-scope:not([disabled]):hover { background: var(--panel-hover); color: var(--text); }
 
 .tasklist-count {
   font-family: var(--font-mono);
@@ -467,18 +492,26 @@ button {
 
 .tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
 
-.tasklist-empty {
-  padding: 18px 12px;
-  font-size: var(--fs-sm);
+/* One component, two shapes. The copy and the CTA come from EmptyState.tsx;
+   this only decides how much room they get. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   color: var(--faint);
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
-.tasklist-empty strong { color: var(--muted); font-weight: 600; }
-.tasklist-empty-action { display: block; margin-top: 12px; }
+.empty-state[data-variant='list'] { padding: 18px 12px; align-items: flex-start; }
+.empty-state[data-variant='pane'] { padding: 24px; align-items: center; text-align: center; }
+
+.empty-state-headline { margin: 0; color: var(--muted); font-size: var(--fs-md); }
+.empty-state-body { margin: 0; max-width: 46ch; }
+.empty-state strong { color: var(--text); font-weight: 600; }
+.empty-state .btn { margin-top: 8px; }
 
 .placeholder p { margin: 0; max-width: 42ch; }
-.placeholder .btn { margin-top: 4px; }
 
 .group-label {
   display: flex;
@@ -673,6 +706,21 @@ button {
   min-width: 0;
   overflow: hidden;
 }
+
+.main-ident-project {
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The selected task belongs to a project the sidebar is not showing. Brighter,
+   never louder: no tint, no motion, nothing that reads as an error — it is a
+   fact worth noticing, not a problem. */
+.main-ident-project[data-foreign='true'] { color: var(--text-strong); }
 
 .main-ident-title {
   font-size: var(--fs-md);
@@ -1264,7 +1312,7 @@ button {
 
 .sb-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 2px 8px;
   width: 100%;
   padding: 7px 10px;
@@ -1272,11 +1320,28 @@ button {
   border-left: 2px solid transparent;
   border-bottom: 1px solid var(--border);
 }
+
+/* Leads the row: 87 distinct branches across 115 sessions, against 13 cwds. */
+.sb-row-branch {
+  grid-column: 1;
+  grid-row: 1;
+  max-width: 24ch;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* master / HEAD identify nothing, so they stop looking like an identifier and
+   let the eye fall through to the prompt and the files. */
+.sb-row-branch[data-weak='true'] { color: var(--faint); }
 .sb-row:hover { background: var(--panel-hover); }
 .sb-row[data-selected='true'] { background: var(--panel-raised); border-left-color: var(--accent); }
 
 .sb-row-title {
-  grid-column: 1;
+  grid-column: 2;
   font-size: var(--fs-md);
   color: var(--text);
   overflow: hidden;
@@ -1286,15 +1351,34 @@ button {
 .sb-row[data-selected='true'] .sb-row-title { color: var(--text-strong); }
 
 .sb-row-age {
-  grid-column: 2;
+  grid-column: 3;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
+.sb-row-sub {
+  grid-column: 2 / span 2;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-row-files {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
 .sb-row-meta {
-  grid-column: 1 / span 2;
+  grid-column: 1 / span 3;
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -1368,3 +1452,86 @@ button {
 .term-status-text { flex: 1 1 auto; min-width: 0; }
 .term-status-calm { color: var(--muted); }
 .term-status .btn { flex: 0 0 auto; height: 20px; }
+
+/* --------------------------------------------------------------------------
+   Launch notices + import picker (M4)
+
+   Housekeeping, so: a line, never a modal. Someone opening Albedo to get to
+   work should not be interrupted by a dialog about their database. Quieter
+   than the error banner on purpose — nothing here is wrong, it is an offer.
+   -------------------------------------------------------------------------- */
+
+.notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.notice strong { color: var(--text); font-weight: 600; }
+
+.notice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice .btn { flex: 0 0 auto; height: 20px; }
+
+.ip-dialog { width: min(760px, 100%); }
+
+.ip-lede {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ip-row[data-selected='false'] { opacity: 0.55; }
+
+.ip-check { grid-row: 1 / span 2; display: flex; align-items: center; }
+.ip-check input { accent-color: var(--accent); }
+
+.ip-fields { grid-column: 2; display: flex; gap: 6px; }
+.ip-name { flex: 1 1 40%; height: 24px; }
+.ip-root { flex: 1 1 60%; height: 24px; font-family: var(--font-mono); font-size: var(--fs-sm); }
+
+.ip-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.ip-stats { color: var(--faint); }
+
+.ip-dirs {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
