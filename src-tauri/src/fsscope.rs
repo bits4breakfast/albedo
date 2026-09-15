@@ -31,8 +31,8 @@ pub async fn allow_project_dir(app: tauri::AppHandle, path: String) -> Result<()
     // Canonicalise first: the grant is recorded against the real path, so a
     // symlinked project root does not silently grant a different tree than the
     // one the caller named.
-    let real = std::fs::canonicalize(requested)
-        .map_err(|e| format!("cannot resolve {path}: {e}"))?;
+    let real =
+        std::fs::canonicalize(requested).map_err(|e| format!("cannot resolve {path}: {e}"))?;
     if !real.is_dir() {
         return Err(format!("not a directory: {}", real.display()));
     }
@@ -43,7 +43,10 @@ pub async fn allow_project_dir(app: tauri::AppHandle, path: String) -> Result<()
     // scope pointless.
     let home = app.path().home_dir().ok();
     if real.parent().is_none() || home.as_deref() == Some(real.as_path()) {
-        return Err(format!("refusing to grant a filesystem or home root: {}", real.display()));
+        return Err(format!(
+            "refusing to grant a filesystem or home root: {}",
+            real.display()
+        ));
     }
 
     app.fs_scope()

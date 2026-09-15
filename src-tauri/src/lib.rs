@@ -14,6 +14,8 @@ const M0002_PROJECTS: &str = include_str!("../../src/db/migrations/0002_projects
 const M0003_TASK_PROMPT: &str = include_str!("../../src/db/migrations/0003_task_prompt.sql");
 /// v4: resuming captured sessions -- worktree ownership, and session titles.
 const M0004_RESUME: &str = include_str!("../../src/db/migrations/0004_resume.sql");
+/// v5: agent_id, so subagent rows stop colliding with their parent session.
+const M0005_SUBAGENTS: &str = include_str!("../../src/db/migrations/0005_subagents.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -39,6 +41,12 @@ pub fn run() {
             version: 4,
             description: "resume: worktree ownership and session titles",
             sql: M0004_RESUME,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "subagent rows: agent_id and a re-ingest of every subagents/ transcript",
+            sql: M0005_SUBAGENTS,
             kind: MigrationKind::Up,
         },
     ];

@@ -114,6 +114,8 @@ interface MessageRow {
   target_path: string | null;
   body: string | null;
   raw_json: string;
+  /** Null on every main-session row; the subagent's id on a sidechain row. */
+  agent_id: string | null;
   ts: number;
 }
 
@@ -177,6 +179,7 @@ function toMessage(r: MessageRow): Message {
     targetPath: r.target_path,
     body: r.body,
     rawJson: r.raw_json,
+    agentId: r.agent_id ?? null,
     ts: r.ts,
   };
 }
@@ -434,6 +437,7 @@ const MESSAGE_INSERT_COLUMNS = [
   'target_path',
   'body',
   'raw_json',
+  'agent_id',
   'ts',
 ] as const;
 
@@ -498,6 +502,7 @@ export function buildMessageInsertBatches(rows: InsertableMessage[]): InsertBatc
         r.targetPath,
         r.body,
         r.rawJson,
+        r.agentId,
         r.ts,
       ]) {
         binds.push(value);

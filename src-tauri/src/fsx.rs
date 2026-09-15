@@ -16,8 +16,8 @@ use std::path::PathBuf;
 /// place that documents it rather than being split across two languages.
 #[tauri::command]
 pub async fn canonicalize_path(path: String) -> Result<String, String> {
-    let resolved: PathBuf = std::fs::canonicalize(&path)
-        .map_err(|e| format!("cannot resolve {path}: {e}"))?;
+    let resolved: PathBuf =
+        std::fs::canonicalize(&path).map_err(|e| format!("cannot resolve {path}: {e}"))?;
     resolved
         .to_str()
         .map(str::to_owned)

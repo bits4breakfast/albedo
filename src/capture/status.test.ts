@@ -76,6 +76,7 @@ function row(
     targetPath: null,
     body: opts.text ?? null,
     rawJson: JSON.stringify(raw),
+    agentId: null,
     ts,
   };
 }

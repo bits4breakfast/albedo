@@ -152,6 +152,20 @@ export interface Message {
   body: string | null;
   /** The original JSONL object, verbatim. Never drop this. */
   rawJson: string;
+  /**
+   * The subagent that produced this row, or null for the main session.
+   *
+   * Part of a row's identity, not decoration. Claude Code writes a subagent's
+   * transcript under the PARENT's `sessionId`, and `seq` is file-local, so
+   * (session_id, seq) alone collides between a parent and every subagent it
+   * spawned -- and between sibling subagents, which all restart seq at 0. That
+   * collision silently discarded 89% of subagent rows until migration 5 made
+   * agent_id the third part of the unique key.
+   *
+   * Same id that `<agent-message from="...">` quotes in the parent transcript,
+   * so a handback joins to the transcript it came from.
+   */
+  agentId: string | null;
   ts: number;
 }
 

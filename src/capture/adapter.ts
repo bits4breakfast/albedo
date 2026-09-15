@@ -435,6 +435,12 @@ function parseLineWithContext(
     sessionId: stringOr(line['sessionId'], ''),
     ts: parseTs(line['timestamp']),
     rawJson: raw,
+    /*
+     * Present only on subagent lines, where `sessionId` is the PARENT's. It is
+     * the rest of the row's identity: without it a subagent's seq 0 is the
+     * same key as its parent's seq 0 and the row is dropped. See migration 5.
+     */
+    agentId: stringOr(line['agentId'], '') || null,
   };
 
   const emit = (
@@ -451,6 +457,7 @@ function parseLineWithContext(
     targetPath,
     body: body === null ? null : truncateBody(body),
     rawJson: base.rawJson,
+    agentId: base.agentId,
     ts: base.ts,
   });
 
