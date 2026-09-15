@@ -13,6 +13,7 @@ import type { ReactNode } from 'react';
 import type { Message } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate } from '../../capture';
+import { hasLivePty, submitPty } from '../Terminal';
 import MessageRow from './MessageRow';
 import { isSidechain, toolUseId } from './ToolChip';
 import './transcript.css';
@@ -285,11 +286,111 @@ export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): Reac
           ↓ latest
         </button>
       ) : null}
+
+      {taskId !== null ? <Composer taskId={taskId} onSent={jumpToEnd} /> : null}
     </div>
   );
 }
 
 export default TranscriptPane;
+
+// ---------------------------------------------------------------------------
+// Composer
+// ---------------------------------------------------------------------------
+
+/** Auto-grow ceiling. Past this the composer scrolls instead of eating the pane. */
+const COMPOSER_MAX_PX = 140;
+
+/**
+ * Send a message without switching panes.
+ *
+ * The architecture is unchanged: the pty still executes, this is only a better
+ * input affordance than walking over to the terminal. The transcript stays the
+ * read surface, so this is a foot -- one line tall until there is something to
+ * say, and absent entirely when no task is selected.
+ */
+function Composer({ taskId, onSent }: { taskId: number; onSent: () => void }): ReactNode {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [live, setLive] = useState(true);
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  // Clear the draft only when switching tasks -- never on a failed send.
+  useEffect(() => {
+    setText('');
+    setNotice(null);
+  }, [taskId]);
+
+  const grow = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
+  }, []);
+
+  const send = useCallback(async () => {
+    if (busy) return;
+    if (text.trim().length === 0) return;
+    setBusy(true);
+    try {
+      // submitPty owns the bracketed-paste wrapper and the submitting \r (see
+      // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
+      // too would nest the escape sequences and send the markers as text.
+      const ok = await submitPty(taskId, text);
+      if (ok) {
+        setText('');
+        setNotice(null);
+        setLive(true);
+        requestAnimationFrame(grow);
+        onSent();
+      } else {
+        setLive(false);
+        setNotice('No live session for this task — open the terminal pane to start it. Your message is kept here.');
+      }
+    } catch {
+      setNotice('Could not reach the session. Your message is kept here.');
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, text, taskId, grow, onSent]);
+
+  return (
+    <div className="tx-composer">
+      {notice ? <div className="tx-composer-notice">{notice}</div> : null}
+      <textarea
+        ref={ref}
+        className="tx-composer-input"
+        rows={1}
+        value={text}
+        placeholder={live ? 'Message this session…' : 'No live session — text is kept until one starts'}
+        spellCheck={false}
+        onFocus={() => setLive(hasLivePty(taskId))}
+        onChange={(e) => {
+          setText(e.target.value);
+          grow();
+        }}
+        onKeyDown={(e) => {
+          // Match the TUI: Enter sends, Shift+Enter is a newline. `isComposing`
+          // keeps an IME's Enter from submitting a half-typed word.
+          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="tx-composer-send"
+        onClick={() => void send()}
+        disabled={busy || text.trim().length === 0}
+        title="Enter to send, Shift+Enter for a newline"
+      >
+        {busy ? '…' : 'send'}
+      </button>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Grouping

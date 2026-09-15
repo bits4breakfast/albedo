@@ -54,6 +54,11 @@ function unregisterPty(taskId: number, ptyId: string): void {
  * spaces before writing -- a stray \n here would submit the line to a running
  * agent, which is exactly what the spec forbids.
  *
+ * SEE {@link submitPty}, which does the opposite on purpose. These two look
+ * mergeable and are not: this one fires unprompted, after a file save, when
+ * the user has not asked to send anything; that one fires because the user
+ * pressed send. Unifying them would mean one of those behaviours is wrong.
+ *
  * Returns false when the task has no live pty (never started, or exited).
  */
 export async function notePty(taskId: number, text: string): Promise<boolean> {
@@ -63,6 +68,43 @@ export async function notePty(taskId: number, text: string): Promise<boolean> {
   if (!payload) return false;
   try {
     await writePty(ptyId, payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Send text to the task's pty AND submit it.
+ *
+ * The counterpart to {@link notePty}: same registry, opposite intent. This one
+ * exists so a composer at the foot of the read pane can send a message without
+ * the user switching panes. The architecture is unchanged -- the pty still
+ * executes, this is only a better input affordance.
+ *
+ * ## Bracketed paste, always
+ *
+ * The body is wrapped in `ESC[200~` / `ESC[201~` and then submitted with a
+ * single `\r`. Without the wrapper the TUI treats every embedded newline as its
+ * own submission, so a three-line message becomes three turns and the agent
+ * starts answering line one before it has seen lines two and three.
+ *
+ * Applied UNIFORMLY, single-line included: one code path is worth more than
+ * the handful of bytes saved, and a conditional wrapper is the kind of thing
+ * that gets tested only on the easy case. Callers must NOT wrap again.
+ *
+ * Returns false when the task has no live pty, so the caller can offer to
+ * start the session rather than silently dropping what the user typed.
+ */
+export async function submitPty(taskId: number, text: string): Promise<boolean> {
+  const ptyId = livePtys.get(taskId);
+  if (!ptyId) return false;
+  // Normalise line endings first: a stray CR inside the paste would submit
+  // early, which is the exact failure the bracketing exists to prevent.
+  const body = text.replace(/\r\n?/g, '\n').replace(/\s+$/, '');
+  if (body.length === 0) return false;
+  try {
+    await writePty(ptyId, `\x1b[200~${body}\x1b[201~\r`);
     return true;
   } catch {
     return false;

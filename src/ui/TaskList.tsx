@@ -4,6 +4,7 @@ import type { Project, Task, TaskStatus } from '../types';
 import StatusDot, { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import { parseIssueKey } from '../lib/issueKey';
 import EmptyState from './EmptyState';
+import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
 
 /**
@@ -23,6 +24,11 @@ export interface TaskListProps {
    * simply not rendered.
    */
   onArchive?: (task: Task) => void;
+  /**
+   * Ends the task for good. Distinct from {@link TaskListProps.onArchive}: see
+   * the menu copy, which has to keep three verbs apart on one surface.
+   */
+  onDelete?: (task: Task) => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
   contextBySession?: Map<string, ContextUsage>;
   /**
@@ -111,6 +117,7 @@ export default function TaskList({
   onSelect,
   onNew,
   onArchive,
+  onDelete,
   contextBySession,
   onManageProjects,
   projects,
@@ -322,7 +329,11 @@ export default function TaskList({
                   aria-selected={task.id === selectedId}
                   onClick={() => onSelect(task.id)}
                   onContextMenu={(e) => openMenu(e, task)}
-                  title={`${task.title}\n${task.repoPath}\n${task.branch}`}
+                  /* Wrapped, not raw: a native title cannot break lines
+                     itself, so a paragraph-length task title renders as one
+                     window-wide strip that covers whatever it was describing
+                     — including the row's own context menu. */
+                  title={`${wrapForTooltip(task.title)}\n${task.repoPath}\n${task.branch}`}
                 >
                   <span className="task-dot-cell">
                     <StatusDot status={task.status} />
@@ -366,7 +377,7 @@ export default function TaskList({
                     </span>
                   </span>
                   <ContextMeter usage={ctx} variant="hairline" />
-                  {onArchive && (
+                  {(onArchive || onDelete) && (
                     <button
                       className="task-more"
                       aria-label={`Actions for ${task.title}`}
@@ -403,18 +414,48 @@ export default function TaskList({
           >
             Copy worktree path
           </button>
-          <button
-            className="row-menu-item"
-            data-tone="danger"
-            role="menuitem"
-            onClick={() => {
-              const task = menu.task;
-              setMenu(null);
-              onArchive?.(task);
-            }}
-          >
-            Archive task…
-          </button>
+          {/*
+            Three verbs now meet on one surface and the wording is what keeps
+            them apart, so each says what it costs rather than just naming
+            itself:
+
+              Close    hide the tab — view state, on the tab bar, not here
+              Archive  out of the active list
+              Delete   gone, worktree optional, CONVERSATION KEPT
+
+            That last clause is the reason Delete can sit next to Archive at
+            all, and the dialog states it too. Saying it here as well is what
+            makes the menu safe to trust before it is opened.
+          */}
+          {onArchive && (
+            <button
+              className="row-menu-item"
+              role="menuitem"
+              onClick={() => {
+                const task = menu.task;
+                setMenu(null);
+                onArchive(task);
+              }}
+            >
+              Archive task…
+              <span className="row-menu-hint">out of the active list</span>
+            </button>
+          )}
+          {onDelete && (
+            <button
+              className="row-menu-item"
+              data-tone="danger"
+              role="menuitem"
+              onClick={() => {
+                const task = menu.task;
+                setMenu(null);
+                onDelete(task);
+              }}
+            >
+              Delete task…
+              <span className="row-menu-hint">worktree optional · conversation kept</span>
+            </button>
+          )}
         </div>
       )}
     </div>

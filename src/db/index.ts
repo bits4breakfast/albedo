@@ -264,6 +264,39 @@ export async function updateTask(id: number, patch: Partial<Task>): Promise<void
   emitTasksChanged();
 }
 
+/**
+ * Delete a task, keeping its conversation.
+ *
+ * ### The constraint is on screen, not just in this comment
+ *
+ * The delete dialog tells the user, in as many words: "The conversation is
+ * kept -- the transcript stays searchable and the session reappears in the
+ * session browser, so you can resume it later." If this function touched
+ * `messages`, that sentence would be a lie, and M1's one rule -- captured
+ * history is never lost -- would be broken by a button.
+ *
+ * ### Why the UPDATE is explicit
+ *
+ * Foreign keys are NOT enforced: tauri-plugin-sql never issues
+ * `PRAGMA foreign_keys = ON`, so `messages.task_id REFERENCES tasks(id)` is
+ * documentation. Nothing in the schema nulls these rows, and nothing stops the
+ * DELETE from leaving them pointing at an id that no longer exists.
+ *
+ * ### Order matters
+ *
+ * Null the messages FIRST. There is no transaction here (tauri-plugin-sql runs
+ * on a connection pool -- see insertMessages), so a failure between the two
+ * statements has to leave the database in the recoverable state: messages
+ * detached and the task still present, rather than the task gone and its rows
+ * pointing at nothing.
+ */
+export async function deleteTask(id: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE messages SET task_id = NULL WHERE task_id = $1`, [id]);
+  await db.execute(`DELETE FROM tasks WHERE id = $1`, [id]);
+  emitTasksChanged();
+}
+
 export async function archiveTask(id: number): Promise<void> {
   const db = await getDb();
   await db.execute(`UPDATE tasks SET status = 'archived' WHERE id = $1`, [id]);

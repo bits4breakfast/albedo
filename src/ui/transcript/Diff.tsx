@@ -341,6 +341,24 @@ export function Code({ pieces }: { pieces: Piece[] }): ReactNode {
   );
 }
 
+/**
+ * A block of code, highlighted, one element per line. Shared by the markdown
+ * renderer and the tool chip so every code surface in the pane looks the same.
+ */
+export function CodeLines({ code, lang, className }: { code: string; lang: string; className?: string }): ReactNode {
+  const tokens = useCodeTokens(code, lang);
+  const lines = useMemo(() => code.split('\n'), [code]);
+  return (
+    <pre className={`tx-pre tx-pre-code${className ? ` ${className}` : ''}`}>
+      {lines.map((line, i) => (
+        <div className="tx-md-pre-line" key={i}>
+          <Code pieces={composePieces(line, tokens[i], undefined)} />
+        </div>
+      ))}
+    </pre>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Render model
 // ---------------------------------------------------------------------------

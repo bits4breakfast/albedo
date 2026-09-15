@@ -28,6 +28,7 @@ import { adoptSessionIntoTask, createTask, updateTask } from '../db';
 import { findProjectByRepo } from '../db/projects';
 import { listBranches, repoRootFor } from '../git/worktree';
 import { relativeTime } from './TaskList';
+import { displayName, wrapForTooltip } from './text';
 
 /** Typing in the search box should not fire a query per keystroke. */
 const SEARCH_DEBOUNCE_MS = 220;
@@ -65,7 +66,6 @@ function homeRelative(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, '~');
 }
 
-/** Title, or the least-bad thing we have. */
 /**
  * The headline, in order of how much it actually identifies a conversation.
  * Title is best but is null for anything Claude Code never titled, so the first
@@ -74,8 +74,11 @@ function homeRelative(path: string): string {
 function sessionLabel(session: PastSession): string {
   const title = session.title?.trim();
   if (title) return title;
+  // A first prompt can be an entire paragraph. This value is both a row
+  // headline AND the created task's title, so it is capped here rather than
+  // left for each consumer to shorten differently.
   const prompt = session.firstPrompt?.trim();
-  if (prompt) return prompt;
+  if (prompt) return displayName(prompt, 120);
   if (session.branch) return session.branch;
   if (session.cwd) return `session in ${basename(session.cwd)}`;
   return `session ${session.sessionId.slice(0, 8)}`;
@@ -463,10 +466,16 @@ export default function SessionBrowser({
               >
                 {session.branch ?? '—'}
               </span>
-              <span className="sb-row-title">{sessionLabel(session)}</span>
+              <span className="sb-row-title" title={wrapForTooltip(sessionLabel(session))}>
+                {sessionLabel(session)}
+              </span>
               <span className="sb-row-age">{relativeTime(session.lastTs, now)}</span>
 
-              {subtitle && <span className="sb-row-sub">{subtitle}</span>}
+              {subtitle && (
+                <span className="sb-row-sub" title={wrapForTooltip(subtitle)}>
+                  {subtitle}
+                </span>
+              )}
 
               <span className="sb-row-meta">
                 {session.topFiles && session.topFiles.length > 0 && (

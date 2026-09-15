@@ -15,9 +15,10 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import Diff, { Code, LinkifiedText, PathLink, composePieces, useCodeTokens } from './Diff';
+import Diff, { Code, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
 import { parsePathRef } from '../../lib/paths';
-import ToolChip, { isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
+import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
+import { isAllEnvelopes, parseUserBody, type UserBlock } from './envelopes';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -51,14 +52,105 @@ export default MessageRow;
 // Roles
 // ---------------------------------------------------------------------------
 
+/**
+ * A `user` row is not only what a human typed.
+ *
+ * Measured across real sessions, about a quarter of them are machine-generated
+ * envelopes -- subagent completions, slash commands, injected context -- which
+ * this pane used to print as raw XML. `parseUserBody` splits them out (see
+ * envelopes.ts, which is the only place that knows those shapes) and each part
+ * renders as what it actually is.
+ *
+ * Prose goes through the markdown renderer too. A human's stray asterisk
+ * rendering as italic is a far smaller cost than a subagent's 60-line report
+ * rendering as source, and ~9% of typed rows contain markdown anyway.
+ */
 function UserRow({ message }: { message: Message }): ReactNode {
-  const text = message.body ?? '';
+  const blocks = useMemo(() => parseUserBody(message.body ?? ''), [message.body]);
+  if (blocks.length === 0) return null;
+  // Nothing a human typed: drop the "you said" framing rather than attributing
+  // a harness notification to the user.
+  const machine = isAllEnvelopes(blocks);
   return (
-    <div className="tx-row tx-row-user">
-      <div className="tx-gutter">you</div>
+    <div className={`tx-row ${machine ? 'tx-row-machine' : 'tx-row-user'}`}>
+      <div className="tx-gutter">{machine ? '' : 'you'}</div>
       <div className="tx-content">
-        <div className="tx-user-text">{text}</div>
+        {blocks.map((b, i) => (
+          <UserBlockView key={i} block={b} />
+        ))}
       </div>
+    </div>
+  );
+}
+
+function UserBlockView({ block }: { block: UserBlock }): ReactNode {
+  switch (block.kind) {
+    case 'text':
+      return <Markdown text={block.text} />;
+    case 'task-notification':
+      return <NotificationChip block={block} />;
+    case 'command':
+      return (
+        <div className="tx-cmd">
+          <span className="tx-cmd-name">{block.name}</span>
+          {block.args ? <span className="tx-cmd-args">{block.args}</span> : null}
+        </div>
+      );
+    case 'system-reminder':
+      return <Collapsed label="injected context" text={block.text} />;
+    case 'output':
+      return (
+        <pre className="tx-pre tx-output">
+          <LinkifiedText text={block.text} />
+        </pre>
+      );
+    default:
+      return null;
+  }
+}
+
+/** A subagent or background task finishing, in the same language as a tool chip. */
+function NotificationChip({ block }: { block: Extract<UserBlock, { kind: 'task-notification' }> }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const toggle = useActivate(() => setOpen((v) => !v));
+  const done = block.status === null || block.status === 'completed';
+  const summary = block.summary ?? 'finished';
+  const fields = useMemo(() => block.fields.map((f) => ({ label: f.name, value: f.value })), [block.fields]);
+
+  return (
+    <div className={`tx-chip ${done ? 'tx-chip-ok' : 'tx-chip-pending'} ${open ? 'tx-chip-open' : ''}`}>
+      <div className="tx-chip-head" onMouseDown={toggle.onMouseDown} onClick={toggle.onClick}>
+        <button type="button" className="tx-chip-toggle" aria-expanded={open} aria-label="subagent detail">
+          <span className="tx-chip-caret">{open ? '▾' : '▸'}</span>
+          <span className="tx-chip-name">subagent</span>
+        </button>
+        <span className="tx-chip-summary tx-chip-summary-wide">{summary}</span>
+        <span className="tx-chip-state">{done ? '✓' : (block.status ?? '…')}</span>
+      </div>
+      {open ? (
+        <div className="tx-chip-body">
+          {block.result ? (
+            <div className="tx-report">
+              <Markdown text={block.result} />
+            </div>
+          ) : null}
+          <FieldList fields={fields} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** De-emphasised and folded away, the way thinking blocks are. */
+function Collapsed({ label, text }: { label: string; text: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  if (text.trim().length === 0) return null;
+  return (
+    <div className="tx-collapsed">
+      <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        {open ? '▾' : '▸'} {label}
+      </button>
+      {open ? <div className="tx-think-body">{text}</div> : null}
     </div>
   );
 }
