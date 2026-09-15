@@ -44,6 +44,26 @@ DROP INDEX IF EXISTS messages_session_seq;
 CREATE UNIQUE INDEX IF NOT EXISTS messages_session_seq
   ON messages(session_id, COALESCE(agent_id, ''), seq);
 
+-- Drop the subagent rows that DID land, so the re-ingest can restore them
+-- properly.
+--
+-- The minority of subagent rows that won their collision were written before
+-- this column existed, so they sit in the table with agent_id NULL -- which is
+-- the value that means "main session". Left alone they would be wrong (their
+-- agent unattributable, so invisible to the subagent view) AND duplicated,
+-- because the rewind below re-reads the same lines and the unique key now
+-- differs. Measured on the live database: re-ingesting without this produced
+-- 97,489 rows where 92,302 were expected, the excess being exactly these.
+--
+-- Identified by their own raw_json rather than by a heuristic: `agentId` is a
+-- top-level field Claude Code writes on subagent lines and on nothing else.
+-- This is the `raw_json` rule paying for itself -- the rows are deletable only
+-- because the original line was kept, and they come back verbatim from the
+-- file moments later.
+DELETE FROM messages
+ WHERE agent_id IS NULL
+   AND json_extract(raw_json, '$.agentId') IS NOT NULL;
+
 -- Recover what was dropped.
 --
 -- `bytes_ingested` is what stops a fully-read file being read again, so the

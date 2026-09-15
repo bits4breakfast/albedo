@@ -1674,3 +1674,62 @@ button {
 /* Pinned, but the window is too narrow for it right now. A dot rather than a
    warning: the preference is intact and will apply again by itself. */
 .tab-pin-hint { margin-left: 3px; color: var(--accent); }
+
+/* --------------------------------------------------------------------------
+   Subagents running in parallel (M4)
+
+   A strip, not a pane: present only while something is live, so a session that
+   never fans out pays no transcript height for it.
+
+   Text tokens only -- no local ground is invented here. The strip sits on
+   `--panel` like the rest of the pane chrome, so `--muted` (6.17) and
+   `--faint` (5.04 on --panel-raised) are already cleared against it and no new
+   contrast decision is made by adding this component.
+   -------------------------------------------------------------------------- */
+
+.sa-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: var(--fs-xs);
+}
+
+.sa-lede {
+  flex: none;
+  color: var(--muted);
+}
+
+.sa-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.sa-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.sa-label {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sa-meta {
+  flex: none;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
