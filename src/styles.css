@@ -558,6 +558,44 @@ button {
 .task-row[data-status='archived'] .task-title,
 .task-row[data-status='archived'] .task-meta { color: var(--faint); }
 
+/*
+ * "This one needs you", for when the dock bounce is not available.
+ *
+ * macOS drops `requestUserAttention` for the app that is already active, so
+ * when Albedo has focus this IS the notification -- not a decoration on top of
+ * one. It marks the specific row, which the bounce cannot do.
+ *
+ * The animation runs on the left border only. Animating the row's background
+ * would fight the four grounds already stacked on it (hover, selected, the
+ * blocked tint, and the status groups), and each of those is a measured
+ * text-contrast decision; a pulse underneath the title would undo them on a
+ * timer, invisibly to any audit of the variables. The border carries no text,
+ * so it can move freely.
+ */
+@keyframes task-attention {
+  50% { border-left-color: transparent; }
+}
+
+.task-row[data-attention] {
+  border-left-color: var(--warn);
+  animation: task-attention 1.4s steps(1, end) 6;
+}
+.task-row[data-attention='finished'] { border-left-color: var(--status-done); }
+
+/* Selection is the stronger statement, and clearing the mark follows it. */
+.task-row[data-selected='true'][data-attention] {
+  border-left-color: var(--accent);
+  animation: none;
+}
+
+/*
+ * A pulse is motion for its own sake to anyone who has asked for less of it.
+ * The mark itself stays -- it is the information; only the blinking stops.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .task-row[data-attention] { animation: none; }
+}
+
 .task-dot-cell { grid-row: 1 / span 2; justify-self: center; }
 
 .task-title {

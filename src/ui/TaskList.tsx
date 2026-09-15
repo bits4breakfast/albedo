@@ -6,6 +6,7 @@ import { parseIssueKey } from '../lib/issueKey';
 import EmptyState from './EmptyState';
 import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
+import type { AttentionKind } from './attention';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -31,6 +32,12 @@ export interface TaskListProps {
   onDelete?: (task: Task) => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
   contextBySession?: Map<string, ContextUsage>;
+  /**
+   * Tasks asking for attention, from `ui/attention`. Optional, so the list
+   * renders identically without it -- the mark is an addition to the row, not
+   * a state it depends on.
+   */
+  attention?: ReadonlyMap<number, AttentionKind>;
   /**
    * Opens the project manager. Offered from the empty state because a task is
    * cut from a project: on a fresh install ⌘N has nowhere to go until one
@@ -115,6 +122,7 @@ export default function TaskList({
   tasks,
   selectedId,
   onSelect,
+  attention,
   onNew,
   onArchive,
   onDelete,
@@ -323,6 +331,9 @@ export default function TaskList({
                   data-task-id={task.id}
                   data-selected={task.id === selectedId}
                   data-status={task.status}
+                  /* Drives the pulse. Present only until the row is selected,
+                     so it never becomes permanent decoration. */
+                  data-attention={attention?.get(task.id) ?? undefined}
                   data-menu-open={menu?.task.id === task.id}
                   role="option"
                   tabIndex={-1}
