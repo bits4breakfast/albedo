@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Task } from '../types';
 import { createTask } from '../db';
 import { listProjects } from '../db/projects';
-import { branchNameFor, slugify } from '../git/slug';
+import { nameTask } from '../git/slug';
 import {
   GitError,
   composeWorktreePath,
@@ -23,33 +23,13 @@ import {
   listBranches,
 } from '../git/worktree';
 import ProjectsDialog from './ProjectsDialog';
+import { readLastProjectId, writeLastProjectId } from './projectPrefs';
 import './worktree.css';
-
-const LAST_PROJECT_KEY = 'albedo.worktree.lastProjectId';
 
 export interface NewTaskDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated: (t: Task) => void;
-}
-
-// localStorage is wrapped: a locked-down WebView can throw on access.
-function readLastProjectId(): number | null {
-  try {
-    const raw = localStorage.getItem(LAST_PROJECT_KEY);
-    const n = raw === null ? Number.NaN : Number(raw);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeLastProjectId(id: number): void {
-  try {
-    localStorage.setItem(LAST_PROJECT_KEY, String(id));
-  } catch {
-    // Remembering the last project is a nicety, not a requirement.
-  }
 }
 
 function messageOf(e: unknown): string {
@@ -84,17 +64,27 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
 
   // --- load projects ------------------------------------------------------
 
-  const loadProjects = useCallback(async () => {
+  const loadProjects = useCallback(async (select?: number) => {
     setProjectsLoading(true);
     setProjectsError(null);
     try {
       const list = await listProjects();
       setProjects(list);
       setProjectId((current) => {
+        // 1. An explicit choice (the project just created) always wins.
+        if (select !== undefined && list.some((p) => p.id === select)) return select;
+        // 2. Whatever is already selected, if it still exists.
         if (current !== null && list.some((p) => p.id === current)) return current;
+        // 3. The last one used.
         const remembered = readLastProjectId();
         if (remembered !== null && list.some((p) => p.id === remembered)) return remembered;
-        return list[0]?.id ?? null;
+        // 4. The most recently CREATED one -- not the alphabetically first.
+        // listProjects sorts by name, so list[0] is arbitrary; right after
+        // adding a second project the useful default is the new one.
+        return list.reduce<Project | null>(
+          (newest, p) => (newest === null || p.createdAt > newest.createdAt ? p : newest),
+          null,
+        )?.id ?? null;
       });
     } catch (e) {
       setProjectsError(messageOf(e));
@@ -176,11 +166,14 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
 
   // --- derived values, shown live -----------------------------------------
 
-  const slug = useMemo(() => (title.trim() ? slugify(title) : ''), [title]);
-  const branch = useMemo(() => (slug ? branchNameFor(slug) : ''), [slug]);
+  // One derivation for the key, the branch and the directory, so what the
+  // dialog shows is exactly what gets created.
+  const naming = useMemo(() => (title.trim() ? nameTask(title) : null), [title]);
+  const branch = naming?.branch ?? '';
   const worktreePath = useMemo(
-    () => (project && slug ? composeWorktreePath(project.worktreeRoot, slug, home) : ''),
-    [project, slug, home],
+    () =>
+      project && naming ? composeWorktreePath(project.worktreeRoot, naming.dirName, home) : '',
+    [project, naming, home],
   );
 
   const canSubmit =
@@ -317,6 +310,8 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
                   {project && (
                     <div className="wt-hint">
                       <span className="wt-mono">{project.repoPath}</span>
+                      <br />
+                      worktrees in <span className="wt-mono">{project.worktreeRoot}</span>
                     </div>
                   )}
                 </div>
@@ -379,6 +374,20 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
 
                 {/* --- derived preview ------------------------------------- */}
                 <div className="wt-derived">
+                  {naming?.key && (
+                    <div className="wt-derived-row">
+                      <span className="wt-derived-key">Issue</span>
+                      <span className="wt-derived-val">
+                        <span className="wt-chip" data-tone="issue">
+                          {naming.key}
+                        </span>{' '}
+                        <span className="wt-modal-sub">
+                          drives the branch and folder below. Claude Code looks the issue up
+                          itself — Albedo only names it.
+                        </span>
+                      </span>
+                    </div>
+                  )}
                   <div className="wt-derived-row">
                     <span className="wt-derived-key">Branch</span>
                     <span className="wt-derived-val" data-pending={branch === ''}>
@@ -460,7 +469,17 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
       <ProjectsDialog
         open={projectsOpen}
         onClose={() => setProjectsOpen(false)}
-        onChanged={() => void loadProjects()}
+        onChanged={(created) => void loadProjects(created?.id)}
+        onCreateTaskIn={(p) => {
+          // Land back here with the new project selected and the cursor in the
+          // field the user has to fill in next. Closing the projects dialog is
+          // the confirmation that the round trip finished.
+          setProjects((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
+          setProjectId(p.id);
+          setProjectsOpen(false);
+          setError(null);
+          window.setTimeout(() => titleRef.current?.focus(), 0);
+        }}
       />
     </>
   );

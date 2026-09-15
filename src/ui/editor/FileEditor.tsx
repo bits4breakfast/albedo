@@ -19,7 +19,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { EditorState, Prec, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
+import {
+  Compartment,
+  EditorState,
+  Prec,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+} from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -37,14 +44,16 @@ import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from
 import { php } from '@codemirror/lang-php';
 import { javascript } from '@codemirror/lang-javascript';
 import type { Extension } from '@codemirror/state';
-import type { ThemedToken } from 'shiki/core';
+import type { DualToken } from '../../lib/highlight';
 
 import type { OpenFileRequest, Task } from '../../types';
 import type { ResolvedPath } from '../../lib/paths';
 import { resolveInWorktree } from '../../lib/paths';
-import { highlightToTokens, peekTokens, tokenStyle } from '../../lib/highlight';
+import { highlightToTokens, peekTokens, styleToCss } from '../../lib/highlight';
 import { langForPath } from '../../lib/diff';
 import { isHandEdited, markHandEdited, onHandEditedChange } from '../../lib/handEdited';
+import { onThemeChange, resolvedTheme } from '../theme';
+import type { ResolvedTheme } from '../theme';
 import { notePty } from '../Terminal';
 import { openInPhpStorm } from './openFile';
 import './editor.css';
@@ -82,15 +91,20 @@ const shikiField = StateField.define<DecorationSet>({
 /** One `Decoration.mark` per distinct inline style, reused across lines. */
 const markCache = new Map<string, Decoration>();
 
-function markFor(token: ThemedToken): Decoration | null {
-  const style = tokenStyle(token);
-  const css = Object.entries(style)
-    .map(([k, v]) => `${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}:${v}`)
-    .join(';');
+/**
+ * A token's mark.
+ *
+ * The style carries `--shiki-light` and `--shiki-dark` rather than a resolved
+ * colour, and the `ed-tok` class is what lets CSS pick between them (see
+ * editor.css). Serialisation goes through `styleToCss` from highlight.ts so the
+ * editor and the transcript cannot drift on custom-property spelling.
+ */
+function markFor(token: DualToken): Decoration | null {
+  const css = styleToCss(token.style);
   if (css === '') return null;
   let mark = markCache.get(css);
   if (!mark) {
-    mark = Decoration.mark({ attributes: { style: css } });
+    mark = Decoration.mark({ class: 'ed-tok', attributes: { style: css } });
     markCache.set(css, mark);
   }
   return mark;
@@ -105,7 +119,7 @@ function markFor(token: ThemedToken): Decoration | null {
  * are correct in both cases because the tokens of a line always concatenate
  * back to the line.
  */
-function decorationsFor(state: EditorState, tokens: ThemedToken[][]): DecorationSet {
+function decorationsFor(state: EditorState, tokens: DualToken[][]): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const count = Math.min(tokens.length, state.doc.lines);
   for (let i = 0; i < count; i += 1) {
@@ -127,14 +141,23 @@ function decorationsFor(state: EditorState, tokens: ThemedToken[][]): Decoration
  * Keeps the Shiki decorations in sync with the document.
  *
  * `highlightToTokens` never throws and caches, so a re-render after an undo is
- * free; a genuinely new document costs one tokenise. The generation counter
- * plus the `doc.eq` check drop results that arrive after further typing.
+ * free; a genuinely new document costs one tokenise.
+ *
+ * **Nothing here reacts to the theme, deliberately.** Tokens are styled for
+ * both themes at once (`--shiki-light` / `--shiki-dark`) and CSS picks, so a
+ * theme switch is a repaint of decorations that are already correct. Re-running
+ * the tokeniser on a flip would rebuild an identical decoration set and would
+ * be a second theming mechanism sitting next to the real one. The only staleness
+ * left to guard is therefore the document's, which is one counter: a result
+ * carrying an old number, or built against a doc that has since moved, is
+ * dropped.
  */
 function shikiHighlighting(lang: string): Extension {
   return ViewPlugin.fromClass(
     class {
       private timer: ReturnType<typeof setTimeout> | null = null;
-      private generation = 0;
+      /** Bumped by every event that invalidates an in-flight tokenise. */
+      private seq = 0;
 
       constructor(private readonly view: EditorView) {
         this.run(0);
@@ -145,26 +168,26 @@ function shikiHighlighting(lang: string): Extension {
       }
 
       destroy() {
+        this.seq += 1;
         if (this.timer) clearTimeout(this.timer);
-        this.generation += 1;
       }
 
       private run(delay: number) {
+        this.seq += 1;
         if (this.timer) clearTimeout(this.timer);
         this.timer = setTimeout(() => {
           this.timer = null;
-          void this.tokenize();
+          void this.tokenize(this.seq);
         }, delay);
       }
 
-      private async tokenize() {
+      private async tokenize(mine: number) {
         const { view } = this;
         const doc = view.state.doc;
         if (doc.length > MAX_HIGHLIGHT_CHARS) return;
         const code = doc.toString();
-        const mine = (this.generation += 1);
         const tokens = peekTokens(code, lang) ?? (await highlightToTokens(code, lang));
-        if (mine !== this.generation) return;
+        if (mine !== this.seq) return;
         if (!view.state.doc.eq(doc)) return;
         view.dispatch({ effects: setTokenDecorations.of(decorationsFor(view.state, tokens)) });
       }
@@ -224,55 +247,86 @@ function editingLanguage(relPath: string): Extension | null {
   }
 }
 
-const editorTheme = EditorView.theme(
-  {
-    '&': {
-      height: '100%',
-      backgroundColor: 'var(--panel-inset)',
-      color: 'var(--text)',
-      fontSize: 'var(--fs-md)',
-    },
-    '.cm-scroller': {
-      fontFamily: 'var(--font-mono)',
-      lineHeight: '1.5',
-      overflow: 'auto',
-    },
-    '.cm-content': { caretColor: 'var(--accent)' },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
-      backgroundColor: 'var(--accent-soft)',
-    },
-    '.cm-gutters': {
-      backgroundColor: 'var(--panel-inset)',
-      color: 'var(--faint)',
-      borderRight: '1px solid var(--border)',
-    },
-    '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--muted)' },
-    '.cm-activeLine': { backgroundColor: 'rgba(255, 255, 255, 0.025)' },
-    '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
-      backgroundColor: 'var(--accent-soft)',
-      outline: '1px solid var(--accent-line)',
-    },
-    '.cm-nonmatchingBracket': { backgroundColor: 'var(--del-soft)' },
-    '.cm-selectionMatch': { backgroundColor: 'rgba(255, 255, 255, 0.06)' },
-    '.cm-panels': {
-      backgroundColor: 'var(--panel)',
-      color: 'var(--text)',
-      borderBottom: '1px solid var(--border)',
-    },
-    '.cm-panel input, .cm-panel button': {
-      fontFamily: 'var(--font-ui)',
-      fontSize: 'var(--fs-sm)',
-      backgroundColor: 'var(--panel-raised)',
-      color: 'var(--text)',
-      border: '1px solid var(--border-strong)',
-      borderRadius: 'var(--radius)',
-    },
-    '.cm-searchMatch': { backgroundColor: 'rgba(240, 163, 58, 0.22)' },
-    '.cm-searchMatch-selected': { backgroundColor: 'rgba(240, 163, 58, 0.45)' },
+/**
+ * Every colour here is a token, so the rules themselves are theme-independent.
+ * The one thing that is not is CodeMirror's own `dark` flag: it drives the
+ * base theme's chrome (selection layer, panel chrome, tooltip, the
+ * `.cm-editor.cm-focused` treatment) and was pinned to `true`. Two instances of
+ * the same spec, swapped through a compartment, is all it takes to make that
+ * follow -- without rebuilding the view and losing the undo history and
+ * scroll position.
+ */
+const THEME_SPEC = {
+  '&': {
+    height: '100%',
+    backgroundColor: 'var(--panel-inset)',
+    color: 'var(--text)',
+    fontSize: 'var(--fs-md)',
   },
-  { dark: true },
-);
+  '.cm-scroller': {
+    fontFamily: 'var(--font-mono)',
+    lineHeight: '1.5',
+    overflow: 'auto',
+  },
+  '.cm-content': { caretColor: 'var(--accent)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
+    backgroundColor: 'var(--accent-soft)',
+  },
+  // Line numbers sit on the two lower text tiers rather than on `--faint`,
+  // which is the disabled tier and does not clear 3.0:1 against the well in
+  // either theme. The active/inactive distinction is kept, one tier up.
+  '.cm-gutters': {
+    backgroundColor: 'var(--panel-inset)',
+    color: 'var(--muted)',
+    borderRight: '1px solid var(--border)',
+  },
+  '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--text)' },
+  // The four overlays below wash over the code rather than replacing it, so
+  // they are alpha veils and cannot be shell tokens. See editor.css.
+  '.cm-activeLine': { backgroundColor: 'var(--ed-line-active)' },
+  '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
+    backgroundColor: 'var(--accent-soft)',
+    outline: '1px solid var(--accent-line)',
+  },
+  // `--del-soft` alone is a 10% wash; on the light well that is #fbeceb, which
+  // is not enough to notice. The outline is what carries the signal.
+  '.cm-nonmatchingBracket': {
+    backgroundColor: 'var(--del-soft)',
+    outline: '1px solid var(--del)',
+  },
+  '.cm-selectionMatch': { backgroundColor: 'var(--ed-match)' },
+  '.cm-panels': {
+    backgroundColor: 'var(--panel)',
+    color: 'var(--text)',
+    borderBottom: '1px solid var(--border)',
+  },
+  '.cm-panel input, .cm-panel button': {
+    fontFamily: 'var(--font-ui)',
+    fontSize: 'var(--fs-sm)',
+    backgroundColor: 'var(--panel-raised)',
+    color: 'var(--text)',
+    border: '1px solid var(--border-strong)',
+    borderRadius: 'var(--radius)',
+  },
+  // Same fill for every hit; the current one gets an outline rather than a
+  // darker wash, so the code under the match you are reading stays legible.
+  '.cm-searchMatch': { backgroundColor: 'var(--ed-search)' },
+  '.cm-searchMatch-selected': {
+    backgroundColor: 'var(--ed-search)',
+    outline: '1px solid var(--warn)',
+  },
+};
+
+/** Same rules, two values of CodeMirror's own `dark` flag. */
+const themeDark = EditorView.theme(THEME_SPEC, { dark: true });
+const themeLight = EditorView.theme(THEME_SPEC, { dark: false });
+
+const themeCompartment = new Compartment();
+
+function themeExtension(theme: ResolvedTheme): Extension {
+  return theme === 'dark' ? themeDark : themeLight;
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -521,7 +575,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
         shikiHighlighting(langForPath(resolved.relative)),
         flashField,
         ...(language ? [language] : []),
-        editorTheme,
+        themeCompartment.of(themeExtension(resolvedTheme())),
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -535,6 +589,13 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
     view.focus();
+
+    // CodeMirror's own chrome follows the theme through a compartment, so the
+    // switch keeps the undo history, the selection and the scroll position.
+    // (Shiki's colours are the plugin's business, and it subscribes itself.)
+    const offTheme = onThemeChange((theme) => {
+      view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(theme)) });
+    });
 
     // Reveal the requested line, clamped -- a stale trace can name line 900 of
     // a file that is now 40 lines long.
@@ -556,6 +617,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
 
     return () => {
       if (flashTimer) clearTimeout(flashTimer);
+      offTheme();
       viewRef.current = null;
       view.destroy();
     };

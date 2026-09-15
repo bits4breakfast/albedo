@@ -14,98 +14,98 @@
    ========================================================================== */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
 
-  /* --- surfaces ---------------------------------------------------------- */
-  --bg: #0b0d10;          /* window ground, terminal ground */
-  --panel: #111419;       /* sidebar, header, pane chrome */
-  --panel-raised: #171b21;/* selected rows, menus, buttons */
-  --panel-inset: #090b0e; /* wells: terminal body, code blocks */
-  /* THE LIGHTEST SURFACE IN THE APP, and the reason it is a token rather
-     than a hex typed into whichever :hover rule needed one.
+  /* ======================================================================
+     COLOUR. :root carries the LIGHT palette in full; the two blocks after
+     this rule override it for dark. Read docs/INTERFACES.md "Theming" before
+     touching the structure.
 
-     Contrast is a property of a pair, so a surface invented locally is a
-     text-contrast decision made by someone who was only thinking about a
-     hover state. That is not hypothetical: mid-way through the contrast
-     pass I lightened two hover grounds to #242a34 and silently pushed
-     --faint to 3.99, with nothing in the variables to show it. Every
-     surface belongs here where it can be checked against the type tiers.
+     RULE: no colour may have its ONLY definition in a media or [data-theme]
+     block. A token defined only under dark is *undefined* in light, and an
+     undefined custom property renders as nothing at all -- which is far
+     harder to spot than rendering as the wrong colour.
 
-     Safe to put text on: all three tiers clear AA against it --
-     --text 10.72, --muted 6.42, --faint 4.64. UI tokens clear 3.0:
-     --border-strong 3.47, --status-archived 3.57 (the tightest).
+     RULE: the contrast bar is identical in both themes -- 4.5:1 for text,
+     3.0:1 for UI, against the WORST ground. The worst ground flips with the
+     theme: in dark it is the LIGHTEST surface (--panel-hover), because
+     hover/selected states lift; in light it is the DARKEST (--panel-active),
+     because they sink. Ratios below are worst-case across every surface.
+     ====================================================================== */
 
-     DO NOT go lighter than about #1e232c. That is where --faint hits 4.53
-     and the tier below it runs out. A lighter hover state means raising
-     --faint first, not nudging this one and hoping. */
-  --panel-hover: #1c212a;
-  /* Press state. Darker than --panel, so every tier gains contrast on it
-     (--faint 5.31) -- but it lives here for the same reason: a surface
-     defined in a rule is a surface nobody can audit. */
-  --panel-active: #10141a;
-  /* Meter/gauge track. Shared with the gauges panel: a track that drifts
-     between the task-row meter and the panel would read as a rendering bug,
-     not a palette choice. Non-text; fills on it clear 3.0. */
-  --track: #1b2029;
-  --border: #262c36;      /* decorative hairlines between panes and rows */
-  --border-strong: #6b7585;/* load-bearing edges: 3.71 on --panel-raised and
-                              3.38 on the lightest hover ground, clearing the
-                              3.0 UI-component minimum everywhere */
+  /* --- surfaces (light) --------------------------------------------------- */
+  --bg: #eceef1;           /* window ground */
+  --panel: #f6f7f9;        /* sidebar, header, pane chrome */
+  --panel-raised: #e7eaef; /* selected rows, menus, buttons */
+  --panel-inset: #ffffff;  /* wells: terminal body, code blocks */
+  --panel-hover: #dfe4ea;  /* see the dark block for why this is a token */
+  --panel-active: #d7dde4; /* press; carries --text-strong only */
+  --track: #e0e5eb;        /* meter/gauge track, shared with the gauges panel */
+  --border: #dde1e7;       /* decorative hairlines */
+  --border-strong: #6e7683;/* load-bearing edges                        3.35 */
 
-  /* --- type -------------------------------------------------------------- */
-  /* Three text tiers. 4.5:1 IS A FLOOR, NOT A PREFERENCE -- it is the WCAG
-     AA threshold for body text, and every value below is the dimmest that
-     still clears it against the worst ground it lands on. Do not "tidy"
-     these downward because the palette looks loud next to a screenshot of
-     something else; it looked tasteful at 3.18 too, and the first thing the
-     user said about the app was that they could not read it.
+  /* --- type (light) ------------------------------------------------------- */
+  /* Three tiers, same floor as dark. 4.5:1 IS A FLOOR, NOT A PREFERENCE.
+     Light inverts the direction: a token gains contrast by getting DARKER,
+     so "dimmer" here means lighter, and lighter is exactly what runs out of
+     room. That is why --faint is a mid-slate and not a pale grey. */
+  --text: #1e242c;         /* primary                                  11.75 */
+  --text-strong: #0b0f14;  /* titles, active row                       14.45 */
+  --muted: #4a525e;        /* repo, branch, timestamps                  6.17 */
+  --faint: #575f6c;        /* section labels, paths, hints              5.04 */
 
-     Ratios are worst-case across every surface: --bg, --panel,
-     --panel-raised and --panel-hover. --panel-raised is the one that gets
-     missed, because it is what SELECTED and hovered rows are painted with --
-     which is to say, the row the user is most likely to be reading. Measured
-     against --bg alone, --muted looked like a passable 4.24; on a selected
-     row it was really 3.18.
+  /* --- accent + diff (light) ---------------------------------------------- */
+  /* Re-picked, not reused: #4d9fff is 6.35 on near-black and 2.2 on near
+     white. Every hue below is a different value from its dark counterpart. */
+  --accent: #0b57bd;                          /* 5.28 */
+  --accent-soft: rgb(11 87 189 / 0.10);
+  --accent-soft-strong: rgb(11 87 189 / 0.18);
+  --accent-line: rgb(11 87 189 / 0.45);
+  --on-accent-soft: #0b4a9e;                  /* 6.77 on --accent-soft */
+  --add: #116b33;                             /* 5.17 */
+  --add-soft: rgb(17 107 51 / 0.11);
+  --del: #b32d27;                             /* 4.94 */
+  --del-soft: rgb(179 45 39 / 0.10);
+  --on-del-soft: #8f231e;                     /* 6.17 on --del-soft */
+  --focus: #0a5fd0;                           /* 4.31 */
 
-       --text          10.47   primary
-       --muted          6.26   secondary: repo, branch, timestamps
-       --faint          4.53   tertiary: section labels, paths, hints
+  /* --- status (light) ----------------------------------------------------- */
+  --status-idle: #6b7380;      /* 3.50 */
+  --status-running: #0b57bd;   /* 5.28 */
+  --status-blocked: #7d520a;   /* 5.33 */
+  --status-done: #116b33;      /* 5.17 */
+  --status-archived: #6f7784;  /* 3.30 */
+  --warn: #7d520a;             /* 5.33 */
+  --danger: #b32d27;           /* 4.94 */
+  /* Channels, so the blocked-row tint and the ping keyframes can vary alpha
+     off one hue instead of hardcoding six rgba() literals per theme. */
+  --warn-rgb: 125 82 10;
 
-     All three are text, deliberately. --faint was nearly demoted to a
-     non-text token at 3.75, which would have forced every label and path
-     using it up into --muted and collapsed three tiers into two. The
-     hierarchy is what makes a dense 3-pane layout scannable, so the tiers
-     stay and each one pays for itself by clearing AA. 11.5-13px type is the
-     other half of the constraint: small text needs MORE contrast, not less.
-
-     Adding a fourth, dimmer tier is not possible without breaking AA. The
-     usable range on this ground is 4.5 to ~11, and it already holds three. */
-  --text: #ccd3de;        /* body text                              11.47 */
-  --text-strong: #f1f4f9; /* titles, active row                     15.50 */
-  --muted: #9aa4b4;       /* metadata: repo, branch, timestamps      6.87 */
-  --faint: #828a98;       /* section labels, paths, hints            4.97 */
-
-  /* --- accent + diff ----------------------------------------------------- */
-  --accent: #4d9fff;                        /* 6.35 */
-  --accent-soft: rgba(77, 159, 255, 0.14);
-  --accent-line: rgba(77, 159, 255, 0.6);   /* 3.18 as a UI edge */
-  --add: #4cbf72;                           /* 7.41 */
-  --add-soft: rgba(76, 191, 114, 0.13);
-  --del: #ec6a64;                           /* 5.61 */
-  --del-soft: rgba(236, 106, 100, 0.13);
-  /* Focus is never carried by a border token. Keyboard navigation is the
-     whole reason this has its own name: it must stay bright wherever it
-     lands, independently of how quiet the surrounding chrome is. */
-  --focus: #6fb0ff;                         /* 7.42 */
-
-  /* --- status (TaskStatus from src/types.ts) ------------------------------ */
-  --status-idle: #79828f;      /* 4.45 */
-  --status-running: #4d9fff;   /* 6.35 */
-  --status-blocked: #f0a33a;   /* 8.23 */
-  --status-done: #4cbf72;      /* 7.41 */
-  --status-archived: #6f7783;  /* 3.82 */
-  --warn: #f0a33a;             /* 8.23 */
-  --danger: #ec6a64;           /* 5.61 */
+  /* --- derived surfaces + marks (light) ----------------------------------- */
+  --scrollbar: #939ba7;
+  --scrollbar-hover: #7d8592;
+  --banner-text: #6b4708;                     /* 6.19 on --banner-bg */
+  --banner-bg: rgb(var(--warn-rgb) / 0.10);
+  --banner-border: rgb(var(--warn-rgb) / 0.3);
+  --shadow-menu: 0 8px 24px rgb(15 23 35 / 0.18);
+  /* Context meters. Calibrated per theme on purpose: these encode an inferred
+     limit and a near-ceiling warning, so a single compromise value would be
+     invisible on one ground or garish on the other. */
+  --ctx-quiet-row: #7d8592;                   /* 3.47 on --panel */
+  --ctx-quiet-bar: #727a87;                   /* 3.42 on --track */
+  /* The inferred-limit marker. OPAQUE on purpose: an alpha modulation of the
+     fill measured 2.06-3.26 across the six fill/theme combinations, i.e. the
+     marker was in the CSS and absent to the user. It is the visual statement
+     that a number is estimated rather than measured, so a marker nobody can
+     see is the same as not shipping one — except we would think we had. An
+     opaque panel-coloured stripe is the same geometry at 3.26-8.79.
+     Tracks --panel automatically, so it needs no dark override. */
+  --hatch: var(--panel);
+  --term-selection: rgb(11 87 189 / 0.22);
+  /* Read by Terminal.tsx. The theme's source of truth is CSS, so the xterm
+     palette asks CSS which theme won rather than re-deriving it from the
+     attribute and the media query and getting a different answer. */
+  --is-dark: 0;
 
   /* --- metrics ----------------------------------------------------------- */
   --titlebar-h: 40px;         /* macOS overlay title bar strip */
@@ -130,6 +130,140 @@
   --fs-md: 13px;
   --fs-lg: 14px;
 }
+
+/* Dark overrides. Duplicated deliberately: the media query handles "system",
+   the attribute selector handles an explicit choice, and the :not() guard on
+   the media block is what lets an explicit LIGHT choice win on a machine
+   whose OS is dark. Keep the two bodies identical. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+  /* --- surfaces (dark) --- */
+  --bg: #0b0d10;
+  --panel: #111419;
+  --panel-raised: #171b21;
+  --panel-inset: #090b0e;
+  /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
+     hex typed into whichever :hover rule needed one. Contrast is a property
+     of a pair, so a surface invented locally is a text-contrast decision made
+     by someone who was only thinking about a hover state. Not hypothetical:
+     mid-way through the contrast pass I lightened two hover grounds and
+     silently pushed --faint to 3.99, with nothing in the variables to show
+     it. DO NOT go lighter than about #1e232c -- that is where --faint hits
+     4.53 and the tier below it runs out. */
+  --panel-hover: #1c212a;
+  --panel-active: #10141a;
+  --track: #1b2029;
+  --border: #262c36;
+  --border-strong: #6b7585;/* 3.47 */
+
+  /* --- type (dark) --- */
+  --text: #ccd3de;         /* 10.72 */
+  --text-strong: #f1f4f9;  /* 14.65 */
+  --muted: #9aa4b4;        /*  6.42 */
+  --faint: #828a98;        /*  4.64 */
+
+  /* --- accent + diff (dark) --- */
+  --accent: #4d9fff;                          /* 5.94 */
+  --accent-soft: rgb(77 159 255 / 0.14);
+  --accent-soft-strong: rgb(77 159 255 / 0.22);
+  --accent-line: rgb(77 159 255 / 0.6);
+  --on-accent-soft: #bcd9ff;                  /* 10.43 on --accent-soft */
+  --add: #4cbf72;                             /* 6.92 */
+  --add-soft: rgb(76 191 114 / 0.13);
+  --del: #ec6a64;                             /* 5.24 */
+  --del-soft: rgb(236 106 100 / 0.13);
+  --on-del-soft: #ffb3b0;                     /* 8.57 on --del-soft */
+  --focus: #6fb0ff;                           /* 7.18 */
+
+  /* --- status (dark) --- */
+  --status-idle: #79828f;      /* 4.15 */
+  --status-running: #4d9fff;   /* 5.94 */
+  --status-blocked: #f0a33a;   /* 7.69 */
+  --status-done: #4cbf72;      /* 6.92 */
+  --status-archived: #6f7783;  /* 3.57 */
+  --warn: #f0a33a;             /* 7.69 */
+  --danger: #ec6a64;           /* 5.24 */
+  --warn-rgb: 240 163 58;
+
+  /* --- derived surfaces + marks (dark) --- */
+  --scrollbar: #3b4351;
+  --scrollbar-hover: #4c5666;
+  --banner-text: #f6d6a4;                     /* 12.11 on --banner-bg */
+  --banner-bg: rgb(var(--warn-rgb) / 0.10);
+  --banner-border: rgb(var(--warn-rgb) / 0.25);
+  --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.55);
+  --ctx-quiet-row: #5e6875;                   /* 3.26 on --panel */
+  --ctx-quiet-bar: #667186;                   /* 3.32 on --track */
+  --term-selection: rgb(77 159 255 / 0.28);
+  --is-dark: 1;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  /* --- surfaces (dark) --- */
+  --bg: #0b0d10;
+  --panel: #111419;
+  --panel-raised: #171b21;
+  --panel-inset: #090b0e;
+  /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
+     hex typed into whichever :hover rule needed one. Contrast is a property
+     of a pair, so a surface invented locally is a text-contrast decision made
+     by someone who was only thinking about a hover state. Not hypothetical:
+     mid-way through the contrast pass I lightened two hover grounds and
+     silently pushed --faint to 3.99, with nothing in the variables to show
+     it. DO NOT go lighter than about #1e232c -- that is where --faint hits
+     4.53 and the tier below it runs out. */
+  --panel-hover: #1c212a;
+  --panel-active: #10141a;
+  --track: #1b2029;
+  --border: #262c36;
+  --border-strong: #6b7585;/* 3.47 */
+
+  /* --- type (dark) --- */
+  --text: #ccd3de;         /* 10.72 */
+  --text-strong: #f1f4f9;  /* 14.65 */
+  --muted: #9aa4b4;        /*  6.42 */
+  --faint: #828a98;        /*  4.64 */
+
+  /* --- accent + diff (dark) --- */
+  --accent: #4d9fff;                          /* 5.94 */
+  --accent-soft: rgb(77 159 255 / 0.14);
+  --accent-soft-strong: rgb(77 159 255 / 0.22);
+  --accent-line: rgb(77 159 255 / 0.6);
+  --on-accent-soft: #bcd9ff;                  /* 10.43 on --accent-soft */
+  --add: #4cbf72;                             /* 6.92 */
+  --add-soft: rgb(76 191 114 / 0.13);
+  --del: #ec6a64;                             /* 5.24 */
+  --del-soft: rgb(236 106 100 / 0.13);
+  --on-del-soft: #ffb3b0;                     /* 8.57 on --del-soft */
+  --focus: #6fb0ff;                           /* 7.18 */
+
+  /* --- status (dark) --- */
+  --status-idle: #79828f;      /* 4.15 */
+  --status-running: #4d9fff;   /* 5.94 */
+  --status-blocked: #f0a33a;   /* 7.69 */
+  --status-done: #4cbf72;      /* 6.92 */
+  --status-archived: #6f7783;  /* 3.57 */
+  --warn: #f0a33a;             /* 7.69 */
+  --danger: #ec6a64;           /* 5.24 */
+  --warn-rgb: 240 163 58;
+
+  /* --- derived surfaces + marks (dark) --- */
+  --scrollbar: #3b4351;
+  --scrollbar-hover: #4c5666;
+  --banner-text: #f6d6a4;                     /* 12.11 on --banner-bg */
+  --banner-bg: rgb(var(--warn-rgb) / 0.10);
+  --banner-border: rgb(var(--warn-rgb) / 0.25);
+  --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.55);
+  --ctx-quiet-row: #5e6875;                   /* 3.26 on --panel */
+  --ctx-quiet-bar: #667186;                   /* 3.32 on --track */
+  --term-selection: rgb(77 159 255 / 0.28);
+  --is-dark: 1;
+}
+
+:root[data-theme='light'] { color-scheme: light; }
 
 /* --------------------------------------------------------------------------
    Reset
@@ -177,12 +311,12 @@ button {
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #3b4351;
+  background: var(--scrollbar);
   border: 2px solid transparent;
   background-clip: content-box;
   border-radius: 6px;
 }
-::-webkit-scrollbar-thumb:hover { background: #4c5666; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); background-clip: content-box; }
 
 /* --------------------------------------------------------------------------
    App frame
@@ -273,8 +407,8 @@ button {
 .btn:active { background: var(--panel-active); }
 .btn[disabled] { color: var(--faint); background: transparent; }
 
-.btn-primary { background: var(--accent-soft); border-color: var(--accent-line); color: #bcd9ff; }
-.btn-primary:hover { background: rgba(77, 159, 255, 0.22); color: #e2effe; }
+.btn-primary { background: var(--accent-soft); border-color: var(--accent-line); color: var(--on-accent-soft); }
+.btn-primary:hover { background: var(--accent-soft-strong); color: var(--on-accent-soft); }
 
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
 .btn-ghost:hover { background: var(--panel-raised); color: var(--text); border-color: var(--border); }
@@ -383,8 +517,8 @@ button {
 
 .task-row[data-selected='true'] .task-title { color: var(--text-strong); }
 
-.task-row[data-status='blocked'] { background: rgba(240, 163, 58, 0.05); }
-.task-row[data-status='blocked']:hover { background: rgba(240, 163, 58, 0.09); }
+.task-row[data-status='blocked'] { background: rgb(var(--warn-rgb) / 0.05); }
+.task-row[data-status='blocked']:hover { background: rgb(var(--warn-rgb) / 0.09); }
 .task-row[data-status='archived'] .task-title,
 .task-row[data-status='archived'] .task-meta { color: var(--faint); }
 
@@ -459,7 +593,7 @@ button {
 }
 .status-dot[data-status='blocked'] {
   background: var(--status-blocked);
-  box-shadow: 0 0 0 0 rgba(240, 163, 58, 0.55);
+  box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0.55);
   animation: dot-ping 1.6s ease-out infinite;
 }
 
@@ -469,9 +603,9 @@ button {
 }
 
 @keyframes dot-ping {
-  0% { box-shadow: 0 0 0 0 rgba(240, 163, 58, 0.5); }
-  70% { box-shadow: 0 0 0 5px rgba(240, 163, 58, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(240, 163, 58, 0); }
+  0% { box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0.5); }
+  70% { box-shadow: 0 0 0 5px rgb(var(--warn-rgb) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -576,7 +710,7 @@ button {
 }
 .seg button:last-child { border-right: none; }
 .seg button:hover { color: var(--text); background: var(--panel-raised); }
-.seg button[aria-pressed='true'] { color: #cfe4ff; background: var(--accent-soft); }
+.seg button[aria-pressed='true'] { color: var(--on-accent-soft); background: var(--accent-soft); }
 
 .panes {
   flex: 1 1 auto;
@@ -712,9 +846,9 @@ button {
   gap: 8px;
   padding: 4px 10px;
   font-size: var(--fs-sm);
-  color: #f6d6a4;
-  background: rgba(240, 163, 58, 0.1);
-  border-bottom: 1px solid rgba(240, 163, 58, 0.25);
+  color: var(--banner-text);
+  background: var(--banner-bg);
+  border-bottom: 1px solid var(--banner-border);
 }
 .banner-text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -761,7 +895,7 @@ button {
   background: var(--panel-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-menu);
 }
 
 .row-menu-head {
@@ -785,7 +919,7 @@ button {
   border-radius: 2px;
 }
 .row-menu-item:hover { background: var(--accent-soft); color: var(--text-strong); }
-.row-menu-item[data-tone='danger']:hover { background: var(--del-soft); color: #ffb3b0; }
+.row-menu-item[data-tone='danger']:hover { background: var(--del-soft); color: var(--on-del-soft); }
 
 /* --------------------------------------------------------------------------
    Reading pane tabs (M4)
@@ -844,15 +978,15 @@ button {
   pointer-events: none;
 }
 
-.task-ctx-fill { display: block; height: 100%; background: #5e6875; } /* 3.26 */
+.task-ctx-fill { display: block; height: 100%; background: var(--ctx-quiet-row); }
 .task-ctx[data-level='warn'] .task-ctx-fill { background: var(--status-blocked); opacity: 0.8; }
 .task-ctx[data-level='high'] .task-ctx-fill { background: var(--danger); }
 
 .task-ctx[data-basis='inferred'] .task-ctx-fill {
   background-image: repeating-linear-gradient(
     115deg,
-    rgba(0, 0, 0, 0.45) 0 2px,
-    rgba(0, 0, 0, 0) 2px 4px
+    var(--hatch) 0 2px,
+    transparent 2px 4px
   );
 }
 
@@ -887,15 +1021,15 @@ button {
   overflow: hidden;
 }
 
-.ctx-fill { position: absolute; inset: 0 auto 0 0; background: #667186; } /* 3.32 */
+.ctx-fill { position: absolute; inset: 0 auto 0 0; background: var(--ctx-quiet-bar); }
 .ctx[data-level='warn'] .ctx-fill { background: var(--status-blocked); }
 .ctx[data-level='high'] .ctx-fill { background: var(--danger); }
 
 .ctx[data-basis='inferred'] .ctx-fill {
   background-image: repeating-linear-gradient(
     115deg,
-    rgba(0, 0, 0, 0.45) 0 2px,
-    rgba(0, 0, 0, 0) 2px 4px
+    var(--hatch) 0 2px,
+    transparent 2px 4px
   );
 }
 
@@ -908,3 +1042,149 @@ button {
 .ctx[data-level='warn'] .ctx-text { color: var(--status-blocked); }
 .ctx[data-level='high'] .ctx-text { color: var(--danger); }
 
+
+
+/* --------------------------------------------------------------------------
+   Sidebar footer — theme toggle (M4)
+
+   Placed here rather than in the header: it is a per-viewer preference set
+   once, not a control worth permanent header width next to Projects,
+   Worktrees and New task. The sidebar foot is always on screen and never
+   scrolls, so it is findable without being in the way.
+   -------------------------------------------------------------------------- */
+
+.sidebar-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.sidebar-foot-label {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.theme-toggle {
+  display: flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.theme-toggle button {
+  height: 20px;
+  padding: 0 7px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  background: transparent;
+  border-right: 1px solid var(--border);
+}
+.theme-toggle button:last-child { border-right: none; }
+.theme-toggle button:hover { color: var(--text); background: var(--panel-hover); }
+.theme-toggle button[aria-pressed='true'] {
+  color: var(--on-accent-soft);
+  background: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------------------
+   Project tabs (M4)
+
+   Present only when there are two or more projects — one project is the
+   expected case and gets no bar at all.
+
+   The tabs carry status because they hide things: with a project tab active,
+   a session that blocks in a background project has no row to ping, so the
+   tab pings instead. Same visual language as the rows, and the motion budget
+   is unchanged — blocked pings, running breathes, nothing else moves.
+   -------------------------------------------------------------------------- */
+
+.project-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 4px 4px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.project-tabs::-webkit-scrollbar { display: none; }
+
+.project-tab {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  white-space: nowrap;
+}
+
+.project-tab:hover { color: var(--text); background: var(--panel-hover); }
+
+.project-tab[aria-selected='true'] {
+  color: var(--text-strong);
+  background: var(--bg);
+  border-color: var(--border);
+  /* Sit on the bar's bottom rule so the active tab reads as joined to the
+     list below it rather than floating above it. */
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+
+.project-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.project-tab-count {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+
+.project-tab[data-status='blocked'] .project-tab-count { color: var(--status-blocked); }
+.project-tab[data-status='blocked'] { color: var(--text); }
+
+/* --------------------------------------------------------------------------
+   Issue key chip (M4)
+
+   The key is the task's identity to the user, so it is scannable down the
+   left edge of the list rather than being the first few characters of a
+   sentence. Monospace and tabular so keys of different lengths still line up.
+   -------------------------------------------------------------------------- */
+
+.task-key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  /* --on-accent-soft, not --accent: it is the token that exists for text on
+     this exact tint, so the chip keeps its headroom (6.04 worst case, vs 4.83)
+     and stays correct if the tint's alpha is ever retuned. */
+  color: var(--on-accent-soft);
+  background: var(--accent-soft);
+  border-radius: 2px;
+  padding: 1px 4px;
+  margin-right: 5px;
+}
+
+.task-row[data-status='archived'] .task-key { color: var(--faint); background: none; }
+.task-rest { overflow: hidden; text-overflow: ellipsis; }

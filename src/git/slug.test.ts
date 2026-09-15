@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_SLUG_LENGTH,
+  nameTask,
   assertValidRefName,
   branchNameFor,
   isSafeSlug,
@@ -164,5 +165,87 @@ describe('isValidRefName', () => {
   it('assertValidRefName throws with the offending value', () => {
     expect(() => assertValidRefName('-b', 'base branch')).toThrow(/Invalid base branch name/);
     expect(() => assertValidRefName('main')).not.toThrow();
+  });
+});
+
+describe('nameTask', () => {
+  it('reproduces the branches already on the user machine', () => {
+    expect(nameTask('UP-2398')).toEqual({
+      key: 'UP-2398',
+      slug: 'UP-2398',
+      branch: 'UP-2398',
+      dirName: 'UP-2398',
+    });
+    expect(nameTask('UP-2398-followup')).toMatchObject({
+      key: 'UP-2398',
+      branch: 'UP-2398-followup',
+      dirName: 'UP-2398',
+    });
+    expect(nameTask('PLATFORM-19T')).toMatchObject({ branch: 'PLATFORM-19T' });
+    expect(nameTask('HUB-429902396650')).toMatchObject({ branch: 'HUB-429902396650' });
+  });
+
+  it('slugs the part after the key onto the branch', () => {
+    expect(nameTask('UP-2398 fix the login loop')).toMatchObject({
+      key: 'UP-2398',
+      branch: 'UP-2398-fix-the-login-loop',
+      dirName: 'UP-2398',
+    });
+    expect(nameTask('UP-2398: Fix The Login Loop')).toMatchObject({
+      branch: 'UP-2398-fix-the-login-loop',
+    });
+  });
+
+  it('keys the directory on the issue alone — one worktree per issue', () => {
+    // Two tasks naming one issue therefore collide on the path, which
+    // createWorktree refuses. That is the intended answer.
+    expect(nameTask('UP-2398 part one').dirName).toBe('UP-2398');
+    expect(nameTask('UP-2398 part two').dirName).toBe('UP-2398');
+  });
+
+  it('leaves keyless titles exactly as they were', () => {
+    expect(nameTask('Fix the login loop')).toEqual({
+      key: null,
+      slug: 'fix-the-login-loop',
+      branch: 'fix-the-login-loop',
+      dirName: 'fix-the-login-loop',
+    });
+    expect(nameTask('UTF-8 encoding is broken')).toMatchObject({
+      key: null,
+      branch: 'utf-8-encoding-is-broken',
+    });
+  });
+
+  it('falls back to the bare key when the rest slugs to nothing', () => {
+    // "UP-2398 !!!" must not become `UP-2398-task-1700000000000`.
+    expect(nameTask('UP-2398 !!!', { now: 1700000000000 })).toMatchObject({
+      branch: 'UP-2398',
+      dirName: 'UP-2398',
+    });
+    expect(nameTask('UP-2398 \u65e5\u672c\u8a9e', { now: 1 })).toMatchObject({ branch: 'UP-2398' });
+  });
+
+  it('still produces a usable name for an empty title', () => {
+    expect(nameTask('', { now: 7 })).toEqual({
+      key: null,
+      slug: 'task-7',
+      branch: 'task-7',
+      dirName: 'task-7',
+    });
+  });
+
+  it('always produces a legal ref name and a legal directory name', () => {
+    const titles = [
+      'UP-2398', 'UP-2398 fix', 'UP-2398-followup', 'PLATFORM-19T', 'HUB-429902396650',
+      'Fix the thing', '', '...', 'a'.repeat(200), 'UP-2398 ' + 'x'.repeat(200),
+      'UTF-8 encoding', 'E-mail the team', '-leading dash',
+    ];
+    for (const t of titles) {
+      const n = nameTask(t, { now: 9 });
+      expect(isValidRefName(n.branch), `${t} -> ${n.branch}`).toBe(true);
+      expect(n.dirName.startsWith('-'), t).toBe(false);
+      expect(n.dirName.length > 0, t).toBe(true);
+      expect(n.dirName.includes('/'), t).toBe(false);
+    }
   });
 });

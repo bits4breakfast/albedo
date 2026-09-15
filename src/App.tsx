@@ -1,9 +1,12 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import type { OpenFileRequest, Task } from './types';
+import type { OpenFileRequest, Project, Task } from './types';
+import { useTheme } from './ui/theme';
+import type { ThemeChoice } from './ui/theme';
 import useTasks from './ui/useTasks';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
+import StatusDot from './ui/StatusDot';
 import Terminal from './ui/Terminal';
 import NewTaskDialog from './ui/NewTaskDialog';
 import WorktreeReconcile from './ui/WorktreeReconcile';
@@ -15,6 +18,7 @@ import { FileOpenContext } from './ui/editor/openFile';
 import UsagePanel from './ui/gauges/UsagePanel';
 import ProjectsDialog from './ui/ProjectsDialog';
 import { backfillProjectsFromTasks } from './db/projects';
+import { parseIssueKey } from './lib/issueKey';
 
 /**
  * The frame.
@@ -47,6 +51,7 @@ const LS = {
   ratio: 'albedo.shell.splitRatio',
   orientation: 'albedo.shell.orientation',
   selected: 'albedo.shell.selectedTask',
+  project: 'albedo.shell.activeProject',
   rightTab: 'albedo.shell.rightTab',
 } as const;
 
@@ -70,6 +75,41 @@ function store(key: string, value: string): void {
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
+const THEME_LABEL: Record<ThemeChoice, string> = {
+  system: 'auto',
+  light: 'light',
+  dark: 'dark',
+};
+
+const THEME_TITLE: Record<ThemeChoice, string> = {
+  system: 'Follow the system appearance',
+  light: 'Always light',
+  dark: 'Always dark',
+};
+
+function ThemeToggle({
+  value,
+  onChange,
+}: {
+  value: ThemeChoice;
+  onChange: (next: ThemeChoice) => void;
+}) {
+  return (
+    <div className="theme-toggle" role="group" aria-label="Theme">
+      {(['system', 'light', 'dark'] as const).map((choice) => (
+        <button
+          key={choice}
+          aria-pressed={value === choice}
+          onClick={() => onChange(choice)}
+          title={THEME_TITLE[choice]}
+        >
+          {THEME_LABEL[choice]}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Error boundary
@@ -114,9 +154,139 @@ class PaneErrorBoundary extends Component<BoundaryProps, BoundaryState> {
 }
 
 // ---------------------------------------------------------------------------
+// Project tabs
+//
+// Deliberately absent until they are needed. One project is the expected case,
+// and in that case this is a no-op: no bar, no chrome, no vertical space — the
+// app exactly as it was. The second project summons the bar, and that is the
+// entire interaction. No reordering, no per-tab state, nothing else: a rare
+// case earns correctness, not a surface.
+//
+// The one thing the bar MUST do is keep the app's core promise working. Tabs
+// hide every task outside the active project, so a session that blocks in a
+// background project would go invisible — the app failing at its only job
+// exactly when several things are running. Each tab therefore carries its own
+// status in the same visual language as the rows: blocked pings, running
+// breathes, and those stay the only two moving things in the app.
+// ---------------------------------------------------------------------------
+
+interface ProjectTab {
+  key: string;
+  /** null = the "Other" tab: tasks belonging to no known project. */
+  project: Project | null;
+  label: string;
+  tasks: Task[];
+  blocked: number;
+  running: number;
+}
+
+function buildTabs(projects: Project[], tasks: Task[]): ProjectTab[] {
+  const byProject = new Map<number, Task[]>();
+  const orphans: Task[] = [];
+  for (const task of tasks) {
+    const id = task.projectId;
+    if (id === null || !projects.some((p) => p.id === id)) orphans.push(task);
+    else {
+      const bucket = byProject.get(id);
+      if (bucket) bucket.push(task);
+      else byProject.set(id, [task]);
+    }
+  }
+  const count = (list: Task[], status: Task['status']) =>
+    list.filter((t) => t.status === status).length;
+
+  const tabs: ProjectTab[] = projects.map((project) => {
+    const list = byProject.get(project.id) ?? [];
+    return {
+      key: `p${project.id}`,
+      project,
+      label: project.name,
+      tasks: list,
+      blocked: count(list, 'blocked'),
+      running: count(list, 'running'),
+    };
+  });
+  // Only when it has something in it. A task with no project means the backfill
+  // failed, and an invisible task is the one outcome worth a whole extra tab.
+  if (orphans.length > 0) {
+    tabs.push({
+      key: 'orphans',
+      project: null,
+      label: 'Other',
+      tasks: orphans,
+      blocked: count(orphans, 'blocked'),
+      running: count(orphans, 'running'),
+    });
+  }
+  return tabs;
+}
+
+/**
+ * Build the initial prompt for a task's first session.
+ *
+ * Opt-in by design: an empty or absent template yields null, and null means no
+ * argv prompt at all. Silently prompting an agent the user has just launched
+ * is a side effect they did not ask for, so the default is to say nothing.
+ */
+function renderPromptTemplate(task: Task, project: Project | null): string | null {
+  const template = project?.taskPromptTemplate?.trim();
+  if (!template) return null;
+  const issue = parseIssueKey(task.title);
+  const filled = template
+    .replaceAll('{key}', issue?.key ?? '')
+    .replaceAll('{title}', task.title)
+    // Not in the interface doc, but parseIssueKey already hands it over and a
+    // template wanting "UP-2398: <the descriptive bit>" has no other way to
+    // get it. Falls back to the whole title when there is no key.
+    .replaceAll('{rest}', issue?.rest || task.title)
+    .replaceAll('{branch}', task.branch)
+    .trim();
+  return filled.length > 0 ? filled : null;
+}
+
+function ProjectTabs({
+  tabs,
+  activeKey,
+  onSelect,
+}: {
+  tabs: ProjectTab[];
+  activeKey: string;
+  onSelect: (key: string) => void;
+}) {
+  return (
+    <div className="project-tabs" role="tablist" aria-label="Projects">
+      {tabs.map((tab) => {
+        const status = tab.blocked > 0 ? 'blocked' : tab.running > 0 ? 'running' : null;
+        const badge =
+          tab.blocked > 0 ? tab.blocked : tab.running > 0 ? tab.running : tab.tasks.length;
+        return (
+          <button
+            key={tab.key}
+            role="tab"
+            aria-selected={tab.key === activeKey}
+            className="project-tab"
+            data-status={status ?? 'quiet'}
+            onClick={() => onSelect(tab.key)}
+            title={
+              tab.blocked > 0
+                ? `${tab.label}: ${tab.blocked} waiting on you`
+                : (tab.project?.repoPath ?? tab.label)
+            }
+          >
+            {status && <StatusDot status={status} />}
+            <span className="project-tab-name">{tab.label}</span>
+            <span className="project-tab-count">{badge}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export default function App() {
-  const { tasks, loading, loadError, captureError, contextBySession, refresh, upsertTask, archive } =
+  const { tasks, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive } =
     useTasks();
 
   const [selectedId, setSelectedId] = useState<number | null>(() =>
@@ -153,6 +323,10 @@ export default function App() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [activeProjectTabKey, setActiveProjectTabKey] = useState<string>(() =>
+    readStored(LS.project, (raw) => raw || null, ''),
+  );
+  const { choice: themeChoice, setChoice: setThemeChoice } = useTheme();
   const [startupError, setStartupError] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
   const [dragging, setDragging] = useState<null | 'sidebar' | 'split'>(null);
@@ -167,9 +341,61 @@ export default function App() {
     if (rightTab !== 'editor') store(LS.rightTab, rightTab);
   }, [rightTab]);
 
+  const tabs = useMemo(() => buildTabs(projects, tasks), [projects, tasks]);
+
+  /**
+   * One tab is not a tab bar. With a single project the app is exactly what it
+   * was before projects existed: no bar, nothing hidden, nothing to switch.
+   */
+  const showTabs = tabs.length >= 2;
+
+  const activeProjectTab = useMemo(() => {
+    if (!showTabs) return null;
+    return tabs.find((t) => t.key === activeProjectTabKey) ?? tabs[0] ?? null;
+  }, [showTabs, tabs, activeProjectTabKey]);
+
+  const selectTab = useCallback((key: string) => {
+    setActiveProjectTabKey(key);
+    store(LS.project, key);
+  }, []);
+
+  /**
+   * Scoped only while the bar is showing. With the bar hidden nothing is
+   * filtered, so no task can be concealed by a tab the user cannot see.
+   */
+  const visibleTasks = useMemo(
+    () => (activeProjectTab ? activeProjectTab.tasks : tasks),
+    [activeProjectTab, tasks],
+  );
+
+  /**
+   * What the list is scoped to. With no bar this is the sole project, so the
+   * empty state can still name it — which is the actual bug report: creating
+   * the first project looked like nothing happened.
+   */
+  const activeProject = useMemo(
+    () => (showTabs ? (activeProjectTab?.project ?? null) : (projects[0] ?? null)),
+    [showTabs, activeProjectTab, projects],
+  );
+
   const selected = useMemo(
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
+  );
+
+  /**
+   * FIRST SPAWN ONLY. A task with a sessionId has already been told this; a
+   * re-spawn after a kill or crash must not re-prompt, or the agent starts the
+   * work over. That would read as bizarre agent behaviour rather than as a
+   * spawn bug, which is exactly why the gate lives here and is stated twice.
+   */
+  const initialPromptFor = useCallback(
+    (task: Task): string | null => {
+      if (task.sessionId !== null) return null;
+      const project = projects.find((p) => p.id === task.projectId) ?? null;
+      return renderPromptTemplate(task, project);
+    },
+    [projects],
   );
 
   const select = useCallback((id: number) => {
@@ -230,17 +456,18 @@ export default function App() {
     setRightTab((t) => (t === 'editor' ? 'transcript' : t));
   }, []);
 
-  // Pick something sensible once tasks land: whatever is blocked first.
+  // Pick something sensible once tasks land: whatever is blocked first, and
+  // always something the active tab can actually show.
   useEffect(() => {
-    if (loading || tasks.length === 0) return;
-    if (selectedId !== null && tasks.some((t) => t.id === selectedId)) return;
+    if (loading || visibleTasks.length === 0) return;
+    if (selectedId !== null && visibleTasks.some((t) => t.id === selectedId)) return;
     const candidate =
-      tasks.find((t) => t.status === 'blocked') ??
-      tasks.find((t) => t.status === 'running') ??
-      tasks.find((t) => t.status !== 'archived') ??
-      tasks[0];
+      visibleTasks.find((t) => t.status === 'blocked') ??
+      visibleTasks.find((t) => t.status === 'running') ??
+      visibleTasks.find((t) => t.status !== 'archived') ??
+      visibleTasks[0];
     if (candidate) select(candidate.id);
-  }, [loading, tasks, selectedId, select]);
+  }, [loading, visibleTasks, selectedId, select]);
 
   // Terminals outlive tab switches, but not the task itself.
   useEffect(() => {
@@ -361,14 +588,19 @@ export default function App() {
 
       <div className="app-body">
         <aside className="sidebar" style={{ width: sidebarWidth, flexBasis: sidebarWidth }}>
+          {showTabs && activeProjectTab && (
+            <ProjectTabs tabs={tabs} activeKey={activeProjectTab.key} onSelect={selectTab} />
+          )}
           <TaskList
-            tasks={tasks}
+            tasks={visibleTasks}
             selectedId={selectedId}
             onSelect={select}
             onNew={() => setNewTaskOpen(true)}
             onArchive={(task) => setArchiveTarget(task)}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
+            projects={projects}
+            activeProject={activeProject}
           />
           {/* Pinned below the list, outside its scroller, so it is on screen
               permanently. The panel carries its own boundary for render
@@ -376,6 +608,10 @@ export default function App() {
           <PaneErrorBoundary label="Usage panel">
             <UsagePanel task={selected} />
           </PaneErrorBoundary>
+          <div className="sidebar-foot">
+            <span className="sidebar-foot-label">theme</span>
+            <ThemeToggle value={themeChoice} onChange={setThemeChoice} />
+          </div>
         </aside>
 
         <div
@@ -437,7 +673,12 @@ export default function App() {
               <div className="pane-body">
                 <div className="term-stack">
                   {openTasks.map((task) => (
-                    <Terminal key={task.id} task={task} active={task.id === selectedId} />
+                    <Terminal
+                      key={task.id}
+                      task={task}
+                      active={task.id === selectedId}
+                      initialPrompt={initialPromptFor(task) ?? undefined}
+                    />
                   ))}
                 </div>
                 {openTasks.length === 0 && (
@@ -584,6 +825,14 @@ export default function App() {
           open={projectsOpen}
           onClose={() => setProjectsOpen(false)}
           onChanged={() => void refresh()}
+          onCreateTaskIn={(project) => {
+            // The dialog already remembers the project it just created as the
+            // new-task default, so this only has to switch to its tab and open
+            // the dialog.
+            selectTab(`p${project.id}`);
+            setProjectsOpen(false);
+            setNewTaskOpen(true);
+          }}
         />
       </PaneErrorBoundary>
 

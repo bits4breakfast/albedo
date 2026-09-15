@@ -22,9 +22,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
-import type { ThemedToken } from 'shiki/core';
 import type { DiffHunk, DiffLine, DiffSegment, FileDiff, OpenFileRequest } from '../../types';
-import { highlightToTokens, peekTokens, plainTokens, tokenStyle } from '../../lib/highlight';
+import { highlightToTokens, peekTokens, plainTokens } from '../../lib/highlight';
+import type { DualToken } from '../../lib/highlight';
 import { parsePathRef } from '../../lib/paths';
 import { useOpenFile } from '../editor/openFile';
 import './transcript.css';
@@ -220,9 +220,9 @@ function linkifyLines(text: string): ReactNode[] {
  * Tokenize a blob, re-rendering when the async result lands. Starts from the
  * cache so an already-seen blob paints highlighted on the first frame.
  */
-export function useCodeTokens(text: string, lang: string): ThemedToken[][] {
+export function useCodeTokens(text: string, lang: string): DualToken[][] {
   const tooBig = useMemo(() => text.length > 0 && countLines(text) > MAX_HIGHLIGHT_LINES, [text]);
-  const [tokens, setTokens] = useState<ThemedToken[][]>(
+  const [tokens, setTokens] = useState<DualToken[][]>(
     () => (tooBig ? plainTokens(text) : peekTokens(text, lang)) ?? plainTokens(text),
   );
 
@@ -270,14 +270,14 @@ interface Piece {
 }
 
 /** Normalise a token line so its text covers exactly `content`. */
-function normaliseTokens(content: string, tokens: ThemedToken[] | undefined): Array<{ text: string; style: Record<string, string> }> {
+function normaliseTokens(content: string, tokens: DualToken[] | undefined): Array<{ text: string; style: Record<string, string> }> {
   const out: Array<{ text: string; style: Record<string, string> }> = [];
   let used = 0;
   for (const t of tokens ?? []) {
     if (used >= content.length) break;
     const text = t.content.length > content.length - used ? content.slice(used, content.length) : t.content;
     if (text.length === 0) continue;
-    out.push({ text, style: tokenStyle(t) });
+    out.push({ text, style: t.style });
     used += text.length;
   }
   if (used < content.length) out.push({ text: content.slice(used), style: {} });
@@ -295,7 +295,7 @@ function normaliseTokens(content: string, tokens: ThemedToken[] | undefined): Ar
  */
 export function composePieces(
   content: string,
-  tokens: ThemedToken[] | undefined,
+  tokens: DualToken[] | undefined,
   segments: DiffSegment[] | undefined,
 ): Piece[] {
   const toks = normaliseTokens(content, tokens);
@@ -332,17 +332,11 @@ export function Code({ pieces }: { pieces: Piece[] }): ReactNode {
   if (pieces.length === 0) return <span className="tx-d-code" />;
   return (
     <span className="tx-d-code">
-      {pieces.map((p, i) =>
-        p.changed ? (
-          <span key={i} className="tx-d-word" style={p.style as CSSProperties}>
-            {p.text}
-          </span>
-        ) : (
-          <span key={i} style={p.style as CSSProperties}>
-            {p.text}
-          </span>
-        ),
-      )}
+      {pieces.map((p, i) => (
+        <span key={i} className={p.changed ? 'tx-tok tx-d-word' : 'tx-tok'} style={p.style as CSSProperties}>
+          {p.text}
+        </span>
+      ))}
     </span>
   );
 }
@@ -736,8 +730,8 @@ function UnifiedBody({
   linkPath = null,
 }: {
   rows: readonly Row[];
-  oldTokens: ThemedToken[][];
-  newTokens: ThemedToken[][];
+  oldTokens: DualToken[][];
+  newTokens: DualToken[][];
   linkPath?: string | null;
 }): ReactNode {
   return (
@@ -764,8 +758,8 @@ function SplitBody({
   linkPath = null,
 }: {
   rows: readonly Row[];
-  oldTokens: ThemedToken[][];
-  newTokens: ThemedToken[][];
+  oldTokens: DualToken[][];
+  newTokens: DualToken[][];
   linkPath?: string | null;
 }): ReactNode {
   const pairs = useMemo(() => pairRows(rows), [rows]);

@@ -232,6 +232,9 @@ export async function updateTask(id: number, patch: Partial<Task>): Promise<void
     if (key === 'id') continue; // never reassign the primary key
     const column = TASK_COLUMN[key];
     if (column === undefined) continue; // unknown field: ignore, do not inject
+    // `undefined` means "not mentioned": spreading a partially-filled object
+    // must not null out columns it never set. Explicit null still clears.
+    if (patch[key] === undefined) continue;
     binds.push(patch[key]);
     sets.push(`${column} = $${binds.length}`);
   }

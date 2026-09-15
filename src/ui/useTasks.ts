@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Task, TaskStatus } from '../types';
+import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged } from '../db';
+import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, deriveStatus, contextUsageForSessions } from '../capture';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
@@ -39,6 +40,12 @@ export interface UseTasksResult {
   loadError: string | null;
   captureError: string | null;
   /**
+   * Projects, name-ascending as the db returns them. The task list groups by
+   * these, INCLUDING empty ones -- a project with no tasks still has to appear,
+   * or creating one looks like nothing happened.
+   */
+  projects: Project[];
+  /**
    * Context-window usage keyed by sessionId, fetched for every visible task in
    * a single batched query. Absent entries simply render no meter.
    */
@@ -62,6 +69,7 @@ export function useTasks(): UseTasksResult {
   const [contextBySession, setContextBySession] = useState<Map<string, ContextUsage>>(
     () => new Map(),
   );
+  const [projects, setProjects] = useState<Project[]>([]);
 
   /** Latest tasks, readable from callbacks without re-subscribing. */
   const tasksRef = useRef<Task[]>([]);
@@ -96,6 +104,16 @@ export function useTasks(): UseTasksResult {
       setLoadError(`Could not read tasks: ${message(err)}`);
     } finally {
       if (aliveRef.current) setLoading(false);
+    }
+  }, []);
+
+  const refreshProjects = useCallback(async () => {
+    try {
+      const rows = await listProjects();
+      if (!aliveRef.current) return;
+      setProjects(Array.isArray(rows) ? rows : []);
+    } catch {
+      /* The list still renders; it just cannot group by project. */
     }
   }, []);
 
@@ -206,10 +224,22 @@ export function useTasks(): UseTasksResult {
   useEffect(() => {
     aliveRef.current = true;
     void refresh();
+    void refreshProjects();
     return () => {
       aliveRef.current = false;
     };
-  }, [refresh]);
+  }, [refresh, refreshProjects]);
+
+  // Projects mutate from the dialog, and from the launch backfill.
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    try {
+      off = onProjectsChanged(() => void refreshProjects());
+    } catch {
+      /* no notifications: the dialog's onChanged still refreshes */
+    }
+    return () => off?.();
+  }, [refreshProjects]);
 
   // Task rows mutated behind the shell's back -- the worktree module creating
   // or removing one, the capture watcher adopting a sessionId. Without this the
@@ -283,8 +313,18 @@ export function useTasks(): UseTasksResult {
   }, [refreshStatus, refreshContext]);
 
   return useMemo(
-    () => ({ tasks, loading, loadError, captureError, contextBySession, refresh, upsertTask, archive }),
-    [tasks, loading, loadError, captureError, contextBySession, refresh, upsertTask, archive],
+    () => ({
+      tasks,
+      loading,
+      loadError,
+      captureError,
+      projects,
+      contextBySession,
+      refresh,
+      upsertTask,
+      archive,
+    }),
+    [tasks, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive],
   );
 }
 

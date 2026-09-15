@@ -479,7 +479,8 @@
   min-width: 0;
 }
 .tx-d-half:first-child { border-right: 1px solid var(--border); }
-.tx-d-blank { background: rgb(255 255 255 / 1.5%); }
+/* The empty half of a split pair: a faint recess, not a wash of white. */
+.tx-d-blank { background: var(--tx-blank); }
 
 /* --- change colouring ----------------------------------------------------- */
 
@@ -515,8 +516,8 @@
    hardcoded, so it tracks --add/--del instead of drifting away from them.
 */
 .tx-d-word { border-radius: 2px; }
-.tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) 26%, transparent); }
-.tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) 26%, transparent); }
+.tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) var(--tx-word-tint), transparent); }
+.tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) var(--tx-word-tint), transparent); }
 
 /* --- collapsed regions ---------------------------------------------------- */
 
@@ -600,3 +601,60 @@
 /* A path inside prose keeps the code-span box and gains link affordance. */
 .tx-md-code-link { color: var(--text); }
 .tx-md-code-link:hover { color: var(--accent); border-color: var(--accent-line); }
+
+/* ==========================================================================
+   Theming
+
+   Per docs/INTERFACES.md: :root carries the LIGHT values, and the dark values
+   are stated twice -- once behind the media query (guarded so an explicit
+   light choice still wins) and once behind [data-theme='dark']. Nothing is
+   defined only inside a themed block.
+
+   Hues come from the shared --add/--del tokens, so they follow the shell's
+   per-theme palette for free. What is local here is the STRENGTH of each
+   tint, which cannot be shared: the same alpha that reads as a subtle wash
+   over a near-black ground reads as nearly nothing over white.
+   ========================================================================== */
+
+:root {
+  /*
+     Light. 40%, not the dark 26%: the alphas are not interchangeable because
+     the tokens they mix are not. Dark --add is a bright green over near-black;
+     light --add is a dark green over near-white, so the same alpha lands a much
+     weaker separation. 40% puts the word highlight 1.69/1.85 away from its own
+     row, matching dark's 1.66/1.51, and text on it still measures 7.84/6.94 --
+     the whole sweep from 20% to 55% clears the 4.5 text bar, so separation is
+     what picks the value here, not legibility.
+  */
+  --tx-word-tint: 40%;
+  --tx-blank: rgb(0 0 0 / 3%);/* the unused half of a split pair: 1.07 vs ground */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --tx-word-tint: 26%;
+    --tx-blank: rgb(255 255 255 / 1.5%);
+  }
+}
+
+:root[data-theme='dark'] {
+  --tx-word-tint: 26%;
+  --tx-blank: rgb(255 255 255 / 1.5%);
+}
+
+/*
+   Syntax colour.
+
+   Every token span carries both themes as custom properties (see
+   src/lib/highlight.ts); these three rules are what choose between them. This
+   is the whole cost of theme switching for highlighted code -- no
+   re-tokenising, no re-render, no flash. The `inherit` fallback covers tokens
+   with no colour, which is what the plain-text fallback produces.
+*/
+.tx-tok { color: var(--shiki-light, inherit); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .tx-tok { color: var(--shiki-dark, inherit); }
+}
+
+:root[data-theme='dark'] .tx-tok { color: var(--shiki-dark, inherit); }

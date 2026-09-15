@@ -7,6 +7,26 @@
  * Counted across ALL sessions: the quota is account-wide, which is the whole
  * reason a header-level figure exists.
  *
+ * ### CONSUMPTION IS NOT OCCUPANCY. Read this before changing a formula.
+ *
+ * `cache_read_input_tokens` is re-reported on EVERY turn: a session holding
+ * 186k of cached context reports that same 186k again on each of its turns.
+ *
+ *   - For CONTEXT OCCUPANCY (context.ts) the three input counters ARE summed,
+ *     because on a single turn they are the size of that turn's prompt.
+ *   - For CONSUMPTION over a window (this file) they are NOT. Summing them
+ *     across 872 turns produced 210M "tokens" in five hours, ~206M of which
+ *     was the same cached content counted over and over.
+ *
+ * So the headline here is `input_tokens + cache_creation_input_tokens` plus
+ * `output_tokens` -- tokens the window actually spent. `cache_read` is
+ * reported alongside, never added in.
+ *
+ * And no weighted "effective tokens": cache reads are discounted, but the
+ * exact accounting against a subscription window is not public, and an
+ * unverifiable weighting is the same fabricated number we refused to ship for
+ * plan limits.
+ *
  * DELIBERATELY ABSENT: any percentage-of-plan-limit. Nothing on disk carries
  * the plan's token allowance or its reset time -- ~/.claude/stats-cache.json
  * holds historical totals only, policy-limits.json holds policy restrictions
@@ -44,10 +64,15 @@ export const WINDOW_SPANS: Readonly<Record<'5h' | 'week', number>> = {
 // ---------------------------------------------------------------------------
 
 export interface UsageBreakdown {
-  /** Fresh, uncached prompt tokens plus both cache counters. */
+  /** Raw `input_tokens`: fresh, uncached prompt tokens only. */
   inputTokens: number;
   outputTokens: number;
+  /** Tokens written into the cache. Spent once, so additive with inputTokens. */
   cacheCreationInputTokens: number;
+  /**
+   * Tokens READ from the cache. Re-reported every turn, so this is the one
+   * counter that must never be summed into a consumption total.
+   */
   cacheReadInputTokens: number;
   /** Assistant turns counted. Useful for sanity-checking the window. */
   lineCount: number;
@@ -90,16 +115,21 @@ async function aggregateWindow(startTs: number, endTs: number): Promise<UsageBre
 
 export interface UsageSummary {
   /**
-   * TOTAL input-side tokens: `input_tokens + cache_creation_input_tokens +
-   * cache_read_input_tokens`.
+   * Fresh input-side tokens the window actually spent:
+   * `input_tokens + cache_creation_input_tokens`.
    *
-   * ASSUMPTION (unverifiable from the transcript alone): Anthropic does not
-   * publish how the 5h subscription window is metered, so which of the three
-   * input counters it charges is a guess. The total is the conservative
-   * choice. `usageBreakdown()` returns the components separately.
+   * Deliberately EXCLUDES `cache_read_input_tokens` -- see the header of this
+   * file. Adding it in re-counts the same cached context once per turn and
+   * inflates a five-hour figure by ~35x.
    */
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Cached context re-read over the window. Real and worth showing -- it is
+   * the measure of how much cached context the fleet is re-reading -- but it
+   * is NOT additive with the other two. Never fold it into a total.
+   */
+  cacheReadTokens: number;
   /** Start of the window, epoch ms: always `now - 5h`. */
   sinceTs: number;
 }
@@ -107,10 +137,22 @@ export interface UsageSummary {
 export async function usageSummary(now: number = Date.now()): Promise<UsageSummary> {
   const b = await usageBreakdown(now);
   return {
-    inputTokens: b.inputTokens + b.cacheCreationInputTokens + b.cacheReadInputTokens,
+    inputTokens: freshInputTokens(b),
     outputTokens: b.outputTokens,
+    cacheReadTokens: b.cacheReadInputTokens,
     sinceTs: b.sinceTs,
   };
+}
+
+/**
+ * Input-side tokens a window actually spent. The single place this is
+ * computed, so the headline figure cannot drift between usageSummary,
+ * windowUsage and the burn rate.
+ */
+export function freshInputTokens(
+  totals: Pick<UsageBreakdown, 'inputTokens' | 'cacheCreationInputTokens'>,
+): number {
+  return totals.inputTokens + totals.cacheCreationInputTokens;
 }
 
 export async function usageBreakdown(now: number = Date.now()): Promise<UsageBreakdown> {
@@ -124,11 +166,14 @@ export async function usageBreakdown(now: number = Date.now()): Promise<UsageBre
 export interface WindowUsage {
   windowStart: number;
   windowEnd: number;
+  /** Fresh input-side tokens spent: input + cache_creation. No cache_read. */
   inputTokens: number;
   outputTokens: number;
+  /** Cached context re-read. Reported separately, never added to the others. */
+  cacheReadTokens: number;
   /** ms until windowEnd. */
   resetsInMs: number;
-  /** Tokens per hour over the window so far. */
+  /** Tokens actually spent per hour: (inputTokens + outputTokens) / hours. */
   burnRate: number;
 }
 
@@ -161,20 +206,25 @@ export async function windowUsage(
 
 /** Pure core of windowUsage, exported for testing. */
 export function deriveWindowUsage(
-  totals: Pick<UsageBreakdown, 'inputTokens' | 'outputTokens' | 'cacheCreationInputTokens' | 'cacheReadInputTokens' | 'oldestTs'>,
+  totals: Pick<
+    UsageBreakdown,
+    'inputTokens' | 'outputTokens' | 'cacheCreationInputTokens' | 'cacheReadInputTokens' | 'oldestTs'
+  >,
   span: number,
   now: number,
 ): WindowUsage {
-  const inputTokens =
-    totals.inputTokens + totals.cacheCreationInputTokens + totals.cacheReadInputTokens;
+  const inputTokens = freshInputTokens(totals);
   const outputTokens = totals.outputTokens;
+  const cacheReadTokens = totals.cacheReadInputTokens;
   const windowStart = now - span;
 
   const windowEnd = totals.oldestTs === null ? now : totals.oldestTs + span;
   const resetsInMs = Math.max(0, windowEnd - now);
 
   // Rate over the stretch activity actually covers, floored so a window that
-  // has barely started cannot report an absurd extrapolation.
+  // has barely started cannot report an absurd extrapolation. Built from the
+  // spent figures only -- a burn rate that counted cache_read would be
+  // inflated by the same factor the headline was.
   const elapsedMs =
     totals.oldestTs === null ? 0 : Math.max(now - totals.oldestTs, MIN_BURN_ELAPSED_MS);
   const burnRate = elapsedMs === 0 ? 0 : (inputTokens + outputTokens) / (elapsedMs / 3_600_000);
@@ -184,6 +234,7 @@ export function deriveWindowUsage(
     windowEnd,
     inputTokens,
     outputTokens,
+    cacheReadTokens,
     resetsInMs,
     burnRate,
   };
@@ -241,5 +292,12 @@ export function sumUsage(
   };
 }
 
-/** Context occupancy of a single turn. Re-exported for callers of this module. */
+/**
+ * Context occupancy of a single turn: input + cache_creation + cache_read.
+ *
+ * Re-exported for convenience, and deliberately NOT used anywhere in this
+ * file. It answers "how big was that prompt", not "what did the window
+ * spend" -- see the header. If you find yourself reaching for it here, you
+ * are about to reintroduce the 35x inflation bug.
+ */
 export { contextUsedFrom };

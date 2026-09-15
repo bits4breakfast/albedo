@@ -11,6 +11,135 @@
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
+   Theme tokens owned by this stylesheet.
+
+   These are the destructive-confirmation surfaces: the dirty-files warning,
+   the unmerged-commits notice and the force acknowledgement. They are where a
+   user is asked to agree to lose work, so they are treated as
+   information-carrying, not styling, and every value below was measured
+   against the ground it actually lands on in BOTH themes.
+
+   Two rules they encode:
+
+   1. The surfaces are OPAQUE, not low-alpha washes over whatever is behind
+      them. A wash makes the contrast a property of a ground owned by another
+      stylesheet, which is not a thing this file can audit or keep true. The
+      dark values are the exact composites the previous alpha versions
+      produced, so dark does not shift.
+   2. Amber (uncommitted changes) and red (unmerged commits) stay ~33 degrees
+      apart in hue in both themes. They are different losses with different
+      remedies -- keeping the branch saves the commits but not the working
+      tree -- and two warnings that converge on one colour would undo that.
+
+   Measured ratios, worst ground in each theme (dark / light):
+     dirty chip text on its surface      10.31 / 6.27   (need 4.5)
+     dirty chip border                    4.63 / 3.43   (need 3.0)
+     warn text on the worst app ground   10.02 / 6.26   (need 4.5)
+     unmerged notice text                 8.91 / 7.14   (need 4.5)
+     unmerged notice rule                 4.52 / 4.92   (need 3.0)
+     force-ack label, worst ground        8.94 / 6.74   (need 4.5)
+     danger button label                  8.91 / 7.14   (need 4.5)
+     danger button label on hover fill   11.30 / 9.02   (need 4.5)
+     clean chip text / border       7.00,4.76 / 5.88,3.68
+
+   Light is the default here because a token defined only inside a dark block
+   is UNDEFINED in light -- it renders as nothing rather than as wrong, which
+   is much harder to notice.
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* Modal scrim and lift. Both were a dark-ground assumption: 62% near-black
+     over a white page is a blackout, and a 55%-black shadow is a smudge. */
+  --wt-scrim: rgba(24, 28, 36, 0.32);
+  --wt-modal-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+
+  /* Amber: uncommitted changes. Lost whenever the worktree is removed. */
+  --wt-warn-surface: #fbe9c8;
+  --wt-warn-line: #a8730f;
+  --wt-warn-text: #7a4a00;
+  --wt-warn-row: #fbeacc;
+
+  /* Red: unmerged commits, and the acknowledgement itself. Lost only if the
+     branch is deleted too -- which is why it is a separate colour. */
+  --wt-danger-surface: #fdecea;
+  --wt-danger-line: #c0322b;
+  --wt-danger-text: #9b1c15;
+  --wt-danger-row: #fce4e1;
+  --wt-danger-hover-surface: #f8d7d4;
+  --wt-danger-hover-text: #6e0f0a;
+
+  /* Green: nothing at risk. */
+  --wt-clean-surface: #eaf7ee;
+  --wt-clean-line: #2f8f52;
+  --wt-clean-text: #186c36;
+
+  /* Text tiers for content sitting ON the tinted surfaces above.
+     These exist because the shell's type tokens are tuned against the shell's
+     grounds: in light, a token at exactly 4.5 on white measures 3.71-3.93 on
+     these tints, i.e. it fails. Owning the surface means owning the pair.
+     Worst case across all four tints: strong 13.63, body 11.09, muted 5.07. */
+  --wt-on-tint-strong: #1b1f26;
+  --wt-on-tint: #2b2f36;
+  --wt-on-tint-muted: #5a6270;
+}
+
+/* Dark overrides. The guard is what lets an explicit light choice win over a
+   system preference for dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --wt-scrim: rgba(5, 7, 9, 0.62);
+    --wt-modal-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+
+    --wt-warn-surface: #251d13;
+    --wt-warn-line: #ad7f2e;
+    --wt-warn-text: #f3c481;
+    --wt-warn-row: #171411;
+
+    --wt-danger-surface: #2c1d21;
+    --wt-danger-line: #e35b56;
+    --wt-danger-text: #f3b0ad;
+    --wt-danger-row: #251517;
+    --wt-danger-hover-surface: #432528;
+    --wt-danger-hover-text: #ffe3e1;
+
+    --wt-clean-surface: #0f2418;
+    --wt-clean-line: #459b63;
+    --wt-clean-text: #4cbf72;
+
+    /* Worst case across the four dark tints: 14.60 / 10.68 / 6.39. */
+    --wt-on-tint-strong: #f1f4f9;
+    --wt-on-tint: #ccd3de;
+    --wt-on-tint-muted: #9aa4b4;
+  }
+}
+
+/* Same values again for the explicit choice. */
+:root[data-theme='dark'] {
+  --wt-scrim: rgba(5, 7, 9, 0.62);
+  --wt-modal-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+
+  --wt-warn-surface: #251d13;
+  --wt-warn-line: #ad7f2e;
+  --wt-warn-text: #f3c481;
+  --wt-warn-row: #171411;
+
+  --wt-danger-surface: #2c1d21;
+  --wt-danger-line: #e35b56;
+  --wt-danger-text: #f3b0ad;
+  --wt-danger-row: #251517;
+  --wt-danger-hover-surface: #432528;
+  --wt-danger-hover-text: #ffe3e1;
+
+  --wt-clean-surface: #0f2418;
+  --wt-clean-line: #459b63;
+  --wt-clean-text: #4cbf72;
+
+  --wt-on-tint-strong: #f1f4f9;
+  --wt-on-tint: #ccd3de;
+  --wt-on-tint-muted: #9aa4b4;
+}
+
+/* --------------------------------------------------------------------------
    Modal shell
    -------------------------------------------------------------------------- */
 
@@ -22,7 +151,7 @@
   align-items: flex-start;
   justify-content: center;
   padding: 72px 24px 24px;
-  background: rgba(5, 7, 9, 0.62);
+  background: var(--wt-scrim);
   backdrop-filter: blur(2px);
 }
 
@@ -35,7 +164,7 @@
   background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--wt-modal-shadow);
   overflow: hidden;
 }
 
@@ -97,6 +226,26 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+.wt-textarea {
+  resize: vertical;
+  min-height: 42px;
+  line-height: 1.45;
+}
+
+.wt-label-optional {
+  margin-left: 6px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--faint);
+}
+
+.wt-chip[data-tone='issue'] {
+  color: var(--wt-clean-text);
+  border-color: var(--wt-clean-line);
+  background: var(--wt-clean-surface);
+  font-weight: 600;
 }
 
 .wt-input,
@@ -233,17 +382,17 @@
 
 .wt-error {
   margin-top: 12px;
-  border: 1px solid var(--del);
+  border: 1px solid var(--wt-danger-line);
   border-left-width: 2px;
   border-radius: var(--radius);
-  background: var(--del-soft);
+  background: var(--wt-danger-surface);
 }
 
 .wt-error-head {
   padding: 6px 10px;
   font-size: var(--fs-sm);
   font-weight: 600;
-  color: var(--text-strong);
+  color: var(--wt-on-tint-strong);
 }
 
 .wt-error-body {
@@ -254,7 +403,7 @@
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   line-height: 1.5;
-  color: var(--text);
+  color: var(--wt-on-tint);
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
@@ -270,15 +419,15 @@
   margin-top: 12px;
   padding: 8px 10px;
   font-size: var(--fs-sm);
-  color: var(--text);
-  background: var(--panel-inset);
-  border: 1px solid var(--border);
-  border-left: 2px solid var(--warn);
+  color: var(--wt-on-tint);
+  background: var(--wt-warn-surface);
+  border: 1px solid var(--wt-warn-line);
+  border-left-width: 2px;
   border-radius: var(--radius);
 }
 
 .wt-notice strong {
-  color: var(--text-strong);
+  color: var(--wt-on-tint-strong);
   font-weight: 600;
 }
 
@@ -289,13 +438,14 @@
    root in the projects dialog. */
 .wt-notice[data-tone='unmerged'],
 .wt-notice[data-tone='error'] {
-  border-left-color: var(--danger);
-  background: var(--del-soft);
+  border-left-color: var(--wt-danger-line);
+  background: var(--wt-danger-surface);
+  color: var(--wt-danger-text);
 }
 
 .wt-notice[data-tone='unmerged'] strong,
 .wt-notice[data-tone='error'] strong {
-  color: #f3b0ad;
+  color: var(--wt-danger-text);
 }
 
 /* --------------------------------------------------------------------------
@@ -340,15 +490,37 @@
 }
 
 .wt-item[data-dirty='true'] {
-  border-color: var(--warn);
+  border-color: var(--wt-warn-line);
   border-left-width: 2px;
-  background: rgba(240, 163, 58, 0.06);
+  background: var(--wt-warn-row);
 }
 
 .wt-item[data-confirming='true'] {
-  border-color: var(--danger);
+  border-color: var(--wt-danger-line);
   border-left-width: 2px;
-  background: var(--del-soft);
+  background: var(--wt-danger-row);
+}
+
+/* A tinted row is our ground, so the type tiers on it are ours too -- the
+   shell's are tuned against the shell's surfaces and lose ~15% on these in
+   light, which is the difference between passing and failing. */
+.wt-item[data-dirty='true'],
+.wt-item[data-confirming='true'] {
+  color: var(--wt-on-tint);
+}
+
+.wt-item[data-dirty='true'] .wt-item-path,
+.wt-item[data-confirming='true'] .wt-item-path,
+.wt-item[data-dirty='true'] .wt-confirm-title,
+.wt-item[data-confirming='true'] .wt-confirm-title {
+  color: var(--wt-on-tint-strong);
+}
+
+.wt-item[data-dirty='true'] .wt-item-meta,
+.wt-item[data-confirming='true'] .wt-item-meta,
+.wt-item[data-dirty='true'] .wt-item-reason,
+.wt-item[data-confirming='true'] .wt-item-reason {
+  color: var(--wt-on-tint-muted);
 }
 
 .wt-item-top {
@@ -388,15 +560,21 @@
 }
 
 .wt-chip[data-tone='dirty'] {
-  color: #f3c481;
-  border-color: rgba(240, 163, 58, 0.45);
-  background: rgba(240, 163, 58, 0.12);
+  color: var(--wt-warn-text);
+  border-color: var(--wt-warn-line);
+  background: var(--wt-warn-surface);
 }
 
 .wt-chip[data-tone='clean'] {
-  color: var(--add);
-  border-color: rgba(76, 191, 114, 0.35);
-  background: var(--add-soft);
+  color: var(--wt-clean-text);
+  border-color: var(--wt-clean-line);
+  background: var(--wt-clean-surface);
+}
+
+.wt-chip[data-tone='new'] {
+  color: var(--wt-clean-text);
+  border-color: var(--wt-clean-line);
+  background: var(--wt-clean-surface);
 }
 
 .wt-chip[data-tone='locked'] {
@@ -445,6 +623,51 @@
   white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* --- "it worked" -----------------------------------------------------------
+   Creating a project is never the goal, so the confirmation doubles as the
+   handoff to the next step. Uses the audited clean family: text 7.00 dark /
+   5.88 light on its surface, border 4.76 / 3.68. */
+
+.wt-landed {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--wt-clean-line);
+  border-left-width: 2px;
+  border-radius: var(--radius);
+  background: var(--wt-clean-surface);
+  color: var(--wt-on-tint);
+}
+
+.wt-landed-head {
+  font-size: var(--fs-md);
+  color: var(--wt-on-tint-strong);
+}
+
+.wt-landed-head strong {
+  color: var(--wt-clean-text);
+  font-weight: 600;
+}
+
+.wt-landed-detail {
+  margin-top: 3px;
+  font-size: var(--fs-sm);
+  color: var(--wt-on-tint-muted);
+}
+
+.wt-item[data-new='true'] {
+  border-color: var(--wt-clean-line);
+  border-left-width: 2px;
+  background: var(--wt-clean-surface);
+}
+
+.wt-item[data-new='true'] .wt-item-path {
+  color: var(--wt-on-tint-strong);
+}
+
+.wt-item[data-new='true'] .wt-item-meta {
+  color: var(--wt-on-tint-muted);
 }
 
 /* --- the archive choice --------------------------------------------------- */
@@ -508,11 +731,11 @@
 
 .wt-check input {
   margin: 2px 0 0;
-  accent-color: var(--danger);
+  accent-color: var(--wt-danger-line);
 }
 
 .wt-check[data-tone='danger'] {
-  color: #f3b0ad;
+  color: var(--wt-danger-text);
 }
 
 .wt-confirm-actions {
@@ -522,14 +745,14 @@
 }
 
 .wt-btn-danger {
-  background: var(--del-soft);
-  border-color: var(--del);
-  color: #f3b0ad;
+  background: var(--wt-danger-surface);
+  border-color: var(--wt-danger-line);
+  color: var(--wt-danger-text);
 }
 
 .wt-btn-danger:hover:not([disabled]) {
-  background: rgba(227, 91, 86, 0.24);
-  color: #ffe3e1;
+  background: var(--wt-danger-hover-surface);
+  color: var(--wt-danger-hover-text);
 }
 
 .wt-btn-danger[disabled] {

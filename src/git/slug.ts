@@ -8,6 +8,8 @@
  * Owner: worktree workstream (M3).
  */
 
+import { parseIssueKey } from '../lib/issueKey';
+
 /** Slugs are capped so that `~/agents/<repo>/<slug>` stays comfortably short. */
 export const MAX_SLUG_LENGTH = 40;
 
@@ -128,4 +130,71 @@ export function assertValidRefName(name: string, what = 'branch'): void {
   if (!isValidRefName(name)) {
     throw new Error(`Invalid ${what} name: ${JSON.stringify(name)}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Task naming
+// ---------------------------------------------------------------------------
+
+/** Everything a title determines. One function so the pieces cannot drift. */
+export interface TaskNaming {
+  /** Tracker key, when the title starts with one. */
+  key: string | null;
+  /** Slug of the title (or of the part after the key). Always safe. */
+  slug: string;
+  /** Branch to cut: `UP-2398`, `UP-2398-followup`, or a plain slug. */
+  branch: string;
+  /** Directory name under the project worktree root. */
+  dirName: string;
+}
+
+/**
+ * Derive the branch and worktree directory from a task title.
+ *
+ * With a tracker key the key leads, because that is what the user is actually
+ * working on and what every other tool on their machine keys off:
+ *
+ *   `UP-2398`                 -> branch UP-2398            dir UP-2398
+ *   `UP-2398 followup`        -> branch UP-2398-followup   dir UP-2398
+ *   `UP-2398: fix the loop`   -> branch UP-2398-fix-the-loop
+ *   `Fix the login loop`      -> branch fix-the-login-loop dir fix-the-login-loop
+ *
+ * This reproduces the branches already on the user's machine rather than
+ * inventing a scheme next to them.
+ *
+ * The directory is the **bare key** on purpose: one worktree per issue. Two
+ * tasks naming the same issue therefore collide on the path, which
+ * `createWorktree` refuses with a clear message -- the right answer, since two
+ * checkouts of one issue is nearly always a mistake.
+ *
+ * Branch and directory are returned together, and both are validated here, so
+ * there is no path where a branch is legal and the directory it pairs with is
+ * not.
+ */
+export function nameTask(title: string, opts: SlugifyOptions = {}): TaskNaming {
+  const ref = parseIssueKey(title);
+
+  if (ref === null) {
+    const slug = slugify(title, opts);
+    return { key: null, slug, branch: branchNameFor(slug), dirName: slug };
+  }
+
+  // The key is already `[A-Z]{2,10}-[A-Z0-9]{1,20}`, so it is a legal ref name
+  // and a legal path segment without further work -- but assert rather than
+  // assume, because this is the one value that did not come out of slugify().
+  assertValidRefName(ref.key, 'issue key');
+
+  if (ref.rest.length === 0) {
+    return { key: ref.key, slug: ref.key, branch: ref.key, dirName: ref.key };
+  }
+
+  const restSlug = slugify(ref.rest, opts);
+  // `slugify` never returns empty -- it falls back to `task-<timestamp>` -- so
+  // guard against that fallback landing in a branch name that already has a
+  // perfectly good key in it.
+  const meaningful = /^task-\d+$/.test(restSlug) ? '' : restSlug;
+  const branch = meaningful ? `${ref.key}-${meaningful}` : ref.key;
+  assertValidRefName(branch, 'branch');
+
+  return { key: ref.key, slug: meaningful || ref.key, branch, dirName: ref.key };
 }
