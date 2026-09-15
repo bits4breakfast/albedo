@@ -7,6 +7,7 @@ import EmptyState from './EmptyState';
 import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
 import type { AttentionKind } from './attention';
+import { useShortcuts } from './shortcuts';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -206,27 +207,25 @@ export default function TaskList({
   const onNewRef = useRef(onNew);
   onNewRef.current = onNew;
 
-  // Global shortcuts: ⌘1..9 jumps, ⌘N creates. Arrow keys are handled on the
-  // list itself so they don't fight the terminal for the keyboard.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-      if (e.key === 'n' || e.key === 'N') {
-        e.preventDefault();
-        onNewRef.current();
-        return;
-      }
-      if (e.key >= '1' && e.key <= '9') {
-        const index = Number(e.key) - 1;
-        const task = orderedRef.current[index];
-        if (!task) return;
-        e.preventDefault();
-        onSelectRef.current(task.id);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
+  /*
+   * The list owns the shortcuts that depend on ITS ordering. `ordered` is the
+   * grouped, blocked-first sequence the user actually sees, so ⌘3 and ⌘] have
+   * to be resolved here -- App's `visibleTasks` is in a different order, and
+   * jumping to a different task than the one numbered 3 on screen is worse
+   * than having no shortcut.
+   *
+   * Bare arrow keys stay on the list element itself (see `onKeyDown`) so they
+   * do not fight the terminal for the keyboard.
+   */
+  useShortcuts({
+    'mod+n': () => onNewRef.current(),
+    'mod+digit': (_e, digit) => {
+      const task = orderedRef.current[(digit ?? 1) - 1];
+      if (task) onSelectRef.current(task.id);
+    },
+    'mod+[': () => step(-1),
+    'mod+]': () => step(1),
+  });
 
   // Keep the selected row in view when selection moves from elsewhere.
   useEffect(() => {
@@ -234,6 +233,20 @@ export default function TaskList({
     const el = scrollRef.current?.querySelector<HTMLElement>(`[data-task-id="${selectedId}"]`);
     el?.scrollIntoView({ block: 'nearest' });
   }, [selectedId]);
+
+  /*
+   * Shared by ⌘[ / ⌘] and by the bare arrow keys. Reads through refs because
+   * the shortcut handler is registered once and must not close over a stale
+   * list -- the same reason `move` below takes its list from `orderedRef`.
+   */
+  const step = (delta: number) => {
+    const list = orderedRef.current;
+    if (list.length === 0) return;
+    const current = list.findIndex((t) => t.id === selectedRef.current);
+    const next = current === -1 ? (delta > 0 ? 0 : list.length - 1) : current + delta;
+    const task = list[Math.min(list.length - 1, Math.max(0, next))];
+    if (task) onSelectRef.current(task.id);
+  };
 
   const move = (delta: number) => {
     const list = orderedRef.current;

@@ -1658,8 +1658,11 @@ button {
 
 .pane-head-pin {
   flex: 0 0 auto;
-  width: 20px;
+  /* Was a 20px square holding one glyph. It carries a word now, so it sizes
+     to the word -- see the comment at the call site for why. */
   height: 20px;
+  padding: 0 5px;
+  white-space: nowrap;
   font-size: 11px;
   line-height: 1;
   color: var(--faint);
