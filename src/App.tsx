@@ -6,6 +6,7 @@ import type { ThemeChoice } from './ui/theme';
 import useTasks from './ui/useTasks';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
+import Subagents from './ui/Subagents';
 import { attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import { useShortcuts } from './ui/shortcuts';
 import StatusDot from './ui/StatusDot';
@@ -1389,6 +1390,12 @@ export default function App() {
                   buffer survive a tab flip; only the task identity resets them. */}
               <div className="pane-body">
                 <div className="tabpanel" hidden={activeTab !== 'transcript'}>
+                  {/* Above the transcript, and only while something is live:
+                      when a session fans out the transcript itself goes quiet,
+                      which is exactly when you need to know what is running. */}
+                  <PaneErrorBoundary key={`sa-${selected?.id ?? 'none'}`} label="Subagents">
+                    <Subagents sessionId={selected?.sessionId ?? null} />
+                  </PaneErrorBoundary>
                   <PaneErrorBoundary key={`tx-${selected?.id ?? 'none'}`} label="Transcript">
                     <TranscriptPane
                       taskId={selected?.id ?? null}
