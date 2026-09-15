@@ -208,6 +208,77 @@ export function extractUsage(rawJson: string): LineUsage | null {
 }
 
 /**
+ * JSON paths to the token counters that together make up the tokens occupying
+ * the context window on a turn.
+ *
+ * All three, not just `input_tokens`. Under prompt caching `input_tokens` is
+ * typically a handful of tokens -- a real sample from a session holding ~198k
+ * of context read `{input_tokens: 2, cache_read_input_tokens: 186919,
+ * cache_creation_input_tokens: 10889}`. Using `input_tokens` alone would
+ * report an essentially empty context on a nearly full session, which is the
+ * obvious wrong implementation of this metric.
+ */
+export const USAGE_JSON_PATHS = {
+  inputTokens: '$.message.usage.input_tokens',
+  cacheReadInputTokens: '$.message.usage.cache_read_input_tokens',
+  cacheCreationInputTokens: '$.message.usage.cache_creation_input_tokens',
+  outputTokens: '$.message.usage.output_tokens',
+} as const;
+
+export type UsageField = keyof typeof USAGE_JSON_PATHS;
+
+/** The three counters that together occupy the context window. */
+export const CONTEXT_USAGE_FIELDS: readonly UsageField[] = [
+  'inputTokens',
+  'cacheReadInputTokens',
+  'cacheCreationInputTokens',
+];
+
+export const CONTEXT_USAGE_JSON_PATHS: readonly string[] = CONTEXT_USAGE_FIELDS.map(
+  (f) => USAGE_JSON_PATHS[f],
+);
+
+/**
+ * SQLite expression reading one usage counter out of a raw_json column, 0 when
+ * absent. Single source of truth with extractUsage(): both read
+ * USAGE_JSON_PATHS, so a transcript change moves them together.
+ */
+export function usageSqlExpr(field: UsageField, column = 'raw_json'): string {
+  return `COALESCE(json_extract(${column}, '${USAGE_JSON_PATHS[field]}'), 0)`;
+}
+
+/** JSON path that exists on exactly the lines carrying a usage record. */
+export const USAGE_PRESENCE_JSON_PATH = '$.message.usage';
+
+/**
+ * SQLite expression summing CONTEXT_USAGE_JSON_PATHS out of a raw_json column.
+ *
+ * It exists so an aggregate like "peak context across a session" runs in the
+ * database instead of shipping every raw line over the IPC bridge to be
+ * parsed. It encodes the same fields `extractUsage()` reads, and lives here
+ * for the same reason everything else format-shaped does: when the transcript
+ * changes, this file is the only one that has to.
+ */
+export function contextUsedSqlExpr(column = 'raw_json'): string {
+  return CONTEXT_USAGE_FIELDS.map((field) => usageSqlExpr(field, column)).join(' + ');
+}
+
+/** Tokens occupying the context window on the turn this usage record describes. */
+export function contextUsedFrom(usage: LineUsage): number {
+  return usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens;
+}
+
+/** `message.model` off an assistant line, or null. */
+export function modelOf(rawJson: string): string | null {
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'assistant') return null;
+  const message = line['message'];
+  if (!isRecord(message)) return null;
+  const model = message['model'];
+  return typeof model === 'string' && model.length > 0 ? model : null;
+}
+
+/**
  * `message.stop_reason` off an assistant line, or null.
  *
  * This is how the transcript says the model HANDED CONTROL BACK rather than

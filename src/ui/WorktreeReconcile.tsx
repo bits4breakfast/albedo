@@ -19,9 +19,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { listTasks } from '../db';
-import { type OrphanInfo, findOrphans } from '../git/reconcile';
+import { type OrphanInfo, findOrphans, pathKey } from '../git/reconcile';
 import {
   GitError,
+  type WorkAtRisk,
+  ackLabel,
+  assessLoss,
   listBranches,
   removeWorktree,
   uncommittedChanges,
@@ -48,35 +51,13 @@ interface Row extends OrphanInfo {
   aheadError: string | null;
 }
 
-/**
- * What removing this row would destroy. `unknown` is deliberately treated the
- * same as "there is something to lose": if we could not check, the user still
- * has to acknowledge before anything is deleted.
- */
-function lossOf(row: Row): { dirty: boolean; unmerged: boolean; unknown: boolean; needsAck: boolean } {
-  const dirty = row.dirty === true;
-  const unmerged = row.ahead !== null && row.ahead > 0;
-  const unknown = row.dirtyError !== null || row.aheadError !== null;
-  return { dirty, unmerged, unknown, needsAck: dirty || unmerged || unknown };
-}
-
-/** The sentence the user has to tick, naming every count explicitly. */
-function ackLabel(row: Row): string {
-  const { dirty, unmerged, unknown } = lossOf(row);
-  const parts: string[] = [];
-  if (dirty) parts.push(`${row.files.length} uncommitted change(s)`);
-  if (unmerged) {
-    parts.push(`${row.ahead} commit(s) not merged into ${row.aheadBase ?? 'the base branch'}`);
-  }
-  if (parts.length === 0) {
-    return unknown
-      ? 'I understand Albedo could not verify what is in this worktree, and that removing it may destroy work.'
-      : 'I understand this worktree will be removed.';
-  }
-  const list = parts.join(' and ');
-  return unknown
-    ? `I understand ${list} will be permanently lost, and that some of this worktree could not be checked.`
-    : `I understand ${list} will be permanently lost.`;
+/** Project a row onto the shared {@link WorkAtRisk} shape. */
+function riskOf(row: Row): WorkAtRisk {
+  return {
+    files: row.dirtyError !== null || row.dirty === null ? null : row.files,
+    ahead: row.ahead,
+    aheadBase: row.aheadBase,
+  };
 }
 
 interface ConfirmState {
@@ -108,13 +89,28 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
     setLoadError(null);
     setConfirm(null);
     try {
-      // Archived tasks count as "known": their worktrees may still exist and
-      // reporting them as orphans would be a lie.
+      // Every task is "known" so that a live worktree is never misreported --
+      // except archived ones, which are handed over as reclaimable. Archiving
+      // is the user saying they are done with the worktree, so if it is still
+      // on disk (they chose "archive only", or removal failed) this view is
+      // where they get to finish the job. Without this the row keeps the path
+      // known forever and the worktree is unreachable from the UI.
       const tasks = await listTasks({ includeArchived: true });
       const repoPaths = [...new Set(tasks.map((t) => t.repoPath).filter(Boolean))];
       const knownPaths = tasks.map((t) => t.worktreePath).filter(Boolean);
+      const reclaimablePaths = tasks
+        .filter((t) => t.status === 'archived')
+        .map((t) => t.worktreePath)
+        .filter(Boolean);
 
-      const found = await findOrphans(repoPaths, knownPaths);
+      // An archived task knows the branch it was cut from; prefer that over
+      // the repo's current branch when comparing for unmerged commits.
+      const recordedBase = new Map<string, string>();
+      for (const t of tasks) {
+        if (t.worktreePath && t.baseBranch) recordedBase.set(pathKey(t.worktreePath), t.baseBranch);
+      }
+
+      const found = await findOrphans(repoPaths, knownPaths, reclaimablePaths);
       const initial: Row[] = found.map((o) => ({
         ...o,
         dirty: null,
@@ -156,7 +152,8 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
           patch = { dirty: null, files: [], dirtyError: messageOf(e) };
         }
 
-        const base = o.repoPath ? await baseFor(o.repoPath) : null;
+        const base =
+          recordedBase.get(pathKey(o.path)) ?? (o.repoPath ? await baseFor(o.repoPath) : null);
         if (base === null) {
           patch.aheadError = 'No base branch to compare against, so unmerged commits are unknown.';
         } else {
@@ -235,15 +232,22 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
   const renderRow = (row: Row) => {
     const confirming = confirm?.path === row.path;
     const removable = row.classification === 'orphan' && row.repoPath !== null;
-    const loss = lossOf(row);
+    const risk = riskOf(row);
+    // The chips describe the worst case (branch deleted too); the confirmation
+    // below re-assesses against what the user has actually ticked, so keeping
+    // the branch correctly stops warning about unmerged commits.
+    const summary = assessLoss(risk, { deleteBranch: true });
+    const loss =
+      confirming && confirm ? assessLoss(risk, { deleteBranch: confirm.deleteBranch }) : summary;
     const dirty = loss.dirty;
+    const hasUnmerged = row.ahead !== null && row.ahead > 0;
 
     return (
       <div
         key={row.path}
         className="wt-item"
         data-class={row.classification}
-        data-dirty={loss.needsAck && !confirming}
+        data-dirty={summary.needsAck && !confirming}
         data-confirming={confirming}
       >
         <div className="wt-item-top">
@@ -285,7 +289,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
             </span>
           )}
           {row.dirtyError && <span className="wt-chip">status unreadable</span>}
-          {loss.unmerged && (
+          {hasUnmerged && (
             <span className="wt-chip" data-tone="dirty">
               {row.ahead} unmerged
             </span>
@@ -347,7 +351,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
               </div>
             )}
 
-            {row.aheadError && (
+            {row.aheadError && confirm.deleteBranch && (
               <div className="wt-notice">
                 Could not work out whether this worktree has unmerged commits, so there may be
                 committed work here that exists nowhere else.
@@ -390,7 +394,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
                   disabled={confirm.busy}
                   onChange={(e) => setConfirm({ ...confirm, ack: e.target.checked })}
                 />
-                <span>{ackLabel(row)}</span>
+                <span>{ackLabel(risk, { deleteBranch: confirm.deleteBranch })}</span>
               </label>
             )}
 

@@ -11,6 +11,12 @@
 
 import Database from '@tauri-apps/plugin-sql';
 import type { Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
+import {
+  contextUsedSqlExpr,
+  SEQ_STRIDE,
+  usageSqlExpr,
+  USAGE_PRESENCE_JSON_PATH,
+} from '../capture/adapter';
 
 const DB_URL = 'sqlite:albedo.db';
 
@@ -668,16 +674,18 @@ export async function upsertTranscriptFile(
  * tool calls carries usage too — querying `role = 'assistant'` alone would
  * undercount. De-duplication per line is the caller's job (see usage.ts).
  */
-export async function getAssistantRowsSince(sinceTs: number): Promise<
-  Pick<Message, 'sessionId' | 'seq' | 'rawJson' | 'ts'>[]
-> {
+export async function getAssistantRowsSince(
+  sinceTs: number,
+  untilTs?: number,
+): Promise<Pick<Message, 'sessionId' | 'seq' | 'rawJson' | 'ts'>[]> {
   const db = await getDb();
   const rows = await db.select<Pick<MessageRow, 'session_id' | 'seq' | 'raw_json' | 'ts'>[]>(
     `SELECT session_id, seq, raw_json, ts
        FROM messages
-      WHERE ts >= $1 AND role IN ('assistant', 'tool_use')
+      WHERE ts >= $1 ${untilTs === undefined ? '' : 'AND ts <= $2'}
+        AND role IN ('assistant', 'tool_use')
       ORDER BY ts ASC`,
-    [sinceTs],
+    untilTs === undefined ? [sinceTs] : [sinceTs, untilTs],
   );
   return rows.map((r) => ({
     sessionId: r.session_id,
@@ -685,4 +693,204 @@ export async function getAssistantRowsSince(sinceTs: number): Promise<
     rawJson: r.raw_json,
     ts: r.ts,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Per-session context window
+// ---------------------------------------------------------------------------
+
+/**
+ * Sessions per IN(...) clause. The ids are bound twice (peak subquery and
+ * outer filter), so this stays well inside MAX_BIND_PARAMS.
+ */
+const CONTEXT_SESSION_CHUNK = 400;
+
+export interface SessionContextRow {
+  sessionId: string;
+  /** Highest context occupancy seen anywhere in the session. */
+  peakUsed: number;
+  /** raw_json of the newest line carrying a usage record. */
+  latestRawJson: string | null;
+  latestTs: number | null;
+}
+
+/**
+ * Peak and latest context occupancy for many sessions in ONE query per chunk,
+ * not one per session -- the task list calls this on every refresh.
+ *
+ * The summing happens in SQLite rather than in TypeScript on purpose: the
+ * alternative is shipping every assistant line's raw_json across the IPC
+ * bridge just to pick a denominator, which for a long session is megabytes.
+ *
+ * Note the outer query has exactly one aggregate, MAX(m.seq); SQLite then
+ * guarantees the bare `m.ts` / `m.raw_json` columns come from the row that
+ * produced that maximum. That guarantee is why peak is computed in a
+ * subquery instead of as a second aggregate alongside it.
+ */
+export async function getSessionContextRows(
+  sessionIds: string[],
+): Promise<SessionContextRow[]> {
+  if (sessionIds.length === 0) return [];
+  const db = await getDb();
+  const usedExpr = contextUsedSqlExpr('raw_json');
+  const out: SessionContextRow[] = [];
+
+  for (let start = 0; start < sessionIds.length; start += CONTEXT_SESSION_CHUNK) {
+    const chunk = sessionIds.slice(start, start + CONTEXT_SESSION_CHUNK);
+    const inner = chunk.map((_, i) => `$${i + 1}`).join(', ');
+    const outer = chunk.map((_, i) => `$${chunk.length + i + 1}`).join(', ');
+    const rows = await db.select<
+      {
+        session_id: string;
+        latest_ts: number | null;
+        latest_raw: string | null;
+        peak_used: number | null;
+      }[]
+    >(
+      `SELECT m.session_id AS session_id,
+              MAX(m.seq)   AS latest_seq,
+              m.ts         AS latest_ts,
+              m.raw_json   AS latest_raw,
+              p.peak_used  AS peak_used
+         FROM messages m
+         JOIN (
+            SELECT session_id, MAX(${usedExpr}) AS peak_used
+              FROM messages
+             WHERE session_id IN (${inner}) AND role IN ('assistant', 'tool_use')
+             GROUP BY session_id
+         ) p ON p.session_id = m.session_id
+        WHERE m.session_id IN (${outer})
+          AND m.role IN ('assistant', 'tool_use')
+          AND json_extract(m.raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
+        GROUP BY m.session_id`,
+      [...chunk, ...chunk],
+    );
+    for (const r of rows) {
+      out.push({
+        sessionId: r.session_id,
+        peakUsed: r.peak_used ?? 0,
+        latestRawJson: r.latest_raw,
+        latestTs: r.latest_ts,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Fallback source for context derivation: the raw assistant rows themselves.
+ *
+ * Used when getSessionContextRows fails, which in practice means a SQLite
+ * build without the JSON1 functions. Costs far more bandwidth, so it is not
+ * the primary path, but it keeps the feature working rather than blanking it.
+ */
+export async function getSessionUsageRows(
+  sessionIds: string[],
+): Promise<Pick<Message, 'sessionId' | 'seq' | 'rawJson' | 'ts'>[]> {
+  if (sessionIds.length === 0) return [];
+  const out: Pick<Message, 'sessionId' | 'seq' | 'rawJson' | 'ts'>[] = [];
+  const db = await getDb();
+
+  for (let start = 0; start < sessionIds.length; start += CONTEXT_SESSION_CHUNK) {
+    const chunk = sessionIds.slice(start, start + CONTEXT_SESSION_CHUNK);
+    const slots = chunk.map((_, i) => `$${i + 1}`).join(', ');
+    const rows = await db.select<
+      Pick<MessageRow, 'session_id' | 'seq' | 'raw_json' | 'ts'>[]
+    >(
+      `SELECT session_id, seq, raw_json, ts
+         FROM messages
+        WHERE session_id IN (${slots}) AND role IN ('assistant', 'tool_use')
+        ORDER BY session_id ASC, seq ASC`,
+      chunk,
+    );
+    for (const r of rows) {
+      out.push({ sessionId: r.session_id, seq: r.seq, rawJson: r.raw_json, ts: r.ts });
+    }
+  }
+  return out;
+}
+
+/**
+ * Token totals over a time window, across ALL sessions -- the subscription
+ * quota is account-wide, which is the entire reason the header exists.
+ *
+ * Aggregated in SQLite, and de-duplicated per LINE inside the query: usage
+ * belongs to the JSONL line, but a line expands into several rows sharing one
+ * raw_json, so the inner GROUP BY collapses them by (session_id, line index)
+ * before anything is summed. Without it a turn that emitted thinking, text and
+ * two tool calls would be billed four times.
+ */
+export interface WindowUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  /** Assistant turns counted. */
+  lineCount: number;
+  /** ts of the oldest counted turn, or null when the window is empty. */
+  oldestTs: number | null;
+}
+
+export async function getWindowUsageTotals(
+  startTs: number,
+  endTs: number,
+): Promise<WindowUsageTotals> {
+  const db = await getDb();
+  const rows = await db.select<
+    {
+      input_tokens: number | null;
+      output_tokens: number | null;
+      cache_creation_input_tokens: number | null;
+      cache_read_input_tokens: number | null;
+      line_count: number | null;
+      oldest_ts: number | null;
+    }[]
+  >(
+    `SELECT COALESCE(SUM(in_t), 0)     AS input_tokens,
+            COALESCE(SUM(out_t), 0)    AS output_tokens,
+            COALESCE(SUM(cc_t), 0)     AS cache_creation_input_tokens,
+            COALESCE(SUM(cr_t), 0)     AS cache_read_input_tokens,
+            COUNT(*)                   AS line_count,
+            MIN(line_ts)               AS oldest_ts
+       FROM (
+         SELECT MAX(${usageSqlExpr('inputTokens')})             AS in_t,
+                MAX(${usageSqlExpr('outputTokens')})            AS out_t,
+                MAX(${usageSqlExpr('cacheCreationInputTokens')}) AS cc_t,
+                MAX(${usageSqlExpr('cacheReadInputTokens')})     AS cr_t,
+                MIN(ts) AS line_ts
+           FROM messages
+          WHERE ts >= $1 AND ts <= $2
+            AND role IN ('assistant', 'tool_use')
+            AND json_extract(raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
+          GROUP BY session_id, seq / ${SEQ_STRIDE}
+       )`,
+    [startTs, endTs],
+  );
+  const r = rows[0];
+  return {
+    inputTokens: r?.input_tokens ?? 0,
+    outputTokens: r?.output_tokens ?? 0,
+    cacheCreationInputTokens: r?.cache_creation_input_tokens ?? 0,
+    cacheReadInputTokens: r?.cache_read_input_tokens ?? 0,
+    lineCount: r?.line_count ?? 0,
+    oldestTs: r?.oldest_ts ?? null,
+  };
+}
+
+/**
+ * Total characters of stored `body` text for a session.
+ *
+ * Basis for the conversation-size ESTIMATE in contextBands(). Note `body` is a
+ * projection truncated at BODY_MAX_CHARS per row, so for sessions with very
+ * large tool results this undercounts -- which is one more reason the band is
+ * labelled estimated.
+ */
+export async function getSessionBodyChars(sessionId: string): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select<{ chars: number | null }[]>(
+    `SELECT COALESCE(SUM(LENGTH(body)), 0) AS chars
+       FROM messages WHERE session_id = $1 AND body IS NOT NULL`,
+    [sessionId],
+  );
+  return rows[0]?.chars ?? 0;
 }

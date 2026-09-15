@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import type { Task, TaskStatus } from '../types';
-import StatusDot from './StatusDot';
+import StatusDot, { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
+import type { ContextUsage } from '../capture';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -14,9 +15,24 @@ export interface TaskListProps {
   selectedId: number | null;
   onSelect: (id: number) => void;
   onNew: () => void;
+  /**
+   * Opens the archive confirmation for a task. Optional so the frozen
+   * four-prop signature still type-checks; when absent the affordance is
+   * simply not rendered.
+   */
+  onArchive?: (task: Task) => void;
+  /** Context-window usage keyed by sessionId, fetched once for the whole list. */
+  contextBySession?: Map<string, ContextUsage>;
 }
 
 type GroupKey = 'blocked' | 'active' | 'quiet' | 'archived';
+
+/** Row context menu. Destructive actions live here, never on the row itself. */
+interface RowMenu {
+  task: Task;
+  x: number;
+  y: number;
+}
 
 const GROUP_ORDER: GroupKey[] = ['blocked', 'active', 'quiet', 'archived'];
 
@@ -54,15 +70,53 @@ function basename(path: string): string {
   return parts.length ? (parts[parts.length - 1] as string) : path;
 }
 
-export default function TaskList({ tasks, selectedId, onSelect, onNew }: TaskListProps) {
+export default function TaskList({
+  tasks,
+  selectedId,
+  onSelect,
+  onNew,
+  onArchive,
+  contextBySession,
+}: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
+  const [menu, setMenu] = useState<RowMenu | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Ages only need to be roughly right.
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(id);
   }, []);
+
+  // Dismiss the row menu on anything that moves the world under it.
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    // Capture-phase, so it beats anything else — but a press inside the menu
+    // must survive long enough for the item's own click to land.
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('blur', close);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', onKey);
+    const scroller = scrollRef.current;
+    scroller?.addEventListener('scroll', close);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('blur', close);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', onKey);
+      scroller?.removeEventListener('scroll', close);
+    };
+  }, [menu]);
 
   const groups = useMemo(() => {
     const buckets = new Map<GroupKey, Task[]>();
@@ -138,6 +192,17 @@ export default function TaskList({ tasks, selectedId, onSelect, onNew }: TaskLis
     }
   };
 
+  /**
+   * Destructive actions are deliberately two-step: they are never a click
+   * adjacent to the selection target. Reachable from the hover control or a
+   * right-click anywhere on the row.
+   */
+  const openMenu = (e: ReactMouseEvent<HTMLElement>, task: Task) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ task, x: e.clientX, y: e.clientY });
+  };
+
   const blockedCount = tasks.filter((t) => t.status === 'blocked').length;
   const liveCount = tasks.filter((t) => t.status !== 'archived').length;
 
@@ -171,16 +236,24 @@ export default function TaskList({ tasks, selectedId, onSelect, onNew }: TaskLis
             </div>
             {group.tasks.map((task) => {
               const index = ordered.indexOf(task);
+              const ctx = task.sessionId ? contextBySession?.get(task.sessionId) : undefined;
+              const ctxLevel = ctx ? contextLevel(ctx.fraction) : null;
+              // Quiet sessions say nothing. The number appears only once it is
+              // worth reading, which is what keeps it unobtrusive.
+              const ctxText = ctx && ctxLevel !== 'quiet' ? contextReadout(ctx) : null;
               return (
-                <button
+                <div
                   key={task.id}
                   className="task-row"
                   data-task-id={task.id}
                   data-selected={task.id === selectedId}
                   data-status={task.status}
+                  data-menu-open={menu?.task.id === task.id}
                   role="option"
+                  tabIndex={-1}
                   aria-selected={task.id === selectedId}
                   onClick={() => onSelect(task.id)}
+                  onContextMenu={(e) => openMenu(e, task)}
                   title={`${task.title}\n${task.repoPath}\n${task.branch}`}
                 >
                   <span className="task-dot-cell">
@@ -192,14 +265,67 @@ export default function TaskList({ tasks, selectedId, onSelect, onNew }: TaskLis
                     <span className="task-repo">{basename(task.repoPath)}</span>
                     <span className="task-sep">/</span>
                     <span className="task-branch">{task.branch}</span>
-                    {index < 9 && <span className="task-index">⌘{index + 1}</span>}
+                    <span className="task-meta-tail">
+                      {ctx && ctxText && (
+                        <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
+                          {ctxText}
+                        </span>
+                      )}
+                      {index < 9 && <span className="task-index">⌘{index + 1}</span>}
+                    </span>
                   </span>
-                </button>
+                  <ContextMeter usage={ctx} variant="hairline" />
+                  {onArchive && (
+                    <button
+                      className="task-more"
+                      aria-label={`Actions for ${task.title}`}
+                      title="Actions"
+                      onClick={(e) => openMenu(e, task)}
+                      onContextMenu={(e) => openMenu(e, task)}
+                    >
+                      ⋯
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>
         ))}
       </div>
+
+      {menu && (
+        <div
+          className="row-menu"
+          ref={menuRef}
+          style={{ left: Math.min(menu.x, window.innerWidth - 180), top: menu.y }}
+          role="menu"
+        >
+          <div className="row-menu-head">{menu.task.title}</div>
+          <button
+            className="row-menu-item"
+            role="menuitem"
+            onClick={() => {
+              const path = menu.task.worktreePath;
+              setMenu(null);
+              void navigator.clipboard?.writeText(path).catch(() => {});
+            }}
+          >
+            Copy worktree path
+          </button>
+          <button
+            className="row-menu-item"
+            data-tone="danger"
+            role="menuitem"
+            onClick={() => {
+              const task = menu.task;
+              setMenu(null);
+              onArchive?.(task);
+            }}
+          >
+            Archive task…
+          </button>
+        </div>
+      )}
     </div>
   );
 }

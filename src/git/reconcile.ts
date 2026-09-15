@@ -165,6 +165,16 @@ export interface ClassifyInput {
   scans: RepoScan[];
   disk: DiskCandidate[];
   knownPaths: string[];
+  /**
+   * Paths that a task row still references but which are nonetheless available
+   * to reclaim -- in practice, the worktrees of archived tasks.
+   *
+   * Without this the archive path has a hole: `archiveTask` only flips a status,
+   * so the row survives, so its `worktreePath` stays in `knownPaths`, so the
+   * worktree is hidden from reconcile forever while still sitting on disk.
+   * Listed here it wins over `knownPaths` and is reported as an orphan.
+   */
+  reclaimablePaths?: string[];
   home: string;
 }
 
@@ -176,10 +186,19 @@ export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
   const home = input.home;
   const root = agentsRoot(home);
 
+  const reclaimable = new Set<string>();
+  for (const k of input.reclaimablePaths ?? []) {
+    if (!k) continue;
+    reclaimable.add(pathKey(expandTilde(k, home)));
+  }
+
   const known = new Set<string>();
   for (const k of input.knownPaths) {
     if (!k) continue;
-    known.add(pathKey(expandTilde(k, home)));
+    const key = pathKey(expandTilde(k, home));
+    // Reclaimable wins: an archived task's worktree is "known" to the database
+    // and still reclaimable on disk, and hiding it is the bug this closes.
+    if (!reclaimable.has(key)) known.add(key);
   }
 
   const out: OrphanInfo[] = [];
@@ -198,12 +217,18 @@ export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
       if (emitted.has(key)) continue;
 
       const insideAgents = isUnder(root, wt.path);
-      const classification: OrphanClassification = insideAgents ? 'orphan' : 'unknown';
-      const reason = wt.prunable
-        ? `git reports this worktree as prunable${wt.prunableReason ? `: ${wt.prunableReason}` : ''}`
-        : insideAgents
-          ? `Created under ${root} but no task references it.`
-          : `Tracked by ${basename(scan.repoPath)} but outside ${root} and unknown to Albedo.`;
+      const isReclaimable = reclaimable.has(key);
+      // An archived task's worktree is reclaimable wherever it lives: the user
+      // told us they are done with it, so it is not a guess on our part.
+      const classification: OrphanClassification =
+        insideAgents || isReclaimable ? 'orphan' : 'unknown';
+      const reason = isReclaimable
+        ? 'Its task is archived, but the worktree is still on disk.'
+        : wt.prunable
+          ? `git reports this worktree as prunable${wt.prunableReason ? `: ${wt.prunableReason}` : ''}`
+          : insideAgents
+            ? `Created under ${root} but no task references it.`
+            : `Tracked by ${basename(scan.repoPath)} but outside ${root} and unknown to Albedo.`;
 
       emitted.add(key);
       out.push({
@@ -294,12 +319,20 @@ export function gitdirToRepoPath(gitdir: string | null): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Worktrees on disk that no task row claims.
+ * Worktrees on disk that no live task claims.
  *
- * `repoPaths` are the repos to interrogate with `git worktree list`;
- * `knownPaths` are the `worktree_path` values of every task row (including
- * archived ones -- passing only live tasks would report archived worktrees as
- * orphans).
+ * `repoPaths` are the repos to interrogate with `git worktree list`.
+ *
+ * `knownPaths` are the `worktree_path` values of task rows that still own their
+ * worktree -- pass every task, archived ones included, so that nothing is
+ * misreported while it is still in use.
+ *
+ * `reclaimablePaths` is the escape hatch for rows that exist but have given up
+ * their worktree: the worktree paths of **archived** tasks. Listing a path here
+ * overrides `knownPaths`, so the worktree is reported as an orphan and can be
+ * removed from the reconcile view. Without it an archived task's worktree is
+ * unreachable from the UI -- the row keeps the path "known" forever while the
+ * directory sits on disk.
  *
  * Failures to read one repo or one directory are swallowed on purpose: a repo
  * that has been moved away should not blank the whole reconcile view, and it
@@ -308,6 +341,7 @@ export function gitdirToRepoPath(gitdir: string | null): string | null {
 export async function findOrphans(
   repoPaths: string[],
   knownPaths: string[],
+  reclaimablePaths: string[] = [],
 ): Promise<OrphanInfo[]> {
   const { homeDir } = await import('@tauri-apps/api/path');
   const home = await homeDir();
@@ -321,10 +355,19 @@ export async function findOrphans(
     }
   }
 
-  const resolvedKnown = await resolveKnownPaths(knownPaths, home);
+  const [resolvedKnown, resolvedReclaimable] = await Promise.all([
+    resolveKnownPaths(knownPaths, home),
+    resolveKnownPaths(reclaimablePaths, home),
+  ]);
   const disk = await scanAgentsRoot(agentsRoot(home));
 
-  return classifyOrphans({ scans, disk, knownPaths: resolvedKnown, home });
+  return classifyOrphans({
+    scans,
+    disk,
+    knownPaths: resolvedKnown,
+    reclaimablePaths: resolvedReclaimable,
+    home,
+  });
 }
 
 function dedupePaths(paths: string[]): string[] {

@@ -191,6 +191,73 @@ describe('classifyOrphans', () => {
     }
   });
 
+  it('reports an archived task worktree, even though its row still exists', () => {
+    // The bug this closes: archiveTask only flips a status, so the row (and its
+    // worktreePath) survives. Without reclaimablePaths the worktree is both not
+    // removed and never offered -- unreachable from the UI.
+    const out = classifyOrphans({
+      scans,
+      disk: [],
+      knownPaths: [
+        '/Users/m/agents/albedo/tracked-task',
+        '/Users/m/agents/albedo/left-behind',
+        '/Users/m/www/worktrees/hand-made',
+      ],
+      reclaimablePaths: ['/Users/m/agents/albedo/left-behind'],
+      home: HOME,
+    });
+    expect(out.map((o) => o.path)).toEqual(['/Users/m/agents/albedo/left-behind']);
+    expect(out[0]).toMatchObject({ classification: 'orphan', branch: 'left-behind' });
+    expect(out[0]?.reason).toMatch(/archived/i);
+  });
+
+  it('reclaims an archived worktree outside ~/agents too', () => {
+    // Normally a worktree outside ~/agents is only ever informational, but an
+    // archived task is the user telling us they are done with that one.
+    const out = classifyOrphans({
+      scans,
+      disk: [],
+      knownPaths: ['/Users/m/www/worktrees/hand-made'],
+      reclaimablePaths: ['/Users/m/www/worktrees/hand-made'],
+      home: HOME,
+    });
+    const row = out.find((o) => o.path === '/Users/m/www/worktrees/hand-made');
+    expect(row?.classification).toBe('orphan');
+  });
+
+  it('normalises reclaimable paths the same way as known paths', () => {
+    for (const reclaimable of [
+      '~/agents/albedo/left-behind',
+      '/Users/m/agents/albedo/left-behind/',
+      '/Users/M/Agents/Albedo/Left-Behind',
+    ]) {
+      const out = classifyOrphans({
+        scans,
+        disk: [],
+        knownPaths: [
+          '/Users/m/agents/albedo/tracked-task',
+          '/Users/m/agents/albedo/left-behind',
+          '/Users/m/www/worktrees/hand-made',
+        ],
+        reclaimablePaths: [reclaimable],
+        home: HOME,
+      });
+      expect(out.map((o) => o.path), reclaimable).toEqual(['/Users/m/agents/albedo/left-behind']);
+    }
+  });
+
+  it('still hides a live task worktree when reclaimablePaths is empty or absent', () => {
+    const known = [
+      '/Users/m/agents/albedo/tracked-task',
+      '/Users/m/agents/albedo/left-behind',
+      '/Users/m/www/worktrees/hand-made',
+    ];
+    expect(classifyOrphans({ scans, disk: [], knownPaths: known, home: HOME })).toEqual([]);
+    expect(
+      classifyOrphans({ scans, disk: [], knownPaths: known, reclaimablePaths: [], home: HOME }),
+    ).toEqual([]);
+  });
+
   it('matches /tmp against /private/tmp in both directions', () => {
     const tmpScan = [
       scan(

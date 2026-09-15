@@ -1,3 +1,4 @@
+mod fsx;
 mod pty;
 
 use tauri_plugin_sql::{Migration, MigrationKind};
@@ -29,6 +30,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            fsx::canonicalize_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running albedo");

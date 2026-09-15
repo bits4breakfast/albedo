@@ -176,3 +176,40 @@ export interface PtyExitEvent {
   ptyId: string;
   code: number | null;
 }
+
+// ---------------------------------------------------------------------------
+// Touched files (M4)
+// ---------------------------------------------------------------------------
+
+/** Where the knowledge that a file changed came from. */
+export type TouchedSource = 'transcript' | 'git' | 'both';
+
+export interface TouchedFile {
+  /** Worktree-relative path. Always relative -- see resolveInWorktree(). */
+  path: string;
+  /** Number of tool calls in the transcript that targeted this file. */
+  editCount: number;
+  /** Last time the transcript or git saw this file change. */
+  lastTouchedAt: number | null;
+  /**
+   * The agent can change files outside its edit tool (a Bash `sed`, a
+   * generator), so the transcript alone under-reports. `git` means git sees a
+   * change the transcript never mentioned.
+   */
+  source: TouchedSource;
+  /** Porcelain status code from `git status`, when git knows about it. */
+  gitStatus: string | null;
+  /** True once the user saved this file by hand in the built-in editor. */
+  handEdited: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Opening files (M4)
+// ---------------------------------------------------------------------------
+
+export interface OpenFileRequest {
+  /** Path as it appeared in the transcript. May be absolute or relative. */
+  path: string;
+  /** 1-based line to reveal, when the source had one. */
+  line?: number | null;
+}

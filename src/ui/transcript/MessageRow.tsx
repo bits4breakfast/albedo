@@ -15,7 +15,8 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import Diff, { Code, composePieces, useCodeTokens } from './Diff';
+import Diff, { Code, LinkifiedText, PathLink, composePieces, useCodeTokens } from './Diff';
+import { parsePathRef } from '../../lib/paths';
 import ToolChip, { isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -110,7 +111,9 @@ function OrphanResultRow({ message }: { message: Message }): ReactNode {
     <div className="tx-row tx-row-tool">
       <div className="tx-gutter" />
       <div className="tx-content">
-        <pre className="tx-pre">{text}</pre>
+        <pre className="tx-pre">
+          <LinkifiedText text={text} />
+        </pre>
       </div>
     </div>
   );
@@ -130,7 +133,7 @@ function ToolUseRow({ message, result }: { message: Message; result: Message | n
         <div className="tx-content">
           <ToolChip message={message} result={result} />
           {rendered.diffs.map((d, i) => (
-            <Diff key={i} diff={d} expand={rendered.expand[i] ?? null} />
+            <Diff key={i} diff={d} expand={rendered.expand[i] ?? null} absoluteLines={rendered.absoluteLines} />
           ))}
         </div>
       </div>
@@ -150,6 +153,12 @@ function ToolUseRow({ message, result }: { message: Message; result: Message | n
 interface RenderedDiffs {
   diffs: FileDiff[];
   expand: Array<{ oldText: string; newText: string } | null>;
+  /**
+   * Whether the diffs' line numbers are real file lines. True for `git diff`
+   * output and for Write (which produces a whole file starting at line 1);
+   * false for Edit/MultiEdit, whose old_string/new_string are fragments.
+   */
+  absoluteLines: boolean;
 }
 
 /** Decide whether this tool call is a diff, and build it if so. */
@@ -186,7 +195,7 @@ function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | 
         diffs.push(diffStrings(oldText, newText, path));
         expand.push({ oldText, newText });
       }
-      return diffs.length > 0 ? { diffs, expand } : null;
+      return diffs.length > 0 ? { diffs, expand, absoluteLines: tool === 'Write' } : null;
     }
 
     if (tool === 'Bash') {
@@ -195,7 +204,7 @@ function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | 
       if (resultText.length === 0) return null;
       const diffs = parseUnifiedDiff(resultText);
       if (diffs.length === 0) return null;
-      return { diffs, expand: diffs.map(() => null) };
+      return { diffs, expand: diffs.map(() => null), absoluteLines: true };
     }
 
     return null;
@@ -318,6 +327,29 @@ export function parseBlocks(src: string): Block[] {
   return out;
 }
 
+/**
+ * Decide whether an inline code span is a path reference.
+ *
+ * Deliberately strict: only when the span is *nothing but* the reference. A
+ * span like `npm run build` may well contain something path-shaped, and
+ * turning that into a link makes the pane feel unreliable -- a false positive
+ * costs more than a missed link. Extraction itself stays in `parsePathRef`.
+ */
+function codeSpanRef(text: string): { path: string; line: number | null } | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  let ref: { path: string; line: number | null } | null = null;
+  try {
+    ref = parsePathRef(trimmed);
+  } catch {
+    return null;
+  }
+  if (!ref || ref.path.length === 0 || !trimmed.startsWith(ref.path)) return null;
+  const rest = trimmed.slice(ref.path.length);
+  if (rest.length > 0 && !/^:\d+(?::\d+)?$/.test(rest)) return null;
+  return ref;
+}
+
 const INLINE_RE =
   /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|\*([^*\n]+?)\*|_([^_\n]+?)_|~~([\s\S]+?)~~|\[([^\]\n]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/g;
 
@@ -335,10 +367,17 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
     const [, , codeText, strongA, strongB, emA, emB, strike, linkText, linkUrl] = m;
 
     if (codeText !== undefined) {
+      const ref = codeSpanRef(codeText);
       out.push(
-        <code key={key++} className="tx-md-code">
-          {codeText}
-        </code>,
+        ref ? (
+          <PathLink key={key++} path={ref.path} line={ref.line} className="tx-md-code tx-md-code-link">
+            {codeText}
+          </PathLink>
+        ) : (
+          <code key={key++} className="tx-md-code">
+            {codeText}
+          </code>
+        ),
       );
     } else if (strongA !== undefined || strongB !== undefined) {
       out.push(<strong key={key++}>{parseInline(strongA ?? strongB ?? '', depth + 1)}</strong>);

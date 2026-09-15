@@ -1,0 +1,180 @@
+/* ==========================================================================
+   Editor pane — owner: editor workstream (M4).
+
+   Tokens come from src/styles.css; nothing here hardcodes a colour. Class
+   names are `ed-` prefixed. Imported by FileEditor.tsx.
+
+   Same visual grammar as the rest of the cockpit: square, hairline borders,
+   dense, quiet. The editor is an overlay because opening a file is something
+   you do *from* the transcript and return out of, not a fourth pane.
+   ========================================================================== */
+
+.ed-root {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel-inset);
+  border-left: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+/* --- top bar ------------------------------------------------------------- */
+
+.ed-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: var(--row-h);
+  padding: 0 8px 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.ed-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;         /* keep the filename visible when the path is long */
+  text-align: left;
+}
+
+.ed-line {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-left: -4px;
+}
+
+.ed-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-raised);
+  color: var(--warn);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+/* Unsaved-changes dot. Quiet: the Save button carries the real signal. */
+.ed-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ed-spacer { flex: 1 1 auto; }
+
+.ed-status {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  color: var(--muted);
+}
+.ed-status[data-tone='ok'] { color: var(--add); }
+.ed-status[data-tone='warn'] { color: var(--warn); }
+.ed-status[data-tone='error'] { color: var(--danger); }
+
+/* --- buttons ------------------------------------------------------------- */
+
+.ed-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.ed-btn:hover:not(:disabled) { color: var(--text-strong); border-color: var(--accent-line); }
+.ed-btn:active:not(:disabled) { background: var(--panel); }
+.ed-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.ed-btn:disabled { color: var(--faint); cursor: default; }
+
+.ed-btn.ed-danger { color: var(--danger); }
+.ed-btn.ed-danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+.ed-close { padding: 3px 7px; font-size: var(--fs-md); line-height: 1; }
+
+/* --- notices ------------------------------------------------------------- */
+
+.ed-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+}
+
+.ed-notice > span { flex: 1 1 auto; }
+.ed-notice[data-tone='warn'] { border-left: 2px solid var(--warn); color: var(--warn); }
+.ed-notice[data-tone='error'] { border-left: 2px solid var(--danger); color: var(--danger); }
+.ed-notice[data-tone='muted'] { border-left: 2px solid var(--faint); color: var(--muted); }
+
+/* --- body ---------------------------------------------------------------- */
+
+.ed-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ed-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ed-message {
+  padding: 24px;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.ed-message[data-tone='error'] { color: var(--danger); }
+
+.ed-message strong { color: var(--text-strong); font-weight: 500; }
+
+.ed-message-sub {
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.ed-message code {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+/* --- the "you asked for line N" flash ------------------------------------ */
+
+.cm-line.ed-flash {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+  transition: background 400ms ease-out, box-shadow 400ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-line.ed-flash { transition: none; }
+}

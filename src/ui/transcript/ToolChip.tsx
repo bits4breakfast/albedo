@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
+import { LinkifiedText, PathLink, useActivate } from './Diff';
 
 // ---------------------------------------------------------------------------
 // rawJson narrowing
@@ -245,26 +246,42 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
   const input = toolInput(message);
 
   const state = pending ? 'pending' : error ? 'error' : 'ok';
+  // Same drag/selection guard the links use, so toggling the chip does not
+  // fire at the end of a drag-select over the row.
+  const toggle = useActivate(() => setOpen((v) => !v));
 
   return (
     <div className={`tx-chip tx-chip-${state} ${open ? 'tx-chip-open' : ''}`}>
-      <button type="button" className="tx-chip-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="tx-chip-caret">{open ? '▾' : '▸'}</span>
-        <span className="tx-chip-name">{name}</span>
+      {/*
+        The head is a row, not a button: the target path inside it is a link of
+        its own, and nesting interactive elements inside a button is both
+        invalid and ambiguous to click. The caret button carries the keyboard
+        affordance; clicking anywhere else in the row toggles too, except on the
+        path, which stops propagation and opens the file instead.
+      */}
+      <div className="tx-chip-head" onMouseDown={toggle.onMouseDown} onClick={toggle.onClick}>
+        <button type="button" className="tx-chip-toggle" aria-expanded={open} aria-label={`${name} details`}>
+          <span className="tx-chip-caret">{open ? '▾' : '▸'}</span>
+          <span className="tx-chip-name">{name}</span>
+        </button>
         {target ? (
-          <span className="tx-chip-target" title={target}>
+          <PathLink path={target} className="tx-chip-target" title={target}>
             {basename(target)}
-          </span>
+          </PathLink>
         ) : null}
         {summary ? <span className="tx-chip-summary">{summary}</span> : null}
         <span className="tx-chip-state" title={state}>
           {pending ? '…' : error ? '✕' : '✓'}
         </span>
-      </button>
+      </div>
 
       {open ? (
         <div className="tx-chip-body">
-          {target ? <div className="tx-chip-path">{target}</div> : null}
+          {target ? (
+            <div className="tx-chip-path">
+              <PathLink path={target} />
+            </div>
+          ) : null}
           {Object.keys(input).length > 0 ? (
             <section className="tx-chip-section">
               <h4 className="tx-chip-label">input</h4>
@@ -278,7 +295,11 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
             ) : resultText.length === 0 ? (
               <div className="tx-chip-empty">empty</div>
             ) : (
-              <pre className={`tx-pre ${error ? 'tx-pre-error' : ''}`}>{resultText}</pre>
+              // Stack traces and compiler errors live here; this is where a
+              // clickable path pays off most.
+              <pre className={`tx-pre ${error ? 'tx-pre-error' : ''}`}>
+                <LinkifiedText text={resultText} />
+              </pre>
             )}
           </section>
         </div>

@@ -597,6 +597,82 @@ export async function unmergedCommits(
   return { ahead: parseCommitCount(r.stdout), upstream };
 }
 
+// ---------------------------------------------------------------------------
+// Describing what a removal would destroy.
+//
+// Pure, and shared by both confirmation dialogs (ArchiveTaskDialog and
+// WorktreeReconcile) so the two can never drift into saying different things
+// about the same situation. Tested directly -- the wording IS the safety
+// mechanism, so it gets the same treatment as the parsers.
+// ---------------------------------------------------------------------------
+
+/** Everything we managed to find out about the work sitting in a worktree. */
+export interface WorkAtRisk {
+  /** Uncommitted files (see {@link describeStatusEntry}); null = unreadable. */
+  files: string[] | null;
+  /** Commits not merged into {@link aheadBase}; null = could not establish. */
+  ahead: number | null;
+  aheadBase: string | null;
+}
+
+/** The part of the user's choice that changes what is actually destroyed. */
+export interface LossPlan {
+  /** Whether the branch is deleted as well as the worktree. */
+  deleteBranch: boolean;
+}
+
+export interface LossAssessment {
+  /** Uncommitted work will be destroyed. */
+  dirty: boolean;
+  /** Committed-but-unmerged work will be destroyed. */
+  unmerged: boolean;
+  /** Something relevant to this plan could not be checked. */
+  unknown: boolean;
+  /** Whether the user must tick an acknowledgement before anything happens. */
+  needsAck: boolean;
+}
+
+/**
+ * What removing this worktree under this plan would actually destroy.
+ *
+ * The distinction that matters: uncommitted changes die with the worktree
+ * whatever the user chooses, but **unmerged commits only die if the branch is
+ * deleted too**. Keeping the branch is therefore a genuinely non-destructive
+ * option for committed work, and the dialogs must not cry wolf about it.
+ *
+ * An unknown is treated as a loss. If we could not check, the user still
+ * acknowledges before anything is deleted.
+ */
+export function assessLoss(w: WorkAtRisk, plan: LossPlan): LossAssessment {
+  const dirty = w.files !== null && w.files.length > 0;
+  const unmerged = plan.deleteBranch && w.ahead !== null && w.ahead > 0;
+  const unknown = w.files === null || (plan.deleteBranch && w.ahead === null);
+  return { dirty, unmerged, unknown, needsAck: dirty || unmerged || unknown };
+}
+
+/**
+ * The sentence the user has to tick. Names every count explicitly -- "are you
+ * sure?" is not a confirmation, "3 uncommitted change(s) and 2 commit(s) not
+ * merged into origin/main will be permanently lost" is.
+ */
+export function ackLabel(w: WorkAtRisk, plan: LossPlan): string {
+  const { dirty, unmerged, unknown } = assessLoss(w, plan);
+  const parts: string[] = [];
+  if (dirty) parts.push(`${w.files?.length ?? 0} uncommitted change(s)`);
+  if (unmerged) {
+    parts.push(`${w.ahead} commit(s) not merged into ${w.aheadBase ?? 'the base branch'}`);
+  }
+  if (parts.length === 0) {
+    return unknown
+      ? 'I understand Albedo could not check what is in this worktree, and that removing it may destroy work.'
+      : 'I understand this worktree will be removed.';
+  }
+  const list = parts.join(' and ');
+  return unknown
+    ? `I understand ${list} will be permanently lost, and that some of this worktree could not be checked.`
+    : `I understand ${list} will be permanently lost.`;
+}
+
 export interface RemoveWorktreeOptions {
   repoPath: string;
   path: string;
