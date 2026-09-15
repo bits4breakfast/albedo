@@ -27,6 +27,52 @@ import type { Task } from '../types';
 
 const RESIZE_DEBOUNCE_MS = 100;
 
+// ---------------------------------------------------------------------------
+// Live pty registry
+//
+// One entry per task that currently has a spawned, un-exited pty. Kept at
+// module scope so `notePty` can reach a terminal without the caller holding a
+// ref to the component -- the editor workstream calls it from a save handler.
+// ---------------------------------------------------------------------------
+
+const livePtys = new Map<number, string>();
+
+function registerPty(taskId: number, ptyId: string): void {
+  livePtys.set(taskId, ptyId);
+}
+
+function unregisterPty(taskId: number, ptyId: string): void {
+  if (livePtys.get(taskId) === ptyId) livePtys.delete(taskId);
+}
+
+/**
+ * Place text in the task's pty input WITHOUT submitting it.
+ *
+ * The agent may be mid-turn, so sending stays manual: this writes the text and
+ * leaves the cursor after it. Newlines and carriage returns are collapsed to
+ * spaces before writing -- a stray \n here would submit the line to a running
+ * agent, which is exactly what the spec forbids.
+ *
+ * Returns false when the task has no live pty (never started, or exited).
+ */
+export async function notePty(taskId: number, text: string): Promise<boolean> {
+  const ptyId = livePtys.get(taskId);
+  if (!ptyId) return false;
+  const payload = text.replace(/[\r\n]+/g, ' ').trim();
+  if (!payload) return false;
+  try {
+    await writePty(ptyId, payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the task has a spawned, un-exited pty. */
+export function hasLivePty(taskId: number): boolean {
+  return livePtys.has(taskId);
+}
+
 type Phase = 'starting' | 'live' | 'exited' | 'failed';
 
 export interface TerminalProps {
@@ -196,6 +242,7 @@ export default function Terminal({ task, active = true, onExit, onError }: Termi
           return;
         }
         ptyIdRef.current = id;
+        registerPty(task.id, id);
         setPhase('live');
 
         unsubs.push(
@@ -211,6 +258,7 @@ export default function Terminal({ task, active = true, onExit, onError }: Termi
         unsubs.push(
           onPtyExit(id, (code) => {
             deadRef.current = true;
+            unregisterPty(task.id, id);
             setExitCode(code);
             setPhase('exited');
             // Leave the scrollback intact and readable.
@@ -253,7 +301,10 @@ export default function Terminal({ task, active = true, onExit, onError }: Termi
       }
       const id = ptyIdRef.current;
       ptyIdRef.current = null;
-      if (id) void killPty(id).catch(() => {});
+      if (id) {
+        unregisterPty(task.id, id);
+        void killPty(id).catch(() => {});
+      }
       termRef.current = null;
       try {
         term.dispose();

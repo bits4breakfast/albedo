@@ -172,7 +172,181 @@ render-only callers buys far more than paging changes — the pane only needs
 This does **not** relax CLAUDE.md rule 2: `raw_json` is never dropped at the
 *write* boundary. This is about what a read hands back.
 
+**`TouchedFile` has no "outside the worktree" flag.** A transcript path that
+resolves outside the task's checkout is deliberately kept (under-reporting is
+the dangerous direction) but is distinguishable only by its leading `/`. If the
+touched-files view ever needs to style or filter those, that wants a field
+rather than a string test.
+
 **`beforeSeq`.** Deliberately not added. Backward paging re-reads the window
 (0.6 MB per step at k=1, growing linearly), which is real but bounded: the
 largest session observed is 3,675 lines, ~18 steps to walk entirely. Revisit
 when sessions exceed ~5k rows, or when the pane must hold >1,000 rows at once.
+
+---
+
+# M4 additions — touched files, opening and editing
+
+Added to the spec after the first five workstreams landed. Same rules: one
+owner per signature, callers code against this doc.
+
+## `src/lib/paths.ts` — owner: editor workstream
+
+**The single place path resolution happens.** The spec is explicit that
+resolution is worktree-scoped and enforced in one place: `src/Foo.php` always
+means *this task's* checkout. Nothing else in the app may join a transcript path
+to a filesystem path.
+
+```ts
+export interface ResolvedPath { absolute: string; relative: string }
+
+/**
+ * Resolve a path seen in a transcript against a task's worktree.
+ * Returns null when the path escapes the worktree -- callers render it as
+ * plain text rather than a link. Must reject `..` traversal, absolute paths
+ * outside the worktree, and symlinks pointing out of it.
+ */
+export function resolveInWorktree(worktreePath: string, raw: string): Promise<ResolvedPath | null>;
+
+/** Pull `path:line` / `path:line:col` / `path", line N` out of transcript text. */
+export function parsePathRef(text: string): { path: string; line: number | null } | null;
+```
+
+Containment is a security boundary, not a convenience: a transcript is data the
+app renders, and a path in it must never be able to open or write outside the
+task's checkout.
+
+## `src/lib/handEdited.ts` — owner: editor workstream
+
+```ts
+/** Session-scoped, in memory. Cleared when the app restarts, per spec. */
+export function markHandEdited(taskId: number, relPath: string): void;
+export function isHandEdited(taskId: number, relPath: string): boolean;
+export function onHandEditedChange(cb: () => void): () => void;
+```
+
+## `src/ui/editor/FileEditor.tsx` — owner: editor workstream
+
+```ts
+// default export
+<FileEditor task={Task} request={OpenFileRequest | null} onClose={() => void} />
+```
+
+CodeMirror 6 + Shiki highlighting. Light edits only: no autocomplete, no
+linting, no LSP. `Cmd+S` writes straight to the worktree, then:
+1. marks the file hand-edited for the session, and
+2. calls `notePty(taskId, …)` to place an unsent one-line note in the pty input.
+
+## `src/ui/editor/openFile.tsx` — owner: editor workstream
+
+App-wide entry point so any renderer can ask for a file without knowing what
+the editor is.
+
+```ts
+export const FileOpenContext: React.Context<(req: OpenFileRequest) => void>;
+export function useOpenFile(): (req: OpenFileRequest) => void;
+export function openInPhpStorm(worktreePath: string, relPath: string, line?: number | null): Promise<void>;
+```
+
+## `src/ui/Terminal.tsx` — owner: shell workstream (addition)
+
+```ts
+/**
+ * Place text in the pty's input WITHOUT submitting it. The agent may be
+ * mid-turn, so sending stays manual -- write the text, never a newline.
+ * Returns false when the task has no live pty.
+ */
+export function notePty(taskId: number, text: string): Promise<boolean>;
+```
+
+## `src/db/touched.ts` — owner: touched-files workstream
+
+```ts
+export function touchedFiles(taskId: number): Promise<TouchedFile[]>;
+```
+
+Groups `messages` by `target_path` for the task's sessions (edit count, last
+touched), then merges `git status` from the worktree. A file git reports that
+the transcript never mentioned is included with `source: 'git'` — the agent can
+change files outside its edit tool and the view would otherwise lie.
+
+## `src/ui/TouchedFiles.tsx` — owner: touched-files workstream
+
+```ts
+// default export
+<TouchedFiles task={Task} />
+```
+
+Rows are clickable and call `useOpenFile()`. This is the change-set view, the
+other axis to the chronological transcript.
+
+---
+
+# Additive props and exports (recorded, not frozen)
+
+Added by owners to their own components. All optional, so the frozen
+signatures above still hold.
+
+```ts
+<TaskList … onArchive?={(t: Task) => void}
+            contextBySession?={Map<string, ContextUsage>} />
+<Header   … context?={ContextUsage | null} />
+```
+
+`src/ui/StatusDot.tsx` (shell-owned) additionally exports the small-indicator
+kit: `ContextMeter`, `contextLevel`, `contextReadout`, `contextTitle`,
+`CONTEXT_WARN` (0.7), `CONTEXT_HIGH` (0.9). **Reuse these rather than
+re-deriving thresholds** — a context figure that disagrees with the one in the
+task row is worse than no figure.
+
+## Honesty rule for inferred context limits
+
+Binding on every surface that displays context occupancy.
+
+The transcript records the model id but **not** its context window size, so the
+denominator is inferred from the session's observed peak.
+
+| `limitBasis` | render |
+| --- | --- |
+| `'known'` | a hard percentage (`87%`) |
+| `'inferred'` | **no percentage** — the exact token count (`~86k`), hatched fill |
+
+The token count is exact whatever the denominator turns out to be, so it is the
+honest fallback. Colour thresholds still apply to inferred readings: the alarm
+is the best available signal and suppressing it would be its own failure — but
+it is shaped as a hint, never as a claim.
+
+## Additive exports, official
+
+Owners added these within their own modules; recorded so callers can rely on them.
+
+```ts
+// src/lib/paths.ts
+export type WorktreeProbe =
+  (absolutePath: string, worktreeRoot: string | null) => Promise<string | null>;
+export function setWorktreeProbe(p: WorktreeProbe): void;
+
+// The probe is a CANONICALISER, not a contained-or-not check. Containment lives
+// entirely in resolveInWorktree, so a buggy or lying probe still cannot hand out
+// an escape -- there is a test that injects one. `worktreeRoot` is a hint the
+// degraded fallback uses to bound its walk, null when the root itself is being
+// canonicalised. setWorktreeProbe also clears the canonical-root memo.
+
+// src/lib/handEdited.ts
+export function handEditedFiles(taskId: number): string[];  // useful to the touched-files view
+export function clearHandEdited(taskId: number): void;
+
+// src/db/touched.ts
+export function touchedFilesDetailed(taskId: number): Promise<{ files: TouchedFile[]; gitError: string | null }>;
+
+// src/capture (usage.ts)
+export function windowUsage(kind: '5h' | 'week'): Promise<WindowUsage>;
+export function usageBreakdown(): Promise<{ input: number; cacheRead: number; cacheCreation: number; output: number }>;
+```
+
+## Rust commands
+
+| command | why it exists |
+| --- | --- |
+| `pty_spawn` / `pty_write` / `pty_resize` / `pty_kill` | the embedded pty; no first-party Tauri plugin exists |
+| `canonicalize_path` | `tauri-plugin-fs` exposes `stat`/`lstat` but no `canonicalize`, so worktree containment could not follow a symlink and had to refuse every one of them. The user's own repo has 182. Resolution only — containment stays in `resolveInWorktree`, so the security decision is not split across two languages. |

@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import type { Task } from './types';
+import type { OpenFileRequest, Task } from './types';
 import useTasks from './ui/useTasks';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
@@ -8,18 +8,30 @@ import Terminal from './ui/Terminal';
 import NewTaskDialog from './ui/NewTaskDialog';
 import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
+import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
+import TouchedFiles from './ui/TouchedFiles';
+import FileEditor from './ui/editor/FileEditor';
+import { FileOpenContext } from './ui/editor/openFile';
+import UsagePanel from './ui/gauges/UsagePanel';
 
 /**
  * The frame.
  *
  * Three panes: tasks on the left, then the main area split between the pty
- * (input and live progress) and the transcript (reading). The user picks which
- * of the two they want at full width; both stay mounted either way, because
- * unmounting the pty pane would kill running Claude sessions.
+ * (input and live progress) and a reading pane. The user picks which of the two
+ * they want at full width; both stay mounted either way, because unmounting the
+ * pty pane would kill running Claude sessions.
+ *
+ * The reading pane is tabbed rather than split further: transcript (time axis),
+ * files (change-set axis) and — only once a file has been requested — editor.
+ * A fourth resizable pane would leave every one of them too narrow to read at
+ * 1440px, which is the width this app is actually used at.
  */
 
 type PaneMode = 'pty' | 'split' | 'transcript';
 type Orientation = 'row' | 'column';
+/** Tabs of the right-hand reading pane. `editor` appears on demand. */
+type RightTab = 'transcript' | 'files' | 'editor';
 
 const SIDEBAR_MIN = 200;
 const SIDEBAR_MAX = 480;
@@ -33,6 +45,7 @@ const LS = {
   ratio: 'albedo.shell.splitRatio',
   orientation: 'albedo.shell.orientation',
   selected: 'albedo.shell.selectedTask',
+  rightTab: 'albedo.shell.rightTab',
 } as const;
 
 function readStored<T>(key: string, parse: (raw: string) => T | null, fallback: T): T {
@@ -101,7 +114,8 @@ class PaneErrorBoundary extends Component<BoundaryProps, BoundaryState> {
 // ---------------------------------------------------------------------------
 
 export default function App() {
-  const { tasks, loading, loadError, captureError, refresh, upsertTask } = useTasks();
+  const { tasks, loading, loadError, captureError, contextBySession, refresh, upsertTask, archive } =
+    useTasks();
 
   const [selectedId, setSelectedId] = useState<number | null>(() =>
     readStored(LS.selected, (raw) => (Number.isFinite(Number(raw)) ? Number(raw) : null), null),
@@ -122,8 +136,21 @@ export default function App() {
     readStored(LS.ratio, (raw) => clamp(Number(raw) || 0.55, RATIO_MIN, RATIO_MAX), 0.55),
   );
 
+  const [rightTab, setRightTab] = useState<RightTab>(() =>
+    readStored(
+      LS.rightTab,
+      (raw) => (raw === 'transcript' || raw === 'files' || raw === 'editor' ? raw : null),
+      'transcript',
+    ),
+  );
+  /** Pending file-open, scoped to the task it was requested from. */
+  const [openRequest, setOpenRequest] = useState<{ taskId: number; request: OpenFileRequest } | null>(
+    null,
+  );
+
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [reconcileOpen, setReconcileOpen] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
   const [dragging, setDragging] = useState<null | 'sidebar' | 'split'>(null);
 
   const panesRef = useRef<HTMLDivElement | null>(null);
@@ -132,6 +159,9 @@ export default function App() {
   useEffect(() => store(LS.mode, mode), [mode]);
   useEffect(() => store(LS.orientation, orientation), [orientation]);
   useEffect(() => store(LS.ratio, ratio.toFixed(3)), [ratio]);
+  useEffect(() => {
+    if (rightTab !== 'editor') store(LS.rightTab, rightTab);
+  }, [rightTab]);
 
   const selected = useMemo(
     () => tasks.find((t) => t.id === selectedId) ?? null,
@@ -142,6 +172,26 @@ export default function App() {
     setSelectedId(id);
     store(LS.selected, String(id));
     setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, []);
+
+  // File-open entry point handed to every renderer via context. Reads the
+  // selection through a ref so the context value stays referentially stable --
+  // transcript rows subscribe to it and should not re-render on every select.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+
+  const openFile = useCallback((request: OpenFileRequest) => {
+    const taskId = selectedIdRef.current;
+    if (taskId === null) return;
+    setOpenRequest({ taskId, request });
+    setRightTab('editor');
+    // The editor is useless behind a full-width terminal.
+    setMode((m) => (m === 'pty' ? 'split' : m));
+  }, []);
+
+  const closeEditor = useCallback(() => {
+    setOpenRequest(null);
+    setRightTab((t) => (t === 'editor' ? 'transcript' : t));
   }, []);
 
   // Pick something sensible once tasks land: whatever is blocked first.
@@ -171,6 +221,16 @@ export default function App() {
         .filter((t): t is Task => t !== undefined),
     [openIds, tasks],
   );
+
+  /** The editor only exists for the task its request came from. */
+  const editorTask = useMemo(() => {
+    if (!openRequest || !selected) return null;
+    return openRequest.taskId === selected.id ? selected : null;
+  }, [openRequest, selected]);
+
+  // Derived rather than corrected in an effect: switching task while the editor
+  // tab is showing falls straight back to the transcript, with no flash.
+  const activeTab: RightTab = rightTab === 'editor' && !editorTask ? 'transcript' : rightTab;
 
   // --- splitter drags ------------------------------------------------------
 
@@ -233,9 +293,16 @@ export default function App() {
     : { flex: '1 1 auto' };
   const secondaryStyle = { flex: '1 1 0' };
 
+  const noteFor = (tab: RightTab): string => {
+    if (tab === 'files') return selected ? selected.branch : 'no task';
+    if (tab === 'editor') return openRequest?.request.path ?? '';
+    return selected?.sessionId ?? 'no session yet';
+  };
+
   const banner = loadError ?? captureError;
 
   return (
+    <FileOpenContext.Provider value={openFile}>
     <div className="app" data-dragging={dragging !== null}>
       <Header
         onNewTask={() => setNewTaskOpen(true)}
@@ -262,7 +329,15 @@ export default function App() {
             selectedId={selectedId}
             onSelect={select}
             onNew={() => setNewTaskOpen(true)}
+            onArchive={(task) => setArchiveTarget(task)}
+            contextBySession={contextBySession}
           />
+          {/* Pinned below the list, outside its scroller, so it is on screen
+              permanently. The panel carries its own boundary for render
+              throws; this one catches a failure to mount at all. */}
+          <PaneErrorBoundary label="Usage panel">
+            <UsagePanel task={selected} />
+          </PaneErrorBoundary>
         </aside>
 
         <div
@@ -357,16 +432,74 @@ export default function App() {
 
             <section className="pane pane-transcript" style={secondaryStyle} hidden={!showTranscript}>
               <div className="pane-head">
-                <span>transcript</span>
-                <span className="pane-head-note">{selected?.sessionId ?? 'no session yet'}</span>
+                <div className="tabs" role="tablist" aria-label="Reading pane">
+                  <button
+                    role="tab"
+                    aria-selected={activeTab === 'transcript'}
+                    onClick={() => setRightTab('transcript')}
+                  >
+                    transcript
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={activeTab === 'files'}
+                    onClick={() => setRightTab('files')}
+                  >
+                    files
+                  </button>
+                  {editorTask && (
+                    <button
+                      role="tab"
+                      aria-selected={activeTab === 'editor'}
+                      onClick={() => setRightTab('editor')}
+                    >
+                      editor
+                    </button>
+                  )}
+                </div>
+                <span className="pane-head-note" title={noteFor(activeTab)}>
+                  {noteFor(activeTab)}
+                </span>
+                {activeTab === 'editor' && (
+                  <button className="pane-head-close" onClick={closeEditor} title="Close editor">
+                    ✕
+                  </button>
+                )}
               </div>
+
+              {/* All three panels stay mounted so scroll position and editor
+                  buffer survive a tab flip; only the task identity resets them. */}
               <div className="pane-body">
-                <PaneErrorBoundary key={selected?.id ?? 'none'} label="Transcript">
-                  <TranscriptPane
-                    taskId={selected?.id ?? null}
-                    sessionId={selected?.sessionId ?? null}
-                  />
-                </PaneErrorBoundary>
+                <div className="tabpanel" hidden={activeTab !== 'transcript'}>
+                  <PaneErrorBoundary key={`tx-${selected?.id ?? 'none'}`} label="Transcript">
+                    <TranscriptPane
+                      taskId={selected?.id ?? null}
+                      sessionId={selected?.sessionId ?? null}
+                    />
+                  </PaneErrorBoundary>
+                </div>
+
+                <div className="tabpanel" hidden={activeTab !== 'files'}>
+                  {selected ? (
+                    <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
+                      <TouchedFiles task={selected} />
+                    </PaneErrorBoundary>
+                  ) : (
+                    <div className="placeholder">No task selected.</div>
+                  )}
+                </div>
+
+                <div className="tabpanel" hidden={activeTab !== 'editor'}>
+                  {editorTask && (
+                    <PaneErrorBoundary key={`ed-${editorTask.id}`} label="Editor">
+                      <FileEditor
+                        task={editorTask}
+                        request={openRequest?.request ?? null}
+                        onClose={closeEditor}
+                      />
+                    </PaneErrorBoundary>
+                  )}
+                </div>
               </div>
             </section>
           </div>
@@ -394,6 +527,22 @@ export default function App() {
           }}
         />
       </PaneErrorBoundary>
+
+      {/* Archiving is not a status flip: the dialog does `git worktree remove`
+          and branch cleanup behind a confirmation. The task row is only marked
+          archived once the dialog reports the worktree work succeeded --
+          flipping first would strand the worktree, reachable from nothing. */}
+      <PaneErrorBoundary label="Archive task">
+        <ArchiveTaskDialog
+          task={archiveTarget}
+          onClose={() => setArchiveTarget(null)}
+          onArchived={(taskId) => {
+            void archive(taskId);
+            setArchiveTarget(null);
+          }}
+        />
+      </PaneErrorBoundary>
     </div>
+    </FileOpenContext.Provider>
   );
 }

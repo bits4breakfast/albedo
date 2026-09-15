@@ -271,8 +271,19 @@
   padding: 2px 7px;
   font-size: var(--fs-sm);
   text-align: left;
+  /* The whole row toggles; the path inside it opts out and opens the file. */
+  cursor: pointer;
 }
 .tx-chip-head:hover .tx-chip-name { color: var(--text-strong); }
+
+/* Caret + name: the keyboard affordance for expanding the chip. */
+.tx-chip-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  text-align: left;
+}
 
 .tx-chip-caret {
   color: var(--faint);
@@ -522,3 +533,55 @@
   color: var(--muted);
   font-size: var(--fs-xs);
 }
+
+/* --- path links ----------------------------------------------------------- */
+
+/*
+   Links are spans, not anchors: nothing here navigates, it asks the app to open
+   a file. They stay inside the selectable text flow -- no `user-select: none`,
+   no layout of their own -- so dragging across one still selects text, and the
+   click guard in `useActivate` ignores a click that ended a drag.
+*/
+.tx-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 90ms linear;
+}
+.tx-link:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent-line);
+}
+.tx-link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The chip target is already accent-coloured; hovering firms up the underline. */
+.tx-chip-target.tx-link:hover { color: var(--text-strong); }
+
+.tx-chip-path .tx-link { color: var(--muted); }
+.tx-chip-path .tx-link:hover { color: var(--accent); }
+
+/* Diff header path: the dir stays faint, the basename leads. */
+.tx-d-path .tx-link:hover .tx-d-base,
+.tx-d-path .tx-link:hover .tx-d-dir { color: var(--accent); }
+
+/*
+   Line numbers are a secondary affordance -- discoverable on hover of the row,
+   never shouting. They are not in the tab order; the header link is.
+*/
+.tx-d-n-link { cursor: pointer; }
+.tx-d-row:hover .tx-d-n-link,
+.tx-d-half:hover .tx-d-n-link { color: var(--accent); }
+.tx-d-n-link:hover {
+  color: var(--accent) !important;
+  opacity: 1 !important;
+  text-decoration-color: var(--accent-line);
+}
+
+/* A path inside prose keeps the code-span box and gains link affordance. */
+.tx-md-code-link { color: var(--text); }
+.tx-md-code-link:hover { color: var(--accent); border-color: var(--accent-line); }

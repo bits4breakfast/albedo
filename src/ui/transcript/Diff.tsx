@@ -12,13 +12,21 @@
  * us tokens, the diff gives us word-level segments, and `composePieces` splits
  * the tokens at the segment boundaries so a single span carries both the
  * token's colour and the segment's changed flag.
+ *
+ * This file also hosts the shared path-link primitives (`useOpenPath`,
+ * `PathLink`, `LinkifiedText`). They live here because it is the only module in
+ * the transcript that both the chip and the row renderers import and that knows
+ * nothing about `Message` -- putting them in ToolChip.tsx would point the
+ * dependency graph backwards.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode, RefObject } from 'react';
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
 import type { ThemedToken } from 'shiki/core';
-import type { DiffHunk, DiffLine, DiffSegment, FileDiff } from '../../types';
+import type { DiffHunk, DiffLine, DiffSegment, FileDiff, OpenFileRequest } from '../../types';
 import { highlightToTokens, peekTokens, plainTokens, tokenStyle } from '../../lib/highlight';
+import { parsePathRef } from '../../lib/paths';
+import { useOpenFile } from '../editor/openFile';
 import './transcript.css';
 
 /** Below this container width the side-by-side layout stops being readable. */
@@ -30,6 +38,179 @@ const BUDGET_STEP = 800;
 
 /** Past this many lines, highlighting a blob costs more than it gives. */
 const MAX_HIGHLIGHT_LINES = 6000;
+
+/** Beyond this, scanning every line of a tool result for paths is not worth it. */
+const MAX_LINKIFY_LINES = 2000;
+const MAX_LINKIFY_CHARS = 400_000;
+
+// ---------------------------------------------------------------------------
+// Opening files
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the app to open a path seen in the transcript.
+ *
+ * The raw path goes straight through to `useOpenFile`: resolution against the
+ * task's worktree happens in `resolveInWorktree`, which is a security boundary.
+ * A transcript is data we render, so nothing here may join a transcript path to
+ * a filesystem path or decide that one looks safe.
+ *
+ * Opening is best-effort. If no provider is mounted, or the editor throws, the
+ * link quietly does nothing rather than taking the pane down with it.
+ */
+export function useOpenPath(): (path: string, line?: number | null) => void {
+  let open: ((req: OpenFileRequest) => void) | null = null;
+  try {
+    open = useOpenFile();
+  } catch {
+    open = null; // no provider (tests, or the editor not mounted yet)
+  }
+  return useCallback(
+    (path: string, line: number | null = null) => {
+      if (typeof open !== 'function') return;
+      if (typeof path !== 'string' || path.trim().length === 0) return;
+      try {
+        open({ path, line });
+      } catch {
+        /* the editor is not allowed to break rendering */
+      }
+    },
+    [open],
+  );
+}
+
+/**
+ * Click handling that coexists with text selection.
+ *
+ * The pane re-enables `user-select: text` precisely so people can copy code out
+ * of it, so a link must not steal a drag that was a selection gesture. A click
+ * only activates when the pointer barely moved and nothing is selected.
+ */
+export function useActivate(onActivate: () => void): {
+  onMouseDown: (e: ReactMouseEvent) => void;
+  onClick: (e: ReactMouseEvent) => void;
+} {
+  const downRef = useRef<{ x: number; y: number } | null>(null);
+  return {
+    onMouseDown: (e: ReactMouseEvent) => {
+      downRef.current = { x: e.clientX, y: e.clientY };
+    },
+    onClick: (e: ReactMouseEvent) => {
+      const down = downRef.current;
+      downRef.current = null;
+      if (down && (Math.abs(e.clientX - down.x) > 3 || Math.abs(e.clientY - down.y) > 3)) return;
+      try {
+        const sel = window.getSelection?.();
+        if (sel && !sel.isCollapsed && sel.toString().length > 0) return;
+      } catch {
+        /* selection API unavailable; fall through and treat it as a click */
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      onActivate();
+    },
+  };
+}
+
+export interface PathLinkProps {
+  /** Path exactly as it appeared in the transcript. Never pre-resolved. */
+  path: string;
+  line?: number | null;
+  className?: string;
+  title?: string;
+  /** Visible text; defaults to the path itself. */
+  children?: ReactNode;
+  /**
+   * Keyboard-reachable. Off for the per-line affordances inside a diff, which
+   * would otherwise add two tab stops per line to a 5000-line diff; the file is
+   * still reachable from the diff header link.
+   */
+  focusable?: boolean;
+}
+
+export function PathLink({
+  path,
+  line = null,
+  className,
+  title,
+  children,
+  focusable = true,
+}: PathLinkProps): ReactNode {
+  const openPath = useOpenPath();
+  const handlers = useActivate(() => openPath(path, line));
+  return (
+    <span
+      className={`tx-link${className ? ` ${className}` : ''}`}
+      role="link"
+      tabIndex={focusable ? 0 : -1}
+      title={title ?? (line !== null ? `${path}:${line}` : path)}
+      onMouseDown={handlers.onMouseDown}
+      onClick={handlers.onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openPath(path, line);
+        }
+      }}
+    >
+      {children ?? path}
+    </span>
+  );
+}
+
+/**
+ * Render text, turning path references into links.
+ *
+ * Extraction is delegated to `parsePathRef` -- one line at a time, because that
+ * is the shape of a stack trace and the parser answers per fragment. When it
+ * returns null the line renders as plain text; being conservative matters more
+ * than catching every path, since a false positive makes ordinary prose look
+ * broken.
+ *
+ * Locating the parsed path inside the line with `indexOf` is presentation, not
+ * parsing: we only need to know which characters to wrap. If it is not found
+ * verbatim, the line stays plain.
+ */
+export function LinkifiedText({ text, className }: { text: string; className?: string }): ReactNode {
+  const nodes = useMemo(() => linkifyLines(text), [text]);
+  return <span className={className}>{nodes}</span>;
+}
+
+function linkifyLines(text: string): ReactNode[] {
+  if (typeof text !== 'string' || text.length === 0) return [];
+  const lines = text.split('\n');
+  if (lines.length > MAX_LINKIFY_LINES || text.length > MAX_LINKIFY_CHARS) return [text];
+
+  const out: ReactNode[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    const suffix = i < lines.length - 1 ? '\n' : '';
+    let ref: { path: string; line: number | null } | null = null;
+    try {
+      ref = parsePathRef(line);
+    } catch {
+      ref = null;
+    }
+    const at = ref && ref.path.length > 0 ? line.indexOf(ref.path) : -1;
+    if (!ref || at < 0) {
+      out.push(line + suffix);
+      continue;
+    }
+    // Extend the link over a trailing :line[:col] so the whole reference is one target.
+    let end = at + ref.path.length;
+    const trailing = /^:\d+(?::\d+)?/.exec(line.slice(end));
+    if (ref.line !== null && trailing) end += trailing[0].length;
+
+    if (at > 0) out.push(line.slice(0, at));
+    out.push(
+      <PathLink key={`${i}-${at}`} path={ref.path} line={ref.line}>
+        {line.slice(at, end)}
+      </PathLink>,
+    );
+    out.push(line.slice(end) + suffix);
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Token plumbing
@@ -322,9 +503,17 @@ export interface DiffProps {
   expand?: { oldText: string; newText: string } | null;
   /** Forces a layout instead of deriving it from the container width. */
   layout?: 'auto' | 'split' | 'unified';
+  /**
+   * True when the diff's line numbers are real file lines, which makes them
+   * safe to open at. A `git diff` qualifies; an Edit tool call does NOT -- its
+   * `old_string`/`new_string` are fragments, so line 1 is the first line of the
+   * fragment, not of the file. Opening at a fragment offset would land the user
+   * somewhere arbitrary, so per-line links stay off unless the caller says so.
+   */
+  absoluteLines?: boolean;
 }
 
-export function Diff({ diff, expand = null, layout = 'auto' }: DiffProps): ReactNode {
+export function Diff({ diff, expand = null, layout = 'auto', absoluteLines = false }: DiffProps): ReactNode {
   const [ref, width] = useContainerWidth();
   const [override, setOverride] = useState<'split' | 'unified' | null>(null);
   const [budget, setBudget] = useState(INITIAL_BUDGET);
@@ -336,6 +525,12 @@ export function Diff({ diff, expand = null, layout = 'auto' }: DiffProps): React
 
   const resolved: 'split' | 'unified' =
     layout !== 'auto' ? layout : (override ?? (width >= SIDE_BY_SIDE_MIN ? 'split' : 'unified'));
+
+  // Per-line links only when the numbers are real file lines (see `absoluteLines`).
+  // A rename's destination is the file that exists.
+  const linkPath = absoluteLines
+    ? (diff.path.includes(' → ') ? (diff.path.split(' → ').pop() ?? diff.path) : diff.path)
+    : null;
 
   const expandOld = useMemo(() => (expand ? sourceLines(expand.oldText) : null), [expand]);
   const expandNew = useMemo(() => (expand ? sourceLines(expand.newText) : null), [expand]);
@@ -383,6 +578,7 @@ export function Diff({ diff, expand = null, layout = 'auto' }: DiffProps): React
             newSource={expandNew}
             lang={diff.lang}
             split={resolved === 'split'}
+            linkPath={linkPath}
           />,
         );
       }
@@ -396,9 +592,9 @@ export function Diff({ diff, expand = null, layout = 'auto' }: DiffProps): React
       <div className="tx-d-hunk" key={`h-${hi}`}>
         {hunk.header ? <div className="tx-d-hunk-head">{hunk.header}</div> : null}
         {resolved === 'split' ? (
-          <SplitBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} />
+          <SplitBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} linkPath={linkPath} />
         ) : (
-          <UnifiedBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} />
+          <UnifiedBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} linkPath={linkPath} />
         )}
       </div>,
     );
@@ -435,6 +631,7 @@ export function Diff({ diff, expand = null, layout = 'auto' }: DiffProps): React
             newSource={expandNew}
             lang={diff.lang}
             split={resolved === 'split'}
+            linkPath={linkPath}
           />,
         );
       }
@@ -485,12 +682,20 @@ function DiffHeader({
   resolved: 'split' | 'unified';
   onToggle: (() => void) | null;
 }): ReactNode {
-  const base = diff.path.split('/').pop() ?? diff.path;
+  // A rename header reads "old → new". Both sides stay visible, but only the
+  // destination is a link: the source no longer exists to open.
+  const renamed = diff.path.includes(' → ');
+  const target = renamed ? (diff.path.split(' → ').pop() ?? diff.path) : diff.path;
+  const from = renamed ? diff.path.slice(0, diff.path.length - target.length) : '';
+  const base = target.split('/').pop() ?? target;
   return (
     <div className="tx-d-head">
       <span className="tx-d-path" title={diff.path}>
-        <span className="tx-d-dir">{diff.path.slice(0, diff.path.length - base.length)}</span>
-        <span className="tx-d-base">{base}</span>
+        {renamed ? <span className="tx-d-dir">{from}</span> : null}
+        <PathLink path={target} title={target}>
+          <span className="tx-d-dir">{target.slice(0, target.length - base.length)}</span>
+          <span className="tx-d-base">{base}</span>
+        </PathLink>
       </span>
       <span className="tx-d-stat">
         {model.added > 0 ? <span className="tx-d-plus">+{model.added}</span> : null}
@@ -509,18 +714,31 @@ function DiffHeader({
 // Bodies
 // ---------------------------------------------------------------------------
 
-function num(n: number | null): string {
-  return n === null ? '' : String(n);
+/**
+ * A line number, clickable when it refers to a real line of a real file.
+ * `focusable={false}`: two tab stops per line would make a large diff
+ * unnavigable by keyboard, and the file is already reachable from the header.
+ */
+function LineNo({ n, linkPath }: { n: number | null; linkPath: string | null }): ReactNode {
+  if (n === null) return <span className="tx-d-n" />;
+  if (linkPath === null) return <span className="tx-d-n">{n}</span>;
+  return (
+    <PathLink path={linkPath} line={n} className="tx-d-n tx-d-n-link" title={`${linkPath}:${n}`} focusable={false}>
+      {n}
+    </PathLink>
+  );
 }
 
 function UnifiedBody({
   rows,
   oldTokens,
   newTokens,
+  linkPath = null,
 }: {
   rows: readonly Row[];
   oldTokens: ThemedToken[][];
   newTokens: ThemedToken[][];
+  linkPath?: string | null;
 }): ReactNode {
   return (
     <div className="tx-d-rows tx-d-unified">
@@ -528,8 +746,8 @@ function UnifiedBody({
         const tokens = r.line.kind === 'add' ? newTokens[r.newRow] : oldTokens[r.oldRow];
         return (
           <div className={`tx-d-row tx-d-${r.line.kind}`} key={i}>
-            <span className="tx-d-n">{num(r.line.oldNumber)}</span>
-            <span className="tx-d-n">{num(r.line.newNumber)}</span>
+            <LineNo n={r.line.oldNumber} linkPath={null} />
+            <LineNo n={r.line.newNumber} linkPath={linkPath} />
             <span className="tx-d-mark">{r.line.kind === 'add' ? '+' : r.line.kind === 'del' ? '-' : ' '}</span>
             <Code pieces={composePieces(r.line.content, tokens, r.line.segments)} />
           </div>
@@ -543,10 +761,12 @@ function SplitBody({
   rows,
   oldTokens,
   newTokens,
+  linkPath = null,
 }: {
   rows: readonly Row[];
   oldTokens: ThemedToken[][];
   newTokens: ThemedToken[][];
+  linkPath?: string | null;
 }): ReactNode {
   const pairs = useMemo(() => pairRows(rows), [rows]);
   return (
@@ -556,7 +776,7 @@ function SplitBody({
           <div className={`tx-d-half tx-d-${p.left ? p.left.line.kind : 'blank'}`}>
             {p.left ? (
               <>
-                <span className="tx-d-n">{num(p.left.line.oldNumber)}</span>
+                <LineNo n={p.left.line.oldNumber} linkPath={null} />
                 <Code pieces={composePieces(p.left.line.content, oldTokens[p.left.oldRow], p.left.line.segments)} />
               </>
             ) : (
@@ -566,7 +786,7 @@ function SplitBody({
           <div className={`tx-d-half tx-d-${p.right ? p.right.line.kind : 'blank'}`}>
             {p.right ? (
               <>
-                <span className="tx-d-n">{num(p.right.line.newNumber)}</span>
+                <LineNo n={p.right.line.newNumber} linkPath={linkPath} />
                 <Code pieces={composePieces(p.right.line.content, newTokens[p.right.newRow], p.right.line.segments)} />
               </>
             ) : (
@@ -609,12 +829,14 @@ function GapLines({
   newSource,
   lang,
   split,
+  linkPath = null,
 }: {
   gap: Gap;
   oldSource: readonly string[];
   newSource: readonly string[];
   lang: string;
   split: boolean;
+  linkPath?: string | null;
 }): ReactNode {
   const lines = useMemo(() => {
     const out: DiffLine[] = [];
@@ -636,8 +858,8 @@ function GapLines({
   const rows: Row[] = useMemo(() => lines.map((line, i) => ({ line, oldRow: i, newRow: i })), [lines]);
 
   return split ? (
-    <SplitBody rows={rows} oldTokens={tokens} newTokens={tokens} />
+    <SplitBody rows={rows} oldTokens={tokens} newTokens={tokens} linkPath={linkPath} />
   ) : (
-    <UnifiedBody rows={rows} oldTokens={tokens} newTokens={tokens} />
+    <UnifiedBody rows={rows} oldTokens={tokens} newTokens={tokens} linkPath={linkPath} />
   );
 }

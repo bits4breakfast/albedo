@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   GitError,
   type GitResult,
+  type WorkAtRisk,
+  ackLabel,
   agentsRoot,
+  assessLoss,
   basename,
   classifyGitError,
   composeWorktreePath,
@@ -322,6 +325,117 @@ describe('unmergedCommits', () => {
     );
     await expect(unmergedCommits('/wt', '--all')).rejects.toThrow(/Invalid base branch name/);
     expect(calls.map((c) => c.args)).toEqual([upstreamArgs]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What a removal would destroy -- shared by both confirmation dialogs
+// ---------------------------------------------------------------------------
+
+describe('assessLoss', () => {
+  const clean: WorkAtRisk = { files: [], ahead: 0, aheadBase: 'main' };
+  const dirty: WorkAtRisk = { files: ['?? a.txt', ' M b.ts'], ahead: 0, aheadBase: 'main' };
+  const unmerged: WorkAtRisk = { files: [], ahead: 2, aheadBase: 'origin/main' };
+
+  it('sees nothing at risk in a clean, merged worktree', () => {
+    for (const deleteBranch of [true, false]) {
+      expect(assessLoss(clean, { deleteBranch })).toEqual({
+        dirty: false,
+        unmerged: false,
+        unknown: false,
+        needsAck: false,
+      });
+    }
+  });
+
+  it('counts uncommitted changes whether or not the branch is deleted', () => {
+    // The working tree dies with the worktree either way.
+    expect(assessLoss(dirty, { deleteBranch: false })).toMatchObject({
+      dirty: true,
+      needsAck: true,
+    });
+    expect(assessLoss(dirty, { deleteBranch: true })).toMatchObject({ dirty: true, needsAck: true });
+  });
+
+  it('counts unmerged commits ONLY when the branch is deleted', () => {
+    // Keeping the branch leaves committed work reachable by name, so warning
+    // about it would be crying wolf -- and would train the user to tick past it.
+    expect(assessLoss(unmerged, { deleteBranch: false })).toEqual({
+      dirty: false,
+      unmerged: false,
+      unknown: false,
+      needsAck: false,
+    });
+    expect(assessLoss(unmerged, { deleteBranch: true })).toMatchObject({
+      unmerged: true,
+      needsAck: true,
+    });
+  });
+
+  it('treats an unreadable status as a loss, always', () => {
+    const unknownFiles: WorkAtRisk = { files: null, ahead: 0, aheadBase: 'main' };
+    expect(assessLoss(unknownFiles, { deleteBranch: false })).toMatchObject({
+      unknown: true,
+      needsAck: true,
+    });
+  });
+
+  it('treats an unknown commit count as a loss only when deleting the branch', () => {
+    const unknownAhead: WorkAtRisk = { files: [], ahead: null, aheadBase: 'main' };
+    expect(assessLoss(unknownAhead, { deleteBranch: false })).toMatchObject({
+      unknown: false,
+      needsAck: false,
+    });
+    expect(assessLoss(unknownAhead, { deleteBranch: true })).toMatchObject({
+      unknown: true,
+      needsAck: true,
+    });
+  });
+});
+
+describe('ackLabel', () => {
+  it('names the uncommitted count', () => {
+    expect(ackLabel({ files: ['?? a', ' M b'], ahead: 0, aheadBase: 'main' }, { deleteBranch: false }))
+      .toBe('I understand 2 uncommitted change(s) will be permanently lost.');
+  });
+
+  it('names the unmerged count and the base it was compared against', () => {
+    expect(ackLabel({ files: [], ahead: 3, aheadBase: 'origin/main' }, { deleteBranch: true })).toBe(
+      'I understand 3 commit(s) not merged into origin/main will be permanently lost.',
+    );
+  });
+
+  it('names both counts when both apply', () => {
+    expect(
+      ackLabel({ files: ['?? a'], ahead: 2, aheadBase: 'origin/main' }, { deleteBranch: true }),
+    ).toBe(
+      'I understand 1 uncommitted change(s) and 2 commit(s) not merged into origin/main ' +
+        'will be permanently lost.',
+    );
+  });
+
+  it('drops the unmerged half when the branch is kept', () => {
+    expect(
+      ackLabel({ files: ['?? a'], ahead: 2, aheadBase: 'origin/main' }, { deleteBranch: false }),
+    ).toBe('I understand 1 uncommitted change(s) will be permanently lost.');
+  });
+
+  it('says so when it could not check', () => {
+    expect(ackLabel({ files: null, ahead: 0, aheadBase: 'main' }, { deleteBranch: false })).toMatch(
+      /could not check/,
+    );
+    expect(
+      ackLabel({ files: ['?? a'], ahead: null, aheadBase: 'main' }, { deleteBranch: true }),
+    ).toBe(
+      'I understand 1 uncommitted change(s) will be permanently lost, and that some of this ' +
+        'worktree could not be checked.',
+    );
+  });
+
+  it('falls back to a phrase when there is no base branch name', () => {
+    expect(ackLabel({ files: [], ahead: 1, aheadBase: null }, { deleteBranch: true })).toContain(
+      'not merged into the base branch',
+    );
   });
 });
 

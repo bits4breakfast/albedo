@@ -21,6 +21,7 @@
     "fs:allow-open",
     "fs:allow-read",
     "fs:allow-seek",
+    "fs:allow-write-text-file",
     "fs:allow-exists",
     "fs:allow-watch",
     {
@@ -40,6 +41,16 @@
         {
           "name": "git",
           "cmd": "git",
+          "args": true
+        },
+        {
+          "name": "open",
+          "cmd": "open",
+          "args": true
+        },
+        {
+          "name": "phpstorm",
+          "cmd": "phpstorm",
           "args": true
         }
       ]

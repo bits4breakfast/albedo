@@ -1,0 +1,251 @@
+/* ==========================================================================
+   Touched files (M4) — the change-set view. Owned by the touched-files
+   workstream. All class names are `tf-` prefixed; every colour comes from the
+   tokens in src/styles.css, which belongs to the shell and is not edited here.
+
+   Density matches the task list and the transcript: hairline rows, mono for
+   anything a human compares character by character (paths, status codes,
+   counts), and one accent — the rows git found that the transcript never
+   mentioned.
+   ========================================================================== */
+
+.tf-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* --------------------------------------------------------------------------
+   Header
+   -------------------------------------------------------------------------- */
+
+.tf-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.tf-head-title {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.tf-head-count {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tf-btn {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tf-btn:hover { background: #1f242c; color: var(--text); border-color: var(--border-strong); }
+.tf-btn:disabled { color: var(--faint); background: transparent; }
+
+/* --------------------------------------------------------------------------
+   Notices — an empty list must never be able to mean two different things
+   -------------------------------------------------------------------------- */
+
+.tf-error {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--danger);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+  user-select: text;
+  cursor: auto;
+}
+
+.tf-error-label { color: var(--danger); }
+
+.tf-error-detail {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.tf-warn {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(240, 163, 58, 0.25);
+  background: rgba(240, 163, 58, 0.08);
+  color: #f6d6a4;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.tf-warn-detail { font-family: var(--font-mono); color: var(--warn); }
+
+/* The legend for `source: 'git'` rows. Present only when such a row exists —
+   it explains the accent above the rows it applies to, rather than sitting
+   there as permanent chrome. */
+.tf-legend {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--warn);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------------------
+   Rows
+   -------------------------------------------------------------------------- */
+
+.tf-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 18px;
+}
+
+.tf-row {
+  display: grid;
+  grid-template-columns: 2.2em minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  column-gap: 8px;
+  width: 100%;
+  padding: 3px 8px;
+  text-align: left;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+
+.tf-row:hover { background: var(--panel-raised); }
+.tf-row:hover .tf-name { color: var(--text-strong); }
+
+/* Git alone knows about this file: the agent changed it outside its edit tool.
+   Distinct on purpose — this is the row you did not expect to be here. */
+.tf-row[data-source='git'] {
+  border-left-color: var(--warn);
+  background: rgba(240, 163, 58, 0.05);
+}
+.tf-row[data-source='git']:hover { background: rgba(240, 163, 58, 0.1); }
+
+.tf-status {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  white-space: pre;
+  letter-spacing: 0.06em;
+}
+.tf-status[data-tone='add'] { color: var(--add); }
+.tf-status[data-tone='del'] { color: var(--del); }
+.tf-status[data-tone='mod'] { color: var(--accent); }
+
+.tf-path {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  /* No gap: the directory, the separator and the basename are ONE path and
+     must read as one. Badges space themselves with a margin. */
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* The directory is context; the basename is what you are looking for. */
+.tf-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;          /* clip the FRONT of a deep path, not the end */
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.tf-sep {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.tf-name {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.tf-badge {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--warn);
+  background: rgba(240, 163, 58, 0.12);
+  border: 1px solid rgba(240, 163, 58, 0.3);
+  border-radius: var(--radius);
+}
+
+.tf-badge-hand {
+  color: #bcd9ff;
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.tf-edits {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tf-when {
+  min-width: 2.6em;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* --------------------------------------------------------------------------
+   Empty / loading
+   -------------------------------------------------------------------------- */
+
+.tf-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.tf-empty-hint {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+.tf-mono { font-family: var(--font-mono); }

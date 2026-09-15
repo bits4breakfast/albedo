@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Task, TaskStatus } from '../types';
-import { listTasks, updateTask, archiveTask, getMessages } from '../db';
-import { startCapture, onCaptureUpdate, deriveStatus } from '../capture';
-import type { CaptureHandle } from '../capture';
+import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged } from '../db';
+import { startCapture, onCaptureUpdate, deriveStatus, contextUsageForSessions } from '../capture';
+import type { CaptureHandle, ContextUsage } from '../capture';
 
 /** Shape of the `onCaptureUpdate` payload, per docs/INTERFACES.md. */
 interface CaptureUpdate {
@@ -27,6 +27,10 @@ interface CaptureUpdate {
 const COALESCE_MS = 250;
 /** Recent-window of rows handed to deriveStatus. */
 const STATUS_WINDOW = 400;
+/** Coalesces bursts of task-row writes into one reload. */
+const TASKS_CHANGED_DEBOUNCE_MS = 120;
+/** One batched context query per burst, never one per row. */
+const CONTEXT_DEBOUNCE_MS = 400;
 
 export interface UseTasksResult {
   tasks: Task[];
@@ -34,6 +38,11 @@ export interface UseTasksResult {
   /** Fatal-ish problems worth surfacing in a banner. Null when healthy. */
   loadError: string | null;
   captureError: string | null;
+  /**
+   * Context-window usage keyed by sessionId, fetched for every visible task in
+   * a single batched query. Absent entries simply render no meter.
+   */
+  contextBySession: Map<string, ContextUsage>;
   refresh: () => Promise<void>;
   /** Insert or replace a task locally (e.g. after NewTaskDialog creates one). */
   upsertTask: (task: Task) => void;
@@ -50,6 +59,9 @@ export function useTasks(): UseTasksResult {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [contextBySession, setContextBySession] = useState<Map<string, ContextUsage>>(
+    () => new Map(),
+  );
 
   /** Latest tasks, readable from callbacks without re-subscribing. */
   const tasksRef = useRef<Task[]>([]);
@@ -154,6 +166,42 @@ export function useTasks(): UseTasksResult {
     [applyTask],
   );
 
+  /**
+   * One batched query for every live session. Never per row: with several
+   * sessions open that would be N queries on every transcript append.
+   */
+  const refreshContext = useCallback(async () => {
+    const ids = Array.from(
+      new Set(
+        tasksRef.current
+          .filter((t) => t.status !== 'archived' && t.sessionId)
+          .map((t) => t.sessionId as string),
+      ),
+    );
+    if (ids.length === 0) {
+      setContextBySession((prev) => (prev.size === 0 ? prev : new Map()));
+      return;
+    }
+    try {
+      const result = await contextUsageForSessions(ids);
+      if (!aliveRef.current) return;
+      setContextBySession(result instanceof Map ? new Map(result) : new Map());
+    } catch {
+      /* Keep the last good reading rather than blanking the meters. */
+    }
+  }, []);
+
+  /** Identity of the live session set — refetch when a task joins or leaves. */
+  const sessionKey = tasks
+    .filter((t) => t.status !== 'archived' && t.sessionId)
+    .map((t) => t.sessionId)
+    .sort()
+    .join(',');
+
+  useEffect(() => {
+    void refreshContext();
+  }, [sessionKey, refreshContext]);
+
   // Initial load.
   useEffect(() => {
     aliveRef.current = true;
@@ -163,11 +211,32 @@ export function useTasks(): UseTasksResult {
     };
   }, [refresh]);
 
+  // Task rows mutated behind the shell's back -- the worktree module creating
+  // or removing one, the capture watcher adopting a sessionId. Without this the
+  // list silently goes stale (INTERFACES.md, lead ruling 5).
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      off = onTasksChanged(() => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => void refresh(), TASKS_CHANGED_DEBOUNCE_MS);
+      });
+    } catch {
+      /* db build without notifications: we still see our own writes */
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      off?.();
+    };
+  }, [refresh]);
+
   // Capture pipeline: start the watcher, then refresh status on every burst.
   useEffect(() => {
     let handle: CaptureHandle | null = null;
     let stopped = false;
     let unsubscribe: (() => void) | null = null;
+    let contextTimer: ReturnType<typeof setTimeout> | null = null;
     const timers = timersRef.current;
 
     try {
@@ -182,6 +251,10 @@ export function useTasks(): UseTasksResult {
             void refreshStatus(u.sessionId, u.cwd ?? null);
           }, COALESCE_MS),
         );
+
+        // Context is event-driven too — no polling. One batch per burst.
+        if (contextTimer) clearTimeout(contextTimer);
+        contextTimer = setTimeout(() => void refreshContext(), CONTEXT_DEBOUNCE_MS);
       });
     } catch (err) {
       setCaptureError(`Capture updates unavailable: ${message(err)}`);
@@ -202,15 +275,16 @@ export function useTasks(): UseTasksResult {
     return () => {
       stopped = true;
       unsubscribe?.();
+      if (contextTimer) clearTimeout(contextTimer);
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
       void handle?.stop().catch(() => {});
     };
-  }, [refreshStatus]);
+  }, [refreshStatus, refreshContext]);
 
   return useMemo(
-    () => ({ tasks, loading, loadError, captureError, refresh, upsertTask, archive }),
-    [tasks, loading, loadError, captureError, refresh, upsertTask, archive],
+    () => ({ tasks, loading, loadError, captureError, contextBySession, refresh, upsertTask, archive }),
+    [tasks, loading, loadError, captureError, contextBySession, refresh, upsertTask, archive],
   );
 }
 

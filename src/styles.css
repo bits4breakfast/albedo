@@ -189,25 +189,6 @@ button {
 .usage-figure { color: var(--text); font-family: var(--font-mono); }
 .usage-figure em { font-style: normal; color: var(--muted); }
 
-.usage-bar {
-  position: relative;
-  width: 108px;
-  height: 4px;
-  background: #1b2029;
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.usage-bar-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--accent);
-  transition: width 400ms ease;
-}
-
-.usage-bar-fill[data-level='warn'] { background: var(--warn); }
-.usage-bar-fill[data-level='high'] { background: var(--danger); }
-
 .usage-stale { color: var(--faint); font-style: italic; }
 .usage-error { color: var(--warn); }
 
@@ -254,7 +235,9 @@ button {
   overflow: hidden;
 }
 
-.tasklist { display: flex; flex-direction: column; height: 100%; outline: none; }
+/* Fills what the usage panel below it does not claim. `min-height: 0` is what
+   lets .tasklist-scroll actually scroll instead of pushing the panel off. */
+.tasklist { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; outline: none; }
 
 .tasklist-head {
   flex: 0 0 auto;
@@ -422,7 +405,6 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .status-dot { animation: none !important; }
-  .usage-bar-fill { transition: none; }
 }
 
 /* --------------------------------------------------------------------------
@@ -664,3 +646,192 @@ button {
   border-bottom: 1px solid rgba(240, 163, 58, 0.25);
 }
 .banner-text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --------------------------------------------------------------------------
+   Task row actions (M4)
+   Destructive actions never sit inline with the selection target: they live
+   behind a hover control or a right-click, and open a confirmation dialog.
+   -------------------------------------------------------------------------- */
+
+.task-row { position: relative; }
+
+.task-more {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 18px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.task-row:hover .task-more,
+.task-row[data-menu-open='true'] .task-more { display: flex; }
+.task-more:hover { color: var(--text-strong); border-color: var(--border-strong); background: #232933; }
+
+/* The age gets out of the way rather than the control overlapping it. */
+.task-row:hover .task-age,
+.task-row[data-menu-open='true'] .task-age { visibility: hidden; }
+
+.task-row[data-menu-open='true'] { background: var(--panel-raised); }
+
+.row-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 168px;
+  padding: 3px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.row-menu-head {
+  padding: 4px 8px 5px;
+  margin-bottom: 3px;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-menu-item {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  text-align: left;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  border-radius: 2px;
+}
+.row-menu-item:hover { background: var(--accent-soft); color: var(--text-strong); }
+.row-menu-item[data-tone='danger']:hover { background: var(--del-soft); color: #ffb3b0; }
+
+/* --------------------------------------------------------------------------
+   Reading pane tabs (M4)
+   -------------------------------------------------------------------------- */
+
+.pane-head .tabs { display: flex; gap: 2px; margin-left: -4px; }
+
+.pane-head .tabs button {
+  height: 19px;
+  padding: 0 7px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border-radius: 2px;
+}
+.pane-head .tabs button:hover { color: var(--text); background: var(--panel-raised); }
+.pane-head .tabs button[aria-selected='true'] { color: var(--text-strong); background: var(--panel-raised); }
+
+.pane-head-close {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+  color: var(--muted);
+  border-radius: 2px;
+}
+.pane-head-close:hover { color: var(--text-strong); background: var(--panel-raised); }
+
+.tabpanel { position: absolute; inset: 0; overflow: hidden; }
+.tabpanel[hidden] { display: none !important; }
+
+/* --------------------------------------------------------------------------
+   Context-window meters (M4)
+
+   Deliberately outside the motion budget: nothing here animates. Below the
+   warn threshold the hairline is drawn at roughly border contrast, so a
+   healthy fleet of rows reads as no meter at all; past 70% it warms, past 90%
+   it goes red and the figure appears next to the branch.
+
+   `data-basis="inferred"` is hatched rather than solid. The transcript does
+   not record the context limit, so that fill is an estimate — the hatch says
+   so without a tooltip, and the figure shown alongside falls back to the raw
+   token count, which is always exactly true.
+   -------------------------------------------------------------------------- */
+
+.task-ctx {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.task-ctx-fill { display: block; height: 100%; background: #2a3341; }
+.task-ctx[data-level='warn'] .task-ctx-fill { background: var(--status-blocked); opacity: 0.8; }
+.task-ctx[data-level='high'] .task-ctx-fill { background: var(--danger); }
+
+.task-ctx[data-basis='inferred'] .task-ctx-fill {
+  background-image: repeating-linear-gradient(
+    115deg,
+    rgba(0, 0, 0, 0.45) 0 2px,
+    rgba(0, 0, 0, 0) 2px 4px
+  );
+}
+
+.task-meta-tail {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.task-index { margin-left: 0; }
+
+.task-ctx-text {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--status-blocked);
+}
+.task-ctx-text[data-level='high'] { color: var(--danger); }
+
+/* Header readout ---------------------------------------------------------- */
+
+.ctx { display: inline-flex; align-items: center; gap: 6px; }
+
+.ctx-bar {
+  position: relative;
+  width: 46px;
+  height: 4px;
+  background: #1b2029;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ctx-fill { position: absolute; inset: 0 auto 0 0; background: #3c4757; }
+.ctx[data-level='warn'] .ctx-fill { background: var(--status-blocked); }
+.ctx[data-level='high'] .ctx-fill { background: var(--danger); }
+
+.ctx[data-basis='inferred'] .ctx-fill {
+  background-image: repeating-linear-gradient(
+    115deg,
+    rgba(0, 0, 0, 0.45) 0 2px,
+    rgba(0, 0, 0, 0) 2px 4px
+  );
+}
+
+.ctx-text {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.ctx[data-level='warn'] .ctx-text { color: var(--status-blocked); }
+.ctx[data-level='high'] .ctx-text { color: var(--danger); }
+
