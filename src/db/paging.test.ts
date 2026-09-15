@@ -58,6 +58,7 @@ function row(o: {
     targetPath: null,
     body: o.body ?? `row ${o.seq}`,
     rawJson: '{}',
+    agentId: null,
     ts: o.ts,
   };
 }

@@ -116,7 +116,7 @@ describe('onTasksChanged', () => {
 });
 
 describe('buildMessageInsertBatches', () => {
-  const COLUMNS = 9;
+  const COLUMNS = 10;
 
   function row(seq: number, taskId: number | null = 1): InsertableMessage {
     return {
@@ -128,6 +128,7 @@ describe('buildMessageInsertBatches', () => {
       targetPath: null,
       body: `body ${seq}`,
       rawJson: `{"seq":${seq}}`,
+      agentId: null,
       ts: 1_000 + seq,
     };
   }
@@ -164,7 +165,7 @@ describe('buildMessageInsertBatches', () => {
   it('binds values in the same order as the column list', () => {
     const batch = buildMessageInsertBatches([row(42, null)])[0];
     expect(batch?.sql.startsWith(
-      'INSERT OR IGNORE INTO messages (task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts) VALUES ',
+      'INSERT OR IGNORE INTO messages (task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts) VALUES ',
     )).toBe(true);
     expect(batch?.binds).toEqual([
       null,
@@ -175,6 +176,7 @@ describe('buildMessageInsertBatches', () => {
       null,
       'body 42',
       '{"seq":42}',
+      null,
       1_042,
     ]);
   });

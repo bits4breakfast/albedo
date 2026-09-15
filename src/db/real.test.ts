@@ -99,7 +99,7 @@ describe('the harness itself', () => {
       {
         taskId: null, sessionId: 's', seq: 0, role: 'user',
         toolName: null, targetPath: null, body: 'retry the uploader',
-        rawJson: '{}', ts: 1,
+        rawJson: '{}', agentId: null, ts: 1,
       },
     ]);
     const hits = db.raw.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all('"retry"');
@@ -311,9 +311,9 @@ describe('searchMessages — executed', () => {
   beforeEach(async () => {
     await insertMessages([
       { taskId: null, sessionId: 's1', seq: 0, role: 'user', toolName: null, targetPath: null,
-        body: 'please fix the uploader retry logic', rawJson: '{}', ts: 1 },
+        body: 'please fix the uploader retry logic', rawJson: '{}', agentId: null, ts: 1 },
       { taskId: null, sessionId: 's1', seq: 100, role: 'tool_use', toolName: 'Edit',
-        targetPath: '/repo/src/uploader.ts', body: 'Edit: /repo/src/uploader.ts', rawJson: '{}', ts: 2 },
+        targetPath: '/repo/src/uploader.ts', body: 'Edit: /repo/src/uploader.ts', rawJson: '{}', agentId: null, ts: 2 },
     ]);
   });
 
@@ -349,16 +349,16 @@ describe('touchedFiles — executed', () => {
     // The same file, written three times, named absolutely and relatively.
     await insertMessages([
       { taskId: task.id, sessionId: 's1', seq: 0, role: 'tool_use', toolName: 'Edit',
-        targetPath: '/wt/slug/src/a.ts', body: 'Edit', rawJson: '{}', ts: 10 },
+        targetPath: '/wt/slug/src/a.ts', body: 'Edit', rawJson: '{}', agentId: null, ts: 10 },
       { taskId: task.id, sessionId: 's1', seq: 100, role: 'tool_use', toolName: 'Write',
-        targetPath: '/wt/slug/src/a.ts', body: 'Write', rawJson: '{}', ts: 20 },
+        targetPath: '/wt/slug/src/a.ts', body: 'Write', rawJson: '{}', agentId: null, ts: 20 },
       { taskId: task.id, sessionId: 's1', seq: 200, role: 'tool_use', toolName: 'Edit',
-        targetPath: 'src/a.ts', body: 'Edit', rawJson: '{}', ts: 30 },
+        targetPath: 'src/a.ts', body: 'Edit', rawJson: '{}', agentId: null, ts: 30 },
       { taskId: task.id, sessionId: 's1', seq: 300, role: 'tool_use', toolName: 'Edit',
-        targetPath: '/wt/slug/src/b.ts', body: 'Edit', rawJson: '{}', ts: 40 },
+        targetPath: '/wt/slug/src/b.ts', body: 'Edit', rawJson: '{}', agentId: null, ts: 40 },
       // a read must not count as a touch
       { taskId: task.id, sessionId: 's1', seq: 400, role: 'tool_use', toolName: 'Read',
-        targetPath: '/wt/slug/src/c.ts', body: 'Read', rawJson: '{}', ts: 50 },
+        targetPath: '/wt/slug/src/c.ts', body: 'Read', rawJson: '{}', agentId: null, ts: 50 },
     ]);
 
     const files = await touchedFiles(task.id);
@@ -840,11 +840,11 @@ describe('deleteTask — the promise the dialog makes on screen', () => {
     });
     await insertMessages([
       { taskId: task.id, sessionId: 'sess-keep', seq: 0, role: 'user', toolName: null,
-        targetPath: null, body: 'please add a retry to the uploader', rawJson: '{}', ts: 1_000 },
+        targetPath: null, body: 'please add a retry to the uploader', rawJson: '{}', agentId: null, ts: 1_000 },
       { taskId: task.id, sessionId: 'sess-keep', seq: 100, role: 'assistant', toolName: null,
-        targetPath: null, body: 'adding backoff now', rawJson: '{}', ts: 2_000 },
+        targetPath: null, body: 'adding backoff now', rawJson: '{}', agentId: null, ts: 2_000 },
       { taskId: task.id, sessionId: 'sess-keep', seq: 200, role: 'tool_use', toolName: 'Edit',
-        targetPath: '/wt/retry/src/uploader.ts', body: 'Edit: uploader.ts', rawJson: '{}', ts: 3_000 },
+        targetPath: '/wt/retry/src/uploader.ts', body: 'Edit: uploader.ts', rawJson: '{}', agentId: null, ts: 3_000 },
     ]);
     seedTranscriptFile(db, {
       path: '/p/sess-keep.jsonl', sessionId: 'sess-keep', cwd: '/wt/retry', title: 'Add a retry',
@@ -919,7 +919,7 @@ describe('deleteTask — the promise the dialog makes on screen', () => {
     });
     await insertMessages([
       { taskId: other.id, sessionId: 'sess-other', seq: 0, role: 'user', toolName: null,
-        targetPath: null, body: 'unrelated work', rawJson: '{}', ts: 5_000 },
+        targetPath: null, body: 'unrelated work', rawJson: '{}', agentId: null, ts: 5_000 },
     ]);
 
     await deleteTask(taskId);
@@ -951,4 +951,84 @@ describe('deleteTask — the promise the dialog makes on screen', () => {
       .get(taskId) as { c: number };
     return row.c;
   }
+});
+
+/**
+ * The collision that silently discarded 89% of every subagent transcript.
+ *
+ * Claude Code writes a subagent's transcript under the PARENT's `sessionId`,
+ * and `seq` is file-local, so the subagent's first line claims the same
+ * (session_id, seq) as the parent's first line. `INSERT OR IGNORE` against the
+ * old two-column unique index then did exactly what it says.
+ *
+ * Nothing in the app reported an error, and 787 tests were green throughout --
+ * because every fixture seeded one file per session, which is the one shape
+ * that cannot collide. These run on the shipped schema, with migration 5.
+ */
+describe('subagent rows do not collide with their parent session', () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = createTestDb();
+    harness.db = db;
+    resetDb();
+  });
+
+  const row = (seq: number, agentId: string | null, body: string) => ({
+    taskId: null,
+    sessionId: 'parent-session',
+    seq,
+    role: 'assistant' as const,
+    toolName: null,
+    targetPath: null,
+    body,
+    rawJson: JSON.stringify({ agentId }),
+    agentId,
+    ts: 1_000 + seq,
+  });
+
+  it('keeps a parent row and a subagent row that share (session_id, seq)', async () => {
+    const written = await insertMessages([
+      row(0, null, 'parent line 0'),
+      row(0, 'a039663833faf1918', 'subagent line 0'),
+    ]);
+    expect(written).toBe(2);
+    const bodies = (
+      db.raw.prepare('SELECT body FROM messages ORDER BY agent_id IS NULL DESC, body').all() as {
+        body: string;
+      }[]
+    ).map((r) => r.body);
+    expect(bodies).toEqual(['parent line 0', 'subagent line 0']);
+  });
+
+  it('keeps two sibling subagents that both restart seq at 0', async () => {
+    // Several subagents run under one parent session, each with its own file,
+    // each starting at line 0. They collided with each other as well as with
+    // the parent -- which is why the loss exceeded the parent-only count.
+    await insertMessages([
+      row(0, 'agent-aaa', 'from aaa'),
+      row(0, 'agent-bbb', 'from bbb'),
+      row(0, null, 'from parent'),
+    ]);
+    expect(db.raw.prepare('SELECT COUNT(*) n FROM messages').get()).toEqual({ n: 3 });
+  });
+
+  it('still de-duplicates a re-ingested byte range, agent or not', async () => {
+    // The whole point of INSERT OR IGNORE: the watcher re-reads a tail on
+    // restart. COALESCE in the index is what keeps this true for NULL agent_id
+    // -- SQLite treats NULLs as distinct, so a plain three-column unique index
+    // would have let every main-session row duplicate on re-ingest.
+    await insertMessages([row(5, null, 'parent'), row(5, 'agent-aaa', 'sub')]);
+    const again = await insertMessages([row(5, null, 'parent'), row(5, 'agent-aaa', 'sub')]);
+    expect(again).toBe(0);
+    expect(db.raw.prepare('SELECT COUNT(*) n FROM messages').get()).toEqual({ n: 2 });
+  });
+
+  it('rewinds every subagents/ transcript so the lost rows are re-read', async () => {
+    // bytes_ingested is what stops a completed file being read again, so the
+    // migration has to rewind them or the recovered rows never arrive.
+    const rewound = db.raw
+      .prepare("SELECT bytes_ingested, last_seq FROM transcript_files WHERE path LIKE '%/subagents/%'")
+      .all() as { bytes_ingested: number }[];
+    expect(rewound.every((r) => r.bytes_ingested === 0)).toBe(true);
+  });
 });
