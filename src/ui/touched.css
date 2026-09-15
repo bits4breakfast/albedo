@@ -423,6 +423,9 @@
     column-gap: 6px;
     padding-inline: 6px;
   }
+  /* The column has its own "files" header at these widths, so the in-pane
+     title is the same word twice — and at 240px it wraps onto two lines. */
+  .tf-head-title { display: none; }
   .tf-path { flex-wrap: wrap; }
   /* flex-basis 0 so the basename never CAUSES a wrap (line-breaking looks at
      base sizes, not shrink factors): without it a long name pushes the badges
@@ -453,7 +456,4 @@
   .tf-when { display: none; }
   .tf-status { letter-spacing: 0; }
   .tf-badge { margin-left: 4px; padding: 0 3px; }
-  /* The pinned column has its own header at these widths, so the words
-     "Touched files" are on screen twice. Keep the count and the button. */
-  .tf-head-title { display: none; }
 }
