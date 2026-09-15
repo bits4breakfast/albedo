@@ -1053,7 +1053,6 @@ export default function App() {
     <FileOpenContext.Provider value={openFile}>
     <div className="app" data-dragging={dragging !== null}>
       <Header
-        onNewTask={() => setNewTaskOpen(true)}
         onReconcile={() => setReconcileOpen(true)}
         onProjects={() => setProjectsOpen(true)}
         onSessions={() => setSessionsOpen(true)}
