@@ -3,6 +3,7 @@ import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, deriveStatus, contextUsageForSessions } from '../capture';
+import { noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
 /** Shape of the `onCaptureUpdate` payload, per docs/INTERFACES.md. */
@@ -178,6 +179,9 @@ export function useTasks(): UseTasksResult {
 
       applyTask(task.id, { status, lastActivityAt });
       if (prior.status !== status) {
+        // A transition, not a level: this is the one place that knows a task
+        // just *became* blocked rather than having been blocked all along.
+        noteStatusChange(task.id, prior.status, status);
         void updateTask(task.id, { status, lastActivityAt }).catch(() => {});
       }
     },

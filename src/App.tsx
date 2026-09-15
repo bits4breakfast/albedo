@@ -6,6 +6,7 @@ import type { ThemeChoice } from './ui/theme';
 import useTasks from './ui/useTasks';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
+import { attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import StatusDot from './ui/StatusDot';
 import Terminal from './ui/Terminal';
 import NewTaskDialog from './ui/NewTaskDialog';
@@ -732,7 +733,17 @@ export default function App() {
     setSelectedId(id);
     store(LS.selected, String(id));
     setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    // Looking at it is what "seen" means; nothing else clears the mark.
+    clearAttention(id);
   }, []);
+
+  /*
+   * Which tasks are asking for attention, and the window focus that decides
+   * whether the ask is a dock bounce or a pulse in the list. See ui/attention.
+   */
+  const [attention, setAttention] = useState<ReadonlyMap<number, AttentionKind>>(attentionMarks);
+  useEffect(() => onAttention(setAttention), []);
+  useEffect(() => watchFocus(), []);
 
   /**
    * Adopt pre-projects task rows on launch.
@@ -1138,6 +1149,7 @@ export default function App() {
             }}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
+            attention={attention}
             projects={projects}
             activeProject={activeProject}
             nameProject={!showTabs}
