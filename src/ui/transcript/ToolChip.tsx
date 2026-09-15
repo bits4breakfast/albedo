@@ -16,7 +16,13 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
 import { CodeLines, Disclosure, LinkifiedText, PathLink, useActivate } from './Diff';
-import { inputViewFor, type InputField, type InputView } from './toolViews';
+import {
+  inputViewFor,
+  parseQuestionAnswers,
+  type InputField,
+  type InputView,
+  type QuestionView,
+} from './toolViews';
 
 // ---------------------------------------------------------------------------
 // rawJson narrowing
@@ -203,6 +209,13 @@ export function summaryOf(message: Message): string | null {
       const todos = input.todos;
       return Array.isArray(todos) ? `${todos.length} items` : null;
     }
+    case 'AskUserQuestion': {
+      const qs = input.questions;
+      if (!Array.isArray(qs) || qs.length === 0) return null;
+      const first = qs[0] as Obj;
+      const head = firstLine(str(first?.question) ?? str(first?.header) ?? '');
+      return qs.length > 1 ? `${head} (+${qs.length - 1} more)` : head;
+    }
     case 'Write': {
       const content = str(input.content);
       return content === null ? null : `${content.split('\n').length} lines`;
@@ -247,6 +260,18 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
   const resultText = open ? toolResultText(result) : '';
   const input = toolInput(message);
 
+  /*
+   * The one tool whose answer is worth reading without expanding: "which
+   * option did I pick" is the whole content of the row. Everything else keeps
+   * the collapsed-is-cheap rule -- this reads the result text only for
+   * AskUserQuestion, and only to pull the chosen labels out.
+   */
+  const answers = useMemo(
+    () => (message.toolName === 'AskUserQuestion' ? parseQuestionAnswers(toolResultText(result)) : null),
+    [message.toolName, result],
+  );
+  const chosen = answers === null || answers.size === 0 ? null : [...answers.values()].join(' · ');
+
   const state = pending ? 'pending' : error ? 'error' : 'ok';
   const inputView = useMemo(() => inputViewFor(message.toolName, input), [message.toolName, input]);
   // Same drag/selection guard the links use, so toggling the chip does not
@@ -273,6 +298,11 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
           </PathLink>
         ) : null}
         {summary ? <span className="tx-chip-summary">{summary}</span> : null}
+        {chosen ? (
+          <span className="tx-chip-answer" title={chosen}>
+            {chosen}
+          </span>
+        ) : null}
         <span className="tx-chip-state" title={state}>
           {pending ? '…' : error ? '✕' : '✓'}
         </span>
@@ -303,7 +333,7 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
               {raw || inputView.kind === 'json' ? (
                 <pre className="tx-pre">{pretty(input)}</pre>
               ) : (
-                <ToolInput view={inputView} />
+                <ToolInput view={inputView} answers={answers} />
               )}
             </section>
           ) : null}
@@ -328,8 +358,10 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
 }
 
 /** Renders whatever shape `toolViews` decided this tool's input should take. */
-function ToolInput({ view }: { view: InputView }): ReactNode {
+function ToolInput({ view, answers = null }: { view: InputView; answers?: Map<string, string> | null }): ReactNode {
   switch (view.kind) {
+    case 'questions':
+      return <QuestionList questions={view.questions} answers={answers} />;
     case 'shell':
       return (
         <>
@@ -353,6 +385,73 @@ function ToolInput({ view }: { view: InputView }): ReactNode {
     default:
       return null;
   }
+}
+
+/**
+ * A question and the options it offered, with the chosen one marked.
+ *
+ * Rendered as a list rather than as raw input JSON because the decision is the
+ * content here: which options were on the table, and which one was taken. An
+ * unanswered question renders the same way minus the mark, which is the honest
+ * state while the prompt is still open.
+ */
+function QuestionList({
+  questions,
+  answers,
+}: {
+  questions: readonly QuestionView[];
+  answers: Map<string, string> | null;
+}): ReactNode {
+  return (
+    <div className="tx-questions">
+      {questions.map((q, qi) => {
+        const answer = answers?.get(q.question) ?? null;
+        return (
+          <div className="tx-question" key={qi}>
+            <div className="tx-question-head">
+              {q.header ? <span className="tx-question-tag">{q.header}</span> : null}
+              <span className="tx-question-text">{q.question}</span>
+              {q.multiSelect ? <span className="tx-question-multi">pick any</span> : null}
+            </div>
+            <ul className="tx-options">
+              {q.options.map((o, oi) => {
+                // The answer is the label as rendered, so compare on the label.
+                const picked = answer !== null && answer === o.label;
+                return (
+                  <li className={`tx-option ${picked ? 'tx-option-picked' : ''}`} key={oi}>
+                    <span className="tx-option-mark" aria-hidden="true">
+                      {picked ? '✓' : ''}
+                    </span>
+                    <div className="tx-option-body">
+                      <div className="tx-option-label">{o.label}</div>
+                      {o.description ? <div className="tx-option-desc">{o.description}</div> : null}
+                      {o.preview ? <pre className="tx-pre tx-option-preview">{o.preview}</pre> : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {/*
+              An answer that matches no option is the free-text "Other" the
+              picker always offers. Showing it as a row of its own is the only
+              way it appears at all -- it is in no option list by construction.
+            */}
+            {answer !== null && !q.options.some((o) => o.label === answer) ? (
+              <div className="tx-option tx-option-picked tx-option-other">
+                <span className="tx-option-mark" aria-hidden="true">
+                  ✓
+                </span>
+                <div className="tx-option-body">
+                  <div className="tx-option-label">{answer}</div>
+                  <div className="tx-option-desc">typed, not one of the offered options</div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function FieldList({ fields }: { fields: readonly InputField[] }): ReactNode {

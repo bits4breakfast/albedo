@@ -108,7 +108,7 @@ npm test && npm run typecheck
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-Database: `~/Library/Application Support/com.upsellguru.albedo/albedo.db`
+Database: `~/Library/Application Support/com.bits4breakfast.albedo/albedo.db`
 (~290MB and growing — 166MB of that is `raw_json`, which is the honest cost of
 the never-drop rule, not a leak).
 
