@@ -12,10 +12,11 @@
  * assuming a key exists.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
-import { LinkifiedText, PathLink, useActivate } from './Diff';
+import { CodeLines, LinkifiedText, PathLink, useActivate } from './Diff';
+import { inputViewFor, type InputField, type InputView } from './toolViews';
 
 // ---------------------------------------------------------------------------
 // rawJson narrowing
@@ -236,6 +237,7 @@ export interface ToolChipProps {
 
 export function ToolChip({ message, result = null, defaultOpen = false }: ToolChipProps): ReactNode {
   const [open, setOpen] = useState(defaultOpen);
+  const [raw, setRaw] = useState(false);
 
   const name = message.toolName ?? 'tool';
   const target = targetOf(message);
@@ -246,6 +248,7 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
   const input = toolInput(message);
 
   const state = pending ? 'pending' : error ? 'error' : 'ok';
+  const inputView = useMemo(() => inputViewFor(message.toolName, input), [message.toolName, input]);
   // Same drag/selection guard the links use, so toggling the chip does not
   // fire at the end of a drag-select over the row.
   const toggle = useActivate(() => setOpen((v) => !v));
@@ -284,8 +287,24 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
           ) : null}
           {Object.keys(input).length > 0 ? (
             <section className="tx-chip-section">
-              <h4 className="tx-chip-label">input</h4>
-              <pre className="tx-pre">{pretty(input)}</pre>
+              <h4 className="tx-chip-label">
+                input
+                {inputView.kind !== 'json' ? (
+                  <button type="button" className="tx-chip-raw" onClick={() => setRaw((v) => !v)}>
+                    {raw ? 'formatted' : 'raw'}
+                  </button>
+                ) : null}
+              </h4>
+              {/*
+                Formatting input is a readability choice, so it is never the
+                only one: the raw JSON stays one click away, because what was
+                actually sent occasionally matters more than how it reads.
+              */}
+              {raw || inputView.kind === 'json' ? (
+                <pre className="tx-pre">{pretty(input)}</pre>
+              ) : (
+                <ToolInput view={inputView} />
+              )}
             </section>
           ) : null}
           <section className="tx-chip-section">
@@ -305,6 +324,48 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Renders whatever shape `toolViews` decided this tool's input should take. */
+function ToolInput({ view }: { view: InputView }): ReactNode {
+  switch (view.kind) {
+    case 'shell':
+      return (
+        <>
+          {view.description ? <div className="tx-chip-desc">{view.description}</div> : null}
+          <CodeLines code={view.command} lang="shellscript" />
+          <FieldList fields={view.fields} />
+        </>
+      );
+    case 'fields':
+      return <FieldList fields={view.fields} />;
+    case 'file':
+      return (
+        <>
+          <div className="tx-chip-desc">
+            <PathLink path={view.path} />
+          </div>
+          <CodeLines code={view.content} lang={view.lang} />
+          <FieldList fields={view.fields} />
+        </>
+      );
+    default:
+      return null;
+  }
+}
+
+export function FieldList({ fields }: { fields: readonly InputField[] }): ReactNode {
+  if (fields.length === 0) return null;
+  return (
+    <dl className="tx-fields">
+      {fields.map((f, i) => (
+        <div className="tx-field" key={i}>
+          <dt className="tx-field-k">{f.label}</dt>
+          <dd className="tx-field-v">{f.path ? <PathLink path={f.value} /> : f.value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

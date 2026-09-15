@@ -696,6 +696,16 @@
   color: var(--wt-on-tint-muted);
 }
 
+/* Hidden is view state, not a lifecycle state: dimmed and dashed like the
+   "unknown" rows in reconcile, never coloured like a warning. */
+.wt-item[data-hidden='true'] {
+  border-style: dashed;
+}
+
+.wt-item[data-hidden='true'] .wt-item-path {
+  color: var(--muted);
+}
+
 .wt-item[data-new='true'] {
   border-color: var(--wt-clean-line);
   border-left-width: 2px;

@@ -23,6 +23,7 @@ import { archiveProject, backfillProjectsFromTasks } from './db/projects';
 import type { BackfillResult } from './db/projects';
 import { repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
+import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
 
 /**
@@ -82,6 +83,25 @@ function store(key: string, value: string): void {
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 const DISMISSED_KEY = 'albedo.shell.dismissedNotices';
+const HIDDEN_PROJECTS_KEY = 'albedo.shell.hiddenProjects';
+
+function readHiddenProjects(): number[] {
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_PROJECTS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHiddenProjects(ids: number[]): void {
+  try {
+    window.localStorage.setItem(HIDDEN_PROJECTS_KEY, JSON.stringify(ids));
+  } catch {
+    /* a reappearing tab is not worth throwing over */
+  }
+}
 
 function readDismissed(): string[] {
   try {
@@ -267,11 +287,31 @@ function ProjectTabs({
   tabs,
   activeKey,
   onSelect,
+  onHide,
+  hidden,
+  onRestore,
 }: {
   tabs: ProjectTab[];
   activeKey: string;
   onSelect: (key: string) => void;
+  onHide: (projectId: number) => void;
+  hidden: Project[];
+  onRestore: (projectId: number) => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', close);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', close);
+    };
+  }, [menuOpen]);
+  // Never offer to hide the last one: that would leave a bar with nothing in
+  // it but the restore chip.
+  const canHide = tabs.length > 1;
   return (
     <div className="project-tabs" role="tablist" aria-label="Projects">
       {tabs.map((tab) => {
@@ -295,9 +335,66 @@ function ProjectTabs({
             {status && <StatusDot status={status} />}
             <span className="project-tab-name">{tab.label}</span>
             <span className="project-tab-count">{badge}</span>
+            {canHide && tab.project && (
+              <span
+                className="project-tab-close"
+                role="button"
+                aria-label={`Close ${tab.label}`}
+                title={`Close ${tab.label} — the project and its worktrees are untouched`}
+                onPointerDown={(e) => {
+                  // Beat the tab's own click so closing never also selects.
+                  e.stopPropagation();
+                  e.preventDefault();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (tab.project) onHide(tab.project.id);
+                }}
+              >
+                ✕
+              </span>
+            )}
           </button>
         );
       })}
+
+      {/* Always reachable from where it was closed. Without this the bar can
+          become a one-way door -- close a tab, and with the bar gone there is
+          nowhere left that knows the project is merely hidden. */}
+      {hidden.length > 0 && (
+        <div className="project-tabs-restore">
+          <button
+            className="project-tab project-tab-more"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-expanded={menuOpen}
+            title="Closed projects"
+          >
+            +{hidden.length} closed
+          </button>
+          {menuOpen && (
+            <div
+              className="row-menu project-tabs-menu"
+              role="menu"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div className="row-menu-head">Closed — still here, just not shown</div>
+              {hidden.map((project) => (
+                <button
+                  key={project.id}
+                  className="row-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onRestore(project.id);
+                  }}
+                >
+                  {project.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -358,10 +455,22 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(false);
   /** Notices the user has waved away, so launch housekeeping cannot nag. */
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set(readDismissed()));
+  /**
+   * Closed project tabs. VIEW STATE, not a lifecycle change: the project, its
+   * tasks and its worktrees are untouched, exactly like closing a browser tab.
+   * Deliberately not conflated with archiving, which touches worktrees and asks
+   * for confirmation — this one is only "not right now".
+   */
+  const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<number>>(
+    () => new Set(readHiddenProjects()),
+  );
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
+  /** Which verb the end-task dialog was opened with. */
+  const [endIntent, setEndIntent] = useState<'archive' | 'delete'>('archive');
   const [dragging, setDragging] = useState<null | 'sidebar' | 'split'>(null);
 
   const panesRef = useRef<HTMLDivElement | null>(null);
+  const selectTabRef = useRef<((key: string) => void) | null>(null);
 
   useEffect(() => store(LS.sidebar, String(Math.round(sidebarWidth))), [sidebarWidth]);
   useEffect(() => store(LS.mode, mode), [mode]);
@@ -371,13 +480,84 @@ export default function App() {
     if (rightTab !== 'editor') store(LS.rightTab, rightTab);
   }, [rightTab]);
 
-  const tabs = useMemo(() => buildTabs(projects, tasks), [projects, tasks]);
+  const allTabs = useMemo(() => buildTabs(projects, tasks), [projects, tasks]);
+
+  /**
+   * A closed tab must never swallow the one signal this app exists to deliver.
+   *
+   * Chosen over refusing to close a blocked project: blocked is a state a task
+   * enters LATER, so a check at close time would not cover the case that
+   * matters — closing a quiet project that goes blocked an hour afterwards. It
+   * also makes the refusal explicable only at the moment it happens, whereas a
+   * tab reappearing with a pinging dot explains itself. The hide is dropped
+   * rather than merely overridden, so what is stored matches what is shown.
+   */
+  useEffect(() => {
+    if (hiddenProjectIds.size === 0) return;
+    const blocked = new Set(
+      tasks.filter((t) => t.status === 'blocked' && t.projectId !== null).map((t) => t.projectId),
+    );
+    const revive = [...hiddenProjectIds].filter((id) => blocked.has(id));
+    if (revive.length === 0) return;
+    setHiddenProjectIds((prev) => {
+      const next = new Set(prev);
+      for (const id of revive) next.delete(id);
+      writeHiddenProjects([...next]);
+      return next;
+    });
+  }, [tasks, hiddenProjectIds]);
+
+  const tabs = useMemo(
+    () => allTabs.filter((t) => t.project === null || !hiddenProjectIds.has(t.project.id)),
+    [allTabs, hiddenProjectIds],
+  );
+
+  const hiddenProjects = useMemo(
+    () => projects.filter((p) => hiddenProjectIds.has(p.id)),
+    [projects, hiddenProjectIds],
+  );
+
+  const hideProject = useCallback((projectId: number) => {
+    const key = `p${projectId}`;
+    // Closing the active tab lands on a neighbour, the way a browser does --
+    // next if there is one, otherwise previous. Falling back to "first tab"
+    // would jump the user across the bar for no reason.
+    if (activeProjectTabKey === key) {
+      const i = tabs.findIndex((t) => t.key === key);
+      const neighbour = tabs[i + 1] ?? tabs[i - 1] ?? null;
+      if (neighbour) selectTabRef.current?.(neighbour.key);
+    }
+    setHiddenProjectIds((prev) => {
+      const next = new Set(prev);
+      next.add(projectId);
+      writeHiddenProjects([...next]);
+      return next;
+    });
+  }, [tabs, activeProjectTabKey]);
+
+  const restoreProject = useCallback(
+    (projectId: number) => {
+      setHiddenProjectIds((prev) => {
+        const next = new Set(prev);
+        next.delete(projectId);
+        writeHiddenProjects([...next]);
+        return next;
+      });
+      selectTabRef.current?.(`p${projectId}`);
+    },
+    [],
+  );
 
   /**
    * One tab is not a tab bar. With a single project the app is exactly what it
    * was before projects existed: no bar, nothing hidden, nothing to switch.
    */
-  const showTabs = tabs.length >= 2;
+  /**
+   * `|| hiddenProjects.length > 0` is what stops closing being a one-way door:
+   * hide one of two projects and the bar would otherwise vanish, taking the
+   * only route back with it.
+   */
+  const showTabs = tabs.length >= 2 || hiddenProjects.length > 0;
 
   const activeProjectTab = useMemo(() => {
     if (!showTabs) return null;
@@ -388,6 +568,9 @@ export default function App() {
     setActiveProjectTabKey(key);
     store(LS.project, key);
   }, []);
+  // Restoring selects the restored tab; the ref avoids ordering the two
+  // callbacks against each other.
+  selectTabRef.current = selectTab;
 
   /**
    * Scoped only while the bar is showing. With the bar hidden nothing is
@@ -465,9 +648,19 @@ export default function App() {
    */
   const sessionNameFor = useCallback(
     (task: Task): string | undefined => {
+      /*
+       * Shortened, because this one leaves our app.
+       *
+       * `--name` surfaces in Claude Code's prompt box, its /resume picker and
+       * the terminal title. A task title created from a long prompt is a whole
+       * paragraph, and a paragraph-length name degrades the very surfaces this
+       * flag was added to improve. The full title stays in the database and on
+       * the row; only the label we hand to another program is trimmed.
+       */
+      const name = displayName(task.title);
       const pending = pendingResume.get(task.id);
-      if (pending) return pending.includes('--fork-session') ? `${task.title} (fork)` : undefined;
-      if (task.sessionId === null) return task.title;
+      if (pending) return pending.includes('--fork-session') ? `${name} (fork)` : undefined;
+      if (task.sessionId === null) return name;
       return undefined;
     },
     [pendingResume],
@@ -769,15 +962,32 @@ export default function App() {
 
       <div className="app-body">
         <aside className="sidebar" style={{ width: sidebarWidth, flexBasis: sidebarWidth }}>
-          {showTabs && activeProjectTab && (
-            <ProjectTabs tabs={tabs} activeKey={activeProjectTab.key} onSelect={selectTab} />
+          {/* Not gated on activeProjectTab: hide EVERY project and there is no
+              active tab, and gating here would remove the restore chip along
+              with the tabs — the one-way door this feature must not become. */}
+          {showTabs && (
+            <ProjectTabs
+              tabs={tabs}
+              activeKey={activeProjectTab?.key ?? ''}
+              onSelect={selectTab}
+              onHide={hideProject}
+              hidden={hiddenProjects}
+              onRestore={restoreProject}
+            />
           )}
           <TaskList
             tasks={visibleTasks}
             selectedId={selectedId}
             onSelect={select}
             onNew={() => setNewTaskOpen(true)}
-            onArchive={(task) => setArchiveTarget(task)}
+            onArchive={(task) => {
+              setEndIntent('archive');
+              setArchiveTarget(task);
+            }}
+            onDelete={(task) => {
+              setEndIntent('delete');
+              setArchiveTarget(task);
+            }}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             projects={projects}
@@ -829,7 +1039,9 @@ export default function App() {
                       <span className="task-sep">/</span>
                     </>
                   )}
-                  <span className="main-ident-title">{selected.title}</span>
+                  <span className="main-ident-title" title={wrapForTooltip(selected.title)}>
+                    {selected.title}
+                  </span>
                   <span className="main-ident-path">{selected.worktreePath}</span>
                 </>
               ) : (
@@ -1030,6 +1242,17 @@ export default function App() {
         <ProjectsDialog
           open={projectsOpen}
           onClose={() => setProjectsOpen(false)}
+          onUnhideProject={(id) =>
+            // The hidden set lives in React state, read from localStorage once
+            // at mount — a write to the key alone would not bring the tab back
+            // until a relaunch.
+            setHiddenProjectIds((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              writeHiddenProjects([...next]);
+              return next;
+            })
+          }
           onChanged={(created) => {
             void refresh();
             // Follow the project that was just made. Without this the new tab
@@ -1089,10 +1312,19 @@ export default function App() {
       <PaneErrorBoundary label="Archive task">
         <ArchiveTaskDialog
           task={archiveTarget}
+          intent={endIntent}
           onClose={() => setArchiveTarget(null)}
           onArchived={(taskId) => {
             void archive(taskId);
             setArchiveTarget(null);
+          }}
+          onDeleted={(taskId) => {
+            // Same ordering discipline as onArchived: the row only leaves the
+            // list once the destructive work has actually completed. The task
+            // is already gone from the db by here, so this just resyncs.
+            forgetResume(taskId);
+            setArchiveTarget(null);
+            void refresh();
           }}
         />
       </PaneErrorBoundary>

@@ -83,6 +83,63 @@
 }
 .tx-jump:hover { border-color: var(--accent-line); color: var(--text-strong); }
 
+/* --- composer -------------------------------------------------------------- */
+
+/*
+   A foot, not a takeover: one line tall until there is something to say, and
+   not rendered at all without a task. The read surface keeps the pane.
+*/
+.tx-composer {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: end;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.tx-composer-notice {
+  grid-column: 1 / -1;
+  margin-bottom: 2px;
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
+
+.tx-composer-input {
+  width: 100%;
+  min-height: 22px;
+  max-height: 140px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  border-radius: var(--radius);
+  resize: none;
+  overflow-y: auto;
+}
+.tx-composer-input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.tx-composer-input::placeholder { color: var(--faint); }
+
+.tx-composer-send {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tx-composer-send:hover:not(:disabled) { color: var(--text-strong); border-color: var(--border-strong); }
+.tx-composer-send:disabled { opacity: 0.5; cursor: default; }
+
 /* --- rows ----------------------------------------------------------------- */
 
 .tx-row {
@@ -117,6 +174,47 @@
   color: var(--text-strong);
   max-height: 340px;
   overflow-y: auto;
+}
+
+/* A machine-generated envelope in a user row: no "you said" framing. */
+.tx-row-machine { margin: 2px 0; padding: 0; }
+
+/* A slash command, shown as the command rather than as its XML. */
+.tx-cmd {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  border-radius: var(--radius);
+}
+.tx-cmd-name { color: var(--accent); }
+.tx-cmd-args { color: var(--muted); }
+
+.tx-collapsed { margin: 1px 0; }
+
+.tx-output {
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  color: var(--muted);
+  border-radius: var(--radius);
+}
+
+/* A subagent's handback is a document; give it room but bound it. */
+.tx-report {
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.tx-chip-summary-wide {
+  flex: 1;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
 }
 
 .tx-system-text {
@@ -344,6 +442,48 @@
 }
 
 .tx-chip-section { margin-top: 5px; }
+
+/* Per-tool input: a shell command reads as shell, not as a JSON string. */
+.tx-chip-desc {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.tx-chip-raw {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  letter-spacing: 0;
+  text-transform: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tx-chip-raw:hover { color: var(--text); border-color: var(--border-strong); }
+
+.tx-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1px 10px;
+  margin: 3px 0 0;
+  font-size: var(--fs-sm);
+}
+.tx-field { display: contents; }
+.tx-field-k {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  text-align: right;
+  white-space: nowrap;
+}
+.tx-field-v {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
 
 .tx-chip-label {
   margin: 0 0 2px;

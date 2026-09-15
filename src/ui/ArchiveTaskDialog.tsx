@@ -1,5 +1,5 @@
 /**
- * ArchiveTaskDialog — archiving a task, including its worktree.
+ * Ending a task — archiving it, or deleting it outright.
  *
  * The gap this closes: `archiveTask` only flips a status column. On its own
  * that leaves the worktree on disk *and* keeps its path in the task table, so
@@ -7,12 +7,16 @@
  * from the app and the user had to drop to a terminal. Archiving now asks what
  * should happen to the worktree and does it.
  *
+ * **One component serves both verbs on purpose.** Everything that decides what
+ * is destroyed — the probes, the loss assessment, the acknowledgement wording —
+ * is identical for archive and delete, and two dialogs would be two places for
+ * that to drift. Only the words and the final callback differ.
+ *
  * Division of labour with the shell: this dialog owns the **git** side and
- * calls `onArchived(task.id)` only once git is done. The shell's `useTasks`
- * owns the **database** side and does the `archiveTask(id)` write in response.
+ * calls back only once git is done. The shell owns the **database** side.
  * Order matters and is deliberate: if removal fails we surface git's stderr and
- * do not archive, because an archived task whose removal failed is exactly how
- * a worktree goes missing.
+ * do not end the task, because a task whose removal failed is exactly how a
+ * worktree goes missing.
  *
  * Owner: worktree workstream (M3).
  */
@@ -37,14 +41,40 @@ import './worktree.css';
  * `remove-keep-branch` is the default and never destroys committed work: the
  * branch survives, so anything committed is still reachable by name.
  */
-export type ArchiveMode = 'remove-keep-branch' | 'remove-delete-branch' | 'archive-only';
+export type ArchiveMode = 'remove-keep-branch' | 'remove-delete-branch' | 'keep-worktree';
+
+/**
+ * Which of the two endings this is.
+ *
+ *  - `archive` — the task leaves the active list and stays under Archived.
+ *  - `delete`  — the task row is gone. **Its transcript is not**: the
+ *    conversation is kept and stays searchable, which is what makes deletion
+ *    safe enough to sit next to archiving in a menu.
+ */
+export type EndIntent = 'archive' | 'delete';
 
 export interface ArchiveTaskDialogProps {
-  /** The task to archive; null closes the dialog. */
+  /** The task to end; null closes the dialog. */
   task: Task | null;
+  /** Defaults to `archive`, so an existing caller is unaffected. */
+  intent?: EndIntent;
   onClose: () => void;
-  /** Called only after the chosen git work succeeded. The shell archives the row. */
+  /** Called after the chosen git work succeeded. The shell flips the status. */
   onArchived: (taskId: number) => void;
+  /**
+   * Called after the chosen git work succeeded, for `intent === 'delete'`.
+   *
+   * **The implementation must not delete the task's messages.** It sets
+   * `messages.task_id = NULL` for that task's rows and removes the task row
+   * only. Captured history is never lost (CLAUDE.md), the conversation stays
+   * searchable, and it reappears in the session browser as an unadopted
+   * session. Foreign keys are not enforced in this app, so nulling has to be
+   * explicit — nothing in the schema will do it.
+   *
+   * This dialog tells the user in as many words that the conversation is kept.
+   * That sentence is a promise the data layer has to keep.
+   */
+  onDeleted?: (taskId: number) => void;
 }
 
 interface Probe {
@@ -69,7 +99,14 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDialogProps) {
+export function ArchiveTaskDialog({
+  task,
+  intent = 'archive',
+  onClose,
+  onArchived,
+  onDeleted,
+}: ArchiveTaskDialogProps) {
+  const deleting = intent === 'delete';
   const [probe, setProbe] = useState<Probe>(EMPTY_PROBE);
   const [mode, setMode] = useState<ArchiveMode>('remove-keep-branch');
   const [ack, setAck] = useState(false);
@@ -162,7 +199,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
       // `owned` is checked here as well as in the render: the render decides
       // what is offered, this decides what runs, and the two failing together
       // is the only way a not-owned directory could be touched.
-      if (owned && mode !== 'archive-only') {
+      if (owned && mode !== 'keep-worktree') {
         await removeWorktree({
           repoPath: task.repoPath,
           path: task.worktreePath,
@@ -173,14 +210,15 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
           deleteBranch: mode === 'remove-delete-branch',
         });
       }
-      // Git is done (or was not needed). Only now is it safe to archive.
-      onArchived(task.id);
+      // Git is done (or was not needed). Only now is it safe to touch the row.
+      if (deleting) (onDeleted ?? onArchived)(task.id);
+      else onArchived(task.id);
     } catch (e) {
       setError(e instanceof GitError ? e.message : `${messageOf(e)}\n(not a git failure)`);
     } finally {
       setBusy(false);
     }
-  }, [task, busy, mode, ack, owned, onArchived]);
+  }, [task, busy, mode, ack, owned, deleting, onArchived, onDeleted]);
 
   if (!task) return null;
 
@@ -191,7 +229,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
   };
   // Not owned means there is nothing to remove, so nothing is offered and the
   // dialog is a different act with a different name. See the render below.
-  const removing = owned && mode !== 'archive-only';
+  const removing = owned && mode !== 'keep-worktree';
   const loss = assessLoss(risk, { deleteBranch: mode === 'remove-delete-branch' });
   const needsAck = removing && loss.needsAck;
   const hasUnmerged = probe.ahead !== null && probe.ahead > 0;
@@ -231,7 +269,7 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title" id="wt-archive-title">
-            {owned ? 'Archive task' : 'Remove from list'}
+            {deleting ? 'Delete task' : owned ? 'Archive task' : 'Remove from list'}
           </h2>
           <span className="wt-modal-sub">{task.title}</span>
         </div>
@@ -277,8 +315,11 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
               <strong>Nothing on disk is touched.</strong> This task is a resumed session, so
               Albedo did not create <span className="wt-mono">{task.worktreePath}</span> — it is
               your own working directory. No worktree is removed, no branch is deleted, and the
-              directory is not even inspected. Removing the task drops it from the list; the
-              conversation and its transcript are kept.
+              directory is not even inspected.{' '}
+              {deleting
+                ? 'Deleting removes the task from Albedo only.'
+                : 'Removing the task drops it from the list.'}{' '}
+              The conversation and its transcript are kept.
             </div>
           )}
 
@@ -316,8 +357,10 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
             )}
 
             {option(
-              'archive-only',
-              'Archive only, leave the worktree on disk',
+              'keep-worktree',
+              deleting
+                ? 'Delete the task only, leave the worktree on disk'
+                : 'Archive only, leave the worktree on disk',
               <>
                 No git commands run. <strong>The worktree stays at</strong>{' '}
                 <span className="wt-mono">{task.worktreePath}</span> and will be listed under
@@ -369,6 +412,18 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
             </div>
           )}
 
+          {/* A separate kind of loss from the worktree warnings above, and the
+              user should be able to tell which one they are agreeing to: this
+              is about the Albedo row, not about their files. */}
+          {deleting && (
+            <div className="wt-notice" data-tone="unmerged">
+              <strong>The task is removed from Albedo and cannot be brought back.</strong> Its
+              title, branch and status are gone.{' '}
+              <strong>The conversation is kept</strong> — the transcript stays searchable and
+              the session reappears in the session browser, so you can resume it later.
+            </div>
+          )}
+
           {needsAck && (
             <label className="wt-check" data-tone="danger">
               <input
@@ -399,8 +454,8 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
             {!owned
               ? 'Albedo only forgets the task. Your files and your branch are untouched.'
               : removing
-                ? 'The worktree is removed first; the task is archived only if that succeeds.'
-                : 'The task is archived. The worktree is left exactly as it is.'}
+                ? `The worktree is removed first; the task is ${deleting ? 'deleted' : 'archived'} only if that succeeds.`
+                : `The task is ${deleting ? 'deleted' : 'archived'}. The worktree is left exactly as it is.`}
           </span>
           <span className="wt-foot-spacer" />
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
@@ -408,21 +463,31 @@ export function ArchiveTaskDialog({ task, onClose, onArchived }: ArchiveTaskDial
           </button>
           <button
             type="button"
-            className={needsAck ? 'btn wt-btn-danger' : 'btn btn-primary'}
+            className={needsAck || deleting ? 'btn wt-btn-danger' : 'btn btn-primary'}
             disabled={busy || !probe.done || (needsAck && !ack)}
             onClick={() => void confirm()}
           >
             {busy
-              ? owned
-                ? 'Archiving…'
-                : 'Removing…'
-              : !owned
-                ? 'Remove from list'
-                : needsAck
-                  ? 'Archive and discard work'
-                  : removing
-                    ? 'Archive and remove worktree'
-                    : 'Archive only'}
+              ? deleting
+                ? 'Deleting…'
+                : owned
+                  ? 'Archiving…'
+                  : 'Removing…'
+              : deleting
+                ? !owned
+                  ? 'Delete task'
+                  : needsAck
+                    ? 'Delete task and discard work'
+                    : removing
+                      ? 'Delete task and remove worktree'
+                      : 'Delete task only'
+                : !owned
+                  ? 'Remove from list'
+                  : needsAck
+                    ? 'Archive and discard work'
+                    : removing
+                      ? 'Archive and remove worktree'
+                      : 'Archive only'}
           </button>
         </div>
       </div>

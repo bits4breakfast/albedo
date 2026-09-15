@@ -1535,3 +1535,42 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Closing a project tab is VIEW STATE — the project is untouched. The control
+   is hover-revealed so a bar of tabs does not read as a row of delete buttons,
+   and it is never offered on the last visible tab. */
+.project-tab-close {
+  flex: 0 0 auto;
+  display: none;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  margin-right: -3px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--faint);
+  border-radius: 2px;
+}
+.project-tab:hover .project-tab-close,
+.project-tab[aria-selected='true'] .project-tab-close { display: flex; }
+.project-tab-close:hover { color: var(--text-strong); background: var(--panel-hover); }
+
+/* Hidden tabs are always reachable from where they were closed. */
+.project-tabs-restore { position: relative; flex: 0 0 auto; }
+
+.project-tab-more { color: var(--faint); }
+.project-tab-more:hover { color: var(--text); }
+
+.project-tabs-menu { position: absolute; top: 26px; right: 0; z-index: 40; }
+
+/* Menu items that have to say what they cost, not just what they are called —
+   three end-a-thing verbs now meet on one surface. */
+.row-menu-hint {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.row-menu-item:hover .row-menu-hint { color: var(--muted); }
+.row-menu-item[data-tone='danger']:hover .row-menu-hint { color: var(--on-del-soft); }

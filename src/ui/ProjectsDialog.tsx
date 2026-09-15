@@ -28,7 +28,7 @@ import { checkWorktreeRoot, expandTilde, validateWorktreeRoot } from '../git/rec
 import { basename, defaultWorktreeRoot, listBranches, repoRootFor } from '../git/worktree';
 import { PROMPT_PLACEHOLDERS, fillPromptTemplate } from '../lib/issueKey';
 import { nameTask } from '../git/slug';
-import { writeLastProjectId } from './projectPrefs';
+import { readHiddenProjectIds, unhideProjectId, writeLastProjectId } from './projectPrefs';
 import './worktree.css';
 
 export interface ProjectsDialogProps {
@@ -39,6 +39,13 @@ export interface ProjectsDialogProps {
    * new project on a create, so the caller can select it rather than guess.
    */
   onChanged?: (created?: Project) => void;
+  /**
+   * Tell the shell a project is no longer hidden. The shell holds the hidden
+   * set in React state, so writing localStorage alone would not bring the tab
+   * back until a restart. Without this prop, unhiding still persists — it just
+   * does not take effect immediately.
+   */
+  onUnhideProject?: (projectId: number) => void;
   /**
    * Take the user straight into creating a task in the project they just made.
    * Creating a project is never the goal -- it is the prerequisite for cutting
@@ -91,6 +98,7 @@ export function ProjectsDialog({
   onClose,
   onChanged,
   onCreateTaskIn,
+  onUnhideProject,
 }: ProjectsDialogProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
@@ -104,6 +112,8 @@ export function ProjectsDialog({
   const [confirmArchive, setConfirmArchive] = useState<number | null>(null);
   /** The project just created, so the dialog can visibly land on it. */
   const [justCreated, setJustCreated] = useState<Project | null>(null);
+  /** Project tabs the user has closed. View state, owned by the shell. */
+  const [hiddenIds, setHiddenIds] = useState<number[]>([]);
   /** Set when a create collided with an existing project, to offer "edit it". */
   const [clash, setClash] = useState<Project | null>(null);
 
@@ -130,6 +140,7 @@ export function ProjectsDialog({
       setClash(null);
       return;
     }
+    setHiddenIds(readHiddenProjectIds());
     void reload();
     void (async () => {
       try {
@@ -616,6 +627,15 @@ export function ProjectsDialog({
                 </div>
               )}
 
+              {hiddenIds.length > 0 && (
+                <div className="wt-hint" style={{ marginBottom: 8 }}>
+                  <strong>Hidden</strong> means its tab is closed — the project, its tasks and its
+                  worktrees are untouched and it is still listed here.{' '}
+                  <strong>Archived</strong> takes a project out of the active list.{' '}
+                  <strong>Deleting</strong> a task is separate again, and lives on the task.
+                </div>
+              )}
+
               {!loading && projects.length === 0 && (
                 <div className="wt-empty">
                   <strong>No projects yet.</strong>
@@ -639,6 +659,7 @@ export function ProjectsDialog({
                   key={p.id}
                   className="wt-item"
                   data-new={justCreated?.id === p.id}
+                  data-hidden={hiddenIds.includes(p.id)}
                   data-confirming={confirmArchive === p.id}
                   // Double-click is "click plus the obvious button", matching
                   // the session browser. Edit is the only non-destructive row
@@ -661,6 +682,24 @@ export function ProjectsDialog({
                       {p.name}
                     </span>
                     {justCreated?.id === p.id && <span className="wt-chip" data-tone="new">new</span>}
+                    {hiddenIds.includes(p.id) && (
+                      <span className="wt-chip" title="Its tab is closed. Nothing on disk changed.">
+                        hidden
+                      </span>
+                    )}
+                    {hiddenIds.includes(p.id) && (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy}
+                        onClick={() => {
+                          setHiddenIds(unhideProjectId(p.id));
+                          onUnhideProject?.(p.id);
+                        }}
+                      >
+                        Show tab
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn"

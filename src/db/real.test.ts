@@ -25,9 +25,13 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 
 import {
   createTask,
+  deleteTask,
   insertMessages,
   listTranscriptFiles,
   listTranscriptFilesNeedingTitle,
+  listTasks,
+  getTask,
+  onTasksChanged,
   resetDb,
   searchMessages,
   setTranscriptTitle,
@@ -812,5 +816,139 @@ describe('listUnclaimedRepos — the import candidates', () => {
 
   async function archiveProjectRaw(id: number): Promise<void> {
     db.raw.prepare('UPDATE projects SET archived_at = 1 WHERE id = ?').run(id);
+  }
+});
+
+
+// ---------------------------------------------------------------------------
+
+describe('deleteTask — the promise the dialog makes on screen', () => {
+  /**
+   * The delete dialog tells the user: "The conversation is kept — the
+   * transcript stays searchable and the session reappears in the session
+   * browser, so you can resume it later."
+   *
+   * These tests assert that sentence, not the SQL that implements it.
+   */
+  async function seedTaskWithSession(): Promise<{ taskId: number; sessionId: string }> {
+    const project = await createProject({
+      name: 'p', repoPath: '/repo', worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const task = await createTask({
+      title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
+      branch: 'feat/retry', worktreePath: '/wt/retry', ownsWorktree: true,
+    });
+    await insertMessages([
+      { taskId: task.id, sessionId: 'sess-keep', seq: 0, role: 'user', toolName: null,
+        targetPath: null, body: 'please add a retry to the uploader', rawJson: '{}', ts: 1_000 },
+      { taskId: task.id, sessionId: 'sess-keep', seq: 100, role: 'assistant', toolName: null,
+        targetPath: null, body: 'adding backoff now', rawJson: '{}', ts: 2_000 },
+      { taskId: task.id, sessionId: 'sess-keep', seq: 200, role: 'tool_use', toolName: 'Edit',
+        targetPath: '/wt/retry/src/uploader.ts', body: 'Edit: uploader.ts', rawJson: '{}', ts: 3_000 },
+    ]);
+    seedTranscriptFile(db, {
+      path: '/p/sess-keep.jsonl', sessionId: 'sess-keep', cwd: '/wt/retry', title: 'Add a retry',
+    });
+    return { taskId: task.id, sessionId: 'sess-keep' };
+  }
+
+  it('removes the task row and nothing else', async () => {
+    const { taskId } = await seedTaskWithSession();
+    expect(await getTask(taskId)).not.toBeNull();
+
+    await deleteTask(taskId);
+
+    expect(await getTask(taskId)).toBeNull();
+    expect(await listTasks({ includeArchived: true })).toEqual([]);
+    // the messages are still there, all three of them
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages').get()).toEqual({ c: 3 });
+  });
+
+  it('THE PROMISE: the session reappears in the browser, intact and unclaimed', async () => {
+    const { taskId, sessionId } = await seedTaskWithSession();
+
+    // before: the session is claimed by the task
+    const before = await listPastSessions();
+    expect(before[0]?.taskId).toBe(taskId);
+    expect(before[0]?.messageCount).toBe(3);
+
+    await deleteTask(taskId);
+
+    const after = await listPastSessions();
+    expect(after).toHaveLength(1);
+    expect(after[0]?.sessionId).toBe(sessionId);
+    expect(after[0]?.messageCount).toBe(3);   // conversation kept
+    expect(after[0]?.taskId).toBeNull();      // and resumable, not owned
+    expect(after[0]?.title).toBe('Add a retry');
+  });
+
+  it('leaves the transcript searchable — the FTS index is not disturbed', async () => {
+    const { taskId } = await seedTaskWithSession();
+    expect(await searchMessages('uploader')).not.toHaveLength(0);
+
+    await deleteTask(taskId);
+
+    // An UPDATE of task_id fires the messages_au trigger, which deletes and
+    // re-inserts the FTS row. A silently emptied search index would be
+    // invisible until someone searched for something old.
+    const hits = await searchMessages('uploader');
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]?.snippet).toContain('<mark>');
+    expect(hits[0]?.message.taskId).toBeNull();
+    expect(
+      db.raw.prepare('SELECT COUNT(*) c FROM messages_fts').get(),
+    ).toEqual({ c: 3 });
+  });
+
+  it('detaches the rows rather than orphaning them at a dead task id', async () => {
+    const { taskId } = await seedTaskWithSession();
+    await deleteTask(taskId);
+    // Foreign keys are not enforced, so nothing but this function prevents
+    // rows pointing at an id that no longer exists.
+    const dangling = db.raw
+      .prepare('SELECT COUNT(*) c FROM messages WHERE task_id IS NOT NULL')
+      .get();
+    expect(dangling).toEqual({ c: 0 });
+  });
+
+  it('touches only the deleted task', async () => {
+    const { taskId } = await seedTaskWithSession();
+    const other = await createTask({
+      title: 'other', projectId: null, repoPath: '/repo', baseBranch: 'main',
+      branch: 'b', worktreePath: '/wt/other', ownsWorktree: true,
+    });
+    await insertMessages([
+      { taskId: other.id, sessionId: 'sess-other', seq: 0, role: 'user', toolName: null,
+        targetPath: null, body: 'unrelated work', rawJson: '{}', ts: 5_000 },
+    ]);
+
+    await deleteTask(taskId);
+
+    expect(await getTask(other.id)).not.toBeNull();
+    const kept = await getMessagesForTask(other.id);
+    expect(kept).toBe(1);
+  });
+
+  it('is a harmless no-op for a task that does not exist', async () => {
+    await seedTaskWithSession();
+    await expect(deleteTask(9_999)).resolves.toBeUndefined();
+    expect(await listTasks()).toHaveLength(1);
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages').get()).toEqual({ c: 3 });
+  });
+
+  it('fires onTasksChanged after the write', async () => {
+    const { taskId } = await seedTaskWithSession();
+    const cb = vi.fn();
+    const off = onTasksChanged(cb);
+    await deleteTask(taskId);
+    expect(cb).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  function getMessagesForTask(taskId: number): number {
+    const row = db.raw
+      .prepare('SELECT COUNT(*) c FROM messages WHERE task_id = ?')
+      .get(taskId) as { c: number };
+    return row.c;
   }
 });
