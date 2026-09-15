@@ -13,6 +13,8 @@ import TouchedFiles from './ui/TouchedFiles';
 import FileEditor from './ui/editor/FileEditor';
 import { FileOpenContext } from './ui/editor/openFile';
 import UsagePanel from './ui/gauges/UsagePanel';
+import ProjectsDialog from './ui/ProjectsDialog';
+import { backfillProjectsFromTasks } from './db/projects';
 
 /**
  * The frame.
@@ -150,6 +152,8 @@ export default function App() {
 
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [reconcileOpen, setReconcileOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
   const [dragging, setDragging] = useState<null | 'sidebar' | 'split'>(null);
 
@@ -172,6 +176,38 @@ export default function App() {
     setSelectedId(id);
     store(LS.selected, String(id));
     setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, []);
+
+  /**
+   * Adopt pre-projects task rows on launch.
+   *
+   * Idempotent by design -- it only touches `project_id IS NULL` and reuses an
+   * existing project for a repo path -- so running it every start is intended.
+   * It ends with `emitTasksChanged()`, which the task list is already
+   * subscribed to, so the backfilled rows arrive without a second fetch here.
+   *
+   * A failure is caught but NOT swallowed: if this does not run, new tasks get
+   * created without a project, and the first symptom would be somewhere else
+   * entirely. It goes in the banner.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        await backfillProjectsFromTasks();
+        if (!cancelled) setStartupError(null);
+      } catch (err) {
+        if (cancelled) return;
+        const detail = err instanceof Error ? err.message : String(err);
+        setStartupError(
+          `Could not assign existing tasks to projects: ${detail}. ` +
+            'New tasks may be created without one.',
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // File-open entry point handed to every renderer via context. Reads the
@@ -299,7 +335,7 @@ export default function App() {
     return selected?.sessionId ?? 'no session yet';
   };
 
-  const banner = loadError ?? captureError;
+  const banner = loadError ?? startupError ?? captureError;
 
   return (
     <FileOpenContext.Provider value={openFile}>
@@ -307,6 +343,7 @@ export default function App() {
       <Header
         onNewTask={() => setNewTaskOpen(true)}
         onReconcile={() => setReconcileOpen(true)}
+        onProjects={() => setProjectsOpen(true)}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
       />
 
@@ -330,6 +367,7 @@ export default function App() {
             onSelect={select}
             onNew={() => setNewTaskOpen(true)}
             onArchive={(task) => setArchiveTarget(task)}
+            onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
           />
           {/* Pinned below the list, outside its scroller, so it is on screen
@@ -408,9 +446,18 @@ export default function App() {
                       'loading tasks…'
                     ) : tasks.length === 0 ? (
                       <>
-                        Nothing running.
-                        <span className="placeholder-key">⌘N</span>
-                        cuts a worktree and starts a Claude Code session in it.
+                        {/* One <p> per flex line: .placeholder is a column flex
+                            container, so a bare inline <span> would break out
+                            onto a line of its own mid-sentence. */}
+                        <p>Nothing running.</p>
+                        <p>
+                          A task is cut from a project — a repo Albedo keeps worktrees for — so
+                          there has to be one before <span className="placeholder-key">⌘N</span>{' '}
+                          has anywhere to go.
+                        </p>
+                        <button className="btn" onClick={() => setProjectsOpen(true)}>
+                          Add a project
+                        </button>
                       </>
                     ) : (
                       'Pick a task to attach a terminal.'
@@ -532,6 +579,14 @@ export default function App() {
           and branch cleanup behind a confirmation. The task row is only marked
           archived once the dialog reports the worktree work succeeded --
           flipping first would strand the worktree, reachable from nothing. */}
+      <PaneErrorBoundary label="Projects">
+        <ProjectsDialog
+          open={projectsOpen}
+          onClose={() => setProjectsOpen(false)}
+          onChanged={() => void refresh()}
+        />
+      </PaneErrorBoundary>
+
       <PaneErrorBoundary label="Archive task">
         <ArchiveTaskDialog
           task={archiveTarget}

@@ -284,13 +284,17 @@
 
 /* Unmerged commits are a different loss from a dirty working tree, so they
    read differently: red rather than amber, and never folded into the file
-   list. The file list cannot show them — they are not in the working tree. */
-.wt-notice[data-tone='unmerged'] {
+   list. The file list cannot show them — they are not in the working tree.
+   `error` is the same treatment for a rejected value, e.g. a bad worktree
+   root in the projects dialog. */
+.wt-notice[data-tone='unmerged'],
+.wt-notice[data-tone='error'] {
   border-left-color: var(--danger);
   background: var(--del-soft);
 }
 
-.wt-notice[data-tone='unmerged'] strong {
+.wt-notice[data-tone='unmerged'] strong,
+.wt-notice[data-tone='error'] strong {
   color: #f3b0ad;
 }
 

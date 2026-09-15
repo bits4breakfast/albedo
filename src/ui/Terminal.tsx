@@ -154,8 +154,8 @@ export default function Terminal({ task, active = true, onExit, onError }: Termi
 
     const term = new XTerm({
       fontFamily: cssVar('--font-mono', 'ui-monospace, Menlo, monospace'),
-      fontSize: 12,
-      lineHeight: 1.25,
+      fontSize: 13,
+      lineHeight: 1.3,
       letterSpacing: 0,
       cursorBlink: true,
       cursorStyle: 'block',

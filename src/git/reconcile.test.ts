@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type ClassifyInput,
+  checkWorktreeRoot,
   type DiskCandidate,
   type RepoScan,
   classifyOrphans,
@@ -10,6 +12,8 @@ import {
   parseDotGitFile,
   pathKey,
   resolveAgainst,
+  rootContaining,
+  validateWorktreeRoot,
 } from './reconcile';
 import { parseWorktreePorcelain } from './worktree';
 
@@ -17,6 +21,15 @@ const HOME = '/Users/m';
 
 function scan(repoPath: string, porcelain: string): RepoScan {
   return { repoPath, worktrees: parseWorktreePorcelain(porcelain) };
+}
+
+/**
+ * classifyOrphans with a default project worktree root, so the existing cases
+ * keep testing what they were written to test. ~/agents is now just "the root
+ * this project happens to use", not a hardcoded location.
+ */
+function classify(input: Omit<ClassifyInput, 'worktreeRoots'> & { worktreeRoots?: string[] }) {
+  return classifyOrphans({ worktreeRoots: ['/Users/m/agents'], ...input });
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +145,7 @@ describe('classifyOrphans', () => {
   const scans = [scan('/Users/m/www/albedo', albedoPorcelain)];
 
   it('reports an unclaimed worktree under ~/agents as an orphan', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans,
       disk: [],
       knownPaths: ['/Users/m/agents/albedo/tracked-task'],
@@ -150,7 +163,7 @@ describe('classifyOrphans', () => {
 
   it("treats the user's own worktree roots as informational, never as orphans", () => {
     // ~/www/worktrees predates Albedo. Offering to delete it would be a bug.
-    const out = classifyOrphans({ scans, disk: [], knownPaths: [], home: HOME });
+    const out = classify({ scans, disk: [], knownPaths: [], home: HOME });
     const handMade = out.find((o) => o.path === '/Users/m/www/worktrees/hand-made');
     expect(handMade?.classification).toBe('unknown');
     expect(out.filter((o) => o.classification === 'orphan').map((o) => o.path)).toEqual([
@@ -160,12 +173,12 @@ describe('classifyOrphans', () => {
   });
 
   it('never reports the main worktree, even when no task claims the repo', () => {
-    const out = classifyOrphans({ scans, disk: [], knownPaths: [], home: HOME });
+    const out = classify({ scans, disk: [], knownPaths: [], home: HOME });
     expect(out.map((o) => o.path)).not.toContain('/Users/m/www/albedo');
   });
 
   it('skips bare repositories', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [scan('/srv/mirror.git', 'worktree /srv/main\nHEAD a\n\nworktree /srv/mirror.git\nbare\n\n')],
       disk: [],
       knownPaths: [],
@@ -181,7 +194,7 @@ describe('classifyOrphans', () => {
       '/Users/M/Agents/Albedo/Left-Behind',
       '/Users/m/agents/albedo/../albedo/left-behind',
     ]) {
-      const out = classifyOrphans({
+      const out = classify({
         scans,
         disk: [],
         knownPaths: [known, '/Users/m/agents/albedo/tracked-task'],
@@ -195,7 +208,7 @@ describe('classifyOrphans', () => {
     // The bug this closes: archiveTask only flips a status, so the row (and its
     // worktreePath) survives. Without reclaimablePaths the worktree is both not
     // removed and never offered -- unreachable from the UI.
-    const out = classifyOrphans({
+    const out = classify({
       scans,
       disk: [],
       knownPaths: [
@@ -214,7 +227,7 @@ describe('classifyOrphans', () => {
   it('reclaims an archived worktree outside ~/agents too', () => {
     // Normally a worktree outside ~/agents is only ever informational, but an
     // archived task is the user telling us they are done with that one.
-    const out = classifyOrphans({
+    const out = classify({
       scans,
       disk: [],
       knownPaths: ['/Users/m/www/worktrees/hand-made'],
@@ -231,7 +244,7 @@ describe('classifyOrphans', () => {
       '/Users/m/agents/albedo/left-behind/',
       '/Users/M/Agents/Albedo/Left-Behind',
     ]) {
-      const out = classifyOrphans({
+      const out = classify({
         scans,
         disk: [],
         knownPaths: [
@@ -252,9 +265,9 @@ describe('classifyOrphans', () => {
       '/Users/m/agents/albedo/left-behind',
       '/Users/m/www/worktrees/hand-made',
     ];
-    expect(classifyOrphans({ scans, disk: [], knownPaths: known, home: HOME })).toEqual([]);
+    expect(classify({ scans, disk: [], knownPaths: known, home: HOME })).toEqual([]);
     expect(
-      classifyOrphans({ scans, disk: [], knownPaths: known, reclaimablePaths: [], home: HOME }),
+      classify({ scans, disk: [], knownPaths: known, reclaimablePaths: [], home: HOME }),
     ).toEqual([]);
   });
 
@@ -266,7 +279,7 @@ describe('classifyOrphans', () => {
           'worktree /private/tmp/wt\nHEAD b\nbranch refs/heads/x\n\n',
       ),
     ];
-    const out = classifyOrphans({
+    const out = classify({
       scans: tmpScan,
       disk: [],
       knownPaths: ['/tmp/wt'],
@@ -276,7 +289,7 @@ describe('classifyOrphans', () => {
   });
 
   it('marks a prunable worktree with git own reason', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [
         scan(
           '/Users/m/www/albedo',
@@ -297,7 +310,7 @@ describe('classifyOrphans', () => {
   });
 
   it('deduplicates a worktree reported by two repos', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [
         scan(
           '/Users/m/www/albedo',
@@ -325,7 +338,7 @@ describe('classifyOrphans -- disk candidates', () => {
   });
 
   it('flags a stale directory whose gitdir has gone as an orphan', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [],
       disk: [disk({ path: '/Users/m/agents/albedo/stale', gitdirExists: false })],
       knownPaths: [],
@@ -341,7 +354,7 @@ describe('classifyOrphans -- disk candidates', () => {
   });
 
   it('calls a live worktree of an unscanned repo unknown, not an orphan', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [],
       disk: [disk({ path: '/Users/m/agents/albedo/live' })],
       knownPaths: [],
@@ -354,7 +367,7 @@ describe('classifyOrphans -- disk candidates', () => {
   });
 
   it('ignores a directory with no .git -- we do not offer to delete plain folders', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [],
       disk: [disk({ path: '/Users/m/agents/albedo/notes', hasGitFile: false, gitdirExists: false })],
       knownPaths: [],
@@ -364,7 +377,7 @@ describe('classifyOrphans -- disk candidates', () => {
   });
 
   it('ignores anything outside ~/agents and anything a task already claims', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [],
       disk: [
         disk({ path: '/Users/m/www/worktrees/mine', gitdirExists: false }),
@@ -377,7 +390,7 @@ describe('classifyOrphans -- disk candidates', () => {
   });
 
   it('does not double-report a path git already told us about', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [
         scan(
           '/Users/m/www/albedo',
@@ -393,7 +406,7 @@ describe('classifyOrphans -- disk candidates', () => {
   });
 
   it('sorts orphans before unknowns', () => {
-    const out = classifyOrphans({
+    const out = classify({
       scans: [],
       disk: [
         disk({ path: '/Users/m/agents/a/zzz-live' }),
@@ -403,5 +416,165 @@ describe('classifyOrphans -- disk candidates', () => {
       home: HOME,
     });
     expect(out.map((o) => o.classification)).toEqual(['orphan', 'unknown']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Worktree-root validation
+// ---------------------------------------------------------------------------
+
+describe('validateWorktreeRoot', () => {
+  const opts = { repoPath: '/Users/m/www/albedo', home: HOME };
+  const ok = (root: string) => validateWorktreeRoot(root, opts);
+  const reasonFor = (root: string) => {
+    const r = validateWorktreeRoot(root, opts);
+    return r.ok ? null : r.reason;
+  };
+
+  it('accepts a sensible root and returns the resolved path', () => {
+    expect(ok('/Users/m/www/worktrees')).toEqual({
+      ok: true,
+      path: '/Users/m/www/worktrees',
+      warning: null,
+    });
+    expect(ok('~/agents/albedo')).toMatchObject({ ok: true, path: '/Users/m/agents/albedo' });
+    expect(ok('  ~/agents/albedo/  ')).toMatchObject({ ok: true, path: '/Users/m/agents/albedo' });
+  });
+
+  it('requires an absolute path', () => {
+    expect(reasonFor('agents/albedo')).toMatch(/not an absolute path/);
+    expect(reasonFor('./wt')).toMatch(/not an absolute path/);
+    expect(reasonFor('')).toMatch(/Choose a directory/);
+    expect(reasonFor('   ')).toMatch(/Choose a directory/);
+  });
+
+  it('refuses a root inside the project repository', () => {
+    // git will create this happily and the repo then contains a checkout of
+    // itself -- the single most regrettable thing a user can pick here.
+    expect(reasonFor('/Users/m/www/albedo')).toMatch(/repository itself/);
+    expect(reasonFor('/Users/m/www/albedo/worktrees')).toMatch(/inside the project repository/);
+    expect(reasonFor('~/www/albedo/.worktrees')).toMatch(/inside the project repository/);
+    // A sibling directory is fine.
+    expect(ok('/Users/m/www/albedo-worktrees')).toMatchObject({ ok: true });
+  });
+
+  it('refuses the filesystem root and anything too close to it', () => {
+    expect(reasonFor('/')).toMatch(/filesystem root/);
+    expect(reasonFor('/Users')).toMatch(/too close to the filesystem root/);
+    expect(reasonFor('/opt')).toMatch(/too close to the filesystem root/);
+  });
+
+  it('refuses a home directory, including someone else\'s', () => {
+    expect(reasonFor('~')).toMatch(/home directory itself/);
+    expect(reasonFor('/Users/m')).toMatch(/home directory itself/);
+    expect(reasonFor('/Users/someone-else')).toMatch(/looks like a home directory/);
+    // One level in is exactly what we want people to pick.
+    expect(ok('/Users/m/agents')).toMatchObject({ ok: true });
+  });
+
+  it('warns, but allows, a root that contains the repository', () => {
+    const r = ok('/Users/m/www');
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.warning).toMatch(/contains the repository itself/);
+  });
+
+  it('tolerates a missing repoPath rather than crashing', () => {
+    expect(validateWorktreeRoot('/Users/m/wt', { repoPath: '', home: HOME })).toMatchObject({
+      ok: true,
+    });
+  });
+});
+
+describe('checkWorktreeRoot', () => {
+  it('short-circuits on a pure-rule failure without touching the filesystem', async () => {
+    await expect(
+      checkWorktreeRoot('/', { repoPath: '/Users/m/www/albedo', home: HOME }),
+    ).resolves.toMatchObject({ ok: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multiple project roots
+// ---------------------------------------------------------------------------
+
+describe('rootContaining', () => {
+  it('finds the root a path belongs to, and ignores prefix lookalikes', () => {
+    const roots = ['/Users/m/agents', '/Users/m/www/worktrees'];
+    expect(rootContaining(roots, '/Users/m/www/worktrees/x')).toBe('/Users/m/www/worktrees');
+    expect(rootContaining(roots, '/Users/m/agents/a/b')).toBe('/Users/m/agents');
+    expect(rootContaining(roots, '/Users/m/agents-old/x')).toBeNull();
+    expect(rootContaining([], '/Users/m/agents/x')).toBeNull();
+  });
+});
+
+describe('classifyOrphans with project roots', () => {
+  const scans = [scan('/Users/m/www/albedo', albedoPorcelain)];
+
+  it("makes the user's own ~/www/worktrees actionable once a project points there", () => {
+    // This is the whole point of the projects change: same fixture, same
+    // worktree, different answer, because the user named that root.
+    const out = classifyOrphans({
+      scans,
+      disk: [],
+      worktreeRoots: ['/Users/m/www/worktrees'],
+      knownPaths: [],
+      home: HOME,
+    });
+    const handMade = out.find((o) => o.path === '/Users/m/www/worktrees/hand-made');
+    expect(handMade?.classification).toBe('orphan');
+    // ...and ~/agents is no longer special, so those become informational.
+    expect(out.find((o) => o.path === '/Users/m/agents/albedo/left-behind')?.classification).toBe(
+      'unknown',
+    );
+  });
+
+  it('treats several roots as equally known', () => {
+    const out = classifyOrphans({
+      scans,
+      disk: [],
+      worktreeRoots: ['/Users/m/agents', '/Users/m/www/worktrees'],
+      knownPaths: [],
+      home: HOME,
+    });
+    expect(out.every((o) => o.classification === 'orphan')).toBe(true);
+    expect(out).toHaveLength(3);
+  });
+
+  it('expands ~ in the roots it is given', () => {
+    const out = classifyOrphans({
+      scans,
+      disk: [],
+      worktreeRoots: ['~/www/worktrees'],
+      knownPaths: [],
+      home: HOME,
+    });
+    expect(out.find((o) => o.path === '/Users/m/www/worktrees/hand-made')?.classification).toBe(
+      'orphan',
+    );
+  });
+
+  it('offers nothing when no project has a root', () => {
+    // No roots means Albedo has no claim on anything: never a remove button.
+    const out = classifyOrphans({
+      scans,
+      disk: [],
+      worktreeRoots: [],
+      knownPaths: [],
+      home: HOME,
+    });
+    expect(out.every((o) => o.classification === 'unknown')).toBe(true);
+  });
+
+  it('ignores disk candidates outside every root', () => {
+    const out = classifyOrphans({
+      scans: [],
+      disk: [
+        { path: '/Users/m/elsewhere/x', hasGitFile: true, gitdirTarget: null, gitdirExists: false },
+      ],
+      worktreeRoots: ['/Users/m/agents'],
+      knownPaths: [],
+      home: HOME,
+    });
+    expect(out).toEqual([]);
   });
 });

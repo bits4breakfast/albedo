@@ -19,42 +19,101 @@
   /* --- surfaces ---------------------------------------------------------- */
   --bg: #0b0d10;          /* window ground, terminal ground */
   --panel: #111419;       /* sidebar, header, pane chrome */
-  --panel-raised: #171b21;/* hover / selected rows, buttons */
+  --panel-raised: #171b21;/* selected rows, menus, buttons */
   --panel-inset: #090b0e; /* wells: terminal body, code blocks */
-  --border: #1f242d;      /* hairlines between panes and rows */
-  --border-strong: #2d3542;/* splitters, focused inputs */
+  /* THE LIGHTEST SURFACE IN THE APP, and the reason it is a token rather
+     than a hex typed into whichever :hover rule needed one.
+
+     Contrast is a property of a pair, so a surface invented locally is a
+     text-contrast decision made by someone who was only thinking about a
+     hover state. That is not hypothetical: mid-way through the contrast
+     pass I lightened two hover grounds to #242a34 and silently pushed
+     --faint to 3.99, with nothing in the variables to show it. Every
+     surface belongs here where it can be checked against the type tiers.
+
+     Safe to put text on: all three tiers clear AA against it --
+     --text 10.72, --muted 6.42, --faint 4.64. UI tokens clear 3.0:
+     --border-strong 3.47, --status-archived 3.57 (the tightest).
+
+     DO NOT go lighter than about #1e232c. That is where --faint hits 4.53
+     and the tier below it runs out. A lighter hover state means raising
+     --faint first, not nudging this one and hoping. */
+  --panel-hover: #1c212a;
+  /* Press state. Darker than --panel, so every tier gains contrast on it
+     (--faint 5.31) -- but it lives here for the same reason: a surface
+     defined in a rule is a surface nobody can audit. */
+  --panel-active: #10141a;
+  /* Meter/gauge track. Shared with the gauges panel: a track that drifts
+     between the task-row meter and the panel would read as a rendering bug,
+     not a palette choice. Non-text; fills on it clear 3.0. */
+  --track: #1b2029;
+  --border: #262c36;      /* decorative hairlines between panes and rows */
+  --border-strong: #6b7585;/* load-bearing edges: 3.71 on --panel-raised and
+                              3.38 on the lightest hover ground, clearing the
+                              3.0 UI-component minimum everywhere */
 
   /* --- type -------------------------------------------------------------- */
-  --text: #ccd3de;        /* body text */
-  --text-strong: #f1f4f9; /* titles, active row */
-  --muted: #6d7684;       /* metadata: repo, branch, timestamps */
-  --faint: #474e59;       /* separators inside text, disabled */
+  /* Three text tiers. 4.5:1 IS A FLOOR, NOT A PREFERENCE -- it is the WCAG
+     AA threshold for body text, and every value below is the dimmest that
+     still clears it against the worst ground it lands on. Do not "tidy"
+     these downward because the palette looks loud next to a screenshot of
+     something else; it looked tasteful at 3.18 too, and the first thing the
+     user said about the app was that they could not read it.
+
+     Ratios are worst-case across every surface: --bg, --panel,
+     --panel-raised and --panel-hover. --panel-raised is the one that gets
+     missed, because it is what SELECTED and hovered rows are painted with --
+     which is to say, the row the user is most likely to be reading. Measured
+     against --bg alone, --muted looked like a passable 4.24; on a selected
+     row it was really 3.18.
+
+       --text          10.47   primary
+       --muted          6.26   secondary: repo, branch, timestamps
+       --faint          4.53   tertiary: section labels, paths, hints
+
+     All three are text, deliberately. --faint was nearly demoted to a
+     non-text token at 3.75, which would have forced every label and path
+     using it up into --muted and collapsed three tiers into two. The
+     hierarchy is what makes a dense 3-pane layout scannable, so the tiers
+     stay and each one pays for itself by clearing AA. 11.5-13px type is the
+     other half of the constraint: small text needs MORE contrast, not less.
+
+     Adding a fourth, dimmer tier is not possible without breaking AA. The
+     usable range on this ground is 4.5 to ~11, and it already holds three. */
+  --text: #ccd3de;        /* body text                              11.47 */
+  --text-strong: #f1f4f9; /* titles, active row                     15.50 */
+  --muted: #9aa4b4;       /* metadata: repo, branch, timestamps      6.87 */
+  --faint: #828a98;       /* section labels, paths, hints            4.97 */
 
   /* --- accent + diff ----------------------------------------------------- */
-  --accent: #4d9fff;
+  --accent: #4d9fff;                        /* 6.35 */
   --accent-soft: rgba(77, 159, 255, 0.14);
-  --accent-line: rgba(77, 159, 255, 0.45);
-  --add: #4cbf72;
+  --accent-line: rgba(77, 159, 255, 0.6);   /* 3.18 as a UI edge */
+  --add: #4cbf72;                           /* 7.41 */
   --add-soft: rgba(76, 191, 114, 0.13);
-  --del: #e35b56;
-  --del-soft: rgba(227, 91, 86, 0.13);
+  --del: #ec6a64;                           /* 5.61 */
+  --del-soft: rgba(236, 106, 100, 0.13);
+  /* Focus is never carried by a border token. Keyboard navigation is the
+     whole reason this has its own name: it must stay bright wherever it
+     lands, independently of how quiet the surrounding chrome is. */
+  --focus: #6fb0ff;                         /* 7.42 */
 
   /* --- status (TaskStatus from src/types.ts) ------------------------------ */
-  --status-idle: #5d6673;
-  --status-running: #4d9fff;
-  --status-blocked: #f0a33a;
-  --status-done: #4cbf72;
-  --status-archived: #3a414b;
-  --warn: #f0a33a;
-  --danger: #e35b56;
+  --status-idle: #79828f;      /* 4.45 */
+  --status-running: #4d9fff;   /* 6.35 */
+  --status-blocked: #f0a33a;   /* 8.23 */
+  --status-done: #4cbf72;      /* 7.41 */
+  --status-archived: #6f7783;  /* 3.82 */
+  --warn: #f0a33a;             /* 8.23 */
+  --danger: #ec6a64;           /* 5.61 */
 
   /* --- metrics ----------------------------------------------------------- */
-  --titlebar-h: 38px;         /* macOS overlay title bar strip */
+  --titlebar-h: 40px;         /* macOS overlay title bar strip */
   --traffic-lights-w: 78px;   /* keep the top-left clear of the stoplights */
   --sidebar-min: 200px;
   --sidebar-max: 480px;
-  --row-h: 46px;
-  --tab-h: 28px;
+  --row-h: 50px;
+  --tab-h: 30px;
   --radius: 3px;              /* barely there, on purpose */
 
   /* --- fonts ------------------------------------------------------------- */
@@ -62,10 +121,14 @@
     system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas,
     monospace;
-  --fs-xs: 10.5px;
-  --fs-sm: 11.5px;
-  --fs-md: 12.5px;
-  --fs-lg: 13.5px;
+  /* Bumped one notch from 10.5/11.5/12.5/13.5. The old --fs-xs sat below
+     anything macOS uses for readable UI text, and it was carrying real
+     information -- branch names, timestamps, token counts -- not decoration.
+     Density is the point of this app; illegibility was never part of it. */
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
 }
 
 /* --------------------------------------------------------------------------
@@ -104,20 +167,22 @@ button {
 
 ::selection { background: var(--accent-soft); }
 
+/* 2px, not 1px: a hairline ring on a dark ground is easy to lose, and this is
+   the only way round the app without a mouse. */
 :focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #262c35;
+  background: #3b4351;
   border: 2px solid transparent;
   background-clip: content-box;
   border-radius: 6px;
 }
-::-webkit-scrollbar-thumb:hover { background: #39414d; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #4c5666; background-clip: content-box; }
 
 /* --------------------------------------------------------------------------
    App frame
@@ -195,7 +260,7 @@ button {
 /* Small chrome button ----------------------------------------------------- */
 
 .btn {
-  height: 22px;
+  height: 24px;
   padding: 0 9px;
   font-size: var(--fs-sm);
   color: var(--text);
@@ -204,8 +269,8 @@ button {
   border-radius: var(--radius);
   white-space: nowrap;
 }
-.btn:hover { background: #1f242c; border-color: var(--border-strong); color: var(--text-strong); }
-.btn:active { background: #10141a; }
+.btn:hover { background: var(--panel-hover); border-color: var(--border-strong); color: var(--text-strong); }
+.btn:active { background: var(--panel-active); }
 .btn[disabled] { color: var(--faint); background: transparent; }
 
 .btn-primary { background: var(--accent-soft); border-color: var(--accent-line); color: #bcd9ff; }
@@ -271,6 +336,12 @@ button {
   color: var(--faint);
   line-height: 1.6;
 }
+
+.tasklist-empty strong { color: var(--muted); font-weight: 600; }
+.tasklist-empty-action { display: block; margin-top: 12px; }
+
+.placeholder p { margin: 0; max-width: 42ch; }
+.placeholder .btn { margin-top: 4px; }
 
 .group-label {
   display: flex;
@@ -494,7 +565,7 @@ button {
 }
 
 .seg button {
-  height: 20px;
+  height: 22px;
   padding: 0 9px;
   font-size: var(--fs-xs);
   letter-spacing: 0.05em;
@@ -525,7 +596,7 @@ button {
 }
 
 .pane-head {
-  flex: 0 0 20px;
+  flex: 0 0 22px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -657,10 +728,10 @@ button {
 
 .task-more {
   position: absolute;
-  top: 4px;
+  top: 5px;
   right: 4px;
-  width: 20px;
-  height: 18px;
+  width: 22px;
+  height: 20px;
   display: none;
   align-items: center;
   justify-content: center;
@@ -674,7 +745,7 @@ button {
 
 .task-row:hover .task-more,
 .task-row[data-menu-open='true'] .task-more { display: flex; }
-.task-more:hover { color: var(--text-strong); border-color: var(--border-strong); background: #232933; }
+.task-more:hover { color: var(--text-strong); border-color: var(--border-strong); background: var(--panel-hover); }
 
 /* The age gets out of the way rather than the control overlapping it. */
 .task-row:hover .task-age,
@@ -723,7 +794,7 @@ button {
 .pane-head .tabs { display: flex; gap: 2px; margin-left: -4px; }
 
 .pane-head .tabs button {
-  height: 19px;
+  height: 22px;
   padding: 0 7px;
   font-size: var(--fs-xs);
   letter-spacing: 0.07em;
@@ -736,8 +807,8 @@ button {
 
 .pane-head-close {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   font-size: 11px;
   color: var(--muted);
   border-radius: 2px;
@@ -751,9 +822,11 @@ button {
    Context-window meters (M4)
 
    Deliberately outside the motion budget: nothing here animates. Below the
-   warn threshold the hairline is drawn at roughly border contrast, so a
-   healthy fleet of rows reads as no meter at all; past 70% it warms, past 90%
-   it goes red and the figure appears next to the branch.
+   warn threshold the hairline is a neutral grey — subordinate by being
+   colourless next to the amber and red, not by being too faint to see. It
+   still clears 3.0 against the panel (3.26), because "unobtrusive" was never
+   meant to mean "invisible when you go looking for it". Past 70% it warms,
+   past 90% it goes red and the figure appears next to the branch.
 
    `data-basis="inferred"` is hatched rather than solid. The transcript does
    not record the context limit, so that fill is an estimate — the hatch says
@@ -771,7 +844,7 @@ button {
   pointer-events: none;
 }
 
-.task-ctx-fill { display: block; height: 100%; background: #2a3341; }
+.task-ctx-fill { display: block; height: 100%; background: #5e6875; } /* 3.26 */
 .task-ctx[data-level='warn'] .task-ctx-fill { background: var(--status-blocked); opacity: 0.8; }
 .task-ctx[data-level='high'] .task-ctx-fill { background: var(--danger); }
 
@@ -809,12 +882,12 @@ button {
   position: relative;
   width: 46px;
   height: 4px;
-  background: #1b2029;
+  background: var(--track);
   border-radius: 2px;
   overflow: hidden;
 }
 
-.ctx-fill { position: absolute; inset: 0 auto 0 0; background: #3c4757; }
+.ctx-fill { position: absolute; inset: 0 auto 0 0; background: #667186; } /* 3.32 */
 .ctx[data-level='warn'] .ctx-fill { background: var(--status-blocked); }
 .ctx[data-level='high'] .ctx-fill { background: var(--danger); }
 

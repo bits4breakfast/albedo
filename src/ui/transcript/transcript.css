@@ -493,14 +493,30 @@
 .tx-d-del { background: var(--del-soft); }
 .tx-d-meta { color: var(--muted); font-style: italic; }
 
-.tx-d-add .tx-d-n { color: var(--add); opacity: 0.7; }
-.tx-d-del .tx-d-n { color: var(--del); opacity: 0.7; }
+/*
+   Changed-line gutter numbers read as secondary, not as a second colour signal:
+   the row tint and the +/- marker already carry add/del. --muted lands them at
+   6.55 / 6.82 against their own tinted row -- a touch brighter than the --faint
+   context numbers (5.67), which is the emphasis we actually want.
+
+   These previously used --add/--del at `opacity: 0.7`, which measured 4.17 and
+   3.40. Never dim text with `opacity` to make it subordinate: it composites
+   against the backdrop after the token has been chosen, so it silently undoes
+   whatever contrast the token guaranteed, and no audit of the tokens can see it.
+*/
+.tx-d-add .tx-d-n,
+.tx-d-del .tx-d-n { color: var(--muted); }
 .tx-d-add .tx-d-mark { color: var(--add); }
 .tx-d-del .tx-d-mark { color: var(--del); }
 
+/*
+   Word highlight: the same hue as the row, at double strength so the changed
+   words separate from the rest of the line. Mixed from the tokens rather than
+   hardcoded, so it tracks --add/--del instead of drifting away from them.
+*/
 .tx-d-word { border-radius: 2px; }
-.tx-d-add .tx-d-word { background: rgb(76 191 114 / 26%); }
-.tx-d-del .tx-d-word { background: rgb(227 91 86 / 26%); }
+.tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) 26%, transparent); }
+.tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) 26%, transparent); }
 
 /* --- collapsed regions ---------------------------------------------------- */
 
@@ -577,8 +593,7 @@
 .tx-d-row:hover .tx-d-n-link,
 .tx-d-half:hover .tx-d-n-link { color: var(--accent); }
 .tx-d-n-link:hover {
-  color: var(--accent) !important;
-  opacity: 1 !important;
+  color: var(--accent);
   text-decoration-color: var(--accent-line);
 }
 

@@ -4,7 +4,6 @@ import {
   type GitResult,
   type WorkAtRisk,
   ackLabel,
-  agentsRoot,
   assessLoss,
   basename,
   classifyGitError,
@@ -20,7 +19,9 @@ import {
   parseWorktreePorcelain,
   removeWorktree,
   revRange,
+  defaultWorktreeRoot,
   setGitRunner,
+  setPathExistsProbe,
   shortenRef,
   uncommittedChanges,
   unmergedCommits,
@@ -45,15 +46,25 @@ function fakeGit(replies: (call: Call) => GitResult | undefined) {
 }
 
 let restoreRunner: (() => void) | null = null;
+let restoreProbe: (() => void) | null = null;
 afterEach(() => {
   if (restoreRunner) restoreRunner();
+  if (restoreProbe) restoreProbe();
   restoreRunner = null;
+  restoreProbe = null;
   vi.restoreAllMocks();
 });
 
-function install(replies: (call: Call) => GitResult | undefined) {
+/**
+ * Install a fake git runner. Also stubs the path-existence probe, which
+ * defaults to "nothing exists" -- the happy path for createWorktree. Pass
+ * `existingPaths` to make specific paths look occupied.
+ */
+function install(replies: (call: Call) => GitResult | undefined, existingPaths: string[] = []) {
   const f = fakeGit(replies);
   restoreRunner = () => setGitRunner(f.restore);
+  const prevProbe = setPathExistsProbe(async (path) => existingPaths.includes(path));
+  restoreProbe = () => setPathExistsProbe(prevProbe);
   return f.calls;
 }
 
@@ -450,23 +461,40 @@ describe('parseRefList', () => {
 // Path composition
 // ---------------------------------------------------------------------------
 
-describe('composeWorktreePath / agentsRoot / basename', () => {
-  it('builds ~/agents/<repo>/<slug>', () => {
-    expect(composeWorktreePath('/Users/m', 'albedo', 'fix-login')).toBe(
-      '/Users/m/agents/albedo/fix-login',
+describe('composeWorktreePath', () => {
+  it('builds <worktreeRoot>/<slug>, with no repo segment of our own', () => {
+    // The root is per-project now, so the directory the user chose IS the
+    // namespace. Inserting a <repo> segment would defeat the point.
+    expect(composeWorktreePath('/Users/m/www/worktrees', 'fix-login')).toBe(
+      '/Users/m/www/worktrees/fix-login',
     );
   });
 
-  it('is insensitive to stray slashes on the home directory', () => {
-    expect(composeWorktreePath('/Users/m/', 'albedo', 'fix')).toBe('/Users/m/agents/albedo/fix');
-    expect(composeWorktreePath('/Users/m//', '/albedo/', '/fix/')).toBe(
+  it('expands a leading ~ when a home directory is supplied', () => {
+    expect(composeWorktreePath('~/agents/albedo', 'fix', '/Users/m')).toBe(
       '/Users/m/agents/albedo/fix',
     );
+    expect(composeWorktreePath('~', 'fix', '/Users/m')).toBe('/Users/m/fix');
   });
 
-  it('agentsRoot and basename agree with it', () => {
-    expect(agentsRoot('/Users/m')).toBe('/Users/m/agents');
-    expect(agentsRoot('/Users/m/')).toBe('/Users/m/agents');
+  it('is insensitive to stray slashes and redundant segments', () => {
+    expect(composeWorktreePath('/Users/m/wt/', 'fix')).toBe('/Users/m/wt/fix');
+    expect(composeWorktreePath('/Users/m//wt///', '/fix/')).toBe('/Users/m/wt/fix');
+    expect(composeWorktreePath('/Users/m/a/../wt', 'fix')).toBe('/Users/m/wt/fix');
+  });
+});
+
+describe('defaultWorktreeRoot', () => {
+  it('suggests ~/agents/<name>, matching the migration backfill', () => {
+    expect(defaultWorktreeRoot('albedo')).toBe('~/agents/albedo');
+    expect(defaultWorktreeRoot('  albedo  ')).toBe('~/agents/albedo');
+    expect(defaultWorktreeRoot('')).toBe('~/agents/project');
+    expect(defaultWorktreeRoot('/weird/')).toBe('~/agents/weird');
+  });
+});
+
+describe('basename', () => {
+  it('takes the last segment', () => {
     expect(basename('/Users/m/www/albedo')).toBe('albedo');
     expect(basename('/Users/m/www/albedo/')).toBe('albedo');
     expect(basename('albedo')).toBe('albedo');
@@ -541,6 +569,28 @@ describe('createWorktree', () => {
       useExistingBranch: true,
     });
     expect(calls[0]?.args).toEqual(['worktree', 'add', '--', '/wt', 'fix-login']);
+  });
+
+  it('refuses a path that already exists rather than writing into it', async () => {
+    // git only objects when the directory is NON-empty, so without this check an
+    // empty folder the user made for something else quietly becomes a worktree.
+    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }), ['/wt']);
+    const err = await createWorktree({
+      repoPath: '/repo',
+      baseBranch: 'main',
+      branch: 'fix',
+      path: '/wt',
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitError);
+    expect((err as GitError).kind).toBe('path-exists');
+    expect((err as GitError).message).toContain('/wt already exists');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('still creates when the path is free', async () => {
+    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }), ['/somewhere-else']);
+    await createWorktree({ repoPath: '/repo', baseBranch: 'main', branch: 'fix', path: '/wt' });
+    expect(calls).toHaveLength(1);
   });
 
   it('signals branch-exists to the caller instead of guessing', async () => {

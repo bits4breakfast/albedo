@@ -23,6 +23,12 @@ export interface TaskListProps {
   onArchive?: (task: Task) => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
   contextBySession?: Map<string, ContextUsage>;
+  /**
+   * Opens the project manager. Offered from the empty state because a task is
+   * cut from a project: on a fresh install ⌘N has nowhere to go until one
+   * exists.
+   */
+  onManageProjects?: () => void;
 }
 
 type GroupKey = 'blocked' | 'active' | 'quiet' | 'archived';
@@ -77,6 +83,7 @@ export default function TaskList({
   onNew,
   onArchive,
   contextBySession,
+  onManageProjects,
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
@@ -223,7 +230,14 @@ export default function TaskList({
           <div className="tasklist-empty">
             No tasks yet.
             <br />
-            <span className="placeholder-key">⌘N</span> cuts a worktree and starts a session.
+            A task is cut from a <strong>project</strong> — a repo Albedo keeps worktrees for.
+            Once one exists, <span className="placeholder-key">⌘N</span> cuts a worktree and
+            starts a session in it.
+            {onManageProjects && (
+              <button className="btn tasklist-empty-action" onClick={onManageProjects}>
+                Add a project
+              </button>
+            )}
           </div>
         )}
 
