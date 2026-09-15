@@ -805,8 +805,8 @@ button {
 
 .pane-body { flex: 1 1 auto; position: relative; min-height: 0; min-width: 0; overflow: hidden; }
 
-.pane-transcript { border-left: 1px solid var(--border); }
-.panes[data-orientation='column'] .pane-transcript { border-left: none; border-top: 1px solid var(--border); }
+.read-area { border-left: 1px solid var(--border); }
+.panes[data-orientation='column'] .read-area { border-left: none; border-top: 1px solid var(--border); }
 
 /* --------------------------------------------------------------------------
    Terminal
@@ -1574,3 +1574,47 @@ button {
 }
 .row-menu-item:hover .row-menu-hint { color: var(--muted); }
 .row-menu-item[data-tone='danger']:hover .row-menu-hint { color: var(--on-del-soft); }
+
+/* --------------------------------------------------------------------------
+   Pinned files column (M4)
+
+   The change set is a REFERENCE you glance at while reading, not a destination
+   you navigate to — behind a tab you can never see both, which is exactly when
+   you want it. It earns a column where a fourth reading pane did not, because
+   a file list is narrow by nature: paths, counts, a status chip.
+
+   Off by default. Falls back to the tab when there is not room, WITHOUT
+   forgetting the preference.
+   -------------------------------------------------------------------------- */
+
+.read-area {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.read-area[hidden] { display: none !important; }
+.read-area > .pane-transcript { flex: 1 1 0; min-width: 0; }
+
+.pane-files {
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.panes[data-orientation='column'] .read-area { border-top: 1px solid var(--border); }
+
+.pane-head-pin {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--faint);
+  border-radius: 2px;
+}
+.pane-head-pin:hover { color: var(--text-strong); background: var(--panel-hover); }
+.pane-head-pin[data-on='true'] { color: var(--accent); }
+
+/* Pinned, but the window is too narrow for it right now. A dot rather than a
+   warning: the preference is intact and will apply again by itself. */
+.tab-pin-hint { margin-left: 3px; color: var(--accent); }

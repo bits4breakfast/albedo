@@ -15,7 +15,7 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
-import { CodeLines, LinkifiedText, PathLink, useActivate } from './Diff';
+import { CodeLines, Disclosure, LinkifiedText, PathLink, useActivate } from './Diff';
 import { inputViewFor, type InputField, type InputView } from './toolViews';
 
 // ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
       */}
       <div className="tx-chip-head" onMouseDown={toggle.onMouseDown} onClick={toggle.onClick}>
         <button type="button" className="tx-chip-toggle" aria-expanded={open} aria-label={`${name} details`}>
-          <span className="tx-chip-caret">{open ? '▾' : '▸'}</span>
+          <Disclosure open={open} />
           <span className="tx-chip-name">{name}</span>
         </button>
         {target ? (

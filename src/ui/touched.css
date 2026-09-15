@@ -17,6 +17,14 @@
   background: var(--bg);
   color: var(--text);
 
+  /* The pane is a query container: it is mounted both as a full-width tab and
+     as a pinned column the user can drag down to 180px, so the rows have to
+     respond to the PANE's width, not the window's. (Container queries need
+     WKWebView 16.0; the file already requires 16.4 for color-mix, so this
+     adds no floor.) */
+  container-type: inline-size;
+  container-name: tf;
+
   /* ------------------------------------------------------------------ *
      The amber family — the local palette for "git changed this file, the
      transcript never mentioned it". Derived from tokens with color-mix()
@@ -104,6 +112,10 @@
 
 .tf-head-count {
   flex: 1 1 auto;
+  min-width: 0;            /* or the refresh button is pushed off a 180px pane */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--muted);
@@ -272,9 +284,13 @@
   white-space: nowrap;
 }
 
-/* The directory is context; the basename is what you are looking for. */
+/* Shrink order inside a row, and it is deliberate: the directory gives way
+   first (it is context), then the basename ellipsises, and the badges never
+   shrink at all. Before this, .tf-name was `flex: 0 0 auto` and the badges sat
+   after it, so a long basename pushed the `worktree` badge out of an
+   overflow: hidden box — the marker vanished with nothing to show it had. */
 .tf-dir {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;       /* give way first */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -293,13 +309,16 @@
 }
 
 .tf-name {
-  flex: 0 0 auto;
+  flex: 0 1 auto;          /* then ellipsise, never disappear */
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-mono);
   color: var(--text);
 }
 
 .tf-badge {
-  flex: 0 0 auto;
+  flex: 0 0 auto;          /* the word is the point; it is never squeezed out */
   margin-left: 6px;
   padding: 0 4px;
   font-size: var(--fs-xs);

@@ -19,12 +19,14 @@ import UsagePanel from './ui/gauges/UsagePanel';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
-import { archiveProject, backfillProjectsFromTasks } from './db/projects';
+import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/projects';
+import { listTasks } from './db';
 import type { BackfillResult } from './db/projects';
 import { repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
+import { grantProjectDirs } from './lib/fsGrants';
 
 /**
  * The frame.
@@ -48,6 +50,20 @@ type RightTab = 'transcript' | 'files' | 'editor';
 const SIDEBAR_MIN = 200;
 const SIDEBAR_MAX = 480;
 const SIDEBAR_DEFAULT = 260;
+/**
+ * The pinned files column. Narrow by nature — paths, counts, a status chip —
+ * which is why it works where a fourth READING pane does not.
+ */
+const FILES_MIN = 180;
+const FILES_MAX = 420;
+const FILES_DEFAULT = 240;
+/**
+ * What the transcript or editor needs beside it to stay worth reading. Below
+ * this the column is not viable and falls back to the tab. Measured: at 1440px
+ * in split mode the read pane would be 284px, which is not a diff.
+ */
+const READ_MIN = 420;
+
 const RATIO_MIN = 0.18;
 const RATIO_MAX = 0.86;
 
@@ -59,6 +75,8 @@ const LS = {
   selected: 'albedo.shell.selectedTask',
   project: 'albedo.shell.activeProject',
   rightTab: 'albedo.shell.rightTab',
+  filesPinned: 'albedo.shell.filesPinned',
+  filesWidth: 'albedo.shell.filesWidth',
 } as const;
 
 function readStored<T>(key: string, parse: (raw: string) => T | null, fallback: T): T {
@@ -435,6 +453,15 @@ export default function App() {
   const [openRequest, setOpenRequest] = useState<{ taskId: number; request: OpenFileRequest } | null>(
     null,
   );
+  /** Files promoted from a tab to a permanent column. Default off. */
+  const [filesPinned, setFilesPinned] = useState(() =>
+    readStored(LS.filesPinned, (raw) => (raw === '1' ? true : raw === '0' ? false : null), false),
+  );
+  const [filesWidth, setFilesWidth] = useState(() =>
+    readStored(LS.filesWidth, (raw) => clamp(Number(raw) || FILES_DEFAULT, FILES_MIN, FILES_MAX), FILES_DEFAULT),
+  );
+  /** Live width of the pane row, so viability is measured rather than guessed. */
+  const [panesWidth, setPanesWidth] = useState(0);
 
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [reconcileOpen, setReconcileOpen] = useState(false);
@@ -467,7 +494,7 @@ export default function App() {
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
   /** Which verb the end-task dialog was opened with. */
   const [endIntent, setEndIntent] = useState<'archive' | 'delete'>('archive');
-  const [dragging, setDragging] = useState<null | 'sidebar' | 'split'>(null);
+  const [dragging, setDragging] = useState<null | 'sidebar' | 'split' | 'files'>(null);
 
   const panesRef = useRef<HTMLDivElement | null>(null);
   const selectTabRef = useRef<((key: string) => void) | null>(null);
@@ -479,6 +506,19 @@ export default function App() {
   useEffect(() => {
     if (rightTab !== 'editor') store(LS.rightTab, rightTab);
   }, [rightTab]);
+  useEffect(() => store(LS.filesPinned, filesPinned ? '1' : '0'), [filesPinned]);
+  useEffect(() => store(LS.filesWidth, String(Math.round(filesWidth))), [filesWidth]);
+
+  // Measure the pane row, not the read pane: the read pane's width DEPENDS on
+  // whether the column is showing, so observing it would feed back on itself.
+  useEffect(() => {
+    const el = panesRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setPanesWidth(el.clientWidth));
+    observer.observe(el);
+    setPanesWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
 
   const allTabs = useMemo(() => buildTabs(projects, tasks), [projects, tasks]);
 
@@ -718,6 +758,29 @@ export default function App() {
         if (cancelled) return;
         setBackfill(result);
         setStartupError(null);
+
+        // Grant the filesystem scope for every directory we may need to read.
+        // The static capability only covers ~/.claude/projects and ~/agents; a
+        // project pointed anywhere else -- which is the whole point of letting
+        // the user choose -- is outside it, and opening a file in it fails with
+        // "forbidden path". See src/lib/fsGrants.ts.
+        const projects = await listProjects({ includeArchived: true });
+        const tasks = await listTasks({ includeArchived: true });
+        if (cancelled) return;
+        const denied = await grantProjectDirs({
+          repoPaths: projects.map((p) => p.repoPath),
+          worktreeRoots: projects.map((p) => p.worktreeRoot),
+          worktreePaths: tasks.map((t) => t.worktreePath),
+        });
+        if (!cancelled && denied.length > 0) {
+          // Not fatal, but not silent: files in those projects will not open,
+          // and a quiet degradation of a core path has bitten this app before.
+          setStartupError(
+            `Could not grant file access to ${denied.length} project ` +
+              `director${denied.length === 1 ? 'y' : 'ies'}: ${denied[0]}. ` +
+              'Opening files in those projects will fail.',
+          );
+        }
       } catch (err) {
         if (cancelled) return;
         const detail = err instanceof Error ? err.message : String(err);
@@ -746,6 +809,51 @@ export default function App() {
     // The editor is useless behind a full-width terminal.
     setMode((m) => (m === 'pty' ? 'split' : m));
   }, []);
+
+  /**
+   * Put a task on screen. The ONLY supported way to do so.
+   *
+   * ## THE RULE
+   *
+   * SELECTING A TASK THAT IS NOT IN THE ACTIVE SCOPE IS A NO-OP UNLESS THE
+   * SCOPE MOVES FIRST. The auto-select effect re-picks from the active tab's
+   * task list, so a `select()` into a tab that is not showing is immediately
+   * undone — and the symptom is the task appearing to vanish, a long way from
+   * the cause.
+   *
+   * That bug shipped three times, in three call sites that each had to
+   * remember the ordering: new task, resume, and open-adopted-session. Hence
+   * one function rather than a rule people follow. Every path that wants a
+   * task on screen goes through here.
+   *
+   * Order is load-bearing top to bottom:
+   *   1. unhide  — a closed tab cannot be selected, and silently failing to
+   *                switch brings the same "task vanished" symptom back through
+   *                a new door. Same reasoning as unhiding on blocked.
+   *   2. scope   — the tab must be active before the selection can survive.
+   *   3. select  — now it sticks.
+   *   4. reveal  — "focus" means the thing is actually on screen, not merely
+   *                selected behind a FILES or EDITOR tab.
+   */
+  const revealTask = useCallback(
+    (task: Task) => {
+      const projectId = task.projectId;
+
+      if (projectId !== null && hiddenProjectIds.has(projectId)) {
+        setHiddenProjectIds((prev) => {
+          const next = new Set(prev);
+          next.delete(projectId);
+          writeHiddenProjects([...next]);
+          return next;
+        });
+      }
+
+      selectTab(projectId !== null ? `p${projectId}` : 'orphans');
+      select(task.id);
+      setRightTab((t) => (t === 'transcript' ? t : 'transcript'));
+    },
+    [hiddenProjectIds, selectTab, select],
+  );
 
   const closeEditor = useCallback(() => {
     setOpenRequest(null);
@@ -787,9 +895,33 @@ export default function App() {
     return openRequest.taskId === selected.id ? selected : null;
   }, [openRequest, selected]);
 
+  /**
+   * Is there room for the column, right now?
+   *
+   * The preference is NOT changed by the answer. A pinned column that stops
+   * fitting falls back to the tab and comes back when the window allows, which
+   * is the difference between a layout that adapts and a preference that
+   * evaporates on resize and never returns.
+   */
+  const readAreaWidth =
+    mode === 'pty'
+      ? 0
+      : mode === 'split' && orientation === 'row'
+        ? panesWidth * (1 - ratio)
+        : panesWidth;
+  const filesColumnFits = readAreaWidth >= filesWidth + READ_MIN;
+  const filesColumnShown = filesPinned && mode !== 'pty' && filesColumnFits;
+
   // Derived rather than corrected in an effect: switching task while the editor
   // tab is showing falls straight back to the transcript, with no flash.
-  const activeTab: RightTab = rightTab === 'editor' && !editorTask ? 'transcript' : rightTab;
+  // A pinned column also takes FILES out of the tab strip -- a tab that shows
+  // you what you are already looking at is noise.
+  const activeTab: RightTab =
+    rightTab === 'editor' && !editorTask
+      ? 'transcript'
+      : rightTab === 'files' && filesColumnShown
+        ? 'transcript'
+        : rightTab;
 
   // --- splitter drags ------------------------------------------------------
 
@@ -818,6 +950,22 @@ export default function App() {
           : (ev.clientY - rect.top) / rect.height;
       setRatio(clamp(next, RATIO_MIN, RATIO_MAX));
     };
+    const up = () => {
+      setDragging(null);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const startFilesDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const rect = panesRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setDragging('files');
+    const move = (ev: PointerEvent) =>
+      setFilesWidth(clamp(rect.right - ev.clientX, FILES_MIN, FILES_MAX));
     const up = () => {
       setDragging(null);
       window.removeEventListener('pointermove', move);
@@ -1081,7 +1229,10 @@ export default function App() {
               <div className="pane-head">
                 <span>pty</span>
                 <span className="pane-head-note">
-                  {openTasks.length} session{openTasks.length === 1 ? '' : 's'} alive
+                  {/* Processes, not conversations. "session" was doing both
+                      jobs across the app, which is how "no live session" came
+                      to read as "your conversation is gone". */}
+                  {openTasks.length} terminal{openTasks.length === 1 ? '' : 's'} alive
                 </span>
               </div>
               <div className="pane-body">
@@ -1132,7 +1283,12 @@ export default function App() {
               />
             )}
 
-            <section className="pane pane-transcript" style={secondaryStyle} hidden={!showTranscript}>
+            {/* The read area holds the transcript/editor AND the pinned files
+                column, so the column sits beside them rather than inside the
+                tabbed body — and so the split ratio still divides pty from
+                "everything you read", which is what the user is dragging. */}
+            <div className="read-area" style={secondaryStyle} hidden={!showTranscript}>
+            <section className="pane pane-transcript">
               <div className="pane-head">
                 <div className="tabs" role="tablist" aria-label="Reading pane">
                   <button
@@ -1142,13 +1298,18 @@ export default function App() {
                   >
                     transcript
                   </button>
-                  <button
-                    role="tab"
-                    aria-selected={activeTab === 'files'}
-                    onClick={() => setRightTab('files')}
-                  >
-                    files
-                  </button>
+                  {!filesColumnShown && (
+                    <button
+                      role="tab"
+                      aria-selected={activeTab === 'files'}
+                      onClick={() => setRightTab('files')}
+                    >
+                      files
+                      {/* Pinned but not fitting: say so rather than letting the
+                          preference look like it did nothing. */}
+                      {filesPinned && <span className="tab-pin-hint" title="Pinned as a column — not enough room at this width, so it is a tab for now">·</span>}
+                    </button>
+                  )}
                   {editorTask && (
                     <button
                       role="tab"
@@ -1165,6 +1326,21 @@ export default function App() {
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor">
                     ✕
+                  </button>
+                )}
+                {!filesColumnShown && (
+                  <button
+                    className="pane-head-pin"
+                    data-on={filesPinned}
+                    onClick={() => setFilesPinned((v) => !v)}
+                    title={
+                      filesPinned
+                        ? 'Files are pinned as a column; unpin to keep them as a tab'
+                        : 'Pin files as a column beside the transcript'
+                    }
+                    aria-pressed={filesPinned}
+                  >
+                    ⇥
                   </button>
                 )}
               </div>
@@ -1204,6 +1380,48 @@ export default function App() {
                 </div>
               </div>
             </section>
+
+            {filesColumnShown && (
+              <>
+                <div
+                  className="splitter splitter-v"
+                  data-dragging={dragging === 'files'}
+                  onPointerDown={startFilesDrag}
+                  role="separator"
+                  aria-orientation="vertical"
+                />
+                <section
+                  className="pane pane-files"
+                  style={{ flex: `0 0 ${Math.round(filesWidth)}px` }}
+                >
+                  <div className="pane-head">
+                    <span>files</span>
+                    <span className="pane-head-note">{selected?.branch ?? ''}</span>
+                    <button
+                      className="pane-head-pin"
+                      data-on
+                      onClick={() => setFilesPinned(false)}
+                      title="Unpin — put files back in the tab strip"
+                      aria-pressed
+                    >
+                      ⇥
+                    </button>
+                  </div>
+                  <div className="pane-body">
+                    {selected ? (
+                      <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
+                        <TouchedFiles task={selected} />
+                      </PaneErrorBoundary>
+                    ) : (
+                      <div className="placeholder">
+                        <p>No task selected.</p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </>
+            )}
+            </div>
           </div>
         </main>
       </div>
@@ -1217,8 +1435,7 @@ export default function App() {
             // Switch scope BEFORE selecting: the auto-select effect re-picks
             // from the active tab's list, so selecting into a tab that is not
             // showing gets immediately undone.
-            if (task.projectId !== null) selectTab(`p${task.projectId}`);
-            select(task.id);
+            revealTask(task);
             setNewTaskOpen(false);
           }}
         />
@@ -1292,8 +1509,7 @@ export default function App() {
           onClose={() => setSessionsOpen(false)}
           onOpenTask={(taskId) => {
             const task = tasks.find((t) => t.id === taskId);
-            if (task?.projectId != null) selectTab(`p${task.projectId}`);
-            select(taskId);
+            if (task) revealTask(task);
           }}
           onResumed={(task, args) => {
             setPendingResume((prev) => {
@@ -1302,8 +1518,11 @@ export default function App() {
               return next;
             });
             upsertTask(task);
-            if (task.projectId !== null) selectTab(`p${task.projectId}`);
-            select(task.id);
+            // Continue AND fork both land here, and both carry a projectId
+            // resolved from the session's repo root — frequently a different
+            // project than the active tab, since reaching sessions from
+            // anywhere in your history is the point of the browser.
+            revealTask(task);
             void refresh();
           }}
         />

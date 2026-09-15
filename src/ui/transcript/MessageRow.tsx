@@ -15,7 +15,7 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import Diff, { Code, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import Diff, { Code, Disclosure, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { isAllEnvelopes, parseUserBody, type UserBlock } from './envelopes';
@@ -121,7 +121,7 @@ function NotificationChip({ block }: { block: Extract<UserBlock, { kind: 'task-n
     <div className={`tx-chip ${done ? 'tx-chip-ok' : 'tx-chip-pending'} ${open ? 'tx-chip-open' : ''}`}>
       <div className="tx-chip-head" onMouseDown={toggle.onMouseDown} onClick={toggle.onClick}>
         <button type="button" className="tx-chip-toggle" aria-expanded={open} aria-label="subagent detail">
-          <span className="tx-chip-caret">{open ? '▾' : '▸'}</span>
+          <Disclosure open={open} />
           <span className="tx-chip-name">subagent</span>
         </button>
         <span className="tx-chip-summary tx-chip-summary-wide">{summary}</span>
@@ -148,7 +148,7 @@ function Collapsed({ label, text }: { label: string; text: string }): ReactNode 
   return (
     <div className="tx-collapsed">
       <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        {open ? '▾' : '▸'} {label}
+        <Disclosure open={open} /> {label}
       </button>
       {open ? <div className="tx-think-body">{text}</div> : null}
     </div>
@@ -175,7 +175,7 @@ function ThinkingRow({ message }: { message: Message }): ReactNode {
       <div className="tx-gutter" />
       <div className="tx-content">
         <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          {open ? '▾' : '▸'} thinking{words > 0 ? ` · ${words} words` : ''}
+          <Disclosure open={open} /> thinking{words > 0 ? ` · ${words} words` : ''}
         </button>
         {open ? <div className="tx-think-body">{text}</div> : null}
       </div>

@@ -230,6 +230,9 @@
 
 .tx-think-head,
 .tx-sidechain-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   color: var(--faint);
   font-size: var(--fs-sm);
   font-style: italic;
@@ -365,7 +368,7 @@
 
 .tx-chip-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   width: 100%;
   padding: 2px 7px;
@@ -379,17 +382,45 @@
 /* Caret + name: the keyboard affordance for expanding the chip. */
 .tx-chip-toggle {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
   flex: none;
   text-align: left;
 }
 
-.tx-chip-caret {
-  color: var(--faint);
-  font-size: var(--fs-xs);
+/*
+   The disclosure caret. See Disclosure in Diff.tsx.
+
+   It was --faint at --fs-xs: the dimmest tier at the smallest size, on the one
+   element whose entire job is to announce that there is more to see. Quiet
+   means subordinate, not invisible, and the line falls in a specific place --
+   de-emphasise the CONTENT a thing hides, never the control that reveals it.
+
+   24x24 is the WCAG 2.2 target-size minimum. The negative block margin keeps
+   that hit area from pushing the rows apart: visible size and clickable size
+   are allowed to differ, and in a dense list they should.
+*/
+.tx-disc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-block: -6px;
+  margin-inline: -5px;
+  color: var(--muted);
+  font-size: var(--fs-lg);
+  line-height: 1;
   user-select: none;
 }
+
+/* Hovering anywhere on the control brings the caret up with it. */
+.tx-chip-head:hover .tx-disc,
+.tx-think-head:hover .tx-disc,
+.tx-sidechain-head:hover .tx-disc,
+.tx-d-gap:hover .tx-disc,
+.tx-chip-toggle:hover .tx-disc { color: var(--text); }
 
 .tx-chip-name {
   flex: none;
@@ -664,7 +695,9 @@
 /* --- collapsed regions ---------------------------------------------------- */
 
 .tx-d-gap {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   width: 100%;
   padding: 1px 8px;
   border-top: 1px solid var(--border);

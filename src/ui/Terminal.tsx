@@ -44,6 +44,13 @@ const livePtys = new Map<number, string>();
  */
 const starters = new Map<number, () => boolean>();
 
+/**
+ * Tasks whose next start would RESUME their conversation rather than begin a
+ * new one. Per-task and module-level so callers outside the component can ask
+ * — the fact was already tracked inside Terminal, it just had no accessor.
+ */
+const resumable = new Set<number>();
+
 /** Notified whenever a task gains or loses a live pty. */
 const presenceListeners = new Set<(taskId: number, live: boolean) => void>();
 
@@ -136,6 +143,22 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
 /** True when the task has a spawned, un-exited pty. */
 export function hasLivePty(taskId: number): boolean {
   return livePtys.has(taskId);
+}
+
+/**
+ * True when restarting this task would pick its conversation back up.
+ *
+ * False in two cases, which look the same to a caller and are not worth
+ * separating: the task has never established a session, or a `--resume` for it
+ * was already rejected by the CLI (a pruned transcript). Either way a fresh
+ * session is all that is available, and a caller promising to reopen the
+ * conversation would be over-promising.
+ *
+ * The conversation itself is on disk regardless — this is about whether the
+ * CLI can pick it up again, not whether it still exists.
+ */
+export function canResume(taskId: number): boolean {
+  return resumable.has(taskId);
 }
 
 /**
@@ -518,6 +541,10 @@ export default function Terminal({
             // same dead id forever.
             resumeRejectedRef.current =
               usedResumeRef.current && !sawOutputRef.current && code !== 0;
+            // Synchronously, and BEFORE unregisterPty: presence listeners
+            // re-render immediately on that call, and would otherwise read a
+            // stale `canResume` on the very render that reports the exit.
+            if (resumeRejectedRef.current) resumable.delete(task.id);
             unregisterPty(task.id, id);
             setExitCode(code);
             setPhase('exited');
@@ -635,6 +662,20 @@ export default function Terminal({
     // task.id). Re-running this effect would respawn a live Claude session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * A task becomes resumable the moment capture adopts a session id for it, and
+   * stops being so if a resume is rejected. `phase` is in the deps so this
+   * re-evaluates after an exit rather than only when the task object changes.
+   */
+  useEffect(() => {
+    const id = task.id;
+    if (task.sessionId !== null && !resumeRejectedRef.current) resumable.add(id);
+    else resumable.delete(id);
+    return () => {
+      resumable.delete(id);
+    };
+  }, [task.id, task.sessionId, phase]);
 
   // --- becoming visible: remeasure, repaint, take focus --------------------
   useEffect(() => {
