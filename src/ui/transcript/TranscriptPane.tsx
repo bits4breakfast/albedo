@@ -14,6 +14,7 @@ import type { Message } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate } from '../../capture';
 import { hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { Disclosure } from './Diff';
 import MessageRow from './MessageRow';
 import { isSidechain, toolUseId } from './ToolChip';
 import './transcript.css';
@@ -250,7 +251,7 @@ export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): Reac
   const items = useMemo(() => groupRows(messages), [messages]);
 
   if (inactive) {
-    return <div className="tx-pane tx-pane-empty">No session selected</div>;
+    return <div className="tx-pane tx-pane-empty">Select a task to read its transcript</div>;
   }
 
   return (
@@ -263,13 +264,13 @@ export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): Reac
             </button>
           </div>
         ) : messages.length > 0 ? (
-          <div className="tx-page-top tx-page-start">start of session</div>
+          <div className="tx-page-top tx-page-start">start of conversation</div>
         ) : null}
 
         {error ? <div className="tx-error">Could not read the transcript: {error}</div> : null}
 
         {messages.length === 0 && !loading && !error ? (
-          <div className="tx-pane-empty">Nothing recorded for this session yet</div>
+          <div className="tx-pane-empty">No messages in this conversation yet</div>
         ) : null}
 
         {items.map((item) =>
@@ -378,9 +379,9 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
     timerRef.current = 0;
     try {
       if (await submitPty(taskId, body)) succeeded();
-      else setNotice('The session started but would not take the message. It is still here — press send to retry.');
+      else setNotice('The terminal started but would not take the message. It is still here — press send to retry.');
     } catch {
-      setNotice('Could not reach the session. Your message is kept here.');
+      setNotice('Could not reach the terminal. Your message is kept here.');
     } finally {
       setAwaiting(false);
       inFlightRef.current = false;
@@ -429,13 +430,13 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
         // Coming up. Hold the body and let the presence event send it.
         pendingRef.current = text;
         setAwaiting(true);
-        setNotice('Starting the session — your message will send as soon as it is up.');
+        setNotice('Starting the terminal — your message will send as soon as it is up.');
         timerRef.current = window.setTimeout(() => {
           if (pendingRef.current === null) return;
           pendingRef.current = null;
           setAwaiting(false);
           inFlightRef.current = false;
-          setNotice('The session did not come up. Your message is kept here — press send to try again.');
+          setNotice('The terminal did not start. Your message is kept here — press send to try again.');
         }, START_TIMEOUT_MS);
         // `startPty` also returns true when a pty is ALREADY live -- submitPty
         // can fail on a write error alone. No presence event is coming in that
@@ -443,21 +444,31 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
         if (hasLivePty(taskId)) void flushRef.current();
         return; // otherwise inFlightRef stays set until the retry or the timeout
       }
-      setNotice('This task has no terminal open, so there is nothing to send to. Your message is kept here.');
+      setNotice('This task is not open, so there is no terminal to send to. Your message is kept here.');
       inFlightRef.current = false;
     } catch {
-      setNotice('Could not reach the session. Your message is kept here.');
+      setNotice('Could not reach the terminal. Your message is kept here.');
       inFlightRef.current = false;
     } finally {
       setBusy(false);
     }
   }, [text, taskId, succeeded]);
 
+  /*
+     Copy note: say what it means for the user's work, not what the process is
+     doing. "No live session" read as "your conversation is gone" -- it is not,
+     it is on disk and in the database; what stopped is a process. And the
+     reassurance has to be unconditional: `startPty` RESUMES in the normal case,
+     but a `--resume` the CLI already rejected starts fresh, so the copy below
+     promises the conversation is kept (always true) rather than that sending
+     will reopen it (true only usually). See the note in the handback about
+     exposing that flag so this can say the better thing.
+  */
   const placeholder = awaiting
-    ? 'Waiting for the session…'
+    ? 'Starting the terminal…'
     : live
-      ? 'Message this session…'
-      : 'No live session — sending will start one';
+      ? 'Message this conversation…'
+      : 'Terminal not running — your conversation is saved. Send to restart it.';
 
   return (
     <div className="tx-composer">
@@ -581,7 +592,7 @@ function SidechainGroup({
       <div className="tx-gutter" />
       <div className="tx-content">
         <button type="button" className="tx-sidechain-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          {open ? '▾' : '▸'} subagent · {rows.length} row{rows.length === 1 ? '' : 's'}
+          <Disclosure open={open} /> subagent · {rows.length} row{rows.length === 1 ? '' : 's'}
           {tools > 0 ? ` · ${tools} tool call${tools === 1 ? '' : 's'}` : ''}
         </button>
         {open ? (

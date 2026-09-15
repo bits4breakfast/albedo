@@ -342,6 +342,27 @@ export function Code({ pieces }: { pieces: Piece[] }): ReactNode {
 }
 
 /**
+ * The disclosure caret, everywhere something in the pane opens.
+ *
+ * One component rather than a glyph typed at each site, so the next collapsible
+ * thing inherits the right size instead of the wrong one. It is a control, not
+ * decoration: `--muted`, a size ABOVE the text it sits beside, and a 24x24 hit
+ * target regardless of how small the glyph looks.
+ *
+ * Quiet means subordinate, not invisible -- and that applies to the CONTENT a
+ * thing hides, never to the control that reveals it. Thinking blocks and
+ * injected context are de-emphasised on purpose; the caret that opens them is
+ * not, or nobody finds out the content is there at all.
+ */
+export function Disclosure({ open }: { open: boolean }): ReactNode {
+  return (
+    <span className="tx-disc" aria-hidden="true">
+      {open ? '▾' : '▸'}
+    </span>
+  );
+}
+
+/**
  * A block of code, highlighted, one element per line. Shared by the markdown
  * renderer and the tool chip so every code surface in the pane looks the same.
  */
@@ -827,10 +848,17 @@ function GapBar({
   onClick: () => void;
 }): ReactNode {
   const label = `${gap.count.toLocaleString()} unchanged line${gap.count === 1 ? '' : 's'}`;
+  /*
+     Two different glyphs, on purpose. A caret means "you can open this", so the
+     expandable bar uses the pane's one disclosure vocabulary. The static bar is
+     NOT a control -- a `git diff` simply does not carry the hidden lines, and
+     nothing will reveal them -- so it keeps the ellipsis, which says "there is
+     more here" without promising a click will do anything.
+  */
   if (!expandable) return <div className="tx-d-gap tx-d-gap-static">⋯ {label}</div>;
   return (
     <button type="button" className="tx-d-gap" onClick={onClick} aria-expanded={open}>
-      {open ? '▾' : '⋯'} {label}
+      <Disclosure open={open} /> {label}
     </button>
   );
 }

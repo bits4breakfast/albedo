@@ -220,7 +220,7 @@ describe('(c) exactly-once when presence brings the session up', () => {
     expect(submitPty).toHaveBeenCalledTimes(1);
   });
 
-  it('reports and keeps the draft when no terminal is open for the task', async () => {
+  it('reports and keeps the draft when the task is not open', async () => {
     vi.mocked(submitPty).mockResolvedValue(false);
     vi.mocked(startPty).mockReturnValue(false); // nothing mounted: unfixable here
     vi.mocked(hasLivePty).mockReturnValue(false);
@@ -229,7 +229,7 @@ describe('(c) exactly-once when presence brings the session up', () => {
     type('nowhere to go');
     pressEnter();
 
-    await waitFor(() => expect(screen.getByText(/no terminal open/i)).toBeDefined());
+    await waitFor(() => expect(screen.getByText(/no terminal to send to/i)).toBeDefined());
     expect(box().value).toBe('nowhere to go');
     expect(box().readOnly).toBe(false);
   });

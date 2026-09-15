@@ -1,3 +1,4 @@
+mod fsscope;
 mod fsx;
 mod pty;
 
@@ -58,6 +59,7 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_kill,
             fsx::canonicalize_path,
+            fsscope::allow_project_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running albedo");

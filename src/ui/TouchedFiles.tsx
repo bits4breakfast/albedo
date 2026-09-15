@@ -229,7 +229,10 @@ function FileRow({
       className="tf-row"
       data-source={file.source}
       onClick={() => onOpen(file)}
-      title={`${file.path}${file.gitStatus ? ` · git ${file.gitStatus}` : ''}`}
+      // Everything the row can shed when the column is narrow is still here.
+      // Pinned as a column the pane goes down to 180px, where touched.css drops
+      // the directory and the timestamp; the tooltip is where they survive.
+      title={rowTitle(file, now)}
     >
       <span className="tf-status" data-tone={statusTone(file.gitStatus)}>
         {file.gitStatus === null ? '··' : file.gitStatus.replace(/ /g, '·')}
@@ -269,6 +272,21 @@ function FileRow({
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The whole row as text. The pane is resizable down to 180px as a pinned
+ * column, and at that width the directory and the relative time are dropped
+ * from the layout — so they have to be somewhere, and hover is that somewhere.
+ */
+function rowTitle(file: TouchedFile, now: number): string {
+  const facts: string[] = [];
+  facts.push(file.editCount === 0 ? 'no edit-tool calls' : `${file.editCount} edit call${file.editCount === 1 ? '' : 's'}`);
+  if (file.lastTouchedAt !== null) facts.push(`last touched ${relativeTime(file.lastTouchedAt, now)} ago`);
+  if (file.gitStatus !== null) facts.push(`git ${file.gitStatus.trim() || '--'}`);
+  if (file.source === 'git') facts.push('changed in the worktree, not through an edit tool');
+  if (file.handEdited) facts.push('saved by hand in the editor');
+  return `${file.path}\n${facts.join(' · ')}`;
+}
 
 /** add / del / mod / none, from the porcelain code. Drives the row's colour. */
 export function statusTone(code: string | null): 'add' | 'del' | 'mod' | 'none' {

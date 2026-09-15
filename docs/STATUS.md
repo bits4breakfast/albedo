@@ -1,14 +1,42 @@
 # Status — where the build got to
 
-Current as of the ninth commit. ~34,500 lines.
+**Read this first if you are picking the project up cold.**
+
+## Open right now — start here
+
+1. **LIVE BUG, unfixed.** The app shows:
+   `Could not assign existing tasks to projects: Can't find variable: listProjects.`
+   That is `backfillProjectsFromTasks` throwing in `src/db/projects.ts`. Ruled out:
+   it is not a missing import (the function is defined in that file and hoists),
+   and `tsc` is clean. Almost certainly a **circular import** leaving the binding
+   in TDZ — `db/index → capture/adapter → … → db/projects → db/index` is the
+   suspected shape. `madge --circular src` would settle it.
+   **Consequence while it throws: tasks are not being linked to projects**, which
+   presents as tasks landing in the wrong tab.
+
+2. **In flight, not landed** (each was dispatched and may be partially applied):
+   - `canResume(taskId)` export, so the composer can tell "your conversation will
+     be picked up" from "this one was pruned and cannot be"
+   - switching tab + focus when opening a session from another project
+   - `TouchedFiles` row layout at 180–240px (the new pinnable column's minimum)
+   - calling `allow_project_dir` for every project root on startup — **until this
+     lands, opening a file in a worktree outside `~/agents` fails with
+     "forbidden path"**. The Rust command exists and compiles; nothing calls it.
+
+3. **Never verified by anyone:** the pty actually drawing Claude Code's TUI, and
+   resize under a hard splitter drag. Both need a human at the window.
+
+---
+
+Nine commits, ~35,100 lines.
 
 | | |
 | --- | --- |
 | `npx tsc --noEmit` | clean |
-| `npx vitest run` | **813 passing**, 25 files, 2.2s |
+| `npx vitest run` | **832 passing**, 26 files |
 | `cargo test --lib` / `clippy` / `fmt` | 8 passing, clean, clean |
 | Builds | `vite build` and `cargo build` both pass |
-| M1 capture | 509 transcripts, 44k+ messages, 42 days |
+| M1 capture | 529 transcripts, 45,497 messages, 42 days |
 | **Live capture** | **measured at 392ms**, file write → watcher → adapter → SQLite |
 | Migrations 1–4 | applied to the live database |
 | Contrast | 0 failures, both palettes, flat and tinted grounds |
