@@ -21,9 +21,17 @@
      as a pinned column the user can drag down to 180px, so the rows have to
      respond to the PANE's width, not the window's. (Container queries need
      WKWebView 16.0; the file already requires 16.4 for color-mix, so this
-     adds no floor.) */
+     adds no floor.)
+
+     `width: 100%` is NOT decoration here. inline-size containment means the
+     pane's own width is computed WITHOUT looking at its contents, so as an
+     auto-width flex item it collapses to 0 and every query matches the
+     narrowest branch at every real width. Measured: without this line the
+     rows render in narrow mode even in a 420px column. */
   container-type: inline-size;
   container-name: tf;
+  width: 100%;
+  min-width: 0;
 
   /* ------------------------------------------------------------------ *
      The amber family — the local palette for "git changed this file, the
@@ -377,3 +385,75 @@
 }
 
 .tf-mono { font-family: var(--font-mono); }
+
+/* --------------------------------------------------------------------------
+   Narrow column
+   --------------------------------------------------------------------------
+   The pane is also mounted as a pinned column, resizable 180-420px (default
+   240). A row carries five things — status code, path, badges, edit count,
+   relative time — and below roughly 260px they stop fitting. So the row sheds
+   them in order of how much they identify the file, and everything it sheds
+   stays in the row's tooltip (see rowTitle() in TouchedFiles.tsx).
+
+   What NEVER goes, at any width: the basename, the 3px --warn rule and the
+   `worktree` badge. The git-only marker has three carriers so that no single
+   one is load-bearing, and the two that survive here are the legible ones —
+   the rule, which needs no space, and the badge, which says it in words. The
+   wash is the decorative carrier and it costs nothing to keep, so it stays
+   too; the badge is the one that would otherwise have been squeezed out, and
+   it is now the last thing in the row allowed to shrink (it cannot).
+
+   The 3px rule stays 3px: it is 1.7% of a 180px column and it is what makes
+   the row scannable at a glance. Shaving it would save nothing that matters
+   and cost the thing that does.
+   -------------------------------------------------------------------------- */
+
+/* ~260px and below: the path WRAPS instead of losing its directory.
+   Dropping the directory was the obvious move and it is wrong at the default
+   240px width: `index.ts` exists in three directories in a typical repo, and
+   a change-set view that cannot tell them apart has stopped doing its job.
+   Vertical space is the cheap axis in a narrow column and a change set is
+   tens of rows, not thousands.
+
+   Flex `order` does the reflow with no change to the DOM: the basename and
+   the badges stay on line 1, the directory is re-ordered after them and given
+   a full-width basis so it wraps onto line 2, still front-clipped. */
+@container tf (max-width: 260px) {
+  .tf-row {
+    column-gap: 6px;
+    padding-inline: 6px;
+  }
+  .tf-path { flex-wrap: wrap; }
+  /* flex-basis 0 so the basename never CAUSES a wrap (line-breaking looks at
+     base sizes, not shrink factors): without it a long name pushes the badges
+     onto a third line. It grows into line 1 instead and ellipsises, which puts
+     the badges at the right edge of the same line. */
+  .tf-name { flex: 1 1 0; }
+  .tf-name,
+  .tf-badge { order: 0; }
+  .tf-sep { display: none; }
+  .tf-dir {
+    order: 1;
+    flex: 0 0 100%;
+    max-width: 100%;
+    line-height: 1.35;
+  }
+}
+
+/* ~210px and below: the relative time goes. It is the least identifying
+   column and the most redundant one — rows are sorted most recently touched
+   first, so the order already says what the column said, and the tooltip has
+   the exact value. The edit count stays: it is the per-file fact this view
+   exists to show. */
+@container tf (max-width: 210px) {
+  .tf-row {
+    column-gap: 5px;
+    grid-template-columns: 2ch minmax(0, 1fr) auto auto;
+  }
+  .tf-when { display: none; }
+  .tf-status { letter-spacing: 0; }
+  .tf-badge { margin-left: 4px; padding: 0 3px; }
+  /* The pinned column has its own header at these widths, so the words
+     "Touched files" are on screen twice. Keep the count and the button. */
+  .tf-head-title { display: none; }
+}

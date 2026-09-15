@@ -21,24 +21,71 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { homeDir } from '@tauri-apps/api/path';
 
 /** Paths already granted this run, so repeated calls cost nothing. */
 const granted = new Set<string>();
+
+/** Test hook: forget what has been granted. */
+export function resetGrants(): void {
+  granted.clear();
+}
+
+/**
+ * Expand a leading `~`.
+ *
+ * NOT cosmetic: the pre-projects backfill stores `~/agents/<repo>` as a
+ * project's worktreeRoot, and the Rust command refuses relative paths. On the
+ * user's live database one of two projects has exactly that value, so without
+ * this it reports a failure for a perfectly valid root.
+ */
+function expandHome(path: string, home: string): string {
+  if (path === '~') return home;
+  if (path.startsWith('~/')) return `${home}${path.slice(1)}`;
+  return path;
+}
+
+/**
+ * Does this failure just mean "the directory is not there yet"?
+ *
+ * A project's worktreeRoot is created on demand, so a configured root that has
+ * not been used yet is the normal state rather than a fault. The Rust side
+ * canonicalises before granting, so a missing directory comes back as an io
+ * error. On the user's live database two of five directories are in this
+ * state, so treating it as an error would put a banner over two healthy
+ * projects on every launch.
+ *
+ * Matching on the message is not lovely -- a structured signal from
+ * `allow_project_dir` would be better. Deliberately narrow: anything
+ * unrecognised is still reported.
+ */
+function isNotYetPresent(message: string): boolean {
+  return /no such file or directory/i.test(message);
+}
 
 /**
  * Grant one directory. Idempotent within a run and on the Rust side.
  * Resolves to the error string rather than throwing, so a caller granting many
  * directories can report the failures without losing the successes.
  */
-export async function grantDir(path: string | null | undefined): Promise<string | null> {
-  const dir = path?.trim();
+export async function grantDir(
+  path: string | null | undefined,
+  home = '',
+): Promise<string | null> {
+  const raw = path?.trim();
+  if (!raw) return null;
+  const dir = expandHome(raw, home).replace(/\/+$/, '');
   if (!dir || granted.has(dir)) return null;
   try {
     await invoke('allow_project_dir', { path: dir });
     granted.add(dir);
     return null;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
+    // Not memoised either way: a directory created later must be granted then,
+    // and a transient failure deserves a retry on the next call.
+    if (isNotYetPresent(message)) return null;
+    return `${dir}: ${message}`;
   }
 }
 
@@ -60,7 +107,20 @@ export interface GrantTargets {
  * kind of quiet degradation this project has been bitten by before.
  */
 export async function grantProjectDirs(t: GrantTargets): Promise<string[]> {
+  let home = '';
+  try {
+    home = (await homeDir()).replace(/\/+$/, '');
+  } catch {
+    // Without a home directory a `~` path cannot be expanded. Absolute paths
+    // still work, so carry on rather than granting nothing.
+  }
   const all = [...(t.repoPaths ?? []), ...(t.worktreeRoots ?? []), ...(t.worktreePaths ?? [])];
-  const results = await Promise.all(all.map(grantDir));
-  return results.filter((r): r is string => r !== null);
+  // Sequential: the grants share a memo, and concurrent calls for the same
+  // directory would each miss it and invoke twice.
+  const denied: string[] = [];
+  for (const path of all) {
+    const err = await grantDir(path, home);
+    if (err !== null) denied.push(err);
+  }
+  return denied;
 }

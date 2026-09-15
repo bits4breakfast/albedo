@@ -4,24 +4,32 @@
 
 ## Open right now — start here
 
-1. **LIVE BUG, unfixed.** The app shows:
-   `Could not assign existing tasks to projects: Can't find variable: listProjects.`
-   That is `backfillProjectsFromTasks` throwing in `src/db/projects.ts`. Ruled out:
-   it is not a missing import (the function is defined in that file and hoists),
-   and `tsc` is clean. Almost certainly a **circular import** leaving the binding
-   in TDZ — `db/index → capture/adapter → … → db/projects → db/index` is the
-   suspected shape. `madge --circular src` would settle it.
-   **Consequence while it throws: tasks are not being linked to projects**, which
-   presents as tasks landing in the wrong tab.
+1. **`Can't find variable: listProjects` — diagnosed, probably not a code bug.**
+   I wrote here earlier that it was a circular import. **That was wrong.** A full
+   cycle scan of `src` finds exactly one cycle, `git/worktree.ts <-> git/reconcile.ts`,
+   which is pre-existing and documented as safe. Nothing in `db/` is involved.
 
-2. **In flight, not landed** (each was dispatched and may be partially applied):
-   - `canResume(taskId)` export, so the composer can tell "your conversation will
-     be picked up" from "this one was pruned and cannot be"
-   - switching tab + focus when opening a session from another project
-   - `TouchedFiles` row layout at 180–240px (the new pinnable column's minimum)
-   - calling `allow_project_dir` for every project root on startup — **until this
-     lands, opening a file in a worktree outside `~/agents` fails with
-     "forbidden path"**. The Rust command exists and compiles; nothing calls it.
+   The likely cause is a **stale vite pre-bundle**: the same terminal output that
+   showed the error also showed `Re-optimizing dependencies because lockfile has
+   changed`, and a stale chunk after a dep re-optimization produces exactly this
+   symptom for a binding that moved. A clean `npm run tauri dev` (with no other
+   vite on 1420) should clear it. **If it recurs on a cold start, it is real and
+   this note is wrong** — re-run the cycle scan first, it is twenty lines of node
+   and needs no dependency.
+
+2. **In flight when the previous session ended** — two agents were stopped mid-work.
+   Their output was recovered and is committed; `tsc` is clean and 828 tests pass.
+   - **LANDED:** `allow_project_dir` is now called. `src/lib/fsGrants.ts` grants
+     each project root at startup, wired from `App.tsx`. This was the fix for
+     "forbidden path" when opening a file in a worktree outside `~/agents`.
+   - **PARTIAL:** `src/ui/touched.css` carries uncommitted narrow-width work for
+     the pinnable files column (180-240px). Unverified at those widths.
+   - **NOT LANDED:** `canResume(taskId)`, so the composer still cannot tell "your
+     conversation will be picked up" from "this one was pruned". The placeholder
+     is deliberately worded to be true either way in the meantime.
+   - **NOT LANDED:** switching tab + focus when opening a session from another
+     project. Same shape as a bug already fixed twice: selecting a task outside
+     the active scope is a no-op unless the scope moves first.
 
 3. **Never verified by anyone:** the pty actually drawing Claude Code's TUI, and
    resize under a hard splitter drag. Both need a human at the window.
