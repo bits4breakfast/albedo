@@ -4,49 +4,59 @@
 
 ## Open right now — start here
 
-1. **`Can't find variable: listProjects` — diagnosed, probably not a code bug.**
-   I wrote here earlier that it was a circular import. **That was wrong.** A full
-   cycle scan of `src` finds exactly one cycle, `git/worktree.ts <-> git/reconcile.ts`,
-   which is pre-existing and documented as safe. Nothing in `db/` is involved.
+1. **Restart the app once, and watch it migrate.** Migration 5 has not run on
+   your live database yet — it will on next launch. It has been rehearsed on a
+   copy of the real 299MB file: 0.43s, then a re-ingest of 417 subagent
+   transcripts taking ~8s, ending at ~91,500 rows with zero duplicates and a
+   clean FTS integrity-check. Expect the first launch after this to be busy for
+   about ten seconds. If it is not, the migration did not run — check
+   `PRAGMA user_version`.
 
-   The likely cause is a **stale vite pre-bundle**: the same terminal output that
-   showed the error also showed `Re-optimizing dependencies because lockfile has
-   changed`, and a stale chunk after a dep re-optimization produces exactly this
-   symptom for a binding that moved. A clean `npm run tauri dev` (with no other
-   vite on 1420) should clear it. **If it recurs on a cold start, it is real and
-   this note is wrong** — re-run the cycle scan first, it is twenty lines of node
-   and needs no dependency.
+2. **The database moved.** The identifier is now `com.bits4breakfast.albedo`,
+   so the app-data directory moved with it. The real database (2 tasks, 2
+   projects) was carried across by hand; the empty one the renamed app created
+   for itself is parked at `com.bits4breakfast.albedo.autocreated-backup` and
+   can be deleted once you are satisfied.
 
-2. **In flight when the previous session ended** — two agents were stopped mid-work.
-   Their output was recovered and is committed; `tsc` is clean and 828 tests pass.
-   - **LANDED:** `allow_project_dir` is now called. `src/lib/fsGrants.ts` grants
-     each project root at startup, wired from `App.tsx`. This was the fix for
-     "forbidden path" when opening a file in a worktree outside `~/agents`.
-   - **PARTIAL:** `src/ui/touched.css` carries uncommitted narrow-width work for
-     the pinnable files column (180-240px). Unverified at those widths.
-   - **NOT LANDED:** `canResume(taskId)`, so the composer still cannot tell "your
-     conversation will be picked up" from "this one was pruned". The placeholder
-     is deliberately worded to be true either way in the meantime.
-   - **NOT LANDED:** switching tab + focus when opening a session from another
-     project. Same shape as a bug already fixed twice: selecting a task outside
-     the active scope is a no-op unless the scope moves first.
+3. **Still never verified by anyone:** the pty actually drawing Claude Code's
+   TUI, and resize under a hard splitter drag. Both need a human at the window.
+   Unchanged from before — nothing in this round touched the pty.
 
-3. **Never verified by anyone:** the pty actually drawing Claude Code's TUI, and
-   resize under a hard splitter drag. Both need a human at the window.
+4. **Known, not done** (from the code-organization pass; none of it is a bug):
+   - `App.tsx` is 1,600 lines with 26 `useState`, 15 `useEffect` and 11
+     `useCallback` in one component. Three cohesive groups are sitting there
+     ready to be hooks: layout geometry, dialog open/close, and launch notices.
+     `useTasks.ts` is the precedent.
+   - Three hand-rolled localStorage read/write pairs with identical try/catch
+     shape, 9 keys in `LS` and 2 more as loose consts, plus 6
+     `useEffect(() => store(...))` lines. One `usePersisted(key, codec,
+     fallback)` collapses all of it.
+   - Two conventions for CSS. Five components co-locate a stylesheet
+     (`transcript.css`, `worktree.css`, `touched.css`, `editor.css`,
+     `gauges.css`); sixteen more live in a 1,735-line `styles.css`, including
+     a 213-line Session browser block belonging to a 571-line component. The
+     better pattern already exists here, it is just not applied evenly.
+   - No `aria-live` anywhere. A task going blocked, a capture error and the
+     backfill are all announced visually only — including the new attention
+     mark, which is a dock bounce plus a border pulse and nothing a screen
+     reader sees.
+   - `SHORTCUTS` in `src/ui/shortcuts.ts` is now a documented table with
+     nothing rendering it. A help surface is a small component away, and until
+     there is one ⌘[ / ⌘] / ⌘← / ⌘→ are undiscoverable.
 
 ---
 
-Nine commits, ~35,100 lines.
+Eighteen commits.
 
 | | |
 | --- | --- |
 | `npx tsc --noEmit` | clean |
-| `npx vitest run` | **832 passing**, 26 files |
+| `npx vitest run` | **873 passing**, 29 files |
 | `cargo test --lib` / `clippy` / `fmt` | 8 passing, clean, clean |
 | Builds | `vite build` and `cargo build` both pass |
-| M1 capture | 529 transcripts, 45,497 messages, 42 days |
+| M1 capture | 529 transcripts, **~91,500 messages after migration 5**, 42 days |
 | **Live capture** | **measured at 392ms**, file write → watcher → adapter → SQLite |
-| Migrations 1–4 | applied to the live database |
+| Migrations 1–4 | applied to the live database; **5 pending first launch** |
 | Contrast | 0 failures, both palettes, flat and tinted grounds |
 
 ---
@@ -66,6 +76,21 @@ watcher. Everything in the database had arrived via the startup backfill.
 
 So the smoke test that matters is **"does it still see things happen"**: write a
 transcript line, watch it land. Not "do the tests pass".
+
+**The second sharpest example, found in this round:** every subagent transcript
+had been silently discarded since the first commit. Claude Code writes them
+under the PARENT's `sessionId`, `seq` is file-local, and the unique index was
+`(session_id, seq)` — so a subagent's line 0 collided with the parent's line 0
+and `INSERT OR IGNORE` did what it says. 52,092 rows expected, 5,988 stored:
+89% gone, and subagent traffic is 53% of the corpus. No error was raised
+anywhere and 787 tests were green, because every fixture seeded one file per
+session — the single shape that cannot collide. Migration 5 fixes it; the
+lesson is that a fixture which never reproduces the real shape proves nothing,
+and both of these bugs were found by counting rows against the files on disk.
+
+**So: when a capture change lands, count.** Parse the files with the real
+adapter, count what it should produce, compare to the table. Twice now that has
+taken minutes and found something years of green tests did not.
 
 **Still not verified:** the pty rendering Claude Code's TUI, and resize. The
 spawn path is well tested (shell quoting round-trips against a real shell,
@@ -95,6 +120,19 @@ and a composer that sends without switching panes.
 
 **Sessions.** A browser over every captured session with FTS search; resume
 (continue or fork); every task resumes across restarts.
+
+**Subagents.** A strip above the transcript listing the agents a session has
+running in parallel, with status derived the same way a task's is. Appears only
+while something is live.
+
+**Attention.** A task going blocked (or a running one finishing) bounces the
+dock when Albedo is not focused, and marks the row when it is — macOS drops
+`requestUserAttention` for the active app, so the in-window mark is the
+notification, not a decoration on one. `src/ui/attention.ts`.
+
+**Keymap.** One matcher and one documented table in `src/ui/shortcuts.ts`:
+⌘N, ⌘1…9, ⌘[ / ⌘], ⌘← / ⌘→, ⌘\. The arrow bindings stand down inside text
+fields, where they mean start/end of line.
 
 **Themes.** System / light / dark, with light re-picked rather than inverted.
 
