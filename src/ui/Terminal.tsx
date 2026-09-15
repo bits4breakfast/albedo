@@ -1,0 +1,301 @@
+import { useEffect, useRef, useState } from 'react';
+import { Terminal as XTerm } from '@xterm/xterm';
+import type { ITheme } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from '../lib/pty';
+import type { Task } from '../types';
+
+/**
+ * The embedded pty.
+ *
+ * Two rules this component exists to hold:
+ *
+ * 1. Output bytes go to xterm **as bytes**. Never decode to a string first —
+ *    a chunk boundary in the middle of a UTF-8 sequence (or an escape) shreds
+ *    Claude Code's TUI.
+ * 2. Resize is debounced and deduplicated. `fit()` runs on a trailing 100ms
+ *    timer and `resizePty` is only called when cols/rows actually changed.
+ *    Resizing a pty on every frame of a splitter drag is the documented way to
+ *    wedge a TUI.
+ *
+ * Lifetime: one instance per task, mounted for as long as the task is open.
+ * The parent hides inactive terminals rather than unmounting them, so a running
+ * session survives tab switching. Cleanup (unsubscribe, kill, dispose) happens
+ * only on real unmount — archive or close.
+ */
+
+const RESIZE_DEBOUNCE_MS = 100;
+
+type Phase = 'starting' | 'live' | 'exited' | 'failed';
+
+export interface TerminalProps {
+  task: Task;
+  /** False keeps the instance alive but hidden. */
+  active?: boolean;
+  onExit?: (code: number | null) => void;
+  onError?: (message: string) => void;
+}
+
+function cssVar(name: string, fallback: string): string {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Palette derived from the shell tokens in styles.css. */
+function terminalTheme(): ITheme {
+  return {
+    background: cssVar('--panel-inset', '#090b0e'),
+    foreground: cssVar('--text', '#ccd3de'),
+    cursor: cssVar('--accent', '#4d9fff'),
+    cursorAccent: cssVar('--panel-inset', '#090b0e'),
+    selectionBackground: 'rgba(77, 159, 255, 0.28)',
+    black: '#0b0d10',
+    red: '#e35b56',
+    green: '#4cbf72',
+    yellow: '#f0a33a',
+    blue: '#4d9fff',
+    magenta: '#b98ce8',
+    cyan: '#3fb9c4',
+    white: '#ccd3de',
+    brightBlack: '#6d7684',
+    brightRed: '#ff7b74',
+    brightGreen: '#6fdd92',
+    brightYellow: '#ffc164',
+    brightBlue: '#79b9ff',
+    brightMagenta: '#d0abff',
+    brightCyan: '#5fd8e2',
+    brightWhite: '#f1f4f9',
+  };
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export default function Terminal({ task, active = true, onExit, onError }: TerminalProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<XTerm | null>(null);
+  const ptyIdRef = useRef<string | null>(null);
+  /** Keystrokes typed before the spawn resolved. */
+  const pendingRef = useRef<string[]>([]);
+  /** Imperative "fit now", installed by the mount effect. */
+  const fitNowRef = useRef<(() => void) | null>(null);
+  const deadRef = useRef(false);
+
+  const onExitRef = useRef(onExit);
+  onExitRef.current = onExit;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
+  const [phase, setPhase] = useState<Phase>('starting');
+  const [exitCode, setExitCode] = useState<number | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  // --- mount: xterm + pty. Runs exactly once per task instance. -------------
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    let disposed = false;
+    const unsubs: Array<() => void> = [];
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const lastSize = { cols: 0, rows: 0 };
+
+    const term = new XTerm({
+      fontFamily: cssVar('--font-mono', 'ui-monospace, Menlo, monospace'),
+      fontSize: 12,
+      lineHeight: 1.25,
+      letterSpacing: 0,
+      cursorBlink: true,
+      cursorStyle: 'block',
+      scrollback: 20000,
+      allowProposedApi: true,
+      convertEol: false,
+      macOptionIsMeta: true,
+      theme: terminalTheme(),
+    });
+    termRef.current = term;
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    try {
+      term.loadAddon(new WebLinksAddon());
+    } catch {
+      /* links are a nicety, not a requirement */
+    }
+    term.open(host);
+
+    /** Fit + tell the pty, but only when the size really moved. */
+    const applyFit = () => {
+      if (disposed) return;
+      // Hidden terminals measure 0x0; fitting then would compute nonsense.
+      if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
+      try {
+        fitAddon.fit();
+      } catch {
+        return;
+      }
+      const { cols, rows } = term;
+      if (!cols || !rows) return;
+      if (cols === lastSize.cols && rows === lastSize.rows) return;
+      lastSize.cols = cols;
+      lastSize.rows = rows;
+      const id = ptyIdRef.current;
+      if (id && !deadRef.current) void resizePty(id, cols, rows).catch(() => {});
+    };
+    fitNowRef.current = applyFit;
+
+    const scheduleFit = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(applyFit, RESIZE_DEBOUNCE_MS);
+    };
+
+    const observer = new ResizeObserver(scheduleFit);
+    observer.observe(host);
+    window.addEventListener('resize', scheduleFit);
+
+    // First measurement before spawning, so the pty is born the right size.
+    try {
+      if (host.offsetWidth > 0 && host.offsetHeight > 0) fitAddon.fit();
+    } catch {
+      /* fall back to xterm's default 80x24 */
+    }
+    lastSize.cols = term.cols;
+    lastSize.rows = term.rows;
+
+    // Buffer input until the pty id arrives.
+    const dataSub = term.onData((data) => {
+      const id = ptyIdRef.current;
+      if (!id) {
+        pendingRef.current.push(data);
+        return;
+      }
+      if (deadRef.current) return;
+      void writePty(id, data).catch((err) => {
+        setFailure(message(err));
+      });
+    });
+    unsubs.push(() => dataSub.dispose());
+
+    void (async () => {
+      try {
+        const id = await spawnPty({
+          cwd: task.worktreePath,
+          command: 'claude',
+          args: [],
+          cols: term.cols,
+          rows: term.rows,
+        });
+        if (disposed) {
+          void killPty(id).catch(() => {});
+          return;
+        }
+        ptyIdRef.current = id;
+        setPhase('live');
+
+        unsubs.push(
+          onPtyOutput(id, (bytes) => {
+            // Bytes straight through. Do not decode.
+            try {
+              term.write(bytes);
+            } catch {
+              /* a write after dispose is harmless */
+            }
+          }),
+        );
+        unsubs.push(
+          onPtyExit(id, (code) => {
+            deadRef.current = true;
+            setExitCode(code);
+            setPhase('exited');
+            // Leave the scrollback intact and readable.
+            onExitRef.current?.(code);
+          }),
+        );
+
+        const queued = pendingRef.current;
+        pendingRef.current = [];
+        for (const chunk of queued) void writePty(id, chunk).catch(() => {});
+
+        applyFit();
+      } catch (err) {
+        if (disposed) return;
+        const msg = message(err);
+        setFailure(msg);
+        setPhase('failed');
+        onErrorRef.current?.(msg);
+        try {
+          term.write(`\r\n\x1b[31mFailed to start \`claude\` in ${task.worktreePath}\x1b[0m\r\n`);
+          term.write(`\x1b[90m${msg}\x1b[0m\r\n`);
+        } catch {
+          /* ignore */
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      fitNowRef.current = null;
+      if (resizeTimer) clearTimeout(resizeTimer);
+      observer.disconnect();
+      window.removeEventListener('resize', scheduleFit);
+      for (const off of unsubs) {
+        try {
+          off();
+        } catch {
+          /* ignore */
+        }
+      }
+      const id = ptyIdRef.current;
+      ptyIdRef.current = null;
+      if (id) void killPty(id).catch(() => {});
+      termRef.current = null;
+      try {
+        term.dispose();
+      } catch {
+        /* ignore */
+      }
+    };
+    // Mount-once: the task identity is the instance identity (parent keys by
+    // task.id). Re-running this effect would respawn a live Claude session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- becoming visible: remeasure, repaint, take focus --------------------
+  useEffect(() => {
+    if (!active) return;
+    const id = window.requestAnimationFrame(() => {
+      fitNowRef.current?.();
+      const term = termRef.current;
+      if (!term) return;
+      try {
+        term.refresh(0, term.rows - 1);
+        term.focus();
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [active]);
+
+  const tone = phase === 'failed' ? 'error' : phase === 'exited' ? 'exited' : 'live';
+
+  return (
+    <div className="term" hidden={!active} aria-hidden={!active}>
+      <div className="term-surface" ref={hostRef} />
+      {phase === 'starting' && <div className="term-starting">starting claude in {task.worktreePath}…</div>}
+      {(phase === 'exited' || phase === 'failed') && (
+        <div className="term-status" data-tone={tone}>
+          {phase === 'exited'
+            ? `session ended${exitCode === null ? '' : ` (exit ${exitCode})`} — scrollback kept`
+            : `could not start: ${failure ?? 'unknown error'}`}
+        </div>
+      )}
+    </div>
+  );
+}

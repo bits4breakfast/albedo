@@ -1,0 +1,524 @@
+/* ==========================================================================
+   Transcript pane (M4). Owned by the transcript workstream.
+
+   Uses only the design tokens defined in src/styles.css. All class names are
+   `tx-` prefixed. Dense, quiet, information first: the diff is the thing you
+   came to read, so everything around it stays out of the way.
+   ========================================================================== */
+
+.tx-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--text);
+  /* The shell disables selection app-wide; a read pane must allow copying. */
+  user-select: text;
+  cursor: auto;
+}
+
+.tx-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 12px 28px;
+  overscroll-behavior: contain;
+}
+
+.tx-pane-empty {
+  padding: 24px 14px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.tx-error {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--danger);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.tx-page-top {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 10px;
+}
+
+.tx-page-start {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.tx-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius);
+}
+.tx-btn:hover { background: var(--panel-raised); color: var(--text); }
+.tx-btn:disabled { opacity: 0.5; }
+
+.tx-jump {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
+}
+.tx-jump:hover { border-color: var(--accent-line); color: var(--text-strong); }
+
+/* --- rows ----------------------------------------------------------------- */
+
+.tx-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+  align-items: start;
+}
+
+.tx-gutter {
+  padding-top: 2px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: right;
+  user-select: none;
+}
+
+.tx-content { min-width: 0; }
+
+.tx-row-user {
+  margin: 8px 0 4px;
+  padding: 4px 0 5px;
+  border-top: 1px solid var(--border);
+}
+.tx-row-user .tx-gutter { color: var(--accent); }
+
+.tx-user-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.tx-system-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* --- thinking ------------------------------------------------------------- */
+
+.tx-think-head,
+.tx-sidechain-head {
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  font-style: italic;
+}
+.tx-think-head:hover,
+.tx-sidechain-head:hover { color: var(--muted); }
+
+.tx-think-body {
+  margin-top: 3px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+/* --- sidechain ------------------------------------------------------------ */
+
+.tx-sidechain-head { font-style: normal; }
+
+.tx-sidechain-body {
+  margin-top: 4px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+}
+
+/* --- markdown ------------------------------------------------------------- */
+
+.tx-md { overflow-wrap: anywhere; }
+
+.tx-md-p {
+  margin: 0 0 7px;
+  white-space: pre-wrap;
+}
+.tx-md > :last-child { margin-bottom: 0; }
+
+.tx-md-h {
+  margin: 10px 0 5px;
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.tx-md-h1 { font-size: var(--fs-lg); }
+.tx-md-h2 { font-size: var(--fs-lg); }
+.tx-md-h3 { font-size: var(--fs-md); }
+.tx-md-h4 { font-size: var(--fs-md); color: var(--muted); }
+
+.tx-md-hr {
+  margin: 9px 0;
+  border-top: 1px solid var(--border);
+}
+
+.tx-md-list {
+  margin: 0 0 7px;
+  padding-left: 18px;
+}
+.tx-md-list li { margin: 1px 0; }
+
+.tx-md-quote {
+  margin: 0 0 7px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.tx-md-code {
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  border-radius: var(--radius);
+}
+
+.tx-md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+}
+
+.tx-md-pre {
+  position: relative;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  border-radius: var(--radius);
+}
+
+.tx-md-pre-lang {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  user-select: none;
+}
+
+.tx-md-pre-line { min-height: 1.45em; }
+
+/* --- preformatted --------------------------------------------------------- */
+
+.tx-pre {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 340px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  tab-size: 2;
+}
+
+.tx-pre-code { max-height: 520px; }
+.tx-pre-error { color: var(--del); }
+
+/* --- tool chip ------------------------------------------------------------ */
+
+.tx-chip {
+  margin: 1px 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+.tx-chip-open { background: var(--panel-raised); }
+
+.tx-chip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 7px;
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+.tx-chip-head:hover .tx-chip-name { color: var(--text-strong); }
+
+.tx-chip-caret {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  user-select: none;
+}
+
+.tx-chip-name {
+  flex: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.tx-chip-target {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-chip-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-chip-state {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+.tx-chip-ok .tx-chip-state { color: var(--add); }
+.tx-chip-error .tx-chip-state { color: var(--del); }
+.tx-chip-error { border-left: 2px solid var(--del); }
+.tx-chip-pending .tx-chip-state { color: var(--warn); }
+
+.tx-chip-body {
+  padding: 4px 7px 7px;
+  border-top: 1px solid var(--border);
+}
+
+.tx-chip-path {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.tx-chip-section { margin-top: 5px; }
+
+.tx-chip-label {
+  margin: 0 0 2px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tx-chip-empty {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-style: italic;
+}
+
+.tx-chip-body .tx-pre {
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  border-radius: var(--radius);
+}
+
+/* --- diff ----------------------------------------------------------------- */
+
+.tx-d {
+  margin: 3px 0 7px;
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tx-d-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+}
+
+.tx-d-path {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx-d-dir { color: var(--faint); }
+.tx-d-base { color: var(--text-strong); }
+
+.tx-d-stat {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.tx-d-plus { color: var(--add); }
+.tx-d-minus { color: var(--del); }
+
+.tx-d-layout { margin-left: auto; }
+
+.tx-d-empty {
+  padding: 6px 8px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-style: italic;
+}
+
+.tx-d-body {
+  overflow-x: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.tx-d-hunk-head {
+  padding: 2px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-d-hunk:first-child .tx-d-hunk-head { border-top: none; }
+
+.tx-d-code {
+  min-width: 0;
+  padding-right: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Line numbers: present but never competing with the code. */
+.tx-d-n {
+  flex: none;
+  padding: 0 6px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  text-align: right;
+  user-select: none;
+}
+
+/* --- unified layout ------------------------------------------------------- */
+
+.tx-d-unified .tx-d-row {
+  display: grid;
+  grid-template-columns: 42px 42px 14px minmax(0, 1fr);
+  align-items: start;
+}
+
+.tx-d-mark {
+  color: var(--faint);
+  text-align: center;
+  user-select: none;
+}
+
+/* --- split layout --------------------------------------------------------- */
+
+.tx-d-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.tx-d-half {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+.tx-d-half:first-child { border-right: 1px solid var(--border); }
+.tx-d-blank { background: rgb(255 255 255 / 1.5%); }
+
+/* --- change colouring ----------------------------------------------------- */
+
+/*
+   Two layers, composed rather than stacked: the row carries the soft add/del
+   background, and `tx-d-word` carries the stronger word-level highlight. The
+   syntax colour lives on the inline `color` of each span, which is why both
+   backgrounds can sit underneath it without washing it out.
+*/
+.tx-d-add { background: var(--add-soft); }
+.tx-d-del { background: var(--del-soft); }
+.tx-d-meta { color: var(--muted); font-style: italic; }
+
+.tx-d-add .tx-d-n { color: var(--add); opacity: 0.7; }
+.tx-d-del .tx-d-n { color: var(--del); opacity: 0.7; }
+.tx-d-add .tx-d-mark { color: var(--add); }
+.tx-d-del .tx-d-mark { color: var(--del); }
+
+.tx-d-word { border-radius: 2px; }
+.tx-d-add .tx-d-word { background: rgb(76 191 114 / 26%); }
+.tx-d-del .tx-d-word { background: rgb(227 91 86 / 26%); }
+
+/* --- collapsed regions ---------------------------------------------------- */
+
+.tx-d-gap {
+  display: block;
+  width: 100%;
+  padding: 1px 8px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+.tx-d-gap:hover { background: var(--panel-raised); color: var(--muted); }
+.tx-d-gap-static { cursor: default; }
+.tx-d-gap-static:hover { background: var(--panel); color: var(--faint); }
+
+.tx-d-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.tx-d-more-label {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
