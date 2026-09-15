@@ -16,6 +16,22 @@
   min-height: 0;
   background: var(--bg);
   color: var(--text);
+
+  /* The amber family, defined ONCE.
+     styles.css ships --accent-soft / --add-soft / --del-soft but no
+     --warn-soft, and this view needs one: it is what marks a file git found
+     that the transcript never mentioned. These three are local aliases, not
+     new global tokens, and their channels mirror --warn (#f0a33a) exactly —
+     so if the shell raises --warn, this is the one block to update, and if a
+     shared --warn-soft lands these three become `var(--warn-soft)` and
+     nothing else in the file changes.
+
+     Measured against the current palette (see the header comment on the row
+     rules): the wash keeps --faint, the dimmest text tier, at 4.68 on the
+     resting row, which is the ceiling — 0.14 drops it to 4.49 and fails AA. */
+  --tf-warn-wash: rgba(240, 163, 58, 0.12);   /* row + badge ground */
+  --tf-warn-tint: rgba(240, 163, 58, 0.08);   /* notice ground */
+  --tf-warn-edge: rgba(240, 163, 58, 0.55);   /* 3.32 on the row ground */
 }
 
 /* --------------------------------------------------------------------------
@@ -56,7 +72,12 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
-.tf-btn:hover { background: #1f242c; color: var(--text); border-color: var(--border-strong); }
+/* The hover cue is carried by the border and the text colour, both tokens.
+   The ground stays --panel-raised: a hardcoded hover hex is exactly how a
+   text tier silently drops below AA later, when someone lightens the ground
+   and nothing in the variables records that --muted is sitting on it.
+   Switch to var(--panel-hover) when the shell workstream lands it. */
+.tf-btn:hover { background: var(--panel-raised); color: var(--text); border-color: var(--border-strong); }
 .tf-btn:disabled { color: var(--faint); background: transparent; }
 
 /* --------------------------------------------------------------------------
@@ -87,9 +108,10 @@
 .tf-warn {
   flex: 0 0 auto;
   padding: 4px 8px;
-  border-bottom: 1px solid rgba(240, 163, 58, 0.25);
-  background: rgba(240, 163, 58, 0.08);
-  color: #f6d6a4;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--warn);   /* 8.23 on this ground */
+  background: var(--tf-warn-tint);
+  color: #f6d6a4;                       /* 12.54 on the tinted ground */
   font-size: var(--fs-xs);
   line-height: 1.5;
 }
@@ -130,7 +152,9 @@
   width: 100%;
   padding: 3px 8px;
   text-align: left;
-  border-left: 2px solid transparent;
+  /* 3px, transparent by default: a git row colours it in rather than widening
+     it, so no row shifts by a pixel when the source changes. */
+  border-left: 3px solid transparent;
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
@@ -138,13 +162,38 @@
 .tf-row:hover { background: var(--panel-raised); }
 .tf-row:hover .tf-name { color: var(--text-strong); }
 
-/* Git alone knows about this file: the agent changed it outside its edit tool.
-   Distinct on purpose — this is the row you did not expect to be here. */
+/* Hover lifts the dimmest tier. --faint is designed against the flat hover
+   ground (4.97 on --panel-raised); on a git row the amber wash sits on top of
+   that ground and takes it to 4.01, which fails AA. Lifting to --muted on
+   hover restores 5.54 and is a normal hover affordance anyway. */
+.tf-row:hover .tf-dir,
+.tf-row:hover .tf-when,
+.tf-row:hover .tf-sep { color: var(--muted); }
+
+/* Git alone knows about this file: the agent changed it outside its edit tool
+   (a Bash `sed`, a generator, a formatter). Distinct on purpose — this is the
+   row you did not expect to be here, and the distinction is the whole point of
+   cross-checking git in the first place.
+
+   Three carriers, deliberately, because no single one survives a palette
+   change on its own:
+     1. a 3px --warn left border  — 7.75 against the row's own ground;
+     2. the amber wash            — 1.20 against --bg;
+     3. the `worktree` badge, which says it in words.
+   The wash alone is NOT enough any more: at the old 0.05 it measured 1.06
+   against --bg and 1.06 against --panel-raised, i.e. a hovered ordinary row
+   was as light as a resting git row. The border does the load-bearing work;
+   the wash tells you the whole row belongs to it.
+
+   The wash is a background-IMAGE layer over a background-COLOR ground, so
+   hover swaps only the ground (to the shell's --panel-raised) and the amber
+   stays constant on top. One wash, two grounds, no second rgba. */
 .tf-row[data-source='git'] {
   border-left-color: var(--warn);
-  background: rgba(240, 163, 58, 0.05);
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--tf-warn-wash), var(--tf-warn-wash));
 }
-.tf-row[data-source='git']:hover { background: rgba(240, 163, 58, 0.1); }
+.tf-row[data-source='git']:hover { background-color: var(--panel-raised); }
 
 .tf-status {
   font-family: var(--font-mono);
@@ -199,9 +248,9 @@
   padding: 0 4px;
   font-size: var(--fs-xs);
   line-height: 1.5;
-  color: var(--warn);
-  background: rgba(240, 163, 58, 0.12);
-  border: 1px solid rgba(240, 163, 58, 0.3);
+  color: var(--warn);                   /* 6.15 on its own ground */
+  background: var(--tf-warn-wash);
+  border: 1px solid var(--tf-warn-edge);
   border-radius: var(--radius);
 }
 

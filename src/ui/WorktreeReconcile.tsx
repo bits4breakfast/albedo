@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { listTasks } from '../db';
+import { listProjects } from '../db/projects';
 import { type OrphanInfo, findOrphans, pathKey } from '../git/reconcile';
 import {
   GitError,
@@ -95,8 +96,18 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
       // on disk (they chose "archive only", or removal failed) this view is
       // where they get to finish the job. Without this the row keeps the path
       // known forever and the worktree is unreachable from the UI.
-      const tasks = await listTasks({ includeArchived: true });
-      const repoPaths = [...new Set(tasks.map((t) => t.repoPath).filter(Boolean))];
+      const [tasks, projects] = await Promise.all([
+        listTasks({ includeArchived: true }),
+        listProjects({ includeArchived: true }),
+      ]);
+      // Scan every project's repo AND every repo a task remembers: a task whose
+      // project was archived still has a worktree worth reconciling.
+      const repoPaths = [
+        ...new Set([...projects.map((p) => p.repoPath), ...tasks.map((t) => t.repoPath)].filter(Boolean)),
+      ];
+      // Albedo's territory is exactly the set of project worktree roots.
+      // Nothing outside them is ever offered for removal.
+      const worktreeRoots = [...new Set(projects.map((p) => p.worktreeRoot).filter(Boolean))];
       const knownPaths = tasks.map((t) => t.worktreePath).filter(Boolean);
       const reclaimablePaths = tasks
         .filter((t) => t.status === 'archived')
@@ -110,7 +121,12 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
         if (t.worktreePath && t.baseBranch) recordedBase.set(pathKey(t.worktreePath), t.baseBranch);
       }
 
-      const found = await findOrphans(repoPaths, knownPaths, reclaimablePaths);
+      const found = await findOrphans({
+        repoPaths,
+        worktreeRoots,
+        knownPaths,
+        reclaimablePaths,
+      });
       const initial: Row[] = found.map((o) => ({
         ...o,
         dirty: null,
@@ -123,14 +139,22 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
       setRows(initial);
       setLoading(false);
 
-      // An orphan has no task row, so it has no recorded base branch. The
-      // repo's current branch is the honest fallback; `unmergedCommits` prefers
-      // the worktree's own upstream over it when one is configured.
+      // An orphan usually has no task row, so no recorded base branch. The
+      // project's default, then the repo's current branch, are the fallbacks;
+      // `unmergedCommits` prefers the worktree's own upstream over both.
+      const projectBase = new Map<string, string>();
+      for (const pr of projects) {
+        if (pr.defaultBaseBranch) projectBase.set(pr.repoPath, pr.defaultBaseBranch);
+      }
       const baseCache = new Map<string, string | null>();
       const baseFor = async (repo: string): Promise<string | null> => {
         const hit = baseCache.get(repo);
         if (hit !== undefined) return hit;
-        let value: string | null = null;
+        let value: string | null = projectBase.get(repo) ?? null;
+        if (value !== null) {
+          baseCache.set(repo, value);
+          return value;
+        }
         try {
           const bs = await listBranches(repo);
           value = bs.all.includes(bs.current) ? bs.current : (bs.all[0] ?? null);

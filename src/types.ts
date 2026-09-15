@@ -8,6 +8,33 @@
  */
 
 // ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+/**
+ * A repository the user works in, and where its worktrees live.
+ *
+ * Exists so the worktree location is the user's choice rather than a hardcoded
+ * `~/agents/<repo>/<slug>` -- an existing layout stays usable instead of having
+ * to be migrated to suit the app.
+ */
+export interface Project {
+  id: number;
+  /** Display name. Defaults to the repo folder's basename. */
+  name: string;
+  /** Root folder of the project -- the git repository itself. */
+  repoPath: string;
+  /** Directory under which this project's worktrees are created. */
+  worktreeRoot: string;
+  /** Offered as the default base in the new-task dialog. Null = repo HEAD. */
+  defaultBaseBranch: string | null;
+  createdAt: number;
+  archivedAt: number | null;
+}
+
+export type NewProject = Omit<Project, 'id' | 'createdAt' | 'archivedAt'>;
+
+// ---------------------------------------------------------------------------
 // Tasks
 // ---------------------------------------------------------------------------
 
@@ -17,6 +44,11 @@ export type TaskStatus = 'idle' | 'running' | 'blocked' | 'done' | 'archived';
 export interface Task {
   id: number;
   title: string;
+  /**
+   * Owning project. Nullable for rows created before projects existed and
+   * backfilled by migration v2; new tasks always carry one.
+   */
+  projectId: number | null;
   /** Absolute path to the origin repository (not the worktree). */
   repoPath: string;
   /** Branch the worktree was cut from. */

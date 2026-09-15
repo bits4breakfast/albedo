@@ -24,6 +24,21 @@ If you find yourself regexing terminal bytes, stop — the answer is in SQLite.
 5. `src/types.ts` and `src/db/schema.sql` are shared contracts. Propose changes,
    do not make them unilaterally.
 
+## Contrast
+
+The first thing the user said after running this app was that they could not
+read it. Three rules came out of the fix:
+
+1. **4.5:1 is a floor, not a preference.** Measure against `--panel-raised` —
+   selected and hovered rows, i.e. the row most likely being read. Measuring
+   against `--bg` alone flattered `--muted` to 4.24 when it was really 3.18.
+2. **Never dim text with `opacity`.** It composites *after* the token is chosen,
+   so it silently undoes the contrast that token guaranteed, and it is invisible
+   to any audit of the variables. Use a lower-contrast token instead.
+3. **Every surface belongs in the token block.** A ground invented locally is a
+   text-contrast decision made by someone thinking only about a hover state.
+   `--panel-hover` and `--panel-active` exist for exactly this.
+
 ## Layout
 
 ```

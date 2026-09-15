@@ -24,6 +24,8 @@ const POLL_MS = 30_000;
 export interface HeaderProps {
   onNewTask: () => void;
   onReconcile: () => void;
+  /** Opens the project manager. Tasks cannot exist without a project. */
+  onProjects: () => void;
   blockedCount: number;
 }
 
@@ -40,7 +42,7 @@ function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1)}M`;
 }
 
-export default function Header({ onNewTask, onReconcile, blockedCount }: HeaderProps) {
+export default function Header({ onNewTask, onReconcile, onProjects, blockedCount }: HeaderProps) {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -122,6 +124,9 @@ export default function Header({ onNewTask, onReconcile, blockedCount }: HeaderP
       </div>
 
       <div className="header-actions">
+        <button className="btn btn-ghost" onClick={onProjects} title="Manage projects">
+          Projects
+        </button>
         <button className="btn btn-ghost" onClick={onReconcile} title="Reconcile git worktrees">
           Worktrees
         </button>

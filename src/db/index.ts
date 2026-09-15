@@ -92,6 +92,7 @@ export function emitTasksChanged(): void {
 interface TaskRow {
   id: number;
   title: string;
+  project_id: number | null;
   repo_path: string;
   base_branch: string;
   branch: string;
@@ -118,6 +119,7 @@ interface MessageRow {
 const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   id: 'id',
   title: 'title',
+  projectId: 'project_id',
   repoPath: 'repo_path',
   baseBranch: 'base_branch',
   branch: 'branch',
@@ -128,7 +130,8 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   lastActivityAt: 'last_activity_at',
 };
 
-const TASK_SELECT = 'id, title, repo_path, base_branch, branch, worktree_path, session_id, status, created_at, last_activity_at';
+const TASK_SELECT =
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, status, created_at, last_activity_at';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -143,6 +146,9 @@ function toTask(r: TaskRow): Task {
   return {
     id: r.id,
     title: r.title,
+    // Null only for rows predating projects that the v2 backfill has not
+    // linked yet; tasks created from here on always carry one.
+    projectId: r.project_id,
     repoPath: r.repo_path,
     baseBranch: r.base_branch,
     branch: r.branch,
@@ -195,9 +201,9 @@ export async function createTask(t: NewTask): Promise<Task> {
   const db = await getDb();
   const createdAt = Date.now();
   const res = await db.execute(
-    `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, session_id, status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, $4, $5, NULL, 'idle', $6, NULL)`,
-    [t.title, t.repoPath, t.baseBranch, t.branch, t.worktreePath, createdAt],
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, 'idle', $7, NULL)`,
+    [t.title, t.projectId, t.repoPath, t.baseBranch, t.branch, t.worktreePath, createdAt],
   );
   const id = res.lastInsertId;
   if (typeof id !== 'number') {
@@ -207,6 +213,7 @@ export async function createTask(t: NewTask): Promise<Task> {
   return {
     id,
     title: t.title,
+    projectId: t.projectId,
     repoPath: t.repoPath,
     baseBranch: t.baseBranch,
     branch: t.branch,

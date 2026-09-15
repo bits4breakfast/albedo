@@ -17,7 +17,6 @@
  */
 
 import {
-  agentsRoot,
   basename,
   git,
   listWorktreesDetailed,
@@ -128,6 +127,19 @@ export function pathKey(p: string): string {
   return normalizePath(p).toLowerCase();
 }
 
+/** The first root in `roots` that contains `path`, or null. */
+export function rootContaining(roots: string[], path: string): string | null {
+  for (const r of roots) {
+    if (r && isUnder(r, path)) return r;
+  }
+  return null;
+}
+
+/** True when `path` sits under any known project worktree root. */
+export function isUnderAnyRoot(roots: string[], path: string): boolean {
+  return rootContaining(roots, path) !== null;
+}
+
 /** True when `child` is `parent` itself or lives beneath it. */
 export function isUnder(parent: string, child: string): boolean {
   const a = pathKey(parent);
@@ -158,12 +170,135 @@ export function parseDotGitFile(text: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Worktree-root validation
+//
+// `worktreeRoot` is typed or picked by the user, and a bad one does not fail
+// until a task is created -- i.e. at the worst possible moment, after the user
+// has named the work and committed to starting it. So it is validated on save,
+// and every rejection names its reason.
+// ---------------------------------------------------------------------------
+
+export type WorktreeRootCheck =
+  | { ok: true; path: string; warning: string | null }
+  | { ok: false; reason: string };
+
+/**
+ * The rules that can be decided without touching the filesystem.
+ *
+ * Returns the expanded, normalised absolute path on success so the caller
+ * stores the resolved form rather than whatever was typed.
+ */
+export function validateWorktreeRoot(
+  root: string,
+  opts: { repoPath: string; home: string },
+): WorktreeRootCheck {
+  const raw = (root ?? '').trim();
+  if (raw.length === 0) return { ok: false, reason: 'Choose a directory for this project’s worktrees.' };
+
+  const expanded = expandTilde(raw, opts.home);
+  if (!expanded.startsWith('/')) {
+    return {
+      ok: false,
+      reason: `${raw} is not an absolute path. Use a full path, or one starting with ~/.`,
+    };
+  }
+
+  const path = normalizePath(expanded);
+  const home = normalizePath(opts.home);
+  const segments = path.split('/').filter(Boolean);
+
+  if (segments.length === 0) {
+    return { ok: false, reason: 'The filesystem root / cannot hold worktrees.' };
+  }
+  if (path === home) {
+    return { ok: false, reason: 'That is your home directory itself. Choose a folder inside it.' };
+  }
+  if (segments.length < 2) {
+    return { ok: false, reason: `${path} is too close to the filesystem root. Choose a folder inside it.` };
+  }
+  // `/Users/someone-else` -- same depth and same parent as home, so it is a
+  // home directory even though it is not *this* user's.
+  const homeSegments = home.split('/').filter(Boolean);
+  if (
+    homeSegments.length >= 2 &&
+    segments.length === homeSegments.length &&
+    parentOf(path) === parentOf(home)
+  ) {
+    return { ok: false, reason: `${path} looks like a home directory. Choose a folder inside it.` };
+  }
+
+  // The one that actually bites: git will happily create a worktree inside the
+  // repository it came from, and then the repo contains a checkout of itself.
+  const repo = normalizePath(expandTilde((opts.repoPath ?? '').trim(), opts.home));
+  if (repo && isUnder(repo, path)) {
+    return {
+      ok: false,
+      reason:
+        path === repo
+          ? 'That is the project repository itself. A worktree cannot live inside the repo it came from.'
+          : `${path} is inside the project repository (${repo}). A worktree inside its own repo confuses git and every tool that reads it.`,
+    };
+  }
+
+  // Not fatal, but worth saying out loud.
+  const warning =
+    repo && isUnder(path, repo)
+      ? `${path} contains the repository itself. That works, but worktrees will sit next to it.`
+      : null;
+
+  return { ok: true, path, warning };
+}
+
+/** Pure path parent; `/a/b` -> `/a`, `/a` -> `/`. */
+function parentOf(p: string): string {
+  const idx = p.lastIndexOf('/');
+  if (idx <= 0) return '/';
+  return p.slice(0, idx);
+}
+
+/**
+ * {@link validateWorktreeRoot} plus the one rule that needs the filesystem:
+ * the parent must exist. The root itself is created on demand by
+ * `git worktree add`, so it is allowed to be missing.
+ */
+export async function checkWorktreeRoot(
+  root: string,
+  opts: { repoPath: string; home: string },
+): Promise<WorktreeRootCheck> {
+  const pure = validateWorktreeRoot(root, opts);
+  if (!pure.ok) return pure;
+
+  const parent = parentOf(pure.path);
+  try {
+    const fs = await import('@tauri-apps/plugin-fs');
+    if (!(await fs.exists(parent))) {
+      return {
+        ok: false,
+        reason: `${parent} does not exist. Create it first, or choose somewhere else — only the last folder is created for you.`,
+      };
+    }
+  } catch {
+    // Cannot read the filesystem (permissions, scope). Do not block the user on
+    // a check we were unable to perform; the pure rules already passed.
+    return { ...pure, warning: pure.warning };
+  }
+  return pure;
+}
+
+// ---------------------------------------------------------------------------
 // Pure classifier
 // ---------------------------------------------------------------------------
 
 export interface ClassifyInput {
   scans: RepoScan[];
   disk: DiskCandidate[];
+  /**
+   * Every known project's `worktreeRoot`, `~` already expanded. A worktree
+   * under one of these is something Albedo has a claim on; anything outside
+   * all of them is `unknown` and gets no remove button. Replaces the hardcoded
+   * `~/agents`, which is what made the user's own ~/www/worktrees unreachable.
+   */
+  worktreeRoots: string[];
   knownPaths: string[];
   /**
    * Paths that a task row still references but which are nonetheless available
@@ -184,7 +319,7 @@ export interface ClassifyInput {
  */
 export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
   const home = input.home;
-  const root = agentsRoot(home);
+  const roots = input.worktreeRoots.map((r) => expandTilde(r, home)).filter((r) => r.length > 0);
 
   const reclaimable = new Set<string>();
   for (const k of input.reclaimablePaths ?? []) {
@@ -216,7 +351,7 @@ export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
       if (known.has(key)) continue;
       if (emitted.has(key)) continue;
 
-      const insideAgents = isUnder(root, wt.path);
+      const insideAgents = isUnderAnyRoot(roots, wt.path);
       const isReclaimable = reclaimable.has(key);
       // An archived task's worktree is reclaimable wherever it lives: the user
       // told us they are done with it, so it is not a guess on our part.
@@ -227,8 +362,8 @@ export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
         : wt.prunable
           ? `git reports this worktree as prunable${wt.prunableReason ? `: ${wt.prunableReason}` : ''}`
           : insideAgents
-            ? `Created under ${root} but no task references it.`
-            : `Tracked by ${basename(scan.repoPath)} but outside ${root} and unknown to Albedo.`;
+            ? `Under ${rootContaining(roots, wt.path) ?? 'a project worktree root'} but no task references it.`
+            : `Tracked by ${basename(scan.repoPath)} but outside every project worktree root.`;
 
       emitted.add(key);
       out.push({
@@ -251,9 +386,9 @@ export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
     const key = pathKey(cand.path);
     if (known.has(key)) continue;
     if (emitted.has(key)) continue;
-    // Only ever consider directories under ~/agents: this scan must not wander
-    // into the user's own worktree roots.
-    if (!isUnder(root, cand.path)) continue;
+    // Only ever consider directories under a known project root: the scan must
+    // not wander anywhere the user has not pointed a project at.
+    if (!isUnderAnyRoot(roots, cand.path)) continue;
     // A directory with no `.git` file is not a worktree. Saying nothing is the
     // conservative answer -- we do not offer to delete arbitrary directories.
     if (!cand.hasGitFile) continue;
@@ -318,36 +453,47 @@ export function gitdirToRepoPath(gitdir: string | null): string | null {
 // Async entry point
 // ---------------------------------------------------------------------------
 
+/** Everything {@link findOrphans} needs. An object because there are now four
+ * lists and positional arguments had stopped being readable. */
+export interface FindOrphansOptions {
+  /** Repos to interrogate with `git worktree list` -- every project's repoPath. */
+  repoPaths: string[];
+  /**
+   * Every project's `worktreeRoot` (a leading `~` is expanded here). A worktree
+   * under one of these is Albedo's business; anything outside them all is
+   * reported as `unknown` with no remove button. This is what turns the user's
+   * pre-existing ~/www/worktrees entries into actionable rows the moment a
+   * project points there -- and what stops us offering to delete anything else.
+   */
+  worktreeRoots: string[];
+  /**
+   * `worktree_path` of task rows that still own their worktree. Pass every
+   * task, archived ones included, so nothing in use is misreported.
+   */
+  knownPaths: string[];
+  /**
+   * Rows that exist but have given up their worktree: the worktree paths of
+   * **archived** tasks. Overrides `knownPaths`, so the worktree is reported as
+   * an orphan and can be removed. Without it an archived task's worktree is
+   * unreachable from the UI -- the row keeps the path "known" forever while the
+   * directory sits on disk.
+   */
+  reclaimablePaths?: string[];
+}
+
 /**
  * Worktrees on disk that no live task claims.
- *
- * `repoPaths` are the repos to interrogate with `git worktree list`.
- *
- * `knownPaths` are the `worktree_path` values of task rows that still own their
- * worktree -- pass every task, archived ones included, so that nothing is
- * misreported while it is still in use.
- *
- * `reclaimablePaths` is the escape hatch for rows that exist but have given up
- * their worktree: the worktree paths of **archived** tasks. Listing a path here
- * overrides `knownPaths`, so the worktree is reported as an orphan and can be
- * removed from the reconcile view. Without it an archived task's worktree is
- * unreachable from the UI -- the row keeps the path "known" forever while the
- * directory sits on disk.
  *
  * Failures to read one repo or one directory are swallowed on purpose: a repo
  * that has been moved away should not blank the whole reconcile view, and it
  * must never cause a worktree to be *misreported* as orphaned.
  */
-export async function findOrphans(
-  repoPaths: string[],
-  knownPaths: string[],
-  reclaimablePaths: string[] = [],
-): Promise<OrphanInfo[]> {
+export async function findOrphans(o: FindOrphansOptions): Promise<OrphanInfo[]> {
   const { homeDir } = await import('@tauri-apps/api/path');
   const home = await homeDir();
 
   const scans: RepoScan[] = [];
-  for (const repoPath of dedupePaths(repoPaths)) {
+  for (const repoPath of dedupePaths(o.repoPaths)) {
     try {
       scans.push({ repoPath, worktrees: await listWorktreesDetailed(repoPath) });
     } catch {
@@ -356,14 +502,20 @@ export async function findOrphans(
   }
 
   const [resolvedKnown, resolvedReclaimable] = await Promise.all([
-    resolveKnownPaths(knownPaths, home),
-    resolveKnownPaths(reclaimablePaths, home),
+    resolveKnownPaths(o.knownPaths, home),
+    resolveKnownPaths(o.reclaimablePaths ?? [], home),
   ]);
-  const disk = await scanAgentsRoot(agentsRoot(home));
+
+  const roots = dedupePaths(o.worktreeRoots.map((r) => expandTilde(r, home)));
+  const disk: DiskCandidate[] = [];
+  for (const root of roots) {
+    disk.push(...(await scanWorktreeRoot(root)));
+  }
 
   return classifyOrphans({
     scans,
     disk,
+    worktreeRoots: roots,
     knownPaths: resolvedKnown,
     reclaimablePaths: resolvedReclaimable,
     home,
@@ -410,54 +562,73 @@ async function resolveKnownPaths(knownPaths: string[], home: string): Promise<st
   return out;
 }
 
-/** Walk `~/agents/<repo>/<slug>` two levels deep and probe each leaf. */
-async function scanAgentsRoot(root: string): Promise<DiskCandidate[]> {
+/**
+ * Walk one project worktree root and probe anything that looks like a worktree.
+ *
+ * Two levels deep, not one: the documented layout is `<root>/<slug>`, but the
+ * pre-projects layout was `~/agents/<repo>/<slug>` and a user who nests by repo
+ * under their own root is doing something reasonable. Depth 2 covers both, and
+ * costs nothing in correctness because only directories carrying a `.git`
+ * *file* are ever reported.
+ */
+async function scanWorktreeRoot(root: string): Promise<DiskCandidate[]> {
   const fs = await import('@tauri-apps/plugin-fs');
   const candidates: DiskCandidate[] = [];
 
-  let repoDirs: Array<{ name: string; isDirectory: boolean }> = [];
+  /** Probe one directory. Returns null when it is not a worktree at all. */
+  const probe = async (path: string): Promise<DiskCandidate | null> => {
+    const dotGit = `${path}/.git`;
+    let text: string;
+    try {
+      const info = await fs.stat(dotGit);
+      if (info.isDirectory) return null; // a real clone, not a worktree
+      text = await fs.readTextFile(dotGit);
+    } catch {
+      return null; // no .git, or unreadable: not a candidate
+    }
+    const target = parseDotGitFile(text);
+    const absTarget = target ? resolveAgainst(path, target) : null;
+    let gitdirExists = false;
+    if (absTarget) {
+      try {
+        gitdirExists = await fs.exists(absTarget);
+      } catch {
+        gitdirExists = false;
+      }
+    }
+    return { path, hasGitFile: true, gitdirTarget: absTarget, gitdirExists };
+  };
+
+  let top: Array<{ name: string; isDirectory: boolean }> = [];
   try {
-    repoDirs = await fs.readDir(root);
+    top = await fs.readDir(root);
   } catch {
-    return candidates; // ~/agents does not exist yet: nothing to reconcile.
+    return candidates; // the root does not exist yet: nothing to reconcile
   }
 
-  for (const repoDir of repoDirs) {
-    if (!repoDir.isDirectory) continue;
-    const repoDirPath = `${root}/${repoDir.name}`;
+  for (const entry of top) {
+    if (!entry.isDirectory) continue;
+    const path = `${root}/${entry.name}`;
+
+    const direct = await probe(path);
+    if (direct) {
+      candidates.push(direct);
+      continue; // a worktree does not contain more worktrees
+    }
+
+    // Not a worktree itself -- look one level deeper for the nested layout.
     let leaves: Array<{ name: string; isDirectory: boolean }> = [];
     try {
-      leaves = await fs.readDir(repoDirPath);
+      leaves = await fs.readDir(path);
     } catch {
       continue;
     }
     for (const leaf of leaves) {
       if (!leaf.isDirectory) continue;
-      const path = `${repoDirPath}/${leaf.name}`;
-      const dotGit = `${path}/.git`;
-
-      let text: string | null = null;
-      try {
-        const info = await fs.stat(dotGit);
-        if (info.isDirectory) continue; // a real clone, not a worktree
-        text = await fs.readTextFile(dotGit);
-      } catch {
-        // No .git at all, or unreadable: not a worktree, so not a candidate.
-        continue;
-      }
-
-      const target = parseDotGitFile(text);
-      const absTarget = target ? resolveAgainst(path, target) : null;
-      let gitdirExists = false;
-      if (absTarget) {
-        try {
-          gitdirExists = await fs.exists(absTarget);
-        } catch {
-          gitdirExists = false;
-        }
-      }
-      candidates.push({ path, hasGitFile: true, gitdirTarget: absTarget, gitdirExists });
+      const nested = await probe(`${path}/${leaf.name}`);
+      if (nested) candidates.push(nested);
     }
   }
   return candidates;
 }
+

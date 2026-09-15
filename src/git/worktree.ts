@@ -17,7 +17,9 @@
  *    then `git worktree prune`. There is no `rm -rf` anywhere in this module.
  */
 
+import type { Project } from '../types';
 import { assertValidRefName, isValidRefName } from './slug';
+import { expandTilde, normalizePath } from './reconcile';
 
 // ---------------------------------------------------------------------------
 // Frozen contract (docs/INTERFACES.md)
@@ -147,6 +149,21 @@ let runner: GitRunner = async (args, cwd) => {
 export function setGitRunner(next: GitRunner): GitRunner {
   const prev = runner;
   runner = next;
+  return prev;
+}
+
+/** Does this path exist? Swappable for the same reason as {@link GitRunner}. */
+export type PathExistsProbe = (path: string) => Promise<boolean>;
+
+let pathExists: PathExistsProbe = async (path) => {
+  const fs = await import('@tauri-apps/plugin-fs');
+  return fs.exists(path);
+};
+
+/** Test seam. Returns the previous probe so a test can restore it. */
+export function setPathExistsProbe(next: PathExistsProbe): PathExistsProbe {
+  const prev = pathExists;
+  pathExists = next;
   return prev;
 }
 
@@ -382,19 +399,23 @@ export function parseRefList(stdout: string): string[] {
 }
 
 /**
- * Compose `~/agents/<repo>/<slug>` from already-resolved parts. Pure so the
- * path layout is testable without a Tauri host.
+ * Compose `<worktreeRoot>/<slug>`. Pure, so the layout is testable without a
+ * Tauri host, and so the dialog can show the path live while the user types.
+ *
+ * Note there is no `<repo>` segment any more: the root is per-project, so the
+ * directory the user chose *is* the namespace. Inserting a segment of our own
+ * would defeat the point of letting them choose.
  */
-export function composeWorktreePath(home: string, repo: string, slug: string): string {
-  const parts = [home, 'agents', repo, slug].map((p, idx) =>
-    idx === 0 ? p.replace(/\/+$/, '') : p.replace(/^\/+|\/+$/g, ''),
-  );
-  return parts.join('/');
+export function composeWorktreePath(worktreeRoot: string, slug: string, home = ''): string {
+  const root = normalizePath(home ? expandTilde(worktreeRoot, home) : worktreeRoot);
+  return `${root.replace(/\/+$/, '')}/${slug.replace(/^\/+|\/+$/g, '')}`;
 }
 
-/** Default root we place worktrees under, given a home directory. */
-export function agentsRoot(home: string): string {
-  return `${home.replace(/\/+$/, '')}/agents`;
+/** Suggested worktree root for a new project, in the `~`-relative form the
+ * migration backfill also uses. Only a default -- the user can change it. */
+export function defaultWorktreeRoot(projectName: string): string {
+  const safe = projectName.trim().replace(/^\/+|\/+$/g, '') || 'project';
+  return `~/agents/${safe}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -461,11 +482,14 @@ export async function listBranches(repoPath: string): Promise<{ current: string;
   return { current, all };
 }
 
-/** `~/agents/<repo>/<slug>`, with `~` resolved through the Tauri path API. */
-export async function worktreePathFor(repoPath: string, slug: string): Promise<string> {
+/**
+ * `<project.worktreeRoot>/<slug>`, with a leading `~` resolved through the
+ * Tauri path API.
+ */
+export async function worktreePathFor(project: Project, slug: string): Promise<string> {
   const { homeDir } = await import('@tauri-apps/api/path');
-  const [home, repo] = await Promise.all([homeDir(), repoName(repoPath)]);
-  return composeWorktreePath(home, repo, slug);
+  const home = await homeDir();
+  return composeWorktreePath(project.worktreeRoot, slug, home);
 }
 
 export interface CreateWorktreeOptions {
@@ -494,6 +518,28 @@ export async function createWorktree(o: CreateWorktreeOptions): Promise<void> {
   assertNotOptionLike(o.path, 'worktree path');
   if (!o.useExistingBranch) {
     assertValidRefName(o.baseBranch, 'base branch');
+  }
+
+  // Refuse an existing path rather than writing into it. git only objects when
+  // the directory is non-empty, so without this an empty folder the user had
+  // made for something else would quietly become a worktree.
+  let exists = false;
+  try {
+    exists = await pathExists(o.path);
+  } catch {
+    // Cannot check (fs scope, permissions): fall through and let git decide,
+    // which is still safe for the non-empty case.
+    exists = false;
+  }
+  if (exists) {
+    throw new GitError({
+      args: ['worktree', 'add'],
+      cwd: o.repoPath,
+      code: null,
+      stdout: '',
+      stderr: `${o.path} already exists. Choose a different task title, or remove that directory first.`,
+      kind: 'path-exists',
+    });
   }
 
   const args = o.useExistingBranch

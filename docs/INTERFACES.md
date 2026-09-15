@@ -68,12 +68,20 @@ export interface WorktreeInfo { path: string; branch: string | null; head: strin
 
 export function repoName(repoPath: string): Promise<string>;
 export function listBranches(repoPath: string): Promise<{ current: string; all: string[] }>;
-export function worktreePathFor(repoPath: string, slug: string): Promise<string>; // ~/agents/<repo>/<slug>
+export function worktreePathFor(project: Project, slug: string): Promise<string>; // <worktreeRoot>/<slug>
 export function createWorktree(o: { repoPath: string; baseBranch: string; branch: string; path: string }): Promise<void>;
 export function listWorktrees(repoPath: string): Promise<WorktreeInfo[]>;
 export function uncommittedChanges(worktreePath: string): Promise<{ files: string[]; dirty: boolean }>;
 export function removeWorktree(o: { repoPath: string; path: string; branch: string | null; force: boolean; deleteBranch: boolean }): Promise<void>;
-export function findOrphans(repoPaths: string[], knownPaths: string[]): Promise<WorktreeInfo[]>;
+export function findOrphans(o: {
+  repoPaths: string[];        // repos to ask git about (projects + tasks, unioned)
+  worktreeRoots: string[];    // every project's worktreeRoot -- Albedo's territory
+  knownPaths: string[];       // worktrees a live task claims
+  reclaimablePaths: string[]; // archived tasks' worktrees, still on disk
+}): Promise<OrphanInfo[]>;
+// Options object, not positional. It grew to four string[] lists, and a caller
+// swapping two of them would have type-checked fine and silently misclassified
+// -- which here means offering to delete the wrong worktree.
 ```
 
 ## `src/lib/diff.ts` — owner: transcript-pane workstream
@@ -350,3 +358,87 @@ export function usageBreakdown(): Promise<{ input: number; cacheRead: number; ca
 | --- | --- |
 | `pty_spawn` / `pty_write` / `pty_resize` / `pty_kill` | the embedded pty; no first-party Tauri plugin exists |
 | `canonicalize_path` | `tauri-plugin-fs` exposes `stat`/`lstat` but no `canonicalize`, so worktree containment could not follow a symlink and had to refuse every one of them. The user's own repo has 182. Resolution only — containment stays in `resolveInWorktree`, so the security decision is not split across two languages. |
+
+---
+
+# Projects
+
+Added after the first run. Replaces the hardcoded `~/agents/<repo>/<slug>`
+worktree location with a per-project choice, so an existing layout (the user's
+own worktrees live under `~/www/worktrees`) stays usable.
+
+Schema lives in `src/db/migrations/0002_projects.sql`. **`src/db/schema.sql` is
+migration v1 and is already applied to live databases — never edit it.**
+Additions go in a new numbered migration, registered in `src-tauri/src/lib.rs`.
+
+## `src/db/projects.ts` — owner: capture/db workstream
+
+```ts
+export function listProjects(opts?: { includeArchived?: boolean }): Promise<Project[]>;
+export function getProject(id: number): Promise<Project | null>;
+export function findProjectByRepo(repoPath: string): Promise<Project | null>;
+export function createProject(p: NewProject): Promise<Project>;
+export function updateProject(id: number, patch: Partial<NewProject>): Promise<void>;
+export function archiveProject(id: number): Promise<void>;
+export function onProjectsChanged(cb: () => void): () => void;
+```
+
+`repo_path` is UNIQUE — one project per repository. `createProject` on an
+existing repo path must fail with a clear error rather than silently returning
+the existing row; the caller decides whether to edit it instead.
+
+## `src/git/worktree.ts` — owner: worktree workstream (change)
+
+```ts
+// was: worktreePathFor(repoPath, slug) -> ~/agents/<repo>/<slug>
+export function worktreePathFor(project: Project, slug: string): Promise<string>;
+```
+
+Resolves to `<project.worktreeRoot>/<slug>`, expanding a leading `~`. The extra
+`<repo>` segment the old form inserted is gone: the root is now per-project, so
+the user's chosen directory *is* the namespace. Two projects sharing a worktree
+root is the user's business, but `createWorktree` must refuse a path that
+already exists rather than write into it.
+
+## Reconcile — owner: worktree workstream (change)
+
+`findOrphans` scans **every project's `worktreeRoot`**, not `~/agents`. The
+classification rule stays: a worktree under a known project's root that no task
+claims is an `orphan`; anything outside every known root is `unknown` and gets
+no remove button. This is what makes the user's pre-existing `~/www/worktrees`
+entries actionable once a project points there, while still never offering to
+delete something Albedo has no claim on.
+
+## Path validation
+
+`worktreeRoot` is user-entered, so validate on save, not on use:
+
+- must be absolute (after `~` expansion)
+- must not be inside the project's `repoPath` — a worktree inside the repo it
+  came from is a mess git will let you create and you will regret
+- must not be `/` or a home directory root
+- parent must exist; the root itself is created on demand
+
+A bad root is a broken task creation at the worst moment, so fail early and loudly.
+
+## Known import cycle
+
+`src/git/worktree.ts` imports `expandTilde`/`normalizePath` from
+`reconcile.ts`, while `reconcile.ts` imports from `worktree.ts` (which also
+re-exports `findOrphans`). Safe today because neither module touches the other
+at evaluation time, only inside function bodies — but it will break the moment
+someone adds a top-level constant initialised from the other module. If it ever
+bites, move the path primitives wholesale into `worktree.ts` and the direction
+collapses.
+
+## CSS baseline
+
+`color-mix()` is used in `transcript.css` and `gauges.css` (token-derived tints
+that must not go stale when a token moves). It needs **Safari 16.4 / WKWebView**.
+
+`vite.config.ts` sets `build.target: 'safari15'` and `cssTarget` inherits it,
+but esbuild passes `color-mix` through untouched at that target — verified, not
+assumed. Tauri uses the system WKWebView, so the real floor is the user's macOS.
+If a lower floor is ever needed, both workstreams hold measured pre-composited
+hex equivalents; ask rather than eyeballing replacements, because these values
+were each chosen against a specific ground.

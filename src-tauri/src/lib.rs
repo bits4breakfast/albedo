@@ -6,14 +6,25 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 /// Schema is kept in src/db/schema.sql and inlined here so the migration and
 /// the checked-in DDL can never drift.
 const SCHEMA: &str = include_str!("../../src/db/schema.sql");
+/// v2: projects. schema.sql is v1 and is already applied to live databases, so
+/// it must never be edited -- additions go in a new migration file.
+const M0002_PROJECTS: &str = include_str!("../../src/db/migrations/0002_projects.sql");
 
 pub fn run() {
-    let migrations = vec![Migration {
-        version: 1,
-        description: "initial schema",
-        sql: SCHEMA,
-        kind: MigrationKind::Up,
-    }];
+    let migrations = vec![
+        Migration {
+            version: 1,
+            description: "initial schema",
+            sql: SCHEMA,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "projects",
+            sql: M0002_PROJECTS,
+            kind: MigrationKind::Up,
+        },
+    ];
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
