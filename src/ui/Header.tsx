@@ -21,8 +21,14 @@ import { usageSummary } from '../capture';
 const WINDOW_MS = 5 * 60 * 60 * 1000;
 const POLL_MS = 30_000;
 
+/*
+ * No "New task" here on purpose. The sidebar carries it, beside the list it
+ * adds to and beside the live/blocked count. Two `btn-primary`s for one action
+ * were on screen at once, which means neither reads as the primary one -- and
+ * it left the header mixing "open this" with "create that". Every button that
+ * remains here opens something.
+ */
 export interface HeaderProps {
-  onNewTask: () => void;
   onReconcile: () => void;
   /** Opens the project manager. Tasks cannot exist without a project. */
   onProjects: () => void;
@@ -45,7 +51,6 @@ function formatTokens(n: number): string {
 }
 
 export default function Header({
-  onNewTask,
   onReconcile,
   onProjects,
   onSessions,
@@ -144,9 +149,6 @@ export default function Header({
         </button>
         <button className="btn btn-ghost" onClick={onReconcile} title="Reconcile git worktrees">
           Worktrees
-        </button>
-        <button className="btn btn-primary" onClick={onNewTask} title="New task (⌘N)">
-          New task
         </button>
       </div>
     </header>
