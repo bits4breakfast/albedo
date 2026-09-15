@@ -11,13 +11,43 @@
  */
 
 import type { Message } from '../types';
+import { gitBranchSqlExpr, prosePromptSqlPredicate } from '../capture/adapter';
+import { WRITING_TOOLS } from './touched';
 import { getDb, toFtsQuery } from './index';
 
 export interface PastSession {
   sessionId: string;
   cwd: string | null;
-  /** From an `ai-title` / `custom-title` line, else null. */
+  /** From an `ai-title` / `custom-title` line, else null. 95/115 coverage. */
   title: string | null;
+  /**
+   * Git branch the session ENDED on, from the line envelope. A session can
+   * switch branches mid-flight, so the latest non-null wins.
+   *
+   * The strongest single discriminator after the title: cwd separates the
+   * user's 115 sessions into only 13 groups, branch into 50.
+   */
+  branch: string | null;
+  /**
+   * First prompt the human actually typed, one line, truncated.
+   *
+   * Skips Claude Code's injected openers (slash-command envelopes, system
+   * reminders): 75 of 115 sessions begin with one, and taking the naive first
+   * user row gives 43 distinct labels across 115 sessions. Skipping them gives
+   * 79 distinct across 97 -- which is what makes the 18 sessions sharing the
+   * branch `master` tellable apart.
+   */
+  firstPrompt: string | null;
+  /**
+   * Most-touched file BASENAMES, most-touched first.
+   *
+   * Basenames, not paths: full paths would reintroduce exactly the problem the
+   * cwd column had, where 115 rows showed the same string. Narrow but sharp --
+   * only 36 of the user's 115 sessions wrote a file at all (most are research
+   * or MCP work), but among those 36 the top-3 signature is unique 36 times
+   * out of 36. Empty array when the session wrote nothing.
+   */
+  topFiles: string[];
   firstTs: number;
   lastTs: number;
   messageCount: number;
@@ -36,6 +66,9 @@ interface SessionRow {
   session_id: string;
   cwd: string | null;
   title: string | null;
+  branch: string | null;
+  first_prompt: string | null;
+  top_files: string | null;
   first_ts: number;
   last_ts: number;
   message_count: number;
@@ -43,6 +76,56 @@ interface SessionRow {
 }
 
 const DEFAULT_LIMIT = 200;
+
+/** Characters of opening prompt kept for the browser row. */
+export const PROMPT_CHARS = 160;
+
+/** How many distinct paths to pull before collapsing to basenames. */
+const TOP_FILES_SCAN = 8;
+
+/** How many basenames to show. */
+export const TOP_FILES_SHOWN = 3;
+
+/**
+ * `count<TAB>path` lines into basenames, most-touched first.
+ *
+ * Distinct paths are counted separately in SQL (so `src/a.ts` and `test/a.ts`
+ * are two files), then collapsed to basenames here, keeping the first
+ * occurrence. That is why more paths are fetched than are shown.
+ */
+function parseTopFiles(raw: string | null | undefined): string[] {
+  if (raw === null || raw === undefined || raw.length === 0) return [];
+  const rows: { count: number; path: string }[] = [];
+  for (const line of raw.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    const count = Number(line.slice(0, tab));
+    const path = line.slice(tab + 1);
+    if (!Number.isFinite(count) || path.length === 0) continue;
+    rows.push({ count, path });
+  }
+  rows.sort((a, b) => b.count - a.count || a.path.localeCompare(b.path));
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const { path } of rows) {
+    const base = path.slice(path.replace(/\/+$/, '').lastIndexOf('/') + 1);
+    if (base.length === 0 || seen.has(base)) continue;
+    seen.add(base);
+    out.push(base);
+    if (out.length === TOP_FILES_SHOWN) break;
+  }
+  return out;
+}
+
+/** Collapse runs of whitespace SUBSTR may have left, and drop empties. */
+function normalisePrompt(raw: string | null | undefined): string | null {
+  // Defensive against a missing column as well as a NULL one: a mapper that
+  // throws on absent data turns a schema mismatch into an unhandled crash.
+  if (raw === null || raw === undefined) return null;
+  const collapsed = raw.replace(/\s+/g, ' ').trim();
+  return collapsed.length > 0 ? collapsed : null;
+}
 
 export async function listPastSessions(opts?: {
   /** Full-text across message bodies. Sessions CONTAINING a match are listed. */
@@ -91,6 +174,33 @@ export async function listPastSessions(opts?: {
     `SELECT m.session_id                AS session_id,
             tf.cwd                      AS cwd,
             tf.title                    AS title,
+            -- Latest non-null branch. The unique index on (session_id, seq)
+            -- serves both the filter and the ordering, so this stops at the
+            -- newest row rather than scanning the session.
+            (SELECT ${gitBranchSqlExpr('x.raw_json')}
+               FROM messages x
+              WHERE x.session_id = m.session_id
+                AND ${gitBranchSqlExpr('x.raw_json')} IS NOT NULL
+              ORDER BY x.seq DESC LIMIT 1)  AS branch,
+            (SELECT SUBSTR(REPLACE(REPLACE(y.body, char(10), ' '), char(9), ' '), 1, ${PROMPT_CHARS})
+               FROM messages y
+              WHERE y.session_id = m.session_id AND y.role = 'user'
+                AND ${prosePromptSqlPredicate('y.body')}
+              ORDER BY y.seq ASC LIMIT 1)   AS first_prompt,
+            -- count and path per line, parsed and re-sorted in TypeScript so
+            -- the result never depends on GROUP_CONCAT preserving subquery
+            -- order, which SQLite does not guarantee.
+            (SELECT GROUP_CONCAT(c || char(9) || p, char(10)) FROM (
+               SELECT t.target_path AS p, COUNT(*) AS c
+                 FROM messages t
+                WHERE t.session_id = m.session_id
+                  AND t.role = 'tool_use'
+                  AND t.tool_name IN (${WRITING_TOOLS.map((t) => `'${t}'`).join(', ')})
+                  AND t.target_path IS NOT NULL AND TRIM(t.target_path) != ''
+                GROUP BY t.target_path
+                ORDER BY c DESC, p ASC
+                LIMIT ${TOP_FILES_SCAN}
+             ))                           AS top_files,
             MIN(m.ts)                   AS first_ts,
             MAX(m.ts)                   AS last_ts,
             COUNT(*)                    AS message_count,
@@ -122,6 +232,9 @@ function toPastSession(r: SessionRow): PastSession {
     sessionId: r.session_id,
     cwd: r.cwd,
     title: r.title,
+    branch: r.branch ?? null,
+    firstPrompt: normalisePrompt(r.first_prompt),
+    topFiles: parseTopFiles(r.top_files),
     firstTs: r.first_ts,
     lastTs: r.last_ts,
     messageCount: r.message_count,

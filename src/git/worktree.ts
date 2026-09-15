@@ -426,7 +426,75 @@ export function defaultWorktreeRoot(projectName: string): string {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Absolute toplevel of the repo containing `repoPath`, symlinks resolved. */
+/**
+ * Derive the repository root from `git rev-parse --git-common-dir` output.
+ *
+ * Pure, so the layout rules are testable without a repo. Returns null when the
+ * shape is not one we can reason about, so the caller falls back rather than
+ * inventing a path.
+ *
+ *   /repo/.git      + not bare  ->  /repo
+ *   /srv/mirror.git + bare      ->  /srv/mirror.git   (the repo IS the dir)
+ *   .git (relative)             ->  null              (see below)
+ *   /elsewhere.git  + not bare  ->  null              (--separate-git-dir)
+ *
+ * The relative case is not hypothetical: without `--path-format=absolute`,
+ * `rev-parse --git-common-dir` run in the main repo prints the literal string
+ * `.git`. A project whose repo_path was `.git` would be a memorable bug, so it
+ * is refused here rather than anywhere further downstream.
+ */
+export function repoRootFromCommonDir(commonDir: string, isBare: boolean): string | null {
+  const dir = normalizePath((commonDir ?? '').trim());
+  if (!dir.startsWith('/')) return null;
+  if (isBare) return dir;
+  if (dir === '/.git') return null;
+  if (dir.endsWith('/.git')) return dir.slice(0, -'/.git'.length);
+  return null;
+}
+
+/**
+ * **The repository a directory belongs to** — the identity key for project
+ * association, and the answer to "are these two directories the same repo?".
+ *
+ * Returns the same path whether called in the main checkout, in a linked
+ * worktree, or in a subdirectory of either. That is the whole point:
+ * {@link repoToplevel} cannot do this, because inside a worktree it returns the
+ * *worktree*, so a task running in a worktree of acme never matched the
+ * acme project and fell into the "Other" tab.
+ *
+ * Use this for identity. Use {@link repoToplevel} when you genuinely mean the
+ * current working tree — `uncommittedChanges` and friends are right to.
+ *
+ * Known limit: with `git init --separate-git-dir`, the common dir is unrelated
+ * to the working tree and cannot be mapped back to it, so this falls back to
+ * the current working tree. Two linked worktrees of such a repo would not agree
+ * with each other. It is a rare configuration and a wrong-but-usable answer
+ * beats a confidently wrong one.
+ */
+export async function repoRootFor(path: string): Promise<string> {
+  const out = await gitOk(
+    ['rev-parse', '--path-format=absolute', '--git-common-dir', '--is-bare-repository'],
+    path,
+  );
+  const lines = out.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  const root = repoRootFromCommonDir(lines[0] ?? '', (lines[1] ?? '') === 'true');
+  if (root !== null) return root;
+
+  // Unusual layout. A real working tree is more useful to the user than a
+  // gitdir, even though it is a weaker identity key.
+  const top = (await gitOk(['rev-parse', '--show-toplevel'], path)).trim();
+  if (top.length === 0) {
+    throw new Error(`Could not determine the repository root for ${path}`);
+  }
+  return normalizePath(top);
+}
+
+/**
+ * Toplevel of the **current working tree**. Inside a linked worktree this is
+ * the worktree, not the repository — which is correct for questions about what
+ * is checked out here, and wrong for questions about which repo this is. For
+ * the latter use {@link repoRootFor}.
+ */
 export async function repoToplevel(repoPath: string): Promise<string> {
   const out = await gitOk(['rev-parse', '--show-toplevel'], repoPath);
   const top = out.trim();
@@ -436,10 +504,13 @@ export async function repoToplevel(repoPath: string): Promise<string> {
   return top;
 }
 
-/** Basename of the repo's toplevel, e.g. `/Users/x/www/albedo` -> `albedo`. */
+/**
+ * Basename of the repository, e.g. `/Users/x/www/albedo` -> `albedo`.
+ * Keyed on {@link repoRootFor}, so a worktree of a repo is named after the
+ * repo rather than after the worktree folder.
+ */
 export async function repoName(repoPath: string): Promise<string> {
-  const top = await repoToplevel(repoPath);
-  return basename(top);
+  return basename(await repoRootFor(repoPath));
 }
 
 /** Pure basename, so `repoName` has no Tauri dependency beyond the git call. */

@@ -301,54 +301,271 @@ export async function archiveProject(id: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Turn every distinct `tasks.repo_path` that has no project into one.
+ * Resolves any path inside a git repository to that repository's ROOT.
  *
- * Deliberately in TypeScript rather than in the migration. Deriving a folder
- * basename in pure SQLite needs an rtrim/replace character-set trick that
- * silently returns an EMPTY name for any path with a trailing slash -- and an
- * empty name passes NOT NULL, so the failure is invisible until two projects
- * are found sharing the worktree root `~/agents/`. See the report to the lead.
+ * Injected rather than imported. `repoRootFor` in src/git/worktree.ts spawns a
+ * git subprocess, and this module has no business doing that -- the same rule
+ * that keeps `cwdExists` null in sessions.ts. Importing it here would also be
+ * the first coupling between two peer feature modules; the caller sits above
+ * both and can supply it.
  *
- * Idempotent: only touches tasks whose `project_id` is still NULL, and reuses
- * an existing project when one already covers that repo path. Safe to call on
- * every app start.
- *
- * @returns number of projects created.
+ * REQUIRED, not optional with a raw-path fallback: falling back to the raw
+ * path is precisely the bug this parameter exists to prevent, so the compiler
+ * should insist rather than let a caller silently reintroduce it.
  */
-export async function backfillProjectsFromTasks(): Promise<number> {
+export type RepoRootResolver = (path: string) => Promise<string>;
+
+/** Cache + failure containment around a caller-supplied resolver. */
+function memoisedResolver(resolve: RepoRootResolver): (p: string) => Promise<string> {
+  const cache = new Map<string, string>();
+  return async (raw: string) => {
+    const key = normalizeRepoPath(raw);
+    const hit = cache.get(key);
+    if (hit !== undefined) return hit;
+    let root = key;
+    try {
+      const resolved = normalizeRepoPath(await resolve(key));
+      if (resolved.length > 0) root = resolved;
+    } catch {
+      // Not a git directory, deleted, or git unavailable. Fall back to the
+      // path itself: no worse than before, and better than aborting a startup
+      // repair over one unreadable directory.
+    }
+    cache.set(key, root);
+    return root;
+  };
+}
+
+export interface WorktreeProjectFinding {
+  /** The project whose repo_path is really a worktree. */
+  project: Project;
+  /** The project whose repo_path is the actual repository root. */
+  parent: Project;
+}
+
+/**
+ * Projects that are provably a git WORKTREE of another project's repository.
+ *
+ * Provable, not heuristic: git itself reports the repository root, and a
+ * project whose root is another project's `repo_path` is a linked worktree of
+ * it. `/Users/x/www/acme-ACME-2368` resolving to `/Users/x/www/acme`
+ * is not a guess.
+ *
+ * DETECTION ONLY. Merging or deleting the project is deliberately not done
+ * here: it means rewriting or removing a row the user can see and may have
+ * created, and an auto-merge that picks the wrong survivor costs far more to
+ * undo than the duplicate costs to live with. The UI can offer "this looks
+ * like a worktree of X -- archive it", which is honest and actionable.
+ */
+export async function findWorktreeProjects(
+  resolve: RepoRootResolver,
+): Promise<WorktreeProjectFinding[]> {
+  const projects = await listProjects({ includeArchived: true });
+  const byRepoPath = new Map(projects.map((p) => [p.repoPath, p]));
+  const rootOf = memoisedResolver(resolve);
+
+  const out: WorktreeProjectFinding[] = [];
+  for (const project of projects) {
+    const root = await rootOf(project.repoPath);
+    if (root === project.repoPath) continue; // it IS the repository
+    const parent = byRepoPath.get(root);
+    if (parent !== undefined && parent.id !== project.id) out.push({ project, parent });
+  }
+  return out;
+}
+
+export interface BackfillResult {
+  /** Tasks whose project association was added or corrected. */
+  relinked: number;
+  /** Projects that are really worktrees of another. Reported, never merged. */
+  worktreeProjects: WorktreeProjectFinding[];
+  /**
+   * Repo roots with captured history that no project claims. Offered to the
+   * user for import; NEVER turned into projects here.
+   */
+  unclaimed: UnclaimedRepo[];
+}
+
+/**
+ * Associate every task with the project for the repository it actually lives in.
+ *
+ * ### GOVERNING RULE: resolve and LINK automatically, NEVER CREATE.
+ *
+ * Linking is provably correct -- git states that a directory belongs to a
+ * repository, so there is nothing to ask about. Creating a project is a
+ * decision: the user names it and configures its worktree root, base branch
+ * and prompt template. Inventing one from a directory path produces rows they
+ * did not ask for and will not recognise.
+ *
+ * That is what this function used to do. It grouped by the RAW
+ * `tasks.repo_path`, so a task running in a git WORKTREE never matched its
+ * real project and a second project was created named after the worktree
+ * folder -- on every launch, for every unseen directory. On the user's
+ * database that produced `acme-ACME-2368` beside their real `acme`,
+ * and the task appeared under a separate named tab. Correct resolution alone
+ * would have produced FEWER bogus projects, not none; not creating is what
+ * produces none.
+ *
+ * A task whose repository has no project keeps `project_id = NULL` and sits in
+ * "Other", which is exactly what that tab is for. The repository shows up in
+ * `unclaimed` for the user to import if they want it.
+ *
+ * Idempotent and safe on every launch: it only ever adds or corrects a link.
+ */
+export async function backfillProjectsFromTasks(
+  resolveRepoRoot: RepoRootResolver,
+): Promise<BackfillResult> {
   const db = await getDb();
-  const rows = await db.select<{ repo_path: string }[]>(
+  const rootOf = memoisedResolver(resolveRepoRoot);
+  let relinked = 0;
+
+  // --- 1. tasks with no project ---------------------------------------------
+  const unassigned = await db.select<{ repo_path: string }[]>(
     `SELECT DISTINCT repo_path FROM tasks
       WHERE project_id IS NULL AND repo_path IS NOT NULL AND TRIM(repo_path) != ''`,
   );
-  if (rows.length === 0) return 0;
 
-  let created = 0;
-  for (const row of rows) {
-    const defaults = deriveProjectDefaults(row.repo_path);
-    if (defaults.repoPath.length === 0) continue;
+  for (const row of unassigned) {
+    // Resolve BEFORE matching. Two tasks in two worktrees of one repository
+    // collapse onto that repository here, which is the whole point.
+    const root = await rootOf(row.repo_path);
+    if (root.length === 0) continue;
 
-    // Two raw paths differing only by a trailing slash collapse onto one
-    // project here, which is the point.
-    let project = await findProjectByRepo(defaults.repoPath);
-    if (project === null) {
-      project = await createProject({
-        name: defaults.name,
-        repoPath: defaults.repoPath,
-        worktreeRoot: defaults.worktreeRoot,
-        defaultBaseBranch: null,
-        taskPromptTemplate: null,
-      });
-      created += 1;
-    }
+    const project = await findProjectByRepo(root);
+    if (project === null) continue; // leave it in "Other"; never invent one
+
     // Link by the RAW stored value, which is what the task rows actually hold.
-    await db.execute(
+    const res = await db.execute(
       `UPDATE tasks SET project_id = $1 WHERE project_id IS NULL AND repo_path = $2`,
       [project.id, row.repo_path],
     );
+    relinked += res.rowsAffected;
   }
 
-  emitTasksChanged();
-  if (created > 0) emitProjectsChanged();
-  return created;
+  // --- 2. tasks pointing at a project that is really a worktree -------------
+  const worktreeProjects = await findWorktreeProjects(resolveRepoRoot);
+  for (const { project, parent } of worktreeProjects) {
+    const res = await db.execute(`UPDATE tasks SET project_id = $1 WHERE project_id = $2`, [
+      parent.id,
+      project.id,
+    ]);
+    relinked += res.rowsAffected;
+  }
+
+  if (relinked > 0) emitTasksChanged();
+  return { relinked, worktreeProjects, unclaimed: await listUnclaimedRepos(resolveRepoRoot) };
+}
+
+// ---------------------------------------------------------------------------
+// Import candidates
+// ---------------------------------------------------------------------------
+
+export interface UnclaimedRepo {
+  /** Repository root, as git reports it. The identity key. */
+  repoRoot: string;
+  /** Folder basename, offered as the project name. The user may change it. */
+  suggestedName: string;
+  /** Captured sessions whose cwd resolves here. */
+  sessionCount: number;
+  messageCount: number;
+  /** Newest captured activity, epoch ms. Null when nothing is captured. */
+  lastActivityAt: number | null;
+  /** Tasks with no project whose repo_path resolves here. */
+  taskCount: number;
+  /**
+   * Distinct directories that resolved to this root — the repository itself
+   * and any worktrees of it. Shown so the user can see WHY it is being
+   * offered, rather than being asked to trust a bare path.
+   */
+  directories: string[];
+}
+
+/**
+ * Repositories Albedo has history for that no project claims.
+ *
+ * The honest alternative to inventing projects: show what was found and let
+ * the user decide, the same shape as the reconcile view. Archived projects
+ * count as claimed -- re-offering something the user archived is nagging.
+ *
+ * Ordered by most recent activity, because that is the one the user is
+ * looking for.
+ */
+export async function listUnclaimedRepos(
+  resolveRepoRoot: RepoRootResolver,
+): Promise<UnclaimedRepo[]> {
+  const db = await getDb();
+  const rootOf = memoisedResolver(resolveRepoRoot);
+
+  // Per-cwd session and message totals. The inner per-session grouping is what
+  // stops a session that spans several transcript files counting twice.
+  const captured = await db.select<
+    { cwd: string; session_count: number; message_count: number; last_ts: number | null }[]
+  >(
+    `SELECT cwd,
+            COUNT(*)        AS session_count,
+            SUM(msgs)       AS message_count,
+            MAX(last_ts)    AS last_ts
+       FROM (
+         SELECT s.cwd AS cwd, s.session_id AS session_id,
+                COUNT(m.id) AS msgs, MAX(m.ts) AS last_ts
+           FROM (SELECT session_id, MAX(updated_at) AS newest, cwd
+                   FROM transcript_files
+                  WHERE cwd IS NOT NULL AND TRIM(cwd) != ''
+                  GROUP BY session_id) s
+           JOIN messages m ON m.session_id = s.session_id
+          GROUP BY s.session_id
+       )
+      GROUP BY cwd`,
+  );
+
+  const taskDirs = await db.select<{ repo_path: string; task_count: number }[]>(
+    `SELECT repo_path, COUNT(*) AS task_count FROM tasks
+      WHERE project_id IS NULL AND repo_path IS NOT NULL AND TRIM(repo_path) != ''
+      GROUP BY repo_path`,
+  );
+
+  // Archived projects still count as claimed.
+  const claimed = new Set(
+    (await listProjects({ includeArchived: true })).map((p) => p.repoPath),
+  );
+
+  const byRoot = new Map<string, UnclaimedRepo>();
+  const take = (root: string, directory: string): UnclaimedRepo | null => {
+    if (root.length === 0 || claimed.has(root)) return null;
+    let entry = byRoot.get(root);
+    if (entry === undefined) {
+      entry = {
+        repoRoot: root,
+        suggestedName: projectNameFor(root),
+        sessionCount: 0,
+        messageCount: 0,
+        lastActivityAt: null,
+        taskCount: 0,
+        directories: [],
+      };
+      byRoot.set(root, entry);
+    }
+    if (!entry.directories.includes(directory)) entry.directories.push(directory);
+    return entry;
+  };
+
+  for (const row of captured) {
+    const entry = take(await rootOf(row.cwd), normalizeRepoPath(row.cwd));
+    if (entry === null) continue;
+    entry.sessionCount += row.session_count;
+    entry.messageCount += row.message_count;
+    if (row.last_ts !== null && (entry.lastActivityAt === null || row.last_ts > entry.lastActivityAt)) {
+      entry.lastActivityAt = row.last_ts;
+    }
+  }
+
+  for (const row of taskDirs) {
+    const entry = take(await rootOf(row.repo_path), normalizeRepoPath(row.repo_path));
+    if (entry === null) continue;
+    entry.taskCount += row.task_count;
+  }
+
+  return [...byRoot.values()].sort(
+    (a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0) || a.repoRoot.localeCompare(b.repoRoot),
+  );
 }

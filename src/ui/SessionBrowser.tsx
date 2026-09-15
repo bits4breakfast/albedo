@@ -20,23 +20,32 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
+import { exists } from '@tauri-apps/plugin-fs';
 import type { Project, Task } from '../types';
 import type { PastSession } from '../db/sessions';
 import { listPastSessions } from '../db/sessions';
-import { createTask, updateTask } from '../db';
-import { listBranches } from '../git/worktree';
+import { adoptSessionIntoTask, createTask, updateTask } from '../db';
+import { findProjectByRepo } from '../db/projects';
+import { listBranches, repoRootFor } from '../git/worktree';
 import { relativeTime } from './TaskList';
 
 /** Typing in the search box should not fire a query per keystroke. */
 const SEARCH_DEBOUNCE_MS = 220;
 const PAGE = 200;
 
+/**
+ * Branches that identify nothing. 53 of this machine's 115 sessions are on
+ * `master` and 15 on `HEAD`, so for the largest cluster the branch is not the
+ * discriminator and must not look like one -- these render dimmed so the eye
+ * moves straight to the prompt and the files instead.
+ */
+const WEAK_BRANCHES = new Set(['master', 'main', 'HEAD', 'develop', 'trunk']);
+
 export type ResumeMode = 'continue' | 'fork';
 
 export interface SessionBrowserProps {
   open: boolean;
   onClose: () => void;
-  projects: Project[];
   /** The session already belongs to a task — show it rather than resuming again. */
   onOpenTask: (taskId: number) => void;
   /** A task was created for this session; `args` is what its pty must spawn with. */
@@ -57,16 +66,56 @@ function homeRelative(path: string): string {
 }
 
 /** Title, or the least-bad thing we have. */
+/**
+ * The headline, in order of how much it actually identifies a conversation.
+ * Title is best but is null for anything Claude Code never titled, so the first
+ * user prompt is the fallback that always exists.
+ */
 function sessionLabel(session: PastSession): string {
-  if (session.title && session.title.trim().length > 0) return session.title.trim();
+  const title = session.title?.trim();
+  if (title) return title;
+  const prompt = session.firstPrompt?.trim();
+  if (prompt) return prompt;
+  if (session.branch) return session.branch;
   if (session.cwd) return `session in ${basename(session.cwd)}`;
   return `session ${session.sessionId.slice(0, 8)}`;
+}
+
+/** The second line: whatever the headline did not already use. */
+function sessionSubtitle(session: PastSession): string | null {
+  const title = session.title?.trim();
+  const prompt = session.firstPrompt?.trim();
+  if (title && prompt) return prompt;
+  return null;
+}
+
+/**
+ * The cwd that says nothing here, because nearly every row shares it. Computed
+ * from the current result set rather than from config, so it self-calibrates:
+ * whatever is unremarkable in THIS list is what gets suppressed.
+ */
+function modalCwd(sessions: PastSession[]): string | null {
+  if (sessions.length < 4) return null;
+  const counts = new Map<string, number>();
+  for (const s of sessions) {
+    if (!s.cwd) continue;
+    counts.set(s.cwd, (counts.get(s.cwd) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [cwd, n] of counts) {
+    if (n > bestN) {
+      best = cwd;
+      bestN = n;
+    }
+  }
+  // Only worth suppressing if it really is the background case.
+  return bestN >= Math.max(3, sessions.length * 0.25) ? best : null;
 }
 
 export default function SessionBrowser({
   open,
   onClose,
-  projects,
   onOpenTask,
   onResumed,
 }: SessionBrowserProps) {
@@ -80,8 +129,12 @@ export default function SessionBrowser({
   const [cwdOverride, setCwdOverride] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
+  /** cwd -> exists. The db layer deliberately never stats the disk. */
+  const [cwdState, setCwdState] = useState<Map<string, boolean>>(() => new Map());
+
   const aliveRef = useRef(true);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const pickFolderRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -134,6 +187,60 @@ export default function SessionBrowser({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, busy, onClose]);
 
+  /**
+   * Stat each DISTINCT cwd once, not each row. 115 sessions share 13 folders,
+   * so this is ~13 calls rather than 115.
+   */
+  useEffect(() => {
+    const wanted = [...new Set(sessions.map((s) => s.cwd).filter((c): c is string => !!c))];
+    const missing = wanted.filter((c) => !cwdState.has(c));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const found = await Promise.all(
+        missing.map(async (cwd) => [cwd, await exists(cwd).catch(() => true)] as const),
+      );
+      if (cancelled || !aliveRef.current) return;
+      setCwdState((prev) => {
+        const next = new Map(prev);
+        for (const [cwd, ok] of found) next.set(cwd, ok);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessions, cwdState]);
+
+  /**
+   * Why this session cannot be continued right now, or null if it can.
+   *
+   * Deliberately ONE expression, consulted by both the Continue button and the
+   * double-click accelerator. An accelerator that bypasses a guard is worse
+   * than no accelerator: the guard exists precisely for the case the user is
+   * moving fast through.
+   */
+  const cwdOk = useCallback(
+    (session: PastSession): boolean | null => {
+      if (session.cwdExists !== null) return session.cwdExists;
+      if (!session.cwd) return null;
+      return cwdState.get(session.cwd) ?? null;
+    },
+    [cwdState],
+  );
+
+  const commonCwd = useMemo(() => modalCwd(sessions), [sessions]);
+
+  const resumeBlocker = useCallback(
+    (session: PastSession, override: string | null): 'no-cwd' | 'cwd-missing' | null => {
+      const cwd = override ?? session.cwd;
+      if (!cwd) return 'no-cwd';
+      if (!override && cwdOk(session) === false) return 'cwd-missing';
+      return null;
+    },
+    [cwdOk],
+  );
+
   const selected = useMemo(
     () => sessions.find((s) => s.sessionId === selectedId) ?? null,
     [sessions, selectedId],
@@ -141,7 +248,7 @@ export default function SessionBrowser({
 
   const effectiveCwd = cwdOverride ?? selected?.cwd ?? null;
   // `cwdExists` is null when capture did not check; only false is a real problem.
-  const cwdMissing = !cwdOverride && selected?.cwdExists === false;
+  const cwdMissing = !cwdOverride && selected !== null && cwdOk(selected) === false;
 
   const pickFolder = useCallback(async () => {
     try {
@@ -170,15 +277,46 @@ export default function SessionBrowser({
           /* not a repo, or git unavailable — the task just has no branch */
         }
 
-        const project = projects.find((p) => p.repoPath === cwd) ?? null;
+        /*
+         * Which project owns this directory.
+         *
+         * Comparing the cwd to `projects.repo_path` directly is wrong whenever
+         * the session ran in a LINKED WORKTREE: `~/agents/acme/ACME-2398`
+         * is acme, but it matches no project row, so the task lands in
+         * "Other". `repoRootFor` resolves through git's common dir, which
+         * returns the same root from inside a worktree or the main checkout.
+         *
+         * Failure here is expected and silent -- a session in ~/Downloads is
+         * not in a repo at all. Null projectId, "Other" tab, no error.
+         */
+        let repoRoot: string | null = null;
+        try {
+          repoRoot = (await repoRootFor(cwd)) || null;
+        } catch {
+          /* not a git repo */
+        }
+        let project: Project | null = null;
+        if (repoRoot) {
+          try {
+            project = await findProjectByRepo(repoRoot);
+          } catch {
+            /* db unreachable -- grouping is not worth failing the resume over */
+          }
+        }
+
         const task = await createTask({
           title: sessionLabel(session),
           projectId: project?.id ?? null,
-          repoPath: cwd,
+          // The ORIGIN repo, per the Task contract. Only the association uses
+          // the resolved root; the session still runs where it ran.
+          repoPath: repoRoot ?? cwd,
           baseBranch: branch,
           branch,
-          // The session's own directory, NOT a worktree Albedo cut. Paired with
-          // ownsWorktree: false so archive can never offer to remove it.
+          // The session's own directory, NOT a worktree Albedo cut, and NOT
+          // the resolved repo root -- resuming in the wrong folder would be a
+          // far worse bug than a mis-grouped tab. Paired with ownsWorktree:
+          // false so archive can never offer to remove it; resolving which
+          // project a directory belongs to says nothing about who created it.
           worktreePath: cwd,
           ownsWorktree: false,
         });
@@ -187,12 +325,37 @@ export default function SessionBrowser({
         if (mode === 'fork') {
           // A fork lands under a NEW session id, so the task must not claim the
           // source id — capture will adopt whatever the fork writes.
+          //
+          // And deliberately NO adoption here, despite the continue path below
+          // doing it: the source conversation's history belongs to the source
+          // session, not to the fork's task. Adopting would move 200 messages
+          // the fork did not produce onto it, and take them off the original.
           args.push('--fork-session');
         } else {
           // Continuing keeps the id, and setting it now is what suppresses the
           // project's initial-prompt template (the gate is sessionId === null).
           await updateTask(task.id, { sessionId: session.sessionId });
           task.sessionId = session.sessionId;
+
+          /*
+           * Claim the EXISTING history for this task, now.
+           *
+           * Rows captured before Albedo existed have task_id = NULL, and the
+           * watcher only backfills them when NEW lines arrive. So without this
+           * the transcript pane is empty until the agent writes something --
+           * and permanently empty for anyone who resumed a session in order to
+           * READ it, which is the exact case this feature was built for.
+           *
+           * Idempotent (`WHERE task_id IS NULL`), so it is safe on a session
+           * that was already adopted.
+           */
+          try {
+            await adoptSessionIntoTask(session.sessionId, task.id);
+          } catch (err) {
+            // Degrades to the old behaviour -- the pane fills in once new lines
+            // land -- which is not worth failing the resume over.
+            console.warn('[albedo] could not adopt session history', err);
+          }
         }
 
         onResumed(task, args);
@@ -203,7 +366,36 @@ export default function SessionBrowser({
         if (aliveRef.current) setBusy(false);
       }
     },
-    [cwdOverride, projects, onResumed, onClose],
+    [cwdOverride, onResumed, onClose],
+  );
+
+  /**
+   * Double-click: do the obvious thing with this row.
+   *
+   * Continue rather than fork, because an accelerator is not a decision
+   * surface — the two buttons stay equally weighted for someone actually
+   * choosing, and forking is something you go looking for. When the row is
+   * blocked, the obvious thing becomes "get me to what is blocking it", so it
+   * selects the row and focuses the folder picker instead of resuming.
+   */
+  const activate = useCallback(
+    async (session: PastSession) => {
+      if (busy) return;
+      if (session.taskId !== null) {
+        onOpenTask(session.taskId);
+        onClose();
+        return;
+      }
+      const override = session.sessionId === selectedId ? cwdOverride : null;
+      if (resumeBlocker(session, override) !== null) {
+        setSelectedId(session.sessionId);
+        if (session.sessionId !== selectedId) setCwdOverride(null);
+        window.requestAnimationFrame(() => pickFolderRef.current?.focus());
+        return;
+      }
+      await resume(session, 'continue');
+    },
+    [busy, selectedId, cwdOverride, resumeBlocker, resume, onOpenTask, onClose],
   );
 
   if (!open) return null;
@@ -242,36 +434,62 @@ export default function SessionBrowser({
               {query.trim() ? `Nothing matches “${query.trim()}”.` : 'No sessions captured yet.'}
             </div>
           )}
-          {sessions.map((session) => (
+          {sessions.map((session) => {
+            const subtitle = sessionSubtitle(session);
+            return (
             <button
               key={session.sessionId}
               className="sb-row"
+              title={session.cwd ? homeRelative(session.cwd) : undefined}
               data-selected={session.sessionId === selectedId}
               data-adopted={session.taskId !== null}
               onClick={() => {
+                // Re-clicking the selected row must not discard a folder the
+                // user just picked for it.
+                if (session.sessionId === selectedId) return;
                 setSelectedId(session.sessionId);
                 setCwdOverride(null);
               }}
-              onDoubleClick={() => {
-                if (session.taskId !== null) {
-                  onOpenTask(session.taskId);
-                  onClose();
-                }
-              }}
+              onDoubleClick={() => void activate(session)}
             >
+              {/* Branch leads: 87 distinct values across 115 sessions, and on
+                  this machine they read as issue keys, which is how the work is
+                  actually named. cwd has 13 distinct values and identifies
+                  almost nothing, so it has lost the leading position. */}
+              <span
+                className="sb-row-branch"
+                data-weak={!session.branch || WEAK_BRANCHES.has(session.branch)}
+                title={session.branch ?? undefined}
+              >
+                {session.branch ?? '—'}
+              </span>
               <span className="sb-row-title">{sessionLabel(session)}</span>
               <span className="sb-row-age">{relativeTime(session.lastTs, now)}</span>
+
+              {subtitle && <span className="sb-row-sub">{subtitle}</span>}
+
               <span className="sb-row-meta">
-                <span className="sb-row-cwd">
-                  {session.cwd ? homeRelative(session.cwd) : 'folder unknown'}
-                </span>
-                <span className="task-sep">·</span>
+                {session.topFiles && session.topFiles.length > 0 && (
+                  <span className="sb-row-files" title={session.topFiles.join(', ')}>
+                    {session.topFiles.slice(0, 3).join(' · ')}
+                  </span>
+                )}
                 <span className="sb-row-count">{session.messageCount} msgs</span>
+                {/* Shown only where it says something. A column of 115
+                    identical paths is noise; an unexpected one is a fact. */}
+                {session.cwd && session.cwd !== commonCwd && (
+                  <span className="sb-row-cwd">{homeRelative(session.cwd)}</span>
+                )}
                 {session.taskId !== null && <span className="sb-chip">open</span>}
-                {session.cwdExists === false && <span className="sb-chip" data-tone="warn">folder gone</span>}
+                {cwdOk(session) === false && (
+                  <span className="sb-chip" data-tone="warn">
+                    folder gone
+                  </span>
+                )}
               </span>
             </button>
-          ))}
+            );
+          })}
         </div>
 
         {selected && (
@@ -290,7 +508,12 @@ export default function SessionBrowser({
 
             <div className="sb-actions">
               {(cwdMissing || !effectiveCwd) && (
-                <button className="btn" onClick={() => void pickFolder()} disabled={busy}>
+                <button
+                  ref={pickFolderRef}
+                  className="btn"
+                  onClick={() => void pickFolder()}
+                  disabled={busy}
+                >
                   Choose folder…
                 </button>
               )}
@@ -316,14 +539,14 @@ export default function SessionBrowser({
                   </span>
                   <button
                     className="btn"
-                    disabled={busy || !effectiveCwd}
+                    disabled={busy || resumeBlocker(selected, cwdOverride) !== null}
                     onClick={() => void resume(selected, 'fork')}
                   >
                     Branch from it
                   </button>
                   <button
                     className="btn btn-primary"
-                    disabled={busy || !effectiveCwd}
+                    disabled={busy || resumeBlocker(selected, cwdOverride) !== null}
                     onClick={() => void resume(selected, 'continue')}
                   >
                     Continue this session

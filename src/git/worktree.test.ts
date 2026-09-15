@@ -18,6 +18,8 @@ import {
   parseUpstream,
   parseWorktreePorcelain,
   removeWorktree,
+  repoRootFor,
+  repoRootFromCommonDir,
   revRange,
   defaultWorktreeRoot,
   setGitRunner,
@@ -490,6 +492,104 @@ describe('defaultWorktreeRoot', () => {
     expect(defaultWorktreeRoot('  albedo  ')).toBe('~/agents/albedo');
     expect(defaultWorktreeRoot('')).toBe('~/agents/project');
     expect(defaultWorktreeRoot('/weird/')).toBe('~/agents/weird');
+  });
+});
+
+describe('repoRootFromCommonDir', () => {
+  it('strips the .git of a normal repo', () => {
+    // The case that matters: identical from the main checkout and from any
+    // linked worktree, which is what --show-toplevel could not give us.
+    expect(repoRootFromCommonDir('/Users/m/www/acme/.git', false)).toBe(
+      '/Users/m/www/acme',
+    );
+    expect(repoRootFromCommonDir('/Users/m/www/acme/.git/', false)).toBe(
+      '/Users/m/www/acme',
+    );
+  });
+
+  it('keeps a bare repo as itself — the directory IS the repository', () => {
+    // dirname() here would yield /srv, which is not a repo at all.
+    expect(repoRootFromCommonDir('/srv/mirror.git', true)).toBe('/srv/mirror.git');
+  });
+
+  it('refuses a relative common dir rather than letting `.git` through', () => {
+    // Without --path-format=absolute, git prints exactly this from the main
+    // repo. A project whose repo_path was the literal string `.git` would be a
+    // memorable bug.
+    expect(repoRootFromCommonDir('.git', false)).toBeNull();
+    expect(repoRootFromCommonDir('.git', true)).toBeNull();
+    expect(repoRootFromCommonDir('../.git', false)).toBeNull();
+    expect(repoRootFromCommonDir('', false)).toBeNull();
+    expect(repoRootFromCommonDir('   ', false)).toBeNull();
+  });
+
+  it('returns null for a layout it cannot map back to a working tree', () => {
+    // --separate-git-dir: the common dir is unrelated to the tree, so the
+    // caller falls back rather than inventing a path.
+    expect(repoRootFromCommonDir('/Users/m/elsewhere.git', false)).toBeNull();
+    expect(repoRootFromCommonDir('/.git', false)).toBeNull();
+  });
+
+  it('is not fooled by a repo directory that ends in .git', () => {
+    expect(repoRootFromCommonDir('/Users/m/www/thing.git/.git', false)).toBe(
+      '/Users/m/www/thing.git',
+    );
+  });
+});
+
+describe('repoRootFor', () => {
+  const revParseArgs = [
+    'rev-parse',
+    '--path-format=absolute',
+    '--git-common-dir',
+    '--is-bare-repository',
+  ];
+
+  it('asks for the common dir, absolute, in one call', async () => {
+    const calls = install(() => ({
+      code: 0,
+      stdout: '/Users/m/www/acme/.git\nfalse\n',
+      stderr: '',
+    }));
+    expect(await repoRootFor('/Users/m/www/acme-worktree/ACME-2398')).toBe(
+      '/Users/m/www/acme',
+    );
+    expect(calls).toEqual([
+      { args: revParseArgs, cwd: '/Users/m/www/acme-worktree/ACME-2398' },
+    ]);
+  });
+
+  it('gives the same answer from a worktree as from the main checkout', async () => {
+    // The actual bug: a task in a worktree of acme did not match the
+    // acme project and fell into the "Other" tab.
+    const reply = { code: 0, stdout: '/Users/m/www/acme/.git\nfalse\n', stderr: '' };
+    install(() => reply);
+    const fromMain = await repoRootFor('/Users/m/www/acme');
+    install(() => reply);
+    const fromWorktree = await repoRootFor('/Users/m/www/acme-worktree/ACME-2398');
+    expect(fromWorktree).toBe(fromMain);
+  });
+
+  it('handles a bare repository', async () => {
+    install(() => ({ code: 0, stdout: '/srv/mirror.git\ntrue\n', stderr: '' }));
+    expect(await repoRootFor('/srv/mirror.git')).toBe('/srv/mirror.git');
+  });
+
+  it('falls back to the working tree for a layout it cannot map', async () => {
+    const calls = install(({ args }) =>
+      args.includes('--git-common-dir')
+        ? { code: 0, stdout: '/Users/m/elsewhere.git\nfalse\n', stderr: '' }
+        : { code: 0, stdout: '/Users/m/sep\n', stderr: '' },
+    );
+    expect(await repoRootFor('/Users/m/sep')).toBe('/Users/m/sep');
+    expect(calls[1]?.args).toEqual(['rev-parse', '--show-toplevel']);
+  });
+
+  it('surfaces git stderr when the directory is not a repo', async () => {
+    install(() => ({ code: 128, stdout: '', stderr: 'fatal: not a git repository' }));
+    const err = await repoRootFor('/Users/m/Documents').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitError);
+    expect((err as GitError).kind).toBe('not-a-repo');
   });
 });
 

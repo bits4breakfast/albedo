@@ -98,6 +98,14 @@ export interface TerminalProps {
    * would re-attempt the same dead session id.
    */
   onFreshStart?: () => void;
+  /**
+   * Becomes `--name <sessionName>`, which sets the session's display name in
+   * Claude Code's own prompt box, /resume picker and terminal title. Supplied
+   * only when we are CREATING a session — never on a plain re-open, because
+   * renaming someone's session out from under them is exactly the quiet
+   * mutation this app should not do.
+   */
+  sessionName?: string;
   onExit?: (code: number | null) => void;
   onError?: (message: string) => void;
 }
@@ -177,12 +185,26 @@ function isResumeArgs(args: string[]): boolean {
   return args.includes('--resume');
 }
 
+/**
+ * `claude [options] [prompt]`. Each element stays a separate argv entry so it
+ * goes through the pty layer's own shell-quoting — nothing here builds a
+ * command string, and a task title is arbitrary user-typed text.
+ */
+function composeArgs(opts: { name?: string; resume?: string[]; prompt?: string }): string[] {
+  const out: string[] = [];
+  if (opts.name) out.push('--name', opts.name);
+  if (opts.resume && opts.resume.length > 0) out.push(...opts.resume);
+  else if (opts.prompt) out.push(opts.prompt);
+  return out;
+}
+
 export default function Terminal({
   task,
   active = true,
   initialPrompt,
   spawnArgs,
   onFreshStart,
+  sessionName,
   onExit,
   onError,
 }: TerminalProps) {
@@ -211,6 +233,7 @@ export default function Terminal({
    */
   const initialPromptRef = useRef(initialPrompt);
   const spawnArgsRef = useRef(spawnArgs);
+  const sessionNameRef = useRef(sessionName);
   /** Did anything at all come back before it died? See the note in spawn(). */
   const sawOutputRef = useRef(false);
   const usedResumeRef = useRef(false);
@@ -422,17 +445,24 @@ export default function Terminal({
       // happened since.
       const neverStarted = taskRef.current.sessionId === null;
       const prompt = neverStarted ? initialPromptRef.current?.trim() : undefined;
-      void spawn(fresh ? (prompt ? [prompt] : []) : buildArgs(), !fresh && isResumeArgs(buildArgs()));
+      if (!fresh) {
+        const again = buildArgs();
+        void spawn(again, isResumeArgs(again));
+        return;
+      }
+      // A fresh session is a NEW session, so naming it renames nothing.
+      void spawn(composeArgs({ name: taskRef.current.title, prompt }), false);
     };
 
     function buildArgs(): string[] {
       // The prompt goes in as argv, never as a pty write. Writing it would mean
       // knowing when Claude Code has finished booting, and the only way to know
       // that is to read terminal output -- the one thing this app never does.
-      const resumeArgs = spawnArgsRef.current;
-      if (resumeArgs && resumeArgs.length > 0) return resumeArgs;
-      const prompt = initialPromptRef.current?.trim();
-      return prompt ? [prompt] : [];
+      return composeArgs({
+        name: sessionNameRef.current,
+        resume: spawnArgsRef.current,
+        prompt: initialPromptRef.current?.trim(),
+      });
     }
 
     const first = buildArgs();

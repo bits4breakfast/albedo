@@ -275,6 +275,11 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
         key={row.path}
         className="wt-item"
         data-class={row.classification}
+        // NO onDoubleClick here, deliberately. The session browser and the
+        // projects dialog both make double-click "click plus the obvious
+        // button" -- but every row action in this view is Remove, and a
+        // double-click that deletes a worktree is precisely the accelerator
+        // nobody wants. The inconsistency is the point; please do not tidy it.
         data-dirty={summary.needsAck && !confirming}
         data-confirming={confirming}
       >

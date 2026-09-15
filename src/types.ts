@@ -126,7 +126,22 @@ export interface Message {
    */
   taskId: number | null;
   sessionId: string;
-  /** Monotonic ordering within a session. Line index in the JSONL file. */
+  /**
+   * Ordering key. `lineIndex * 100 + blockIndex` WITHIN ONE TRANSCRIPT FILE.
+   *
+   * FILE-LOCAL, and everything else is not. A resume or a fork starts a new
+   * file, so `seq` RESTARTS: one task can contain two runs of seq values that
+   * overlap, and a later message can have a LOWER seq than an earlier one.
+   *
+   * Consequences, both of which have already caused bugs:
+   *  - ordering a task-scoped read by `seq` interleaves a resumed session with
+   *    the one it resumed (`getMessages` orders task scope by `ts` instead);
+   *  - `afterSeq` is only meaningful WITHIN one session. Used task-scoped
+   *    after a fork it filters against the old session's numbering and
+   *    silently returns pre-fork rows.
+   *
+   * See src/db/paging.test.ts, which pins both.
+   */
   seq: number;
   role: MessageRole;
   /** Set on tool_use / tool_result rows, e.g. "Edit", "Bash". */

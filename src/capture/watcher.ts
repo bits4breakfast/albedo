@@ -28,6 +28,8 @@ import {
   findTaskByWorktreePath,
   getTranscriptFile,
   insertMessages,
+  listTranscriptFilesNeedingTitle,
+  setTranscriptTitle,
   touchTaskActivity,
   upsertTranscriptFile,
   type InsertableMessage,
@@ -51,6 +53,14 @@ const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 /** Per-read staging buffer. */
 const READ_BUFFER_BYTES = 256 * 1024;
 
+/**
+ * How deep to walk below ~/.claude/projects. Transcripts live at depth 2
+ * (`<projectDir>/<uuid>.jsonl`) and subagent transcripts at depth 4
+ * (`<projectDir>/<uuid>/subagents/<uuid>.jsonl`); the cap is slack for a
+ * layout change, and a guard against ever following a symlink loop.
+ */
+const MAX_SCAN_DEPTH = 6;
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -69,10 +79,16 @@ export interface CaptureUpdate {
 }
 
 export interface CaptureProgress {
-  phase: 'backfill' | 'watching';
+  /**
+   * `degraded` means the live filesystem watcher could not start. History
+   * still backfills, but nothing will update until the app is restarted.
+   */
+  phase: 'backfill' | 'watching' | 'degraded';
   filesDone: number;
   filesTotal: number;
   currentPath: string | null;
+  /** Set only on `degraded`. */
+  error?: string;
 }
 
 const updateListeners = new Set<(u: CaptureUpdate) => void>();
@@ -170,6 +186,16 @@ export function isTranscriptPath(path: string): boolean {
 
 export interface CaptureHandle {
   stop(): Promise<void>;
+  /**
+   * Null when the live watcher is running; a message when it could not start.
+   *
+   * This is deliberately part of the handle rather than a silent log. The
+   * watcher failing is not a minor degradation: transcripts, task status,
+   * touched files and the usage panel then only update on restart, which the
+   * user experiences as "the app just doesn't do anything" with no error
+   * anywhere. It went undetected for exactly that reason.
+   */
+  readonly liveUpdatesError: string | null;
 }
 
 interface PendingFile {
@@ -181,6 +207,7 @@ interface PendingFile {
 let active: Capture | null = null;
 
 class Capture implements CaptureHandle {
+  liveUpdatesError: string | null = null;
   private stopped = false;
   private unwatch: UnwatchFn | null = null;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -204,9 +231,22 @@ class Capture implements CaptureHandle {
         { recursive: true, delayMs: DEBOUNCE_MS },
       );
     } catch (err) {
-      // No watcher (permissions, platform limits) still leaves the startup
-      // backfill useful, so this is degraded-mode, not fatal.
+      // Degraded, NOT silent. The backfill below still makes history
+      // searchable, so this is not fatal -- but live updates are the point of
+      // the app, and a failure here must reach the user rather than the
+      // console. Reported both on the handle (for the caller awaiting
+      // startCapture) and as a progress event (for anyone already subscribed).
+      const detail = err instanceof Error ? err.message : String(err);
+      this.liveUpdatesError =
+        `Live updates unavailable - transcripts will only refresh on restart (${detail})`;
       console.error('[capture] could not watch', this.root, err);
+      emitProgress({
+        phase: 'degraded',
+        filesDone: 0,
+        filesTotal: 0,
+        currentPath: null,
+        error: this.liveUpdatesError,
+      });
     }
 
     // Deliberately NOT awaited: startCapture() must resolve as soon as the app
@@ -241,7 +281,7 @@ class Capture implements CaptureHandle {
       path,
       setTimeout(() => {
         this.timers.delete(path);
-        void this.enqueue(path, projectDirOf(path));
+        void this.enqueue(path, projectDirOf(this.root, path));
       }, DEBOUNCE_MS),
     );
   }
@@ -300,6 +340,16 @@ class Capture implements CaptureHandle {
       await yieldToEventLoop();
     }
 
+    // Only after live history is in: the title pass is a nicety, ingest is not.
+    if (!this.stopped) {
+      try {
+        const titled = await backfillTranscriptTitles();
+        if (titled > 0) console.info(`[capture] backfilled ${titled} session titles`);
+      } catch (err) {
+        console.error('[capture] title backfill failed', err);
+      }
+    }
+
     emitProgress({
       phase: 'watching',
       filesDone: done,
@@ -308,32 +358,56 @@ class Capture implements CaptureHandle {
     });
   }
 
+  /**
+   * Find every transcript under the projects root, RECURSIVELY.
+   *
+   * Claude Code nests subagent transcripts two levels deeper:
+   *   <projectDir>/<session-uuid>/subagents/<uuid>.jsonl
+   *
+   * A scan that only walked `<projectDir>/*.jsonl` missed all of them. On this
+   * machine that was 395 of 510 files -- 230 MB and 48,343 user/assistant
+   * lines, every one of them `isSidechain: true`, and NONE of it duplicated in
+   * the parent transcript. So more than half the user's history was invisible
+   * to search while the recursive fs watcher happily ingested any subagent
+   * file that happened to be appended to while the app was running. Captured
+   * or not captured is a decision; captured-depending-on-timing is a bug.
+   */
   private async scan(): Promise<PendingFile[]> {
     const out: PendingFile[] = [];
-    const entries = await readDir(this.root);
-    for (const entry of entries) {
-      if (this.stopped) return out;
-      if (!entry.isDirectory) continue;
-      const dir = `${this.root}/${entry.name}`;
-      let children;
-      try {
-        children = await readDir(dir);
-      } catch {
-        continue; // unreadable project dir: skip, do not abort the scan
-      }
-      for (const child of children) {
-        if (!child.isFile || !isTranscriptPath(child.name)) continue;
-        const path = `${dir}/${child.name}`;
-        let mtime = 0;
-        try {
-          mtime = (await stat(path)).mtime?.getTime() ?? 0;
-        } catch {
-          /* keep it with mtime 0; it sorts last */
-        }
-        out.push({ path, projectDir: entry.name, mtime });
-      }
-    }
+    await this.walk(this.root, '', 0, out);
     return out;
+  }
+
+  private async walk(
+    dir: string,
+    projectDir: string,
+    depth: number,
+    out: PendingFile[],
+  ): Promise<void> {
+    if (this.stopped || depth > MAX_SCAN_DEPTH) return;
+    let entries;
+    try {
+      entries = await readDir(dir);
+    } catch {
+      return; // unreadable directory: skip it, never abort the whole scan
+    }
+    for (const entry of entries) {
+      if (this.stopped) return;
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory) {
+        // The top-level entry names the project; everything below inherits it.
+        await this.walk(path, depth === 0 ? entry.name : projectDir, depth + 1, out);
+        continue;
+      }
+      if (!entry.isFile || !isTranscriptPath(entry.name)) continue;
+      let mtime = 0;
+      try {
+        mtime = (await stat(path)).mtime?.getTime() ?? 0;
+      } catch {
+        /* keep it with mtime 0; it sorts last */
+      }
+      out.push({ path, projectDir, mtime });
+    }
   }
 
   // -- the actual tail -----------------------------------------------------
@@ -496,6 +570,7 @@ export async function startCapture(): Promise<CaptureHandle> {
   if (!(await exists(root))) {
     // Claude Code has never run here. Nothing to watch yet; hand back a live
     // handle anyway so the caller's teardown path stays uniform.
+    capture.liveUpdatesError = `No transcript directory at ${root} - nothing to capture yet.`;
     console.warn('[capture] no transcript directory at', root);
     return capture;
   }
@@ -527,11 +602,19 @@ async function readRange(path: string, offset: number, length: number): Promise<
   }
 }
 
-function projectDirOf(path: string): string {
-  const slash = path.lastIndexOf('/');
-  if (slash < 0) return '';
-  const parent = path.slice(0, slash);
-  return parent.slice(parent.lastIndexOf('/') + 1);
+/**
+ * First path segment below the projects root.
+ *
+ * Must not be the immediate parent: a subagent transcript's parent directory
+ * is literally named `subagents`, which would file it under a project that
+ * does not exist.
+ */
+export function projectDirOf(root: string, path: string): string {
+  const prefix = `${root}/`;
+  if (!path.startsWith(prefix)) return '';
+  const rest = path.slice(prefix.length);
+  const slash = rest.indexOf('/');
+  return slash < 0 ? '' : rest.slice(0, slash);
 }
 
 function distinctSessionIds(rows: InsertableMessage[]): string[] {
@@ -549,4 +632,98 @@ function maxSeqPerSession(rows: InsertableMessage[]): Map<string, number> {
 
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+
+// ---------------------------------------------------------------------------
+// One-time title backfill
+// ---------------------------------------------------------------------------
+
+/**
+ * Populate `transcript_files.title` for files that were already ingested.
+ *
+ * WHY THIS IS NECESSARY, and why the same shape will recur:
+ *
+ * Ingest tails from `bytes_ingested`. Once a file is fully ingested the
+ * watcher never reads it again -- that is the design, and it is what keeps the
+ * app usable on a 432 MB corpus. So a column added by a later migration is
+ * populated only for transcripts written AFTER it shipped. `title` arrived in
+ * v4, by which point all 115 of the user's transcripts were fully ingested:
+ * without this pass the session browser would have shown an empty title on
+ * 100% of the user's actual 41.8 days of history and looked correct only on
+ * sessions started afterwards.
+ *
+ * The scan is cheap by design: it reads each file in bounded chunks and
+ * rejects ~99% of lines with a substring test before any JSON.parse, and it
+ * only touches files whose title is still NULL. A file with no title line is
+ * marked with '' so it is never re-read.
+ *
+ * @returns how many files gained a title.
+ */
+export async function backfillTranscriptTitles(
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  const pending = await listTranscriptFilesNeedingTitle();
+  if (pending.length === 0) return 0;
+
+  let found = 0;
+  let done = 0;
+  for (const file of pending) {
+    let title: string | null = null;
+    try {
+      title = await scanFileForTitle(file.path);
+    } catch {
+      // Deleted, unreadable, or permission-denied. Leave the row NULL so a
+      // later run retries rather than marking it permanently titleless.
+      done += 1;
+      onProgress?.(done, pending.length);
+      continue;
+    }
+    // '' marks "scanned, nothing found" so the next launch skips it.
+    await setTranscriptTitle(file.path, title);
+    if (title !== null) found += 1;
+    done += 1;
+    onProgress?.(done, pending.length);
+    await yieldToEventLoop();
+  }
+  return found;
+}
+
+/**
+ * Last title line in a file, read in bounded chunks so memory does not track
+ * file size. Only complete lines are scanned; a partial line at a chunk
+ * boundary is carried into the next chunk.
+ */
+async function scanFileForTitle(path: string): Promise<string | null> {
+  const info = await stat(path);
+  if (!info.isFile || info.size === 0) return null;
+
+  let offset = 0;
+  let carry = '';
+  let title: string | null = null;
+
+  while (offset < info.size) {
+    const want = Math.min(MAX_CHUNK_BYTES, info.size - offset);
+    const bytes = await readRange(path, offset, want);
+    if (bytes.length === 0) break;
+
+    const isLastChunk = offset + bytes.length >= info.size;
+    const cut = isLastChunk ? bytes.length - 1 : lastNewlineIndex(bytes);
+    if (cut < 0) {
+      // No line break in a whole chunk: skip past it rather than spinning.
+      offset += bytes.length;
+      carry = '';
+      continue;
+    }
+
+    const consumed = cut + 1;
+    const text = carry + new TextDecoder().decode(bytes.subarray(0, consumed));
+    const chunkTitle = lastTitleIn(text);
+    if (chunkTitle !== null) title = chunkTitle;
+
+    carry = isLastChunk ? '' : new TextDecoder().decode(bytes.subarray(consumed));
+    offset += bytes.length;
+  }
+
+  return title;
 }

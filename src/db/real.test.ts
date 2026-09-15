@@ -23,12 +23,25 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
   default: { load: async () => harness.db },
 }));
 
-import { getMessages, insertMessages, resetDb, searchMessages, createTask } from './index';
+import {
+  createTask,
+  insertMessages,
+  listTranscriptFiles,
+  listTranscriptFilesNeedingTitle,
+  resetDb,
+  searchMessages,
+  setTranscriptTitle,
+} from './index';
 import { listPastSessions } from './sessions';
 import { usageBreakdown, usageSummary, windowUsage } from '../capture/usage';
 import { contextUsage } from '../capture/context';
 import { touchedFiles } from './touched';
-import { createProject } from './projects';
+import {
+  backfillProjectsFromTasks,
+  createProject,
+  findWorktreeProjects,
+  listUnclaimedRepos,
+} from './projects';
 
 let db: TestDb;
 
@@ -288,52 +301,6 @@ describe('usage and context aggregates — executed', () => {
 
 // ---------------------------------------------------------------------------
 
-describe('getMessages paging — executed', () => {
-  beforeEach(async () => {
-    await insertMessages(
-      Array.from({ length: 50 }, (_, i) => ({
-        taskId: 1, sessionId: 's1', seq: i * 100, role: 'assistant' as const,
-        toolName: null, targetPath: null, body: `row ${i}`,
-        rawJson: '{}', ts: 1_000 + i,
-      })),
-    );
-  });
-
-  it('keeps the TAIL when no afterSeq is given', async () => {
-    const page = await getMessages({ sessionId: 's1', limit: 5 });
-    expect(page.map((m) => m.seq)).toEqual([4500, 4600, 4700, 4800, 4900]);
-  });
-
-  it('keeps the HEAD after afterSeq, so forward pages cannot leave a hole', async () => {
-    const page = await getMessages({ sessionId: 's1', afterSeq: 1000, limit: 5 });
-    expect(page.map((m) => m.seq)).toEqual([1100, 1200, 1300, 1400, 1500]);
-  });
-
-  it('pages forward contiguously at any limit', async () => {
-    for (const limit of [1, 7, 49]) {
-      const seen: number[] = [];
-      let cursor = -1;
-      for (;;) {
-        const page = await getMessages({ sessionId: 's1', afterSeq: cursor, limit });
-        if (page.length === 0) break;
-        seen.push(...page.map((m) => m.seq));
-        cursor = page[page.length - 1]?.seq ?? cursor;
-      }
-      expect(seen, `limit ${limit}`).toEqual(Array.from({ length: 50 }, (_, i) => i * 100));
-    }
-  });
-
-  it('orders a task-scoped read by ts, so a resumed session follows the first', async () => {
-    await insertMessages([
-      { taskId: 1, sessionId: 's2', seq: 0, role: 'assistant', toolName: null,
-        targetPath: null, body: 'resumed', rawJson: '{}', ts: 99_999 },
-    ]);
-    const rows = await getMessages({ taskId: 1 });
-    // s2 restarts seq at 0 but is newest; seq-led ordering would put it first
-    expect(rows[rows.length - 1]?.sessionId).toBe('s2');
-  });
-});
-
 // ---------------------------------------------------------------------------
 
 describe('searchMessages — executed', () => {
@@ -397,4 +364,453 @@ describe('touchedFiles — executed', () => {
     expect(paths).toContain('src/b.ts');
     expect(paths).not.toContain('src/c.ts');
   });
+});
+
+
+// ---------------------------------------------------------------------------
+
+describe('branch and first prompt — the discriminators', () => {
+  /** Seed a line with a git branch on the envelope, as the adapter would. */
+  function seedBranchedTurn(
+    sessionId: string,
+    line: number,
+    ts: number,
+    branch: string | null,
+    body: string,
+    role = 'user',
+  ): void {
+    const raw = JSON.stringify({
+      type: role === 'user' ? 'user' : 'assistant',
+      sessionId, timestamp: new Date(ts).toISOString(), cwd: '/w',
+      ...(branch === null ? {} : { gitBranch: branch }),
+      message: { role, content: body },
+    });
+    db.raw
+      .prepare(
+        `INSERT INTO messages (task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts)
+         VALUES (NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+      )
+      .run(sessionId, line * 100, role, body, raw, ts);
+  }
+
+  it('reports the branch the session ENDED on', async () => {
+    seedBranchedTurn('s1', 0, 1, 'master', 'start here');
+    seedBranchedTurn('s1', 1, 2, 'ACME-2346', 'switched');
+    seedBranchedTurn('s1', 2, 3, 'PLATFORM-1NF', 'switched again');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.branch).toBe('PLATFORM-1NF');
+  });
+
+  it('skips rows with no branch rather than reporting null', async () => {
+    seedBranchedTurn('s1', 0, 1, 'ACME-2346', 'real work');
+    seedBranchedTurn('s1', 1, 2, null, 'a line with no envelope branch');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.branch).toBe('ACME-2346');
+  });
+
+  it('is null when the session never recorded one', async () => {
+    seedBranchedTurn('s1', 0, 1, null, 'no branch anywhere');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.branch).toBeNull();
+  });
+
+  it('SKIPS injected openers and takes the first prompt the human typed', async () => {
+    // 75 of the user's 115 sessions open with one of these. Taking the naive
+    // first user row collapses 115 sessions onto 43 distinct labels.
+    seedBranchedTurn('s1', 0, 1, 'master', '<command-name>/resume</command-name>');
+    seedBranchedTurn('s1', 1, 2, 'master', '[Request interrupted by user]');
+    seedBranchedTurn('s1', 2, 3, 'master', 'fix the uploader retry logic');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.firstPrompt).toBe('fix the uploader retry logic');
+  });
+
+  it('differentiates sessions that share a branch and a cwd', async () => {
+    // The actual complaint: 18 sessions on `master`, all in the same checkout.
+    for (const [i, prompt] of ['add retry to uploader', 'investigate the slow query', 'rename the config keys'].entries()) {
+      seedBranchedTurn(`s${i}`, 0, 100 + i, 'master', '<command-name>/clear</command-name>');
+      seedBranchedTurn(`s${i}`, 1, 200 + i, 'master', prompt);
+      seedTranscriptFile(db, { path: `/p/s${i}.jsonl`, sessionId: `s${i}`, cwd: '/Users/x/www/acme' });
+    }
+    const rows = await listPastSessions();
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((r) => r.cwd)).size).toBe(1); // cwd tells them apart: no
+    expect(new Set(rows.map((r) => r.branch)).size).toBe(1); // branch: also no
+    expect(new Set(rows.map((r) => r.firstPrompt)).size).toBe(3); // prompt: yes
+  });
+
+  it('collapses newlines and truncates a long opening prompt', async () => {
+    seedBranchedTurn('s1', 0, 1, 'master', `first line\n\n\tsecond   line ${'x'.repeat(300)}`);
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    const p = (await listPastSessions())[0]?.firstPrompt ?? '';
+    expect(p).not.toContain('\n');
+    expect(p).not.toContain('  ');
+    expect(p.length).toBeLessThanOrEqual(160);
+    expect(p.startsWith('first line second line')).toBe(true);
+  });
+
+  it('is null when a session has only injected openers', async () => {
+    seedBranchedTurn('s1', 0, 1, 'master', '<command-name>/status</command-name>');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.firstPrompt).toBeNull();
+  });
+
+  it('ignores assistant rows when looking for the opening prompt', async () => {
+    seedBranchedTurn('s1', 0, 1, 'master', 'I will start now', 'assistant');
+    seedBranchedTurn('s1', 1, 2, 'master', 'the human question', 'user');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.firstPrompt).toBe('the human question');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('transcript title sentinel', () => {
+  it("distinguishes 'not scanned' from 'scanned, no title'", async () => {
+    seedTranscriptFile(db, { path: '/p/a.jsonl', sessionId: 'a', title: null });
+    seedTranscriptFile(db, { path: '/p/b.jsonl', sessionId: 'b', title: '' });
+    seedTranscriptFile(db, { path: '/p/c.jsonl', sessionId: 'c', title: 'Real Title' });
+
+    // only the unscanned file is offered to the backfill
+    expect((await listTranscriptFilesNeedingTitle()).map((f) => f.path)).toEqual(['/p/a.jsonl']);
+
+    // and the sentinel never leaks out as a title
+    const files = await listTranscriptFiles();
+    const byPath = new Map(files.map((f) => [f.path, f.title]));
+    expect(byPath.get('/p/a.jsonl')).toBeNull();
+    expect(byPath.get('/p/b.jsonl')).toBeNull();
+    expect(byPath.get('/p/c.jsonl')).toBe('Real Title');
+  });
+
+  it('marks a titleless file so it is never re-read', async () => {
+    seedTranscriptFile(db, { path: '/p/a.jsonl', sessionId: 'a', title: null });
+    await setTranscriptTitle('/p/a.jsonl', null);
+    expect(await listTranscriptFilesNeedingTitle()).toEqual([]);
+  });
+
+  it('records a found title and surfaces it in the session browser', async () => {
+    seedTurn(db, { sessionId: 'a', line: 0, ts: 1 });
+    seedTranscriptFile(db, { path: '/p/a.jsonl', sessionId: 'a', cwd: '/w', title: null });
+    await setTranscriptTitle('/p/a.jsonl', 'Refactor the uploader');
+    expect((await listPastSessions())[0]?.title).toBe('Refactor the uploader');
+    expect(await listTranscriptFilesNeedingTitle()).toEqual([]);
+  });
+});
+
+
+describe('topFiles', () => {
+  function seedWrite(sessionId: string, seq: number, tool: string, path: string | null): void {
+    db.raw
+      .prepare(
+        `INSERT INTO messages (task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts)
+         VALUES (NULL, ?, ?, 'tool_use', ?, ?, 'x', '{}', ?)`,
+      )
+      .run(sessionId, seq, tool, path, 1000 + seq);
+  }
+
+  it('returns BASENAMES, most-touched first', async () => {
+    seedWrite('s1', 0, 'Edit', '/wt/slug/src/uploader.ts');
+    seedWrite('s1', 100, 'Edit', '/wt/slug/src/uploader.ts');
+    seedWrite('s1', 200, 'Write', '/wt/slug/src/uploader.ts');
+    seedWrite('s1', 300, 'Edit', '/wt/slug/src/config.ts');
+    seedWrite('s1', 400, 'Edit', '/wt/slug/src/config.ts');
+    seedWrite('s1', 500, 'Edit', '/wt/slug/README.md');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+
+    const [s] = await listPastSessions();
+    // basenames, never full paths — full paths were the cwd problem again
+    expect(s?.topFiles).toEqual(['uploader.ts', 'config.ts', 'README.md']);
+    for (const f of s?.topFiles ?? []) expect(f).not.toContain('/');
+  });
+
+  it('shows at most three', async () => {
+    for (let i = 0; i < 9; i++) seedWrite('s1', i * 100, 'Edit', `/wt/f${i}.ts`);
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.topFiles).toHaveLength(3);
+  });
+
+  it('is an empty array for a session that wrote nothing', async () => {
+    seedTurn(db, { sessionId: 's1', line: 0, ts: 1 });
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.topFiles).toEqual([]);
+  });
+
+  it('counts only writing tools — reading a file is not touching it', async () => {
+    seedWrite('s1', 0, 'Read', '/wt/read-only.ts');
+    seedWrite('s1', 100, 'Grep', '/wt/searched.ts');
+    seedWrite('s1', 200, 'Edit', '/wt/written.ts');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.topFiles).toEqual(['written.ts']);
+  });
+
+  it('de-duplicates basenames that collide across directories', async () => {
+    seedWrite('s1', 0, 'Edit', '/wt/src/index.ts');
+    seedWrite('s1', 100, 'Edit', '/wt/src/index.ts');
+    seedWrite('s1', 200, 'Edit', '/wt/test/index.ts');
+    seedWrite('s1', 300, 'Edit', '/wt/src/other.ts');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    const files = (await listPastSessions())[0]?.topFiles ?? [];
+    expect(files).toEqual(['index.ts', 'other.ts']);
+    expect(new Set(files).size).toBe(files.length);
+  });
+
+  it('ignores null and blank target paths', async () => {
+    seedWrite('s1', 0, 'Edit', null);
+    seedWrite('s1', 100, 'Edit', '   ');
+    seedWrite('s1', 200, 'Edit', '/wt/real.ts');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.topFiles).toEqual(['real.ts']);
+  });
+
+  it('keeps sessions separate', async () => {
+    seedWrite('s1', 0, 'Edit', '/wt/a.ts');
+    seedWrite('s2', 0, 'Edit', '/wt/b.ts');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    seedTranscriptFile(db, { path: '/p/s2.jsonl', sessionId: 's2', cwd: '/w' });
+    const rows = await listPastSessions();
+    const byId = new Map(rows.map((r) => [r.sessionId, r.topFiles]));
+    expect(byId.get('s1')).toEqual(['a.ts']);
+    expect(byId.get('s2')).toEqual(['b.ts']);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+
+describe('backfillProjectsFromTasks — worktree resolution, and never creating', () => {
+  /** git's answer: every `<repo>-<SUFFIX>` directory is a worktree of `<repo>`. */
+  const resolveWorktrees = async (path: string): Promise<string> => {
+    const m = /^(.*\/acme)-[A-Z0-9-]+$/.exec(path);
+    return m ? (m[1] as string) : path;
+  };
+
+  async function seedTask(repoPath: string, projectId: number | null = null): Promise<number> {
+    const res = await db.execute(
+      `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path,
+                          session_id, owns_worktree, status, created_at, last_activity_at)
+       VALUES ('t', $1, $2, 'main', 'b', $2, NULL, 1, 'idle', 1, NULL)`,
+      [projectId, repoPath],
+    );
+    return res.lastInsertId as number;
+  }
+
+  it('links a task in a WORKTREE to the existing project, creating nothing', async () => {
+    // Exactly the user's database: a task in /Users/dev/www/acme-ACME-2368
+    // used to produce a second project named after the worktree folder.
+    const real = await createProject({
+      name: 'acme', repoPath: '/Users/dev/www/acme',
+      worktreeRoot: '/Users/dev/www/worktrees', defaultBaseBranch: null,
+    });
+    const taskId = await seedTask('/Users/dev/www/acme-ACME-2368');
+
+    const result = await backfillProjectsFromTasks(resolveWorktrees);
+
+    const projects = await listProjectsRaw();
+    expect(projects).toHaveLength(1); // not 2
+    expect(projects[0]?.name).toBe('acme');
+    expect(await projectIdOf(taskId)).toBe(real.id);
+    expect(result.relinked).toBe(1);
+  });
+
+  it('CREATES NO PROJECTS, whatever the input — the invariant', async () => {
+    await seedTask('/Users/dev/www/never-seen-before');
+    await seedTask('/Users/dev/www/acme-ACME-9999');
+    await seedTask('/some/other/repo');
+    await seedTask('   ');
+
+    const result = await backfillProjectsFromTasks(resolveWorktrees);
+
+    expect(await listProjectsRaw()).toHaveLength(0);
+    expect(result.relinked).toBe(0);
+    expect(result).not.toHaveProperty('created');
+  });
+
+  it('leaves an unmatched task in "Other" rather than inventing a home', async () => {
+    const taskId = await seedTask('/Users/dev/www/unknown-repo');
+    await backfillProjectsFromTasks(resolveWorktrees);
+    expect(await projectIdOf(taskId)).toBeNull();
+    expect(await listProjectsRaw()).toHaveLength(0);
+  });
+
+  it('collapses several worktrees of one repo onto that one project', async () => {
+    const real = await createProject({
+      name: 'acme', repoPath: '/Users/dev/www/acme',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const a = await seedTask('/Users/dev/www/acme-ACME-2368');
+    const b = await seedTask('/Users/dev/www/acme-PLATFORM-1NF');
+    const c = await seedTask('/Users/dev/www/acme');
+
+    await backfillProjectsFromTasks(resolveWorktrees);
+
+    expect(await listProjectsRaw()).toHaveLength(1);
+    for (const id of [a, b, c]) expect(await projectIdOf(id)).toBe(real.id);
+  });
+
+  it('repairs a task already linked to a bogus worktree project', async () => {
+    // The state the user is actually in right now.
+    const real = await createProject({
+      name: 'acme', repoPath: '/Users/dev/www/acme',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const bogus = await createProject({
+      name: 'acme-ACME-2368', repoPath: '/Users/dev/www/acme-ACME-2368',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const taskId = await seedTask('/Users/dev/www/acme-ACME-2368', bogus.id);
+
+    const result = await backfillProjectsFromTasks(resolveWorktrees);
+
+    expect(await projectIdOf(taskId)).toBe(real.id);
+    // the bogus project is REPORTED, never deleted or merged
+    expect(result.worktreeProjects.map((w) => w.project.name)).toEqual(['acme-ACME-2368']);
+    expect(result.worktreeProjects[0]?.parent.name).toBe('acme');
+    expect(await listProjectsRaw()).toHaveLength(2);
+  });
+
+  it('is idempotent across launches', async () => {
+    await createProject({
+      name: 'acme', repoPath: '/Users/dev/www/acme',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    await seedTask('/Users/dev/www/acme-ACME-2368');
+
+    const first = await backfillProjectsFromTasks(resolveWorktrees);
+    const second = await backfillProjectsFromTasks(resolveWorktrees);
+    const third = await backfillProjectsFromTasks(resolveWorktrees);
+
+    expect(first.relinked).toBe(1);
+    expect(second.relinked).toBe(0); // nothing left to do
+    expect(third.relinked).toBe(0);
+    expect(await listProjectsRaw()).toHaveLength(1);
+  });
+
+  it('survives a resolver that throws, falling back to the raw path', async () => {
+    const real = await createProject({
+      name: 'acme', repoPath: '/Users/dev/www/acme',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const taskId = await seedTask('/Users/dev/www/acme');
+    const angry = async (): Promise<string> => {
+      throw new Error('not a git repository');
+    };
+    await expect(backfillProjectsFromTasks(angry)).resolves.toBeDefined();
+    // the raw path still matched a project, so the link still happened
+    expect(await projectIdOf(taskId)).toBe(real.id);
+  });
+
+  it('detects a worktree project without touching it', async () => {
+    await createProject({
+      name: 'acme', repoPath: '/Users/dev/www/acme',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    await createProject({
+      name: 'acme-ACME-2368', repoPath: '/Users/dev/www/acme-ACME-2368',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const found = await findWorktreeProjects(resolveWorktrees);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.project.repoPath).toBe('/Users/dev/www/acme-ACME-2368');
+    expect(found[0]?.parent.repoPath).toBe('/Users/dev/www/acme');
+    expect(await listProjectsRaw()).toHaveLength(2); // nothing merged or deleted
+  });
+
+  it('does not flag unrelated projects as worktrees of one another', async () => {
+    await createProject({ name: 'a', repoPath: '/w/a', worktreeRoot: '/wt', defaultBaseBranch: null });
+    await createProject({ name: 'b', repoPath: '/w/b', worktreeRoot: '/wt', defaultBaseBranch: null });
+    expect(await findWorktreeProjects(resolveWorktrees)).toEqual([]);
+  });
+
+  async function listProjectsRaw() {
+    return db.raw.prepare('SELECT id, name, repo_path FROM projects ORDER BY id').all() as {
+      id: number; name: string; repo_path: string;
+    }[];
+  }
+  async function projectIdOf(taskId: number): Promise<number | null> {
+    const row = db.raw.prepare('SELECT project_id FROM tasks WHERE id = ?').get(taskId) as
+      | { project_id: number | null }
+      | undefined;
+    return row?.project_id ?? null;
+  }
+});
+
+describe('listUnclaimedRepos — the import candidates', () => {
+  const resolveWorktrees = async (path: string): Promise<string> => {
+    const m = /^(.*\/acme)-[A-Z0-9-]+$/.exec(path);
+    return m ? (m[1] as string) : path;
+  };
+
+  it('offers a repo with captured history that no project claims', async () => {
+    seedTurn(db, { sessionId: 's1', line: 0, ts: 5_000 });
+    seedTurn(db, { sessionId: 's1', line: 1, ts: 6_000 });
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/Users/dev/www/acme' });
+
+    const [repo] = await listUnclaimedRepos(resolveWorktrees);
+    expect(repo?.repoRoot).toBe('/Users/dev/www/acme');
+    expect(repo?.suggestedName).toBe('acme');
+    expect(repo?.sessionCount).toBe(1);
+    expect(repo?.messageCount).toBe(2);
+    expect(repo?.lastActivityAt).toBe(6_000);
+  });
+
+  it('collapses worktree directories onto the repository, listing both', async () => {
+    seedTurn(db, { sessionId: 'a', line: 0, ts: 1_000 });
+    seedTurn(db, { sessionId: 'b', line: 0, ts: 9_000 });
+    seedTranscriptFile(db, { path: '/p/a.jsonl', sessionId: 'a', cwd: '/Users/dev/www/acme' });
+    seedTranscriptFile(db, { path: '/p/b.jsonl', sessionId: 'b', cwd: '/Users/dev/www/acme-ACME-2368' });
+
+    const repos = await listUnclaimedRepos(resolveWorktrees);
+    expect(repos).toHaveLength(1);
+    expect(repos[0]?.sessionCount).toBe(2);
+    expect(repos[0]?.lastActivityAt).toBe(9_000);
+    expect(repos[0]?.directories.sort()).toEqual([
+      '/Users/dev/www/acme',
+      '/Users/dev/www/acme-ACME-2368',
+    ]);
+  });
+
+  it('does not offer a repo a project already claims', async () => {
+    await createProject({
+      name: 'acme', repoPath: '/Users/dev/www/acme',
+      worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    seedTurn(db, { sessionId: 's1', line: 0, ts: 1 });
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/Users/dev/www/acme-ACME-2368' });
+    expect(await listUnclaimedRepos(resolveWorktrees)).toEqual([]);
+  });
+
+  it('treats an ARCHIVED project as claimed — re-offering it would be nagging', async () => {
+    const p = await createProject({
+      name: 'gone', repoPath: '/w/gone', worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    await archiveProjectRaw(p.id);
+    seedTurn(db, { sessionId: 's1', line: 0, ts: 1 });
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w/gone' });
+    expect(await listUnclaimedRepos(resolveWorktrees)).toEqual([]);
+  });
+
+  it('counts tasks with no project', async () => {
+    await db.execute(
+      `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path,
+                          session_id, owns_worktree, status, created_at, last_activity_at)
+       VALUES ('t', NULL, '/w/solo', 'main', 'b', '/w/solo', NULL, 1, 'idle', 1, NULL)`,
+    );
+    const [repo] = await listUnclaimedRepos(resolveWorktrees);
+    expect(repo?.repoRoot).toBe('/w/solo');
+    expect(repo?.taskCount).toBe(1);
+    expect(repo?.sessionCount).toBe(0);
+  });
+
+  it('orders by most recent activity', async () => {
+    for (const [id, ts] of [['old', 1_000], ['new', 9_000], ['mid', 5_000]] as const) {
+      seedTurn(db, { sessionId: id, line: 0, ts });
+      seedTranscriptFile(db, { path: `/p/${id}.jsonl`, sessionId: id, cwd: `/w/${id}` });
+    }
+    expect((await listUnclaimedRepos(resolveWorktrees)).map((r) => r.repoRoot)).toEqual([
+      '/w/new', '/w/mid', '/w/old',
+    ]);
+  });
+
+  async function archiveProjectRaw(id: number): Promise<void> {
+    db.raw.prepare('UPDATE projects SET archived_at = 1 WHERE id = ?').run(id);
+  }
 });
