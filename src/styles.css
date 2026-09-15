@@ -1,0 +1,666 @@
+/* ==========================================================================
+   Albedo — design tokens + shell styles.
+   Owned by the shell workstream (M2). Do not edit from another workstream:
+   append to src/ui/<area>.css and import it from your component instead.
+
+   The tokens below are the shared visual language. Use them; do not hardcode
+   colours. Prefix your own class names by area: `tx-` transcript, `wt-`
+   worktree. Shell classes are unprefixed or `sh-`.
+
+   Design intent: a desktop cockpit for someone who lives in a terminal and an
+   IDE. Dark, dense, low-chrome, information first. Square corners, hairline
+   borders, no decorative padding. Quiet until something needs attention —
+   `blocked` is the only thing allowed to move.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* --- surfaces ---------------------------------------------------------- */
+  --bg: #0b0d10;          /* window ground, terminal ground */
+  --panel: #111419;       /* sidebar, header, pane chrome */
+  --panel-raised: #171b21;/* hover / selected rows, buttons */
+  --panel-inset: #090b0e; /* wells: terminal body, code blocks */
+  --border: #1f242d;      /* hairlines between panes and rows */
+  --border-strong: #2d3542;/* splitters, focused inputs */
+
+  /* --- type -------------------------------------------------------------- */
+  --text: #ccd3de;        /* body text */
+  --text-strong: #f1f4f9; /* titles, active row */
+  --muted: #6d7684;       /* metadata: repo, branch, timestamps */
+  --faint: #474e59;       /* separators inside text, disabled */
+
+  /* --- accent + diff ----------------------------------------------------- */
+  --accent: #4d9fff;
+  --accent-soft: rgba(77, 159, 255, 0.14);
+  --accent-line: rgba(77, 159, 255, 0.45);
+  --add: #4cbf72;
+  --add-soft: rgba(76, 191, 114, 0.13);
+  --del: #e35b56;
+  --del-soft: rgba(227, 91, 86, 0.13);
+
+  /* --- status (TaskStatus from src/types.ts) ------------------------------ */
+  --status-idle: #5d6673;
+  --status-running: #4d9fff;
+  --status-blocked: #f0a33a;
+  --status-done: #4cbf72;
+  --status-archived: #3a414b;
+  --warn: #f0a33a;
+  --danger: #e35b56;
+
+  /* --- metrics ----------------------------------------------------------- */
+  --titlebar-h: 38px;         /* macOS overlay title bar strip */
+  --traffic-lights-w: 78px;   /* keep the top-left clear of the stoplights */
+  --sidebar-min: 200px;
+  --sidebar-max: 480px;
+  --row-h: 46px;
+  --tab-h: 28px;
+  --radius: 3px;              /* barely there, on purpose */
+
+  /* --- fonts ------------------------------------------------------------- */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+    system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas,
+    monospace;
+  --fs-xs: 10.5px;
+  --fs-sm: 11.5px;
+  --fs-md: 12.5px;
+  --fs-lg: 13.5px;
+}
+
+/* --------------------------------------------------------------------------
+   Reset
+   -------------------------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* A cockpit, not a document: no accidental text drag-select of chrome. */
+  user-select: none;
+  cursor: default;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+
+::selection { background: var(--accent-soft); }
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #262c35;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: #39414d; background-clip: content-box; }
+
+/* --------------------------------------------------------------------------
+   App frame
+   -------------------------------------------------------------------------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+
+.app-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Header — macOS overlay title bar lives here.
+   The whole strip is a drag region; interactive children opt out by simply
+   not carrying data-tauri-drag-region (Tauri tests the event target).
+   -------------------------------------------------------------------------- */
+
+.header {
+  flex: 0 0 var(--titlebar-h);
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-left: var(--traffic-lights-w);   /* clear of the stoplights */
+  padding-right: 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-brand {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.header-spacer { flex: 1 1 auto; height: 100%; }
+
+.header-actions { display: flex; align-items: center; gap: 6px; }
+
+/* Usage meter ------------------------------------------------------------- */
+
+.usage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.usage-label {
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.usage-figure { color: var(--text); font-family: var(--font-mono); }
+.usage-figure em { font-style: normal; color: var(--muted); }
+
+.usage-bar {
+  position: relative;
+  width: 108px;
+  height: 4px;
+  background: #1b2029;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  transition: width 400ms ease;
+}
+
+.usage-bar-fill[data-level='warn'] { background: var(--warn); }
+.usage-bar-fill[data-level='high'] { background: var(--danger); }
+
+.usage-stale { color: var(--faint); font-style: italic; }
+.usage-error { color: var(--warn); }
+
+/* Small chrome button ----------------------------------------------------- */
+
+.btn {
+  height: 22px;
+  padding: 0 9px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.btn:hover { background: #1f242c; border-color: var(--border-strong); color: var(--text-strong); }
+.btn:active { background: #10141a; }
+.btn[disabled] { color: var(--faint); background: transparent; }
+
+.btn-primary { background: var(--accent-soft); border-color: var(--accent-line); color: #bcd9ff; }
+.btn-primary:hover { background: rgba(77, 159, 255, 0.22); color: #e2effe; }
+
+.btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn-ghost:hover { background: var(--panel-raised); color: var(--text); border-color: var(--border); }
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  margin-left: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar / task list
+   -------------------------------------------------------------------------- */
+
+.sidebar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: var(--sidebar-min);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.tasklist { display: flex; flex-direction: column; height: 100%; outline: none; }
+
+.tasklist-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--tab-h);
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tasklist-title {
+  flex: 1 1 auto;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.tasklist-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+
+.tasklist-empty {
+  padding: 18px 12px;
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  line-height: 1.6;
+}
+
+.group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px 4px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.group-label[data-tone='blocked'] { color: var(--status-blocked); }
+
+.group-rule { flex: 1 1 auto; height: 1px; background: var(--border); }
+
+/* Task row ---------------------------------------------------------------- */
+
+.task-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 7px;
+  align-items: center;
+  width: 100%;
+  min-height: var(--row-h);
+  padding: 6px 8px;
+  text-align: left;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+
+.task-row:hover { background: var(--panel-raised); }
+
+.task-row[data-selected='true'] {
+  background: var(--panel-raised);
+  border-left-color: var(--accent);
+}
+
+.task-row[data-selected='true'] .task-title { color: var(--text-strong); }
+
+.task-row[data-status='blocked'] { background: rgba(240, 163, 58, 0.05); }
+.task-row[data-status='blocked']:hover { background: rgba(240, 163, 58, 0.09); }
+.task-row[data-status='archived'] .task-title,
+.task-row[data-status='archived'] .task-meta { color: var(--faint); }
+
+.task-dot-cell { grid-row: 1 / span 2; justify-self: center; }
+
+.task-title {
+  grid-column: 2;
+  font-size: var(--fs-md);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-age {
+  grid-column: 3;
+  grid-row: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-meta {
+  grid-column: 2 / span 2;
+  grid-row: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.task-repo { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.task-sep { color: var(--faint); }
+.task-branch {
+  flex: 0 1 auto;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-index {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  color: var(--faint);
+  opacity: 0;
+}
+.task-row:hover .task-index,
+.task-row[data-selected='true'] .task-index { opacity: 1; }
+
+/* Status dot -------------------------------------------------------------- */
+
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-idle);
+  flex: 0 0 auto;
+}
+
+.status-dot[data-status='idle'] { background: var(--status-idle); }
+.status-dot[data-status='done'] { background: var(--status-done); }
+.status-dot[data-status='archived'] { background: transparent; box-shadow: inset 0 0 0 1px var(--status-archived); }
+.status-dot[data-status='running'] {
+  background: var(--status-running);
+  animation: dot-breathe 1.9s ease-in-out infinite;
+}
+.status-dot[data-status='blocked'] {
+  background: var(--status-blocked);
+  box-shadow: 0 0 0 0 rgba(240, 163, 58, 0.55);
+  animation: dot-ping 1.6s ease-out infinite;
+}
+
+@keyframes dot-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes dot-ping {
+  0% { box-shadow: 0 0 0 0 rgba(240, 163, 58, 0.5); }
+  70% { box-shadow: 0 0 0 5px rgba(240, 163, 58, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(240, 163, 58, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot { animation: none !important; }
+  .usage-bar-fill { transition: none; }
+}
+
+/* --------------------------------------------------------------------------
+   Splitters
+   -------------------------------------------------------------------------- */
+
+.splitter {
+  flex: 0 0 5px;
+  position: relative;
+  background: transparent;
+  z-index: 3;
+}
+.splitter-v { cursor: col-resize; margin: 0 -2px; }
+.splitter-h { flex-basis: 5px; cursor: row-resize; margin: -2px 0; }
+
+.splitter::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.splitter:hover::after,
+.splitter[data-dragging='true']::after { background: var(--accent-line); }
+
+/* While dragging, don't let the terminal eat pointer events. */
+.app[data-dragging='true'] { cursor: col-resize; }
+.app[data-dragging='true'] .pane-body { pointer-events: none; }
+
+/* --------------------------------------------------------------------------
+   Main area: pty pane + transcript pane
+   -------------------------------------------------------------------------- */
+
+.main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg);
+}
+
+.main-bar {
+  flex: 0 0 var(--tab-h);
+  height: var(--tab-h);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.main-ident {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.main-ident-title {
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-ident-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.seg {
+  display: flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.seg button {
+  height: 20px;
+  padding: 0 9px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border-right: 1px solid var(--border);
+}
+.seg button:last-child { border-right: none; }
+.seg button:hover { color: var(--text); background: var(--panel-raised); }
+.seg button[aria-pressed='true'] { color: #cfe4ff; background: var(--accent-soft); }
+
+.panes {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+.panes[data-orientation='row'] { flex-direction: row; }
+.panes[data-orientation='column'] { flex-direction: column; }
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane-head {
+  flex: 0 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-head-note {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-mono);
+}
+
+.pane[hidden] { display: none !important; }
+
+.pane-body { flex: 1 1 auto; position: relative; min-height: 0; min-width: 0; overflow: hidden; }
+
+.pane-transcript { border-left: 1px solid var(--border); }
+.panes[data-orientation='column'] .pane-transcript { border-left: none; border-top: 1px solid var(--border); }
+
+/* --------------------------------------------------------------------------
+   Terminal
+   -------------------------------------------------------------------------- */
+
+.term-stack { position: absolute; inset: 0; background: var(--panel-inset); }
+
+.term {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-inset);
+}
+
+.term[hidden] { display: none; }
+
+.term-surface { flex: 1 1 auto; min-height: 0; padding: 4px 2px 0 6px; overflow: hidden; }
+
+/* xterm's own sizing: let it fill the surface. */
+.term-surface .xterm { height: 100%; }
+.term-surface .xterm-viewport { background: transparent !important; }
+
+.term-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--muted);
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+.term-status[data-tone='error'] { color: var(--danger); }
+.term-status[data-tone='exited'] { color: var(--warn); }
+
+.term-starting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Placeholders + failures (a half-built sibling must never white-screen)
+   -------------------------------------------------------------------------- */
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+}
+
+.placeholder-key { font-family: var(--font-mono); color: var(--muted); }
+
+.pane-error {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--danger);
+  background: var(--panel-inset);
+  user-select: text;
+}
+.pane-error pre { margin: 8px 0 0; white-space: pre-wrap; color: var(--muted); }
+
+.banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+  color: #f6d6a4;
+  background: rgba(240, 163, 58, 0.1);
+  border-bottom: 1px solid rgba(240, 163, 58, 0.25);
+}
+.banner-text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

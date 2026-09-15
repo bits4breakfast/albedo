@@ -1,0 +1,139 @@
+/**
+ * src/capture/status.ts
+ *
+ * Task status derived from PERSISTED TRANSCRIPT ROWS ONLY.
+ *
+ * The pty channel is opaque (CLAUDE.md): nothing here may look at terminal
+ * bytes. Every other workstream trusts this function, so the rules below are
+ * spelled out and unit-tested one by one.
+ *
+ * Rule order, highest priority first:
+ *
+ *   1. a trailing `tool_use` with no matching `tool_result`  -> 'blocked'
+ *      (Claude Code writes no "waiting for permission" line; an unanswered
+ *      tool call IS the permission prompt.) This wins over everything below,
+ *      whatever stop_reason says.
+ *   2. the tail is an assistant row whose line ended the turn
+ *      (stop_reason 'end_turn' / 'stop_sequence')            -> 'idle'
+ *   3. activity newer than RUNNING_WINDOW_MS                 -> 'running'
+ *   4. tail is an assistant row (turn ended, just too old)   -> 'idle'
+ *   5. no rows at all                                        -> 'idle'
+ *
+ * Rules 2 and 3 are in that order on purpose. Recency alone cannot tell
+ * "still working" from "just finished", so ordering recency first made every
+ * completed task read `running` for 90 seconds -- a wrong answer to the
+ * question this whole app exists to answer. `stop_reason` is the transcript
+ * saying explicitly which one it is, so it is consulted first and the recency
+ * window is left as the fallback for lines that do not carry the field.
+ *
+ * 'done' and 'archived' are lifecycle states owned by the user, never derived.
+ */
+
+import type { Message, TaskStatus } from '../types';
+import { stopReasonOf, toolCallIdOf, TURN_ENDING_STOP_REASONS } from './adapter';
+
+/** How recent transcript activity must be for a session to read as running. */
+export const RUNNING_WINDOW_MS = 90_000;
+
+/**
+ * Roles that count as "the session is doing something".
+ *
+ * `user` is in here deliberately: Claude Code writes the assistant line only
+ * once the response is complete, so during a long thinking phase the newest
+ * row IS the human's prompt. Leaving `user` out made a session that is very
+ * much working report `idle`. A prompt that has genuinely been abandoned ages
+ * out of the window like anything else.
+ */
+export const ACTIVITY_ROLES: ReadonlySet<Message['role']> = new Set([
+  'user',
+  'assistant',
+  'tool_use',
+  'tool_result',
+]);
+
+type StatusInput = Pick<Message, 'role' | 'seq' | 'ts' | 'rawJson'>;
+
+/**
+ * @param messages rows for ONE session/task. Order does not matter; they are
+ *                 sorted here by (ts, seq) so a caller cannot get this wrong.
+ * @param now      injectable clock, for tests.
+ */
+export function deriveStatus(messages: Message[], now: number = Date.now()): TaskStatus {
+  if (messages.length === 0) return 'idle'; // rule 4
+
+  const rows: StatusInput[] = [...messages].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
+  const last = rows[rows.length - 1];
+  if (!last) return 'idle';
+
+  // rule 1 — takes precedence over stop_reason and over recency alike. An
+  // assistant line can say stop_reason 'tool_use' and still be the thing the
+  // user has to click Allow on.
+  if (hasUnansweredToolUse(rows)) return 'blocked';
+
+  // rule 2 — the transcript states the turn is over, so say so immediately
+  // rather than reporting `running` for another RUNNING_WINDOW_MS.
+  if (handedControlBack(last)) return 'idle';
+
+  // rule 3 — fallback for lines with no usable stop_reason.
+  if (ACTIVITY_ROLES.has(last.role) && now - last.ts <= RUNNING_WINDOW_MS) {
+    return 'running';
+  }
+
+  // rule 4 — an assistant tail too old for the window.
+  if (last.role === 'assistant') return 'idle';
+
+  return 'idle';
+}
+
+/**
+ * True when the newest row is an assistant row whose JSONL line finished the
+ * turn. Any other role, a missing stop_reason, or an unreadable raw_json
+ * returns false so the caller falls through to the recency window -- never
+ * guess "finished" from absent data, or a session mid-thought goes grey.
+ */
+function handedControlBack(last: StatusInput): boolean {
+  if (last.role !== 'assistant') return false;
+  const reason = stopReasonOf(last.rawJson);
+  return reason !== null && TURN_ENDING_STOP_REASONS.has(reason);
+}
+
+/**
+ * True when a tool call issued after the last human turn never got a result.
+ *
+ * Scoping to "after the last human turn" is what keeps an interrupted turn
+ * from wedging a session at `blocked` forever: pressing Esc orphans a
+ * `tool_use`, but Claude Code then writes a `user` row, which moves the
+ * scope past the orphan.
+ */
+function hasUnansweredToolUse(rows: StatusInput[]): boolean {
+  // Fast path: the tail is a tool call, so by construction nothing answered it.
+  const last = rows[rows.length - 1];
+  if (last && last.role === 'tool_use') return true;
+
+  let lastHumanIdx = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r && r.role === 'user') {
+      lastHumanIdx = i;
+      break;
+    }
+  }
+
+  const answered = new Set<string>();
+  for (const r of rows) {
+    if (r.role !== 'tool_result') continue;
+    const id = toolCallIdOf(r);
+    if (id) answered.add(id);
+  }
+
+  for (let i = lastHumanIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || r.role !== 'tool_use') continue;
+    const id = toolCallIdOf(r);
+    // An unidentifiable tool_use (raw_json unparseable) is NOT treated as
+    // blocked; guessing "blocked" on missing data would stick a red badge on
+    // a healthy session.
+    if (id && !answered.has(id)) return true;
+  }
+  return false;
+}
