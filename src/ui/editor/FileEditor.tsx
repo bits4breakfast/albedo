@@ -55,7 +55,6 @@ import { isHandEdited, markHandEdited, onHandEditedChange } from '../../lib/hand
 import { onThemeChange, resolvedTheme } from '../theme';
 import type { ResolvedTheme } from '../theme';
 import { notePty } from '../Terminal';
-import { openInPhpStorm } from './openFile';
 import './editor.css';
 
 /** Files past this size are edited without colour. Tokenising them janks. */
@@ -376,7 +375,6 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
   const [handEdited, setHandEdited] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
-  const [externalError, setExternalError] = useState<string | null>(null);
 
   const requestPath = request?.path ?? null;
   const requestLine = request?.line ?? null;
@@ -390,7 +388,6 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     setDirty(false);
     setSaveState({ kind: 'idle' });
     setConfirmClose(false);
-    setExternalError(null);
 
     if (requestPath === null) {
       setPhase({ kind: 'idle' });
@@ -645,17 +642,6 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     return () => window.removeEventListener('keydown', onKey);
   }, [requestClose]);
 
-  const openExternally = useCallback(async () => {
-    const target = resolvedRef.current;
-    if (!target) return;
-    setExternalError(null);
-    try {
-      await openInPhpStorm(task.worktreePath, target.relative, requestLine);
-    } catch (err) {
-      setExternalError(message(err));
-    }
-  }, [task.worktreePath, requestLine]);
-
   if (request === null) return null;
 
   const title = resolved?.relative ?? request.path;
@@ -699,15 +685,6 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
         >
           Find
         </button>
-        <button
-          type="button"
-          className="ed-btn"
-          onClick={() => void openExternally()}
-          disabled={!resolved}
-          title="Open this worktree path in PHPStorm"
-        >
-          Open in PHPStorm
-        </button>
         <button type="button" className="ed-btn ed-close" onClick={requestClose} title="Close (Esc)">
           ✕
         </button>
@@ -747,12 +724,6 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
       {saveState.kind === 'saved' && !saveState.noted && (
         <div className="ed-notice" data-tone="muted">
           <span>Saved. No live session for this task, so no note was placed in the terminal.</span>
-        </div>
-      )}
-
-      {externalError && (
-        <div className="ed-notice" data-tone="error">
-          <span>{externalError}</span>
         </div>
       )}
 
