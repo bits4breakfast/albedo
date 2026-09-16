@@ -159,7 +159,62 @@ more expensive.
 
 ---
 
-## 5. Transcript and diff follow-ups
+## 5. Configuration: decide the tiers before adding options
+
+There is **no settings UI anywhere** in `src/ui`, and configuration is already
+split across two stores with no home for a third kind:
+
+| Tier | Where it lives | What it holds today |
+| --- | --- | --- |
+| Per-project | SQLite `projects` | `worktree_root`, `default_base_branch`, `task_prompt_template` |
+| Per-task | SQLite `tasks` | branch, base, `owns_worktree` |
+| View state | localStorage, 11 keys | widths, pane mode, active tab, theme |
+| **App-wide** | **nowhere** | — |
+
+The trap is adding a settings dialog before deciding that split, which produces
+a third ad-hoc store and a dialog that writes to all three.
+
+**Proposed split.** *View state* stays in localStorage — it belongs to the
+device, not the user, and a window width is not a preference worth syncing.
+Everything else is real configuration and belongs in SQLite beside the projects
+it qualifies: a `settings` key/value table for app-wide, existing columns for
+per-project. The DB is already the store, migrations already exist, and it stays
+inspectable with `sqlite3`, which is how this project gets debugged.
+
+*(The honest alternative is a hand-editable `config.json` in the app-data dir:
+it can be fixed in an editor when a bad value breaks startup, which SQLite
+cannot. Worth weighing if the setting list grows past a dozen.)*
+
+### What is actually missing is identity and integration, not tuning
+
+1. **The `claude` binary is hardcoded** — `command: 'claude'`
+   (`src/ui/Terminal.tsx:509`). A version manager, a wrapper script or a
+   non-PATH install cannot be pointed at it. It also blocks default flags
+   (`--model`, `--permission-mode`), which is the same slot the spec's M5
+   per-task auth mode needs.
+2. **The editor escape hatch is hardcoded to PhpStorm** — the CLI name and
+   `open -a PhpStorm` both (`src/ui/editor/openFile.tsx:82-115`). A VS Code,
+   Zed or Cursor user cannot use it at all. The spec's "PHPStorm stays the
+   editor" describes the author's setup, not a constraint on the app. Wants a
+   command template, e.g. `code --goto {path}:{line}`.
+3. **The transcript root is hardcoded** — `PROJECTS_SUBPATH = '.claude/projects'`
+   (`src/capture/watcher.ts:46`), and `CLAUDE_CONFIG_DIR` is read nowhere. If
+   anyone sets it, capture silently sees nothing: the same look-healthy-but-empty
+   failure as item 1 in this file. Read the env var first, fall back to the
+   default, and let a setting override both.
+
+### What NOT to make configurable
+
+The ~14 module constants (`RUNNING_WINDOW_MS`, `DEBOUNCE_MS`, `COALESCE_MS`,
+`PAGE`, `TAIL_LIMIT`, `BODY_MAX_CHARS`, …) are engineering constants, not user
+preferences. Exposing them adds surface and support burden for no benefit, and
+several are load-bearing in ways a user cannot be expected to reason about —
+`RUNNING_WINDOW_MS` is the whole reason a finished task does not read as
+`running` for 90 seconds. Leave them in code where their comments are.
+
+---
+
+## 6. Transcript and diff follow-ups
 
 - **Between-hunk gaps on a `git diff` are still dead.** The new context
   expansion (`lib/anchor.ts`) covers the leading and trailing edges only. The
