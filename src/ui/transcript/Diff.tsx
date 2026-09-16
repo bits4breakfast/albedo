@@ -27,6 +27,8 @@ import { highlightToTokens, peekTokens, plainTokens } from '../../lib/highlight'
 import type { DualToken } from '../../lib/highlight';
 import { parsePathRef } from '../../lib/paths';
 import { useOpenFile } from '../editor/openFile';
+import { anchorBlock, fileLines, type AnchorFailure } from '../../lib/anchor';
+import { useReadFile } from '../editor/openFile';
 import './transcript.css';
 
 /** Below this container width the side-by-side layout stops being readable. */
@@ -35,6 +37,9 @@ const SIDE_BY_SIDE_MIN = 860;
 /** Rows rendered before the "show more" break. */
 const INITIAL_BUDGET = 320;
 const BUDGET_STEP = 800;
+
+/** Lines of surrounding file revealed per click, as GitHub's gutter does it. */
+const CONTEXT_STEP = 20;
 
 /** Past this many lines, highlighting a blob costs more than it gives. */
 const MAX_HIGHLIGHT_LINES = 6000;
@@ -544,9 +549,22 @@ export interface DiffProps {
    * somewhere arbitrary, so per-line links stay off unless the caller says so.
    */
   absoluteLines?: boolean;
+  /**
+   * Path to read for context BEYOND the diff, or null to offer none.
+   *
+   * Passed to `useReadFile`, which resolves it: this component never joins a
+   * transcript path to a filesystem path (see `useOpenPath`).
+   */
+  contextPath?: string | null;
 }
 
-export function Diff({ diff, expand = null, layout = 'auto', absoluteLines = false }: DiffProps): ReactNode {
+export function Diff({
+  diff,
+  expand = null,
+  layout = 'auto',
+  absoluteLines = false,
+  contextPath = null,
+}: DiffProps): ReactNode {
   const [ref, width] = useContainerWidth();
   const [override, setOverride] = useState<'split' | 'unified' | null>(null);
   const [budget, setBudget] = useState(INITIAL_BUDGET);
@@ -567,6 +585,94 @@ export function Diff({ diff, expand = null, layout = 'auto', absoluteLines = fal
 
   const expandOld = useMemo(() => (expand ? sourceLines(expand.oldText) : null), [expand]);
   const expandNew = useMemo(() => (expand ? sourceLines(expand.newText) : null), [expand]);
+
+  /*
+   * ---------------------------------------------------------------------
+   * Context beyond the diff, read from the file as it is NOW
+   * ---------------------------------------------------------------------
+   *
+   * The gaps above use `expand`, which is the Edit call's own old/new strings
+   * -- so they can only ever reveal what is already inside the fragment. To
+   * see what surrounds the fragment there is exactly one source: the file.
+   *
+   * That file is the present and the diff is history, so the lines are offered
+   * only once the hunk's own content has been FOUND VERBATIM in it (see
+   * lib/anchor.ts). Anchoring proves the lines we are about to show really do
+   * sit next to the lines in the hunk. It does not prove they were there when
+   * the edit was made, which is why the revealed rows are numbered by the
+   * current file and the bar says where they came from.
+   */
+  const readFile = useReadFile();
+  const [file, setFile] = useState<readonly string[] | null>(null);
+  const [unreadable, setUnreadable] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [leadShown, setLeadShown] = useState(0);
+  const [trailShown, setTrailShown] = useState(0);
+
+  // A rename's destination is the file that exists to be read.
+  const readPath =
+    contextPath ?? (diff.path.includes(' → ') ? (diff.path.split(' → ').pop() ?? null) : diff.path);
+
+  /**
+   * Where the diff's content sits in the current file.
+   *
+   * Two modes, because the two diff sources have different extents. An Edit
+   * call carries its whole fragment, so the fragment is anchored as one block
+   * and the existing in-fragment gaps keep doing their job untouched. A `git
+   * diff` carries only hunks, so each hunk is anchored on its own -- a file
+   * that shifted between them still resolves.
+   */
+  const covered = useMemo((): { start: number; end: number } | AnchorFailure | null => {
+    if (file === null) return null;
+    if (expandNew !== null) {
+      const a = anchorBlock(file, expandNew);
+      return a.ok ? { start: a.offset, end: a.offset + expandNew.length } : a.reason;
+    }
+    let start: number | null = null;
+    let end = 0;
+    for (const h of model.hunks) {
+      const block = h.rows.filter((r) => r.newRow >= 0).map((r) => r.line.content);
+      if (block.length === 0) continue;
+      const hint = absoluteLines
+        ? (h.rows.find((r) => r.line.newNumber !== null)?.line.newNumber ?? null)
+        : null;
+      const a = anchorBlock(file, block, hint);
+      if (!a.ok) return a.reason;
+      if (start === null) start = a.offset;
+      end = a.offset + block.length;
+    }
+    return start === null ? 'empty' : { start, end };
+  }, [file, expandNew, model, absoluteLines]);
+
+  const span = typeof covered === 'object' && covered !== null ? covered : null;
+  const anchorFailure = typeof covered === 'string' ? covered : null;
+  const leadAvailable = span ? span.start : 0;
+  const trailAvailable = span && file ? file.length - span.end : 0;
+
+  const revealContext = useCallback(
+    async (side: 'lead' | 'trail') => {
+      const grow = side === 'lead' ? setLeadShown : setTrailShown;
+      if (file !== null) {
+        grow((n) => n + CONTEXT_STEP);
+        return;
+      }
+      if (loading || readPath === null) return;
+      setLoading(true);
+      try {
+        const text = await readFile(readPath);
+        if (text === null) setUnreadable(true);
+        else {
+          setFile(fileLines(text));
+          grow((n) => n + CONTEXT_STEP);
+        }
+      } catch {
+        setUnreadable(true);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [file, loading, readFile, readPath],
+  );
 
   const toggleGap = useCallback((i: number) => {
     setOpenGaps((prev) => ({ ...prev, [i]: !prev[i] }));
@@ -674,6 +780,15 @@ export function Diff({ diff, expand = null, layout = 'auto', absoluteLines = fal
   const shown = spent;
   const hidden = model.total - shown;
 
+  /*
+   * Offered optimistically, before the file is read. Whether there is anything
+   * above or below cannot be known without reading it, and reading a file for
+   * every diff in a long transcript to decide whether to draw a bar is the
+   * wrong trade -- a transcript can hold hundreds. The bar reports honestly
+   * once clicked, including when the answer is "this file has changed since".
+   */
+  const offerContext = readPath !== null;
+
   return (
     <div className="tx-d" ref={ref}>
       <DiffHeader
@@ -682,7 +797,41 @@ export function Diff({ diff, expand = null, layout = 'auto', absoluteLines = fal
         resolved={resolved}
         onToggle={layout === 'auto' ? () => setOverride(resolved === 'split' ? 'unified' : 'split') : null}
       />
-      <div className="tx-d-body">{body}</div>
+      <div className="tx-d-body">
+        {offerContext ? (
+          <ContextRegion
+            side="lead"
+            shown={Math.min(leadShown, leadAvailable)}
+            available={leadAvailable}
+            loaded={file !== null}
+            loading={loading}
+            failure={unreadable ? 'unreadable' : anchorFailure}
+            file={file}
+            from={span ? span.start - Math.min(leadShown, leadAvailable) : 0}
+            lang={diff.lang}
+            split={resolved === 'split'}
+            linkPath={linkPath}
+            onExpand={() => void revealContext('lead')}
+          />
+        ) : null}
+        {body}
+        {offerContext ? (
+          <ContextRegion
+            side="trail"
+            shown={Math.min(trailShown, trailAvailable)}
+            available={trailAvailable}
+            loaded={file !== null}
+            loading={loading}
+            failure={unreadable ? 'unreadable' : anchorFailure}
+            file={file}
+            from={span ? span.end : 0}
+            lang={diff.lang}
+            split={resolved === 'split'}
+            linkPath={linkPath}
+            onExpand={() => void revealContext('trail')}
+          />
+        ) : null}
+      </div>
       {hidden > 0 ? (
         <div className="tx-d-more">
           <span className="tx-d-more-label">{hidden.toLocaleString()} more lines</span>
@@ -860,6 +1009,159 @@ function GapBar({
     <button type="button" className="tx-d-gap" onClick={onClick} aria-expanded={open}>
       <Disclosure open={open} /> {label}
     </button>
+  );
+}
+
+/**
+ * Context above or below the diff, taken from the file as it is now.
+ *
+ * Three states, and the interesting one is the third:
+ *
+ *  - not yet read: a live bar, because whether anything surrounds the hunk is
+ *    not knowable without reading the file;
+ *  - read and anchored: a bar that reveals `CONTEXT_STEP` more lines a click,
+ *    reporting how many are left;
+ *  - read and NOT anchored: a static note saying why. The hunk's own lines are
+ *    no longer in the file, so anything shown around them would be a file that
+ *    never existed. Saying "this file has changed since" is the whole point --
+ *    it is also the more useful fact.
+ */
+function ContextRegion({
+  side,
+  shown,
+  available,
+  loaded,
+  loading,
+  failure,
+  file,
+  from,
+  lang,
+  split,
+  linkPath,
+  onExpand,
+}: {
+  side: 'lead' | 'trail';
+  shown: number;
+  available: number;
+  loaded: boolean;
+  loading: boolean;
+  failure: AnchorFailure | 'unreadable' | null;
+  file: readonly string[] | null;
+  from: number;
+  lang: string;
+  split: boolean;
+  linkPath: string | null;
+  onExpand: () => void;
+}): ReactNode {
+  if (failure !== null) {
+    /*
+     * Not gated on `loaded`: an unreadable file never sets `file`, so gating
+     * on it swallowed the one message the user most needs. Both failures are
+     * reachable only after a read was attempted -- `unreadable` by definition,
+     * and an anchor failure because it is derived from loaded content.
+     */
+    if (side === 'trail') return null;
+    return <div className="tx-d-gap tx-d-gap-static">{contextFailureText(failure)}</div>;
+  }
+
+  const lines = loaded && file !== null && shown > 0 ? file.slice(from, from + shown) : [];
+  const remaining = loaded ? available - shown : null;
+  if (loaded && remaining !== null && remaining <= 0 && lines.length === 0) return null;
+
+  const bar =
+    remaining !== null && remaining <= 0 ? null : (
+      <button
+        type="button"
+        className="tx-d-gap tx-d-gap-context"
+        onClick={onExpand}
+        disabled={loading}
+        title="Lines from the file as it is now, shown only where they still match this diff"
+      >
+        {side === 'lead' ? '↑' : '↓'}{' '}
+        {loading
+          ? 'reading file…'
+          : remaining === null
+            ? 'more context'
+            : `${Math.min(CONTEXT_STEP, remaining)} more line${Math.min(CONTEXT_STEP, remaining) === 1 ? '' : 's'} (${remaining.toLocaleString()} left)`}
+      </button>
+    );
+
+  const body = lines.length > 0 ? (
+    <ContextLines lines={lines} firstNumber={from + 1} lang={lang} split={split} linkPath={linkPath} />
+  ) : null;
+
+  return side === 'lead' ? (
+    <>
+      {bar}
+      {body}
+    </>
+  ) : (
+    <>
+      {body}
+      {bar}
+    </>
+  );
+}
+
+function contextFailureText(failure: AnchorFailure | 'unreadable'): string {
+  switch (failure) {
+    case 'unreadable':
+      return '⋯ the file could not be read from this worktree';
+    case 'not-found':
+      return '⋯ this file has changed since — no surrounding context can be shown';
+    case 'ambiguous':
+      return '⋯ these lines appear more than once in the file — context would be a guess';
+    default:
+      return '⋯ no surrounding context available';
+  }
+}
+
+/**
+ * Unchanged rows read from the current file.
+ *
+ * Numbered by the CURRENT file, which is what they are. When the file has not
+ * moved since the diff these run continuously into the hunk, which is the
+ * common case; when it has, the numbers disagree with the hunk's and that
+ * disagreement is true and worth seeing.
+ */
+function ContextLines({
+  lines,
+  firstNumber,
+  lang,
+  split,
+  linkPath,
+}: {
+  lines: readonly string[];
+  firstNumber: number;
+  lang: string;
+  split: boolean;
+  linkPath: string | null;
+}): ReactNode {
+  const diffLines = useMemo<DiffLine[]>(
+    () =>
+      lines.map((content, i) => ({
+        kind: 'context',
+        oldNumber: firstNumber + i,
+        newNumber: firstNumber + i,
+        content,
+      })),
+    [lines, firstNumber],
+  );
+  const blob = useMemo(() => diffLines.map((l) => l.content).join('\n'), [diffLines]);
+  const tokens = useCodeTokens(blob, lang);
+  const rows: Row[] = useMemo(
+    () => diffLines.map((line, i) => ({ line, oldRow: i, newRow: i })),
+    [diffLines],
+  );
+
+  return (
+    <div className="tx-d-context">
+      {split ? (
+        <SplitBody rows={rows} oldTokens={tokens} newTokens={tokens} linkPath={linkPath} />
+      ) : (
+        <UnifiedBody rows={rows} oldTokens={tokens} newTokens={tokens} linkPath={linkPath} />
+      )}
+    </div>
   );
 }
 
