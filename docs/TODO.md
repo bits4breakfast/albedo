@@ -292,49 +292,170 @@ separate conversation, and the ordering above may want `lastTouchedAt` anyway.
 
 ---
 
-## 8. Images: paste and drag-and-drop
+## 8. Images: paste and drag-and-drop into the composer
 
-Nothing in `src/ui` handles a drop, a paste of image data, or a `DataTransfer`
-today. Worth doing — screenshots are a large part of how you actually brief an
-agent — but the architecture decides the shape, so write it down before
-building.
+Screenshots are how you report a UI problem, and today there is no way to get
+one into a session except by switching to the terminal. Nothing in `src/ui`
+handles a drop, a paste of image data, or a `DataTransfer`.
 
 **The pty cannot carry an image.** It is a byte stream and, per CLAUDE.md,
 opaque: execution only. Claude Code takes images as **file paths** in the
 prompt. So Albedo's job is never to understand an image — only to get one onto
-disk and type its path. That keeps the whole feature on the right side of the
-two-channel rule.
+disk and type its path. That keeps the feature on the right side of the
+two-channel rule and needs no new protocol.
 
-### Two input routes, and only one of them needs a write
+### Two input routes, and only one needs a write
 
 1. **A file dragged from Finder** — `onDragDropEvent` is available on both the
    window and the webview in the installed `@tauri-apps/api` (2.11.1) and hands
    over real **paths**. Nothing is written; the path goes straight into the
    composer. This is the cheap 80% and could ship on its own.
-2. **A paste (⌘V) or a drag out of a browser** — these carry bytes, not a path,
-   so the image has to be materialised before it can be referenced.
+2. **A paste (⌘V), or a drag out of a browser** — these carry bytes, not a
+   path, so the image has to be materialised before it can be referenced.
 
 ### Where the bytes go — decide this first
 
 **Not into the worktree.** An image written there shows up in `git status`,
-which means it appears in the touched-files view as a `worktree` row: the app
-would be reporting its own scratch files as changes the agent made. Use the
-app-data directory (or a temp dir), granted at runtime through
-`src/lib/fsGrants.ts` the way project roots already are.
+so it appears in the touched-files view as a `worktree` row: the app reporting
+its own scratch files as changes the agent made.
 
-Capability gap: `src-tauri/capabilities/default.json` grants
-`fs:allow-write-text-file` only. Binary writes need `fs:allow-write-file` plus a
-scope entry for wherever the images land.
+**App-data, not temp.** Temp is cleaned, and a session resumed months later
+would reference a path that no longer exists — leaving `raw_json` as the only
+trace of what was discussed. App-data persists with the database, which is the
+right lifetime. Grant it at runtime through `src/lib/fsGrants.ts`, the way
+project roots already are.
 
-Also decide up front, because it is unpleasant to retrofit:
+Consequence worth knowing: `resolveInWorktree` refuses paths outside the
+worktree, so an image path rendered in the transcript will not be clickable.
+That is the containment rule working correctly, not a bug to route around.
+
+### Two blockers, both one line, both easy to lose an hour to
+
+- **`fs:allow-write-file` is not granted.** `src-tauri/capabilities/default.json`
+  has `fs:allow-write-text-file` only — text, not bytes. A PNG needs the binary
+  permission plus an `fs:scope` entry for wherever the images land; the scope
+  currently covers `$HOME/.claude/projects` and `$HOME/agents` only.
+- **`dragDropEnabled` is unset**, so it defaults to true — Tauri's native
+  drag-drop handler takes the event and **HTML5 `ondrop` never fires in the
+  webview**. Use `onDragDropEvent` (which is what you want anyway: paths, not
+  `File` objects), or set it false and do it in the DOM. Do not spend the
+  afternoon debugging a dead `ondrop` handler.
+
+### Decide up front, unpleasant to retrofit
 
 - **Cleanup.** Pasted screenshots accumulate forever otherwise. Age them out, or
   keep them per-task and delete with the task — noting that deleting a task
-  already promises not to touch its transcript, so the same care applies here.
+  already promises not to touch its transcript, so the same care applies.
 - **What the composer shows.** A raw `/var/folders/.../a1b2.png` in the input is
-  ugly and unreviewable; a chip that stands for the path is better, but the
+  ugly and unreviewable; a chip standing for the path reads better, but the
   composer sends plain text to the pty, so the chip has to resolve back to the
   path on send.
+
+### Rendering: the data is already captured
+
+The adapter has no image case — `[image]` is the generic unknown-block
+placeholder (`src/capture/adapter.ts:558`), so an image already in a transcript
+renders as that literal text.
+
+But **`raw_json` keeps the base64 verbatim** (verified): every image ever pasted
+into any captured session is already in the database and can be rendered without
+re-capturing anything. The never-drop rule paying for itself a third time.
+
+Only one image block exists in the whole corpus today, so rendering is low-value
+until sending works — which is the right order to build them in anyway.
+
+---
+
+## 9. Tabs and naming
+
+Three separate things, reported together from the project tab strip. The first
+is a bug; the other two are missing affordances over plumbing that already
+exists.
+
+### 9a. BUG — the "+N closed" menu opens invisibly
+
+It is not a dead button. `onClick` toggles `menuOpen` and the menu renders a
+head plus one `row-menu-item` per hidden project, each calling `onRestore`. The
+markup is fine.
+
+**It is clipped.** `.project-tabs` sets `overflow-x: auto; overflow-y: hidden`
+(`src/styles.css:1204`) so the strip can scroll sideways, and
+`.project-tabs-menu` is `position: absolute; top: 26px` (`:1618`) — i.e. it
+drops *below* the strip, into the axis that is clipped. An absolutely
+positioned child cannot escape an ancestor that hides overflow.
+
+So a closed project is currently unrecoverable through the UI, which is exactly
+the one-way door the comment above that button says it exists to prevent.
+
+Fix is one of: render the menu in a portal on `document.body` and position it
+from the button's rect; or move `.project-tabs-restore` out of the scrolling
+container so it is a sibling of the strip rather than a child. The portal is
+more work and survives future layout changes; the sibling is two lines.
+
+### 9b. Nothing can be renamed, though the data layer already allows it
+
+There is no rename affordance anywhere — not for a project, not for a task.
+
+The plumbing is not the blocker: `updateProject(id, { name })`
+(`src/db/projects.ts:253`) and `updateTask(id, { title })` (`src/db/index.ts:249`)
+are both generic column-patchers and already accept it. This is a UI gap only.
+
+Task titles matter more than project names. A task created from a pasted brief
+is titled with the whole first prompt — one in the live database is a
+200-character paragraph — and `wrapForTooltip` exists precisely because those
+titles overflow everything they touch. Renaming is the actual fix; the tooltip
+wrapping was the workaround.
+
+### 9c. "Other" should offer to create a project
+
+A task whose `repoPath` resolves to no project row gets `projectId: null` and
+lands in the **Other** tab. That is correct and deliberate — CLAUDE.md: *resolve
+and link automatically; never create. Linking a task to an existing project is
+provable. Creating a project is the user's decision.*
+
+But the rule forbids creating silently, not **offering**. Landing in "Other"
+with no path forward makes a correct design read as a dead end — the app knows
+the repo root, knows it has no project, and says nothing.
+
+The offer already exists elsewhere: `ImportProjects` does exactly this at
+startup, including the careful part (offering the repo *root*, never a worktree
+that resolves to it — see the comments in `src/ui/ImportProjects.tsx`). Reuse
+that, do not write a second one. An inline "create a project for `~/www/albedo`"
+on the Other tab, or on the task row, is the whole feature.
+
+---
+
+## 10. The "thinking" disclosure promises content that does not exist
+
+Expanding a thinking row shows an empty box. **This is not a capture bug, and
+it is not fixable by reading the transcript differently.**
+
+Measured across the whole corpus: **18,040 thinking blocks, 0 of them carry any
+text.** Every one is `{ type: 'thinking', thinking: '', signature: '<~1000
+chars>' }` — Claude Code persists the cryptographic signature and not the
+reasoning. The adapter already reads the right field
+(`src/capture/adapter.ts:532`, `stringOr(block['thinking'], '')`); the field is
+empty at the source. The live database agrees: 17,899 thinking rows, every body
+empty.
+
+So the defect is the UI claiming otherwise. `ThinkingRow`
+(`src/ui/transcript/MessageRow.tsx`) renders a disclosure button whose only
+possible outcome is an empty `div`, and the word count is always 0 so the label
+degrades to a bare "thinking".
+
+**Fix by telling the truth, not by hiding it.** A thinking block is real
+information — the model reasoned here, and the row marks where. It just has no
+readable body. So: render it as a non-interactive marker, with no caret and
+nothing to open. If the rows are worth keeping visible at all, "thought here"
+with no affordance beats a control that opens nothing.
+
+Do NOT drop the rows from capture. `raw_json` holds the signature, and if Claude
+Code ever starts persisting the text, the rows are already in place.
+
+Separately and independently: **the disclosure caret is too small.** Same
+`Disclosure` component is used by the tool chips, the subagent chip, injected
+context and this row, so sizing it up is one change in one place — worth doing
+regardless of what happens above.
 
 ---
 
