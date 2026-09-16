@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { Message } from '../../types';
+import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate } from '../../capture';
 import { hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
@@ -33,9 +33,15 @@ const LOAD_PX = 160;
 export interface TranscriptPaneProps {
   taskId: number | null;
   sessionId: string | null;
+  /**
+   * Derived task status, forwarded to the composer so it can tell a session
+   * that is thinking from one that is waiting on a permission prompt. Optional:
+   * without it the composer behaves exactly as it did before.
+   */
+  status?: TaskStatus | null;
 }
 
-export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): ReactNode {
+export function TranscriptPane({ taskId, sessionId, status = null }: TranscriptPaneProps): ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
   const [limit, setLimit] = useState(PAGE);
   const [loading, setLoading] = useState(false);
@@ -288,7 +294,7 @@ export function TranscriptPane({ taskId, sessionId }: TranscriptPaneProps): Reac
         </button>
       ) : null}
 
-      {taskId !== null ? <Composer taskId={taskId} onSent={jumpToEnd} /> : null}
+      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}
     </div>
   );
 }
@@ -324,6 +330,19 @@ const START_TIMEOUT_MS = 12_000;
  * part of this pane, and reaching it through `<TranscriptPane>` would mean
  * mocking the db and capture layers to assert nothing about them.
  *
+ * ## When the session is on a permission prompt
+ *
+ * `submitPty` types into the pty. If Claude Code is showing a permission
+ * prompt it is asking "1 / 2 / 3", and a paragraph pasted into that is an
+ * answer to the prompt, not a message -- the one case where sending does
+ * something the user did not mean. A task that is merely `running` is fine:
+ * Claude Code queues typed input itself, which is the normal way to follow up
+ * mid-turn and is left alone.
+ *
+ * So `blocked` holds the message instead of sending it, and releases it when
+ * the status clears. The text stays visible in the box the whole time, frozen
+ * rather than hidden, so nothing fires from a place the user cannot see.
+ *
  * That retry is the only new control flow here, and it is arranged to be
  * exactly-once. The pending body lives in a ref that is TAKEN synchronously
  * before the retry fires, so a presence event that arrives twice finds nothing
@@ -332,10 +351,20 @@ const START_TIMEOUT_MS = 12_000;
  * pending so the draft cannot drift underneath it. Every failure path leaves
  * the text exactly where the user typed it.
  */
-export function Composer({ taskId, onSent }: { taskId: number; onSent: () => void }): ReactNode {
+export function Composer({
+  taskId,
+  onSent,
+  status = null,
+}: {
+  taskId: number;
+  onSent: () => void;
+  status?: TaskStatus | null;
+}): ReactNode {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
+  /** Held because the session is on a permission prompt. See `send`. */
+  const [held, setHeld] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [live, setLive] = useState(true);
 
@@ -364,6 +393,7 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
     setText('');
     setNotice(null);
     setAwaiting(false);
+    setHeld(false);
     pendingRef.current = null;
     inFlightRef.current = false; // or a switch mid-await wedges the composer shut
     window.clearTimeout(timerRef.current);
@@ -384,6 +414,7 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
       setNotice('Could not reach the terminal. Your message is kept here.');
     } finally {
       setAwaiting(false);
+      setHeld(false);
       inFlightRef.current = false;
     }
   }, [taskId, succeeded]);
@@ -409,12 +440,43 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
     });
   }, [taskId]);
 
+  /*
+     Release on the status leaving `blocked`. `flushPending` takes the body
+     rather than reading it, so a status that flickers cannot send twice.
+  */
+  useEffect(() => {
+    if (status === 'blocked') return;
+    if (!held || pendingRef.current === null) return;
+    void flushRef.current();
+  }, [status, held]);
+
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
+
+  /** Take the held message back, so a prompt nobody answers is not a trap. */
+  const cancelHold = useCallback(() => {
+    pendingRef.current = null;
+    inFlightRef.current = false;
+    setHeld(false);
+    setNotice(null);
+  }, []);
 
   const send = useCallback(async () => {
     // A ref, because two Enters in one tick both see stale `busy` state.
     if (inFlightRef.current) return;
     if (text.trim().length === 0) return;
+    /*
+       Checked BEFORE submitPty, because submitPty types into the prompt. No
+       timeout here, unlike the pty-start hold: a permission prompt waits for a
+       person and can sit for an hour, so a deadline would only invent a
+       failure. `Cancel` on the notice is the way out.
+    */
+    if (status === 'blocked') {
+      pendingRef.current = text;
+      inFlightRef.current = true;
+      setHeld(true);
+      setNotice('Waiting — this session is on a permission prompt. Answer it in the terminal and this sends itself.');
+      return;
+    }
     inFlightRef.current = true;
     setBusy(true);
     try {
@@ -464,7 +526,9 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
      will reopen it (true only usually). See the note in the handback about
      exposing that flag so this can say the better thing.
   */
-  const placeholder = awaiting
+  const placeholder = held
+    ? 'Waiting for the permission prompt to be answered…'
+    : awaiting
     ? 'Starting the terminal…'
     : live
       ? 'Message this conversation…'
@@ -472,7 +536,16 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
 
   return (
     <div className="tx-composer">
-      {notice ? <div className="tx-composer-notice">{notice}</div> : null}
+      {notice ? (
+        <div className="tx-composer-notice">
+          <span>{notice}</span>
+          {held ? (
+            <button type="button" className="tx-composer-undo" onClick={cancelHold}>
+              cancel
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <textarea
         ref={ref}
         className="tx-composer-input"
@@ -485,7 +558,7 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
            guarded by inFlightRef, so the Enter key that readOnly still delivers
            cannot start a second one.
         */
-        readOnly={awaiting}
+        readOnly={awaiting || held}
         placeholder={placeholder}
         spellCheck={false}
         onChange={(e) => {
@@ -505,10 +578,10 @@ export function Composer({ taskId, onSent }: { taskId: number; onSent: () => voi
         type="button"
         className="tx-composer-send"
         onClick={() => void send()}
-        disabled={busy || awaiting || text.trim().length === 0}
+        disabled={busy || awaiting || held || text.trim().length === 0}
         title="Enter to send, Shift+Enter for a newline"
       >
-        {awaiting ? '…' : 'send'}
+        {awaiting || held ? '…' : 'send'}
       </button>
     </div>
   );

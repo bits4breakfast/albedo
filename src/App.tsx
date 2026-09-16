@@ -1431,6 +1431,9 @@ export default function App() {
                     <TranscriptPane
                       taskId={selected?.id ?? null}
                       sessionId={selected?.sessionId ?? null}
+                      /* So the composer can hold a message rather than typing
+                         it into a permission prompt. */
+                      status={selected?.status ?? null}
                     />
                   </PaneErrorBoundary>
                 </div>
