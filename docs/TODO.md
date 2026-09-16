@@ -230,6 +230,66 @@ several are load-bearing in ways a user cannot be expected to reason about —
 
 ---
 
+## 7. Touched files should read like `git status`, not like a log
+
+The spec asked for "path, edit count, last touched" and that is what was built.
+In use it is the wrong shape: the question this view answers is *what does the
+change set look like right now, before I commit*, and neither how many tool
+calls hit a file nor when they did tells you that. It is a change set, so it
+should look like one — path, status, and eventually `+`/`-`.
+
+### Drop two columns
+
+`src/ui/TouchedFiles.tsx` (end of the row renderer):
+
+- `tf-edits` — the `3×` count, from `TouchedFile.editCount`.
+- `tf-when` — the relative time, from `TouchedFile.lastTouchedAt`.
+
+Keep the status code, the path, and both badges: `worktree` (git saw a change
+the transcript never mentioned) and `hand` (you saved it yourself). Those two
+say something `git status` cannot, which is the whole reason this is not just a
+shell-out.
+
+### The sort has to change with them — do not miss this
+
+`compareTouched` (`src/db/touched.ts:260`) orders by `lastTouchedAt`, then by
+`editCount`, then by path. Remove both columns and the list is ordered by two
+things you can no longer see, which reads as unordered.
+
+`git status` sorts by path, and that is probably right here too. The open
+question is the deliberate rule above it: `source: 'git'` rows currently lead
+the list, because "something changed here that the agent never told you about"
+is the most valuable line in the view. Path-ascending throws that away. Worth
+keeping as a group header or a sticky first section rather than losing it to
+alphabetical order.
+
+### `+`/`-` needs data nothing collects yet
+
+`src/git/worktree.ts` runs `git status --porcelain=v1 -z` and nothing else;
+there is no `numstat` anywhere. Adding per-file line counts means:
+
+- `git diff --numstat` for unstaged and `git diff --numstat --cached` for
+  staged, summed — a file can have both;
+- **untracked files produce no numstat at all.** They are pure additions, so
+  either count the lines directly or use `git diff --no-index -- /dev/null
+  <file>`. Skipping them would show `—` against exactly the new files the agent
+  just wrote, which is the worst column to have blank;
+- **binary files report `-`/`-`** rather than numbers. Render that as binary,
+  not as zero.
+
+Cost is one or two more git invocations per refresh, on the same cadence as the
+existing `git status` call.
+
+### Contract note
+
+`TouchedFile` in `src/types.ts` is a frozen contract (`docs/INTERFACES.md`).
+Outside the renderer, `editCount` and `lastTouchedAt` are referenced only by
+`src/db/touched.test.ts`. Still, **stop rendering them before proposing their
+removal** — adding `added`/`deleted` is additive and safe, deleting fields is a
+separate conversation, and the ordering above may want `lastTouchedAt` anyway.
+
+---
+
 ## Already recorded elsewhere — do not duplicate here
 
 `STATUS.md` → **Known gaps** owns: no reprocessor, thin component coverage,
