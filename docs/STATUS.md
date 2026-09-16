@@ -22,7 +22,13 @@
    TUI, and resize under a hard splitter drag. Both need a human at the window.
    Unchanged from before — nothing in this round touched the pty.
 
-4. **Known, not done** (from the code-organization pass; none of it is a bug):
+4. **The backlog now lives in `docs/TODO.md`** — what to do next, with the
+   reasons, in rough priority order. The first item there is a polling fallback
+   for the fs watcher: `watch()` succeeds but never fires on WSL's `/mnt/c` and
+   on some network mounts, which would silently reproduce this project's worst
+   historical bug with nothing reporting `degraded`.
+
+   Summarised below, in full there:
    - `App.tsx` is 1,600 lines with 26 `useState`, 15 `useEffect` and 11
      `useCallback` in one component. Three cohesive groups are sitting there
      ready to be hooks: layout geometry, dialog open/close, and launch notices.
