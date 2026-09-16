@@ -828,6 +828,28 @@
 .tx-d-gap-static { cursor: default; }
 .tx-d-gap-static:hover { background: var(--panel); color: var(--faint); }
 
+/*
+ * The context expanders, above and below the diff.
+ *
+ * Same bar as a gap, and deliberately so: it occupies the same slot and means
+ * the same thing ("there is more, here"). The only difference is the arrow,
+ * which says WHICH WAY the file continues -- a caret would claim it opens a
+ * region we already hold, and these lines come from the file instead.
+ *
+ * `--faint` is the gap bar's own token, already cleared on `--panel` (6.01)
+ * and on `--panel-raised` (5.04) for the hover; nothing new is introduced.
+ */
+.tx-d-gap-context { cursor: pointer; }
+.tx-d-gap-context:disabled { cursor: progress; color: var(--faint); }
+
+/*
+ * Revealed context is unchanged code, so it must not read as part of the
+ * change. It gets the same ground as the gap lines and no add/del tint --
+ * the rows inside carry `kind: 'context'`, so they already render neutrally;
+ * this only marks the block's extent.
+ */
+.tx-d-context { background: var(--panel-inset); }
+
 .tx-d-more {
   display: flex;
   align-items: center;

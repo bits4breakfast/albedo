@@ -17,7 +17,8 @@ import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import TouchedFiles from './ui/TouchedFiles';
 import FileEditor from './ui/editor/FileEditor';
-import { FileOpenContext } from './ui/editor/openFile';
+import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
+import { resolveInWorktree } from './lib/paths';
 import UsagePanel from './ui/gauges/UsagePanel';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
@@ -638,6 +639,10 @@ export default function App() {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+  /* Read by `readFileText`, which is registered once and must not close over
+     the task that was selected when it was created. */
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   /**
    * FIRST SPAWN ONLY. A task with a sessionId has already been told this; a
@@ -729,6 +734,31 @@ export default function App() {
       return renderPromptTemplate(task, project);
     },
     [projects],
+  );
+
+  /**
+   * Read a file's current text for the diff view's context expansion.
+   *
+   * Resolution lives here rather than in the renderer, exactly as
+   * `openFile` does: `resolveInWorktree` is the single containment point, and
+   * a transcript path must never reach the filesystem any other way. Null for
+   * every failure -- no task, outside the worktree, unreadable -- because the
+   * caller's only use for it is deciding whether to offer more context.
+   */
+  const readFileText = useCallback(
+    async (path: string): Promise<string | null> => {
+      const task = selectedRef.current;
+      if (!task) return null;
+      try {
+        const target = await resolveInWorktree(task.worktreePath, path);
+        if (!target) return null;
+        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+        return await readTextFile(target.absolute);
+      } catch {
+        return null;
+      }
+    },
+    [],
   );
 
   const select = useCallback((id: number) => {
@@ -1075,6 +1105,7 @@ export default function App() {
 
   return (
     <FileOpenContext.Provider value={openFile}>
+    <FileTextContext.Provider value={readFileText}>
     <div className="app" data-dragging={dragging !== null}>
       <Header
         onReconcile={() => setReconcileOpen(true)}
@@ -1595,6 +1626,7 @@ export default function App() {
         />
       </PaneErrorBoundary>
     </div>
+    </FileTextContext.Provider>
     </FileOpenContext.Provider>
   );
 }

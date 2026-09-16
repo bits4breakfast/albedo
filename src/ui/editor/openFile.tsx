@@ -29,6 +29,31 @@ export function useOpenFile(): (req: OpenFileRequest) => void {
   return useContext(FileOpenContext);
 }
 
+/**
+ * Read a file's CURRENT text, for renderers that need more of it than the
+ * transcript carries -- the diff view expanding context around a hunk.
+ *
+ * Same division of labour as `FileOpenContext`, and for the same reason: the
+ * caller passes the raw path it saw in the transcript and the PROVIDER
+ * resolves it through `resolveInWorktree`. A transcript is data we render, so
+ * no renderer may join a transcript path to a filesystem path or decide that
+ * one looks safe. Keeping the resolution on this side means the diff component
+ * never learns what a worktree is.
+ *
+ * Resolves to null for anything unavailable -- no task, no provider, outside
+ * the worktree, unreadable. Callers treat null as "no context to offer",
+ * never as an error worth a dialog.
+ */
+export const FileTextContext = createContext<(path: string) => Promise<string | null>>(
+  async () => null,
+);
+FileTextContext.displayName = 'FileTextContext';
+
+/** Read a file's current text, or null when it cannot be read. */
+export function useReadFile(): (path: string) => Promise<string | null> {
+  return useContext(FileTextContext);
+}
+
 // ---------------------------------------------------------------------------
 // The escape hatch
 // ---------------------------------------------------------------------------
