@@ -269,3 +269,93 @@ describe('(c) exactly-once when presence brings the session up', () => {
     expect(submitPty).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// (d) a session sitting on a permission prompt
+// ---------------------------------------------------------------------------
+
+/** A live pty whose writes succeed — the dangerous case, not a failing one. */
+function livePty() {
+  vi.mocked(submitPty).mockResolvedValue(true);
+  vi.mocked(startPty).mockReturnValue(true);
+  vi.mocked(hasLivePty).mockReturnValue(true);
+}
+
+describe('(d) blocked: the message is held instead of typed into the prompt', () => {
+  it('does not write to the pty while the task is blocked', async () => {
+    // The whole point. submitPty types into the pty, and a pty showing "1/2/3"
+    // reads a paragraph as an answer to that question.
+    livePty();
+    render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+
+    type('please also update the tests');
+    pressEnter();
+
+    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    expect(submitPty).not.toHaveBeenCalled();
+    // Frozen where the user left it, not cleared and not hidden.
+    expect(box().value).toBe('please also update the tests');
+    expect(box().readOnly).toBe(true);
+  });
+
+  it('sends it by itself once the status clears', async () => {
+    livePty();
+    const onSent = vi.fn();
+    const { rerender } = render(<Composer taskId={5} status="blocked" onSent={onSent} />);
+
+    type('please also update the tests');
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+
+    await act(async () => {
+      rerender(<Composer taskId={5} status="running" onSent={onSent} />);
+    });
+
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    expect(submitPty).toHaveBeenCalledWith(5, 'please also update the tests');
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(box().value).toBe('');
+  });
+
+  it('releases exactly once even if the status flickers', async () => {
+    // deriveStatus runs on every capture tick; blocked -> running -> blocked
+    // -> running must not send the same body three times.
+    livePty();
+    const { rerender } = render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+    type('once please');
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+
+    for (const s of ['running', 'blocked', 'running', 'idle'] as const) {
+      await act(async () => {
+        rerender(<Composer taskId={5} status={s} onSent={vi.fn()} />);
+      });
+    }
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+  });
+
+  it('gives the message back when the hold is cancelled', async () => {
+    // A permission prompt waits for a person and has no timeout, so without
+    // this the composer would be frozen until someone answered it.
+    livePty();
+    render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+    type('never mind');
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+
+    expect(box().readOnly).toBe(false);
+    expect(box().value).toBe('never mind');
+    // ...and the cancelled body must not fire when the status later clears.
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('leaves a merely running task alone — Claude Code queues those itself', async () => {
+    livePty();
+    render(<Composer taskId={5} status="running" onSent={vi.fn()} />);
+    type('follow-up mid-turn');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+  });
+});

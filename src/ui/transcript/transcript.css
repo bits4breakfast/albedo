@@ -102,10 +102,33 @@
 
 .tx-composer-notice {
   grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
   margin-bottom: 2px;
   color: var(--warn);
   font-size: var(--fs-xs);
 }
+
+/*
+ * The way out of a hold. A permission prompt waits for a person, so there is
+ * no timeout to fall back on -- without this, a message held against a prompt
+ * nobody answers would freeze the composer indefinitely.
+ *
+ * `--warn` is the notice's own token (5.33 flat), inherited rather than
+ * re-picked, so the button introduces no new contrast decision.
+ */
+.tx-composer-undo {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  color: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.tx-composer-undo:hover { background: var(--panel-raised); }
 
 .tx-composer-input {
   width: 100%;
