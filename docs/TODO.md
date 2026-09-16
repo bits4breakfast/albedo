@@ -56,9 +56,9 @@ Currently macOS-only by configuration, not by code:
   `"deb"`, `"appimage"`, `"rpm"` as wanted.
 - `bundle.icon` lists only `icons/icon.icns`, even though `icon.ico`, `icon.png`
   and the `Square*.png` set are already generated on disk. Widen it.
-- `src/ui/editor/openFile.tsx` falls back to `open -a PhpStorm`, which is macOS
-  only. The `phpstorm` CLI is tried *first* and is cross-platform, so this
-  degrades rather than breaks; `xdg-open` is the Linux second chance.
+- `shell:allow-execute` in `src-tauri/capabilities/default.json` still allows
+  `open` (macOS-only) alongside `phpstorm`, left there for the external-editor
+  template in §5. Whatever replaces it needs `xdg-open` on Linux.
 - `--traffic-lights-w: 78px` (`src/styles.css:113`) reserves header space for
   the macOS stoplights. Dead padding elsewhere; gate it.
 
@@ -194,11 +194,14 @@ cannot. Worth weighing if the setting list grows past a dozen.)*
    non-PATH install cannot be pointed at it. It also blocks default flags
    (`--model`, `--permission-mode`), which is the same slot the spec's M5
    per-task auth mode needs.
-2. **The editor escape hatch is hardcoded to PhpStorm** — the CLI name and
-   `open -a PhpStorm` both (`src/ui/editor/openFile.tsx:82-115`). A VS Code,
-   Zed or Cursor user cannot use it at all. The spec's "PHPStorm stays the
-   editor" describes the author's setup, not a constraint on the app. Wants a
-   command template, e.g. `code --goto {path}:{line}`.
+2. **There is no external-editor action at all any more.** "Open in PHPStorm"
+   was removed rather than left hardcoded (it named one editor in both the CLI
+   and a macOS-only `open -a` fallback). What should replace it is a command
+   **template** — `code --goto {path}:{line}`, `zed {path}:{line}`,
+   `idea --line {line} {path}` — with `{path}` and `{line}` substituted and the
+   arguments passed as an array, never interpolated into a shell string. The
+   old implementation's comment on argument injection is worth reading before
+   rewriting it: a worktree path with a space in it is the easy case.
 3. **The transcript root is hardcoded** — `PROJECTS_SUBPATH = '.claude/projects'`
    (`src/capture/watcher.ts:46`), and `CLAUDE_CONFIG_DIR` is read nowhere. If
    anyone sets it, capture silently sees nothing: the same look-healthy-but-empty
@@ -425,7 +428,49 @@ on the Other tab, or on the task row, is the whole feature.
 
 ---
 
-## 10. The "thinking" disclosure promises content that does not exist
+## 10. Touched files: sizing and full paths
+
+Both from using the pane; both small.
+
+- **The list should expand as far as you want.** The pinned files column is
+  bounded by `FILES_MIN`/`FILES_MAX` in `src/App.tsx` and the tab version
+  inherits the pane. On a long change set the list is the thing you want most of
+  the window for, and it cannot have it. Raising the ceiling is a constant;
+  letting it take the full pane is the real fix.
+- **Hovering a filename should show the full path.** The row renders the path
+  split into `tf-dir` / `tf-name` and truncates the directory, so a deep path
+  shows a filename with no way to see where it lives. There is no `title` on the
+  row. The transcript's `PathLink` already does exactly this (`title={target}`)
+  — match it, so the same gesture works in both places.
+
+---
+
+## 11. Syntax highlighting — already done; one real gap
+
+Answering the question rather than filing it: **Shiki is already wired up**
+(`shiki ^1.24.2`), with **39 grammars** registered in `src/lib/highlight.ts`,
+each behind its own `import()` so they stay dynamic chunks rather than bloating
+the main bundle. It drives both the transcript diffs (`.tx-tok`) and the
+CodeMirror editor (`.ed-tok`), and it is theme-aware through `--shiki-light` /
+`--shiki-dark`. CodeMirror 6 additionally supplies its own PHP and JavaScript
+modes for the edit buffer.
+
+Checked against what is actually edited in the live database rather than
+assumed. Every extension with more than a handful of edits is covered —
+`php` (2,256), `md`, `ts`, `jsx`, `tsx`, `html`, `yaml`, `css`, `sh`, `rs`,
+`sql`, `js` — and `langForPath` already maps the aliases (`mjs` → javascript,
+`yml` → yaml).
+
+**The one gap: `.tpl` (16 edits) falls through to plain text.** Smarty
+templates. Shiki has a `smarty` grammar, so this is one line in the `LANGS`
+table plus one in `langForPath`. Not urgent at 16 edits, but it is the only
+thing in the corpus that is genuinely unhighlighted.
+
+Nothing else to choose or install here.
+
+---
+
+## 12. The "thinking" disclosure promises content that does not exist
 
 Expanding a thinking row shows an empty box. **This is not a capture bug, and
 it is not fixable by reading the transcript differently.**
