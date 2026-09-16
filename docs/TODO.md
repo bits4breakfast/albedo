@@ -151,6 +151,8 @@ more expensive.
   (`src/ui/Terminal.tsx:160`). So the composer still cannot say "your
   conversation will be picked up" rather than the deliberately vague placeholder
   that is true either way. Wiring it is the point of it existing.
+- **The touched-files view is the wrong shape** — see §7, which is big enough
+  to stand on its own.
 - **Selecting a task outside the active project tab is still a visual no-op.**
   `select()` (`App.tsx`) sets `selectedId` but never moves
   `activeProjectTabKey`, so opening a session from another project appears to do
@@ -287,6 +289,52 @@ Outside the renderer, `editCount` and `lastTouchedAt` are referenced only by
 `src/db/touched.test.ts`. Still, **stop rendering them before proposing their
 removal** — adding `added`/`deleted` is additive and safe, deleting fields is a
 separate conversation, and the ordering above may want `lastTouchedAt` anyway.
+
+---
+
+## 8. Images: paste and drag-and-drop
+
+Nothing in `src/ui` handles a drop, a paste of image data, or a `DataTransfer`
+today. Worth doing — screenshots are a large part of how you actually brief an
+agent — but the architecture decides the shape, so write it down before
+building.
+
+**The pty cannot carry an image.** It is a byte stream and, per CLAUDE.md,
+opaque: execution only. Claude Code takes images as **file paths** in the
+prompt. So Albedo's job is never to understand an image — only to get one onto
+disk and type its path. That keeps the whole feature on the right side of the
+two-channel rule.
+
+### Two input routes, and only one of them needs a write
+
+1. **A file dragged from Finder** — `onDragDropEvent` is available on both the
+   window and the webview in the installed `@tauri-apps/api` (2.11.1) and hands
+   over real **paths**. Nothing is written; the path goes straight into the
+   composer. This is the cheap 80% and could ship on its own.
+2. **A paste (⌘V) or a drag out of a browser** — these carry bytes, not a path,
+   so the image has to be materialised before it can be referenced.
+
+### Where the bytes go — decide this first
+
+**Not into the worktree.** An image written there shows up in `git status`,
+which means it appears in the touched-files view as a `worktree` row: the app
+would be reporting its own scratch files as changes the agent made. Use the
+app-data directory (or a temp dir), granted at runtime through
+`src/lib/fsGrants.ts` the way project roots already are.
+
+Capability gap: `src-tauri/capabilities/default.json` grants
+`fs:allow-write-text-file` only. Binary writes need `fs:allow-write-file` plus a
+scope entry for wherever the images land.
+
+Also decide up front, because it is unpleasant to retrofit:
+
+- **Cleanup.** Pasted screenshots accumulate forever otherwise. Age them out, or
+  keep them per-task and delete with the task — noting that deleting a task
+  already promises not to touch its transcript, so the same care applies here.
+- **What the composer shows.** A raw `/var/folders/.../a1b2.png` in the input is
+  ugly and unreviewable; a chip that stands for the path is better, but the
+  composer sends plain text to the pty, so the chip has to resolve back to the
+  path on send.
 
 ---
 
