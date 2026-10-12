@@ -23,8 +23,8 @@
    Unchanged from before — nothing in this round touched the pty.
 
 4. **The backlog now lives in `docs/TODO.md`** — what to do next, with the
-   reasons, in rough priority order. The first item there is a polling fallback
-   for the fs watcher: `watch()` succeeds but never fires on WSL's `/mnt/c` and
+   reasons, in rough priority order. The polling fallback for the fs watcher is
+   now built (not yet verified live): `watch()` succeeds but never fires on WSL's `/mnt/c` and
    on some network mounts, which would silently reproduce this project's worst
    historical bug with nothing reporting `degraded`.
 

@@ -47,6 +47,15 @@ export const PROJECTS_SUBPATH = '.claude/projects';
 
 const TRANSCRIPT_EXT = '.jsonl';
 
+/** How often the safety-net poll compares disk against what was ingested. */
+export const POLL_MS = 30_000;
+
+/**
+ * A file that grew less than this long ago is not yet evidence of a dead
+ * watcher: the event may simply still be in flight (debounce + ingest).
+ */
+export const POLL_GRACE_MS = 5_000;
+
 /** Bytes pulled per pass. Bounds memory on the first import of a big file. */
 const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 
@@ -80,14 +89,15 @@ export interface CaptureUpdate {
 
 export interface CaptureProgress {
   /**
-   * `degraded` means the live filesystem watcher could not start. History
-   * still backfills, but nothing will update until the app is restarted.
+   * `degraded` means the live filesystem watcher could not start; `polling`
+   * means it started but is inert (or absent) and a slower poll is carrying
+   * the load. Either way `error` says so. History still backfills.
    */
-  phase: 'backfill' | 'watching' | 'degraded';
+  phase: 'backfill' | 'watching' | 'degraded' | 'polling';
   filesDone: number;
   filesTotal: number;
   currentPath: string | null;
-  /** Set only on `degraded`. */
+  /** Set on `degraded` and `polling`. */
   error?: string;
 }
 
@@ -170,6 +180,42 @@ export function lastNewlineIndex(bytes: Uint8Array): number {
   return -1;
 }
 
+export interface DiskFile {
+  path: string;
+  size: number;
+  mtime: number;
+}
+
+/**
+ * Compare disk against what ingest last saw, to detect appends the watcher
+ * never reported.
+ *
+ * `missed` are files that differ from the last size ingest observed AND have
+ * been quiet for `graceMs`, with no ingest pending -- a working watcher would
+ * already have delivered them. `recent` differ too but are inside the grace
+ * window; they are not evidence yet and the next poll will decide.
+ *
+ * Compared against the size ingest STAT'ed, not the bytes it consumed: a
+ * trailing partial line leaves bytes_ingested short of the size forever, and
+ * that must not read as a dead watcher.
+ */
+export function findUnreportedGrowth(
+  files: readonly DiskFile[],
+  seen: ReadonlyMap<string, number>,
+  now: number,
+  graceMs: number,
+  isPending: (path: string) => boolean,
+): { missed: string[]; recent: string[] } {
+  const missed: string[] = [];
+  const recent: string[] = [];
+  for (const f of files) {
+    if (seen.get(f.path) === f.size) continue;
+    if (isPending(f.path)) continue;
+    (now - f.mtime >= graceMs ? missed : recent).push(f.path);
+  }
+  return { missed, recent };
+}
+
 /** `<session-uuid>.jsonl` -> `<session-uuid>`. Fallback identity only. */
 export function sessionIdFromPath(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1);
@@ -202,6 +248,7 @@ interface PendingFile {
   path: string;
   projectDir: string;
   mtime: number;
+  size: number;
 }
 
 let active: Capture | null = null;
@@ -213,6 +260,12 @@ class Capture implements CaptureHandle {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   /** One in-flight ingest per file; further events chain behind it. */
   private readonly queues = new Map<string, Promise<void>>();
+  /** Size of each file as of the last time ingest looked at it. */
+  private readonly seen = new Map<string, number>();
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private polling = false;
+  private backfilled = false;
+  private pollInFlight = false;
 
   constructor(private readonly root: string) {}
 
@@ -247,7 +300,14 @@ class Capture implements CaptureHandle {
         currentPath: null,
         error: this.liveUpdatesError,
       });
+      // No watcher at all: the poll is the only live path, so say so.
+      this.enterPolling(`Live updates are being polled, not watched (${detail})`);
     }
+
+    // Always on, because a watcher that starts and never fires is silent. The
+    // poll is cheap (one stat per transcript) and is what makes that case
+    // detectable; it only ingests when disk disagrees with what was captured.
+    this.pollTimer = setInterval(() => void this.poll(), POLL_MS);
 
     // Deliberately NOT awaited: startCapture() must resolve as soon as the app
     // is observing changes. The backfill streams in behind it.
@@ -258,6 +318,8 @@ class Capture implements CaptureHandle {
     this.stopped = true;
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
+    if (this.pollTimer !== null) clearInterval(this.pollTimer);
+    this.pollTimer = null;
     if (this.unwatch) {
       try {
         this.unwatch();
@@ -302,6 +364,61 @@ class Capture implements CaptureHandle {
     return next;
   }
 
+  // -- polling safety net --------------------------------------------------
+
+  private enterPolling(message: string): void {
+    if (this.polling) return;
+    this.polling = true;
+    this.liveUpdatesError = message;
+    console.warn('[capture]', message);
+    emitProgress({
+      phase: 'polling',
+      filesDone: 0,
+      filesTotal: 0,
+      currentPath: null,
+      error: message,
+    });
+  }
+
+  private async poll(): Promise<void> {
+    // Not during the backfill (it is reading the same files), and never two
+    // polls at once if a scan outlasts the interval.
+    if (this.stopped || !this.backfilled || this.pollInFlight) return;
+    this.pollInFlight = true;
+    try {
+      const found = await this.scan();
+      const pending = (p: string) => this.timers.has(p) || this.queues.has(p);
+      const { missed, recent } = findUnreportedGrowth(
+        found.map((f) => ({
+          path: f.path,
+          size: f.size,
+          mtime: f.mtime,
+        })),
+        this.seen,
+        Date.now(),
+        POLL_GRACE_MS,
+        pending,
+      );
+      // Once the watcher is known inert, do not wait out the grace window.
+      const toIngest = this.polling ? [...missed, ...recent] : missed;
+      if (missed.length > 0) {
+        this.enterPolling(
+          'Live updates are being polled, not watched: the filesystem watcher missed changes to ' +
+            `${missed.length} transcript${missed.length === 1 ? '' : 's'}`,
+        );
+      }
+      const byPath = new Map(found.map((f) => [f.path, f]));
+      for (const path of toIngest) {
+        const f = byPath.get(path);
+        if (f) void this.enqueue(f.path, f.projectDir);
+      }
+    } catch (err) {
+      console.error('[capture] poll failed', err);
+    } finally {
+      this.pollInFlight = false;
+    }
+  }
+
   // -- startup backfill ----------------------------------------------------
 
   private async backfill(): Promise<void> {
@@ -310,6 +427,7 @@ class Capture implements CaptureHandle {
       files = await this.scan();
     } catch (err) {
       console.error('[capture] scan failed', err);
+      this.backfilled = true; // let the poll retry rather than never start
       return;
     }
 
@@ -350,8 +468,10 @@ class Capture implements CaptureHandle {
       }
     }
 
+    this.backfilled = true;
     emitProgress({
-      phase: 'watching',
+      phase: this.polling ? 'polling' : 'watching',
+      error: this.polling ? (this.liveUpdatesError ?? undefined) : undefined,
       filesDone: done,
       filesTotal: files.length,
       currentPath: null,
@@ -401,12 +521,15 @@ class Capture implements CaptureHandle {
       }
       if (!entry.isFile || !isTranscriptPath(entry.name)) continue;
       let mtime = 0;
+      let size = -1; // unknown: never equals a recorded size, so it is re-checked
       try {
-        mtime = (await stat(path)).mtime?.getTime() ?? 0;
+        const info = await stat(path);
+        mtime = info.mtime?.getTime() ?? 0;
+        size = info.size;
       } catch {
         /* keep it with mtime 0; it sorts last */
       }
-      out.push({ path, projectDir, mtime });
+      out.push({ path, projectDir, mtime, size });
     }
   }
 
@@ -434,6 +557,7 @@ class Capture implements CaptureHandle {
         return; // deleted between the event and now
       }
       if (!info.isFile) return;
+      this.seen.set(path, info.size);
 
       if (info.size < offset) {
         // Truncated or rewritten. Re-ingest from the top; INSERT OR IGNORE on

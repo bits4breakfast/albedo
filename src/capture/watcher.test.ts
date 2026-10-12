@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  findUnreportedGrowth,
   isTranscriptPath,
   lastNewlineIndex,
   lineIndexAfter,
@@ -145,5 +146,60 @@ describe('path helpers', () => {
   it('falls back to the filename for a session id', () => {
     expect(sessionIdFromPath('/p/-Users-x-proj/abc-123.jsonl')).toBe('abc-123');
     expect(sessionIdFromPath('abc-123.jsonl')).toBe('abc-123');
+  });
+});
+
+describe('findUnreportedGrowth', () => {
+  const NOW = 100_000;
+  const GRACE = 5_000;
+  const never = () => false;
+
+  it('is quiet when every file matches what ingest last saw', () => {
+    const r = findUnreportedGrowth(
+      [{ path: 'a', size: 10, mtime: 0 }],
+      new Map([['a', 10]]),
+      NOW,
+      GRACE,
+      never,
+    );
+    expect(r).toEqual({ missed: [], recent: [] });
+  });
+
+  it('flags growth the watcher never reported once it is past the grace window', () => {
+    const r = findUnreportedGrowth(
+      [{ path: 'a', size: 20, mtime: NOW - 10_000 }],
+      new Map([['a', 10]]),
+      NOW,
+      GRACE,
+      never,
+    );
+    expect(r.missed).toEqual(['a']);
+  });
+
+  it('does not count fresh growth as evidence: the event may still be in flight', () => {
+    const r = findUnreportedGrowth(
+      [{ path: 'a', size: 20, mtime: NOW - 1_000 }],
+      new Map([['a', 10]]),
+      NOW,
+      GRACE,
+      never,
+    );
+    expect(r).toEqual({ missed: [], recent: ['a'] });
+  });
+
+  it('ignores files with an ingest already pending', () => {
+    const r = findUnreportedGrowth(
+      [{ path: 'a', size: 20, mtime: 0 }],
+      new Map([['a', 10]]),
+      NOW,
+      GRACE,
+      (p) => p === 'a',
+    );
+    expect(r).toEqual({ missed: [], recent: [] });
+  });
+
+  it('treats a file ingest has never seen as growth', () => {
+    const r = findUnreportedGrowth([{ path: 'new', size: 5, mtime: 0 }], new Map(), NOW, GRACE, never);
+    expect(r.missed).toEqual(['new']);
   });
 });

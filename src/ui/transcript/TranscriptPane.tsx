@@ -13,7 +13,7 @@ import type { ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate } from '../../capture';
-import { hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import { Disclosure } from './Diff';
 import MessageRow from './MessageRow';
 import { isSidechain, toolUseId } from './ToolChip';
@@ -519,12 +519,11 @@ export function Composer({
   /*
      Copy note: say what it means for the user's work, not what the process is
      doing. "No live session" read as "your conversation is gone" -- it is not,
-     it is on disk and in the database; what stopped is a process. And the
-     reassurance has to be unconditional: `startPty` RESUMES in the normal case,
-     but a `--resume` the CLI already rejected starts fresh, so the copy below
-     promises the conversation is kept (always true) rather than that sending
-     will reopen it (true only usually). See the note in the handback about
-     exposing that flag so this can say the better thing.
+     it is on disk and in the database; what stopped is a process. `canResume`
+     is what lets the copy promise more than "saved": when the CLI can pick the
+     session up it says so, and when it cannot (never established, or a
+     `--resume` already rejected) it says a new session starts rather than
+     over-promising a reopen.
   */
   const placeholder = held
     ? 'Waiting for the permission prompt to be answered…'
@@ -532,7 +531,9 @@ export function Composer({
     ? 'Starting the terminal…'
     : live
       ? 'Message this conversation…'
-      : 'Terminal not running — your conversation is saved. Send to restart it.';
+      : canResume(taskId)
+        ? 'Terminal not running — send to pick this conversation back up.'
+        : 'Terminal not running — your conversation is saved. Send to start a new session.';
 
   return (
     <div className="tx-composer">

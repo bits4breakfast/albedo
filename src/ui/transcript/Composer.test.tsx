@@ -24,7 +24,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-import { hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import { Composer } from './TranscriptPane';
 
 // Replaces the real module, so xterm and the Tauri pty bridge never load.
@@ -36,6 +36,7 @@ vi.mock('../Terminal', () => {
     submitPty: vi.fn(async () => false),
     startPty: vi.fn(() => false),
     hasLivePty: vi.fn(() => false),
+    canResume: vi.fn(() => false),
     onPtyPresenceChange: vi.fn((cb: (taskId: number, live: boolean) => void) => {
       listeners.add(cb);
       return () => listeners.delete(cb);
@@ -357,5 +358,21 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     type('follow-up mid-turn');
     pressEnter();
     await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('placeholder when no terminal is running', () => {
+  it('promises the conversation is picked up when the CLI can resume it', () => {
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    vi.mocked(canResume).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} status="idle" />);
+    expect(box().placeholder).toMatch(/pick this conversation back up/);
+  });
+
+  it('says a new session starts when it cannot, rather than over-promising', () => {
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    vi.mocked(canResume).mockReturnValue(false);
+    render(<Composer taskId={1} onSent={vi.fn()} status="idle" />);
+    expect(box().placeholder).toMatch(/new session/);
   });
 });

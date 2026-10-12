@@ -34,6 +34,7 @@ describe('comboOf', () => {
     expect(comboOf(ev({ key: 'ArrowLeft', metaKey: true }))?.combo).toBe('mod+arrowleft');
     expect(comboOf(ev({ key: 'ArrowRight', metaKey: true }))?.combo).toBe('mod+arrowright');
     expect(comboOf(ev({ key: '\\', metaKey: true }))?.combo).toBe('mod+\\');
+    expect(comboOf(ev({ key: '/', metaKey: true }))?.combo).toBe('mod+/');
   });
 
   it('is case-insensitive, so Shift does not silently disable a binding', () => {
@@ -55,7 +56,7 @@ describe('SHORTCUTS', () => {
     // Guards the drift this table exists to prevent: a documented shortcut
     // that no keystroke reaches.
     const reachable = new Set(
-      ['n', '\\', '[', ']', 'ArrowLeft', 'ArrowRight', '1'].map(
+      ['n', '\\', '/', '[', ']', 'ArrowLeft', 'ArrowRight', '1'].map(
         (key) => comboOf(ev({ key, metaKey: true }))?.combo,
       ),
     );

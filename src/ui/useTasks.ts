@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
-import { startCapture, onCaptureUpdate, deriveStatus, contextUsageForSessions } from '../capture';
+import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
 import { noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
@@ -294,9 +294,17 @@ export function useTasks(): UseTasksResult {
       setCaptureError(`Capture updates unavailable: ${message(err)}`);
     }
 
+    // The watcher reports a dead or inert fs watch here, and nothing else did:
+    // liveUpdatesError was set and never read.
+    const unsubscribeProgress = onCaptureProgress((p) => {
+      if (stopped) return;
+      if (p.phase === 'degraded' || p.phase === 'polling') setCaptureError(p.error ?? null);
+    });
+
     void (async () => {
       try {
         handle = await startCapture();
+        if (!stopped && handle?.liveUpdatesError) setCaptureError(handle.liveUpdatesError);
         if (stopped) {
           void handle?.stop().catch(() => {});
           handle = null;
@@ -309,6 +317,7 @@ export function useTasks(): UseTasksResult {
     return () => {
       stopped = true;
       unsubscribe?.();
+      unsubscribeProgress();
       if (contextTimer) clearTimeout(contextTimer);
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();

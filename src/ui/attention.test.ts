@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __setAttentionBackend,
+  announcementFor,
   attentionFor,
   attentionMarks,
   clearAttention,
@@ -91,5 +92,31 @@ describe('marks and the OS bounce', () => {
     onAttention(good);
     expect(() => noteStatusChange(1, 'running', 'blocked')).not.toThrow();
     expect(good).toHaveBeenCalled();
+  });
+});
+
+describe('announcementFor', () => {
+  const title = (id: number) => (id === 1 ? 'Fix login' : null);
+
+  it('speaks for a task that newly needs you', () => {
+    expect(announcementFor(new Map(), new Map([[1, 'blocked']]), title)).toBe(
+      'Fix login needs you: waiting on a permission prompt.',
+    );
+  });
+
+  it('speaks when a task finishes, falling back to the id without a title', () => {
+    expect(announcementFor(new Map(), new Map([[2, 'finished']]), title)).toBe('Task 2 finished.');
+  });
+
+  it('stays silent for marks that persist or clear', () => {
+    const marks = new Map([[1, 'blocked' as const]]);
+    expect(announcementFor(marks, marks, title)).toBe('');
+    expect(announcementFor(marks, new Map(), title)).toBe('');
+  });
+
+  it('speaks again when a mark changes kind', () => {
+    expect(announcementFor(new Map([[1, 'blocked']]), new Map([[1, 'finished']]), title)).toBe(
+      'Fix login finished.',
+    );
   });
 });
