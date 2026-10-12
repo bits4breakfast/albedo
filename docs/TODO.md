@@ -8,41 +8,21 @@ Nothing here is a bug in shipped behaviour unless it says so.
 
 ---
 
-## 1. Watcher: a polling fallback
+## 1. Watcher: a polling fallback — done
 
-**The one I would do first, and not because of Windows.**
+Shipped in `src/capture/watcher.ts`. Every 30s, once the backfill is in, the
+watcher stats each transcript and compares it to the size ingest last saw; growth
+older than 5s with no ingest pending means the native watcher missed it. The
+poll ingests it and the app reports "live updates are being polled, not
+watched". A failed `watch()` falls into the same mode.
 
-`src/capture/watcher.ts:223` registers `tauri-plugin-fs`'s native `watch` with a
-debounce. There is no polling fallback anywhere in `src/capture/`. Native events
-are inotify on Linux, FSEvents on macOS — and there are filesystems where
-`watch()` **succeeds and then never fires**:
+The surfacing half turned out to be missing, not just the fallback:
+`liveUpdatesError` and the `degraded` event had no reader. `useTasks` now
+subscribes and the message lands in the banner.
 
-- WSL's `/mnt/c` (the Windows drive, via drvfs/9p) delivers no inotify events;
-- NFS/SMB network mounts, commonly;
-- some container bind mounts.
-
-The failure mode is the bad one. `watch()` returns a valid unwatch handle, so
-`liveUpdatesError` stays null, nothing reports `degraded`, and every row still
-arrives — via the startup backfill. The app looks healthy.
-
-That is exactly the bug `STATUS.md` calls the sharpest in the project's history:
-the watcher that never fired from the first commit while 787 tests stayed green.
-It is currently one unusual filesystem away from returning, and this time
-nothing would even error.
-
-**Shape of the fix.** Not "replace events with polling" — poll only as a
-fallback, and use the discrepancy as the detector:
-
-- after `start()`, note `bytes_ingested` for the newest transcript;
-- on an interval (30s is plenty), `stat` the handful of files the app is
-  actually tailing and compare `mtime`/size to what was last ingested;
-- if the poll finds an append the watcher never reported, the watcher is inert:
-  keep polling, and surface it the way `liveUpdatesError` is surfaced today —
-  "live updates are being polled, not watched" is a true and useful sentence.
-
-**Why it is worth it regardless of platform:** it converts a silent failure into
-a slower-but-working one, and it makes the dead-watcher case *detectable*, which
-it is not today.
+**Not verified live.** The comparison is unit-tested
+(`findUnreportedGrowth`); the real thing needs a filesystem that swallows
+events, or a no-op'd `watch()` callback, and a transcript append.
 
 ---
 
@@ -136,28 +116,17 @@ more expensive.
 
 ---
 
-## 4. UI/UX
+## 4. UI/UX — done, except §7
 
-- **No `aria-live` anywhere in `src/`.** A task going blocked, a capture error
-  and the backfill are announced visually only. The attention feature added in
-  this round is a dock bounce plus a border pulse — nothing a screen reader
-  sees. One polite live region announcing status transitions would cover most
-  of it.
-- **`SHORTCUTS` has no renderer.** `src/ui/shortcuts.ts` exports a documented
-  table precisely so a help surface can render it instead of a second list
-  drifting from the first. Until something does, ⌘[ / ⌘] / ⌘← / ⌘→ are
-  undiscoverable. A `?` overlay is a small component.
-- **`canResume(taskId)` is exported and nothing consumes it**
-  (`src/ui/Terminal.tsx:160`). So the composer still cannot say "your
-  conversation will be picked up" rather than the deliberately vague placeholder
-  that is true either way. Wiring it is the point of it existing.
-- **The touched-files view is the wrong shape** — see §7, which is big enough
-  to stand on its own.
-- **Selecting a task outside the active project tab is still a visual no-op.**
-  `select()` (`App.tsx`) sets `selectedId` but never moves
-  `activeProjectTabKey`, so opening a session from another project appears to do
-  nothing. Same shape as a bug already fixed twice — the scope has to move
-  first.
+Shipped: a polite `aria-live` region announcing blocked/finished (reusing the
+attention marks, so it is silent for a prompt you answered yourself); a `⌘/`
+overlay rendered from `SHORTCUTS`, with a header button; the composer
+placeholder now reads `canResume`; and `select()` moves to the task's project
+tab first, so opening a session from another project is no longer a no-op.
+
+Still open: **the touched-files view is the wrong shape** — see §7.
+
+None of this has been checked by a person at the window yet.
 
 ---
 

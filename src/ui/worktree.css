@@ -833,3 +833,10 @@
   font-family: var(--font-mono);
   user-select: text;
 }
+
+/* Shortcuts help: text on --panel, the same ground as the rest of the modal. */
+.shortcuts-list { margin: 0; display: grid; gap: 6px; }
+.shortcuts-row { display: grid; grid-template-columns: 7ch 1fr; gap: 12px; align-items: baseline; }
+.shortcuts-row dt, .shortcuts-row dd { margin: 0; }
+.shortcuts-row kbd { font-family: var(--mono, ui-monospace, monospace); color: var(--text); }
+.shortcuts-row dd { color: var(--text); }

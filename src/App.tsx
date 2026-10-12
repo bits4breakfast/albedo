@@ -7,8 +7,9 @@ import useTasks from './ui/useTasks';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import Subagents from './ui/Subagents';
-import { attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
+import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import { useShortcuts } from './ui/shortcuts';
+import ShortcutsHelp from './ui/ShortcutsHelp';
 import StatusDot from './ui/StatusDot';
 import Terminal from './ui/Terminal';
 import NewTaskDialog from './ui/NewTaskDialog';
@@ -470,6 +471,7 @@ export default function App() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   /**
    * Resume argv for tasks created in THIS run. A fork lands under a new
@@ -761,7 +763,18 @@ export default function App() {
     [],
   );
 
+  // select() is stable, so it reads the tabs through a ref rather than closing
+  // over them.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+
   const select = useCallback((id: number) => {
+    // The scope moves first. A task in another project's tab would otherwise be
+    // selected behind a list that does not show it, which reads as nothing
+    // happening. Only a visible tab can take the scope; a hidden one is the
+    // user's choice and is left alone.
+    const home = tabsRef.current.find((t) => t.tasks.some((task) => task.id === id));
+    if (home) selectTabRef.current?.(home.key);
     setSelectedId(id);
     store(LS.selected, String(id));
     setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
@@ -775,6 +788,22 @@ export default function App() {
    */
   const [attention, setAttention] = useState<ReadonlyMap<number, AttentionKind>>(attentionMarks);
   useEffect(() => onAttention(setAttention), []);
+
+  // One polite live region for the transitions the dock bounce and row pulse
+  // only show. Titles come off a ref so a task rename does not re-announce.
+  const [announcement, setAnnouncement] = useState('');
+  const announcedRef = useRef<ReadonlyMap<number, AttentionKind>>(attention);
+  const tasksForAnnounceRef = useRef(tasks);
+  tasksForAnnounceRef.current = tasks;
+  useEffect(() => {
+    const text = announcementFor(
+      announcedRef.current,
+      attention,
+      (id) => tasksForAnnounceRef.current.find((t) => t.id === id)?.title ?? null,
+    );
+    announcedRef.current = attention;
+    setAnnouncement(text);
+  }, [attention]);
   useEffect(() => watchFocus(), []);
 
   /**
@@ -1047,6 +1076,7 @@ export default function App() {
   );
 
   useShortcuts({
+    'mod+/': () => setShortcutsOpen((o) => !o),
     'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),
     // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
     // field, and this app has a composer, a title input and a code editor.
@@ -1111,11 +1141,16 @@ export default function App() {
         onReconcile={() => setReconcileOpen(true)}
         onProjects={() => setProjectsOpen(true)}
         onSessions={() => setSessionsOpen(true)}
+        onShortcuts={() => setShortcutsOpen(true)}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
       />
 
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
+
       {banner && (
-        <div className="banner">
+        <div className="banner" role="status">
           <span className="status-dot" data-status="blocked" aria-hidden="true" />
           <span className="banner-text" title={banner}>
             {banner}
@@ -1536,6 +1571,7 @@ export default function App() {
           and branch cleanup behind a confirmation. The task row is only marked
           archived once the dialog reports the worktree work succeeded --
           flipping first would strand the worktree, reachable from nothing. */}
+      <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <PaneErrorBoundary label="Projects">
         <ProjectsDialog
           open={projectsOpen}

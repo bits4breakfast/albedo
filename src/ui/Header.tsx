@@ -34,6 +34,8 @@ export interface HeaderProps {
   onProjects: () => void;
   /** Opens the past-session browser. */
   onSessions: () => void;
+  /** Opens the keyboard shortcuts list. */
+  onShortcuts: () => void;
   blockedCount: number;
 }
 
@@ -54,6 +56,7 @@ export default function Header({
   onReconcile,
   onProjects,
   onSessions,
+  onShortcuts,
   blockedCount,
 }: HeaderProps) {
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -149,6 +152,9 @@ export default function Header({
         </button>
         <button className="btn btn-ghost" onClick={onReconcile} title="Reconcile git worktrees">
           Worktrees
+        </button>
+        <button className="btn btn-ghost" onClick={onShortcuts} title="Keyboard shortcuts (⌘/)" aria-label="Keyboard shortcuts">
+          ⌘/
         </button>
       </div>
     </header>

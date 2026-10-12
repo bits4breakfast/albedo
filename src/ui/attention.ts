@@ -166,3 +166,25 @@ export function attentionFor(prior: TaskStatus, next: TaskStatus): AttentionKind
 export function clearAttention(taskId: number): void {
   if (marked.delete(taskId)) emit();
 }
+
+/**
+ * What a screen reader should hear for marks that were not there before.
+ *
+ * The dock bounce and the row pulse are both visual, so without this a blocked
+ * session is silent to anyone not looking at the list. Only NEW marks speak:
+ * a mark clearing (you looked at the task) or persisting is not an event, which
+ * is the same discipline `attentionFor` applies to the bounce.
+ */
+export function announcementFor(
+  prev: ReadonlyMap<number, AttentionKind>,
+  next: ReadonlyMap<number, AttentionKind>,
+  titleOf: (taskId: number) => string | null,
+): string {
+  const parts: string[] = [];
+  for (const [id, kind] of next) {
+    if (prev.get(id) === kind) continue;
+    const title = titleOf(id) ?? `Task ${id}`;
+    parts.push(kind === 'blocked' ? `${title} needs you: waiting on a permission prompt.` : `${title} finished.`);
+  }
+  return parts.join(' ');
+}
