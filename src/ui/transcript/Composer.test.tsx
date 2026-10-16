@@ -21,7 +21,7 @@
  * as they check the call counts.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
@@ -230,7 +230,7 @@ describe('(c) exactly-once when presence brings the session up', () => {
     type('nowhere to go');
     pressEnter();
 
-    await waitFor(() => expect(screen.getByText(/no terminal to send to/i)).toBeDefined());
+    await waitFor(() => expect(screen.getByText(/nowhere to send this/i)).toBeDefined());
     expect(box().value).toBe('nowhere to go');
     expect(box().readOnly).toBe(false);
   });
@@ -292,7 +292,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     type('please also update the tests');
     pressEnter();
 
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
     expect(submitPty).not.toHaveBeenCalled();
     // Frozen where the user left it, not cleared and not hidden.
     expect(box().value).toBe('please also update the tests');
@@ -306,7 +306,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
 
     type('please also update the tests');
     pressEnter();
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
 
     await act(async () => {
       rerender(<Composer taskId={5} status="running" onSent={onSent} />);
@@ -325,7 +325,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     const { rerender } = render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
     type('once please');
     pressEnter();
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
 
     for (const s of ['running', 'blocked', 'running', 'idle'] as const) {
       await act(async () => {
@@ -342,7 +342,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
     type('never mind');
     pressEnter();
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
 
@@ -374,5 +374,105 @@ describe('placeholder when no terminal is running', () => {
     vi.mocked(canResume).mockReturnValue(false);
     render(<Composer taskId={1} onSent={vi.fn()} status="idle" />);
     expect(box().placeholder).toMatch(/new session/);
+  });
+});
+
+describe('Tab with nothing focused', () => {
+  const tab = (init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(window, { key: 'Tab', ...init });
+
+  it('focuses the composer when nothing holds focus', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    tab();
+
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('leaves Tab alone when something else has focus', () => {
+    render(
+      <>
+        <button>other</button>
+        <Composer taskId={1} onSent={() => {}} />
+      </>,
+    );
+    screen.getByText('other').focus();
+
+    tab();
+
+    expect(document.activeElement).toBe(screen.getByText('other'));
+  });
+
+  it('leaves Shift+Tab and modified Tab alone', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    tab({ shiftKey: true });
+    tab({ metaKey: true });
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('does not steal focus from behind an open dialog', () => {
+    render(
+      <>
+        <div aria-modal="true" role="dialog" />
+        <Composer taskId={1} onSent={() => {}} />
+      </>,
+    );
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    tab();
+
+    expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe('resizable composer', () => {
+  const grip = () => screen.getByRole('separator');
+
+  // This environment's localStorage is not a working Storage, so give the
+  // component a plain in-memory one.
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+  });
+
+  it('dragging the grip up sets the height, and it is remembered', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    fireEvent.pointerDown(grip(), { clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(grip(), { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(grip(), { clientY: 120, pointerId: 1 });
+
+    expect(box().style.height).toBe('80px');
+    expect(box().style.maxHeight).toBe('none');
+    expect(window.localStorage.getItem('albedo.composerPx')).toBe('80');
+  });
+
+  it('double-click resets to auto-grow and forgets the height', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    fireEvent.pointerDown(grip(), { clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(grip(), { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(grip(), { clientY: 120, pointerId: 1 });
+
+    fireEvent.doubleClick(grip());
+
+    expect(box().style.maxHeight).toBe('');
+    expect(window.localStorage.getItem('albedo.composerPx')).toBeNull();
+  });
+
+  it('starts at a remembered height', () => {
+    window.localStorage.setItem('albedo.composerPx', '96');
+    render(<Composer taskId={1} onSent={() => {}} />);
+    expect(box().style.height).toBe('96px');
   });
 });

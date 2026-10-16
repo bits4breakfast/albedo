@@ -63,7 +63,10 @@ describe('buildRuns', () => {
     expect(runs[0]?.label).toBe('the original assignment');
   });
 
-  it('derives blocked from an unanswered trailing tool_use', () => {
+  it('reads an unanswered trailing tool_use as running, not blocked', () => {
+    // A tool that is still executing has no result yet; so does a permission
+    // prompt, and the transcript cannot tell them apart. Prompts are reported
+    // at the task level (hook events), so here it is work in progress.
     const runs = buildRuns(
       [agg('aaa', 2, now - 1_000, now)],
       [
@@ -73,7 +76,7 @@ describe('buildRuns', () => {
         }),
       ],
     );
-    expect(runs[0]?.status).toBe('blocked');
+    expect(runs[0]?.status).toBe('running');
   });
 
   it('survives an agent with aggregates but no tail rows', () => {

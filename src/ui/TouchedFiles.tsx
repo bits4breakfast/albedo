@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpenFileRequest, Task, TouchedFile } from '../types';
 import { touchedFilesDetailed } from '../db/touched';
+import { lineChanges, type LineChange } from '../git/worktree';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
 import { useOpenFile } from './editor/openFile';
@@ -38,6 +39,8 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
   const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [reloadKey, setReloadKey] = useState(0);
+  /** +/- per path against the task's base. Empty when git cannot say. */
+  const [lines, setLines] = useState<Map<string, LineChange>>(() => new Map());
 
   const openFile = useSafeOpenFile();
 
@@ -45,6 +48,15 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
   useEffect(() => {
     let live = true;
     setLoading(true);
+    // Line counts are a nicety beside the change set: a failure here leaves
+    // the rows without them rather than failing the list.
+    void lineChanges(task.worktreePath, task.baseBranch)
+      .then((m) => {
+        if (live) setLines(m);
+      })
+      .catch(() => {
+        if (live) setLines(new Map());
+      });
     void touchedFilesDetailed(task.id)
       .then((res) => {
         if (!live) return;
@@ -67,11 +79,12 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
     return () => {
       live = false;
     };
-  }, [task.id, reloadKey]);
+  }, [task.id, task.worktreePath, task.baseBranch, reloadKey]);
 
   // Reset between tasks so the previous task's rows never flash in the new one.
   useEffect(() => {
     setFiles([]);
+    setLines(new Map());
     setGitError(null);
     setError(null);
     setLoaded(false);
@@ -184,7 +197,7 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
 
       <div className="tf-scroll">
         {files.map((f) => (
-          <FileRow key={f.path} file={f} now={now} onOpen={onOpen} />
+          <FileRow key={f.path} file={f} change={lines.get(f.path) ?? null} now={now} onOpen={onOpen} />
         ))}
 
         {files.length === 0 && loaded && error === null ? (
@@ -209,10 +222,13 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
 
 function FileRow({
   file,
+  change,
   now,
   onOpen,
 }: {
   file: TouchedFile;
+  /** Lines added/deleted against the base; null when git has no count. */
+  change: LineChange | null;
   now: number;
   onOpen: (f: TouchedFile) => void;
 }): ReactNode {
@@ -261,8 +277,14 @@ function FileRow({
         ) : null}
       </span>
 
-      <span className="tf-edits" title={`${file.editCount} edit tool call(s) in the transcript`}>
-        {file.editCount === 0 ? '—' : `${file.editCount}×`}
+      <span className="tf-lines" title={linesTitle(change)}>
+        {change === null ? null : change.added === null ? (
+          <span className="tf-bin">bin</span>
+        ) : (
+          <>
+            <span className="tf-add">+{change.added}</span> <span className="tf-del">−{change.deleted}</span>
+          </>
+        )}
       </span>
       <span className="tf-when">{relativeTime(file.lastTouchedAt, now)}</span>
     </button>
@@ -286,6 +308,12 @@ function rowTitle(file: TouchedFile, now: number): string {
   if (file.source === 'git') facts.push('changed in the worktree, not through an edit tool');
   if (file.handEdited) facts.push('saved by hand in the editor');
   return `${file.path}\n${facts.join(' · ')}`;
+}
+
+function linesTitle(change: LineChange | null): string {
+  if (change === null) return 'No line count: unchanged against the base branch, or not tracked by git yet';
+  if (change.added === null) return 'Binary file';
+  return `${change.added} line(s) added, ${change.deleted} removed, against the base branch`;
 }
 
 /** add / del / mod / none, from the porcelain code. Drives the row's colour. */

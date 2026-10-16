@@ -10,6 +10,17 @@ Claude Code, never replaces it. Spec: Notion "Albedo: MVP Spec".
 | pty (`src-tauri/src/pty.rs`) | bidirectional | Execution only. Output is **opaque** — never parsed. |
 | transcript JSONL on disk | read only | All structured data: search, history, status, diffs. |
 
+A third, narrow channel exists by the owner's decision: **hook events**
+(`src/capture/hookEvents.ts`). Claude Code writes the turn it is waiting on to
+the transcript only once the turn ends, so an approval question or permission
+prompt is invisible there while it waits. Albedo spawns `claude` with a
+`--settings` block whose hooks append one JSON line per event to
+`~/.albedo/events/task-<id>.jsonl`; the app reads that file. It is structured,
+read-only, and never terminal bytes. It is used for exactly one thing -- "this
+task is waiting on you, and on what" -- and nothing else may be built on it
+without the same decision. `hookEvents.ts` is the only file that knows the
+hook payload shape.
+
 Violating this separation is the one architectural mistake that matters.
 If you find yourself regexing terminal bytes, stop — the answer is in SQLite.
 

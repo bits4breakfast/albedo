@@ -1,3 +1,4 @@
+import { listen } from '@tauri-apps/api/event';
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import type { OpenFileRequest, Project, Task } from './types';
@@ -11,7 +12,8 @@ import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocu
 import { useShortcuts } from './ui/shortcuts';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import StatusDot from './ui/StatusDot';
-import Terminal from './ui/Terminal';
+import Terminal, { focusPty } from './ui/Terminal';
+import ModelPicker from './ui/ModelPicker';
 import NewTaskDialog from './ui/NewTaskDialog';
 import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
@@ -25,7 +27,7 @@ import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
 import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/projects';
-import { listTasks } from './db';
+import { deleteTask, listTasks } from './db';
 import type { BackfillResult } from './db/projects';
 import { repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
@@ -945,6 +947,15 @@ export default function App() {
     if (candidate) select(candidate.id);
   }, [loading, visibleTasks, selectedId, select]);
 
+  // A selection restored from the last run is shown but was never opened, so it
+  // had no terminal and the message box could not send to it. Selecting by
+  // click opens the task; a restored selection must too.
+  useEffect(() => {
+    if (selectedId === null || loading) return;
+    if (!tasks.some((t) => t.id === selectedId && t.status !== 'archived')) return;
+    setOpenIds((prev) => (prev.includes(selectedId) ? prev : [...prev, selectedId]));
+  }, [selectedId, tasks, loading]);
+
   // Terminals outlive tab switches, but not the task itself.
   useEffect(() => {
     setOpenIds((prev) => {
@@ -1063,6 +1074,28 @@ export default function App() {
     ],
     [filesColumnShown, editorTask],
   );
+
+  // ⌘W. The native menu owns the shortcut (see src-tauri/src/lib.rs) and tells
+  // us rather than closing the window, which would quit the app and every live
+  // terminal in it. It closes an open file, and otherwise does nothing.
+  const editorOpenRef = useRef(false);
+  editorOpenRef.current = editorTask !== null;
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    void listen('albedo://close-tab', () => {
+      if (editorOpenRef.current) closeEditor();
+    })
+      .then((un) => {
+        if (gone) un();
+        else off = un;
+      })
+      .catch((err) => console.warn('[menu] close shortcut unavailable', err));
+    return () => {
+      gone = true;
+      off?.();
+    };
+  }, [closeEditor]);
 
   const stepReadingTab = useCallback(
     (delta: number) => {
@@ -1291,6 +1324,7 @@ export default function App() {
                   <span className="main-ident-title" title={wrapForTooltip(selected.title)}>
                     {selected.title}
                   </span>
+                  <ModelPicker task={selected} />
                   <span className="main-ident-path">{selected.worktreePath}</span>
                 </>
               ) : (
@@ -1455,7 +1489,7 @@ export default function App() {
               {/* All three panels stay mounted so scroll position and editor
                   buffer survive a tab flip; only the task identity resets them. */}
               <div className="pane-body">
-                <div className="tabpanel" hidden={activeTab !== 'transcript'}>
+                <div className="tabpanel tabpanel-col" hidden={activeTab !== 'transcript'}>
                   {/* Above the transcript, and only while something is live:
                       when a session fans out the transcript itself goes quiet,
                       which is exactly when you need to know what is running. */}
@@ -1469,6 +1503,12 @@ export default function App() {
                       /* So the composer can hold a message rather than typing
                          it into a permission prompt. */
                       status={selected?.status ?? null}
+                      /* The prompt is answered in the terminal; make sure it
+                         is on screen, then give it the keyboard. */
+                      onAnswerInTerminal={(id) => {
+                        setMode((m) => (m === 'transcript' ? 'split' : m));
+                        window.requestAnimationFrame(() => focusPty(id));
+                      }}
                     />
                   </PaneErrorBoundary>
                 </div>
@@ -1656,11 +1696,16 @@ export default function App() {
           }}
           onDeleted={(taskId) => {
             // Same ordering discipline as onArchived: the row only leaves the
-            // list once the destructive work has actually completed. The task
-            // is already gone from the db by here, so this just resyncs.
-            forgetResume(taskId);
-            setArchiveTarget(null);
-            void refresh();
+            // list once the destructive work has actually completed. The dialog
+            // only does the git side, so the task and its captured messages are
+            // removed here (see deleteTask).
+            void deleteTask(taskId)
+              .then(() => {
+                forgetResume(taskId);
+                setArchiveTarget(null);
+                return refresh();
+              })
+              .catch((e) => console.error('deleteTask failed', e));
           }}
         />
       </PaneErrorBoundary>

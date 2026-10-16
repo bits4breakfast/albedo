@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  parseNumstat,
   GitError,
   type GitResult,
   type WorkAtRisk,
@@ -918,5 +919,15 @@ describe('removeWorktree', () => {
       }),
     ).rejects.toThrow(/Invalid branch name/);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('parseNumstat', () => {
+  it('reads counts per path, binary as null, and skips junk', () => {
+    const m = parseNumstat('12\t3\tsrc/a.ts\n-\t-\tlogo.png\n\nnot a line\n0\t7\tdocs/x y.md\n');
+    expect(m.get('src/a.ts')).toEqual({ added: 12, deleted: 3 });
+    expect(m.get('logo.png')).toEqual({ added: null, deleted: null });
+    expect(m.get('docs/x y.md')).toEqual({ added: 0, deleted: 7 });
+    expect(m.size).toBe(3);
   });
 });

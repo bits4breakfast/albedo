@@ -65,7 +65,33 @@ export type UserBlock =
   /** Content attached to the user's prompt -- a paste, a file, an image. */
   | { kind: 'context'; ref: string | null; text: string }
   /** Output of a local command, and similar side-channel text. */
-  | { kind: 'output'; tag: string; text: string };
+  | { kind: 'output'; tag: string; text: string }
+  /**
+   * Text Claude Code marked as pasted, in `<pasted_content id="...">`. Only
+   * appears as its own block when there is typed text beside it; a message that
+   * is nothing but one pasted block is reduced to plain text (see
+   * {@link unwrapSolepaste}).
+   */
+  | { kind: 'pasted'; id: string | null; text: string }
+  /** A skill's SKILL.md, loaded into context when it was invoked. */
+  | { kind: 'skill'; name: string; dir: string; text: string };
+
+/**
+ * A loaded skill arrives as a plain user row with no tags at all: the first
+ * line is `Base directory for this skill: <dir>` and the rest is the SKILL.md.
+ * Anchored at the start of the body, so prose that merely quotes the phrase is
+ * untouched. The skill's name is the last segment of the directory.
+ */
+const SKILL_RE = /^Base directory for this skill: ([^\n]+)\n+([\s\S]*)$/;
+
+function parseSkill(body: string): UserBlock | null {
+  const m = SKILL_RE.exec(body);
+  if (!m) return null;
+  const dir = (m[1] ?? '').trim().replace(/\/+$/, '');
+  const name = dir.split('/').pop() ?? '';
+  if (dir.length === 0 || name.length === 0) return null;
+  return { kind: 'skill', name, dir, text: (m[2] ?? '').trim() };
+}
 
 /**
  * Envelopes recognised at the top level of a user body. Anything not in this
@@ -83,6 +109,7 @@ const KNOWN_TAGS = [
   'interrupted-output',
   'agent-message',
   'context',
+  'pasted_content',
 ] as const;
 
 /**
@@ -255,6 +282,21 @@ function stripAgentFrame(blocks: UserBlock[]): UserBlock[] {
 }
 
 /**
+ * A body that is one pasted block and nothing else is plain text.
+ *
+ * Albedo's own message box sends everything as a bracketed paste (so a
+ * multi-line message is one turn, not one per line), and Claude Code then wraps
+ * the WHOLE message in `<pasted_content>` -- the sentence the user typed and
+ * the log they pasted alike. Showing that as "pasted" would call the user's own
+ * typing a paste. A real paste in the terminal has typed text OUTSIDE the tag,
+ * and that case keeps its separate block.
+ */
+function unwrapSoleStreamedPaste(blocks: UserBlock[]): UserBlock[] {
+  const only = blocks.length === 1 ? blocks[0] : undefined;
+  return only && only.kind === 'pasted' ? [{ kind: 'text', text: only.text }] : blocks;
+}
+
+/**
  * Split a user row's body into renderable blocks.
  *
  * Always returns at least one block for non-empty input, and never throws: a
@@ -264,6 +306,8 @@ function stripAgentFrame(blocks: UserBlock[]): UserBlock[] {
 export function parseUserBody(body: string): UserBlock[] {
   if (typeof body !== 'string' || body.length === 0) return [];
   try {
+    const skill = parseSkill(body);
+    if (skill) return [skill];
     const out: UserBlock[] = [];
     let last = 0;
     ENVELOPE_RE.lastIndex = 0;
@@ -285,6 +329,9 @@ export function parseUserBody(body: string): UserBlock[] {
           break;
         case 'agent-message':
           out.push(parseAgentMessage(attrs, inner));
+          break;
+        case 'pasted_content':
+          out.push({ kind: 'pasted', id: attr(attrs, 'id'), text: unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, '') });
           break;
         case 'context':
           out.push({ kind: 'context', ref: attr(attrs, 'ref'), text: unescapeXml(inner.trim()) });
@@ -309,7 +356,7 @@ export function parseUserBody(body: string): UserBlock[] {
 
     if (last < body.length) pushText(out, body.slice(last));
     if (out.length === 0) pushText(out, body);
-    return stripAgentFrame(coalesceCommands(out));
+    return unwrapSoleStreamedPaste(stripAgentFrame(coalesceCommands(out)));
   } catch {
     return [{ kind: 'text', text: body }];
   }
