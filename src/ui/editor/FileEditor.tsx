@@ -806,17 +806,38 @@ function CopyPathButton({ path, absolute }: { path: string; absolute: string | n
     const t = setTimeout(() => setState('idle'), 1400);
     return () => clearTimeout(t);
   }, [state]);
+
+  const copy = useCallback(
+    (wantAbsolute: boolean) => {
+      const text = wantAbsolute && absolute ? absolute : path;
+      void copyText(text).then((ok) => setState(ok ? 'copied' : 'failed'));
+    },
+    [path, absolute],
+  );
+
+  // Option-Command-C, Finder's "Copy as Pathname" (VS Code agrees); with Shift,
+  // the absolute path. Matched on `code`, because Option turns `key` into "ç".
+  // Capture phase, so it works with the cursor inside the editor too.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.altKey || e.ctrlKey || e.code !== 'KeyC') return;
+      e.preventDefault();
+      e.stopPropagation();
+      copy(e.shiftKey);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [copy]);
+
   return (
     <button
       type="button"
       className="ed-copy"
       data-state={state}
-      onClick={(e) => {
-        const text = e.altKey && absolute ? absolute : path;
-        void copyText(text).then((ok) => setState(ok ? 'copied' : 'failed'));
-      }}
-      title={absolute ? 'Copy path (⌥-click for the absolute path)' : 'Copy path'}
+      onClick={(e) => copy(e.altKey)}
+      title={absolute ? 'Copy path (⌥⌘C) · absolute path: ⌥-click or ⇧⌥⌘C' : 'Copy path (⌥⌘C)'}
       aria-label="Copy path"
+      aria-keyshortcuts="Alt+Meta+C"
     >
       {state === 'copied' ? 'copied' : state === 'failed' ? 'copy failed' : (
         <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
