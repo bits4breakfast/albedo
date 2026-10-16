@@ -18,6 +18,7 @@
  *    re-reads the file and refuses to overwrite a version that moved under us.
  */
 
+import { copyText } from '../../lib/clipboard';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -652,6 +653,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
         <span className="ed-path" title={resolved?.absolute ?? request.path}>
           {title}
         </span>
+        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} />
         {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
         {handEdited && (
           <span className="ed-badge" title="You saved this file by hand in this session">
@@ -789,4 +791,39 @@ function SaveIndicator({ state }: { state: SaveState }) {
     default:
       return null;
   }
+}
+
+/**
+ * Copy the path shown above the editor. A click copies it as shown (relative
+ * to the worktree, which is what you paste into a prompt or a command run
+ * there); Option-click copies the absolute path. "copied" confirms it for a
+ * moment rather than leaving you to wonder whether it worked.
+ */
+function CopyPathButton({ path, absolute }: { path: string; absolute: string | null }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const t = setTimeout(() => setState('idle'), 1400);
+    return () => clearTimeout(t);
+  }, [state]);
+  return (
+    <button
+      type="button"
+      className="ed-copy"
+      data-state={state}
+      onClick={(e) => {
+        const text = e.altKey && absolute ? absolute : path;
+        void copyText(text).then((ok) => setState(ok ? 'copied' : 'failed'));
+      }}
+      title={absolute ? 'Copy path (⌥-click for the absolute path)' : 'Copy path'}
+      aria-label="Copy path"
+    >
+      {state === 'copied' ? 'copied' : state === 'failed' ? 'copy failed' : (
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      )}
+    </button>
+  );
 }

@@ -286,6 +286,40 @@ export function modelOf(rawJson: string): string | null {
   return typeof model === 'string' && model.length > 0 ? model : null;
 }
 
+/** An image a user attached, ready for an `<img src>`. */
+export interface TranscriptImage {
+  /** `data:` URL, built from the block's base64 payload. */
+  src: string;
+  mediaType: string;
+}
+
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/**
+ * The image a row stands for, or null.
+ *
+ * An image block becomes a `[image]` placeholder row (see blockToRow), and the
+ * row keeps the whole line in raw_json -- base64 payload included -- so the
+ * picture is recovered here, by the block index encoded in `seq`. Only inline
+ * base64 sources of the four web image types are returned: anything else (a
+ * URL source, an unknown type) stays a placeholder rather than becoming a
+ * request the app never meant to make.
+ */
+export function imageAt(rawJson: string, seq: number): TranscriptImage | null {
+  const line = safeParse(rawJson);
+  const message = line?.['message'];
+  if (!isRecord(message) || !Array.isArray(message['content'])) return null;
+  const block = (message['content'] as unknown[])[seq % SEQ_STRIDE];
+  if (!isRecord(block) || block['type'] !== 'image') return null;
+  const source = block['source'];
+  if (!isRecord(source) || source['type'] !== 'base64') return null;
+  const mediaType = source['media_type'];
+  const data = source['data'];
+  if (typeof mediaType !== 'string' || !IMAGE_TYPES.has(mediaType)) return null;
+  if (typeof data !== 'string' || data.length === 0 || !/^[A-Za-z0-9+/=\s]+$/.test(data.slice(0, 256))) return null;
+  return { src: `data:${mediaType};base64,${data}`, mediaType };
+}
+
 /**
  * `message.stop_reason` off an assistant line, or null.
  *

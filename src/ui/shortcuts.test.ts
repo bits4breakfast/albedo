@@ -24,8 +24,8 @@ describe('comboOf', () => {
   it('reads the digit out of a number jump', () => {
     expect(comboOf(ev({ key: '3', metaKey: true }))).toEqual({ combo: 'mod+digit', digit: 3 });
     expect(comboOf(ev({ key: '9', metaKey: true }))).toEqual({ combo: 'mod+digit', digit: 9 });
-    // 0 is not a jump: there is no zeroth task.
-    expect(comboOf(ev({ key: '0', metaKey: true }))).toBeNull();
+    // 0 is not a jump (there is no zeroth task); it is "actual size".
+    expect(comboOf(ev({ key: '0', metaKey: true }))).toEqual({ combo: 'mod+0', digit: null });
   });
 
   it('matches the bracket and arrow bindings', () => {
@@ -56,10 +56,20 @@ describe('SHORTCUTS', () => {
     // Guards the drift this table exists to prevent: a documented shortcut
     // that no keystroke reaches.
     const reachable = new Set(
-      ['n', '\\', '/', '[', ']', 'ArrowLeft', 'ArrowRight', '1'].map(
+      ['n', '\\', '/', '[', ']', 'ArrowLeft', 'ArrowRight', '1', '=', '-', '0'].map(
         (key) => comboOf(ev({ key, metaKey: true }))?.combo,
       ),
     );
     for (const s of SHORTCUTS) expect(reachable).toContain(s.combo);
+  });
+});
+
+describe('text size keys', () => {
+  it('maps Cmd = / + to bigger, Cmd - to smaller, Cmd 0 to actual size', () => {
+    expect(comboOf(ev({ key: '=', metaKey: true }))?.combo).toBe('mod+=');
+    expect(comboOf(ev({ key: '+', metaKey: true }))?.combo).toBe('mod+=');
+    expect(comboOf(ev({ key: '-', metaKey: true }))?.combo).toBe('mod+-');
+    expect(comboOf(ev({ key: '0', metaKey: true }))?.combo).toBe('mod+0');
+    expect(comboOf(ev({ key: '=' }))).toBeNull();
   });
 });

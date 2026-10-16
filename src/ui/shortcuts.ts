@@ -39,6 +39,9 @@ export type Combo =
   | 'mod+arrowleft'
   | 'mod+arrowright'
   | 'mod+/'
+  | 'mod+='
+  | 'mod+-'
+  | 'mod+0'
   | 'mod+digit';
 
 export interface ShortcutDoc {
@@ -60,6 +63,9 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous reading tab' },
   { combo: 'mod+arrowright', keys: '⌘→', description: 'Next reading tab' },
   { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle terminal / split / transcript' },
+  { combo: 'mod+=', keys: '⌘+', description: 'Bigger text' },
+  { combo: 'mod+-', keys: '⌘−', description: 'Smaller text' },
+  { combo: 'mod+0', keys: '⌘0', description: 'Actual size' },
   { combo: 'mod+/', keys: '⌘/', description: 'Show this list' },
 ] as const;
 
@@ -94,6 +100,15 @@ export function comboOf(e: KeyboardEvent): { combo: Combo; digit: number | null 
       return { combo: 'mod+\\', digit: null };
     case '/':
       return { combo: 'mod+/', digit: null };
+    // `+` is Shift+`=` on most layouts, so both are bigger; numpad sends `+`.
+    case '=':
+    case '+':
+      return { combo: 'mod+=', digit: null };
+    case '-':
+    case '_':
+      return { combo: 'mod+-', digit: null };
+    case '0':
+      return { combo: 'mod+0', digit: null };
     case '[':
       return { combo: 'mod+[', digit: null };
     case ']':

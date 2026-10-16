@@ -476,3 +476,12 @@ describe('resizable composer', () => {
     expect(box().style.height).toBe('96px');
   });
 });
+
+describe('shellEscapePath', () => {
+  it('escapes spaces and shell characters the way a terminal does on drop', async () => {
+    const { shellEscapePath } = await import('./TranscriptPane');
+    expect(shellEscapePath('/T/Screenshot 2026-10-17 at 00.36.49.png')).toBe('/T/Screenshot\\ 2026-10-17\\ at\\ 00.36.49.png');
+    expect(shellEscapePath("/a/it's (1).png")).toBe("/a/it\\'s\\ \\(1\\).png");
+    expect(shellEscapePath('/plain/path.png')).toBe('/plain/path.png');
+  });
+});

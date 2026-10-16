@@ -20,6 +20,7 @@ import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
 import { useOpenFile } from './editor/openFile';
 import { relativeTime } from './TaskList';
+import { useActivate } from './transcript/Diff';
 import './touched.css';
 
 /** Capture fires per batch of rows; coalesce bursts into one reload. */
@@ -239,12 +240,24 @@ function FileRow({
   const dir = cut === -1 ? '' : file.path.slice(0, cut);
   const name = cut === -1 ? file.path : file.path.slice(cut + 1);
 
+  // A div, not a <button>: WebKit allows no text selection inside a button,
+  // and the path is something people copy. useActivate opens the file on a
+  // plain click but not on a click that ends a text selection.
+  const activate = useActivate(() => onOpen(file));
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className="tf-row"
       data-source={file.source}
-      onClick={() => onOpen(file)}
+      onMouseDown={activate.onMouseDown}
+      onClick={activate.onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(file);
+        }
+      }}
       // Everything the row can shed when the column is narrow is still here.
       // Pinned as a column the pane goes down to 180px, where touched.css drops
       // the directory and the timestamp; the tooltip is where they survive.
@@ -287,7 +300,7 @@ function FileRow({
         )}
       </span>
       <span className="tf-when">{relativeTime(file.lastTouchedAt, now)}</span>
-    </button>
+    </div>
   );
 }
 

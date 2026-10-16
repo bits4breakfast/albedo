@@ -53,3 +53,12 @@ describe('transcript links', () => {
     expect(screen.getByRole('link').textContent).toBe('https://a.dev/x');
   });
 });
+
+describe('underscores inside words', () => {
+  it('do not italicise a path, but _word_ still does', () => {
+    const { container } = render(<p>{parseInline('/T/NSIRD_screencaptureui_pXCwuA/Shot.png and _this_')}</p>);
+    const ems = container.querySelectorAll('em');
+    expect(ems).toHaveLength(1);
+    expect(ems[0]?.textContent).toBe('this');
+  });
+});

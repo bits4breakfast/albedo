@@ -226,6 +226,14 @@
 }
 
 .tf-row:hover { background: var(--panel-hover); }
+.tf-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* The path can be selected and copied (the row is a div for exactly this).
+   Everything else in the row is left out of a selection, so a copy yields the
+   path and nothing but the path. */
+.tf-row { cursor: pointer; user-select: none; }
+.tf-path { user-select: text; cursor: text; }
+.tf-badge { user-select: none; }
 .tf-row:hover .tf-name { color: var(--text-strong); }
 
 /* Hover lifts the dimmest tier, in BOTH themes and for the same reason.

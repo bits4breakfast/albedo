@@ -8,6 +8,9 @@
  * scrolling up to read is never interrupted.
  */
 
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { SEQ_STRIDE } from '../../capture';
+import { imageSourceNote, isImagePlaceholder } from './envelopes';
 import { onPromptChange, pendingPrompt, type PendingPrompt } from '../../capture/hookEvents';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -294,7 +297,7 @@ export function TranscriptPane({
           item.kind === 'sidechain' ? (
             <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
           ) : (
-            <MessageRow key={item.key} message={item.message} result={item.result} />
+            <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
           ),
         )}
       </div>
@@ -470,6 +473,8 @@ export function Composer({
   const [held, setHeld] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [live, setLive] = useState(true);
+  /** Files are being dragged over the window. */
+  const [dropping, setDropping] = useState(false);
 
   const ref = useRef<HTMLTextAreaElement>(null);
   /** The body waiting for a session. Taken, not read, so it can only fire once. */
@@ -623,6 +628,51 @@ export function Composer({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  /*
+     Drop files on the window and their paths land in the message box. That is
+     how Claude Code itself takes a picture dragged into a terminal: it sees an
+     image path in the input and attaches the file, so nothing here reads or
+     uploads the file. The webview delivers drops as native paths (the DOM drop
+     event never sees them), hence Tauri's event rather than onDrop.
+  */
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    let webview: ReturnType<typeof getCurrentWebview>;
+    try {
+      webview = getCurrentWebview();
+    } catch {
+      return; // not inside Tauri (tests, a browser build): no drop target
+    }
+    void webview
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === 'enter') setDropping(true);
+        else if (p.type === 'leave') setDropping(false);
+        else if (p.type === 'drop') {
+          setDropping(false);
+          if (p.paths.length === 0) return;
+          const insert = p.paths.map(shellEscapePath).join(' ');
+          setText((t) => (t.length === 0 || /\s$/.test(t) ? `${t}${insert} ` : `${t} ${insert} `));
+          requestAnimationFrame(() => {
+            ref.current?.focus();
+            grow();
+          });
+        }
+      })
+      .then((un) => {
+        if (gone) un();
+        else off = un;
+      })
+      .catch(() => {
+        /* no webview events (tests, a browser build): drop simply does nothing */
+      });
+    return () => {
+      gone = true;
+      off?.();
+    };
+  }, [grow]);
+
   /** Take the held message back, so a prompt nobody answers is not a trap. */
   const cancelHold = useCallback(() => {
     pendingRef.current = null;
@@ -723,7 +773,7 @@ export function Composer({
         storeComposerPx(null);
       }}
     />
-    <div className="tx-composer">
+    <div className="tx-composer" data-drop={dropping}>
       {notice ? (
         <div className="tx-composer-notice">
           <span>{notice}</span>
@@ -776,12 +826,21 @@ export function Composer({
   );
 }
 
+/**
+ * A path as a terminal types it when a file is dropped on it: shell-special
+ * characters backslash-escaped, so a screenshot's "Screenshot 2026-10-17 at
+ * 00.36.49.png" stays one path. Claude Code reads image paths in this form.
+ */
+export function shellEscapePath(path: string): string {
+  return path.replace(/([ \t'"\\()&;|<>$`!*?[\]{}#~])/g, '\\$1');
+}
+
 // ---------------------------------------------------------------------------
 // Grouping
 // ---------------------------------------------------------------------------
 
 type Item =
-  | { kind: 'row'; key: string; message: Message; result: Message | null }
+  | { kind: 'row'; key: string; message: Message; result: Message | null; extras?: Message[] }
   | { kind: 'sidechain'; key: string; rows: Message[]; results: Map<number, Message | null> };
 
 /**
@@ -833,6 +892,28 @@ function groupRows(messages: readonly Message[]): Item[] {
       continue;
     }
     if (!consumed.has(m.id)) {
+      if (m.role === 'user') {
+        // One thing you sent is one band. Claude Code writes a message with an
+        // attachment as several rows -- your text and the image are blocks of
+        // the same line, and the "[Image: source: ...]" note is the line after
+        // -- and each used to render as its own "you" band.
+        const extras: Message[] = [];
+        let hasImage = isImagePlaceholder(m.body);
+        let j = i + 1;
+        while (j < messages.length) {
+          const n = messages[j];
+          if (!n || n.role !== 'user' || isSidechain(n) || consumed.has(n.id)) break;
+          const sameLine = Math.floor(n.seq / SEQ_STRIDE) === Math.floor(m.seq / SEQ_STRIDE) && n.sessionId === m.sessionId;
+          const note = hasImage && imageSourceNote(n.body ?? '') !== null;
+          if (!sameLine && !note) break;
+          extras.push(n);
+          if (isImagePlaceholder(n.body)) hasImage = true;
+          j++;
+        }
+        items.push({ kind: 'row', key: `m-${m.id}`, message: m, result: null, extras });
+        i = j;
+        continue;
+      }
       items.push({ kind: 'row', key: `m-${m.id}`, message: m, result: resultFor(m) });
     }
     i++;

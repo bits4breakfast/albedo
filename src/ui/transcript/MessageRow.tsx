@@ -11,7 +11,7 @@
  * chose.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
@@ -19,7 +19,8 @@ import Diff, { Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composeP
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
-import { isAllEnvelopes, parseUserBody, type UserBlock } from './envelopes';
+import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, type UserBlock } from './envelopes';
+import { imageAt } from '../../capture';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -27,12 +28,17 @@ export interface MessageRowProps {
   message: Message;
   /** The paired `tool_result` row for a `tool_use`, when it has arrived. */
   result?: Message | null;
+  /**
+   * For a user row: the rest of the same message -- an attached image, the
+   * note naming its file -- so it renders as one band. See groupRows.
+   */
+  extras?: readonly Message[];
 }
 
-export function MessageRow({ message, result = null }: MessageRowProps): ReactNode {
+export function MessageRow({ message, result = null, extras = [] }: MessageRowProps): ReactNode {
   switch (message.role) {
     case 'user':
-      return <UserRow message={message} />;
+      return <UserRow message={message} extras={extras} />;
     case 'assistant':
       return message.toolName === 'thinking' ? <ThinkingRow message={message} /> : <AssistantRow message={message} />;
     case 'system':
@@ -66,21 +72,84 @@ export default MessageRow;
  * rendering as italic is a far smaller cost than a subagent's 60-line report
  * rendering as source, and ~9% of typed rows contain markdown anyway.
  */
-function UserRow({ message }: { message: Message }): ReactNode {
-  const blocks = useMemo(() => parseUserBody(message.body ?? ''), [message.body]);
-  if (blocks.length === 0) return null;
-  // Nothing a human typed: drop the "you said" framing rather than attributing
-  // a harness notification to the user.
-  const machine = isAllEnvelopes(blocks);
+type UserPart =
+  | { kind: 'blocks'; blocks: UserBlock[] }
+  | { kind: 'image'; src: string | null }
+  | { kind: 'source'; path: string };
+
+function UserRow({ message, extras }: { message: Message; extras: readonly Message[] }): ReactNode {
+  const parts = useMemo<UserPart[]>(() => {
+    const out: UserPart[] = [];
+    for (const m of [message, ...extras]) {
+      const body = m.body ?? '';
+      if (isImagePlaceholder(body)) {
+        out.push({ kind: 'image', src: imageAt(m.rawJson, m.seq)?.src ?? null });
+        continue;
+      }
+      const source = imageSourceNote(body);
+      if (source !== null) {
+        out.push({ kind: 'source', path: source });
+        continue;
+      }
+      const blocks = parseUserBody(body);
+      if (blocks.length > 0) out.push({ kind: 'blocks', blocks });
+    }
+    return out;
+  }, [message, extras]);
+
+  if (parts.length === 0) return null;
+  // Nothing a human typed or attached: drop the "you said" framing rather than
+  // attributing a harness notification to the user.
+  const machine = parts.every((p) => p.kind === 'blocks' && isAllEnvelopes(p.blocks));
   return (
     <div className={`tx-row ${machine ? 'tx-row-machine' : 'tx-row-user'}`}>
       <div className="tx-gutter">{machine ? '' : 'you'}</div>
       <div className="tx-content">
-        {blocks.map((b, i) => (
-          <UserBlockView key={i} block={b} />
-        ))}
+        {parts.map((p, i) =>
+          p.kind === 'blocks' ? (
+            p.blocks.map((b, j) => <UserBlockView key={`${i}-${j}`} block={b} />)
+          ) : p.kind === 'image' ? (
+            <AttachedImage key={i} src={p.src} />
+          ) : (
+            <div key={i} className="tx-img-source" title={p.path}>
+              {p.path.split('/').pop()}
+            </div>
+          ),
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * An image you attached. A thumbnail in the band; click for the full size,
+ * Esc or a click anywhere to close. Null `src` means the picture could not be
+ * recovered from the transcript (another source type), which is said, not
+ * hidden.
+ */
+function AttachedImage({ src }: { src: string | null }): ReactNode {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (src === null) return <div className="tx-img-missing">image (not stored in the transcript)</div>;
+  return (
+    <>
+      <button type="button" className="tx-img-thumb" onClick={() => setOpen(true)} title="Show full size">
+        <img src={src} alt="Attached image" loading="lazy" />
+      </button>
+      {open ? (
+        <div className="tx-lightbox" role="dialog" aria-modal="true" aria-label="Attached image" onClick={() => setOpen(false)}>
+          <img src={src} alt="Attached image, full size" />
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -468,13 +537,13 @@ function codeSpanRef(text: string): { path: string; line: number | null } | null
 }
 
 const INLINE_RE =
-  /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|\*([^*\n]+?)\*|_([^_\n]+?)_|~~([\s\S]+?)~~|\[([^\]\n]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/g;
+  /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|(?<![\p{L}\p{N}_])__([\s\S]+?)__(?![\p{L}\p{N}_])|\*([^*\n]+?)\*|(?<![\p{L}\p{N}_])_([^_\n]+?)_(?![\p{L}\p{N}_])|~~([\s\S]+?)~~|\[([^\]\n]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/gu;
 
 /** Inline markdown to React nodes. Never produces raw HTML. */
 export function parseInline(text: string, depth = 0): ReactNode[] {
   if (depth > 3) return [text];
   const out: ReactNode[] = [];
-  const re = new RegExp(INLINE_RE.source, 'g');
+  const re = new RegExp(INLINE_RE.source, 'gu');
   let last = 0;
   let m: RegExpExecArray | null;
   let key = 0;

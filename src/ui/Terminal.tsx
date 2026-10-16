@@ -405,7 +405,7 @@ export default function Terminal({
 
     const term = new XTerm({
       fontFamily: cssVar('--font-mono', 'ui-monospace, Menlo, monospace'),
-      fontSize: 13,
+      fontSize: 14,
       lineHeight: 1.3,
       letterSpacing: 0,
       cursorBlink: true,

@@ -1,3 +1,4 @@
+import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
 import { listen } from '@tauri-apps/api/event';
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
@@ -1108,7 +1109,20 @@ export default function App() {
     [readingTabs, activeTab],
   );
 
+  // Text size (HIG: macOS has no Dynamic Type, so the app offers its own).
+  const zoomRef = useRef(storedZoom());
+  useEffect(() => {
+    if (zoomRef.current !== 1) void applyZoom(zoomRef.current);
+  }, []);
+  const zoomTo = (z: number) => {
+    zoomRef.current = z;
+    void applyZoom(z);
+  };
+
   useShortcuts({
+    'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
+    'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
+    'mod+0': () => zoomTo(1),
     'mod+/': () => setShortcutsOpen((o) => !o),
     'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),
     // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text

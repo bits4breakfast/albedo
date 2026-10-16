@@ -18,6 +18,10 @@ export type { CaptureHandle, CaptureUpdate, DiskSession } from './watcher';
 
 export { deriveStatus } from './status';
 
+/** Attached images, recovered from a placeholder row's raw line. */
+export { imageAt, SEQ_STRIDE } from './adapter';
+export type { TranscriptImage } from './adapter';
+
 export { usageSummary } from './usage';
 export type { UsageSummary } from './usage';
 

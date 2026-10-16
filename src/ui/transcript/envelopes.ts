@@ -297,6 +297,21 @@ function unwrapSoleStreamedPaste(blocks: UserBlock[]): UserBlock[] {
 }
 
 /**
+ * The note Claude Code writes after an attached image: `[Image: source: <path>]`.
+ * Returns the path, or null when the body is anything else. Anchored at both
+ * ends, so prose that mentions the phrase is untouched.
+ */
+export function imageSourceNote(body: string): string | null {
+  const m = /^\s*\[Image: source: ([^\]\n]+)\]\s*$/.exec(body);
+  return m ? (m[1] ?? '').trim() || null : null;
+}
+
+/** The placeholder body the adapter gives an image block. */
+export function isImagePlaceholder(body: string | null): boolean {
+  return (body ?? '').trim() === '[image]';
+}
+
+/**
  * Split a user row's body into renderable blocks.
  *
  * Always returns at least one block for non-empty input, and never throws: a
