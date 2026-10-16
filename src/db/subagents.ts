@@ -160,7 +160,10 @@ export function buildRuns(
     return {
       agentId: a.agent_id,
       label: labelFrom(opening ?? null),
-      status: deriveStatus(rows),
+      // A subagent's tool call with no result yet is work in progress, not a
+      // prompt: its permission requests reach the user through the parent
+      // task, which is where "waiting on you" is reported.
+      status: deriveStatus(rows, Date.now(), { unansweredToolUseBlocks: false }),
       firstTs: a.first_ts,
       lastTs: a.last_ts,
       messages: a.n,

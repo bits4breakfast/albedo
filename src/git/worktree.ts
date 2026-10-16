@@ -360,6 +360,58 @@ export function describeStatusEntry(e: StatusEntry): string {
  * the answer that lets the UI say "nothing will be lost", so guessing it is the
  * one failure mode this whole check exists to prevent.
  */
+/** Lines added and deleted in one file. Null for a binary file. */
+export interface LineChange {
+  added: number | null;
+  deleted: number | null;
+}
+
+/**
+ * `git diff --numstat --no-renames` output, keyed by path. Binary files report
+ * `-` for both counts, which becomes null. Renames are disabled at the call so
+ * every line is a plain `<added>\t<deleted>\t<path>`.
+ */
+export function parseNumstat(stdout: string): Map<string, LineChange> {
+  const out = new Map<string, LineChange>();
+  for (const line of stdout.split('\n')) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line);
+    if (!m) continue;
+    const n = (v: string | undefined) => (v === undefined || v === '-' ? null : Number(v));
+    out.set(m[3] as string, { added: n(m[1]), deleted: n(m[2]) });
+  }
+  return out;
+}
+
+/**
+ * Lines changed per file in a worktree: everything the task did relative to
+ * where its branch left `baseBranch` (or that branch's upstream) -- committed on the branch AND still
+ * uncommitted -- which is what "this task's changes" means. Untracked files
+ * are not in a diff and are absent here.
+ *
+ * Falls back to uncommitted changes only (against HEAD) when the merge base
+ * cannot be found, e.g. a base branch that no longer exists.
+ */
+export async function lineChanges(worktreePath: string, baseBranch: string): Promise<Map<string, LineChange>> {
+  let against = 'HEAD';
+  try {
+    assertSafeArgv([baseBranch]);
+    // The base's upstream when it has one. A local `master` that has not been
+    // pulled is behind `origin/master`; a branch rebased onto origin then
+    // diffs against a stale point and drags in every upstream change since.
+    let base = baseBranch;
+    try {
+      const up = (await gitOk(['rev-parse', '--abbrev-ref', `${baseBranch}@{upstream}`], worktreePath)).trim();
+      if (up) base = up;
+    } catch {
+      /* no upstream: the local branch is the base */
+    }
+    against = (await gitOk(['merge-base', base, 'HEAD'], worktreePath)).trim() || 'HEAD';
+  } catch {
+    /* no merge base: uncommitted changes only */
+  }
+  return parseNumstat(await gitOk(['diff', '--numstat', '--no-renames', against], worktreePath));
+}
+
 export function parseCommitCount(stdout: string): number {
   const t = (stdout ?? '').trim();
   if (!/^\d+$/.test(t)) {

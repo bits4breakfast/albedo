@@ -13,8 +13,8 @@
  * format stops here (CLAUDE.md hard rule #1).
  */
 
-export { startCapture, onCaptureUpdate } from './watcher';
-export type { CaptureHandle, CaptureUpdate } from './watcher';
+export { startCapture, onCaptureUpdate, listDiskSessions, importTranscripts } from './watcher';
+export type { CaptureHandle, CaptureUpdate, DiskSession } from './watcher';
 
 export { deriveStatus } from './status';
 

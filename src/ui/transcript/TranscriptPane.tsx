@@ -8,6 +8,7 @@
  * scrolling up to read is never interrupted.
  */
 
+import { onPromptChange, pendingPrompt, type PendingPrompt } from '../../capture/hookEvents';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
@@ -39,9 +40,19 @@ export interface TranscriptPaneProps {
    * without it the composer behaves exactly as it did before.
    */
   status?: TaskStatus | null;
+  /**
+   * Take the user to the terminal, where the waiting prompt is answered.
+   * Absent: the card still shows what is being asked, without the button.
+   */
+  onAnswerInTerminal?: (taskId: number) => void;
 }
 
-export function TranscriptPane({ taskId, sessionId, status = null }: TranscriptPaneProps): ReactNode {
+export function TranscriptPane({
+  taskId,
+  sessionId,
+  status = null,
+  onAnswerInTerminal,
+}: TranscriptPaneProps): ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
   const [limit, setLimit] = useState(PAGE);
   const [loading, setLoading] = useState(false);
@@ -294,6 +305,7 @@ export function TranscriptPane({ taskId, sessionId, status = null }: TranscriptP
         </button>
       ) : null}
 
+      {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}
     </div>
   );
@@ -302,11 +314,102 @@ export function TranscriptPane({ taskId, sessionId, status = null }: TranscriptP
 export default TranscriptPane;
 
 // ---------------------------------------------------------------------------
+// Waiting prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * What Claude is waiting on the user for, shown where the transcript is read.
+ *
+ * The transcript cannot show it: Claude Code writes a turn only when it ends,
+ * and this turn is waiting. It comes from the hook events (capture/
+ * hookEvents.ts). Read-only for now -- answering happens in the terminal, one
+ * click away -- so nothing here can type into a prompt by mistake.
+ */
+function PromptCard({
+  taskId,
+  onAnswerInTerminal,
+}: {
+  taskId: number;
+  onAnswerInTerminal: ((taskId: number) => void) | undefined;
+}): ReactNode {
+  const [prompt, setPrompt] = useState<PendingPrompt | null>(() => pendingPrompt(taskId));
+  useEffect(() => {
+    setPrompt(pendingPrompt(taskId));
+    return onPromptChange((id, next) => {
+      if (id === taskId) setPrompt(next);
+    });
+  }, [taskId]);
+
+  if (prompt === null) return null;
+  return (
+    <div className="tx-prompt" role="status" aria-label="Waiting on you">
+      <div className="tx-prompt-head">
+        <span className="tx-prompt-tag">waiting on you</span>
+        {onAnswerInTerminal ? (
+          <button type="button" className="btn btn-ghost" onClick={() => onAnswerInTerminal(taskId)}>
+            Answer in terminal
+          </button>
+        ) : null}
+      </div>
+      {prompt.kind === 'question' ? (
+        prompt.questions.length === 0 ? (
+          <div className="tx-prompt-q">Claude is asking a question.</div>
+        ) : (
+          prompt.questions.map((q, i) => (
+            <div className="tx-prompt-block" key={i}>
+              {q.header ? <div className="tx-prompt-sub">{q.header}</div> : null}
+              <div className="tx-prompt-q">{q.question}</div>
+              <ol className="tx-prompt-opts">
+                {q.options.map((o, j) => (
+                  <li key={j}>
+                    <span className="tx-prompt-opt">{o.label}</span>
+                    {o.description ? <span className="tx-prompt-desc"> — {o.description}</span> : null}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))
+        )
+      ) : prompt.kind === 'permission' ? (
+        <div className="tx-prompt-q">
+          Needs permission: <span className="tx-prompt-cmd">{prompt.summary}</span>
+        </div>
+      ) : (
+        <div className="tx-prompt-q">{prompt.message}</div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
 
 /** Auto-grow ceiling. Past this the composer scrolls instead of eating the pane. */
 const COMPOSER_MAX_PX = 140;
+
+/** Smallest a dragged composer can be: one line of text. */
+const COMPOSER_MIN_PX = 28;
+const COMPOSER_PX_KEY = 'albedo.composerPx';
+
+/** The height the user dragged it to, or null for auto-grow. Never throws. */
+function storedComposerPx(): number | null {
+  try {
+    const n = Number(window.localStorage.getItem(COMPOSER_PX_KEY));
+    return Number.isFinite(n) && n >= COMPOSER_MIN_PX ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeComposerPx(px: number | null): void {
+  try {
+    if (px === null) window.localStorage.removeItem(COMPOSER_PX_KEY);
+    else window.localStorage.setItem(COMPOSER_PX_KEY, String(Math.round(px)));
+  } catch {
+    /* storage unavailable: the height just is not remembered */
+  }
+}
 
 /** How long to wait for a session that `startPty` said was on its way. */
 const START_TIMEOUT_MS = 12_000;
@@ -374,12 +477,57 @@ export function Composer({
   const inFlightRef = useRef(false);
   const timerRef = useRef(0);
 
+  /**
+   * A height the user dragged the composer to. While set it is the height --
+   * typing no longer auto-grows it -- and double-clicking the grip clears it.
+   */
+  const [userPx, setUserPx] = useState<number | null>(storedComposerPx);
+  const userPxRef = useRef(userPx);
+  userPxRef.current = userPx;
+
   const grow = useCallback(() => {
     const el = ref.current;
     if (!el) return;
+    const fixed = userPxRef.current;
+    if (fixed !== null) {
+      el.style.maxHeight = 'none';
+      el.style.height = `${fixed}px`;
+      return;
+    }
+    el.style.maxHeight = '';
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
   }, []);
+
+  useEffect(() => {
+    grow();
+  }, [userPx, grow]);
+
+  const dragRef = useRef<{ y: number; h: number } | null>(null);
+  const onGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    if (!el) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragRef.current = { y: e.clientY, h: el.offsetHeight };
+  };
+  const onGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    // Up grows it: the composer hangs from the bottom of the pane.
+    const max = Math.max(COMPOSER_MIN_PX, Math.floor(window.innerHeight * 0.6));
+    setUserPx(Math.min(max, Math.max(COMPOSER_MIN_PX, d.h + (d.y - e.clientY))));
+  };
+  const onGripUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    storeComposerPx(userPxRef.current);
+  };
 
   const succeeded = useCallback(() => {
     setText('');
@@ -409,9 +557,9 @@ export function Composer({
     timerRef.current = 0;
     try {
       if (await submitPty(taskId, body)) succeeded();
-      else setNotice('The terminal started but would not take the message. It is still here — press send to retry.');
+      else setNotice('Could not deliver your message. It is still here — press send to retry.');
     } catch {
-      setNotice('Could not reach the terminal. Your message is kept here.');
+      setNotice('Could not send your message. It is still here — press send to retry.');
     } finally {
       setAwaiting(false);
       setHeld(false);
@@ -452,6 +600,29 @@ export function Composer({
 
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
+  /*
+     Tab with nothing focused lands in the composer. Only then: if anything at
+     all holds focus (the terminal, a list row, a button) Tab keeps its normal
+     meaning, and an open dialog keeps it too, so focus never slips behind one.
+     "Nothing focused" is `document.body` being the active element, which is
+     what the page reports after a click on bare background or a closed dialog.
+  */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.defaultPrevented) return;
+      if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+      const active = document.activeElement;
+      if (active !== null && active !== document.body && active !== document.documentElement) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      const el = ref.current;
+      if (!el || el.disabled) return;
+      e.preventDefault();
+      el.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   /** Take the held message back, so a prompt nobody answers is not a trap. */
   const cancelHold = useCallback(() => {
     pendingRef.current = null;
@@ -474,7 +645,7 @@ export function Composer({
       pendingRef.current = text;
       inFlightRef.current = true;
       setHeld(true);
-      setNotice('Waiting — this session is on a permission prompt. Answer it in the terminal and this sends itself.');
+      setNotice('Waiting — Claude is asking you something. Answer it in the terminal and your message sends itself.');
       return;
     }
     inFlightRef.current = true;
@@ -492,13 +663,13 @@ export function Composer({
         // Coming up. Hold the body and let the presence event send it.
         pendingRef.current = text;
         setAwaiting(true);
-        setNotice('Starting the terminal — your message will send as soon as it is up.');
+        setNotice('Starting the session — your message sends as soon as it is ready.');
         timerRef.current = window.setTimeout(() => {
           if (pendingRef.current === null) return;
           pendingRef.current = null;
           setAwaiting(false);
           inFlightRef.current = false;
-          setNotice('The terminal did not start. Your message is kept here — press send to try again.');
+          setNotice('The session did not start. Your message is still here — press send to try again.');
         }, START_TIMEOUT_MS);
         // `startPty` also returns true when a pty is ALREADY live -- submitPty
         // can fail on a write error alone. No presence event is coming in that
@@ -506,10 +677,10 @@ export function Composer({
         if (hasLivePty(taskId)) void flushRef.current();
         return; // otherwise inFlightRef stays set until the retry or the timeout
       }
-      setNotice('This task is not open, so there is no terminal to send to. Your message is kept here.');
+      setNotice('This task\u2019s session isn\u2019t running, so there is nowhere to send this. Select the task in the list to start it, then press send. Your message is still here.');
       inFlightRef.current = false;
     } catch {
-      setNotice('Could not reach the terminal. Your message is kept here.');
+      setNotice('Could not send your message. It is still here — press send to retry.');
       inFlightRef.current = false;
     } finally {
       setBusy(false);
@@ -536,6 +707,22 @@ export function Composer({
         : 'Terminal not running — your conversation is saved. Send to start a new session.';
 
   return (
+    <>
+    <div
+      className="tx-grip"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize message box (double-click to reset)"
+      title="Drag to resize the message box · double-click to reset"
+      onPointerDown={onGripDown}
+      onPointerMove={onGripMove}
+      onPointerUp={onGripUp}
+      onPointerCancel={onGripUp}
+      onDoubleClick={() => {
+        setUserPx(null);
+        storeComposerPx(null);
+      }}
+    />
     <div className="tx-composer">
       {notice ? (
         <div className="tx-composer-notice">
@@ -585,6 +772,7 @@ export function Composer({
         {awaiting || held ? '…' : 'send'}
       </button>
     </div>
+    </>
   );
 }
 

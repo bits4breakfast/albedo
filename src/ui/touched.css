@@ -347,13 +347,19 @@
   border-color: var(--accent-line);
 }
 
-.tf-edits {
+.tf-lines {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
-  color: var(--muted);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  white-space: nowrap;
 }
+/* --add / --del are the diff tokens, cleared at 5+ on the flat panel; these
+   rows sit on --panel and --panel-raised (hover), never on a diff tint. */
+.tf-add { color: var(--add); }
+.tf-del { color: var(--del); }
+.tf-bin { color: var(--muted); }
+
 
 .tf-when {
   min-width: 2.6em;
@@ -446,12 +452,12 @@
 /* ~210px and below: the relative time goes. It is the least identifying
    column and the most redundant one — rows are sorted most recently touched
    first, so the order already says what the column said, and the tooltip has
-   the exact value. The edit count stays: it is the per-file fact this view
-   exists to show. */
+   the exact value. The +/- count stays: it is the per-file fact this view
+   exists to show. (The edit-call count is tooltip-only.) */
 @container tf (max-width: 210px) {
   .tf-row {
     column-gap: 5px;
-    grid-template-columns: 2ch minmax(0, 1fr) auto auto;
+    grid-template-columns: 2ch minmax(0, 1fr) auto;
   }
   .tf-when { display: none; }
   .tf-status { letter-spacing: 0; }

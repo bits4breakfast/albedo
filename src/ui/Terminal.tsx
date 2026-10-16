@@ -4,6 +4,8 @@ import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from '../lib/pty';
+import { hookSettingsArg, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
+import { getTaskModel } from './taskModel';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 
@@ -43,6 +45,9 @@ const livePtys = new Map<number, string>();
  * is the only thing that can actually spawn — see {@link startPty}.
  */
 const starters = new Map<number, () => boolean>();
+
+/** Give a task's terminal keyboard focus. Registered while its Terminal is mounted. */
+const focusers = new Map<number, () => void>();
 
 /**
  * Tasks whose next start would RESUME their conversation rather than begin a
@@ -138,6 +143,14 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
   } catch {
     return false;
   }
+}
+
+/** Move keyboard focus into the task's terminal. False when none is mounted. */
+export function focusPty(taskId: number): boolean {
+  const focus = focusers.get(taskId);
+  if (!focus) return false;
+  focus();
+  return true;
 }
 
 /** True when the task has a spawned, un-exited pty. */
@@ -503,11 +516,26 @@ export default function Terminal({
       setPhase('starting');
       spawningRef.current = true;
 
+      // Hooks tell Albedo when the session is waiting on the user, which the
+      // transcript cannot (see capture/hookEvents.ts). Never allowed to stop a
+      // session starting: without them the task simply reads as it did before.
+      // The task's chosen model, on every spawn: a resume after restart would
+      // otherwise fall back to the user's default and quietly switch models.
+      const model = getTaskModel(task.id);
+      let spawnArgs = model ? ['--model', model, ...args] : args;
+      try {
+        const script = await startHookEvents();
+        await resetTaskEvents(task.id);
+        spawnArgs = ['--settings', hookSettingsArg(task.id, script), ...spawnArgs];
+      } catch (err) {
+        console.warn('[terminal] hooks unavailable, starting without them', err);
+      }
+
       try {
         const id = await spawnPty({
           cwd: task.worktreePath,
           command: 'claude',
-          args,
+          args: spawnArgs,
           cols: term.cols,
           rows: term.rows,
         });
@@ -580,6 +608,7 @@ export default function Terminal({
      * in flight — without the second, a click during the async spawn would
      * produce a second pty for the same task and orphan the first.
      */
+    focusers.set(task.id, () => termRef.current?.focus());
     starters.set(task.id, () => {
       if (livePtys.has(task.id)) return true;
       if (spawningRef.current) return true;
@@ -638,6 +667,7 @@ export default function Terminal({
       restartRef.current = null;
       spawningRef.current = false;
       starters.delete(task.id);
+      focusers.delete(task.id);
       for (const off of [...unsubs, ...ptyUnsubs]) {
         try {
           off();

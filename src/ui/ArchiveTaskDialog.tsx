@@ -47,9 +47,9 @@ export type ArchiveMode = 'remove-keep-branch' | 'remove-delete-branch' | 'keep-
  * Which of the two endings this is.
  *
  *  - `archive` — the task leaves the active list and stays under Archived.
- *  - `delete`  — the task row is gone. **Its transcript is not**: the
- *    conversation is kept and stays searchable, which is what makes deletion
- *    safe enough to sit next to archiving in a menu.
+ *  - `delete`  — the task row and Albedo's copy of its conversation are gone.
+ *    Claude Code's own transcript file is untouched. Archive is the ending
+ *    that keeps history.
  */
 export type EndIntent = 'archive' | 'delete';
 
@@ -64,15 +64,12 @@ export interface ArchiveTaskDialogProps {
   /**
    * Called after the chosen git work succeeded, for `intent === 'delete'`.
    *
-   * **The implementation must not delete the task's messages.** It sets
-   * `messages.task_id = NULL` for that task's rows and removes the task row
-   * only. Captured history is never lost (CLAUDE.md), the conversation stays
-   * searchable, and it reappears in the session browser as an unadopted
-   * session. Foreign keys are not enforced in this app, so nulling has to be
-   * explicit — nothing in the schema will do it.
+   * The implementation removes the task row and Albedo's copy of its
+   * conversation (see `deleteTask`). Claude Code's own transcript file is not
+   * touched.
    *
-   * This dialog tells the user in as many words that the conversation is kept.
-   * That sentence is a promise the data layer has to keep.
+   * This dialog tells the user in as many words that the conversation is
+   * removed from Albedo. That sentence is a promise the data layer keeps.
    */
   onDeleted?: (taskId: number) => void;
 }
@@ -319,7 +316,9 @@ export function ArchiveTaskDialog({
               {deleting
                 ? 'Deleting removes the task from Albedo only.'
                 : 'Removing the task drops it from the list.'}{' '}
-              The conversation and its transcript are kept.
+              {deleting
+                ? 'Its conversation is removed from Albedo too.'
+                : 'The conversation and its transcript are kept.'}
             </div>
           )}
 
@@ -419,8 +418,9 @@ export function ArchiveTaskDialog({
             <div className="wt-notice" data-tone="unmerged">
               <strong>The task is removed from Albedo and cannot be brought back.</strong> Its
               title, branch and status are gone.{' '}
-              <strong>The conversation is kept</strong> — the transcript stays searchable and
-              the session reappears in the session browser, so you can resume it later.
+              <strong>Its conversation is removed from Albedo too</strong> — it will no longer be
+              searchable here. Claude Code's own transcript file is not touched. Use Archive
+              instead to keep the history.
             </div>
           )}
 

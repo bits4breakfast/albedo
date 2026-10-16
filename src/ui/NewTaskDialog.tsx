@@ -24,6 +24,8 @@ import {
 } from '../git/worktree';
 import ProjectsDialog from './ProjectsDialog';
 import { readLastProjectId, writeLastProjectId } from './projectPrefs';
+import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
+import { setTaskModel } from './taskModel';
 import './worktree.css';
 
 export interface NewTaskDialogProps {
@@ -44,6 +46,10 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
   const [projectsOpen, setProjectsOpen] = useState(false);
 
   const [title, setTitle] = useState('');
+  /** '' means the user's Claude Code default; anything else is passed as --model. */
+  const [model, setModel] = useState('');
+  const [modelChoices, setModelChoices] = useState<ModelChoice[]>([]);
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
   const [baseBranch, setBaseBranch] = useState('');
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesBusy, setBranchesBusy] = useState(false);
@@ -164,6 +170,22 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
     })();
   }, [open, project]);
 
+  // Models come from Claude Code's own files, so the list and the default are
+  // whatever Claude Code would offer and start with. The pick resets per open.
+  useEffect(() => {
+    if (!open) return;
+    setModel('');
+    let live = true;
+    void Promise.all([loadModelChoices(), loadDefaultModel()]).then(([choices, def]) => {
+      if (!live) return;
+      setModelChoices(choices);
+      setDefaultModel(def);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open]);
+
   // --- derived values, shown live -----------------------------------------
 
   // One derivation for the key, the branch and the directory, so what the
@@ -215,6 +237,8 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
           ownsWorktree: true,
         });
         writeLastProjectId(project.id);
+        // Before onCreated: that is what mounts the terminal, which reads it.
+        setTaskModel(task.id, model || null);
         onCreated(task);
       } catch (e) {
         const kind = e instanceof GitError ? e.kind : 'unknown';
@@ -223,7 +247,7 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
         setBusy(false);
       }
     },
-    [busy, project, baseBranch, branch, worktreePath, title, onCreated],
+    [busy, project, baseBranch, branch, worktreePath, title, model, onCreated],
   );
 
   if (!open) return null;
@@ -374,6 +398,33 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
                       <pre className="wt-error-body">{branchesError}</pre>
                     </div>
                   )}
+                </div>
+
+                <div className="wt-field">
+                  <label className="wt-label" htmlFor="wt-model">
+                    Model
+                  </label>
+                  <select
+                    id="wt-model"
+                    className="wt-select"
+                    value={model}
+                    disabled={busy}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    <option value="">
+                      {defaultModel ? `Default (${defaultModel})` : 'Default (Claude Code’s)'}
+                    </option>
+                    {modelChoices.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="wt-hint">
+                    {model === ''
+                      ? 'Your Claude Code default, as /model saved it.'
+                      : 'This task keeps this model, including when it is resumed.'}
+                  </div>
                 </div>
 
                 {/* --- derived preview ------------------------------------- */}

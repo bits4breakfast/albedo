@@ -89,6 +89,19 @@
    A foot, not a takeover: one line tall until there is something to say, and
    not rendered at all without a task. The read surface keeps the pane.
 */
+/* Drag handle on the composer's top edge. A hairline at rest, so it costs no
+   space and no contrast; the 6px hit area is what makes it findable. */
+.tx-grip {
+  flex: none;
+  height: 6px;
+  margin-bottom: -6px;
+  position: relative;
+  z-index: 1;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.tx-grip:hover { background: var(--border-strong); }
+
 .tx-composer {
   flex: none;
   display: grid;
@@ -186,12 +199,31 @@
 
 .tx-content { min-width: 0; }
 
+/* Your messages are the landmarks of a long transcript, so they are a band:
+   their own flat ground (--user-row, measured for every text tier in the
+   token block), a solid accent edge, and the "you" tag filled. No opacity and
+   no tint, so nothing here changes a ratio the tokens guarantee. */
 .tx-row-user {
-  margin: 8px 0 4px;
-  padding: 4px 0 5px;
-  border-top: 1px solid var(--border);
+  margin: 16px 0 10px;
+  padding: 8px 10px 9px 0;
+  background: var(--user-row);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
 }
-.tx-row-user .tx-gutter { color: var(--accent); }
+.tx-row-user .tx-gutter {
+  align-self: start;
+  justify-self: end;
+  margin-top: 1px;
+  padding: 1px 5px;
+  border-radius: var(--radius);
+  /* --panel-inset is white in light (6.75 on --accent) and near-black in dark
+     (7.24 on --accent): the readable side of the accent in each theme. */
+  background: var(--accent);
+  color: var(--panel-inset);
+  font-weight: 600;
+}
+.tx-row-user .tx-content { color: var(--text-strong); }
 
 .tx-user-text {
   white-space: pre-wrap;
@@ -994,3 +1026,47 @@
 }
 
 :root[data-theme='dark'] .tx-tok { color: var(--shiki-dark, inherit); }
+
+/* Waiting prompt. Flat --panel-raised ground, no tint and no opacity, so the
+   text tokens keep the contrast they were chosen for: --warn clears 5.6 (light)
+   and 8.4 (dark) on it, --text and --muted are the usual body tiers. */
+.tx-prompt {
+  flex: none;
+  margin: 6px 12px 0;
+  padding: 8px 10px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  max-height: 40%;
+  overflow: auto;
+}
+.tx-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tx-prompt-tag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tx-prompt-block { margin-top: 6px; }
+.tx-prompt-sub { font-size: var(--fs-xs); color: var(--muted); }
+.tx-prompt-q { margin-top: 4px; color: var(--text-strong); font-weight: 600; }
+.tx-prompt-opts { margin: 4px 0 0; padding-left: 20px; color: var(--text); }
+.tx-prompt-opt { color: var(--text-strong); }
+.tx-prompt-desc { color: var(--muted); }
+.tx-prompt-cmd { font-family: var(--font-mono); font-weight: 400; color: var(--text); word-break: break-all; }
+
+/* Web links. Same accent token the markdown link already used, so contrast is
+   unchanged; the host hint is muted and only shown when the label hides it. */
+.tx-url {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.tx-url:hover { text-decoration-color: var(--accent); }
+.tx-url:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.tx-url-host { color: var(--muted); text-decoration: none; word-break: normal; }

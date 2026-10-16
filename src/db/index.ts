@@ -136,7 +136,7 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
 
 const TASK_SELECT =
   'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, status, created_at, last_activity_at';
-const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts';
+const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   'idle',
@@ -268,34 +268,59 @@ export async function updateTask(id: number, patch: Partial<Task>): Promise<void
 }
 
 /**
- * Delete a task, keeping its conversation.
+ * Delete a task AND its captured conversation.
  *
- * ### The constraint is on screen, not just in this comment
+ * Claude Code's own transcript file is untouched, so the history is not lost
+ * to the user -- only Albedo's copy goes. (This reverses the earlier
+ * "conversation is kept" behaviour on purpose: the copy was growing without
+ * bound, and a deleted task should not leave gigabytes behind.)
  *
- * The delete dialog tells the user, in as many words: "The conversation is
- * kept -- the transcript stays searchable and the session reappears in the
- * session browser, so you can resume it later." If this function touched
- * `messages`, that sentence would be a lie, and M1's one rule -- captured
- * history is never lost -- would be broken by a button.
+ * ### What goes
  *
- * ### Why the UPDATE is explicit
+ * Every message for the task's session -- matched by `session_id`, not only
+ * `task_id`, because subagent rows carry the PARENT's session id and are not
+ * always tagged with the task -- plus any row still tagged with the task id.
+ * The FTS index follows through the `messages_ad` trigger.
  *
- * Foreign keys are NOT enforced: tauri-plugin-sql never issues
- * `PRAGMA foreign_keys = ON`, so `messages.task_id REFERENCES tasks(id)` is
- * documentation. Nothing in the schema nulls these rows, and nothing stops the
- * DELETE from leaving them pointing at an id that no longer exists.
+ * ### The file record goes too
+ *
+ * The watcher holds a transcript only while it has a `transcript_files` row
+ * (or a task owns its cwd). Removing the row is what makes the session
+ * unheld, so it is not re-captured; it can be brought back from History,
+ * which reads Claude Code's file again from byte 0.
  *
  * ### Order matters
  *
- * Null the messages FIRST. There is no transaction here (tauri-plugin-sql runs
- * on a connection pool -- see insertMessages), so a failure between the two
- * statements has to leave the database in the recoverable state: messages
- * detached and the task still present, rather than the task gone and its rows
- * pointing at nothing.
+ * Foreign keys are NOT enforced (tauri-plugin-sql never issues
+ * `PRAGMA foreign_keys = ON`), and there is no transaction here (the plugin
+ * runs on a connection pool -- see insertMessages). Messages go FIRST, so a
+ * failure between statements leaves the task present with fewer messages --
+ * visible and retryable -- rather than a task row gone with its rows pointing
+ * at nothing.
  */
 export async function deleteTask(id: number): Promise<void> {
   const db = await getDb();
-  await db.execute(`UPDATE messages SET task_id = NULL WHERE task_id = $1`, [id]);
+  const rows = await db.select<{ session_id: string | null }[]>(
+    `SELECT session_id FROM tasks WHERE id = $1`,
+    [id],
+  );
+  const sessionId = rows[0]?.session_id ?? null;
+  // The task row's own session, and any session its tagged messages belong to
+  // (the row's session_id is only set once the task is adopted). The files
+  // go first: they are looked up through the messages that are deleted next.
+  await db.execute(
+    `DELETE FROM transcript_files
+      WHERE session_id = $2
+         OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
+    [id, sessionId ?? ''],
+  );
+  await db.execute(
+    `DELETE FROM messages
+      WHERE session_id = $2
+         OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
+    [id, sessionId ?? ''],
+  );
+  await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
   await db.execute(`DELETE FROM tasks WHERE id = $1`, [id]);
   emitTasksChanged();
 }
@@ -349,6 +374,13 @@ export interface GetMessagesOptions {
   sessionId?: string;
   afterSeq?: number;
   limit?: number;
+  /**
+   * Only the session's own conversation, not its subagents' rows. Subagent
+   * rows are stored under the PARENT's session id, so a status derived from the
+   * whole session reads a subagent's in-flight tool call as the parent waiting
+   * on a permission prompt.
+   */
+  parentOnly?: boolean;
 }
 
 /**
@@ -399,6 +431,7 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
     binds.push(opts.sessionId);
     where.push(`session_id = $${binds.length}`);
   }
+  if (opts.parentOnly) where.push('agent_id IS NULL');
   if (opts.afterSeq !== undefined) {
     // exclusive: pages forward from the last seq the caller already has
     binds.push(opts.afterSeq);

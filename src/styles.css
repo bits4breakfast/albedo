@@ -37,6 +37,10 @@
   --bg: #eceef1;           /* window ground */
   --panel: #f6f7f9;        /* sidebar, header, pane chrome */
   --panel-raised: #e7eaef; /* selected rows, menus, buttons */
+  /* Your own messages in the transcript. A flat ground, measured, not a tint:
+     on it --text 12.51, --text-strong 15.39, --muted 6.32, --faint 5.16,
+     --accent 5.40, --add 5.30, --del 5.06. */
+  --user-row: #dce7f7;
   --panel-inset: #ffffff;  /* wells: terminal body, code blocks */
   --panel-hover: #dfe4ea;  /* see the dark block for why this is a token */
   --panel-active: #d7dde4; /* press; carries --text-strong only */
@@ -143,6 +147,10 @@
   --bg: #0b0d10;
   --panel: #111419;
   --panel-raised: #171b21;
+  /* Your messages. On it: --text 10.61, --text-strong 14.49, --muted 6.35,
+     --faint 4.59, --accent 5.87, --add 6.85, --del 5.18. No lighter: --faint
+     is the tier that runs out first. */
+  --user-row: #162235;
   --panel-inset: #090b0e;
   /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
      hex typed into whichever :hover rule needed one. Contrast is a property
@@ -208,6 +216,10 @@
   --bg: #0b0d10;
   --panel: #111419;
   --panel-raised: #171b21;
+  /* Your messages. On it: --text 10.61, --text-strong 14.49, --muted 6.35,
+     --faint 4.59, --accent 5.87, --add 6.85, --del 5.18. No lighter: --faint
+     is the tier that runs out first. */
+  --user-row: #162235;
   --panel-inset: #090b0e;
   /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
      hex typed into whichever :hover rule needed one. Contrast is a property
@@ -778,6 +790,26 @@ button {
   user-select: text;
 }
 
+.model-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.model-pick-name { color: var(--text); }
+.model-pick-select {
+  font: inherit;
+  color: var(--muted);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 2px;
+}
+.model-pick-select:disabled { cursor: not-allowed; }
+.model-pick-note { color: var(--muted); }
+
 .seg {
   display: flex;
   margin-left: auto;
@@ -1040,6 +1072,14 @@ button {
 
 .tabpanel { position: absolute; inset: 0; overflow: hidden; }
 .tabpanel[hidden] { display: none !important; }
+
+/* The transcript panel stacks the subagent strip above the pane. The pane is
+   height: 100% on its own, so with the strip present the pair overflowed this
+   overflow:hidden box and the composer at the pane's foot was clipped away. As
+   a column, the pane takes whatever height the strip leaves. */
+.tabpanel-col { display: flex; flex-direction: column; }
+.tabpanel-col > .sa-bar { flex: none; }
+.tabpanel-col > .tx-pane { flex: 1 1 0; height: auto; min-height: 0; }
 
 /* --------------------------------------------------------------------------
    Context-window meters (M4)
@@ -1347,6 +1387,37 @@ button {
 .sb-list { flex: 1 1 auto; overflow-y: auto; min-height: 120px; }
 
 .sb-empty { padding: 28px 14px; text-align: center; color: var(--faint); font-size: var(--fs-sm); }
+
+.sb-disk-head {
+  padding: 10px 10px 4px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+.sb-disk-note { color: var(--faint); }
+.sb-disk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.sb-disk-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-disk-meta {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-disk-row .btn { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 
 .sb-row {
   display: grid;

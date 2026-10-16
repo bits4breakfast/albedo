@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { deriveStatus, RUNNING_WINDOW_MS } from './status';
+import { deriveStatus, RUNNING_WINDOW_MS, UNANSWERED_RUNNING_WINDOW_MS } from './status';
 import { parseTranscript } from './adapter';
 import type { Message, MessageRole } from '../types';
 
@@ -88,6 +88,38 @@ function reset(): void {
 describe('deriveStatus — rule 4: nothing to go on', () => {
   it('is idle with no rows', () => {
     expect(deriveStatus([], NOW)).toBe('idle');
+  });
+});
+
+describe('deriveStatus — unansweredToolUseBlocks: false', () => {
+  it('reads a tool call with no result as running (it may just be slow)', () => {
+    reset();
+    const rows = [
+      row('user', { ageMs: 10_000, text: 'go' }),
+      row('assistant', { ageMs: 9_000, text: 'running the suite' }),
+      row('tool_use', { ageMs: 8_000, toolId: 'a' }),
+    ];
+    expect(deriveStatus(rows, NOW)).toBe('blocked');
+    expect(deriveStatus(rows, NOW, { unansweredToolUseBlocks: false })).toBe('running');
+  });
+
+  it('keeps a long-running call running past the usual 90s window', () => {
+    reset();
+    const rows = [
+      row('user', { ageMs: 400_000, text: 'go' }),
+      row('tool_use', { ageMs: 300_000, toolId: 'a' }),
+    ];
+    expect(300_000).toBeGreaterThan(RUNNING_WINDOW_MS);
+    expect(deriveStatus(rows, NOW, { unansweredToolUseBlocks: false })).toBe('running');
+  });
+
+  it('gives up on a call older than the long window (the session is presumably gone)', () => {
+    reset();
+    const rows = [
+      row('user', { ageMs: UNANSWERED_RUNNING_WINDOW_MS + 60_000, text: 'go' }),
+      row('tool_use', { ageMs: UNANSWERED_RUNNING_WINDOW_MS + 30_000, toolId: 'a' }),
+    ];
+    expect(deriveStatus(rows, NOW, { unansweredToolUseBlocks: false })).toBe('idle');
   });
 });
 

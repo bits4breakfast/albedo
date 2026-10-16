@@ -15,7 +15,8 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import Diff, { Code, Disclosure, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import Diff, { Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { isAllEnvelopes, parseUserBody, type UserBlock } from './envelopes';
@@ -98,6 +99,12 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
       );
     case 'system-reminder':
       return <Collapsed label="injected context" text={block.text} />;
+    case 'skill':
+      return <SkillBlock block={block} />;
+    case 'pasted': {
+      const lines = block.text.split('\n').length;
+      return <Collapsed label={`pasted text · ${lines} line${lines === 1 ? '' : 's'}`} text={block.text} />;
+    }
     case 'output':
       return (
         <pre className="tx-pre tx-output">
@@ -151,6 +158,24 @@ function Collapsed({ label, text }: { label: string; text: string }): ReactNode 
         <Disclosure open={open} /> {label}
       </button>
       {open ? <div className="tx-think-body">{text}</div> : null}
+    </div>
+  );
+}
+
+/** A loaded skill: its name and where it lives, with the SKILL.md folded away. */
+function SkillBlock({ block }: { block: Extract<UserBlock, { kind: 'skill' }> }): ReactNode {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="tx-collapsed">
+      <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <Disclosure open={open} /> skill loaded · <span className="tx-cmd-name">{block.name}</span>
+      </button>
+      {open ? (
+        <div className="tx-think-body">
+          <div className="tx-cmd-args">{block.dir}</div>
+          <Markdown text={block.text} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -454,14 +479,27 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
   let m: RegExpExecArray | null;
   let key = 0;
 
+  /** Plain text between markup, with any web URL in it made a link. */
+  const pushPlain = (chunk: string): void => {
+    for (const part of splitUrls(chunk)) {
+      if (typeof part === 'string') out.push(part);
+      else out.push(<ExternalLink key={key++} url={part.url} />);
+    }
+  };
+
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) pushPlain(text.slice(last, m.index));
     const [, , codeText, strongA, strongB, emA, emB, strike, linkText, linkUrl] = m;
 
     if (codeText !== undefined) {
       const ref = codeSpanRef(codeText);
+      const asUrl = safeHttpUrl(codeText);
       out.push(
-        ref ? (
+        asUrl !== null && /^https?:\/\//i.test(codeText.trim()) ? (
+          <ExternalLink key={key++} url={asUrl} className="tx-md-code">
+            {codeText}
+          </ExternalLink>
+        ) : ref ? (
           <PathLink key={key++} path={ref.path} line={ref.line} className="tx-md-code tx-md-code-link">
             {codeText}
           </PathLink>
@@ -478,19 +516,34 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
     } else if (strike !== undefined) {
       out.push(<s key={key++}>{parseInline(strike, depth + 1)}</s>);
     } else if (linkText !== undefined) {
-      // Deliberately not an anchor: model output does not get to be clickable.
-      out.push(
-        <span key={key++} className="tx-md-link" title={linkUrl ?? ''}>
-          {linkText.length > 0 ? linkText : (linkUrl ?? '')}
-        </span>,
-      );
+      const target = linkUrl ? safeHttpUrl(linkUrl) : null;
+      const label = linkText.length > 0 ? linkText : (linkUrl ?? '');
+      if (target === null) {
+        // Not a web link (relative, `file:`, `javascript:` ...): shown, not clickable.
+        out.push(
+          <span key={key++} className="tx-md-link" title={linkUrl ?? ''}>
+            {label}
+          </span>,
+        );
+      } else {
+        // The label is the model's; the host is the truth. When they differ the
+        // host is shown beside it, so a label cannot disguise the destination.
+        const host = hostOf(target);
+        const labelIsUrl = /^https?:\/\//i.test(label.trim());
+        out.push(
+          <ExternalLink key={key++} url={target} className="tx-md-link">
+            {label}
+            {host && !labelIsUrl ? <span className="tx-url-host"> ({host})</span> : null}
+          </ExternalLink>,
+        );
+      }
     } else {
       out.push(m[0]);
     }
     last = m.index + m[0].length;
   }
 
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) pushPlain(text.slice(last));
   return out;
 }
 

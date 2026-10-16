@@ -19,6 +19,7 @@ import {
   modelOf,
   SEQ_STRIDE,
 } from './adapter';
+import { loadModelWindows, windowFor } from './modelCatalog';
 import { getSessionBodyChars, getSessionContextRows, getSessionUsageRows } from '../db';
 
 export interface ContextUsage {
@@ -54,9 +55,10 @@ export interface ContextUsage {
  * `applied_edits` array, and no key anywhere carries a window or limit. So
  * the size genuinely cannot be read; it has to be inferred.
  *
- * Deliberately NOT keyed by model. Tying a guess to a model id would look
- * authoritative while being exactly as much of a guess, and would go stale
- * silently on the next model release.
+ * This table is only the FALLBACK now, and is deliberately not keyed by model:
+ * a hand-kept guess per model id would look authoritative and go stale on the
+ * next release. When Claude Code's own model catalog lists the model, its
+ * window is used instead and marked 'known' (see modelCatalog.ts).
  */
 export const CONTEXT_WINDOW_TIERS: readonly number[] = [200_000, 1_000_000];
 
@@ -111,7 +113,10 @@ export interface ContextInput {
  * -- a session that has only a typed prompt so far has no context reading, and
  * inventing 0/200k would draw an empty gauge for a session that is mid-turn.
  */
-export function deriveContextUsage(input: ContextInput): ContextUsage | null {
+export function deriveContextUsage(
+  input: ContextInput,
+  windows: ReadonlyMap<string, number> = new Map(),
+): ContextUsage | null {
   if (input.latestRawJson === null) return null;
   const usage = extractUsage(input.latestRawJson);
   if (usage === null) return null;
@@ -130,14 +135,22 @@ export function deriveContextUsage(input: ContextInput): ContextUsage | null {
   // question from what a window SPENT. See the header of usage.ts.
   const used = contextUsedFrom(usage);
   const peak = Math.max(input.peakUsed, used);
-  const { limit, limitBasis } = pickWindowTier(peak);
+  const model = modelOf(input.latestRawJson);
+  // Claude Code's own catalog beats inference: it names the model's window, so
+  // there is nothing to guess. Inference stays as the fallback for a model the
+  // catalog does not list (or no catalog at all).
+  const catalogLimit = windowFor(model, windows);
+  const { limit, limitBasis } =
+    catalogLimit !== null
+      ? { limit: Math.max(catalogLimit, peak), limitBasis: 'known' as const }
+      : pickWindowTier(peak);
 
   return {
     used,
     limit,
     fraction: limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0,
     limitBasis,
-    model: modelOf(input.latestRawJson),
+    model,
     at: input.latestTs,
   };
 }
@@ -175,8 +188,9 @@ export async function contextUsageForSessions(
     inputs = await aggregateInMemory(unique);
   }
 
+  const windows = await loadModelWindows();
   for (const [sessionId, input] of inputs) {
-    const usage = deriveContextUsage(input);
+    const usage = deriveContextUsage(input, windows);
     if (usage !== null) out.set(sessionId, usage);
   }
   return out;

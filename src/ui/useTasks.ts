@@ -3,6 +3,7 @@ import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
+import { hasHooks, onPromptChange, pendingPrompt } from '../capture/hookEvents';
 import { noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
@@ -164,8 +165,13 @@ export function useTasks(): UseTasksResult {
 
       let status: TaskStatus;
       try {
-        const messages = await getMessages({ sessionId, limit: STATUS_WINDOW });
-        status = deriveStatus(messages ?? []);
+        // Parent rows only: a subagent's tool call that is still running has no
+        // result yet, and would read as this task waiting on a permission prompt.
+        const messages = await getMessages({ sessionId, limit: STATUS_WINDOW, parentOnly: true });
+        status = deriveStatus(messages ?? [], Date.now(), { unansweredToolUseBlocks: !hasHooks(task.id) });
+        // The transcript cannot show a prompt that is still waiting (the turn
+        // is written only when it ends); the hooks can. See hookEvents.ts.
+        if (pendingPrompt(task.id) !== null) status = 'blocked';
       } catch (err) {
         setCaptureError(`Status refresh failed: ${message(err)}`);
         return;
@@ -324,6 +330,23 @@ export function useTasks(): UseTasksResult {
       void handle?.stop().catch(() => {});
     };
   }, [refreshStatus, refreshContext]);
+
+  // A prompt appearing or being answered is a status change on its own: the
+  // transcript has nothing to say about either until the turn ends.
+  useEffect(() => {
+    return onPromptChange((taskId, prompt) => {
+      const task = tasksRef.current.find((t) => t.id === taskId);
+      if (!task || task.status === 'archived') return;
+      if (prompt !== null) {
+        if (task.status === 'blocked') return;
+        applyTask(taskId, { status: 'blocked' });
+        noteStatusChange(taskId, task.status, 'blocked');
+        void updateTask(taskId, { status: 'blocked' }).catch(() => {});
+      } else if (task.sessionId) {
+        void refreshStatus(task.sessionId, null);
+      }
+    });
+  }, [applyTask, refreshStatus]);
 
   return useMemo(
     () => ({
