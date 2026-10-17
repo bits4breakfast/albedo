@@ -11,7 +11,6 @@
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
-import { onPromptChange, pendingPrompt, type PendingPrompt } from '../../capture/hookEvents';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
@@ -21,6 +20,7 @@ import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from 
 import { imageFromClipboard, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
 import MessageRow from './MessageRow';
+import PromptCard from './PromptCard';
 import { isSidechain, toolUseId } from './ToolChip';
 import './transcript.css';
 
@@ -316,74 +316,6 @@ export function TranscriptPane({
 }
 
 export default TranscriptPane;
-
-// ---------------------------------------------------------------------------
-// Waiting prompt
-// ---------------------------------------------------------------------------
-
-/**
- * What Claude is waiting on the user for, shown where the transcript is read.
- *
- * The transcript cannot show it: Claude Code writes a turn only when it ends,
- * and this turn is waiting. It comes from the hook events (capture/
- * hookEvents.ts). Read-only for now -- answering happens in the terminal, one
- * click away -- so nothing here can type into a prompt by mistake.
- */
-function PromptCard({
-  taskId,
-  onAnswerInTerminal,
-}: {
-  taskId: number;
-  onAnswerInTerminal: ((taskId: number) => void) | undefined;
-}): ReactNode {
-  const [prompt, setPrompt] = useState<PendingPrompt | null>(() => pendingPrompt(taskId));
-  useEffect(() => {
-    setPrompt(pendingPrompt(taskId));
-    return onPromptChange((id, next) => {
-      if (id === taskId) setPrompt(next);
-    });
-  }, [taskId]);
-
-  if (prompt === null) return null;
-  return (
-    <div className="tx-prompt" role="status" aria-label="Waiting on you">
-      <div className="tx-prompt-head">
-        <span className="tx-prompt-tag">waiting on you</span>
-        {onAnswerInTerminal ? (
-          <button type="button" className="btn btn-ghost" onClick={() => onAnswerInTerminal(taskId)}>
-            Answer in terminal
-          </button>
-        ) : null}
-      </div>
-      {prompt.kind === 'question' ? (
-        prompt.questions.length === 0 ? (
-          <div className="tx-prompt-q">Claude is asking a question.</div>
-        ) : (
-          prompt.questions.map((q, i) => (
-            <div className="tx-prompt-block" key={i}>
-              {q.header ? <div className="tx-prompt-sub">{q.header}</div> : null}
-              <div className="tx-prompt-q">{q.question}</div>
-              <ol className="tx-prompt-opts">
-                {q.options.map((o, j) => (
-                  <li key={j}>
-                    <span className="tx-prompt-opt">{o.label}</span>
-                    {o.description ? <span className="tx-prompt-desc"> — {o.description}</span> : null}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ))
-        )
-      ) : prompt.kind === 'permission' ? (
-        <div className="tx-prompt-q">
-          Needs permission: <span className="tx-prompt-cmd">{prompt.summary}</span>
-        </div>
-      ) : (
-        <div className="tx-prompt-q">{prompt.message}</div>
-      )}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Composer

@@ -15,11 +15,22 @@ A third, narrow channel exists by the owner's decision: **hook events**
 the transcript only once the turn ends, so an approval question or permission
 prompt is invisible there while it waits. Albedo spawns `claude` with a
 `--settings` block whose hooks append one JSON line per event to
-`~/.albedo/events/task-<id>.jsonl`; the app reads that file. It is structured,
-read-only, and never terminal bytes. It is used for exactly one thing -- "this
-task is waiting on you, and on what" -- and nothing else may be built on it
-without the same decision. `hookEvents.ts` is the only file that knows the
-hook payload shape.
+`~/.albedo/events/task-<id>.jsonl`; the app reads that file. It is structured
+and never terminal bytes. It is used for exactly one thing -- "this task is
+waiting on you, on what, and here is the user's answer" -- and nothing else may
+be built on it without the same decision. `hookEvents.ts` is the only file that
+knows the hook payload shape.
+
+It is no longer purely read-only, and this is the whole of the widening: the
+`PermissionRequest` hook waits (up to an hour) for
+`answer-<task>-<request>.json` and prints it as its documented decision. Albedo
+writes that file only from a click on the "waiting on you" card -- Allow, Deny,
+"don't ask again" for a plain allow-rule suggestion, or AskUserQuestion answers
+-- and only while that exact request is still pending. Measured on Claude Code
+2.1.302: the terminal dialog is shown and usable the whole time, answering
+there first kills the waiting hook (so a late card answer can never apply), and
+a hook that times out decides nothing. Nothing writes an answer on its own, and
+keystrokes are not used: the pty stays input-only and unread.
 
 Violating this separation is the one architectural mistake that matters.
 If you find yourself regexing terminal bytes, stop — the answer is in SQLite.
