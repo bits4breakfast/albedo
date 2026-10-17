@@ -47,6 +47,10 @@ vi.mock('../Terminal', () => {
   };
 });
 
+// Paste writes through these; nothing touches a real disk.
+vi.mock('@tauri-apps/api/path', () => ({ homeDir: vi.fn(async () => '/Users/me') }));
+vi.mock('@tauri-apps/plugin-fs', () => ({ mkdir: vi.fn(async () => {}), writeFile: vi.fn(async () => {}) }));
+
 const term = (await import('../Terminal')) as unknown as {
   __emitPresence: (taskId: number, live: boolean) => void;
 };
@@ -474,6 +478,46 @@ describe('resizable composer', () => {
     window.localStorage.setItem('albedo.composerPx', '96');
     render(<Composer taskId={1} onSent={() => {}} />);
     expect(box().style.height).toBe('96px');
+  });
+});
+
+describe('pasting a screenshot', () => {
+  const imageItem = (bytes: number[]) => ({
+    kind: 'file',
+    type: 'image/png',
+    getAsFile: () => ({ type: 'image/png', arrayBuffer: async () => new Uint8Array(bytes).buffer }) as unknown as File,
+  });
+  const textItem = { kind: 'string', type: 'text/plain', getAsFile: () => null };
+
+  it('writes the image under ~/.albedo/paste and inserts its path like a drop', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('see');
+    const notPrevented = fireEvent.paste(box(), { clipboardData: { items: [textItem, imageItem([1, 2, 3])] } });
+    expect(notPrevented).toBe(false);
+    await waitFor(() => expect(box().value).toMatch(/^see \/Users\/me\/\.albedo\/paste\/\d{8}-\d{6}-\d{3}\.png $/));
+    expect(fs.mkdir).toHaveBeenCalledWith('/Users/me/.albedo/paste', { recursive: true });
+    const [path, data] = vi.mocked(fs.writeFile).mock.calls[0]!;
+    expect(box().value).toBe(`see ${path} `);
+    expect([...(data as Uint8Array)]).toEqual([1, 2, 3]);
+  });
+
+  it('leaves a text paste to the browser, exactly as before', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: { items: [textItem] } });
+    expect(notPrevented).toBe(true);
+    expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('says so, and keeps the draft, when the write fails', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('forbidden path'));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('draft');
+    fireEvent.paste(box(), { clipboardData: { items: [imageItem([9])] } });
+    await waitFor(() => expect(screen.getByText(/Could not save the pasted image: forbidden path/)).toBeTruthy());
+    expect(box().value).toBe('draft');
   });
 });
 

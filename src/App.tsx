@@ -13,8 +13,10 @@ import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocu
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
+import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import StatusDot from './ui/StatusDot';
+import ClosedProjectsMenu from './ui/ClosedProjectsMenu';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
 import NewTaskDialog from './ui/NewTaskDialog';
@@ -327,17 +329,6 @@ function ProjectTabs({
   hidden: Project[];
   onRestore: (projectId: number) => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = () => setMenuOpen(false);
-    window.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', close);
-    return () => {
-      window.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', close);
-    };
-  }, [menuOpen]);
   // Never offer to hide the last one: that would leave a bar with nothing in
   // it but the restore chip.
   const canHide = tabs.length > 1;
@@ -390,40 +381,7 @@ function ProjectTabs({
       {/* Always reachable from where it was closed. Without this the bar can
           become a one-way door -- close a tab, and with the bar gone there is
           nowhere left that knows the project is merely hidden. */}
-      {hidden.length > 0 && (
-        <div className="project-tabs-restore">
-          <button
-            className="project-tab project-tab-more"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-expanded={menuOpen}
-            title="Closed projects"
-          >
-            +{hidden.length} closed
-          </button>
-          {menuOpen && (
-            <div
-              className="row-menu project-tabs-menu"
-              role="menu"
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <div className="row-menu-head">Closed — still here, just not shown</div>
-              {hidden.map((project) => (
-                <button
-                  key={project.id}
-                  className="row-menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onRestore(project.id);
-                  }}
-                >
-                  {project.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {hidden.length > 0 && <ClosedProjectsMenu hidden={hidden} onRestore={onRestore} />}
     </div>
   );
 }
@@ -1141,6 +1099,17 @@ export default function App() {
   const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
   useDoubleShift(() => toggleQuickOpen('all'));
 
+  /** Find in Files (⇧⌘F): same guards as the palette -- a task, and no other modal. */
+  const [findOpen, setFindOpen] = useState(false);
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+  const toggleFind = useCallback(() => {
+    if (!selectedRef.current) return;
+    if (!findOpenRef.current && document.querySelector('[aria-modal="true"]') !== null) return;
+    setFindOpen((o) => !o);
+  }, []);
+  const closeFind = useCallback(() => setFindOpen(false), []);
+
   /** The editor's file, worktree-relative, so the palette can rank it first. */
   const editorFile = useMemo(
     () => (editorTask && openRequest ? worktreeRelative(editorTask.worktreePath, openRequest.request.path) : null),
@@ -1153,6 +1122,7 @@ export default function App() {
     'mod+shift+o': () => toggleQuickOpen('file'),
     'mod+o': () => toggleQuickOpen('class'),
     'mod+alt+o': () => toggleQuickOpen('symbol'),
+    'mod+shift+f': toggleFind,
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
     'mod+0': () => zoomTo(1),
@@ -1673,6 +1643,14 @@ export default function App() {
           currentFile={editorFile}
           onMode={setQuickOpen}
           onClose={closeQuickOpen}
+          onOpen={openFile}
+        />
+      </PaneErrorBoundary>
+      <PaneErrorBoundary label="Find in Files">
+        <FindInFiles
+          open={selected !== null && findOpen}
+          worktreePath={selected?.worktreePath ?? null}
+          onClose={closeFind}
           onOpen={openFile}
         />
       </PaneErrorBoundary>

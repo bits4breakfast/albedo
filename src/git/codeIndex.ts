@@ -275,6 +275,16 @@ export function extractSymbol(path: string, text: string): { kind: SymbolKind; n
 export type GrepFlavour = '-P' | '-E';
 let flavour: GrepFlavour = '-P';
 
+/** The engine this session uses. Shared with Find in Files, which learns the same fact. */
+export function grepFlavour(): GrepFlavour {
+  return flavour;
+}
+
+/** This git has no PCRE: every later grep, here or in Find in Files, uses ERE. */
+export function noteNoPcre(): void {
+  flavour = '-E';
+}
+
 /** The argv for one language's `git grep`. Exported so a test can pin it. */
 export function grepArgs(lang: Language, engine: GrepFlavour = flavour): string[] {
   return [

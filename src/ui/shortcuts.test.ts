@@ -68,6 +68,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'o', code: 'KeyO', metaKey: true }))?.combo,
       comboOf(ev({ key: 'O', code: 'KeyO', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true }))?.combo,
+      comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
     ]);
     // The one gesture is reachable through its own detector.
     const shift = createDoubleShift();
@@ -108,6 +109,19 @@ describe('go-to keys', () => {
   it('leaves every other Alt combo refused', () => {
     expect(comboOf(ev({ key: '[', code: 'BracketLeft', metaKey: true, altKey: true }))).toBeNull();
     expect(comboOf(ev({ key: 'n', code: 'KeyN', metaKey: true, altKey: true }))).toBeNull();
+  });
+});
+
+describe('find in files', () => {
+  it('maps ⇧⌘F by physical key', () => {
+    expect(comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+f');
+  });
+
+  it('refuses Control, Alt, and ⌘F without Shift', () => {
+    expect(comboOf(ev({ key: 'F', code: 'KeyF', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'Ï', code: 'KeyF', metaKey: true, altKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'f', code: 'KeyF', metaKey: true }))).toBeNull();
   });
 });
 
