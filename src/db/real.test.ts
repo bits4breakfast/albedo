@@ -1059,3 +1059,60 @@ describe('getMessages parentOnly: a subagent mid-tool-call is not the parent wai
     expect(all).toHaveLength(2);
   });
 });
+
+describe('getMessages agentId: one subagent’s own rows, for the inspector', () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = createTestDb();
+    harness.db = db;
+    resetDb();
+  });
+
+  // Subagent rows carry the PARENT's session id and a file-local seq, so two
+  // agents (and the parent) share seq values. Only agent_id tells them apart.
+  const row = (seq: number, agentId: string | null, body: string, ts: number, sessionId = 'sess') => ({
+    taskId: null,
+    sessionId,
+    seq,
+    role: 'assistant' as const,
+    toolName: null,
+    targetPath: null,
+    body,
+    rawJson: JSON.stringify({ agentId, n: body }),
+    agentId,
+    ts,
+  });
+
+  beforeEach(async () => {
+    await insertMessages([
+      row(0, null, 'parent 0', 1_000),
+      row(100, null, 'parent 1', 4_000),
+      row(0, 'agent-a', 'a 0', 2_000),
+      row(100, 'agent-a', 'a 1', 3_000),
+      row(200, 'agent-a', 'a 2', 5_000),
+      row(0, 'agent-b', 'b 0', 2_500),
+      row(0, 'agent-a', 'other session', 2_000, 'sess-2'),
+    ]);
+  });
+
+  it('returns only that agent’s rows in that session, in seq order', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-a', limit: 100 });
+    expect(rows.map((m) => m.body)).toEqual(['a 0', 'a 1', 'a 2']);
+    expect(rows.every((m) => m.agentId === 'agent-a')).toBe(true);
+  });
+
+  it('pages forward with afterSeq without picking up the parent or a sibling', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-a', afterSeq: 0, limit: 100 });
+    expect(rows.map((m) => m.body)).toEqual(['a 1', 'a 2']);
+  });
+
+  it('keeps the newest rows when the window is smaller than the run', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-a', limit: 2 });
+    expect(rows.map((m) => m.body)).toEqual(['a 1', 'a 2']);
+  });
+
+  it('wins over parentOnly rather than returning nothing', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-b', parentOnly: true, limit: 100 });
+    expect(rows.map((m) => m.body)).toEqual(['b 0']);
+  });
+});

@@ -13,6 +13,12 @@
  *     drops `requestUserAttention` for the active app -- so the cue has to be
  *     inside the window. The task's row is marked, and pulses.
  *
+ * Unfocused, a system notification goes out as well, naming the task. The
+ * bounce says "Albedo wants you"; with six sessions running, only the banner
+ * says which one, and it is the one cue that reaches you in another Space or
+ * on another display. It is rate-limited per task (see `shouldNotify`) and
+ * can be switched off (`setNotificationsEnabled`).
+ *
  * The mark is set in BOTH cases, not just the focused one. The bounce says
  * "something happened"; only the mark says *which task*, and it has to survive
  * until you come back and look.
@@ -26,6 +32,7 @@
  */
 
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import type { TaskStatus } from '../types';
 
 /**
@@ -61,12 +68,116 @@ let requestOsAttention: (critical: boolean) => void = (critical) => {
     });
 };
 
+// ---------------------------------------------------------------------------
+// System notifications
+// ---------------------------------------------------------------------------
+
+/**
+ * The least time between two notifications of the same kind for one task.
+ *
+ * A task that flaps -- finishes, gets a one-line follow-up queued, finishes
+ * again -- would otherwise post a banner per turn, and Notification Center
+ * fills with one task's name. A minute is long enough to absorb a flap and
+ * short enough that a genuinely new "waiting on you" is never held back for
+ * long. Per kind, so a "finished" a moment ago never swallows a "blocked":
+ * the prompt is the one that will sit there until you act.
+ */
+export const NOTIFY_MIN_INTERVAL_MS = 60_000;
+
+/** localStorage key for the off switch. Absent means on. */
+export const NOTIFICATIONS_KEY = 'albedo.notifications';
+
+/** When each (task, kind) last posted a notification. */
+const lastNotified = new Map<string, number>();
+
+/**
+ * Whether a notification may go out now, and records it if so. Pure apart
+ * from the map it is handed, so the rate limit is testable without a clock.
+ */
+export function shouldNotify(
+  last: Map<string, number>,
+  taskId: number,
+  kind: AttentionKind,
+  now: number,
+): boolean {
+  const key = `${taskId}:${kind}`;
+  const prev = last.get(key);
+  if (prev !== undefined && now - prev < NOTIFY_MIN_INTERVAL_MS) return false;
+  last.set(key, now);
+  return true;
+}
+
+/** What the banner says. The task's title leads: it is the whole point. */
+export function notificationFor(kind: AttentionKind, title: string | null, taskId: number): {
+  title: string;
+  body: string;
+} {
+  const name = title && title.trim().length > 0 ? title.trim() : `Task ${taskId}`;
+  return kind === 'blocked'
+    ? { title: name, body: 'Waiting on you — Claude is asking for permission or has a question.' }
+    : { title: name, body: 'Finished its turn. The result is ready to read.' };
+}
+
+/** The per-user off switch. Never throws: no storage reads as "on". */
+export function notificationsEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(NOTIFICATIONS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export function setNotificationsEnabled(on: boolean): void {
+  try {
+    if (on) window.localStorage.removeItem(NOTIFICATIONS_KEY);
+    else window.localStorage.setItem(NOTIFICATIONS_KEY, 'off');
+  } catch {
+    /* storage unavailable: the choice just is not remembered */
+  }
+}
+
+/**
+ * Permission is asked for once, on the first notification rather than at
+ * launch: macOS shows its prompt with no context, and the moment a task first
+ * needs you is the one moment the question explains itself. The answer is
+ * cached for the session -- a refusal is not re-asked on every transition.
+ */
+let permission: Promise<boolean> | null = null;
+function ensurePermission(): Promise<boolean> {
+  permission ??= (async () => {
+    try {
+      if (await isPermissionGranted()) return true;
+      return (await requestPermission()) === 'granted';
+    } catch {
+      return false;
+    }
+  })();
+  return permission;
+}
+
+/** Test seam: `sendNotification` needs the Tauri plugin. */
+let postNotification: (n: { title: string; body: string }) => void = (n) => {
+  void ensurePermission()
+    .then((ok) => {
+      if (ok) sendNotification(n);
+    })
+    .catch(() => {
+      /* a notification is a nicety, like the bounce */
+    });
+};
+
 /** @internal for tests */
-export function __setAttentionBackend(fn: ((critical: boolean) => void) | null, isFocused = true): void {
+export function __setAttentionBackend(
+  fn: ((critical: boolean) => void) | null,
+  isFocused = true,
+  notify: ((n: { title: string; body: string }) => void) | null = null,
+): void {
   requestOsAttention = fn ?? (() => {});
+  postNotification = notify ?? (() => {});
   focused = isFocused;
   marked.clear();
   listeners.clear();
+  lastNotified.clear();
 }
 
 function emit(): void {
@@ -136,13 +247,30 @@ export function watchFocus(): () => void {
  * blocked for ten minutes must not bounce the dock on every capture tick, so
  * the caller passes what it was as well as what it is.
  */
-export function noteStatusChange(taskId: number, prior: TaskStatus, next: TaskStatus): void {
+export function noteStatusChange(
+  taskId: number,
+  prior: TaskStatus,
+  next: TaskStatus,
+  /** For the notification banner. Absent, it says "Task <id>". */
+  title: string | null = null,
+): void {
   const kind = attentionFor(prior, next);
   if (kind === null) return;
   marked.set(taskId, kind);
-  // Critical bounces until the app is activated; informational bounces once.
-  // "Blocked" will wait forever, so it gets the persistent one.
-  if (!focused) requestOsAttention(kind === 'blocked');
+  if (!focused) {
+    // Critical bounces until the app is activated; informational bounces
+    // once. "Blocked" will wait forever, so it gets the persistent one.
+    requestOsAttention(kind === 'blocked');
+    // Only while unfocused: a banner for the window you are looking at is
+    // the same noise the dock bounce already avoids.
+    if (notificationsEnabled() && shouldNotify(lastNotified, taskId, kind, Date.now())) {
+      try {
+        postNotification(notificationFor(kind, title, taskId));
+      } catch {
+        /* never let a notification take the status update down */
+      }
+    }
+  }
   emit();
 }
 

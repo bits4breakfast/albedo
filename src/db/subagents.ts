@@ -50,6 +50,9 @@ export interface SubagentRun {
  */
 const TAIL_ROWS = 400;
 
+/** Characters of the opening line kept as a label. See `buildRuns`. */
+const LABEL_MAX = 280;
+
 interface AggRow {
   agent_id: string;
   n: number;
@@ -159,7 +162,10 @@ export function buildRuns(
     const opening = openingBy.get(a.agent_id) ?? (fallback?.role === 'user' ? fallback.body : null);
     return {
       agentId: a.agent_id,
-      label: labelFrom(opening ?? null),
+      // Long enough to say what the agent was asked to do; the strip wraps it
+      // to two lines and clamps there, so the cap is a sanity bound, not a
+      // layout decision.
+      label: labelFrom(opening ?? null, LABEL_MAX),
       // A subagent's tool call with no result yet is work in progress, not a
       // prompt: its permission requests reach the user through the parent
       // task, which is where "waiting on you" is reported.

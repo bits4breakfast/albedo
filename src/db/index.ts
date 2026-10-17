@@ -381,6 +381,17 @@ export interface GetMessagesOptions {
    * on a permission prompt.
    */
   parentOnly?: boolean;
+  /**
+   * Only the rows ONE subagent wrote -- what the subagent inspector reads. The
+   * counterpart of `parentOnly`, and it wins over it: asking for an agent's
+   * rows and for "no agent" at once has no useful answer.
+   *
+   * Pair it with `sessionId` (the PARENT's, which is where subagent rows are
+   * stored). That makes the query seq-ordered, and `seq` is file-local -- one
+   * agent is one file, so its seqs are a consistent order and `afterSeq`
+   * pages forward through them exactly as it does for a parent session.
+   */
+  agentId?: string;
 }
 
 /**
@@ -431,7 +442,12 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
     binds.push(opts.sessionId);
     where.push(`session_id = $${binds.length}`);
   }
-  if (opts.parentOnly) where.push('agent_id IS NULL');
+  if (opts.agentId !== undefined) {
+    binds.push(opts.agentId);
+    where.push(`agent_id = $${binds.length}`);
+  } else if (opts.parentOnly) {
+    where.push('agent_id IS NULL');
+  }
   if (opts.afterSeq !== undefined) {
     // exclusive: pages forward from the last seq the caller already has
     binds.push(opts.afterSeq);

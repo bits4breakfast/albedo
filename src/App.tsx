@@ -1548,7 +1548,7 @@ export default function App() {
                       when a session fans out the transcript itself goes quiet,
                       which is exactly when you need to know what is running. */}
                   <PaneErrorBoundary key={`sa-${selected?.id ?? 'none'}`} label="Subagents">
-                    <Subagents sessionId={selected?.sessionId ?? null} />
+                    <Subagents sessionId={selected?.sessionId ?? null} taskTitle={selected?.title ?? null} />
                   </PaneErrorBoundary>
                   <PaneErrorBoundary key={`tx-${selected?.id ?? 'none'}`} label="Transcript">
                     <TranscriptPane
