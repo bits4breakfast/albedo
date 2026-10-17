@@ -1,0 +1,114 @@
+/* --------------------------------------------------------------------------
+   Find in Files. Built on quickopen.css (overlay, dialog, input, list, row,
+   footer, .qo-hit); only what Quick Open has no equivalent for is here.
+
+   No new surfaces: the file headers sit on --panel, the toggles on --panel
+   and --panel-raised, rows on Quick Open's three grounds. So every text token
+   is one quickopen.css already measured on the worst of those grounds:
+       light  --text 12.22  --muted 6.17  --faint 5.04  --accent 5.28
+       dark   --text 10.72  --muted 6.42  --faint 4.64  --accent 5.94
+   No tints, no opacity. Nothing under --fs-xs; code is mono.
+   -------------------------------------------------------------------------- */
+
+.ff-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px 0;
+}
+
+.ff-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+/* --- input and toggles ---------------------------------------------------- */
+
+.ff-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px;
+}
+
+/* The bar owns the margin now. */
+.ff-input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.ff-input[aria-invalid='true'] { border-color: var(--del); }
+
+.ff-toggle {
+  flex: 0 0 auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.ff-toggle:hover { color: var(--text); background: var(--panel-hover); }
+/* On is carried by ground, edge and ink together, not by colour alone. */
+.ff-toggle[aria-pressed='true'] {
+  color: var(--text-strong);
+  background: var(--panel-raised);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+/* --- results -------------------------------------------------------------- */
+
+/* A file header: not selectable, stays in view while its lines scroll. */
+.ff-file {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px 3px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Truncate from the start, as Quick Open does: the end tells files apart. */
+.ff-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ff-count {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.ff-row { grid-template-columns: 6ch minmax(0, 1fr); padding-left: 12px; }
+
+.ff-line {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--faint);
+}
+.ff-row[aria-selected='true'] .ff-line { color: var(--muted); }
+
+.ff-text {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.ff-row[aria-selected='true'] .ff-text { color: var(--text-strong); }

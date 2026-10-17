@@ -13,6 +13,7 @@ import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocu
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
+import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import StatusDot from './ui/StatusDot';
 import ClosedProjectsMenu from './ui/ClosedProjectsMenu';
@@ -1097,6 +1098,17 @@ export default function App() {
   const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
   useDoubleShift(() => toggleQuickOpen('all'));
 
+  /** Find in Files (⇧⌘F): same guards as the palette -- a task, and no other modal. */
+  const [findOpen, setFindOpen] = useState(false);
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+  const toggleFind = useCallback(() => {
+    if (!selectedRef.current) return;
+    if (!findOpenRef.current && document.querySelector('[aria-modal="true"]') !== null) return;
+    setFindOpen((o) => !o);
+  }, []);
+  const closeFind = useCallback(() => setFindOpen(false), []);
+
   /** The editor's file, worktree-relative, so the palette can rank it first. */
   const editorFile = useMemo(
     () => (editorTask && openRequest ? worktreeRelative(editorTask.worktreePath, openRequest.request.path) : null),
@@ -1109,6 +1121,7 @@ export default function App() {
     'mod+shift+o': () => toggleQuickOpen('file'),
     'mod+o': () => toggleQuickOpen('class'),
     'mod+alt+o': () => toggleQuickOpen('symbol'),
+    'mod+shift+f': toggleFind,
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
     'mod+0': () => zoomTo(1),
@@ -1622,6 +1635,14 @@ export default function App() {
           currentFile={editorFile}
           onMode={setQuickOpen}
           onClose={closeQuickOpen}
+          onOpen={openFile}
+        />
+      </PaneErrorBoundary>
+      <PaneErrorBoundary label="Find in Files">
+        <FindInFiles
+          open={selected !== null && findOpen}
+          worktreePath={selected?.worktreePath ?? null}
+          onClose={closeFind}
           onOpen={openFile}
         />
       </PaneErrorBoundary>

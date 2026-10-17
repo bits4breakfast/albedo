@@ -41,6 +41,8 @@
  *    live key in the terminal -- Claude Code's own transcript toggle -- and
  *    stealing it would break the thing this app wraps.
  *
+ * `⇧⌘F` (Find in Files) follows the same two rules for the same reasons.
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
@@ -62,7 +64,8 @@ export type Combo =
   | 'mod+digit'
   | 'mod+o'
   | 'mod+shift+o'
-  | 'mod+alt+o';
+  | 'mod+alt+o'
+  | 'mod+shift+f';
 
 /** Bindings that are not one keystroke. Documented alongside the combos. */
 export type Gesture = 'shift shift';
@@ -90,6 +93,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+o', keys: '⌘O', description: 'Go to class' },
   { combo: 'mod+alt+o', keys: '⌥⌘O', description: 'Go to symbol' },
   { combo: 'shift shift', keys: '⇧⇧', description: 'Search everywhere' },
+  { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in files' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger text' },
   { combo: 'mod+-', keys: '⌘−', description: 'Smaller text' },
   { combo: 'mod+0', keys: '⌘0', description: 'Actual size' },
@@ -124,6 +128,11 @@ export function comboOf(e: KeyboardEvent): { combo: Combo; digit: number | null 
     if (e.altKey) return { combo: 'mod+alt+o', digit: null };
     if (e.shiftKey) return { combo: 'mod+shift+o', digit: null };
     return { combo: 'mod+o', digit: null };
+  }
+  // PhpStorm's Find in Files, on the same terms as the O family: Command only
+  // (Ctrl+Shift+F belongs to the terminal) and read from `code`.
+  if (e.code === 'KeyF' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+f', digit: null };
   }
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
   const key = e.key.toLowerCase();
