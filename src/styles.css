@@ -1694,8 +1694,6 @@ button {
 .project-tab-more { color: var(--faint); }
 .project-tab-more:hover { color: var(--text); }
 
-.project-tabs-menu { position: absolute; top: 26px; right: 0; z-index: 40; }
-
 /* Menu items that have to say what they cost, not just what they are called —
    three end-a-thing verbs now meet on one surface. */
 .row-menu-hint {

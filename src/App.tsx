@@ -15,6 +15,7 @@ import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import StatusDot from './ui/StatusDot';
+import ClosedProjectsMenu from './ui/ClosedProjectsMenu';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
 import NewTaskDialog from './ui/NewTaskDialog';
@@ -326,17 +327,6 @@ function ProjectTabs({
   hidden: Project[];
   onRestore: (projectId: number) => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = () => setMenuOpen(false);
-    window.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', close);
-    return () => {
-      window.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', close);
-    };
-  }, [menuOpen]);
   // Never offer to hide the last one: that would leave a bar with nothing in
   // it but the restore chip.
   const canHide = tabs.length > 1;
@@ -389,40 +379,7 @@ function ProjectTabs({
       {/* Always reachable from where it was closed. Without this the bar can
           become a one-way door -- close a tab, and with the bar gone there is
           nowhere left that knows the project is merely hidden. */}
-      {hidden.length > 0 && (
-        <div className="project-tabs-restore">
-          <button
-            className="project-tab project-tab-more"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-expanded={menuOpen}
-            title="Closed projects"
-          >
-            +{hidden.length} closed
-          </button>
-          {menuOpen && (
-            <div
-              className="row-menu project-tabs-menu"
-              role="menu"
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <div className="row-menu-head">Closed — still here, just not shown</div>
-              {hidden.map((project) => (
-                <button
-                  key={project.id}
-                  className="row-menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onRestore(project.id);
-                  }}
-                >
-                  {project.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {hidden.length > 0 && <ClosedProjectsMenu hidden={hidden} onRestore={onRestore} />}
     </div>
   );
 }

@@ -344,7 +344,12 @@ Three separate things, reported together from the project tab strip. The first
 is a bug; the other two are missing affordances over plumbing that already
 exists.
 
-### 9a. BUG — the "+N closed" menu opens invisibly
+### 9a. BUG — the "+N closed" menu opens invisibly — done
+
+**Fixed** by the portal: `src/ui/ClosedProjectsMenu.tsx` renders the menu on
+`document.body`, positioned from the chip's rect, and closes on an outside
+press, Esc (focus returns to the chip), blur, resize, or the strip scrolling.
+The diagnosis below is kept for the record.
 
 It is not a dead button. `onClick` toggles `menuOpen` and the menu renders a
 head plus one `row-menu-item` per hidden project, each calling `onRestore`. The
