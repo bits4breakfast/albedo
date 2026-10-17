@@ -65,6 +65,28 @@ describe('diff context expansion', () => {
     expect(screen.queryByText('before 10')).toBeNull();
   });
 
+  it('offers no file context when contextPath is explicitly null', () => {
+    // The editor's Diff mode: both whole files are in `expand`, so the gaps
+    // already reach every line and a context bar would read the file for nothing.
+    const read = vi.fn(async () => fileNow);
+    const oldFile = [...before, OLD, ...after].join('\n');
+    render(
+      <FileTextContext.Provider value={read}>
+        <Diff
+          diff={diffStrings(oldFile, fileNow, 'src/thing.ts')}
+          expand={{ oldText: oldFile, newText: fileNow }}
+          layout="unified"
+          absoluteLines
+          contextPath={null}
+        />
+      </FileTextContext.Provider>,
+    );
+    expect(screen.queryByRole('button', { name: /more context/ })).toBeNull();
+    // ...and the whole-file gaps above and below the hunk open instead.
+    expect(screen.getAllByRole('button', { name: /unchanged line/ }).length).toBe(2);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('shows nothing extra when the file cannot be read', async () => {
     renderDiff(null);
     fireEvent.click(screen.getAllByRole('button', { name: /more context/ })[0]!);
