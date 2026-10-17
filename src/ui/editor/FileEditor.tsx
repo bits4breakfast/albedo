@@ -21,6 +21,7 @@
 import { copyText } from '../../lib/clipboard';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
 import { useOpenFile } from './openFile';
+import FileDiffView from './FileDiffView';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -379,6 +380,21 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   const [handEdited, setHandEdited] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
 
+  /*
+   * File | Diff. Component state, NOT reset when the request changes: stepping
+   * to the next changed file is a new request, and walking the change set as
+   * diffs is the point. Reset on close, so the next file opened from scratch
+   * opens as a file. The CodeMirror view stays alive (hidden) in Diff mode, so
+   * unsaved edits, undo history and scroll survive a look at the diff.
+   */
+  const [mode, setMode] = useState<'file' | 'diff'>('file');
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  /** A line asked for while in Diff mode, revealed once the file is showing. */
+  const pendingLineRef = useRef<number | null>(null);
+  /** Bumped on save so an open diff re-reads the file it describes. */
+  const [savedKey, setSavedKey] = useState(0);
+
   const requestPath = request?.path ?? null;
   const requestLine = request?.line ?? null;
 
@@ -414,6 +430,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
 
     if (requestPath === null) {
       setPhase({ kind: 'idle' });
+      setMode('file');
       return;
     }
 
@@ -521,6 +538,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     existedRef.current = true;
     overwriteRef.current = false;
     setDirty(false);
+    setSavedKey((k) => k + 1);
 
     // Order matters and is fixed by the spec: write, mark, then note.
     markHandEdited(task.id, target.relative);
@@ -636,14 +654,62 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   // nowhere. Keyed on the request object, so asking for the same line twice
   // still jumps. A request for another path is the effect above's business:
   // the view here is still the old file's.
+  //
+  // A line is a place in the FILE, so a request carrying one leaves Diff mode
+  // -- which is what a click on a diff line number is. The reveal waits for
+  // the surface to be visible (below); a hidden CodeMirror cannot measure.
+  // A request for another path is revealed by the view built for it.
   useEffect(() => {
+    if (request === null || request.line == null || request.line < 1) return;
+    if (modeRef.current === 'diff') {
+      pendingLineRef.current = request.path === viewPathRef.current ? request.line : null;
+      setMode('file');
+      return;
+    }
     const view = viewRef.current;
-    if (!view || request === null || request.path !== viewPathRef.current) return;
-    if (request.line == null || request.line < 1) return;
+    if (!view || request.path !== viewPathRef.current) return;
     revealLine(view, request.line);
     view.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request]);
+
+  // --- back from Diff mode ---------------------------------------------------
+  useEffect(() => {
+    const view = viewRef.current;
+    if (mode !== 'file' || !view) return;
+    const line = pendingLineRef.current;
+    pendingLineRef.current = null;
+    // The surface was display:none while the diff showed.
+    view.requestMeasure();
+    if (line !== null) revealLine(view, line);
+    view.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // --- File | Diff: Shift-Command-D -----------------------------------------
+  // Not PhpStorm's Command-D: CodeMirror binds Mod-d to "select next
+  // occurrence", and an editor where that key stopped working would be worse
+  // than a different chord. Shift-Command-D is bound by neither CodeMirror,
+  // the default macOS menu, nor the app keymap. Command only, matched on the
+  // physical key (Shift makes `key` "D"), and Control is left alone: it would
+  // reach the terminal as Ctrl-D, which is EOF. Capture phase, so it works
+  // with the cursor inside the editor -- same as the stepping keys.
+  const canDiff = resolved !== null && phase.kind === 'ready';
+  const toggleMode = useCallback(() => {
+    if (!canDiff) return;
+    setMode((m) => (m === 'file' ? 'diff' : 'file'));
+  }, [canDiff]);
+  useEffect(() => {
+    if (request === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'KeyD') return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMode();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [request, toggleMode]);
 
   // --- close ---------------------------------------------------------------
   const requestClose = useCallback(() => {
@@ -744,6 +810,29 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
 
         <span className="ed-spacer" />
 
+        <span className="ed-mode" role="group" aria-label="Show">
+          <button
+            type="button"
+            className="ed-mode-btn"
+            aria-pressed={mode === 'file'}
+            onClick={() => setMode('file')}
+            title="The file as it is now (⇧⌘D toggles)"
+          >
+            File
+          </button>
+          <button
+            type="button"
+            className="ed-mode-btn"
+            aria-pressed={mode === 'diff'}
+            aria-keyshortcuts="Shift+Meta+D"
+            onClick={() => canDiff && setMode('diff')}
+            disabled={!canDiff}
+            title="This task's change to the file: the branch's base against the working tree, committed and uncommitted together (⇧⌘D)"
+          >
+            Diff
+          </button>
+        </span>
+
         <SaveIndicator state={saveState} />
 
         <button
@@ -762,7 +851,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
             const view = viewRef.current;
             if (view) openSearchPanel(view);
           }}
-          disabled={phase.kind !== 'ready'}
+          disabled={phase.kind !== 'ready' || mode === 'diff'}
           title="Find (⌘F)"
         >
           Find
@@ -848,7 +937,10 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
             <div className="ed-message-sub">{phase.message}</div>
           </div>
         )}
-        <div className="ed-surface" ref={hostRef} hidden={phase.kind !== 'ready'} />
+        {mode === 'diff' && resolved !== null && phase.kind === 'ready' ? (
+          <FileDiffView task={task} target={resolved} reloadKey={savedKey} unsaved={dirty} />
+        ) : null}
+        <div className="ed-surface" ref={hostRef} hidden={phase.kind !== 'ready' || mode === 'diff'} />
       </div>
     </div>
   );

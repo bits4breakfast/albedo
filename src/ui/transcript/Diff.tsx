@@ -601,6 +601,11 @@ export interface DiffProps {
    *
    * Passed to `useReadFile`, which resolves it: this component never joins a
    * transcript path to a filesystem path (see `useOpenPath`).
+   *
+   * Omitted means "the diff's own path". Explicit null is honoured as none: the
+   * editor's Diff mode passes it, because it hands over both WHOLE files in
+   * `expand` and the gaps already reach every line there is -- a "more
+   * context" bar on top would read the file only to find nothing left.
    */
   contextPath?: string | null;
 }
@@ -610,7 +615,7 @@ export function Diff({
   expand = null,
   layout = 'auto',
   absoluteLines = false,
-  contextPath = null,
+  contextPath,
 }: DiffProps): ReactNode {
   const [ref, width] = useContainerWidth();
   const [override, setOverride] = useState<'split' | 'unified' | null>(null);
@@ -658,7 +663,11 @@ export function Diff({
 
   // A rename's destination is the file that exists to be read.
   const readPath =
-    contextPath ?? (diff.path.includes(' → ') ? (diff.path.split(' → ').pop() ?? null) : diff.path);
+    contextPath !== undefined
+      ? contextPath
+      : diff.path.includes(' → ')
+        ? (diff.path.split(' → ').pop() ?? null)
+        : diff.path;
 
   /**
    * Where the diff's content sits in the current file.
