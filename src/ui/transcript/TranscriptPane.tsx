@@ -839,7 +839,7 @@ export function shellEscapePath(path: string): string {
 // Grouping
 // ---------------------------------------------------------------------------
 
-type Item =
+export type Item =
   | { kind: 'row'; key: string; message: Message; result: Message | null; extras?: Message[] }
   | { kind: 'sidechain'; key: string; rows: Message[]; results: Map<number, Message | null> };
 
@@ -847,8 +847,12 @@ type Item =
  * Pair each `tool_use` with its `tool_result`, and fold runs of sidechain rows
  * into a single collapsible group. Subagent traffic is noise until you go
  * looking for it.
+ *
+ * `foldSidechains: false` is for the subagent inspector, which IS going looking
+ * for it: every row it shows is sidechain, so folding would hide the whole run
+ * behind one disclosure.
  */
-function groupRows(messages: readonly Message[]): Item[] {
+export function groupRows(messages: readonly Message[], { foldSidechains = true } = {}): Item[] {
   const resultByCallId = new Map<string, Message>();
   for (const m of messages) {
     if (m.role !== 'tool_result') continue;
@@ -876,7 +880,7 @@ function groupRows(messages: readonly Message[]): Item[] {
   while (i < messages.length) {
     const m = messages[i];
     if (!m) break;
-    if (isSidechain(m)) {
+    if (foldSidechains && isSidechain(m)) {
       const rows: Message[] = [];
       const results = new Map<number, Message | null>();
       while (i < messages.length) {
