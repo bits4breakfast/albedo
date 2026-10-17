@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __setAttentionBackend,
   announcementFor,
@@ -6,7 +6,12 @@ import {
   attentionMarks,
   clearAttention,
   noteStatusChange,
+  notificationFor,
+  NOTIFICATIONS_KEY,
+  NOTIFY_MIN_INTERVAL_MS,
   onAttention,
+  setNotificationsEnabled,
+  shouldNotify,
 } from './attention';
 
 describe('attentionFor', () => {
@@ -118,5 +123,97 @@ describe('announcementFor', () => {
     expect(announcementFor(new Map([[1, 'blocked']]), new Map([[1, 'finished']]), title)).toBe(
       'Fix login finished.',
     );
+  });
+});
+
+describe('system notifications', () => {
+  let posted: { title: string; body: string }[];
+  const setup = (focused: boolean) => {
+    posted = [];
+    __setAttentionBackend(() => {}, focused, (n) => posted.push(n));
+  };
+
+  // The suite runs in node: give the off switch a storage to live in.
+  beforeEach(() => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+      },
+    });
+    setup(false);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reads the switch from storage', () => {
+    window.localStorage.setItem(NOTIFICATIONS_KEY, 'off');
+    noteStatusChange(1, 'running', 'blocked', 'Fix login');
+    expect(posted).toEqual([]);
+  });
+
+  it('names the task when it starts waiting on you or finishes, while unfocused', () => {
+    noteStatusChange(1, 'running', 'blocked', 'Fix login');
+    noteStatusChange(2, 'running', 'idle', 'Write docs');
+    expect(posted.map((n) => n.title)).toEqual(['Fix login', 'Write docs']);
+    expect(posted[0]?.body).toMatch(/waiting on you/i);
+    expect(posted[1]?.body).toMatch(/finished/i);
+  });
+
+  it('stays quiet while the window has focus', () => {
+    setup(true);
+    noteStatusChange(1, 'running', 'blocked', 'Fix login');
+    expect(posted).toEqual([]);
+  });
+
+  it('stays quiet for transitions that are not events', () => {
+    noteStatusChange(1, 'blocked', 'idle', 'Fix login'); // you answered it
+    noteStatusChange(1, 'idle', 'running', 'Fix login');
+    expect(posted).toEqual([]);
+  });
+
+  it('is rate-limited per task', () => {
+    noteStatusChange(1, 'running', 'idle', 'A');
+    noteStatusChange(1, 'running', 'idle', 'A');
+    noteStatusChange(2, 'running', 'idle', 'B');
+    expect(posted.map((n) => n.title)).toEqual(['A', 'B']);
+  });
+
+  it('respects the off switch', () => {
+    setNotificationsEnabled(false);
+    noteStatusChange(1, 'running', 'blocked', 'Fix login');
+    expect(posted).toEqual([]);
+    setNotificationsEnabled(true);
+    noteStatusChange(2, 'running', 'blocked', 'Other');
+    expect(posted).toHaveLength(1);
+  });
+
+  it('falls back to the id for an untitled task', () => {
+    expect(notificationFor('finished', '  ', 9).title).toBe('Task 9');
+  });
+});
+
+describe('shouldNotify', () => {
+  it('allows one per task and kind per interval', () => {
+    const last = new Map<string, number>();
+    expect(shouldNotify(last, 1, 'finished', 0)).toBe(true);
+    expect(shouldNotify(last, 1, 'finished', NOTIFY_MIN_INTERVAL_MS - 1)).toBe(false);
+    expect(shouldNotify(last, 1, 'finished', NOTIFY_MIN_INTERVAL_MS)).toBe(true);
+  });
+
+  it('never lets a recent "finished" swallow a "blocked"', () => {
+    const last = new Map<string, number>();
+    expect(shouldNotify(last, 1, 'finished', 0)).toBe(true);
+    expect(shouldNotify(last, 1, 'blocked', 10)).toBe(true);
+  });
+
+  it('a suppressed attempt does not extend the window', () => {
+    const last = new Map<string, number>();
+    shouldNotify(last, 1, 'blocked', 0);
+    shouldNotify(last, 1, 'blocked', NOTIFY_MIN_INTERVAL_MS / 2);
+    expect(shouldNotify(last, 1, 'blocked', NOTIFY_MIN_INTERVAL_MS)).toBe(true);
   });
 });

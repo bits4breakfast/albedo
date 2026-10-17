@@ -187,7 +187,7 @@ export function useTasks(): UseTasksResult {
       if (prior.status !== status) {
         // A transition, not a level: this is the one place that knows a task
         // just *became* blocked rather than having been blocked all along.
-        noteStatusChange(task.id, prior.status, status);
+        noteStatusChange(task.id, prior.status, status, task.title);
         void updateTask(task.id, { status, lastActivityAt }).catch(() => {});
       }
     },
@@ -340,7 +340,7 @@ export function useTasks(): UseTasksResult {
       if (prompt !== null) {
         if (task.status === 'blocked') return;
         applyTask(taskId, { status: 'blocked' });
-        noteStatusChange(taskId, task.status, 'blocked');
+        noteStatusChange(taskId, task.status, 'blocked', task.title);
         void updateTask(taskId, { status: 'blocked' }).catch(() => {});
       } else if (task.sessionId) {
         void refreshStatus(task.sessionId, null);
