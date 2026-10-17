@@ -21,6 +21,7 @@ import NewTaskDialog from './ui/NewTaskDialog';
 import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
+import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import FileEditor from './ui/editor/FileEditor';
 import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
@@ -1371,6 +1372,13 @@ export default function App() {
                     {selected.title}
                   </span>
                   <ModelPicker task={selected} />
+                  <PrBadge
+                    task={selected}
+                    onEnd={(intent) => {
+                      setEndIntent(intent);
+                      setArchiveTarget(selected);
+                    }}
+                  />
                   <span className="main-ident-path">{selected.worktreePath}</span>
                 </>
               ) : (

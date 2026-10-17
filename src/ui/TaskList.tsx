@@ -8,6 +8,8 @@ import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
 import type { AttentionKind } from './attention';
 import { useShortcuts } from './shortcuts';
+import { PrRowMark } from './PrBadge';
+import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -137,6 +139,14 @@ export default function TaskList({
   const [menu, setMenu] = useState<RowMenu | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  /*
+   * PR status for the rows on screen. The list owns the polling because it
+   * owns "visible": these are exactly the tasks the owner can see a mark for.
+   * One subscription for the whole list; rows read the cache directly.
+   */
+  usePrPolling(tasks);
+  usePrStatusVersion();
 
   // Ages only need to be roughly right.
   useEffect(() => {
@@ -392,6 +402,7 @@ export default function TaskList({
                     )}
                     <span className="task-branch">{task.branch}</span>
                     <span className="task-meta-tail">
+                      {task.status !== 'archived' && <PrRowMark pr={getPrStatus(task.id)} />}
                       {ctx && ctxText && (
                         <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
                           {ctxText}

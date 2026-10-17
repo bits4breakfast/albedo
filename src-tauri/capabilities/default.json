@@ -57,6 +57,21 @@
           "args": true
         },
         {
+          "name": "gh",
+          "cmd": "gh",
+          "args": true
+        },
+        {
+          "name": "gh-homebrew",
+          "cmd": "/opt/homebrew/bin/gh",
+          "args": true
+        },
+        {
+          "name": "gh-usr-local",
+          "cmd": "/usr/local/bin/gh",
+          "args": true
+        },
+        {
           "name": "phpstorm",
           "cmd": "phpstorm",
           "args": true
