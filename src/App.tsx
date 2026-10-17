@@ -10,8 +10,10 @@ import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
-import { useShortcuts } from './ui/shortcuts';
+import { useDoubleShift, useShortcuts } from './ui/shortcuts';
 import ShortcutsHelp from './ui/ShortcutsHelp';
+import QuickOpen from './ui/QuickOpen';
+import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import StatusDot from './ui/StatusDot';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
@@ -475,6 +477,8 @@ export default function App() {
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
+  const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   /**
    * Resume argv for tasks created in THIS run. A fork lands under a new
@@ -1119,7 +1123,35 @@ export default function App() {
     void applyZoom(z);
   };
 
+  /**
+   * Open the palette in a mode, or close it if it is already showing that mode.
+   * Pressing another mode's keys while it is open switches mode and keeps the
+   * query. Never without a task -- there is no worktree to search -- and never
+   * on top of another dialog, which would leave two modals fighting for focus.
+   */
+  const quickOpenRef = useRef(quickOpen);
+  quickOpenRef.current = quickOpen;
+  const toggleQuickOpen = useCallback((next: QuickOpenMode) => {
+    if (!selectedRef.current) return;
+    const current = quickOpenRef.current;
+    if (current === null && document.querySelector('[aria-modal="true"]') !== null) return;
+    setQuickOpen(current === next ? null : next);
+  }, []);
+  const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
+  useDoubleShift(() => toggleQuickOpen('all'));
+
+  /** The editor's file, worktree-relative, so the palette can rank it first. */
+  const editorFile = useMemo(
+    () => (editorTask && openRequest ? worktreeRelative(editorTask.worktreePath, openRequest.request.path) : null),
+    [editorTask, openRequest],
+  );
+
   useShortcuts({
+    // PhpStorm's keymap. Live while typing: nothing in a text field, the
+    // terminal included, binds ⌘O (Ctrl+O is left alone -- see shortcuts.ts).
+    'mod+shift+o': () => toggleQuickOpen('file'),
+    'mod+o': () => toggleQuickOpen('class'),
+    'mod+alt+o': () => toggleQuickOpen('symbol'),
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
     'mod+0': () => zoomTo(1),
@@ -1626,6 +1658,16 @@ export default function App() {
           archived once the dialog reports the worktree work succeeded --
           flipping first would strand the worktree, reachable from nothing. */}
       <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <PaneErrorBoundary label="Go to">
+        <QuickOpen
+          mode={selected ? quickOpen : null}
+          worktreePath={selected?.worktreePath ?? null}
+          currentFile={editorFile}
+          onMode={setQuickOpen}
+          onClose={closeQuickOpen}
+          onOpen={openFile}
+        />
+      </PaneErrorBoundary>
       <PaneErrorBoundary label="Projects">
         <ProjectsDialog
           open={projectsOpen}
