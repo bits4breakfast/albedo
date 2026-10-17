@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  parseCommitFileTimes,
+  parseCommitLog,
   parseNumstat,
   GitError,
   type GitResult,
@@ -929,5 +931,34 @@ describe('parseNumstat', () => {
     expect(m.get('logo.png')).toEqual({ added: null, deleted: null });
     expect(m.get('docs/x y.md')).toEqual({ added: 0, deleted: 7 });
     expect(m.size).toBe(3);
+  });
+});
+
+describe('parseCommitFileTimes', () => {
+  it('keeps the newest commit time per path', () => {
+    const out = '\u00001700000200\n\nsrc/a.ts\nsrc/b.ts\n\u00001700000100\n\nsrc/a.ts\nsrc/c.ts\n';
+    const m = parseCommitFileTimes(out);
+    expect(m.get('src/a.ts')).toBe(1700000200_000);
+    expect(m.get('src/b.ts')).toBe(1700000200_000);
+    expect(m.get('src/c.ts')).toBe(1700000100_000);
+    expect(m.size).toBe(3);
+  });
+  it('is empty for empty output', () => {
+    expect(parseCommitFileTimes('').size).toBe(0);
+  });
+});
+
+describe('parseCommitLog', () => {
+  it('reads commits newest first, each with its files and counts', () => {
+    const out =
+      '\u0000aaa111\t1700000200\tSecond: fix\tthing\n\n3\t1\tsrc/a.ts\n-\t-\timg.png\n' +
+      '\u0000bbb222\t1700000100\tFirst\n\n10\t0\tsrc/a.ts\n';
+    const commits = parseCommitLog(out);
+    expect(commits.map((c) => c.sha)).toEqual(['aaa111', 'bbb222']);
+    expect(commits[0]?.subject).toBe('Second: fix\tthing');
+    expect(commits[0]?.at).toBe(1700000200_000);
+    expect(commits[0]?.files.get('src/a.ts')).toEqual({ added: 3, deleted: 1 });
+    expect(commits[0]?.files.get('img.png')).toEqual({ added: null, deleted: null });
+    expect(commits[1]?.files.size).toBe(1);
   });
 });

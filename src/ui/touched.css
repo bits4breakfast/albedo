@@ -471,3 +471,69 @@
   .tf-status { letter-spacing: 0; }
   .tf-badge { margin-left: 4px; padding: 0 3px; }
 }
+
+/* --- sections -------------------------------------------------------------- */
+
+.tf-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 8px 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  text-align: left;
+}
+button.tf-section-head { cursor: pointer; }
+button.tf-section-head:hover { color: var(--text); }
+.tf-section-caret { width: 1em; color: var(--muted); }
+.tf-section-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.tf-section + .tf-section { border-top: 1px solid var(--border); }
+
+/* --- view switch and commit groups ---------------------------------------- */
+
+.tf-mode {
+  display: inline-flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.tf-mode-btn {
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.tf-mode-btn + .tf-mode-btn { border-left: 1px solid var(--border); }
+.tf-mode-btn:hover { color: var(--text); }
+.tf-mode-btn[aria-pressed='true'] { color: var(--text-strong); background: var(--panel-raised); }
+.tf-mode-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* A commit: its subject reads first, normal case; sha and age trail. */
+.tf-commit-head { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.tf-commit-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tf-commit-meta {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+/* In a narrow pinned column the switch wraps under the title rather than
+   squeezing the count and the refresh button. */
+.tf-head { flex-wrap: wrap; row-gap: 4px; }

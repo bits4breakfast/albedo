@@ -383,21 +383,16 @@ export function parseNumstat(stdout: string): Map<string, LineChange> {
 }
 
 /**
- * Lines changed per file in a worktree: everything the task did relative to
- * where its branch left `baseBranch` (or that branch's upstream) -- committed on the branch AND still
- * uncommitted -- which is what "this task's changes" means. Untracked files
- * are not in a diff and are absent here.
- *
- * Falls back to uncommitted changes only (against HEAD) when the merge base
- * cannot be found, e.g. a base branch that no longer exists.
+ * The commit a task's changes are measured from: where its branch left
+ * `baseBranch` -- or that branch's upstream, when it has one. A local `master`
+ * that has not been pulled is behind `origin/master`; a branch rebased onto
+ * origin would otherwise diff against a stale point and drag in every upstream
+ * change since. Null when there is no merge base (a base that no longer
+ * exists), which callers read as "uncommitted changes only".
  */
-export async function lineChanges(worktreePath: string, baseBranch: string): Promise<Map<string, LineChange>> {
-  let against = 'HEAD';
+export async function taskBase(worktreePath: string, baseBranch: string): Promise<string | null> {
   try {
     assertSafeArgv([baseBranch]);
-    // The base's upstream when it has one. A local `master` that has not been
-    // pulled is behind `origin/master`; a branch rebased onto origin then
-    // diffs against a stale point and drags in every upstream change since.
     let base = baseBranch;
     try {
       const up = (await gitOk(['rev-parse', '--abbrev-ref', `${baseBranch}@{upstream}`], worktreePath)).trim();
@@ -405,11 +400,96 @@ export async function lineChanges(worktreePath: string, baseBranch: string): Pro
     } catch {
       /* no upstream: the local branch is the base */
     }
-    against = (await gitOk(['merge-base', base, 'HEAD'], worktreePath)).trim() || 'HEAD';
+    return (await gitOk(['merge-base', base, 'HEAD'], worktreePath)).trim() || null;
   } catch {
-    /* no merge base: uncommitted changes only */
+    return null;
   }
+}
+
+/**
+ * Lines changed per file in a worktree: everything the task did relative to
+ * {@link taskBase} -- committed on the branch AND still uncommitted -- which is
+ * what "this task's changes" means. Untracked files are not in a diff and are
+ * absent here.
+ */
+export async function lineChanges(worktreePath: string, baseBranch: string): Promise<Map<string, LineChange>> {
+  const against = (await taskBase(worktreePath, baseBranch)) ?? 'HEAD';
   return parseNumstat(await gitOk(['diff', '--numstat', '--no-renames', against], worktreePath));
+}
+
+/**
+ * `git log --format=%x00%ct --name-only` output: path -> the newest commit
+ * time (ms) that touched it. Records are a NUL-prefixed timestamp line
+ * followed by the paths that commit changed.
+ */
+export function parseCommitFileTimes(stdout: string): Map<string, number> {
+  const out = new Map<string, number>();
+  let at: number | null = null;
+  for (const raw of stdout.split('\n')) {
+    const line = raw.trimEnd();
+    if (line.startsWith('\u0000')) {
+      const n = Number(line.slice(1));
+      at = Number.isFinite(n) ? n * 1000 : null;
+      continue;
+    }
+    if (line === '' || at === null) continue;
+    const prev = out.get(line);
+    if (prev === undefined || at > prev) out.set(line, at);
+  }
+  return out;
+}
+
+/** When each file was last committed on the task's branch. Empty when unknown. */
+export async function committedFileTimes(worktreePath: string, baseBranch: string): Promise<Map<string, number>> {
+  const base = await taskBase(worktreePath, baseBranch);
+  if (base === null) return new Map();
+  return parseCommitFileTimes(
+    await gitOk(['log', '--format=%x00%ct', '--name-only', '--no-renames', `${base}..HEAD`], worktreePath),
+  );
+}
+
+/** One commit on the task's branch, with the files it changed. */
+export interface BranchCommit {
+  sha: string;
+  /** Commit time, ms. */
+  at: number;
+  subject: string;
+  files: Map<string, LineChange>;
+}
+
+/**
+ * `git log --format=%x00%H%x09%ct%x09%s --numstat --no-renames` output, newest
+ * first as git prints it. Each record is a NUL-prefixed header line followed
+ * by numstat lines.
+ */
+export function parseCommitLog(stdout: string): BranchCommit[] {
+  const out: BranchCommit[] = [];
+  let cur: BranchCommit | null = null;
+  for (const raw of stdout.split('\n')) {
+    if (raw.startsWith('\u0000')) {
+      const [sha, ct, ...rest] = raw.slice(1).split('\t');
+      const at = Number(ct) * 1000;
+      if (!sha || !Number.isFinite(at)) {
+        cur = null;
+        continue;
+      }
+      cur = { sha, at, subject: rest.join('\t'), files: new Map() };
+      out.push(cur);
+      continue;
+    }
+    if (cur === null) continue;
+    for (const [path, change] of parseNumstat(raw)) cur.files.set(path, change);
+  }
+  return out;
+}
+
+/** The commits on the task's branch since it left its base, newest first. */
+export async function branchCommits(worktreePath: string, baseBranch: string): Promise<BranchCommit[]> {
+  const base = await taskBase(worktreePath, baseBranch);
+  if (base === null) return [];
+  return parseCommitLog(
+    await gitOk(['log', '--format=%x00%H%x09%ct%x09%s', '--numstat', '--no-renames', `${base}..HEAD`], worktreePath),
+  );
 }
 
 export function parseCommitCount(stdout: string): number {

@@ -19,6 +19,8 @@
  */
 
 import { copyText } from '../../lib/clipboard';
+import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
+import { useOpenFile } from './openFile';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -380,6 +382,26 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   const requestPath = request?.path ?? null;
   const requestLine = request?.line ?? null;
 
+  /** The request path the current view was built for. */
+  const viewPathRef = useRef<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Reveal a line, clamped -- a stale trace can name line 900 of a file that
+      is now 40 lines long -- and flash it. */
+  const revealLine = (view: EditorView, requested: number) => {
+    const lineNo = Math.min(Math.max(1, Math.trunc(requested)), view.state.doc.lines);
+    const line = view.state.doc.line(lineNo);
+    view.dispatch({
+      selection: { anchor: line.from },
+      effects: [EditorView.scrollIntoView(line.from, { y: 'center' }), setFlashLine.of(line.from)],
+    });
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => {
+      flashTimer.current = null;
+      if (viewRef.current === view) view.dispatch({ effects: setFlashLine.of(null) });
+    }, FLASH_MS);
+  };
+
   // --- resolve + read ------------------------------------------------------
   useEffect(() => {
     resolvedRef.current = null;
@@ -595,26 +617,11 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
       view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(theme)) });
     });
 
-    // Reveal the requested line, clamped -- a stale trace can name line 900 of
-    // a file that is now 40 lines long.
-    let flashTimer: ReturnType<typeof setTimeout> | null = null;
-    if (requestLine !== null && requestLine > 0) {
-      const lineNo = Math.min(Math.max(1, Math.trunc(requestLine)), view.state.doc.lines);
-      const line = view.state.doc.line(lineNo);
-      view.dispatch({
-        selection: { anchor: line.from },
-        effects: [
-          EditorView.scrollIntoView(line.from, { y: 'center' }),
-          setFlashLine.of(line.from),
-        ],
-      });
-      flashTimer = setTimeout(() => {
-        if (viewRef.current === view) view.dispatch({ effects: setFlashLine.of(null) });
-      }, FLASH_MS);
-    }
+    viewPathRef.current = requestPath;
+    if (requestLine !== null && requestLine > 0) revealLine(view, requestLine);
 
     return () => {
-      if (flashTimer) clearTimeout(flashTimer);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
       offTheme();
       viewRef.current = null;
       view.destroy();
@@ -622,6 +629,21 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     // `doc.key` changes on open and on reload-from-disk; both want a fresh view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.key, resolved]);
+
+  // --- a new line in the file already open ----------------------------------
+  // The view is rebuilt only when the PATH changes, so a second request for
+  // the same file -- Go to Symbol on a method in the open file -- would land
+  // nowhere. Keyed on the request object, so asking for the same line twice
+  // still jumps. A request for another path is the effect above's business:
+  // the view here is still the old file's.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || request === null || request.path !== viewPathRef.current) return;
+    if (request.line == null || request.line < 1) return;
+    revealLine(view, request.line);
+    view.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
 
   // --- close ---------------------------------------------------------------
   const requestClose = useCallback(() => {
@@ -643,6 +665,37 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     return () => window.removeEventListener('keydown', onKey);
   }, [requestClose]);
 
+  // --- stepping through the change set --------------------------------------
+  // The touched-files list publishes its order; the editor walks it. Blocked
+  // while there are unsaved edits, so a keystroke can never discard work.
+  const openFile = useOpenFile();
+  const [order, setOrder] = useState<readonly string[]>(() => touchedOrder(task.id));
+  useEffect(() => {
+    setOrder(touchedOrder(task.id));
+    return onTouchedOrderChange(() => setOrder(touchedOrder(task.id)));
+  }, [task.id]);
+  const current = resolved?.relative ?? null;
+  const position = current === null ? -1 : order.indexOf(current);
+  const step = useCallback(
+    (dir: 1 | -1) => {
+      if (dirty || current === null) return;
+      const next = neighbour(order, current, dir);
+      if (next !== null) openFile({ path: next });
+    },
+    [dirty, current, order, openFile],
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.altKey || e.ctrlKey) return;
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      e.stopPropagation();
+      step(e.key === 'ArrowDown' ? 1 : -1);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [step]);
+
   if (request === null) return null;
 
   const title = resolved?.relative ?? request.path;
@@ -654,6 +707,33 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
           {title}
         </span>
         <CopyPathButton path={title} absolute={resolved?.absolute ?? null} />
+        {position >= 0 && order.length > 1 ? (
+          <span className="ed-nav" aria-label="Changed files">
+            <button
+              type="button"
+              className="ed-nav-btn"
+              onClick={() => step(-1)}
+              disabled={dirty}
+              title={dirty ? 'Save or discard your edits first' : 'Previous changed file (⌥⌘↑)'}
+              aria-label="Previous changed file"
+            >
+              ‹
+            </button>
+            <span className="ed-nav-pos">
+              {position + 1} / {order.length}
+            </span>
+            <button
+              type="button"
+              className="ed-nav-btn"
+              onClick={() => step(1)}
+              disabled={dirty}
+              title={dirty ? 'Save or discard your edits first' : 'Next changed file (⌥⌘↓)'}
+              aria-label="Next changed file"
+            >
+              ›
+            </button>
+          </span>
+        ) : null}
         {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
         {handEdited && (
           <span className="ed-badge" title="You saved this file by hand in this session">

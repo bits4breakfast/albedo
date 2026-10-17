@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from '../lib/pty';
 import { hookSettingsArg, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { getTaskModel } from './taskModel';
+import { submitDelayFor } from '../lib/ptyInput';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 
@@ -127,6 +128,8 @@ export async function notePty(taskId: number, text: string): Promise<boolean> {
  * the handful of bytes saved, and a conditional wrapper is the kind of thing
  * that gets tested only on the easy case. Callers must NOT wrap again.
  *
+ * The submitting `\r` is a separate write after a pause -- see the body.
+ *
  * Returns false when the task has no live pty, so the caller can offer to
  * start the session rather than silently dropping what the user typed.
  */
@@ -138,11 +141,26 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
   const body = text.replace(/\r\n?/g, '\n').replace(/\s+$/, '');
   if (body.length === 0) return false;
   try {
-    await writePty(ptyId, `\x1b[200~${body}\x1b[201~\r`);
+    // The paste and the Enter go as TWO writes, with a pause between. Sent in
+    // one write, Claude Code dropped the Enter that arrived on the heels of
+    // the paste: the message sat unsent in its input box, the composer had
+    // already cleared, and the next message was appended to it and sent
+    // both. An image path takes longer still, because Claude Code reads the
+    // file to turn it into an attachment before it will take Enter. Nothing
+    // here can observe readiness -- that would mean reading terminal output --
+    // so the pause is a fixed, generous one.
+    await writePty(ptyId, `\x1b[200~${body}\x1b[201~`);
+    await sleep(submitDelayFor(body));
+    if (livePtys.get(taskId) !== ptyId) return false; // exited in the pause
+    await writePty(ptyId, '\r');
     return true;
   } catch {
     return false;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Move keyboard focus into the task's terminal. False when none is mounted. */
