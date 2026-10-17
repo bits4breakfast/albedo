@@ -266,6 +266,12 @@ separate conversation, and the ordering above may want `lastTouchedAt` anyway.
 
 ## 8. Images: paste and drag-and-drop into the composer
 
+**Sending is done.** A Finder drop inserts the shell-escaped path. A ⌘V that
+carries image data is written to `~/.albedo/paste/<timestamp>.png` and inserted
+the same way (`src/lib/pasteImage.ts`, with `fs:allow-write-file` granted). Still
+open: cleanup of `~/.albedo/paste/`, a chip in place of the raw path, and
+rendering image blocks in the transcript. The analysis below is kept.
+
 Screenshots are how you report a UI problem, and today there is no way to get
 one into a session except by switching to the terminal. Nothing in `src/ui`
 handles a drop, a paste of image data, or a `DataTransfer`.

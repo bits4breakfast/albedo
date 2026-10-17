@@ -13,11 +13,12 @@ import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
 import { onPromptChange, pendingPrompt, type PendingPrompt } from '../../capture/hookEvents';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate } from '../../capture';
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { imageFromClipboard, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
 import MessageRow from './MessageRow';
 import { isSidechain, toolUseId } from './ToolChip';
@@ -635,6 +636,20 @@ export function Composer({
      uploads the file. The webview delivers drops as native paths (the DOM drop
      event never sees them), hence Tauri's event rather than onDrop.
   */
+  /** Type paths into the draft the way a terminal does for a drop. Paste uses it too. */
+  const insertPaths = useCallback(
+    (paths: string[]) => {
+      if (paths.length === 0) return;
+      const insert = paths.map(shellEscapePath).join(' ');
+      setText((t) => withInsertedPath(t, insert));
+      requestAnimationFrame(() => {
+        ref.current?.focus();
+        grow();
+      });
+    },
+    [grow],
+  );
+
   useEffect(() => {
     let off: (() => void) | null = null;
     let gone = false;
@@ -651,13 +666,7 @@ export function Composer({
         else if (p.type === 'leave') setDropping(false);
         else if (p.type === 'drop') {
           setDropping(false);
-          if (p.paths.length === 0) return;
-          const insert = p.paths.map(shellEscapePath).join(' ');
-          setText((t) => (t.length === 0 || /\s$/.test(t) ? `${t}${insert} ` : `${t} ${insert} `));
-          requestAnimationFrame(() => {
-            ref.current?.focus();
-            grow();
-          });
+          insertPaths(p.paths);
         }
       })
       .then((un) => {
@@ -671,7 +680,30 @@ export function Composer({
       gone = true;
       off?.();
     };
-  }, [grow]);
+  }, [insertPaths]);
+
+  /*
+     ⌘V with image data -- a screenshot copied with ⌃⇧⌘4, an image copied in a
+     browser -- carries bytes, not a path, so it is written to
+     ~/.albedo/paste/ first and then inserted exactly as a drop is (TODO §8).
+     Anything without an image file item returns before preventDefault: a text
+     paste is the browser's, untouched.
+  */
+  const onPaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const image = imageFromClipboard(e.clipboardData?.items);
+      if (!image) return;
+      e.preventDefault();
+      // The draft is frozen while a send is pending; so is what lands in it.
+      if (inFlightRef.current) return;
+      savePastedImage(image)
+        .then((path) => insertPaths([path]))
+        .catch((err: unknown) => {
+          setNotice(`Could not save the pasted image: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    },
+    [insertPaths],
+  );
 
   /** Take the held message back, so a prompt nobody answers is not a trap. */
   const cancelHold = useCallback(() => {
@@ -803,6 +835,7 @@ export function Composer({
           setText(e.target.value);
           grow();
         }}
+        onPaste={onPaste}
         onKeyDown={(e) => {
           // Match the TUI: Enter sends, Shift+Enter is a newline. `isComposing`
           // keeps an IME's Enter from submitting a half-typed word.

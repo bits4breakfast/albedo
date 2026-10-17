@@ -23,6 +23,7 @@
     "fs:allow-read",
     "fs:allow-seek",
     "fs:allow-write-text-file",
+    "fs:allow-write-file",
     "fs:allow-mkdir",
     "fs:allow-exists",
     "fs:allow-watch",
