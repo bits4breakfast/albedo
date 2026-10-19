@@ -375,6 +375,8 @@ export default function SessionBrowser({
           // project a directory belongs to says nothing about who created it.
           worktreePath: cwd,
           ownsWorktree: false,
+          // The session's branch was the user's before Albedo saw it.
+          createdBranch: false,
         });
 
         const args = ['--resume', session.sessionId];

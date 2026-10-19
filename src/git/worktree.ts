@@ -1220,6 +1220,21 @@ export async function taskCreatedBranch(
   }
 }
 
+/**
+ * Whether Albedo may offer to delete `task`'s branch: the recorded answer when
+ * there is one, else (a task from before it was recorded) the reflog. Never
+ * throws.
+ */
+export async function mayDeleteTaskBranch(task: {
+  repoPath: string;
+  branch: string;
+  createdAt: number;
+  createdBranch: boolean | null;
+}): Promise<boolean> {
+  if (task.createdBranch !== null) return task.createdBranch;
+  return taskCreatedBranch(task.repoPath, task.branch, task.createdAt);
+}
+
 /** Re-exported from ./reconcile so the frozen module surface stays in one file. */
 export { findOrphans } from './reconcile';
 export type { OrphanInfo } from './reconcile';

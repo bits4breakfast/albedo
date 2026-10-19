@@ -26,6 +26,7 @@ import {
   removeWorktree,
   riskGrew,
   taskCreatedBranch,
+  mayDeleteTaskBranch,
   undoCreateWorktree,
   repoRootFor,
   repoRootFromCommonDir,
@@ -934,6 +935,24 @@ describe('branch provenance', () => {
     expect(calls[0]?.args).toEqual([
       'reflog', 'show', '--date=unix', '--format=%gd%x09%gs', 'refs/heads/fix', '--',
     ]);
+  });
+});
+
+describe('mayDeleteTaskBranch', () => {
+  const TASK_MS = 1_792_404_000_000;
+  const T = TASK_MS / 1000;
+  const recorded = (createdBranch: boolean | null) => ({ repoPath: '/repo', branch: 'fix', createdAt: TASK_MS, createdBranch });
+
+  it('trusts the recorded answer and never asks git', async () => {
+    const calls = install(() => ({ code: 0, stdout: `fix@{${T}}\tbranch: Created from main\n`, stderr: '' }));
+    expect(await mayDeleteTaskBranch(recorded(true))).toBe(true);
+    // The reflog would say "created with the task"; the column says otherwise.
+    expect(await mayDeleteTaskBranch(recorded(false))).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+  it('falls back to the reflog for a task recorded before the column', async () => {
+    install(() => ({ code: 0, stdout: `fix@{${T}}\tbranch: Created from main\n`, stderr: '' }));
+    expect(await mayDeleteTaskBranch(recorded(null))).toBe(true);
   });
 });
 

@@ -37,7 +37,7 @@ import {
   listBranches,
   probeWorkAtRisk,
   removeWorktree,
-  taskCreatedBranch,
+  mayDeleteTaskBranch,
 } from '../git/worktree';
 import './worktree.css';
 
@@ -156,14 +156,14 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
       const recordedBase = new Map<string, string>();
       // Every task that names this path, for the branch-provenance check. A row
       // backed by a task may only offer branch deletion if the task cut it.
-      const recordedTasks = new Map<string, Array<{ repoPath: string; branch: string; createdAt: number }>>();
+      const recordedTasks = new Map<string, Array<{ repoPath: string; branch: string; createdAt: number; createdBranch: boolean | null }>>();
       for (const t of tasks) {
         if (!t.worktreePath) continue;
         const k = pathKey(t.worktreePath);
         if (t.baseBranch) recordedBase.set(k, t.baseBranch);
         recordedTasks.set(k, [
           ...(recordedTasks.get(k) ?? []),
-          { repoPath: t.repoPath, branch: t.branch, createdAt: t.createdAt },
+          { repoPath: t.repoPath, branch: t.branch, createdAt: t.createdAt, createdBranch: t.createdBranch },
         ]);
       }
 
@@ -228,7 +228,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
         if (owners && o.branch) {
           let created = true;
           for (const t of owners) {
-            if (t.branch !== o.branch || !(await taskCreatedBranch(t.repoPath, t.branch, t.createdAt))) {
+            if (t.branch !== o.branch || !(await mayDeleteTaskBranch(t))) {
               created = false;
               break;
             }

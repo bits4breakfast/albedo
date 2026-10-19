@@ -33,7 +33,7 @@ import {
   assessLoss,
   probeWorkAtRisk,
   removeWorktree,
-  taskCreatedBranch,
+  mayDeleteTaskBranch,
 } from '../git/worktree';
 import './worktree.css';
 
@@ -149,6 +149,7 @@ export function ArchiveTaskDialog({
   const repoPath = task?.repoPath ?? '';
   const branch = task?.branch ?? '';
   const createdAt = task?.createdAt ?? 0;
+  const createdBranch = task?.createdBranch ?? null;
   /**
    * Whether Albedo created this directory. False for a resumed session, which
    * runs in whatever cwd it originally used -- frequently the user's main
@@ -182,7 +183,7 @@ export function ArchiveTaskDialog({
     setProbe(EMPTY_PROBE);
     void (async () => {
       const work = await probeWorkAtRisk(worktreePath, baseBranch || null);
-      const created = await taskCreatedBranch(repoPath, branch, createdAt);
+      const created = await mayDeleteTaskBranch({ repoPath, branch, createdAt, createdBranch });
       if (cancelled) return;
       setProbe(fromWorkProbe(work, created));
       // Never leave a selection on an option that is no longer offered.
@@ -191,7 +192,7 @@ export function ArchiveTaskDialog({
     return () => {
       cancelled = true;
     };
-  }, [taskId, worktreePath, baseBranch, repoPath, branch, createdAt, owned]);
+  }, [taskId, worktreePath, baseBranch, repoPath, branch, createdAt, createdBranch, owned]);
 
   // Changing the plan changes what is destroyed, so a stale tick must not
   // carry over from a more dangerous option to a safer one and back.

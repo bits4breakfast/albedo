@@ -67,6 +67,9 @@ const M0003_TASK_PROMPT: &str = include_str!("../../src/db/migrations/0003_task_
 const M0004_RESUME: &str = include_str!("../../src/db/migrations/0004_resume.sql");
 /// v5: agent_id, so subagent rows stop colliding with their parent session.
 const M0005_SUBAGENTS: &str = include_str!("../../src/db/migrations/0005_subagents.sql");
+/// v6: whether Albedo created the task's branch, so archive never deletes one
+/// the user already had.
+const M0006_CREATED_BRANCH: &str = include_str!("../../src/db/migrations/0006_created_branch.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -98,6 +101,12 @@ pub fn run() {
             version: 5,
             description: "subagent rows: agent_id and a re-ingest of every subagents/ transcript",
             sql: M0005_SUBAGENTS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "tasks.created_branch",
+            sql: M0006_CREATED_BRANCH,
             kind: MigrationKind::Up,
         },
     ];

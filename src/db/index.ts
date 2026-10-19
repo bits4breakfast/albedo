@@ -99,6 +99,7 @@ interface TaskRow {
   worktree_path: string;
   session_id: string | null;
   owns_worktree: number;
+  created_branch: number | null;
   status: string;
   created_at: number;
   last_activity_at: number | null;
@@ -129,13 +130,14 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   worktreePath: 'worktree_path',
   sessionId: 'session_id',
   ownsWorktree: 'owns_worktree',
+  createdBranch: 'created_branch',
   status: 'status',
   createdAt: 'created_at',
   lastActivityAt: 'last_activity_at',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, status, created_at, last_activity_at';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, status, created_at, last_activity_at';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -160,6 +162,7 @@ function toTask(r: TaskRow): Task {
     sessionId: r.session_id,
     // SQLite has no boolean type; anything non-zero is true.
     ownsWorktree: r.owns_worktree !== 0,
+    createdBranch: r.created_branch === null ? null : r.created_branch !== 0,
     status: (VALID_STATUSES.has(r.status) ? r.status : 'idle') as TaskStatus,
     createdAt: r.created_at,
     lastActivityAt: r.last_activity_at,
@@ -212,8 +215,9 @@ export async function createTask(t: NewTask): Promise<Task> {
     // The schema default exists to backfill pre-v4 rows; as a forward default
     // it points the dangerous way (1 = "Albedo may delete this directory"), so
     // no insert from here is allowed to fall through to it.
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, 'idle', $8, NULL)`,
+    // created_branch likewise: NULL is reserved for pre-v6 rows.
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, 'idle', $8, NULL)`,
     [
       t.title,
       t.projectId,
@@ -223,6 +227,7 @@ export async function createTask(t: NewTask): Promise<Task> {
       t.worktreePath,
       t.ownsWorktree ? 1 : 0,
       createdAt,
+      t.createdBranch === null ? null : t.createdBranch ? 1 : 0,
     ],
   );
   const id = res.lastInsertId;
@@ -240,6 +245,7 @@ export async function createTask(t: NewTask): Promise<Task> {
     worktreePath: t.worktreePath,
     sessionId: null,
     ownsWorktree: t.ownsWorktree,
+    createdBranch: t.createdBranch,
     status: 'idle',
     createdAt,
     lastActivityAt: null,

@@ -245,6 +245,8 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
           // archive. A resumed session, which runs in a directory the user
           // already had, sets this false and is never offered removal.
           ownsWorktree: true,
+          // `-b` cut it unless the user chose a branch they already had.
+          createdBranch: !useExistingBranch,
         });
       } catch (e) {
         // The worktree exists but no task names it, so a retry would fail on

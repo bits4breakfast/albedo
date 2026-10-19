@@ -98,6 +98,13 @@ export interface Task {
    * direction, and the caller always knows which kind of task it is creating.
    */
   ownsWorktree: boolean;
+  /**
+   * True when Albedo cut `branch` for this task (`worktree add -b`), false
+   * when the branch already existed (checked out, or a resumed session), null
+   * for a task recorded before this was stored. Archive offers to delete the
+   * branch only when true; null falls back to the branch's reflog.
+   */
+  createdBranch: boolean | null;
   status: TaskStatus;
   createdAt: number;
   lastActivityAt: number | null;
@@ -262,19 +269,6 @@ export interface PtySpawnOptions {
   rows: number;
   /** Extra environment. ANTHROPIC_API_KEY is always stripped, see pty.rs. */
   env?: Record<string, string>;
-}
-
-/** Payload of the `pty://output` Tauri event. */
-export interface PtyOutputEvent {
-  ptyId: string;
-  /** Raw bytes from the pty, base64 encoded. */
-  data: string;
-}
-
-/** Payload of the `pty://exit` Tauri event. */
-export interface PtyExitEvent {
-  ptyId: string;
-  code: number | null;
 }
 
 // ---------------------------------------------------------------------------

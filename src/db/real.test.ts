@@ -349,7 +349,7 @@ describe('touchedFiles — executed', () => {
     });
     const task = await createTask({
       title: 't', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/slug', ownsWorktree: true,
+      branch: 'b', worktreePath: '/wt/slug', ownsWorktree: true, createdBranch: true,
     });
 
     // The same file, written three times, named absolutely and relatively.
@@ -839,7 +839,7 @@ describe('deleteTask — removes the task and the conversation copy Albedo holds
     });
     const task = await createTask({
       title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'feat/retry', worktreePath: '/wt/retry', ownsWorktree: true,
+      branch: 'feat/retry', worktreePath: '/wt/retry', ownsWorktree: true, createdBranch: true,
     });
     await insertMessages([
       { taskId: task.id, sessionId: 'sess-keep', seq: 0, role: 'user', toolName: null,
@@ -899,7 +899,7 @@ describe('deleteTask — removes the task and the conversation copy Albedo holds
     const { taskId } = await seedTaskWithSession();
     const other = await createTask({
       title: 'other', projectId: null, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/other', ownsWorktree: true,
+      branch: 'b', worktreePath: '/wt/other', ownsWorktree: true, createdBranch: true,
     });
     await insertMessages([
       { taskId: other.id, sessionId: 'sess-other', seq: 0, role: 'user', toolName: null,
@@ -1130,7 +1130,7 @@ describe('archiving purges the conversation copy, keeping the task row', () => {
     });
     const task = await createTask({
       title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'feat/retry', worktreePath: path, ownsWorktree: true,
+      branch: 'feat/retry', worktreePath: path, ownsWorktree: true, createdBranch: true,
     });
     await insertMessages([
       { taskId: task.id, sessionId: 'sess-a', seq: 0, role: 'user', toolName: null,
@@ -1180,7 +1180,7 @@ describe('touchTaskActivity — notifies only when the row moved', () => {
   it('reports and emits a change, then stays quiet for a replay of the same or older activity', async () => {
     const task = await createTask({
       title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/t', ownsWorktree: true,
+      branch: 'b', worktreePath: '/wt/t', ownsWorktree: true, createdBranch: true,
     });
     const cb = vi.fn();
     const off = onTasksChanged(cb);
@@ -1199,5 +1199,32 @@ describe('touchTaskActivity — notifies only when the row moved', () => {
     } finally {
       off();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('created_branch (v6)', () => {
+  const base = {
+    title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'fix',
+    worktreePath: '/wt/fix', ownsWorktree: true,
+  };
+
+  it('round-trips what createTask was told, in both directions', async () => {
+    const cut = await createTask({ ...base, createdBranch: true });
+    const kept = await createTask({ ...base, worktreePath: '/wt/kept', createdBranch: false });
+    expect((await getTask(cut.id))?.createdBranch).toBe(true);
+    expect((await getTask(kept.id))?.createdBranch).toBe(false);
+  });
+
+  it('reads a row from before v6 as unknown, not as "created"', async () => {
+    db.raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    const [old] = (await listTasks()).filter((t) => t.title === 'old');
+    expect(old?.createdBranch).toBeNull();
   });
 });
