@@ -557,6 +557,29 @@ the same dialog as Find Usages (`SymbolResults`), titled with what was asked
 
 ---
 
+## 15. Resuming a session that is already running elsewhere (low priority)
+
+Seen live: a task's conversation was running in a terminal outside Albedo, and
+launching Albedo resumed the same session in its own terminal pane
+(`claude --resume <id>`) -- two Claude Code processes on one conversation.
+Both append to the one transcript file. The first message typed in Albedo
+went to the new process, which is right, but the transcript forked at that
+point (one line with two children), and the old process would interleave its
+own lines with the new one's if anything reached it.
+
+Nothing is lost today, but nothing prevents it either. Before resuming, check
+whether the session is live somewhere else, and if it is, say so and offer
+the choice: resume here anyway (and say the other one should be closed), or
+leave it where it is. "Live elsewhere" can be read without touching any pty:
+another `claude` process whose arguments name the session, or the transcript
+file still growing with lines Albedo's own process did not write.
+
+Related, same root: a task resumed on launch for every task at once. Starting
+a session only when its task is opened would make this rarer and launch
+lighter.
+
+---
+
 ## Already recorded elsewhere — do not duplicate here
 
 `STATUS.md` → **Known gaps** owns: no reprocessor, thin component coverage,
