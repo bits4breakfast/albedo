@@ -608,6 +608,38 @@ export default function App() {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+
+  /**
+   * With no task selected, Go to File and Find in Files search the active
+   * project's main checkout -- the repo folder itself -- and open what they
+   * find read-only. This stands in for a task so the search dialogs and the
+   * editor need no second code path. Its id is negative, so it can never meet
+   * a real task's id, and it is never written anywhere: the editor is
+   * read-only for it (the folder is the user's real repo, not a worktree).
+   */
+  const browseTask = useMemo<Task | null>(() => {
+    if (selected !== null || activeProject === null || !activeProject.repoPath) return null;
+    return {
+      id: -activeProject.id,
+      title: activeProject.name,
+      projectId: activeProject.id,
+      repoPath: activeProject.repoPath,
+      baseBranch: '',
+      branch: '',
+      worktreePath: activeProject.repoPath,
+      sessionId: null,
+      ownsWorktree: false,
+      createdBranch: false,
+      status: 'idle',
+      createdAt: 0,
+      lastActivityAt: null,
+    };
+  }, [selected, activeProject]);
+  const browseTaskRef = useRef(browseTask);
+  browseTaskRef.current = browseTask;
+  /** The folder the search dialogs work in: the task's worktree, else the checkout. */
+  const searchTask = selected ?? browseTask;
+  const searchScopeLabel = selected === null && browseTask ? `${browseTask.title} · main checkout` : null;
   /* Read by `readFileText`, which is registered once and must not close over
      the task that was selected when it was created. */
   const selectedRef = useRef(selected);
@@ -841,7 +873,7 @@ export default function App() {
   selectedIdRef.current = selectedId;
 
   const openFile = useCallback((request: OpenFileRequest) => {
-    const taskId = selectedIdRef.current;
+    const taskId = selectedIdRef.current ?? browseTaskRef.current?.id ?? null;
     if (taskId === null) return;
     setOpenRequest({ taskId, request });
     setRightTab('editor');
@@ -939,9 +971,10 @@ export default function App() {
 
   /** The editor only exists for the task its request came from. */
   const editorTask = useMemo(() => {
-    if (!openRequest || !selected) return null;
-    return openRequest.taskId === selected.id ? selected : null;
-  }, [openRequest, selected]);
+    if (!openRequest) return null;
+    if (selected) return openRequest.taskId === selected.id ? selected : null;
+    return browseTask && openRequest.taskId === browseTask.id ? browseTask : null;
+  }, [openRequest, selected, browseTask]);
 
   /**
    * Is there room for the column, right now?
@@ -1086,13 +1119,14 @@ export default function App() {
   /**
    * Open the palette in a mode, or close it if it is already showing that mode.
    * Pressing another mode's keys while it is open switches mode and keeps the
-   * query. Never without a task -- there is no worktree to search -- and never
-   * on top of another dialog, which would leave two modals fighting for focus.
+   * query. Without a task it searches the active project's main checkout (see
+   * browseTask); with neither there is nothing to search. Never on top of
+   * another dialog, which would leave two modals fighting for focus.
    */
   const quickOpenRef = useRef(quickOpen);
   quickOpenRef.current = quickOpen;
   const toggleQuickOpen = useCallback((next: QuickOpenMode) => {
-    if (!selectedRef.current) return;
+    if (!selectedRef.current && !browseTaskRef.current) return;
     const current = quickOpenRef.current;
     if (current === null && document.querySelector('[aria-modal="true"]') !== null) return;
     setQuickOpen(current === next ? null : next);
@@ -1100,12 +1134,12 @@ export default function App() {
   const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
   useDoubleShift(() => toggleQuickOpen('all'));
 
-  /** Find in Files (⇧⌘F): same guards as the palette -- a task, and no other modal. */
+  /** Find in Files (⇧⌘F): same guards as the palette -- a folder, and no other modal. */
   const [findOpen, setFindOpen] = useState(false);
   const findOpenRef = useRef(findOpen);
   findOpenRef.current = findOpen;
   const toggleFind = useCallback(() => {
-    if (!selectedRef.current) return;
+    if (!selectedRef.current && !browseTaskRef.current) return;
     if (!findOpenRef.current && document.querySelector('[aria-modal="true"]') !== null) return;
     setFindOpen((o) => !o);
   }, []);
@@ -1555,6 +1589,7 @@ export default function App() {
                         task={editorTask}
                         request={openRequest?.request ?? null}
                         onClose={closeEditor}
+                        readOnly={editorTask === browseTask}
                       />
                     </PaneErrorBoundary>
                   )}
@@ -1639,8 +1674,9 @@ export default function App() {
       <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <PaneErrorBoundary label="Go to">
         <QuickOpen
-          mode={selected ? quickOpen : null}
-          worktreePath={selected?.worktreePath ?? null}
+          mode={searchTask ? quickOpen : null}
+          worktreePath={searchTask?.worktreePath ?? null}
+          scopeLabel={searchScopeLabel}
           currentFile={editorFile}
           onMode={setQuickOpen}
           onClose={closeQuickOpen}
@@ -1649,8 +1685,9 @@ export default function App() {
       </PaneErrorBoundary>
       <PaneErrorBoundary label="Find in Files">
         <FindInFiles
-          open={selected !== null && findOpen}
-          worktreePath={selected?.worktreePath ?? null}
+          open={searchTask !== null && findOpen}
+          worktreePath={searchTask?.worktreePath ?? null}
+          scopeLabel={searchScopeLabel}
           onClose={closeFind}
           onOpen={openFile}
         />

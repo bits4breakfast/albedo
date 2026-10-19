@@ -29,8 +29,14 @@ import './findinfiles.css';
 
 export interface FindInFilesProps {
   open: boolean;
-  /** The selected task's worktree. The dialog never opens without one. */
+  /** The folder searched: the selected task's worktree, or a main checkout. */
   worktreePath: string | null;
+  /**
+   * Set when there is no task and the search runs in a project's main
+   * checkout instead: named in the dialog so its results are never mistaken
+   * for a task's branch.
+   */
+  scopeLabel?: string | null;
   onClose: () => void;
   onOpen: (request: OpenFileRequest) => void;
 }
@@ -55,7 +61,7 @@ function MatchText({ match }: { match: FindMatch }) {
   );
 }
 
-export default function FindInFiles({ open: openProp, worktreePath, onClose, onOpen }: FindInFilesProps) {
+export default function FindInFiles({ open: openProp, worktreePath, scopeLabel = null, onClose, onOpen }: FindInFilesProps) {
   const open = openProp && worktreePath !== null;
   const [query, setQuery] = useState('');
   const [opts, setOpts] = useState<FindOptions>({ regex: false, matchCase: false });
@@ -217,6 +223,8 @@ export default function FindInFiles({ open: openProp, worktreePath, onClose, onO
           <span className="ff-title">Find in Files</span>
           <kbd className="qo-mode-keys">⇧⌘F</kbd>
         </div>
+
+        {scopeLabel && <div className="qo-scope">Searching {scopeLabel}</div>}
 
         <div className="ff-bar">
           <input

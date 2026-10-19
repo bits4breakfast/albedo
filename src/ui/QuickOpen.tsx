@@ -21,8 +21,14 @@ import './quickopen.css';
 export interface QuickOpenProps {
   /** Null when closed. */
   mode: QuickOpenMode | null;
-  /** The selected task's worktree. The palette never opens without one. */
+  /** The folder searched: the selected task's worktree, or a main checkout. */
   worktreePath: string | null;
+  /**
+   * Set when there is no task and the search runs in a project's main
+   * checkout instead: named in the dialog so its results are never mistaken
+   * for a task's branch.
+   */
+  scopeLabel?: string | null;
   /** The editor's file, worktree-relative, for "this file first". */
   currentFile: string | null;
   onMode: (mode: QuickOpenMode) => void;
@@ -75,7 +81,7 @@ function Highlighted({ text, hits }: { text: string; hits: number[] }) {
   return <>{out}</>;
 }
 
-export default function QuickOpen({ mode, worktreePath, currentFile, onMode, onClose, onOpen }: QuickOpenProps) {
+export default function QuickOpen({ mode, worktreePath, scopeLabel = null, currentFile, onMode, onClose, onOpen }: QuickOpenProps) {
   const open = mode !== null && worktreePath !== null;
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -235,6 +241,8 @@ export default function QuickOpen({ mode, worktreePath, currentFile, onMode, onC
             </button>
           ))}
         </div>
+
+        {scopeLabel && <div className="qo-scope">Searching {scopeLabel}</div>}
 
         <input
           ref={inputRef}

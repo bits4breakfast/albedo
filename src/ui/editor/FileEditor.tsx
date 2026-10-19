@@ -353,13 +353,19 @@ export interface FileEditorProps {
   task: Task;
   request: OpenFileRequest | null;
   onClose: () => void;
+  /**
+   * Browse only: no edits, no save, no Diff. Set when `task` stands for a
+   * project's main checkout (no task selected) -- that folder is the user's
+   * real repo, not a throwaway worktree, so nothing typed here may reach it.
+   */
+  readOnly?: boolean;
 }
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export default function FileEditor({ task, request, onClose }: FileEditorProps) {
+export default function FileEditor({ task, request, onClose, readOnly = false }: FileEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** Content as it was last known to be on disk. The overwrite guard's baseline. */
@@ -488,7 +494,12 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   }, [task.id, resolved]);
 
   // --- save ----------------------------------------------------------------
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const save = useCallback(async () => {
+    // Belt and braces: the view is not editable and the button is not shown,
+    // but a stray Cmd+S must still never write to a main checkout.
+    if (readOnlyRef.current) return;
     const view = viewRef.current;
     const target = resolvedRef.current;
     if (!view || !target) return;
@@ -605,6 +616,8 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         indentUnit.of('  '),
         EditorState.allowMultipleSelections.of(true),
+        EditorState.readOnly.of(readOnly),
+        EditorView.editable.of(!readOnly),
         // No autocompletion, no linting, no LSP -- per spec. If you are about
         // to add `@codemirror/autocomplete` here, that is the line it breaks.
 
@@ -646,7 +659,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     };
     // `doc.key` changes on open and on reload-from-disk; both want a fresh view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc?.key, resolved]);
+  }, [doc?.key, resolved, readOnly]);
 
   // --- a new line in the file already open ----------------------------------
   // The view is rebuilt only when the PATH changes, so a second request for
@@ -694,7 +707,8 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   // physical key (Shift makes `key` "D"), and Control is left alone: it would
   // reach the terminal as Ctrl-D, which is EOF. Capture phase, so it works
   // with the cursor inside the editor -- same as the stepping keys.
-  const canDiff = resolved !== null && phase.kind === 'ready';
+  // A main checkout has no task base to diff against.
+  const canDiff = !readOnly && resolved !== null && phase.kind === 'ready';
   const toggleMode = useCallback(() => {
     if (!canDiff) return;
     setMode((m) => (m === 'file' ? 'diff' : 'file'));
@@ -810,40 +824,48 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
 
         <span className="ed-spacer" />
 
-        <span className="ed-mode" role="group" aria-label="Show">
-          <button
-            type="button"
-            className="ed-mode-btn"
-            aria-pressed={mode === 'file'}
-            onClick={() => setMode('file')}
-            title="The file as it is now (⇧⌘D toggles)"
-          >
-            File
-          </button>
-          <button
-            type="button"
-            className="ed-mode-btn"
-            aria-pressed={mode === 'diff'}
-            aria-keyshortcuts="Shift+Meta+D"
-            onClick={() => canDiff && setMode('diff')}
-            disabled={!canDiff}
-            title="This task's change to the file: the branch's base against the working tree, committed and uncommitted together (⇧⌘D)"
-          >
-            Diff
-          </button>
-        </span>
+        {readOnly ? (
+          <span className="ed-badge" title="Opened with no task selected: this is the project's own folder, so it is shown and never saved">
+            read-only · main checkout
+          </span>
+        ) : (
+          <>
+            <span className="ed-mode" role="group" aria-label="Show">
+              <button
+                type="button"
+                className="ed-mode-btn"
+                aria-pressed={mode === 'file'}
+                onClick={() => setMode('file')}
+                title="The file as it is now (⇧⌘D toggles)"
+              >
+                File
+              </button>
+              <button
+                type="button"
+                className="ed-mode-btn"
+                aria-pressed={mode === 'diff'}
+                aria-keyshortcuts="Shift+Meta+D"
+                onClick={() => canDiff && setMode('diff')}
+                disabled={!canDiff}
+                title="This task's change to the file: the branch's base against the working tree, committed and uncommitted together (⇧⌘D)"
+              >
+                Diff
+              </button>
+            </span>
 
-        <SaveIndicator state={saveState} />
+            <SaveIndicator state={saveState} />
 
-        <button
-          type="button"
-          className="ed-btn"
-          onClick={() => saveRef.current()}
-          disabled={phase.kind !== 'ready' || saveState.kind === 'saving'}
-          title="Save to the worktree (⌘S)"
-        >
-          Save
-        </button>
+            <button
+              type="button"
+              className="ed-btn"
+              onClick={() => saveRef.current()}
+              disabled={phase.kind !== 'ready' || saveState.kind === 'saving'}
+              title="Save to the worktree (⌘S)"
+            >
+              Save
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="ed-btn"

@@ -117,4 +117,10 @@ describe('FindInFiles', () => {
     expect(onClose).toHaveBeenCalled();
     expect(outer).not.toHaveBeenCalled();
   });
+
+  it('names the folder when searching a main checkout', () => {
+    restore = setGitRunner(async () => ({ code: 1, stdout: '', stderr: '' }));
+    render(<FindInFiles open worktreePath="/repo" scopeLabel="app · main checkout" onClose={vi.fn()} onOpen={vi.fn()} />);
+    expect(screen.getByText('Searching app · main checkout')).toBeTruthy();
+  });
 });

@@ -99,4 +99,15 @@ describe('QuickOpen', () => {
     );
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  it('names the folder when searching a main checkout, and only then', () => {
+    render(
+      <QuickOpen mode="file" worktreePath="/repo" scopeLabel="app · main checkout" currentFile={null}
+        onMode={vi.fn()} onClose={vi.fn()} onOpen={vi.fn()} />,
+    );
+    expect(screen.getByText('Searching app · main checkout')).toBeTruthy();
+    cleanup();
+    setup('file');
+    expect(screen.queryByText(/^Searching /)).toBeNull();
+  });
 });
