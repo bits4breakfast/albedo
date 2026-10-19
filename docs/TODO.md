@@ -53,13 +53,10 @@ Already portable, no work needed: `FALLBACK_SHELL` `cfg`s to `/bin/sh` off
 macOS, `comboOf` accepts Ctrl as well as ⌘, and pty.rs's process groups and
 `poll` are plain POSIX.
 
-**Left, not blocking:** `src/git/reconcile.ts` hardcodes two macOS
-assumptions. `normalizePath` maps `/tmp`, `/var`, `/etc` onto `/private/...`
-(firmlinks), and some of its results are used as real paths, so on Linux a
-worktree root or repo under one of those three would resolve to a directory
-that does not exist. `pathKey` lowercases for comparison (case-insensitive
-APFS), so on Linux two worktrees differing only by case would collide. Both
-are edge cases for repos under `~`; both want a platform switch.
+**Done:** `src/git/reconcile.ts` applied two macOS rules everywhere -- the
+`/tmp`, `/var`, `/etc` -> `/private/...` firmlinks, and case-insensitive
+`pathKey`. Both now apply only off Linux (`MAC_PATHS`, from `detectPlatform`),
+so a Linux path is compared case-sensitively and never rewritten.
 
 **Not yet run by a person.** CI proves it builds and the tests pass on
 Linux; nobody has launched the window.

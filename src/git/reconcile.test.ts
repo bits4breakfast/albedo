@@ -684,3 +684,20 @@ describe('worktreeSharedWithLiveTask', () => {
     expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(2, 'idle', '/Users/m/agents/albedo/other')])).toBe(false);
   });
 });
+
+describe('paths on Linux (macPaths = false)', () => {
+  it('leaves /tmp, /var and /etc alone -- they are real directories there', () => {
+    expect(normalizePath('/tmp/wt/a', false)).toBe('/tmp/wt/a');
+    expect(normalizePath('/var/repo/', false)).toBe('/var/repo');
+    expect(normalizePath('/tmp/wt/a', true)).toBe('/private/tmp/wt/a');
+  });
+
+  it('compares case-sensitively, so Repo and repo stay two worktrees', () => {
+    expect(pathKey('/home/dev/agents/Repo/x', false)).not.toBe(pathKey('/home/dev/agents/repo/x', false));
+    expect(pathKey('/Users/dev/agents/Repo/x', true)).toBe(pathKey('/Users/dev/agents/repo/x', true));
+  });
+
+  it('still collapses slashes, dots and a trailing slash', () => {
+    expect(pathKey('/home//dev/./a/../b/', false)).toBe('/home/dev/b');
+  });
+});

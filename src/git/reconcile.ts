@@ -18,6 +18,7 @@
  * the async entry point only gathers the inputs.
  */
 
+import { detectPlatform } from '../lib/platform';
 import {
   basename,
   git,
@@ -83,6 +84,15 @@ export interface DiskCandidate {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether paths follow macOS rules: the `/private` firmlinks below, and a
+ * case-insensitive default volume. Linux has neither -- `/tmp` is a real
+ * directory and `Repo` and `repo` are two -- so applying them there would
+ * rewrite real paths and merge distinct worktrees. Anything not positively
+ * Linux (including the Node test runner) keeps the macOS rules.
+ */
+const MAC_PATHS = detectPlatform() !== 'linux';
+
+/**
  * macOS firmlinks. `/tmp`, `/var` and `/etc` are symlinks into `/private`, and
  * git reports the resolved form while a user (or a test fixture) usually types
  * the short one. Comparing without this produces phantom orphans.
@@ -104,10 +114,10 @@ export function expandTilde(p: string, home: string): string {
 
 /**
  * Textual canonicalisation: collapse duplicate slashes, drop `.` segments,
- * resolve `..` segments, strip a trailing slash, and apply the macOS firmlinks.
+ * resolve `..` segments, strip a trailing slash, and (on macOS) apply the firmlinks.
  * Case is preserved -- see {@link pathKey} for the comparison form.
  */
-export function normalizePath(p: string): string {
+export function normalizePath(p: string, macPaths: boolean = MAC_PATHS): string {
   let s = (p ?? '').trim();
   if (s.length === 0) return '';
   const absolute = s.startsWith('/');
@@ -124,6 +134,7 @@ export function normalizePath(p: string): string {
   s = (absolute ? '/' : '') + parts.join('/');
   if (s.length > 1) s = s.replace(/\/+$/, '');
 
+  if (!macPaths) return s;
   for (const [short, real] of FIRMLINKS) {
     if (s === short) return real;
     if (s.startsWith(`${short}/`)) return real + s.slice(short.length);
@@ -136,8 +147,9 @@ export function normalizePath(p: string): string {
  * `/Users/x/agents/Repo/slug` and `/users/x/agents/repo/slug` are the same
  * directory and must not be reported as two different worktrees.
  */
-export function pathKey(p: string): string {
-  return normalizePath(p).toLowerCase();
+export function pathKey(p: string, macPaths: boolean = MAC_PATHS): string {
+  const s = normalizePath(p, macPaths);
+  return macPaths ? s.toLowerCase() : s;
 }
 
 /** The first root in `roots` that contains `path`, or null. */
