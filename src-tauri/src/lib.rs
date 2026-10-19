@@ -3,7 +3,7 @@ mod fsx;
 mod pty;
 
 use tauri::menu::{Menu, MenuItem, MenuItemKind, WINDOW_SUBMENU_ID};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 /// Event the webview listens for when the user presses the close shortcut.
@@ -116,6 +116,19 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id().as_ref() == CLOSE_TAB_ID {
                 let _ = app.emit(CLOSE_TAB_EVENT, ());
+            }
+        })
+        // Every shortcut is a keydown listener in the page, so it only fires
+        // while the WKWebView is the window's first responder. Activating the
+        // window without clicking into the page (Cmd-Tab, the Dock, a closed
+        // dialog) can leave it not first responder: the key then reaches no
+        // one, matches no menu item, and AppKit beeps. Hand it back on every
+        // activation.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(true) = event {
+                if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
+                    let _ = webview.as_ref().set_focus();
+                }
             }
         })
         .plugin(tauri_plugin_shell::init())
