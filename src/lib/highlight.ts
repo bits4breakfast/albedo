@@ -142,21 +142,58 @@ export async function ensureLang(lang: string): Promise<boolean> {
 // Token cache
 // ---------------------------------------------------------------------------
 
+/**
+ * The cache is bounded by TOKENS, not by entries. An entry is a whole file --
+ * the editor re-highlights the buffer after an edit and the Diff mode both
+ * sides of every file it shows -- so an entry count let a few hundred large
+ * files hold on to a gigabyte. Measured: ~1.1 MB per 1,100-line file before
+ * styles were shared. The budget keeps several dozen such files warm.
+ */
+let TOKEN_BUDGET = 250_000;
 const CACHE_MAX = 400;
 const cache = new Map<string, DualToken[][]>();
+const cacheTokens = new Map<string, number>();
+let cachedTokens = 0;
+
+function tokenCount(lines: DualToken[][]): number {
+  let n = 0;
+  for (const l of lines) n += l.length;
+  return n;
+}
 
 function cacheKey(code: string, lang: string): string {
   // No theme in the key: tokens carry both themes, so one entry serves either.
   return `${lang}\u0000${code}`;
 }
 
+function cacheDrop(key: string): void {
+  if (!cache.delete(key)) return;
+  cachedTokens -= cacheTokens.get(key) ?? 0;
+  cacheTokens.delete(key);
+}
+
 function cachePut(key: string, value: DualToken[][]): void {
-  if (cache.has(key)) cache.delete(key);
+  cacheDrop(key);
+  const size = tokenCount(value);
   cache.set(key, value);
-  if (cache.size > CACHE_MAX) {
-    const oldest = cache.keys().next();
-    if (!oldest.done) cache.delete(oldest.value);
+  cacheTokens.set(key, size);
+  cachedTokens += size;
+  // Oldest first, but never the entry just added: a file bigger than the
+  // whole budget is still served from cache until the next one arrives.
+  for (const oldest of cache.keys()) {
+    if ((cachedTokens <= TOKEN_BUDGET && cache.size <= CACHE_MAX) || oldest === key) break;
+    cacheDrop(oldest);
   }
+}
+
+/** For tests: a small budget, so eviction can be exercised with small files. */
+export function setTokenBudgetForTests(tokens: number): void {
+  TOKEN_BUDGET = tokens;
+}
+
+/** For tests: how much the cache holds. */
+export function cacheStats(): { entries: number; tokens: number } {
+  return { entries: cache.size, tokens: cachedTokens };
 }
 
 /**
@@ -193,17 +230,29 @@ const UNDERLINE = 4;
  * one place to split it.
  */
 function dualStyle(light: TokenStyles | undefined, dark: TokenStyles | undefined): Record<string, string> {
+  const fs = dark?.fontStyle ?? light?.fontStyle ?? 0;
+  const key = `${light?.color ?? ''}|${dark?.color ?? ''}|${fs}`;
+  const shared = styles.get(key);
+  if (shared) return shared;
   const style: Record<string, string> = {};
   if (light?.color) style['--shiki-light'] = light.color;
   if (dark?.color) style['--shiki-dark'] = dark.color;
-  const fs = dark?.fontStyle ?? light?.fontStyle ?? 0;
   if (fs > 0) {
     if (fs & ITALIC) style.fontStyle = 'italic';
     if (fs & BOLD) style.fontWeight = 'bold';
     if (fs & UNDERLINE) style.textDecoration = 'underline';
   }
+  styles.set(key, Object.freeze(style) as Record<string, string>);
   return style;
 }
+
+/**
+ * One style object per distinct style, shared by every token that has it. A
+ * 1,100-line file is ~5,800 tokens in only ~9 styles; an object per token was
+ * most of what each cached file cost. Frozen, because it is shared: nothing
+ * may write to a token's style.
+ */
+const styles = new Map<string, Record<string, string>>();
 
 /**
  * Serialise a token style for contexts that need a CSS text string rather than
@@ -241,7 +290,12 @@ function toDual(lines: ThemedTokenWithVariants[][]): DualToken[][] {
 export async function highlightToTokens(code: string, lang: string): Promise<DualToken[][]> {
   const key = cacheKey(code, lang);
   const hit = cache.get(key);
-  if (hit) return hit;
+  if (hit) {
+    // Used again: to the back of the eviction queue.
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
 
   let tokens: DualToken[][];
   try {
