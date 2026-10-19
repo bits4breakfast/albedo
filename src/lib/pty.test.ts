@@ -1,60 +1,75 @@
 /**
- * Runs without a Tauri host: both `@tauri-apps/api` entry points are mocked, so
- * what is under test is the bridge logic itself -- argument shape, per-pty
- * filtering, unsubscribe, and base64 -> bytes decoding.
+ * Runs without a Tauri host: `@tauri-apps/api/core` is mocked, so what is under
+ * test is the bridge logic itself -- argument shape, the startup sweep, the
+ * per-spawn channel, detach, and base64 -> bytes decoding.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invokeMock, bus } = vi.hoisted(() => ({
+const { invokeMock, calls, channels } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
-  bus: {
-    handlers: new Map<string, Set<(e: { payload: unknown }) => void>>(),
+  /** Every invoke since import -- unlike the mock, never reset. */
+  calls: [] as Array<[string, Record<string, unknown> | undefined]>,
+  channels: [] as Array<{ onmessage: (m: unknown) => void }>,
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (cmd: string, args?: Record<string, unknown>) => {
+    calls.push([cmd, args]);
+    return invokeMock(cmd, args);
+  },
+  Channel: class {
+    onmessage: (m: unknown) => void = () => {};
+    constructor() {
+      channels.push(this);
+    }
   },
 }));
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+import { killPty, resizePty, spawnPty, writePty, type PtyHandlers } from './pty';
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: (name: string, handler: (e: { payload: unknown }) => void) => {
-    const set = bus.handlers.get(name) ?? new Set<(e: { payload: unknown }) => void>();
-    set.add(handler);
-    bus.handlers.set(name, set);
-    return Promise.resolve(() => {
-      set.delete(handler);
-    });
-  },
-}));
+const opts = { cwd: '/tmp', command: 'claude', args: ['--foo'], cols: 80, rows: 24 };
 
-import { killPty, onPtyExit, onPtyOutput, resizePty, spawnPty, writePty } from './pty';
-
-/** Delivers an event to every registered listener, as the Tauri bus would. */
-function emit(name: string, payload: unknown): void {
-  for (const handler of bus.handlers.get(name) ?? []) handler({ payload });
-}
-
-/** Lets the pending `listen()` promise inside `subscribe` settle. */
-const settled = () => Promise.resolve();
+/** Lets the bridge's deferred replay run. */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function b64(bytes: number[]): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
+function recorder() {
+  const out: number[][] = [];
+  const exits: (number | null)[] = [];
+  const handlers: PtyHandlers = {
+    onOutput: (bytes) => out.push(Array.from(bytes)),
+    onExit: (code) => exits.push(code),
+  };
+  return { out, exits, handlers };
+}
+
 beforeEach(() => {
   invokeMock.mockReset();
-  invokeMock.mockResolvedValue(undefined);
-  bus.handlers.clear();
+  invokeMock.mockImplementation((cmd: string) =>
+    Promise.resolve(cmd === 'pty_spawn' ? 'pty-1' : undefined),
+  );
+  channels.length = 0;
+});
+
+describe('startup sweep', () => {
+  it('kills the previous page once, and spawns carry the same page token', async () => {
+    const sweeps = calls.filter(([cmd]) => cmd === 'pty_kill_stale');
+    expect(sweeps).toHaveLength(1);
+    const page = sweeps[0]?.[1]?.page;
+    expect(typeof page).toBe('string');
+
+    await spawnPty(opts, recorder().handlers);
+    const spawn = calls.find(([cmd]) => cmd === 'pty_spawn');
+    expect(spawn?.[1]).toMatchObject({ opts, page });
+    expect(calls.indexOf(sweeps[0]!)).toBeLessThan(calls.indexOf(spawn!));
+  });
 });
 
 describe('commands', () => {
-  it('passes spawn options through as a single opts argument', async () => {
-    invokeMock.mockResolvedValue('pty-1');
-    const opts = { cwd: '/tmp', command: 'claude', args: ['--foo'], cols: 80, rows: 24 };
-
-    await expect(spawnPty(opts)).resolves.toBe('pty-1');
-    expect(invokeMock).toHaveBeenCalledWith('pty_spawn', { opts });
-  });
-
   it('names its arguments the way the Rust commands expect', async () => {
     await writePty('pty-1', 'ls\r');
     expect(invokeMock).toHaveBeenCalledWith('pty_write', { ptyId: 'pty-1', data: 'ls\r' });
@@ -67,71 +82,71 @@ describe('commands', () => {
   });
 });
 
-describe('onPtyOutput', () => {
+describe('spawnPty', () => {
   it('hands the caller decoded bytes, never base64', async () => {
-    const seen: Uint8Array[] = [];
-    onPtyOutput('pty-1', (bytes) => seen.push(bytes));
-    await settled();
+    const r = recorder();
+    const handle = await spawnPty(opts, r.handlers);
+    expect(handle.id).toBe('pty-1');
+    await tick();
 
     // An incomplete UTF-8 sequence: exactly the case that makes the bridge
     // carry bytes instead of a string.
-    emit('pty://output', { ptyId: 'pty-1', data: b64([0x1b, 0x5b, 0x41, 0xe2, 0x9c]) });
-
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toBeInstanceOf(Uint8Array);
-    expect(Array.from(seen[0] ?? [])).toEqual([0x1b, 0x5b, 0x41, 0xe2, 0x9c]);
+    channels[0]?.onmessage({ kind: 'output', data: b64([0x1b, 0x5b, 0x41, 0xe2, 0x9c]) });
+    expect(r.out).toEqual([[0x1b, 0x5b, 0x41, 0xe2, 0x9c]]);
   });
 
-  it('ignores output belonging to another pty', async () => {
-    const seen: Uint8Array[] = [];
-    onPtyOutput('pty-1', (bytes) => seen.push(bytes));
-    await settled();
+  it('keeps what arrives before the spawn resolves, and replays it after the caller resumes', async () => {
+    // A rejected --resume: output and exit both land before pty_spawn returns.
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd !== 'pty_spawn') return Promise.resolve(undefined);
+      channels[0]?.onmessage({ kind: 'output', data: b64([0x61]) });
+      channels[0]?.onmessage({ kind: 'exit', code: 1 });
+      return Promise.resolve('pty-1');
+    });
 
-    emit('pty://output', { ptyId: 'pty-2', data: b64([0x61]) });
-    expect(seen).toHaveLength(0);
+    const order: string[] = [];
+    const handlers: PtyHandlers = {
+      onOutput: () => order.push('output'),
+      onExit: (code) => order.push(`exit ${code}`),
+    };
+    await spawnPty(opts, handlers);
+    order.push('caller resumed');
+    await tick();
+
+    expect(order).toEqual(['caller resumed', 'output', 'exit 1']);
   });
 
-  it('stops delivering once unsubscribed', async () => {
-    const seen: Uint8Array[] = [];
-    const off = onPtyOutput('pty-1', (bytes) => seen.push(bytes));
-    await settled();
-
-    emit('pty://output', { ptyId: 'pty-1', data: b64([0x61]) });
-    off();
-    emit('pty://output', { ptyId: 'pty-1', data: b64([0x62]) });
-
-    expect(seen).toHaveLength(1);
+  it('passes a null exit code through unchanged', async () => {
+    const r = recorder();
+    await spawnPty(opts, r.handlers);
+    await tick();
+    channels[0]?.onmessage({ kind: 'exit', code: null });
+    expect(r.exits).toEqual([null]);
   });
 
-  it('survives an unsubscribe that happens before listen() resolves', async () => {
-    const seen: Uint8Array[] = [];
-    const off = onPtyOutput('pty-1', (bytes) => seen.push(bytes));
-    off();
-    await settled();
+  it('stops delivering once detached', async () => {
+    const r = recorder();
+    const handle = await spawnPty(opts, r.handlers);
+    await tick();
 
-    emit('pty://output', { ptyId: 'pty-1', data: b64([0x61]) });
-    expect(seen).toHaveLength(0);
-    expect(bus.handlers.get('pty://output')?.size ?? 0).toBe(0);
-  });
-});
+    channels[0]?.onmessage({ kind: 'output', data: b64([0x61]) });
+    handle.detach();
+    channels[0]?.onmessage({ kind: 'output', data: b64([0x62]) });
+    channels[0]?.onmessage({ kind: 'exit', code: 0 });
 
-describe('onPtyExit', () => {
-  it('reports the exit code for its own pty only', async () => {
-    const codes: (number | null)[] = [];
-    onPtyExit('pty-1', (code) => codes.push(code));
-    await settled();
-
-    emit('pty://exit', { ptyId: 'pty-2', code: 1 });
-    emit('pty://exit', { ptyId: 'pty-1', code: 0 });
-    expect(codes).toEqual([0]);
+    expect(r.out).toEqual([[0x61]]);
+    expect(r.exits).toEqual([]);
   });
 
-  it('passes a null code through unchanged', async () => {
-    const codes: (number | null)[] = [];
-    onPtyExit('pty-1', (code) => codes.push(code));
-    await settled();
+  it('gives each spawn its own channel', async () => {
+    const a = recorder();
+    const b = recorder();
+    await spawnPty(opts, a.handlers);
+    await spawnPty(opts, b.handlers);
+    await tick();
 
-    emit('pty://exit', { ptyId: 'pty-1', code: null });
-    expect(codes).toEqual([null]);
+    channels[1]?.onmessage({ kind: 'exit', code: 2 });
+    expect(a.exits).toEqual([]);
+    expect(b.exits).toEqual([2]);
   });
 });

@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from '../lib/pty';
+import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
 import { hookSettingsArg, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { getTaskModel } from './taskModel';
 import { submitDelayFor } from '../lib/ptyInput';
@@ -551,55 +551,62 @@ export default function Terminal({
         console.warn('[terminal] hooks unavailable, starting without them', err);
       }
 
+      // Assigned the moment spawnPty resolves. The bridge never calls a
+      // handler before then, so both handlers below always see it set.
+      let id = '';
+
+      const onOutput = (bytes: Uint8Array) => {
+        // Counting that bytes arrived is not reading them. Nothing here
+        // interprets the stream -- it only distinguishes "died before it
+        // produced anything", which is what a rejected --resume looks like.
+        sawOutputRef.current = true;
+        try {
+          term.write(bytes);
+        } catch {
+          /* a write after dispose is harmless */
+        }
+      };
+
+      const onExit = (code: number | null) => {
+        deadRef.current = true;
+        // A resume that died without producing a byte is a rejected
+        // session id. Recorded here so a later start does not retry the
+        // same dead id forever.
+        resumeRejectedRef.current =
+          usedResumeRef.current && !sawOutputRef.current && code !== 0;
+        // Synchronously, and BEFORE unregisterPty: presence listeners
+        // re-render immediately on that call, and would otherwise read a
+        // stale `canResume` on the very render that reports the exit.
+        if (resumeRejectedRef.current) resumable.delete(task.id);
+        unregisterPty(task.id, id);
+        setExitCode(code);
+        setPhase('exited');
+        // Leave the scrollback intact and readable.
+        onExitRef.current?.(code);
+      };
+
       try {
-        const id = await spawnPty({
-          cwd: task.worktreePath,
-          command: 'claude',
-          args: spawnArgs,
-          cols: term.cols,
-          rows: term.rows,
-        });
+        const handle = await spawnPty(
+          {
+            cwd: task.worktreePath,
+            command: 'claude',
+            args: spawnArgs,
+            cols: term.cols,
+            rows: term.rows,
+          },
+          { onOutput, onExit },
+        );
+        id = handle.id;
         if (disposed) {
+          handle.detach();
           void killPty(id).catch(() => {});
           return;
         }
+        ptyUnsubs.push(handle.detach);
         ptyIdRef.current = id;
         spawningRef.current = false;
         registerPty(task.id, id);
         setPhase('live');
-
-        ptyUnsubs.push(
-          onPtyOutput(id, (bytes) => {
-            // Counting that bytes arrived is not reading them. Nothing here
-            // interprets the stream -- it only distinguishes "died before it
-            // produced anything", which is what a rejected --resume looks like.
-            sawOutputRef.current = true;
-            try {
-              term.write(bytes);
-            } catch {
-              /* a write after dispose is harmless */
-            }
-          }),
-        );
-        ptyUnsubs.push(
-          onPtyExit(id, (code) => {
-            deadRef.current = true;
-            // A resume that died without producing a byte is a rejected
-            // session id. Recorded here so a later start does not retry the
-            // same dead id forever.
-            resumeRejectedRef.current =
-              usedResumeRef.current && !sawOutputRef.current && code !== 0;
-            // Synchronously, and BEFORE unregisterPty: presence listeners
-            // re-render immediately on that call, and would otherwise read a
-            // stale `canResume` on the very render that reports the exit.
-            if (resumeRejectedRef.current) resumable.delete(task.id);
-            unregisterPty(task.id, id);
-            setExitCode(code);
-            setPhase('exited');
-            // Leave the scrollback intact and readable.
-            onExitRef.current?.(code);
-          }),
-        );
 
         const queued = pendingRef.current;
         pendingRef.current = [];
