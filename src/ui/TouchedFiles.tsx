@@ -15,7 +15,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpenFileRequest, Task, TouchedFile } from '../types';
 import { touchedFilesDetailed } from '../db/touched';
-import { branchCommits, committedFileTimes, lineChanges, type BranchCommit, type LineChange } from '../git/worktree';
+import {
+  branchCommits,
+  changeKinds,
+  committedFileTimes,
+  lineChanges,
+  type BranchCommit,
+  type ChangeKind,
+  type LineChange,
+} from '../git/worktree';
 import { setTouchedOrder } from './touchedOrder';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
@@ -63,6 +71,8 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
   const [reloadKey, setReloadKey] = useState(0);
   /** +/- per path against the task's base. Empty when git cannot say. */
   const [lines, setLines] = useState<Map<string, LineChange>>(() => new Map());
+  /** A / M / D / T per path against the task's base. Empty when git cannot say. */
+  const [kinds, setKinds] = useState<Map<string, ChangeKind>>(() => new Map());
   /** When each file was last committed on the branch. */
   const [committedAt, setCommittedAt] = useState<Map<string, number>>(() => new Map());
   const [showOutside, setShowOutside] = useState(false);
@@ -87,6 +97,13 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
       })
       .catch(() => {
         if (live) setLines(new Map());
+      });
+    void changeKinds(task.worktreePath, task.baseBranch)
+      .then((m) => {
+        if (live) setKinds(m);
+      })
+      .catch(() => {
+        if (live) setKinds(new Map());
       });
     void branchCommits(task.worktreePath, task.baseBranch)
       .then((c) => {
@@ -130,6 +147,7 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
   useEffect(() => {
     setFiles([]);
     setLines(new Map());
+    setKinds(new Map());
     setCommittedAt(new Map());
     setCommits([]);
     setFolded(new Set());
@@ -415,6 +433,7 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
                       key={f.path}
                       file={f}
                       change={lines.get(f.path) ?? null}
+                      kind={kinds.get(f.path) ?? null}
                       committedOnly={view.fromGit.has(f.path)}
                       now={now}
                       onOpen={onOpen}
@@ -448,6 +467,7 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
 function FileRow({
   file,
   change,
+  kind = null,
   committedOnly = false,
   now,
   onOpen,
@@ -455,6 +475,11 @@ function FileRow({
   file: TouchedFile;
   /** Lines added/deleted against the base; null when git has no count. */
   change: LineChange | null;
+  /**
+   * A / M / D / T against the base. Shown when the file is clean now, so a
+   * committed row says how the branch changed it instead of a blank `··`.
+   */
+  kind?: ChangeKind | null;
   /** Known only from the branch's commits; this transcript never mentions it. */
   committedOnly?: boolean;
   now: number;
@@ -471,12 +496,15 @@ function FileRow({
   // and the path is something people copy. useActivate opens the file on a
   // plain click but not on a click that ends a text selection.
   const activate = useActivate(() => onOpen(file));
+  // The row's colour says WHAT changed (git's letter), never HOW: whether the
+  // agent used an edit tool or a shell command is a badge, and only while the
+  // change is still uncommitted -- after that it is simply part of the branch.
+  const status = file.gitStatus ?? kind;
   return (
     <div
       role="button"
       tabIndex={0}
       className="tf-row"
-      data-source={file.source}
       onMouseDown={activate.onMouseDown}
       onClick={activate.onClick}
       onKeyDown={(e) => {
@@ -501,10 +529,10 @@ function FileRow({
       // Everything the row can shed when the column is narrow is still here.
       // Pinned as a column the pane goes down to 180px, where touched.css drops
       // the directory and the timestamp; the tooltip is where they survive.
-      title={rowTitle(file, now)}
+      title={rowTitle(file, kind, now)}
     >
-      <span className="tf-status" data-tone={statusTone(file.gitStatus)}>
-        {file.gitStatus === null ? '··' : file.gitStatus.replace(/ /g, '·')}
+      <span className="tf-status" data-tone={statusTone(status)}>
+        {status === null ? '··' : status.replace(/ /g, '·')}
       </span>
 
       <span className="tf-path">
@@ -518,9 +546,9 @@ function FileRow({
         {file.source === 'git' && !committedOnly ? (
           <span
             className="tf-badge"
-            title="Changed in the worktree, but not through an edit tool — a Bash command, a generator or a formatter. The transcript never mentions this file."
+            title="Changed in the worktree, but not through an edit tool — a Bash command, a script, a generator or a formatter. The transcript has no edit-tool call for this file."
           >
-            worktree
+            shell
           </span>
         ) : null}
         {file.handEdited ? (
@@ -553,11 +581,19 @@ function FileRow({
  * column, and at that width the directory and the relative time are dropped
  * from the layout — so they have to be somewhere, and hover is that somewhere.
  */
-function rowTitle(file: TouchedFile, now: number): string {
+const KIND_WORDS: Record<ChangeKind, string> = {
+  A: 'added on this branch',
+  M: 'modified on this branch',
+  D: 'deleted on this branch',
+  T: 'type changed on this branch',
+};
+
+function rowTitle(file: TouchedFile, kind: ChangeKind | null, now: number): string {
   const facts: string[] = [];
   facts.push(file.editCount === 0 ? 'no edit-tool calls' : `${file.editCount} edit call${file.editCount === 1 ? '' : 's'}`);
   if (file.lastTouchedAt !== null) facts.push(`last touched ${relativeTime(file.lastTouchedAt, now)} ago`);
   if (file.gitStatus !== null) facts.push(`git ${file.gitStatus.trim() || '--'}`);
+  else if (kind !== null) facts.push(KIND_WORDS[kind]);
   if (file.source === 'git') facts.push('changed in the worktree, not through an edit tool');
   if (file.handEdited) facts.push('saved by hand in the editor');
   return `${file.path}\n${facts.join(' · ')}`;
@@ -569,7 +605,7 @@ function linesTitle(change: LineChange | null): string {
   return `${change.added} line(s) added, ${change.deleted} removed, against the base branch`;
 }
 
-/** add / del / mod / none, from the porcelain code. Drives the row's colour. */
+/** add / del / mod / none, from a porcelain code or a branch-diff letter. Drives the status colour. */
 export function statusTone(code: string | null): 'add' | 'del' | 'mod' | 'none' {
   if (code === null) return 'none';
   const letters = code.replace(/ /g, '');

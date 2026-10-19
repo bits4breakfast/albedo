@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   parseCommitFileTimes,
   parseCommitLog,
+  parseNameStatus,
   parseNumstat,
   GitError,
   type GitResult,
@@ -1164,6 +1165,18 @@ describe('parseNumstat', () => {
     expect(m.get('logo.png')).toEqual({ added: null, deleted: null });
     expect(m.get('docs/x y.md')).toEqual({ added: 0, deleted: 7 });
     expect(m.size).toBe(3);
+  });
+});
+
+describe('parseNameStatus', () => {
+  it('reads the letter per path and skips junk', () => {
+    const m = parseNameStatus('A\tsrc/new.ts\nM\tsrc/a.ts\nD\told.md\nT\tlink\n\nnot a line\nX\tweird\n');
+    expect([...m]).toEqual([
+      ['src/new.ts', 'A'],
+      ['src/a.ts', 'M'],
+      ['old.md', 'D'],
+      ['link', 'T'],
+    ]);
   });
 });
 
