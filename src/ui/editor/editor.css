@@ -91,20 +91,38 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Filename, then its folder. The folder gives way first (shrink weight 1000 vs
+   1), so the filename clips only once the folder is gone entirely. */
 .ed-path {
-  font-family: var(--font-mono);
-  font-size: var(--fs-md);
-  color: var(--text-strong);
-  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl;         /* keep the filename visible when the path is long */
-  text-align: left;
-  /* The shell turns selection off app-wide; a path is something you copy.
-     Copying takes the DOM text, so the rtl clipping above does not reorder it. */
+  white-space: nowrap;
+  /* The shell turns selection off app-wide; a path is something you copy. */
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+}
+.ed-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+}
+.ed-folder {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--muted);
 }
 
 .ed-copy {
@@ -130,7 +148,7 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-left: 4px;
+  margin-left: -4px;     /* the first arrow's glyph, not its hit area, meets the gutter */
   color: var(--muted);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
@@ -153,7 +171,6 @@
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--muted);
-  margin-left: -4px;
 }
 
 .ed-badge {

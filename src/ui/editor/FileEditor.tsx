@@ -22,6 +22,8 @@ import { copyText } from '../../lib/clipboard';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
 import { useOpenFile } from './openFile';
 import FileDiffView from './FileDiffView';
+import SymbolResults, { type SymbolResultsState } from './SymbolResults';
+import { navigate, type NavAction } from './symbolNav';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -377,6 +379,8 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
   const overwriteRef = useRef(false);
   /** The live save handler, so the Cmd+S keymap never closes over stale state. */
   const saveRef = useRef<() => void>(() => {});
+  /** The live ⌘B / ⌥F7 handler, read by the keymap for the same reason. */
+  const navRef = useRef<(action: NavAction) => void>(() => {});
 
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [resolved, setResolved] = useState<ResolvedPath | null>(null);
@@ -601,8 +605,26 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
           keymap.of([
             { key: 'Mod-s', preventDefault: true, run: () => (saveRef.current(), true) },
             { key: 'Ctrl-s', preventDefault: true, run: () => (saveRef.current(), true) },
+            // PhpStorm's Go to Declaration and Find Usages. Navigation, not
+            // code intelligence: git grep and the file's imports, no LSP.
+            { key: 'Mod-b', preventDefault: true, run: () => (navRef.current('declaration'), true) },
+            { key: 'Alt-F7', preventDefault: true, run: () => (navRef.current('usages'), true) },
           ]),
         ),
+        // ⌘-click is Go to Declaration, as in PhpStorm, so adding a cursor
+        // moves to ⌥-click.
+        EditorView.clickAddsSelectionRange.of((e) => e.altKey),
+        EditorView.domEventHandlers({
+          mousedown: (e, view) => {
+            if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.button !== 0) return false;
+            const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+            if (pos === null) return false;
+            e.preventDefault();
+            view.dispatch({ selection: { anchor: pos } });
+            navRef.current('declaration');
+            return true;
+          },
+        }),
 
         // --- the whole extension list. Nothing else belongs here. ---------
         lineNumbers(),
@@ -776,17 +798,63 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     return () => window.removeEventListener('keydown', onKey, true);
   }, [step]);
 
+  // --- Go to Declaration / Find Usages --------------------------------------
+  // Like stepping, a jump to another file is blocked while there are unsaved
+  // edits; a jump within this file is not, since nothing is reloaded.
+  const [nav, setNav] = useState<SymbolResultsState | null>(null);
+  /** Bumped per lookup; a slower, superseded answer is dropped. */
+  const navSeq = useRef(0);
+  const closeNav = useCallback(() => {
+    navSeq.current++;
+    setNav(null);
+    viewRef.current?.focus();
+  }, []);
+  const jump = useCallback(
+    (path: string, line: number) => {
+      if (dirty && path !== current) {
+        setNav({ kind: 'message', title: 'Unsaved edits', message: 'Save or discard your edits first' });
+        return false;
+      }
+      setNav(null);
+      openFile({ path, line });
+      return true;
+    },
+    [dirty, current, openFile],
+  );
+  navRef.current = (action: NavAction) => {
+    const view = viewRef.current;
+    if (!view || current === null) return;
+    const mine = ++navSeq.current;
+    const title = action === 'usages' ? 'Find Usages' : 'Go to Declaration';
+    setNav({ kind: 'loading', title });
+    navigate(
+      { root: task.worktreePath, path: current, text: view.state.doc.toString(), offset: view.state.selection.main.head },
+      action,
+    )
+      .then((out) => {
+        if (navSeq.current !== mine) return;
+        if (out.kind === 'open') jump(out.path, out.line);
+        else if (out.kind === 'list') setNav({ kind: 'list', title: out.title, result: out.result });
+        else setNav({ kind: 'message', title, message: out.message });
+      })
+      .catch((err: unknown) => {
+        if (navSeq.current === mine) setNav({ kind: 'message', title, message: `Search failed: ${message(err)}` });
+      });
+  };
+
   if (request === null) return null;
 
   const title = resolved?.relative ?? request.path;
+  // Filename first, its folder after and clipped first, as Linear's review
+  // tool does: the part you are reading never moves when the folder is long.
+  const slash = title.lastIndexOf('/');
+  const fileName = title.slice(slash + 1);
+  const folder = slash > 0 ? title.slice(0, slash + 1) : '';
 
   return (
     <div className="ed-root" role="dialog" aria-label={`Editing ${title}`}>
       <div className="ed-bar">
-        <span className="ed-path" title={resolved?.absolute ?? request.path}>
-          {title}
-        </span>
-        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} />
+        {/* The arrows lead the bar so stepping through files never moves them. */}
         {position >= 0 && order.length > 1 ? (
           <span className="ed-nav" aria-label="Changed files">
             <button
@@ -814,7 +882,14 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
             </button>
           </span>
         ) : null}
-        {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
+        <span className="ed-path" title={resolved?.absolute ?? request.path}>
+          <span className="ed-name">
+            {fileName}
+            {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
+          </span>
+          {folder && <span className="ed-folder">{folder}</span>}
+        </span>
+        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} />
         {handEdited && (
           <span className="ed-badge" title="You saved this file by hand in this session">
             hand-edited
@@ -964,6 +1039,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
         ) : null}
         <div className="ed-surface" ref={hostRef} hidden={phase.kind !== 'ready' || mode === 'diff'} />
       </div>
+      <SymbolResults state={nav} onClose={closeNav} onOpen={(m) => jump(m.path, m.line)} />
     </div>
   );
 }
