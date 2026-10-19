@@ -422,6 +422,28 @@ export async function lineChanges(worktreePath: string, baseBranch: string): Pro
   return parseNumstat(await gitOk(['diff', '--numstat', '--no-renames', against], worktreePath));
 }
 
+/** How a file differs from the task's base: added, modified, deleted, or its type changed. */
+export type ChangeKind = 'A' | 'M' | 'D' | 'T';
+
+/**
+ * `git diff --name-status --no-renames` output, keyed by path. With renames
+ * off every line is `<letter>\t<path>`; anything else is skipped.
+ */
+export function parseNameStatus(stdout: string): Map<string, ChangeKind> {
+  const out = new Map<string, ChangeKind>();
+  for (const line of stdout.split('\n')) {
+    const m = /^([AMDT])\t(.+)$/.exec(line);
+    if (m) out.set(m[2] as string, m[1] as ChangeKind);
+  }
+  return out;
+}
+
+/** The change kind per file, over the same range as {@link lineChanges}. */
+export async function changeKinds(worktreePath: string, baseBranch: string): Promise<Map<string, ChangeKind>> {
+  const against = (await taskBase(worktreePath, baseBranch)) ?? 'HEAD';
+  return parseNameStatus(await gitOk(['diff', '--name-status', '--no-renames', against], worktreePath));
+}
+
 /**
  * `git log --format=%x00%ct --name-only` output: path -> the newest commit
  * time (ms) that touched it. Records are a NUL-prefixed timestamp line

@@ -165,8 +165,10 @@ describe('mergeTouched', () => {
       transcript: [{ path: `${WT}/src/upload.ts`, editCount: 1, lastTouchedAt: 5_000 }],
       git: [entry('?', '?', 'scripts/generated.sql'), entry(' ', 'M', 'src/upload.ts')],
     });
-    expect(files.map((f) => f.path)).toEqual(['scripts/generated.sql', 'src/upload.ts']);
-    expect(files[0]).toMatchObject({
+    // Listed, and sorted like any other row: with no transcript time, last.
+    // (The view gives uncommitted rows their file's modification time.)
+    expect(files.map((f) => f.path)).toEqual(['src/upload.ts', 'scripts/generated.sql']);
+    expect(files[1]).toMatchObject({
       source: 'git',
       editCount: 0,
       lastTouchedAt: null,
@@ -244,22 +246,20 @@ describe('compareTouched', () => {
     ...over,
   });
 
-  it('lifts git-only rows to the top instead of burying them on a null date', () => {
-    const rows = [
-      file({ path: 'a.ts', lastTouchedAt: 3_000 }),
-      file({ path: 'gen.sql', source: 'git', lastTouchedAt: null, editCount: 0 }),
-      file({ path: 'b.ts', lastTouchedAt: 5_000 }),
-    ].sort(compareTouched);
-    expect(rows.map((r) => r.path)).toEqual(['gen.sql', 'b.ts', 'a.ts']);
-  });
-
-  it('orders the rest most recently touched first', () => {
+  it('orders most recently touched first, whatever the source', () => {
     const rows = [
       file({ path: 'a.ts', lastTouchedAt: 1_000 }),
+      file({ path: 'gen.sql', source: 'git', lastTouchedAt: 4_000, editCount: 0 }),
       file({ path: 'b.ts', lastTouchedAt: 9_000, source: 'both' }),
-      file({ path: 'c.ts', lastTouchedAt: 4_000 }),
     ].sort(compareTouched);
-    expect(rows.map((r) => r.path)).toEqual(['b.ts', 'c.ts', 'a.ts']);
+    expect(rows.map((r) => r.path)).toEqual(['b.ts', 'gen.sql', 'a.ts']);
+  });
+
+  it('puts a row with no time last', () => {
+    const rows = [file({ path: 'gen.sql', source: 'git', lastTouchedAt: null, editCount: 0 }), file({ path: 'a.ts' })].sort(
+      compareTouched,
+    );
+    expect(rows.map((r) => r.path)).toEqual(['a.ts', 'gen.sql']);
   });
 
   it('breaks ties on edit count then path, so the order is stable', () => {
@@ -334,9 +334,9 @@ describe('touchedFiles', () => {
     const files = await touchedFiles(4);
 
     expect(files.map((f) => [f.path, f.source, f.editCount, f.gitStatus])).toEqual([
-      ['scripts/generated.sql', 'git', 0, '??'],
       ['src/upload.ts', 'both', 3, ' M'],
       ['src/old.ts', 'transcript', 1, null],
+      ['scripts/generated.sql', 'git', 0, '??'],
     ]);
     const messageCall = sqlState.calls.find((c) => c.sql.includes('FROM messages'));
     expect(messageCall?.binds).toEqual([4, 'Edit', 'MultiEdit', 'Write', 'NotebookEdit']);

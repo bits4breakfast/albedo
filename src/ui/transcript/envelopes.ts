@@ -50,6 +50,17 @@ export type UserBlock =
     }
   /** The user invoked a slash command. */
   | { kind: 'command'; name: string; args: string | null; message: string | null }
+  /** `/clear`: the conversation before this point is no longer in context. */
+  | { kind: 'cleared' }
+  /**
+   * An action the user started from an Albedo button (Push, Create PR, ...).
+   * `text` is the prompt Claude received; the row shows `label` and folds it.
+   */
+  | { kind: 'action'; action: AlbedoAction; label: string; text: string }
+  /** A `!` command the user ran in Claude Code's shell mode. Typed by the user. */
+  | { kind: 'shell-input'; command: string }
+  /** What that command printed. Either side may be empty, never both. */
+  | { kind: 'shell-output'; stdout: string; stderr: string }
   /** Injected context. Not something the user typed. */
   | { kind: 'system-reminder'; text: string }
   /** Another session -- a subagent handback, or a peer -- wrote to this one. */
@@ -75,6 +86,47 @@ export type UserBlock =
   | { kind: 'pasted'; id: string | null; text: string }
   /** A skill's SKILL.md, loaded into context when it was invoked. */
   | { kind: 'skill'; name: string; dir: string; text: string };
+
+/**
+ * Albedo's own envelope: `<albedo-action kind="push">prompt</albedo-action>`.
+ *
+ * The buttons that send Claude a prompt wrap it in this, so the transcript can
+ * say what was asked -- "Push" -- instead of replaying four bullet points of
+ * instructions the user never typed. The prompt inside stays plain prose:
+ * Claude reads exactly what it would read without the wrapper, and the tag
+ * only names it. Written and read here, so this file still owns every tag.
+ */
+export type AlbedoAction = 'push' | 'create-pr' | 'squash-rebase';
+
+const ACTION_LABEL: Record<AlbedoAction, string> = {
+  push: 'Push',
+  'create-pr': 'Create PR',
+  'squash-rebase': 'Squash & rebase',
+};
+
+function isAction(v: string | null): v is AlbedoAction {
+  return v !== null && Object.prototype.hasOwnProperty.call(ACTION_LABEL, v);
+}
+
+export function wrapAction(action: AlbedoAction, prompt: string): string {
+  return `<albedo-action kind="${action}">\n${prompt}\n</albedo-action>`;
+}
+
+/** The action a whole message is, or null. For one-line labels (the queued strip). */
+export function actionLabelOf(text: string): string | null {
+  const blocks = parseUserBody(text);
+  const only = blocks.length === 1 ? blocks[0] : undefined;
+  return only && only.kind === 'action' ? only.label : null;
+}
+
+/** `<albedo-action>` filling the whole of a string, as Claude Code's paste wrapper leaves it. */
+const SOLE_ACTION_RE = /^\s*<albedo-action\b([^<>]*)>([\s\S]*?)<\/albedo-action>\s*$/;
+
+function parseAction(attrs: string, inner: string): UserBlock | null {
+  const action = attr(attrs, 'kind');
+  if (!isAction(action)) return null; // an unknown kind degrades to text
+  return { kind: 'action', action, label: ACTION_LABEL[action], text: unescapeXml(inner).trim() };
+}
 
 /**
  * A loaded skill arrives as a plain user row with no tags at all: the first
@@ -107,16 +159,27 @@ const KNOWN_TAGS = [
   'local-command-stderr',
   'local-command-caveat',
   'interrupted-output',
+  'bash-input',
+  'bash-stdout',
+  'bash-stderr',
   'agent-message',
   'context',
   'pasted_content',
+  'albedo-action',
 ] as const;
 
 /**
  * `<tag attrs>inner</tag>`. Group 2 is the raw attribute list, which is empty
  * for most tags; matching it is what lets `agent-message` be recognised at all.
+ *
+ * The CLOSING tag may carry attributes too: `<pasted_content id="bc88">` is
+ * closed by `</pasted_content id="bc88">` as often as by a bare one. Requiring
+ * the bare form left those envelopes unmatched, printed as raw tags.
  */
-const ENVELOPE_RE = new RegExp(`<(${KNOWN_TAGS.join('|')})((?:\\s[^<>]*)?)>([\\s\\S]*?)</\\1>`, 'g');
+const ENVELOPE_RE = new RegExp(
+  `<(${KNOWN_TAGS.join('|')})((?:\\s[^<>]*)?)>([\\s\\S]*?)</\\1(?:\\s[^<>]*)?>`,
+  'g',
+);
 
 /** Fields lifted out of a `<task-notification>`; the rest are shown as-is. */
 const NOTIFICATION_RE = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
@@ -226,6 +289,77 @@ function pushText(out: UserBlock[], raw: string): void {
   out.push({ kind: 'text', text });
 }
 
+/**
+ * Text Claude Code writes beside a local command for the *model*, not the
+ * reader: "The command below was run directly in Claude Code, not sent to you
+ * as a request...". It arrives as its own user row, ahead of the command, and
+ * rendered it is a paragraph of harness prose above every `/clear`.
+ */
+const MODEL_ONLY_TAGS: ReadonlySet<string> = new Set(['local-command-caveat']);
+
+/**
+ * `/clear` starts a new transcript whose first rows are the command itself. It
+ * reads better as a boundary than as a chip: everything above it is gone from
+ * the model's context, which is the one thing worth knowing about it.
+ */
+function markClear(blocks: UserBlock[]): UserBlock[] {
+  return blocks.map((b) => (b.kind === 'command' && b.name === '/clear' && b.args === null ? { kind: 'cleared' } : b));
+}
+
+/**
+ * The text of a `system` row, with local-command output unwrapped.
+ *
+ * A local command's output is recorded as a `system` line whose content is
+ * `<local-command-stdout>…</local-command-stdout>` -- empty, for `/clear`. The
+ * row used to print that verbatim. Returns the inner text (empty when there
+ * was none); any body that is not exactly such envelopes comes back as is.
+ */
+export function systemRowText(body: string | null): string {
+  const text = (body ?? '').trim();
+  if (text.length === 0) return '';
+  const re = /^<(local-command-stdout|local-command-stderr)>([\s\S]*?)<\/\1>\s*/;
+  const parts: string[] = [];
+  let rest = text;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(rest)) !== null) {
+    const inner = unescapeXml((m[2] ?? '').trim());
+    if (inner.length > 0) parts.push(inner);
+    rest = rest.slice(m[0].length);
+  }
+  return rest.length === 0 ? parts.join('\n\n') : text;
+}
+
+/**
+ * Shell output, as the trimmed text of one stream: leading and trailing blank
+ * lines go, indentation on the first real line stays.
+ */
+function streamText(inner: string): string {
+  return unescapeXml(inner).replace(/^\s*\n/, '').replace(/\s+$/, '');
+}
+
+/**
+ * `<bash-stdout>` and `<bash-stderr>` arrive side by side, one row after the
+ * `<bash-input>` that produced them. Fold each pair into one output block, and
+ * drop it when both are empty -- a command that printed nothing has nothing
+ * to show.
+ */
+function coalesceShellOutput(blocks: UserBlock[]): UserBlock[] {
+  const out: UserBlock[] = [];
+  for (const b of blocks) {
+    const prev = out[out.length - 1];
+    if (b.kind === 'shell-output' && prev && prev.kind === 'shell-output') {
+      out[out.length - 1] = {
+        kind: 'shell-output',
+        stdout: prev.stdout || b.stdout,
+        stderr: prev.stderr || b.stderr,
+      };
+      continue;
+    }
+    out.push(b);
+  }
+  return out.filter((b) => b.kind !== 'shell-output' || b.stdout.length > 0 || b.stderr.length > 0);
+}
+
 /** Fold a run of `command-*` envelopes into the single command they describe. */
 function coalesceCommands(blocks: UserBlock[]): UserBlock[] {
   const out: UserBlock[] = [];
@@ -327,6 +461,7 @@ export function parseUserBody(body: string): UserBlock[] {
     let last = 0;
     ENVELOPE_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
+    let matched = false;
 
     while ((m = ENVELOPE_RE.exec(body)) !== null) {
       const tag = m[1] ?? '';
@@ -334,6 +469,8 @@ export function parseUserBody(body: string): UserBlock[] {
       const inner = m[3] ?? '';
       if (m.index > last) pushText(out, body.slice(last, m.index));
       last = m.index + m[0].length;
+      matched = true;
+      if (MODEL_ONLY_TAGS.has(tag)) continue;
 
       switch (tag) {
         case 'task-notification':
@@ -345,14 +482,37 @@ export function parseUserBody(body: string): UserBlock[] {
         case 'agent-message':
           out.push(parseAgentMessage(attrs, inner));
           break;
-        case 'pasted_content':
-          out.push({ kind: 'pasted', id: attr(attrs, 'id'), text: unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, '') });
+        case 'pasted_content': {
+          // A button's action arrives inside the paste wrapper: the composer
+          // sends everything as a bracketed paste.
+          const sole = SOLE_ACTION_RE.exec(inner);
+          const action = sole ? parseAction(sole[1] ?? '', sole[2] ?? '') : null;
+          out.push(
+            action ?? {
+              kind: 'pasted',
+              id: attr(attrs, 'id'),
+              text: unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, ''),
+            },
+          );
+          break;
+        }
+        case 'albedo-action':
+          out.push(parseAction(attrs, inner) ?? { kind: 'text', text: unescapeXml(inner).trim() });
           break;
         case 'context':
           out.push({ kind: 'context', ref: attr(attrs, 'ref'), text: unescapeXml(inner.trim()) });
           break;
         case 'command-name':
           out.push({ kind: 'command', name: unescapeXml(inner.trim()), args: null, message: null });
+          break;
+        case 'bash-input':
+          out.push({ kind: 'shell-input', command: unescapeXml(inner.trim()) });
+          break;
+        case 'bash-stdout':
+          out.push({ kind: 'shell-output', stdout: streamText(inner), stderr: '' });
+          break;
+        case 'bash-stderr':
+          out.push({ kind: 'shell-output', stdout: '', stderr: streamText(inner) });
           break;
         case 'command-args': {
           const v = unescapeXml(inner.trim());
@@ -370,14 +530,18 @@ export function parseUserBody(body: string): UserBlock[] {
     }
 
     if (last < body.length) pushText(out, body.slice(last));
-    if (out.length === 0) pushText(out, body);
-    return unwrapSoleStreamedPaste(stripAgentFrame(coalesceCommands(out)));
+    // A body that was only model-facing envelopes is empty on purpose.
+    if (out.length === 0 && !matched) pushText(out, body);
+    return unwrapSoleStreamedPaste(stripAgentFrame(markClear(coalesceShellOutput(coalesceCommands(out)))));
   } catch {
     return [{ kind: 'text', text: body }];
   }
 }
 
-/** True when the row is nothing but machine-generated envelopes. */
+/**
+ * True when the row is nothing but machine-generated envelopes. A `!` command
+ * and an Albedo action arrive in envelopes too, but the user started them.
+ */
 export function isAllEnvelopes(blocks: readonly UserBlock[]): boolean {
-  return blocks.length > 0 && blocks.every((b) => b.kind !== 'text');
+  return blocks.length > 0 && blocks.every((b) => b.kind !== 'text' && b.kind !== 'shell-input' && b.kind !== 'action');
 }

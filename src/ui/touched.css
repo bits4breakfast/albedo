@@ -5,8 +5,7 @@
 
    Density matches the task list and the transcript: hairline rows, mono for
    anything a human compares character by character (paths, status codes,
-   counts), and one accent — the rows git found that the transcript never
-   mentioned.
+   counts). Rows show what git says; how a file was changed is not shown.
    ========================================================================== */
 
 .tf-pane {
@@ -45,9 +44,10 @@
      overlay on near-black raises the ground's luminance, an overlay on
      near-white lowers it, so the constraint inverts.
 
-       --tf-wash    row + badge ground
+       --tf-wash    badge ground (rows are no longer washed; the ceilings
+                    below were set when they were, and still bound the badge)
        --tf-tint    notice ground
-       --tf-rule    3px row edge, notice/legend edge   (UI, needs 3.0)
+       --tf-rule    notice edge                        (UI, needs 3.0)
        --tf-hairline 1px badge edge                    (UI, needs 3.0)
        --tf-ink     amber TEXT: badge label, notice detail
        --tf-notice-ink / --tf-hand-ink   notice body, hand badge
@@ -98,37 +98,8 @@
 }
 
 /* --------------------------------------------------------------------------
-   Header
+   Buttons
    -------------------------------------------------------------------------- */
-
-.tf-head {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-
-.tf-head-title {
-  font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-.tf-head-count {
-  flex: 1 1 auto;
-  min-width: 0;            /* or the refresh button is pushed off a 180px pane */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
 
 .tf-btn {
   flex: 0 0 auto;
@@ -184,20 +155,6 @@
    measures 3.7. --tf-ink is --warn in dark and a darkened amber in light. */
 .tf-warn-detail { font-family: var(--font-mono); color: var(--tf-ink); }
 
-/* The legend for `source: 'git'` rows. Present only when such a row exists —
-   it explains the accent above the rows it applies to, rather than sitting
-   there as permanent chrome. */
-.tf-legend {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
-  border-left: 2px solid var(--tf-rule);
-  background: var(--panel);
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  line-height: 1.5;
-}
-
 /* --------------------------------------------------------------------------
    Rows
    -------------------------------------------------------------------------- */
@@ -216,16 +173,21 @@
   align-items: baseline;
   column-gap: 8px;
   width: 100%;
-  padding: 3px 8px;
+  padding: 3px 8px 3px 11px;
   text-align: left;
-  /* 3px, transparent by default: a git row colours it in rather than widening
-     it, so no row shifts by a pixel when the source changes. */
-  border-left: 3px solid transparent;
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
 
 .tf-row:hover { background: var(--panel-hover); }
+/* The file in the editor's active tab. --panel-raised is the selected-row
+   ground every text tier here is cleared against; the accent edge says it
+   without colour alone. Inset, so the row does not shift. */
+.tf-row[aria-current='true'] {
+  background: var(--panel-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tf-row[aria-current='true'] .tf-name { color: var(--text-strong); }
 .tf-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 /* The path can be selected and copied (the row is a div for exactly this).
@@ -236,48 +198,15 @@
 .tf-badge { user-select: none; }
 .tf-row:hover .tf-name { color: var(--text-strong); }
 
-/* Hover lifts the dimmest tier, in BOTH themes and for the same reason.
-   --faint is tuned against the flat hover ground (4.64 on --panel-hover in
-   dark); the amber wash sits on top of that ground and takes it to 3.72 dark
-   / 4.38-4.65 light, i.e. under or on the AA line either way. Lifting to
-   --muted restores 5.14 dark / 5.88-6.55 light, and is a normal hover
-   affordance anyway. The lift is safe in both directions: --muted is nearer
-   the text end of the tier stack in each theme, so it never reduces
-   contrast. */
+/* Hover lifts the dimmest tier to --muted, a normal hover affordance. --muted
+   is nearer the text end of the tier stack in each theme, so the lift never
+   reduces contrast. */
 .tf-row:hover .tf-dir,
 .tf-row:hover .tf-when,
 .tf-row:hover .tf-sep { color: var(--muted); }
 
-/* Git alone knows about this file: the agent changed it outside its edit tool
-   (a Bash `sed`, a generator, a formatter). Distinct on purpose — this is the
-   row you did not expect to be here, and the distinction is the whole point of
-   cross-checking git in the first place.
-
-   Three carriers, deliberately, because no single one survives a palette
-   change on its own — and the theme split is exactly that palette change:
-
-                          dark            light (assumed palette)
-     1. 3px --tf-rule     7.75 on ground  5.3-9.9 on ground
-     2. the wash          1.196 vs --bg   1.06-1.12 vs --bg
-     3. `worktree` badge  says it in words, in both
-
-   In DARK the wash does real work and the rule confirms it. In LIGHT the
-   weights swap: the wash has to stay a hint (8%, see the ceiling note at the
-   top of this file) because it darkens a ground other people's colour tokens
-   were never measured against, so the rule and the badge carry the signal —
-   both clear their floors with room to spare. The hue helps in light too:
-   every other surface in the app is neutral grey, so a warm row reads as
-   different even at 1.06.
-
-   The wash is a background-IMAGE layer over a background-COLOR ground, so
-   hover swaps only the ground (to --panel-hover) and the amber stays constant
-   on top. One wash, two grounds, no second overlay to keep in sync. */
-.tf-row[data-source='git'] {
-  border-left-color: var(--tf-rule);
-  background-color: var(--bg);
-  background-image: linear-gradient(var(--tf-wash), var(--tf-wash));
-}
-.tf-row[data-source='git']:hover { background-color: var(--panel-hover); }
+/* No row is washed or ruled: every row is what git says, the status letter
+   carries what changed. Row grounds are left to hover and focus. */
 
 .tf-status {
   font-family: var(--font-mono);
@@ -303,7 +232,7 @@
 /* Shrink order inside a row, and it is deliberate: the directory gives way
    first (it is context), then the basename ellipsises, and the badges never
    shrink at all. Before this, .tf-name was `flex: 0 0 auto` and the badges sat
-   after it, so a long basename pushed the `worktree` badge out of an
+   after it, so a long basename pushed the badge out of an
    overflow: hidden box — the marker vanished with nothing to show it had. */
 .tf-dir {
   flex: 0 1000 auto;       /* give way first */
@@ -409,17 +338,10 @@
    them in order of how much they identify the file, and everything it sheds
    stays in the row's tooltip (see rowTitle() in TouchedFiles.tsx).
 
-   What NEVER goes, at any width: the basename, the 3px --warn rule and the
-   `worktree` badge. The git-only marker has three carriers so that no single
-   one is load-bearing, and the two that survive here are the legible ones —
-   the rule, which needs no space, and the badge, which says it in words. The
-   wash is the decorative carrier and it costs nothing to keep, so it stays
-   too; the badge is the one that would otherwise have been squeezed out, and
-   it is now the last thing in the row allowed to shrink (it cannot).
-
-   The 3px rule stays 3px: it is 1.7% of a 180px column and it is what makes
-   the row scannable at a glance. Shaving it would save nothing that matters
-   and cost the thing that does.
+   What NEVER goes, at any width: the basename, the status letter and the
+   badges. A badge says its fact in words and is the one thing that would
+   otherwise be squeezed out, so it is the last thing in the row allowed to
+   shrink (it cannot).
    -------------------------------------------------------------------------- */
 
 /* ~260px and below: the path WRAPS instead of losing its directory.
@@ -437,9 +359,6 @@
     column-gap: 6px;
     padding-inline: 6px;
   }
-  /* The column has its own "files" header at these widths, so the in-pane
-     title is the same word twice — and at 240px it wraps onto two lines. */
-  .tf-head-title { display: none; }
   .tf-path { flex-wrap: wrap; }
   /* flex-basis 0 so the basename never CAUSES a wrap (line-breaking looks at
      base sizes, not shrink factors): without it a long name pushes the badges
@@ -497,25 +416,79 @@ button.tf-section-head:hover { color: var(--text); }
 }
 .tf-section + .tf-section { border-top: 1px solid var(--border); }
 
-/* --- view switch and commit groups ---------------------------------------- */
+/* --- review comments ------------------------------------------------------ */
 
-.tf-mode {
-  display: inline-flex;
-  margin-left: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
+.tf-comments-head { align-items: center; }
+.tf-comments-actions { margin-left: auto; display: inline-flex; gap: 4px; }
+/* The one action this section exists for: text in --text-strong on the
+   button's own --panel-raised, with the accent edge to mark it. */
+.tf-btn-primary { color: var(--text-strong); border-color: var(--accent-line); }
+
+.tf-comments-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 8px 8px;
 }
-.tf-mode-btn {
-  padding: 2px 8px;
-  color: var(--muted);
-  font-size: var(--fs-xs);
+.tf-comments-intro-label { color: var(--muted); font-size: var(--fs-xs); }
+.tf-comments-intro-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 6px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-sm);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.tf-comments-intro-input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tf-comments-notice { padding: 0 8px 6px; color: var(--warn); font-size: var(--fs-xs); }
+
+.tf-comment {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.tf-comment-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px 4px 11px;
+  text-align: left;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
-.tf-mode-btn + .tf-mode-btn { border-left: 1px solid var(--border); }
-.tf-mode-btn:hover { color: var(--text); }
-.tf-mode-btn[aria-pressed='true'] { color: var(--text-strong); background: var(--panel-raised); }
-.tf-mode-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tf-comment-open:hover { background: var(--panel-hover); }
+.tf-comment-open:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tf-comment-where { flex: none; font-family: var(--font-mono); color: var(--muted); }
+.tf-comment-where .tf-name { color: var(--text); }
+.tf-comment-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.tf-comment-sent { flex: none; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
+.tf-comment-sent::before { content: '✓ '; }
+.tf-comment-resolve {
+  flex: none;
+  width: 28px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tf-comment-resolve:hover { color: var(--add); background: var(--panel-hover); }
+.tf-comment-resolve:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* --- view switch and commit groups ---------------------------------------- */
+
 
 /* A commit: its subject reads first, normal case; sha and age trail. */
 .tf-commit-head { text-transform: none; letter-spacing: 0; font-weight: 500; }
@@ -534,6 +507,59 @@ button.tf-section-head:hover { color: var(--text); }
   font-family: var(--font-mono);
   font-weight: 400;
 }
-/* In a narrow pinned column the switch wraps under the title rather than
-   squeezing the count and the refresh button. */
-.tf-head { flex-wrap: wrap; row-gap: 4px; }
+
+/* --------------------------------------------------------------------------
+   Git bar (GitBar.tsx) — under the list: branch and where it stands, then
+   the one action it needs next and ⋯. One line, because every row it takes
+   is a file the list cannot show.
+   -------------------------------------------------------------------------- */
+
+.tf-git {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+/* Branch first, then the state, all on one line. When it does not fit, the
+   state is clipped before the branch is: the branch says which one this is. */
+.tf-git-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tf-git-id > span { flex: 0 0 auto; }
+.tf-git-id > span + span::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--faint);
+}
+.tf-git-id > span[data-tone='warn'] { color: var(--warn); }
+
+.tf-git-branch {
+  flex: 0 1 auto !important;
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+}
+
+.tf-git-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tf-git-more { padding-inline: 6px; }

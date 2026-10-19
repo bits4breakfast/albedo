@@ -7,6 +7,8 @@
  * Pure: the composer owns the store and the textarea.
  */
 
+import { actionLabelOf } from './envelopes';
+
 /** Pastes at or below this stay inline: a short snippet reads fine as itself. */
 export const COLLAPSE_MIN_LINES = 3;
 export const COLLAPSE_MIN_CHARS = 600;
@@ -35,4 +37,11 @@ export function placeholderFor(id: number, text: string): string {
 export function expandPastes(draft: string, store: ReadonlyMap<number, string>): string {
   if (store.size === 0) return draft;
   return draft.replace(PLACEHOLDER_RE, (whole, id: string) => store.get(Number(id)) ?? whole);
+}
+
+/** A queued message as one short line: a pasted block reads as a mention of it. */
+export function queuedLabel(text: string): string {
+  const action = actionLabelOf(text);
+  if (action !== null) return action;
+  return text.replace(/<pasted_content\b[^>]*>[\s\S]*?<\/pasted_content\b[^>]*>/g, '[pasted text]').trim();
 }

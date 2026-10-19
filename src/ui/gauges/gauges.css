@@ -464,3 +464,18 @@
 @media (prefers-reduced-motion: reduce) {
   .gz-seg { transition: none !important; }
 }
+
+/* `/clear`, under the context reading it resets. Armed reads as an ordinary
+   raised button with the label asking the question; no new colour. */
+.gz-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.gz-clear { height: 22px; font-size: var(--fs-xs); }
+.gz-action-note {
+  font-size: var(--fs-xs);
+  color: var(--danger);
+}

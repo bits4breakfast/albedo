@@ -38,6 +38,10 @@ export { windowUsage } from './usage';
 export type { WindowUsage } from './usage';
 
 // --- Additive to docs/INTERFACES.md, for the shell's startup indicator -----
+// What is waiting in Claude Code's input queue, per session (in memory).
+export { queuedFor, onQueueChange } from './queue';
+export type { QueuedEntry } from './queue';
+
 export { onCaptureProgress } from './watcher';
 export type { CaptureProgress } from './watcher';
 

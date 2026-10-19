@@ -1,11 +1,19 @@
 # Linux CI. The macOS build is still made by hand on the author's machine;
 # this proves the Linux one (used under WSL2 on Windows, see docs/LINUX-WSL.md)
 # and keeps the checks honest on a platform nobody here runs day to day.
+#
+# Every push runs the checks only. The .deb/.AppImage build is on demand
+# (Actions > CI > Run workflow): it was most of each run's 6-9 minutes, and
+# nobody needed a Linux package per push.
+#
+# No `pull_request` trigger: for a branch in this repo it ran the same checks
+# a second time beside the push run, in a different concurrency group, so
+# neither cancelled the other. The push run's checks show on the PR anyway.
 name: CI
 
 on:
   push:
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -60,9 +68,11 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Build .deb and .AppImage
+        if: github.event_name == 'workflow_dispatch'
         run: npm run tauri build -- --bundles deb,appimage
 
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: albedo-linux
           path: |

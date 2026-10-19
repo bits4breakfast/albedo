@@ -74,7 +74,12 @@ describe('SHORTCUTS', () => {
     const shift = createDoubleShift();
     shift(sh(0));
     if (shift(sh(100))) reachable.add('shift shift');
-    for (const s of SHORTCUTS) expect(reachable).toContain(s.combo);
+    // `editor …` entries are bound in CodeMirror's keymap (FileEditor.tsx) and
+    // `transcript …` ones in the transcript pane, which this matcher never sees.
+    for (const s of SHORTCUTS) {
+      if (s.combo.startsWith('editor ') || s.combo.startsWith('transcript ')) continue;
+      expect(reachable).toContain(s.combo);
+    }
   });
 });
 

@@ -35,6 +35,7 @@ import {
   removeWorktree,
   mayDeleteTaskBranch,
 } from '../git/worktree';
+import { stopPhpantom } from '../lsp/phpantom';
 import './worktree.css';
 
 /**
@@ -219,6 +220,9 @@ export function ArchiveTaskDialog({
     setBusy(true);
     setError(null);
     try {
+      // An archived task needs no language server, whatever happens to its
+      // folder. Stopping is the whole cleanup: PHPantom writes nothing to disk.
+      await stopPhpantom(task.worktreePath);
       // `owned` is checked here as well as in the render: the render decides
       // what is offered, this decides what runs, and the two failing together
       // is the only way a not-owned directory could be touched.

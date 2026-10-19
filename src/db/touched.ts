@@ -251,15 +251,12 @@ export function mergeTouched(input: MergeTouchedInput): TouchedFile[] {
 }
 
 /**
- * Most recently touched first — except that `source: 'git'` rows have no
- * transcript timestamp at all, and sorting them by a null would bury the
- * surprising rows at the bottom. They lead instead: "something changed here
- * that the agent never told you about" is the single most valuable line in
- * this view.
+ * Most recently touched first. How a file was changed does not affect its
+ * place: an edit made through Bash or a formatter is a change like any other
+ * (the view gives uncommitted rows their file's modification time, so they
+ * do not sink for lack of a transcript timestamp).
  */
 export function compareTouched(a: TouchedFile, b: TouchedFile): number {
-  const rank = (f: TouchedFile) => (f.source === 'git' ? 0 : 1);
-  if (rank(a) !== rank(b)) return rank(a) - rank(b);
   const at = a.lastTouchedAt ?? -1;
   const bt = b.lastTouchedAt ?? -1;
   if (at !== bt) return bt - at;

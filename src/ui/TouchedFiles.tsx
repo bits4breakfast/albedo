@@ -14,9 +14,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpenFileRequest, Task, TouchedFile } from '../types';
-import { touchedFilesDetailed } from '../db/touched';
-import { branchCommits, committedFileTimes, lineChanges, type BranchCommit, type LineChange } from '../git/worktree';
+import { compareTouched, touchedFilesDetailed } from '../db/touched';
+import CommentsSection from './CommentsSection';
+import { stat } from '@tauri-apps/plugin-fs';
+import {
+  branchCommits,
+  changeKinds,
+  committedFileTimes,
+  lineChanges,
+  unmergedCommits,
+  type BranchCommit,
+  type UnmergedCommits,
+  type ChangeKind,
+  type LineChange,
+} from '../git/worktree';
 import { setTouchedOrder } from './touchedOrder';
+import { sendPrompt } from './sendPrompt';
+import GitBar from './GitBar';
+import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
 import { useOpenFile } from './editor/openFile';
@@ -51,9 +66,11 @@ const CLOCK_MS = 30_000;
 
 export interface TouchedFilesProps {
   task: Task;
+  /** The file in the editor's active tab, worktree-relative: its row is marked. */
+  activePath?: string | null;
 }
 
-export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
+export default function TouchedFiles({ task, activePath = null }: TouchedFilesProps): ReactNode {
   const [files, setFiles] = useState<TouchedFile[]>([]);
   const [gitError, setGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,15 +80,19 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
   const [reloadKey, setReloadKey] = useState(0);
   /** +/- per path against the task's base. Empty when git cannot say. */
   const [lines, setLines] = useState<Map<string, LineChange>>(() => new Map());
+  /** A / M / D / T per path against the task's base. Empty when git cannot say. */
+  const [kinds, setKinds] = useState<Map<string, ChangeKind>>(() => new Map());
   /** When each file was last committed on the branch. */
   const [committedAt, setCommittedAt] = useState<Map<string, number>>(() => new Map());
-  const [showOutside, setShowOutside] = useState(false);
+  /** When each uncommitted file last changed on disk. */
+  const [modifiedAt, setModifiedAt] = useState<Map<string, number>>(() => new Map());
   /** The branch's commits, newest first, for the by-commit view. */
   const [commits, setCommits] = useState<BranchCommit[]>([]);
+  /** Commits not on the upstream yet. Null when git could not say. */
+  const [remote, setRemote] = useState<UnmergedCommits | null>(null);
   const [mode, setMode] = useState<ViewMode>(readMode);
   /** Commits the user folded away in the by-commit view. */
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
-  const [showUnchanged, setShowUnchanged] = useState(false);
 
   const openFile = useSafeOpenFile();
 
@@ -87,6 +108,20 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
       })
       .catch(() => {
         if (live) setLines(new Map());
+      });
+    void changeKinds(task.worktreePath, task.baseBranch)
+      .then((m) => {
+        if (live) setKinds(m);
+      })
+      .catch(() => {
+        if (live) setKinds(new Map());
+      });
+    void unmergedCommits(task.worktreePath, task.baseBranch)
+      .then((r) => {
+        if (live) setRemote(r);
+      })
+      .catch(() => {
+        if (live) setRemote(null);
       });
     void branchCommits(task.worktreePath, task.baseBranch)
       .then((c) => {
@@ -109,6 +144,14 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
         setGitError(res.gitError);
         setError(null);
         setNow(Date.now());
+        // An uncommitted file's time is when it last changed on disk, however
+        // it was changed -- an edit tool, a shell command, a formatter.
+        void modifiedTimes(
+          task.worktreePath,
+          res.files.filter((f) => f.gitStatus !== null && !f.path.startsWith('/')).map((f) => f.path),
+        ).then((m) => {
+          if (live) setModifiedAt(m);
+        });
       })
       .catch((err: unknown) => {
         if (!live) return;
@@ -130,7 +173,9 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
   useEffect(() => {
     setFiles([]);
     setLines(new Map());
+    setKinds(new Map());
     setCommittedAt(new Map());
+    setModifiedAt(new Map());
     setCommits([]);
     setFolded(new Set());
     setGitError(null);
@@ -194,23 +239,19 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
   }, []);
 
   /*
-     Sections, by where the change stands -- which is the question a reviewer
-     brings, and which a flat list made you work out row by row:
+     The branch's change set, as git sees it, in two sections:
 
        uncommitted   git status sees it
        committed     in a commit on this branch, clean now
-       no net change the transcript edited it, but neither git status nor the
-                     branch diff shows a difference (edited back, or edited
-                     before the branch left its base)
-       outside       not in this worktree at all (a memory file, /tmp)
 
-     Files the branch committed but this transcript never mentions are added
-     from git -- the change set is the branch's, not only this session's.
+     A file the transcript touched that git shows no change for (edited back,
+     or outside the worktree altogether) is not part of the change set and is
+     not listed. Files the branch committed that this transcript never
+     mentions are added from git: the change set is the branch's, not only
+     this session's.
   */
   const view = useMemo(() => {
-    const inside: TouchedFile[] = [];
-    const outside: TouchedFile[] = [];
-    for (const f of files) (f.path.startsWith('/') ? outside : inside).push(f);
+    const inside = files.filter((f) => !f.path.startsWith('/'));
     const known = new Set(inside.map((f) => f.path));
     const fromGit: TouchedFile[] = [];
     for (const path of lines.keys()) {
@@ -228,13 +269,15 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
       f.lastTouchedAt === null && committedAt.has(f.path) ? { ...f, lastTouchedAt: committedAt.get(f.path) ?? null } : f;
     const byRecent = (a: TouchedFile, b: TouchedFile) => (b.lastTouchedAt ?? 0) - (a.lastTouchedAt ?? 0);
 
-    const uncommitted = inside.filter((f) => f.gitStatus !== null);
+    const uncommitted = inside
+      .filter((f) => f.gitStatus !== null)
+      .map((f) => (modifiedAt.has(f.path) ? { ...f, lastTouchedAt: modifiedAt.get(f.path) ?? null } : f))
+      .sort(compareTouched);
     const committed = [...inside.filter((f) => f.gitStatus === null && lines.has(f.path)), ...fromGit]
       .map(withTime)
       .sort(byRecent);
-    const unchanged = inside.filter((f) => f.gitStatus === null && !lines.has(f.path));
-    return { uncommitted, committed, unchanged, outside, fromGit: new Set(fromGit.map((f) => f.path)) };
-  }, [files, lines, committedAt]);
+    return { uncommitted, committed };
+  }, [files, lines, committedAt, modifiedAt]);
 
   // The order the editor steps through with next / previous file: what is on
   // screen, top to bottom, each file once.
@@ -260,8 +303,14 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
     [view],
   );
 
-  const gitOnly = useMemo(() => view.uncommitted.filter((f) => f.source === 'git').length, [view]);
-  const edits = useMemo(() => files.reduce((n, f) => n + f.editCount, 0), [files]);
+
+  // Keep the open file's row in view as tabs change, without yanking the
+  // list when it already shows.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activePath === null) return;
+    scrollRef.current?.querySelector<HTMLElement>('.tf-row[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [activePath, view, commits, mode]);
 
   const onOpen = useCallback(
     (file: TouchedFile) => {
@@ -270,46 +319,42 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
     [openFile],
   );
 
+  /** Why a git button could not hand its prompt over. Cleared on the next try. */
+  const [askNotice, setAskNotice] = useState<string | null>(null);
+  const [squashOpen, setSquashOpen] = useState(false);
+  useEffect(() => {
+    setAskNotice(null);
+    setSquashOpen(false);
+  }, [task.id]);
+  const askingRef = useRef(false);
+  const askClaude = async (text: string) => {
+    if (askingRef.current) return; // a double click must not send twice
+    askingRef.current = true;
+    try {
+      const outcome = await sendPrompt(task, text);
+      setAskNotice(
+        outcome !== 'failed'
+          ? null
+          : task.status === 'idle'
+            ? 'Could not reach the session. Nothing was sent.'
+            : 'Open the task’s transcript to get its message box, then try again.',
+      );
+    } finally {
+      askingRef.current = false;
+    }
+  };
+
   return (
     <div className="tf-pane">
-      <div className="tf-head">
-        <span className="tf-head-title">Touched files</span>
-        <span className="tf-head-count">
-          {view.uncommitted.length + view.committed.length} file
-          {view.uncommitted.length + view.committed.length === 1 ? '' : 's'}
-          {edits > 0 ? ` · ${edits} edit${edits === 1 ? '' : 's'}` : ''}
-        </span>
-        <span className="tf-mode" role="group" aria-label="Group files">
-          <button
-            type="button"
-            className="tf-mode-btn"
-            aria-pressed={mode === 'branch'}
-            onClick={() => setMode(writeMode('branch'))}
-            title="Every file changed on this branch, once, by where it stands"
-          >
-            Branch
-          </button>
-          <button
-            type="button"
-            className="tf-mode-btn"
-            aria-pressed={mode === 'commit'}
-            onClick={() => setMode(writeMode('commit'))}
-            title="Each commit on this branch with the files it changed"
-          >
-            By commit
-          </button>
-        </span>
-        <button
-          type="button"
-          className="tf-btn"
-          onClick={() => setReloadKey((k) => k + 1)}
-          disabled={loading}
-          title="Re-read the transcript and git status"
-        >
-          {loading ? 'reading…' : 'refresh'}
-        </button>
-      </div>
-
+      {askNotice !== null ? <div className="tf-warn">{askNotice}</div> : null}
+      {squashOpen ? (
+        <SquashRebaseDialog
+          task={task}
+          commits={commits}
+          uncommitted={view.uncommitted.map((f) => f.path)}
+          onClose={() => setSquashOpen(false)}
+        />
+      ) : null}
       {error !== null ? (
         <div className="tf-error">
           <span className="tf-error-label">Could not build the change set</span>
@@ -324,14 +369,8 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
         </div>
       ) : null}
 
-      {gitOnly > 0 ? (
-        <div className="tf-legend">
-          {gitOnly} file{gitOnly === 1 ? '' : 's'} changed in the worktree but not through an edit
-          tool — a Bash command, a generator or a formatter.
-        </div>
-      ) : null}
-
-      <div className="tf-scroll">
+      <div className="tf-scroll" ref={scrollRef}>
+        <CommentsSection task={task} onOpen={(path, line) => openFile({ path, line })} />
         {mode === 'commit' ? (
           <>
             {view.uncommitted.length > 0 ? (
@@ -340,7 +379,14 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
                   Uncommitted<span className="tf-section-count">{view.uncommitted.length}</span>
                 </div>
                 {view.uncommitted.map((f) => (
-                  <FileRow key={f.path} file={f} change={lines.get(f.path) ?? null} now={now} onOpen={onOpen} />
+                  <FileRow
+                    key={f.path}
+                    file={f}
+                    change={lines.get(f.path) ?? null}
+                    now={now}
+                    onOpen={onOpen}
+                    current={f.path === activePath}
+                  />
                 ))}
               </section>
             ) : null}
@@ -374,9 +420,9 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
                           key={`${c.sha}:${path}`}
                           file={rowFor(path)}
                           change={change}
-                          committedOnly
                           now={now}
                           onOpen={onOpen}
+                          current={path === activePath}
                         />
                       ))
                     : null}
@@ -390,53 +436,56 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
         ) : null}
         {mode === 'commit' ? null : (
           [
-            ['Uncommitted', view.uncommitted, true, null],
-            ['Committed on this branch', view.committed, true, null],
-            ['No net change', view.unchanged, showUnchanged, () => setShowUnchanged((v) => !v)],
-            ['Outside this worktree', view.outside, showOutside, () => setShowOutside((v) => !v)],
+            ['Uncommitted', view.uncommitted],
+            ['Committed on this branch', view.committed],
           ] as const
-        ).map(([label, rows, open, toggle]) =>
+        ).map(([label, rows]) =>
           rows.length === 0 ? null : (
             <section key={label} className="tf-section">
-              {toggle ? (
-                <button type="button" className="tf-section-head" aria-expanded={open} onClick={toggle}>
-                  <span className="tf-section-caret">{open ? '▾' : '▸'}</span> {label}
-                  <span className="tf-section-count">{rows.length}</span>
-                </button>
-              ) : (
-                <div className="tf-section-head">
-                  {label}
-                  <span className="tf-section-count">{rows.length}</span>
-                </div>
-              )}
-              {open
-                ? rows.map((f) => (
-                    <FileRow
-                      key={f.path}
-                      file={f}
-                      change={lines.get(f.path) ?? null}
-                      committedOnly={view.fromGit.has(f.path)}
-                      now={now}
-                      onOpen={onOpen}
-                    />
-                  ))
-                : null}
+              <div className="tf-section-head">
+                {label}
+                <span className="tf-section-count">{rows.length}</span>
+              </div>
+              {rows.map((f) => (
+                <FileRow
+                  key={f.path}
+                  file={f}
+                  change={lines.get(f.path) ?? null}
+                  kind={kinds.get(f.path) ?? null}
+                  now={now}
+                  onOpen={onOpen}
+                  current={f.path === activePath}
+                />
+              ))}
             </section>
           ),
         )}
 
-        {files.length === 0 && loaded && error === null ? (
+        {mode !== 'commit' && view.uncommitted.length === 0 && view.committed.length === 0 && loaded && error === null ? (
           <div className="tf-empty">
-            Nothing touched yet.
+            No changes yet.
             <span className="tf-empty-hint">
-              Files appear here as the agent edits them, and whenever git sees a change in{' '}
-              <span className="tf-mono">{task.worktreePath}</span>.
+              Files appear here as soon as git sees a change in <span className="tf-mono">{task.worktreePath}</span>.
             </span>
           </div>
         ) : null}
 
         {!loaded && loading ? <div className="tf-empty">reading the change set…</div> : null}
       </div>
+      {loaded ? (
+        <GitBar
+          task={task}
+          commits={commits.length}
+          dirty={view.uncommitted.length}
+          remote={remote}
+          onAsk={(text) => void askClaude(text)}
+          onSquash={() => setSquashOpen(true)}
+          mode={mode}
+          onMode={(m) => setMode(writeMode(m))}
+          onRefresh={() => setReloadKey((k) => k + 1)}
+          refreshing={loading}
+        />
+      ) : null}
     </div>
   );
 }
@@ -448,17 +497,23 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
 function FileRow({
   file,
   change,
-  committedOnly = false,
+  kind = null,
   now,
   onOpen,
+  current = false,
 }: {
   file: TouchedFile;
   /** Lines added/deleted against the base; null when git has no count. */
   change: LineChange | null;
-  /** Known only from the branch's commits; this transcript never mentions it. */
-  committedOnly?: boolean;
+  /**
+   * A / M / D / T against the base. Shown when the file is clean now, so a
+   * committed row says how the branch changed it instead of a blank `··`.
+   */
+  kind?: ChangeKind | null;
   now: number;
   onOpen: (f: TouchedFile) => void;
+  /** This file is in the editor's active tab. */
+  current?: boolean;
 }): ReactNode {
   const cut = file.path.lastIndexOf('/');
   // The trailing slash is its own element: `.tf-dir` clips from the FRONT
@@ -471,12 +526,16 @@ function FileRow({
   // and the path is something people copy. useActivate opens the file on a
   // plain click but not on a click that ends a text selection.
   const activate = useActivate(() => onOpen(file));
+  // The row says what git says: the status letter, the line counts. How the
+  // file was changed (an edit tool, a shell command, a formatter) is not
+  // shown -- the change is the same either way, and the diff is what to read.
+  const status = file.gitStatus ?? kind;
   return (
     <div
       role="button"
       tabIndex={0}
       className="tf-row"
-      data-source={file.source}
+      aria-current={current ? 'true' : undefined}
       onMouseDown={activate.onMouseDown}
       onClick={activate.onClick}
       onKeyDown={(e) => {
@@ -501,10 +560,10 @@ function FileRow({
       // Everything the row can shed when the column is narrow is still here.
       // Pinned as a column the pane goes down to 180px, where touched.css drops
       // the directory and the timestamp; the tooltip is where they survive.
-      title={rowTitle(file, now)}
+      title={rowTitle(file, kind, now)}
     >
-      <span className="tf-status" data-tone={statusTone(file.gitStatus)}>
-        {file.gitStatus === null ? '··' : file.gitStatus.replace(/ /g, '·')}
+      <span className="tf-status" data-tone={statusTone(status)}>
+        {status === null ? '··' : status.replace(/ /g, '·')}
       </span>
 
       <span className="tf-path">
@@ -515,14 +574,6 @@ function FileRow({
           </>
         )}
         <span className="tf-name">{name}</span>
-        {file.source === 'git' && !committedOnly ? (
-          <span
-            className="tf-badge"
-            title="Changed in the worktree, but not through an edit tool — a Bash command, a generator or a formatter. The transcript never mentions this file."
-          >
-            worktree
-          </span>
-        ) : null}
         {file.handEdited ? (
           <span className="tf-badge tf-badge-hand" title="You saved this file by hand in the editor">
             hand
@@ -553,12 +604,18 @@ function FileRow({
  * column, and at that width the directory and the relative time are dropped
  * from the layout — so they have to be somewhere, and hover is that somewhere.
  */
-function rowTitle(file: TouchedFile, now: number): string {
+const KIND_WORDS: Record<ChangeKind, string> = {
+  A: 'added on this branch',
+  M: 'modified on this branch',
+  D: 'deleted on this branch',
+  T: 'type changed on this branch',
+};
+
+function rowTitle(file: TouchedFile, kind: ChangeKind | null, now: number): string {
   const facts: string[] = [];
-  facts.push(file.editCount === 0 ? 'no edit-tool calls' : `${file.editCount} edit call${file.editCount === 1 ? '' : 's'}`);
-  if (file.lastTouchedAt !== null) facts.push(`last touched ${relativeTime(file.lastTouchedAt, now)} ago`);
+  if (file.lastTouchedAt !== null) facts.push(`changed ${relativeTime(file.lastTouchedAt, now)} ago`);
   if (file.gitStatus !== null) facts.push(`git ${file.gitStatus.trim() || '--'}`);
-  if (file.source === 'git') facts.push('changed in the worktree, not through an edit tool');
+  else if (kind !== null) facts.push(KIND_WORDS[kind]);
   if (file.handEdited) facts.push('saved by hand in the editor');
   return `${file.path}\n${facts.join(' · ')}`;
 }
@@ -569,7 +626,7 @@ function linesTitle(change: LineChange | null): string {
   return `${change.added} line(s) added, ${change.deleted} removed, against the base branch`;
 }
 
-/** add / del / mod / none, from the porcelain code. Drives the row's colour. */
+/** add / del / mod / none, from a porcelain code or a branch-diff letter. Drives the status colour. */
 export function statusTone(code: string | null): 'add' | 'del' | 'mod' | 'none' {
   if (code === null) return 'none';
   const letters = code.replace(/ /g, '');
@@ -577,6 +634,26 @@ export function statusTone(code: string | null): 'add' | 'del' | 'mod' | 'none' 
   if (letters.includes('?') || letters.includes('A')) return 'add';
   if (letters === '') return 'none';
   return 'mod';
+}
+
+/**
+ * Modification time per worktree-relative path. A path that cannot be read --
+ * deleted, or outside the granted scope -- is simply absent, and its row keeps
+ * the transcript's time.
+ */
+async function modifiedTimes(root: string, paths: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  await Promise.all(
+    paths.map(async (p) => {
+      try {
+        const m = (await stat(`${root}/${p}`)).mtime;
+        if (m) out.set(p, m.getTime());
+      } catch {
+        /* no time: see above */
+      }
+    }),
+  );
+  return out;
 }
 
 function firstLine(text: string): string {

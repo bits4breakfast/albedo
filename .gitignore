@@ -6,3 +6,6 @@ src-tauri/target
 
 # Claude Code agent worktrees and local settings
 .claude/
+
+# PHPantom binaries fetched by build.sh --with-phpantom
+src-tauri/binaries/

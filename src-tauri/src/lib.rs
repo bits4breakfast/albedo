@@ -3,21 +3,22 @@ mod fsx;
 mod pty;
 
 use tauri::menu::{Menu, MenuItem, MenuItemKind, WINDOW_SUBMENU_ID};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 /// Event the webview listens for when the user presses the close shortcut.
 const CLOSE_TAB_EVENT: &str = "albedo://close-tab";
 const CLOSE_TAB_ID: &str = "close-tab";
 
-/// The default menu, with every "Close Window" (Cmd+W) swapped for "Close Editor".
+/// The default menu, with every "Close Window" (Cmd+W) swapped for "Close Tab".
 ///
 /// Albedo has one window, so the stock Cmd+W quit the whole app -- including
 /// every live terminal -- when the user only meant to dismiss an open file.
 /// The default menu carries a "Close Window" in BOTH the File and the Window
 /// submenus, so all of them go; one removed alone leaves the shortcut live.
-/// The new item tells the webview, which closes the editor if one is open and
-/// otherwise does nothing. The window's own close button is untouched.
+/// The new item tells the webview, which closes the active editor tab if one
+/// is open and otherwise does nothing. The window's own close button is
+/// untouched.
 fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(handle)?;
     let mut home: Option<tauri::menu::Submenu<R>> = None;
@@ -37,13 +38,7 @@ fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
             }
         }
     }
-    let close = MenuItem::with_id(
-        handle,
-        CLOSE_TAB_ID,
-        "Close Editor",
-        true,
-        Some("CmdOrCtrl+W"),
-    )?;
+    let close = MenuItem::with_id(handle, CLOSE_TAB_ID, "Close Tab", true, Some("CmdOrCtrl+W"))?;
     match home {
         Some(sub) => sub.append(&close)?,
         None => {
@@ -70,6 +65,8 @@ const M0005_SUBAGENTS: &str = include_str!("../../src/db/migrations/0005_subagen
 /// v6: whether Albedo created the task's branch, so archive never deletes one
 /// the user already had.
 const M0006_CREATED_BRANCH: &str = include_str!("../../src/db/migrations/0006_created_branch.sql");
+/// v7: review comments on a task's files, sent to Claude Code.
+const M0007_COMMENTS: &str = include_str!("../../src/db/migrations/0007_comments.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -109,6 +106,12 @@ pub fn run() {
             sql: M0006_CREATED_BRANCH,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 7,
+            description: "review comments",
+            sql: M0007_COMMENTS,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -116,6 +119,19 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id().as_ref() == CLOSE_TAB_ID {
                 let _ = app.emit(CLOSE_TAB_EVENT, ());
+            }
+        })
+        // Every shortcut is a keydown listener in the page, so it only fires
+        // while the WKWebView is the window's first responder. Activating the
+        // window without clicking into the page (Cmd-Tab, the Dock, a closed
+        // dialog) can leave it not first responder: the key then reaches no
+        // one, matches no menu item, and AppKit beeps. Hand it back on every
+        // activation.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(true) = event {
+                if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
+                    let _ = webview.as_ref().set_focus();
+                }
             }
         })
         .plugin(tauri_plugin_shell::init())

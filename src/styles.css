@@ -1057,6 +1057,11 @@ button {
   border-radius: 2px;
 }
 .row-menu-item:hover { background: var(--accent-soft); color: var(--text-strong); }
+.row-menu-item:disabled { color: var(--faint); background: transparent; }
+/* A new group in the menu: a rule above it, inside the menu's padding. */
+.row-menu-item[data-group='true'] { margin-top: 3px; box-shadow: 0 -1px 0 var(--border); border-radius: 0 0 2px 2px; }
+/* The tick column of a radio item; empty when unticked, so labels align. */
+.row-menu-check { display: inline-block; width: 1.2em; color: var(--accent); }
 .row-menu-item[data-tone='danger']:hover { background: var(--del-soft); color: var(--on-del-soft); }
 
 /* --------------------------------------------------------------------------

@@ -22,6 +22,29 @@ import { copyText } from '../../lib/clipboard';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
 import { useOpenFile } from './openFile';
 import FileDiffView from './FileDiffView';
+import SymbolResults, { type SymbolResultsState } from './SymbolResults';
+import { navigate, type NavAction } from './symbolNav';
+import { isPhpPath, warmPhpantom } from '../../lsp/phpantom';
+import {
+  addComment,
+  deleteComment,
+  editComment,
+  listComments,
+  moveComment,
+  onCommentsChanged,
+  relocate,
+  resolveComment,
+  type ReviewComment,
+} from '../../db/comments';
+import {
+  commentsExtension,
+  linesOfSelection,
+  commentsField,
+  setDraft,
+  setPlacedComments,
+  type CommentActions,
+  type PlacedComment,
+} from './comments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -60,6 +83,7 @@ import { onThemeChange, resolvedTheme } from '../theme';
 import type { ResolvedTheme } from '../theme';
 import { notePty } from '../Terminal';
 import './editor.css';
+import './comments.css';
 
 /** Files past this size are edited without colour. Tokenising them janks. */
 const MAX_HIGHLIGHT_CHARS = 300_000;
@@ -359,13 +383,43 @@ export interface FileEditorProps {
    * real repo, not a throwaway worktree, so nothing typed here may reach it.
    */
   readOnly?: boolean;
+  /**
+   * The tab on screen. Several editors stay mounted, one per open tab, so
+   * each keeps its buffer, undo history and scroll; only the active one may
+   * answer the window-level keys (Esc, ⇧⌘D, ⌥⌘↑↓, ⌥⌘C). Default true.
+   */
+  active?: boolean;
+  /** Told when unsaved edits appear or go, for the tab's dot. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * The ‹ › arrows walk the change set in place: given, a step replaces this
+   * tab's file instead of opening another tab.
+   */
+  onStep?: (path: string) => void;
+  /** Bumped to ask this editor to close, through its unsaved-edits prompt. */
+  closeSignal?: number;
+  /** File or Diff to start in: the tabs carry the last choice to a new tab. */
+  initialMode?: 'file' | 'diff';
+  /** The person picked File or Diff (a button or ⇧⌘D), not a line jump. */
+  onModeChosen?: (mode: 'file' | 'diff') => void;
 }
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export default function FileEditor({ task, request, onClose, readOnly = false }: FileEditorProps) {
+export default function FileEditor({
+  task,
+  request,
+  onClose,
+  readOnly = false,
+  active = true,
+  onDirtyChange,
+  onStep,
+  closeSignal = 0,
+  initialMode = 'file',
+  onModeChosen,
+}: FileEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** Content as it was last known to be on disk. The overwrite guard's baseline. */
@@ -377,6 +431,12 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
   const overwriteRef = useRef(false);
   /** The live save handler, so the Cmd+S keymap never closes over stale state. */
   const saveRef = useRef<() => void>(() => {});
+  /** The live ⌘B / ⌥F7 handler, read by the keymap for the same reason. */
+  const navRef = useRef<(action: NavAction) => void>(() => {});
+  /** Review-comment callbacks, read by the CodeMirror extension; null when comments are off. */
+  const commentActionsRef = useRef<CommentActions | null>(null);
+  /** ⇧⌘C: start a comment on the selected lines. */
+  const startCommentRef = useRef<() => void>(() => {});
 
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [resolved, setResolved] = useState<ResolvedPath | null>(null);
@@ -389,11 +449,11 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
   /*
    * File | Diff. Component state, NOT reset when the request changes: stepping
    * to the next changed file is a new request, and walking the change set as
-   * diffs is the point. Reset on close, so the next file opened from scratch
-   * opens as a file. The CodeMirror view stays alive (hidden) in Diff mode, so
+   * diffs is the point. A new tab starts in the last mode chosen (see
+   * EditorTabs). The CodeMirror view stays alive (hidden) in Diff mode, so
    * unsaved edits, undo history and scroll survive a look at the diff.
    */
-  const [mode, setMode] = useState<'file' | 'diff'>('file');
+  const [mode, setMode] = useState<'file' | 'diff'>(() => (initialMode === 'diff' && !readOnly ? 'diff' : 'file'));
   const modeRef = useRef(mode);
   modeRef.current = mode;
   /** A line asked for while in Diff mode, revealed once the file is showing. */
@@ -601,8 +661,28 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
           keymap.of([
             { key: 'Mod-s', preventDefault: true, run: () => (saveRef.current(), true) },
             { key: 'Ctrl-s', preventDefault: true, run: () => (saveRef.current(), true) },
+            // PhpStorm's Go to Declaration and Find Usages. Navigation, not
+            // code intelligence: git grep and the file's imports, no LSP.
+            { key: 'Mod-b', preventDefault: true, run: () => (navRef.current('declaration'), true) },
+            { key: 'Alt-F7', preventDefault: true, run: () => (navRef.current('usages'), true) },
+            // A review comment on the selected lines (or the cursor's line).
+            { key: 'Shift-Mod-c', preventDefault: true, run: () => (startCommentRef.current(), true) },
           ]),
         ),
+        // ⌘-click is Go to Declaration, as in PhpStorm, so adding a cursor
+        // moves to ⌥-click.
+        EditorView.clickAddsSelectionRange.of((e) => e.altKey),
+        EditorView.domEventHandlers({
+          mousedown: (e, view) => {
+            if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.button !== 0) return false;
+            const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+            if (pos === null) return false;
+            e.preventDefault();
+            view.dispatch({ selection: { anchor: pos } });
+            navRef.current('declaration');
+            return true;
+          },
+        }),
 
         // --- the whole extension list. Nothing else belongs here. ---------
         lineNumbers(),
@@ -625,6 +705,8 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
         shikiField,
         shikiHighlighting(langForPath(resolved.relative)),
         flashField,
+        // Review comments: not on a main checkout, which has no task to send them to.
+        ...(readOnly ? [] : [commentsExtension(() => commentActionsRef.current)]),
         ...(language ? [language] : []),
         themeCompartment.of(themeExtension(resolvedTheme())),
         EditorView.lineWrapping,
@@ -709,12 +791,20 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
   // with the cursor inside the editor -- same as the stepping keys.
   // A main checkout has no task base to diff against.
   const canDiff = !readOnly && resolved !== null && phase.kind === 'ready';
+  /** A choice the person made, which the tabs remember for the next file. */
+  const chooseMode = useCallback(
+    (next: 'file' | 'diff') => {
+      if (next === 'diff' && !canDiff) return;
+      setMode(next);
+      onModeChosen?.(next);
+    },
+    [canDiff, onModeChosen],
+  );
   const toggleMode = useCallback(() => {
-    if (!canDiff) return;
-    setMode((m) => (m === 'file' ? 'diff' : 'file'));
-  }, [canDiff]);
+    chooseMode(modeRef.current === 'file' ? 'diff' : 'file');
+  }, [chooseMode]);
   useEffect(() => {
-    if (request === null) return;
+    if (request === null || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'KeyD') return;
       e.preventDefault();
@@ -723,7 +813,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [request, toggleMode]);
+  }, [request, toggleMode, active]);
 
   // --- close ---------------------------------------------------------------
   const requestClose = useCallback(() => {
@@ -735,6 +825,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
   }, [dirty, onClose]);
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -743,7 +834,28 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [requestClose]);
+  }, [requestClose, active]);
+
+  // The tab's × and ⌘W ask through here, so they get the same prompt.
+  const closeSignalSeen = useRef(closeSignal);
+  useEffect(() => {
+    if (closeSignal === closeSignalSeen.current) return;
+    closeSignalSeen.current = closeSignal;
+    requestClose();
+  }, [closeSignal, requestClose]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  // Shown again: a hidden CodeMirror cannot measure, and the keys go here now.
+  useEffect(() => {
+    if (!active) return;
+    const view = viewRef.current;
+    if (!view) return;
+    view.requestMeasure();
+    view.focus();
+  }, [active]);
 
   // --- stepping through the change set --------------------------------------
   // The touched-files list publishes its order; the editor walks it. Blocked
@@ -760,11 +872,14 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     (dir: 1 | -1) => {
       if (dirty || current === null) return;
       const next = neighbour(order, current, dir);
-      if (next !== null) openFile({ path: next });
+      if (next === null) return;
+      if (onStep) onStep(next);
+      else openFile({ path: next });
     },
-    [dirty, current, order, openFile],
+    [dirty, current, order, openFile, onStep],
   );
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.altKey || e.ctrlKey) return;
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -774,19 +889,193 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [step]);
+  }, [step, active]);
+
+  // --- Go to Declaration / Find Usages --------------------------------------
+  // A PHP file opened is the one signal that starts PHPantom, ahead of the
+  // first ⌘B so its ~1s of indexing overlaps the reading. Any other file
+  // type never starts it. A no-op when it is not installed or already up.
+  const worktree = task.worktreePath;
+  useEffect(() => {
+    if (current !== null && isPhpPath(current)) warmPhpantom(worktree);
+  }, [current, worktree]);
+
+  // Like stepping, a jump to another file is blocked while there are unsaved
+  // edits; a jump within this file is not, since nothing is reloaded.
+  const [nav, setNav] = useState<SymbolResultsState | null>(null);
+  /** Bumped per lookup; a slower, superseded answer is dropped. */
+  const navSeq = useRef(0);
+  const closeNav = useCallback(() => {
+    navSeq.current++;
+    setNav(null);
+    viewRef.current?.focus();
+  }, []);
+  const jump = useCallback(
+    (path: string, line: number) => {
+      if (dirty && path !== current) {
+        setNav({ kind: 'message', title: 'Unsaved edits', message: 'Save or discard your edits first' });
+        return false;
+      }
+      setNav(null);
+      openFile({ path, line });
+      return true;
+    },
+    [dirty, current, openFile],
+  );
+  navRef.current = (action: NavAction) => {
+    const view = viewRef.current;
+    if (!view || current === null) return;
+    const mine = ++navSeq.current;
+    const title = action === 'usages' ? 'Find Usages' : 'Go to Declaration';
+    setNav({ kind: 'loading', title });
+    navigate(
+      { root: task.worktreePath, path: current, text: view.state.doc.toString(), offset: view.state.selection.main.head },
+      action,
+    )
+      .then((out) => {
+        if (navSeq.current !== mine) return;
+        if (out.kind === 'open') jump(out.path, out.line);
+        else if (out.kind === 'list') setNav({ kind: 'list', title: out.title, result: out.result });
+        else setNav({ kind: 'message', title, message: out.message });
+      })
+      .catch((err: unknown) => {
+        if (navSeq.current === mine) setNav({ kind: 'message', title, message: `Search failed: ${message(err)}` });
+      });
+  };
+
+  // --- review comments ----------------------------------------------------
+  // Stored in SQLite (src/db/comments.ts). Placed by the code they were left
+  // on, so they follow it when the agent moves it; a comment whose code is
+  // gone is listed as outdated rather than pinned to the wrong lines.
+  const commentsOn = !readOnly;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const [fileComments, setFileComments] = useState<ReviewComment[]>([]);
+  const [outdated, setOutdated] = useState<ReviewComment[]>([]);
+  const [commentNotice, setCommentNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!commentsOn || current === null) {
+      setFileComments([]);
+      return;
+    }
+    let live = true;
+    const load = () =>
+      void listComments(task.id).then(
+        (all) => {
+          if (live) setFileComments(all.filter((c) => c.path === current));
+        },
+        // Comments are a layer on the file: failing to read them must not
+        // break the editor. Logged, and the file shows without them.
+        (err: unknown) => console.warn('[comments] could not load', err),
+      );
+    load();
+    const off = onCommentsChanged((id) => {
+      if (id === task.id) load();
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [commentsOn, task.id, current]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || phase.kind !== 'ready') return;
+    const text = view.state.doc.toString();
+    const placed: PlacedComment[] = [];
+    const lost: ReviewComment[] = [];
+    for (const c of fileComments) {
+      const at = relocate(c, text);
+      if (at.state === 'outdated') {
+        lost.push(c);
+        continue;
+      }
+      placed.push({ comment: c, from: view.state.doc.line(at.lineStart).from, to: view.state.doc.line(at.lineEnd).to });
+      // Moved in the file on disk: remember where. Not while the buffer holds
+      // unsaved typing, which is not the file the comment refers to.
+      if (!dirtyRef.current && (at.lineStart !== c.lineStart || at.lineEnd !== c.lineEnd)) {
+        // Best effort: if it fails, the comment is simply found again next time.
+        moveComment(task.id, c.id, at.lineStart, at.lineEnd).catch((err: unknown) =>
+          console.warn('[comments] could not record the new position', err),
+        );
+      }
+    }
+    view.dispatch({ effects: setPlacedComments.of(placed) });
+    setOutdated(lost);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileComments, phase.kind, doc?.key]);
+
+  /** A comment write that failed says so, rather than leaving the list quietly wrong. */
+  const reportFailure = (write: Promise<unknown>, what: string) => {
+    write.catch((err: unknown) => setCommentNotice(`Could not ${what}: ${message(err)}`));
+  };
+
+  commentActionsRef.current =
+    commentsOn && current !== null
+      ? {
+          save: (draft, text, state) => {
+            const view = viewRef.current;
+            if (!view) return;
+            let write: Promise<unknown>;
+            if (draft.editing) {
+              write = editComment(task.id, draft.editing.id, text);
+            } else {
+              // The comment quotes the file as Claude Code will read it, so
+              // it is refused while the buffer differs from what is on disk.
+              if (dirtyRef.current) {
+                setCommentNotice('Save your edits first: a comment refers to the file as it is on disk.');
+                return;
+              }
+              const a = state.doc.lineAt(draft.from);
+              const b = state.doc.lineAt(draft.to);
+              write = addComment({
+                taskId: task.id,
+                path: current,
+                lineStart: a.number,
+                lineEnd: b.number,
+                anchorText: state.doc.sliceString(a.from, b.to),
+                body: text,
+              });
+            }
+            // The box closes only once the comment is stored: until then the
+            // text lives nowhere else, and a failed write must not lose it.
+            write.then(
+              () => {
+                setCommentNotice(null);
+                view.dispatch({ effects: setDraft.of(null) });
+                view.focus();
+              },
+              (err: unknown) => setCommentNotice(`Could not save the comment, which is still in its box: ${message(err)}`),
+            );
+          },
+          edit: (c) => {
+            const view = viewRef.current;
+            const at = view?.state.field(commentsField).placed.find((p) => p.comment.id === c.id);
+            if (view && at) view.dispatch({ effects: setDraft.of({ from: at.from, to: at.to, editing: c }) });
+          },
+          resolve: (c) => reportFailure(resolveComment(task.id, c.id), 'resolve the comment'),
+          remove: (c) => reportFailure(deleteComment(task.id, c.id), 'delete the comment'),
+        }
+      : null;
+  startCommentRef.current = () => {
+    const view = viewRef.current;
+    if (!view || !commentsOn || mode !== 'file') return;
+    view.dispatch({ effects: setDraft.of({ ...linesOfSelection(view.state), editing: null }) });
+  };
 
   if (request === null) return null;
 
   const title = resolved?.relative ?? request.path;
+  // Filename first, its folder after and clipped first, as Linear's review
+  // tool does: the part you are reading never moves when the folder is long.
+  const slash = title.lastIndexOf('/');
+  const fileName = title.slice(slash + 1);
+  const folder = slash > 0 ? title.slice(0, slash + 1) : '';
 
   return (
     <div className="ed-root" role="dialog" aria-label={`Editing ${title}`}>
       <div className="ed-bar">
-        <span className="ed-path" title={resolved?.absolute ?? request.path}>
-          {title}
-        </span>
-        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} />
+        {/* The arrows lead the bar so stepping through files never moves them. */}
         {position >= 0 && order.length > 1 ? (
           <span className="ed-nav" aria-label="Changed files">
             <button
@@ -814,7 +1103,14 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
             </button>
           </span>
         ) : null}
-        {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
+        <span className="ed-path" title={resolved?.absolute ?? request.path}>
+          <span className="ed-name">
+            {fileName}
+            {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
+          </span>
+          {folder && <span className="ed-folder">{folder}</span>}
+        </span>
+        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} active={active} />
         {handEdited && (
           <span className="ed-badge" title="You saved this file by hand in this session">
             hand-edited
@@ -835,7 +1131,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
                 type="button"
                 className="ed-mode-btn"
                 aria-pressed={mode === 'file'}
-                onClick={() => setMode('file')}
+                onClick={() => chooseMode('file')}
                 title="The file as it is now (⇧⌘D toggles)"
               >
                 File
@@ -845,7 +1141,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
                 className="ed-mode-btn"
                 aria-pressed={mode === 'diff'}
                 aria-keyshortcuts="Shift+Meta+D"
-                onClick={() => canDiff && setMode('diff')}
+                onClick={() => chooseMode('diff')}
                 disabled={!canDiff}
                 title="This task's change to the file: the branch's base against the working tree, committed and uncommitted together (⇧⌘D)"
               >
@@ -877,9 +1173,6 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
           title="Find (⌘F)"
         >
           Find
-        </button>
-        <button type="button" className="ed-btn ed-close" onClick={requestClose} title="Close (Esc)">
-          ✕
         </button>
       </div>
 
@@ -942,6 +1235,43 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
         </div>
       )}
 
+      {commentNotice && (
+        <div className="ed-notice" data-tone="warn">
+          <span>{commentNotice}</span>
+          <button type="button" className="ed-btn" onClick={() => setCommentNotice(null)}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {/* A comment whose code is no longer in the file: shown, never pinned to
+          whatever now sits at its old lines. */}
+      {outdated.length > 0 && (
+        <div className="ed-notice ed-cmt-outdated" data-tone="muted">
+          <span>
+            {outdated.length === 1 ? 'A comment' : `${outdated.length} comments`} on this file no longer match its
+            code:
+          </span>
+          {outdated.map((c) => (
+            <span key={c.id} className="ed-cmt-outdated-item" title={c.anchorText}>
+              <span className="ed-cmt-outdated-body">
+                lines {c.lineStart}–{c.lineEnd}: {c.body.split('\n')[0]}
+              </span>
+              <button type="button" className="ed-btn" onClick={() => reportFailure(resolveComment(task.id, c.id), 'resolve the comment')}>
+                Resolve
+              </button>
+              <button
+                type="button"
+                className="ed-btn ed-danger"
+                onClick={() => reportFailure(deleteComment(task.id, c.id), 'delete the comment')}
+              >
+                Delete
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="ed-body">
         {phase.kind === 'loading' && <div className="ed-message">opening {request.path}…</div>}
         {phase.kind === 'outside' && (
@@ -964,6 +1294,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
         ) : null}
         <div className="ed-surface" ref={hostRef} hidden={phase.kind !== 'ready' || mode === 'diff'} />
       </div>
+      <SymbolResults state={nav} onClose={closeNav} onOpen={(m) => jump(m.path, m.line)} />
     </div>
   );
 }
@@ -993,7 +1324,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
  * there); Option-click copies the absolute path. "copied" confirms it for a
  * moment rather than leaving you to wonder whether it worked.
  */
-function CopyPathButton({ path, absolute }: { path: string; absolute: string | null }) {
+function CopyPathButton({ path, absolute, active }: { path: string; absolute: string | null; active: boolean }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
@@ -1013,6 +1344,7 @@ function CopyPathButton({ path, absolute }: { path: string; absolute: string | n
   // the absolute path. Matched on `code`, because Option turns `key` into "ç".
   // Capture phase, so it works with the cursor inside the editor too.
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.altKey || e.ctrlKey || e.code !== 'KeyC') return;
       e.preventDefault();
@@ -1021,7 +1353,7 @@ function CopyPathButton({ path, absolute }: { path: string; absolute: string | n
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [copy]);
+  }, [copy, active]);
 
   return (
     <button

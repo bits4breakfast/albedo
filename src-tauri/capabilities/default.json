@@ -90,6 +90,23 @@
         }
       ]
     },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/phpantom_lsp",
+          "sidecar": true,
+          "args": ["--stdio"]
+        },
+        {
+          "name": "phpantom",
+          "cmd": "$HOME/.albedo/bin/phpantom_lsp",
+          "args": ["--stdio"]
+        }
+      ]
+    },
+    "shell:allow-stdin-write",
+    "shell:allow-kill",
 
     "dialog:default",
     "dialog:allow-open",

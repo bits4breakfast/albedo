@@ -17,7 +17,9 @@ import type { ReactNode } from 'react';
 import type { Task } from '../../types';
 import type { ResolvedPath } from '../../lib/paths';
 import { loadTaskFileDiff, type ChangeKind, type TaskFileDiff } from '../../git/fileDiff';
-import { Diff } from '../transcript/Diff';
+import { Diff, DiffAnnotationsContext } from '../transcript/Diff';
+import { useDiffComments } from './diffComments';
+import { dismissAfterFocusedTime } from '../../lib/focusTimer';
 import './diffview.css';
 
 /** The working-tree side: the file on disk, null when it does not exist. */
@@ -57,6 +59,17 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     setLoad({ kind: 'loading' });
   }, [target.relative]);
 
+  /**
+   * A refresh that changes nothing changes nothing on screen either, which
+   * reads exactly like a button that does not work -- so it confirms itself.
+   */
+  const [outcome, setOutcome] = useState<'refreshing' | 'refreshed' | null>(null);
+  useEffect(() => {
+    if (outcome !== 'refreshed') return;
+    // Five seconds of the window having focus: not missed by looking away.
+    return dismissAfterFocusedTime(5000, () => setOutcome(null));
+  }, [outcome]);
+
   useEffect(() => {
     let live = true;
     // Keep the previous diff on screen while a refresh of the SAME file runs;
@@ -64,15 +77,32 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     setLoad((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }));
     void loadTaskFileDiff(task.worktreePath, task.baseBranch, target.relative, () => readWorking(target.absolute))
       .then((data) => {
-        if (live) setLoad({ kind: 'ready', data });
+        if (!live) return;
+        setLoad({ kind: 'ready', data });
+        setOutcome((o) => (o === 'refreshing' ? 'refreshed' : o));
       })
       .catch((err: unknown) => {
-        if (live) setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        if (!live) return;
+        setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        setOutcome(null);
       });
     return () => {
       live = false;
     };
   }, [task.worktreePath, task.baseBranch, target.relative, target.absolute, reloadKey, again]);
+
+  const refresh = () => {
+    setOutcome('refreshing');
+    setAgain((n) => n + 1);
+  };
+
+  // Review comments on the new side: only when there is a current file for
+  // them to point at (not a deleted file, not a binary).
+  const currentText =
+    load.kind === 'ready' && 'newText' in load.data.result && load.data.result.change !== 'deleted'
+      ? load.data.result.newText
+      : null;
+  const comments = useDiffComments(task.id, target.relative, currentText, unsaved);
 
   if (load.kind === 'loading') return <div className="ed-message">reading the change…</div>;
   if (load.kind === 'error') {
@@ -98,12 +128,29 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
           against {against}
         </span>
         {unsaved ? <span className="ed-diff-unsaved">unsaved edits are not included</span> : null}
-        <button type="button" className="ed-btn ed-diff-refresh" onClick={() => setAgain((n) => n + 1)} title="Re-read the file and git">
-          refresh
+        <button
+          type="button"
+          className="ed-btn ed-diff-refresh"
+          onClick={refresh}
+          disabled={outcome === 'refreshing'}
+          title="Re-read the file and git"
+          aria-live="polite"
+        >
+          {outcome === 'refreshing' ? 'refreshing…' : outcome === 'refreshed' ? 'refreshed' : 'refresh'}
         </button>
       </div>
+      {comments.notice ? (
+        <div className="ed-notice" data-tone="warn">
+          <span>{comments.notice}</span>
+          <button type="button" className="ed-btn" onClick={comments.clearNotice}>
+            OK
+          </button>
+        </div>
+      ) : null}
       <div className="ed-diff-scroll">
-        <DiffBody data={load.data} />
+        <DiffAnnotationsContext.Provider value={comments.annotations}>
+          <DiffBody data={load.data} />
+        </DiffAnnotationsContext.Provider>
       </div>
     </div>
   );
@@ -138,6 +185,8 @@ function DiffBody({ data }: { data: TaskFileDiff }): ReactNode {
           expand={{ oldText: result.oldText, newText: result.newText }}
           absoluteLines={result.change !== 'deleted'}
           contextPath={null}
+          // The title bar above already names the file.
+          showPath={false}
         />
       );
     case 'binary':

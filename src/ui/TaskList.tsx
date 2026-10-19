@@ -11,6 +11,7 @@ import { useShortcuts } from './shortcuts';
 import { PrRowMark } from './PrBadge';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
+import { useBranchSync } from '../git/branchSync';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -155,6 +156,9 @@ export default function TaskList({
    */
   usePrPolling(tasks);
   usePrStatusVersion();
+  // The stored branch goes stale when a checkout is switched under a task, and
+  // the PR lookup above keys on it. A change reloads the tasks, which re-arms it.
+  useBranchSync(tasks);
 
   // Ages only need to be roughly right.
   useEffect(() => {

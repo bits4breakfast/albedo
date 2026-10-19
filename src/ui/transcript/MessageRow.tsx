@@ -19,7 +19,7 @@ import Diff, { Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composeP
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
-import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, type UserBlock } from './envelopes';
+import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, type UserBlock } from './envelopes';
 import { imageAt } from '../../capture';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -181,6 +181,23 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
           {block.args ? <span className="tx-cmd-args">{block.args}</span> : null}
         </div>
       );
+    case 'action':
+      return <ActionBlock block={block} />;
+    case 'shell-input':
+      return (
+        <div className="tx-cmd tx-shell-in" title="Run in Claude Code's shell mode">
+          <span className="tx-cmd-name">!</span>
+          <span className="tx-shell-cmd">{block.command}</span>
+        </div>
+      );
+    case 'shell-output':
+      return <ShellOutput stdout={block.stdout} stderr={block.stderr} />;
+    case 'cleared':
+      return (
+        <div className="tx-cleared" role="separator">
+          <span>context cleared</span>
+        </div>
+      );
     case 'system-reminder':
       return <Collapsed label="injected context" text={block.text} />;
     case 'skill':
@@ -228,6 +245,76 @@ function NotificationChip({ block }: { block: Extract<UserBlock, { kind: 'task-n
           <FieldList fields={fields} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Something the user started from an Albedo button. Reads as the act -- "Push"
+ * -- with the prompt Claude was given folded under it, for when it matters
+ * exactly what was asked.
+ */
+function ActionBlock({ block }: { block: Extract<UserBlock, { kind: 'action' }> }): ReactNode {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="tx-action">
+      <button
+        type="button"
+        className="tx-cmd tx-action-head"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title={open ? 'Hide the prompt Claude was given' : 'Show the prompt Claude was given'}
+      >
+        <Disclosure open={open} />
+        <span className="tx-cmd-name">{block.label}</span>
+        <span className="tx-cmd-args">from Albedo</span>
+      </button>
+      {open ? (
+        <div className="tx-think-body">
+          <Markdown text={block.text} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Past this, only the tail shows until asked: a build's last lines are its verdict. */
+const SHELL_TAIL_LINES = 8;
+const SHELL_FOLD_AT = 14;
+
+/** Output of a `!` command. stderr after stdout, in its own colour. */
+function ShellOutput({ stdout, stderr }: { stdout: string; stderr: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const outLines = stdout.length > 0 ? stdout.split('\n') : [];
+  const errLines = stderr.length > 0 ? stderr.split('\n') : [];
+  const total = outLines.length + errLines.length;
+  const folded = !open && total > SHELL_FOLD_AT;
+
+  // Folded, keep the last lines across both streams, stderr being the later.
+  const errShown = folded ? errLines.slice(-SHELL_TAIL_LINES) : errLines;
+  const outShown = folded ? outLines.slice(-Math.max(0, SHELL_TAIL_LINES - errShown.length)) : outLines;
+  const hidden = total - outShown.length - errShown.length;
+
+  return (
+    <div className="tx-shell-out">
+      {hidden > 0 ? (
+        <button type="button" className="tx-think-head" onClick={() => setOpen(true)} aria-expanded={false}>
+          <Disclosure open={false} /> {hidden} earlier line{hidden === 1 ? '' : 's'}
+        </button>
+      ) : open ? (
+        <button type="button" className="tx-think-head" onClick={() => setOpen(false)} aria-expanded>
+          <Disclosure open /> {total} lines
+        </button>
+      ) : null}
+      <pre className="tx-pre tx-output">
+        {outShown.length > 0 ? <LinkifiedText text={outShown.join('\n')} /> : null}
+        {outShown.length > 0 && errShown.length > 0 ? '\n' : null}
+        {errShown.length > 0 ? (
+          <span className="tx-stderr">
+            <LinkifiedText text={errShown.join('\n')} />
+          </span>
+        ) : null}
+      </pre>
     </div>
   );
 }
@@ -293,7 +380,7 @@ function ThinkingRow({ message }: { message: Message }): ReactNode {
 }
 
 function SystemRow({ message }: { message: Message }): ReactNode {
-  const text = (message.body ?? '').trim();
+  const text = systemRowText(message.body);
   if (text.length === 0) return null;
   return (
     <div className="tx-row tx-row-system">
@@ -422,12 +509,62 @@ type Block =
   | { t: 'code'; lang: string; code: string }
   | { t: 'list'; ordered: boolean; items: string[] }
   | { t: 'quote'; text: string }
-  | { t: 'hr' };
+  | { t: 'hr' }
+  | { t: 'table'; align: Align[]; head: string[]; rows: string[][] };
+
+type Align = 'left' | 'center' | 'right' | null;
 
 const FENCE_RE = /^\s*(`{3,}|~{3,})\s*([^\s`]*)/;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const HR_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
 const ITEM_RE = /^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)$/;
+/** A GFM delimiter row: `|---|:--:|`, outer pipes optional. */
+const DELIM_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/**
+ * A table row's cells, GFM style: outer pipes optional, `\|` is a literal
+ * pipe, and a pipe inside a code span does not split.
+ */
+export function splitRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  const cells: string[] = [];
+  let cell = '';
+  let tick = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i] as string;
+    if (c === '\\' && s[i + 1] === '|') {
+      cell += '|';
+      i++;
+    } else if (c === '`') {
+      let run = 1;
+      while (s[i + run] === '`') run++;
+      cell += '`'.repeat(run);
+      i += run - 1;
+      tick = tick === 0 ? run : tick === run ? 0 : tick;
+    } else if (c === '|' && tick === 0) {
+      cells.push(cell.trim());
+      cell = '';
+    } else cell += c;
+  }
+  // A trailing pipe closes the last cell rather than opening an empty one.
+  if (cell.trim() !== '' || !s.trimEnd().endsWith('|')) cells.push(cell.trim());
+  return cells;
+}
+
+/** Whether `lines[i]` opens a table: a header row followed by its delimiter row. */
+function tableStartsAt(lines: readonly string[], i: number): boolean {
+  const head = lines[i] ?? '';
+  const delim = lines[i + 1] ?? '';
+  if (!head.includes('|') || !DELIM_RE.test(delim)) return false;
+  return splitRow(head).length === splitRow(delim).length;
+}
+
+function alignOf(cell: string): Align {
+  const left = cell.startsWith(':');
+  const right = cell.endsWith(':');
+  return left && right ? 'center' : right ? 'right' : left ? 'left' : null;
+}
 
 export function parseBlocks(src: string): Block[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
@@ -460,6 +597,25 @@ export function parseBlocks(src: string): Block[] {
       }
       void closed; // an unclosed fence still renders as code, which is what the author meant
       out.push({ t: 'code', lang, code: buf.join('\n') });
+      continue;
+    }
+
+    // Before HR: a delimiter row like `---|---` must never read as a rule.
+    if (tableStartsAt(lines, i)) {
+      const head = splitRow(line);
+      const align = splitRow(lines[i + 1] ?? '').map(alignOf);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length) {
+        const l = lines[i] ?? '';
+        if (l.trim() === '' || !l.includes('|')) break;
+        // Short rows are padded and long ones cut, so every row has the header's width.
+        const cells = splitRow(l).slice(0, head.length);
+        while (cells.length < head.length) cells.push('');
+        rows.push(cells);
+        i++;
+      }
+      out.push({ t: 'table', align, head, rows });
       continue;
     }
 
@@ -518,6 +674,8 @@ export function parseBlocks(src: string): Block[] {
       if (l.trim() === '') break;
       if (FENCE_RE.test(l) || HEADING_RE.test(l) || HR_RE.test(l) || ITEM_RE.test(l)) break;
       if (l.trimStart().startsWith('>')) break;
+      // A table may start straight after a paragraph line, as on GitHub.
+      if (tableStartsAt(lines, i)) break;
       buf.push(l);
       i++;
     }
@@ -650,6 +808,34 @@ export function Markdown({ text }: { text: string }): ReactNode {
           }
           case 'hr':
             return <div key={i} className="tx-md-hr" />;
+          case 'table':
+            return (
+              // The wrapper scrolls sideways, so a wide table never widens the pane.
+              <div key={i} className="tx-md-table-wrap">
+                <table className="tx-md-table">
+                  <thead>
+                    <tr>
+                      {b.head.map((cell, j) => (
+                        <th key={j} style={b.align[j] ? { textAlign: b.align[j] } : undefined}>
+                          {parseInline(cell)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((row, r) => (
+                      <tr key={r}>
+                        {row.map((cell, j) => (
+                          <td key={j} style={b.align[j] ? { textAlign: b.align[j] } : undefined}>
+                            {parseInline(cell)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           case 'quote':
             return (
               <blockquote key={i} className="tx-md-quote">

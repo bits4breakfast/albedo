@@ -1,0 +1,109 @@
+/* ==========================================================================
+   Review comments in the editor. Imported by FileEditor.tsx; the markup comes
+   from comments.ts.
+
+   Shell tokens only. A commented line is marked by an accent edge, not a
+   wash: a tint would sit under Shiki's colours and need measuring against
+   every one of them, per theme (CLAUDE.md, contrast rules 4-6). Cards sit on
+   --panel, the editor's chrome ground; their text is --text and their labels
+   --muted, both cleared against --panel-raised, darker than --panel in light
+   and lighter in dark.
+   ========================================================================== */
+
+/* The gutter: a dot on commented lines, a + on the hovered line to add one. */
+.ed-cmt-gutter .cm-gutterElement {
+  width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.ed-cmt-gutter .cm-gutterElement:hover:not(:has(.ed-cmt-dot))::after {
+  content: '+';
+  color: var(--accent);
+  font-weight: 600;
+}
+.ed-cmt-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.cm-line.ed-cmt-line { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* A card: one comment, under the lines it covers. */
+.ed-cmt {
+  margin: 4px 12px 6px 8px;
+  padding: 6px 10px 8px;
+  border: 1px solid var(--border-strong);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  white-space: normal;
+  cursor: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ed-cmt-head,
+.ed-cmt-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.ed-cmt-head { margin-bottom: 4px; }
+.ed-cmt-foot { margin-top: 6px; justify-content: flex-end; }
+.ed-cmt-foot .ed-cmt-where { margin-right: auto; }
+.ed-cmt-sent::before { content: '✓ '; }
+.ed-cmt-actions { margin-left: auto; display: inline-flex; gap: 2px; }
+/* What was written, kept as written: line breaks included. */
+.ed-cmt-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.ed-cmt-btn {
+  min-height: 24px;   /* WCAG 2.2 target size */
+  padding: 0 8px;
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.ed-cmt-btn:hover { color: var(--text-strong); background: var(--panel-raised); }
+.ed-cmt-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.ed-cmt-primary { border: 1px solid var(--accent-line); color: var(--text-strong); }
+.ed-cmt-danger:hover { color: var(--del); }
+
+.ed-cmt-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  padding: 6px 8px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+  color: var(--text-strong);
+  font: inherit;
+}
+.ed-cmt-input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* Comments whose code is gone: listed in the notice bar, one per line. */
+.ed-cmt-outdated { flex-wrap: wrap; }
+.ed-cmt-outdated-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.ed-cmt-outdated-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

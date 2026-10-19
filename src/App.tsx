@@ -25,7 +25,8 @@ import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
-import FileEditor from './ui/editor/FileEditor';
+import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
+import { onComposerInsert } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
 import { resolveInWorktree } from './lib/paths';
 import UsagePanel from './ui/gauges/UsagePanel';
@@ -1002,10 +1003,30 @@ export default function App() {
     [hiddenProjectIds, selectTab, select],
   );
 
+  /** Close the editor and every tab in it (the pane's ✕, or the last tab closing). */
+  const openRequestRef = useRef(openRequest);
+  openRequestRef.current = openRequest;
   const closeEditor = useCallback(() => {
+    const open = openRequestRef.current;
+    if (open) forgetEditorTabs(open.taskId);
     setOpenRequest(null);
     setRightTab((t) => (t === 'editor' ? 'transcript' : t));
   }, []);
+  // Text handed to the composer from elsewhere (review comments): show the
+  // transcript, where the composer is, the way opening a file shows the editor.
+  useEffect(
+    () =>
+      onComposerInsert(() => {
+        setRightTab('transcript');
+        setMode((m) => (m === 'pty' ? 'split' : m));
+      }),
+    [],
+  );
+
+  /** Bumped by ⌘W: the editor closes its active tab. */
+  const [editorCloseSignal, setEditorCloseSignal] = useState(0);
+  /** The active tab's file, for the pane header and Quick Open. */
+  const [editorActivePath, setEditorActivePath] = useState<string | null>(null);
 
   // Pick something sensible once tasks land: whatever is blocked first, and
   // always something the active tab can actually show.
@@ -1158,7 +1179,7 @@ export default function App() {
     let off: (() => void) | null = null;
     let gone = false;
     void listen('albedo://close-tab', () => {
-      if (editorOpenRef.current) closeEditor();
+      if (editorOpenRef.current) setEditorCloseSignal((n) => n + 1);
     })
       .then((un) => {
         if (gone) un();
@@ -1169,7 +1190,7 @@ export default function App() {
       gone = true;
       off?.();
     };
-  }, [closeEditor]);
+  }, []);
 
   const stepReadingTab = useCallback(
     (delta: number) => {
@@ -1223,8 +1244,8 @@ export default function App() {
 
   /** The editor's file, worktree-relative, so the palette can rank it first. */
   const editorFile = useMemo(
-    () => (editorTask && openRequest ? worktreeRelative(editorTask.worktreePath, openRequest.request.path) : null),
-    [editorTask, openRequest],
+    () => (editorTask && editorActivePath ? worktreeRelative(editorTask.worktreePath, editorActivePath) : null),
+    [editorTask, editorActivePath],
   );
 
   useShortcuts({
@@ -1267,7 +1288,7 @@ export default function App() {
 
   const noteFor = (tab: RightTab): string => {
     if (tab === 'files') return selected ? selected.branch : 'no task';
-    if (tab === 'editor') return openRequest?.request.path ?? '';
+    if (tab === 'editor') return editorActivePath ?? '';
     return selected?.sessionId ?? 'no session yet';
   };
 
@@ -1653,7 +1674,7 @@ export default function App() {
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
                   {selected ? (
                     <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
-                      <TouchedFiles task={selected} />
+                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} />
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
@@ -1663,11 +1684,13 @@ export default function App() {
                 <div className="tabpanel" hidden={activeTab !== 'editor'}>
                   {editorTask && (
                     <PaneErrorBoundary key={`ed-${editorTask.id}`} label="Editor">
-                      <FileEditor
+                      <EditorTabs
                         task={editorTask}
                         request={openRequest?.request ?? null}
-                        onClose={closeEditor}
                         readOnly={editorTask === browseTask}
+                        onCloseAll={closeEditor}
+                        closeSignal={editorCloseSignal}
+                        onActivePath={setEditorActivePath}
                       />
                     </PaneErrorBoundary>
                   )}
@@ -1689,8 +1712,9 @@ export default function App() {
                   style={{ flex: `0 0 ${Math.round(filesWidth)}px` }}
                 >
                   <div className="pane-head">
+                    {/* The branch is in the git row at the foot of the pane, beside its actions. */}
                     <span>files</span>
-                    <span className="pane-head-note">{selected?.branch ?? ''}</span>
+                    <span className="pane-head-note" />
                     <button
                       className="pane-head-pin"
                       data-on
@@ -1704,7 +1728,7 @@ export default function App() {
                   <div className="pane-body">
                     {selected ? (
                       <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
-                        <TouchedFiles task={selected} />
+                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} />
                       </PaneErrorBoundary>
                     ) : (
                       <div className="placeholder">

@@ -8,7 +8,8 @@
  * scrolling up to read is never interrupted.
  */
 
-import { expandPastes, placeholderFor, shouldCollapse } from './pastedText';
+import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
+import { onComposerInsert } from './composerBridge';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
@@ -16,7 +17,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
-import { onCaptureUpdate } from '../../capture';
+import { onCaptureUpdate, onQueueChange, queuedFor, type QueuedEntry } from '../../capture';
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import { imageFromClipboard, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
@@ -71,6 +72,13 @@ export function TranscriptPane({
   /** Scroll anchor captured before a backwards page is applied. */
   const anchorRef = useRef<{ height: number; top: number } | null>(null);
   const pendingScrollRef = useRef<'bottom' | 'anchor' | null>('bottom');
+  /**
+   * Set when the backwards page has actually been applied. Until then a
+   * pending 'anchor' belongs to it alone: a tail row landing first must not
+   * consume the anchor, or the page arrives with nothing to restore and the
+   * window load sends the reader to the bottom.
+   */
+  const pageAppliedRef = useRef(false);
 
   const selectorKey = `${taskId ?? ''}|${sessionId ?? ''}`;
 
@@ -135,8 +143,11 @@ export function TranscriptPane({
     void getMessages({ ...query, limit })
       .then((rows) => {
         if (!live) return;
-        // A backwards page restores the anchor; anything else lands at the end.
-        if (pendingScrollRef.current !== 'anchor') pendingScrollRef.current = 'bottom';
+        // A backwards page restores the anchor. Anything else lands at the end
+        // only for a reader who is following: someone reading further up keeps
+        // their place, whatever caused the reload.
+        if (pendingScrollRef.current === 'anchor') pageAppliedRef.current = true;
+        else pendingScrollRef.current = followingRef.current ? 'bottom' : null;
         setMessages(rows);
         // `limit` keeps the most recent rows, so a full page means there is more
         // history behind it.
@@ -233,12 +244,14 @@ export function TranscriptPane({
     const el = scrollRef.current;
     if (el) anchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
     pendingScrollRef.current = 'anchor';
+    pageAppliedRef.current = false;
     setLimit((l) => l + PAGE);
   }, []);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    // Hidden (another tab is showing): there is no position to read.
+    if (!el || el.clientHeight === 0) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
     if (atBottom !== followingRef.current) {
       followingRef.current = atBottom;
@@ -254,11 +267,15 @@ export function TranscriptPane({
     if (mode === 'bottom') {
       el.scrollTop = el.scrollHeight;
       pendingScrollRef.current = null;
-    } else if (mode === 'anchor') {
+    } else if (mode === 'anchor' && pageAppliedRef.current) {
+      // Measured from the bottom, so rows appended since the anchor was taken
+      // would skew it -- but no tail row can arrive between the page landing
+      // and this effect, which runs in the same commit.
       const anchor = anchorRef.current;
       if (anchor) el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
       anchorRef.current = null;
       pendingScrollRef.current = null;
+      pageAppliedRef.current = false;
     }
   }, [messages]);
 
@@ -270,6 +287,53 @@ export function TranscriptPane({
     setFollowing(true);
   }, []);
 
+  // Back on screen, or resized: a reader who was following stays at the end.
+  // While the pane is hidden (another tab showing) new rows still arrive, but
+  // scrolling a hidden element does nothing, so they piled up below the old
+  // position and the pane came back short of the bottom. Its own size going
+  // from nothing to something is the moment it is shown again.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    // Whether the reader was following when the pane went away. Read at the
+    // moment it hides, because a scroll event on the way back in can report
+    // "not at the bottom" (the rows that arrived meanwhile) before this runs.
+    let followingWhenHidden: boolean | null = null;
+    const ro = new ResizeObserver(() => {
+      if (el.clientHeight === 0) {
+        followingWhenHidden ??= followingRef.current;
+        return;
+      }
+      const follow = followingWhenHidden ?? followingRef.current;
+      followingWhenHidden = null;
+      if (!follow) return;
+      el.scrollTop = el.scrollHeight;
+      followingRef.current = true;
+      setFollowing(true);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [inactive]);
+
+  // ⌘↓: to the latest message, without having to click into the transcript
+  // first. It acts only when the keyboard is not busy elsewhere: nothing
+  // focused, or focus inside the transcript but not in a text field. In the
+  // composer, the editor, the terminal or any other field, ⌘↓ keeps its own
+  // meaning (end of text) and this stays out of the way.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.key !== 'ArrowDown') return;
+      const el = scrollRef.current;
+      // Not on screen: another tab, or the pane is hidden.
+      if (!el || el.offsetParent === null) return;
+      if (!keyboardIsFree(document.activeElement, el)) return;
+      e.preventDefault();
+      jumpToEnd();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [jumpToEnd]);
+
   const items = useMemo(() => groupRows(messages), [messages]);
 
   if (inactive) {
@@ -278,38 +342,43 @@ export function TranscriptPane({
 
   return (
     <div className="tx-pane">
-      <div className="tx-scroll" ref={scrollRef} onScroll={onScroll}>
-        {hasMore ? (
-          <div className="tx-page-top">
-            <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
-              {loading ? 'loading…' : 'Load earlier messages'}
-            </button>
-          </div>
-        ) : messages.length > 0 ? (
-          <div className="tx-page-top tx-page-start">start of conversation</div>
+      {/* The jump button is positioned against this wrapper, not the pane, so
+          it sits at the foot of the transcript and never over the composer. */}
+      <div className="tx-scroll-wrap">
+        <div className="tx-scroll" ref={scrollRef} onScroll={onScroll}>
+          {hasMore ? (
+            <div className="tx-page-top">
+              <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
+                {loading ? 'loading…' : 'Load earlier messages'}
+              </button>
+            </div>
+          ) : messages.length > 0 ? (
+            <div className="tx-page-top tx-page-start">start of conversation</div>
+          ) : null}
+
+          {error ? <div className="tx-error">Could not read the transcript: {error}</div> : null}
+
+          {messages.length === 0 && !loading && !error ? (
+            <div className="tx-pane-empty">No messages in this conversation yet</div>
+          ) : null}
+
+          {items.map((item) =>
+            item.kind === 'sidechain' ? (
+              <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
+            ) : (
+              <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
+            ),
+          )}
+        </div>
+
+        {!following ? (
+          <button type="button" className="tx-jump" onClick={jumpToEnd} title="Jump to the latest message (⌘↓)">
+            ↓ latest <kbd className="tx-jump-key">⌘↓</kbd>
+          </button>
         ) : null}
-
-        {error ? <div className="tx-error">Could not read the transcript: {error}</div> : null}
-
-        {messages.length === 0 && !loading && !error ? (
-          <div className="tx-pane-empty">No messages in this conversation yet</div>
-        ) : null}
-
-        {items.map((item) =>
-          item.kind === 'sidechain' ? (
-            <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
-          ) : (
-            <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
-          ),
-        )}
       </div>
 
-      {!following ? (
-        <button type="button" className="tx-jump" onClick={jumpToEnd}>
-          ↓ latest
-        </button>
-      ) : null}
-
+      <QueuedStrip sessionId={sessionId} status={status} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}
     </div>
@@ -317,6 +386,68 @@ export function TranscriptPane({
 }
 
 export default TranscriptPane;
+
+/**
+ * Whether a key can be taken without stealing it from something focused:
+ * nothing has focus (the window itself), or focus is inside `scroller` on an
+ * element that is not a text field.
+ */
+export function keyboardIsFree(active: Element | null, scroller: Element): boolean {
+  if (active === null || active === document.body || active === document.documentElement) return true;
+  if (!scroller.contains(active)) return false;
+  const editable =
+    (active instanceof HTMLElement && active.isContentEditable) ||
+    active.tagName === 'INPUT' ||
+    active.tagName === 'TEXTAREA' ||
+    active.tagName === 'SELECT';
+  return !editable;
+}
+
+// ---------------------------------------------------------------------------
+// Queued messages
+// ---------------------------------------------------------------------------
+
+/**
+ * What you sent while Claude Code was busy and it has not taken yet, read
+ * from the transcript's queue records (src/capture/queue.ts). Each entry
+ * leaves the moment Claude Code takes it, either as the next turn or folded
+ * into the one running -- and then appears in the transcript as your message.
+ *
+ * Only while a turn is live: a queue cannot be waiting in an idle session,
+ * so anything left at idle is what a killed session never took, and showing
+ * it would claim it is still coming. Entries Claude Code queued itself (a
+ * background task finishing, a subagent's message) are not shown.
+ */
+export function QueuedStrip({ sessionId, status }: { sessionId: string | null; status: TaskStatus | null }): ReactNode {
+  const [entries, setEntries] = useState<readonly QueuedEntry[]>(() => (sessionId ? queuedFor(sessionId) : []));
+  useEffect(() => {
+    if (sessionId === null) {
+      setEntries([]);
+      return;
+    }
+    setEntries([...queuedFor(sessionId)]);
+    return onQueueChange((sid) => {
+      if (sid === sessionId) setEntries([...queuedFor(sessionId)]);
+    });
+  }, [sessionId]);
+
+  const live = status === 'running' || status === 'blocked';
+  const mine = entries.filter((e) => !e.injected);
+  if (!live || mine.length === 0) return null;
+  return (
+    <div className="tx-queued" role="status" aria-label="Queued messages">
+      <div className="tx-queued-head">
+        Queued <span className="tx-queued-count">{mine.length}</span>
+        <span className="tx-queued-hint">sent when Claude Code finishes its current step</span>
+      </div>
+      {mine.map((e, i) => (
+        <div key={`${e.ts}-${i}`} className="tx-queued-item" title={e.text}>
+          {queuedLabel(e.text)}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Composer
@@ -471,14 +602,40 @@ export function Composer({
     storeComposerPx(userPxRef.current);
   };
 
-  const succeeded = useCallback(() => {
-    setText('');
-    pastesRef.current = new Map();
-    pasteSeqRef.current = 0;
-    setNotice(null);
-    requestAnimationFrame(grow);
-    onSent();
-  }, [grow, onSent]);
+  /** Waiting to hear that text handed in from elsewhere was sent (see composerBridge). */
+  const insertWatchersRef = useRef<Array<(sent: string) => boolean>>([]);
+  const succeeded = useCallback(
+    (body: string) => {
+      setText('');
+      pastesRef.current = new Map();
+      pasteSeqRef.current = 0;
+      setNotice(null);
+      requestAnimationFrame(grow);
+      // A watcher that recognises its text in what was sent is done.
+      insertWatchersRef.current = insertWatchersRef.current.filter((w) => !w(body));
+      onSent();
+    },
+    [grow, onSent],
+  );
+
+  // Text handed in from elsewhere (review comments) joins the draft.
+  useEffect(
+    () =>
+      onComposerInsert((insert) => {
+        if (insert.taskId !== taskId) return false;
+        setText((prev) => (prev.trim() === '' ? insert.text : `${prev.replace(/\s+$/, '')}\n\n${insert.text}`));
+        if (insert.onSent) insertWatchersRef.current.push(insert.onSent);
+        requestAnimationFrame(() => {
+          grow();
+          const el = ref.current;
+          if (!el) return;
+          el.focus();
+          el.setSelectionRange(el.value.length, el.value.length);
+        });
+        return true;
+      }),
+    [taskId, grow],
+  );
 
   // Only a task switch discards a draft -- never a failed send.
   useEffect(() => {
@@ -489,6 +646,7 @@ export function Composer({
     setAwaiting(false);
     setHeld(false);
     pendingRef.current = null;
+    insertWatchersRef.current = [];
     inFlightRef.current = false; // or a switch mid-await wedges the composer shut
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
@@ -502,7 +660,7 @@ export function Composer({
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
     try {
-      if (await submitPty(taskId, body)) succeeded();
+      if (await submitPty(taskId, body)) succeeded(body);
       else setNotice('Could not deliver your message. It is still here — press send to retry.');
     } catch {
       setNotice('Could not send your message. It is still here — press send to retry.');
@@ -702,7 +860,7 @@ export function Composer({
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
       if (await submitPty(taskId, body)) {
-        succeeded();
+        succeeded(body);
         inFlightRef.current = false;
         return;
       }

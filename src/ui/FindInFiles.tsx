@@ -44,7 +44,7 @@ export interface FindInFilesProps {
 /** Long enough to skip the keystrokes of a word being typed, short enough to feel live. */
 export const FIND_DEBOUNCE_MS = 200;
 
-function MatchText({ match }: { match: FindMatch }) {
+export function MatchText({ match }: { match: FindMatch }) {
   const { text, ranges } = displayLine(match);
   return (
     <>

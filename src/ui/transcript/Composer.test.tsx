@@ -568,3 +568,35 @@ describe('collapsing a large text paste', () => {
     await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, 'never mind'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// (z) text handed in from elsewhere (review comments)
+// ---------------------------------------------------------------------------
+
+describe('(z) text handed to the composer through the bridge', () => {
+  it("goes into its own task's box only, after any draft, and reports what was sent", async () => {
+    const { insertIntoComposer } = await import('./composerBridge');
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+
+    let other = true;
+    act(() => {
+      other = insertIntoComposer({ taskId: 6, text: 'not mine' });
+    });
+    expect(other).toBe(false);
+    expect(box().value).toBe('');
+
+    type('my draft');
+    const onSent = vi.fn(() => true);
+    let taken = false;
+    act(() => {
+      taken = insertIntoComposer({ taskId: 5, text: 'comments\nsecond line', onSent });
+    });
+    expect(taken).toBe(true);
+    expect(box().value).toBe('my draft\n\ncomments\nsecond line');
+    expect(onSent).not.toHaveBeenCalled(); // in the box is not sent
+
+    pressEnter();
+    await waitFor(() => expect(onSent).toHaveBeenCalledWith('my draft\n\ncomments\nsecond line'));
+  });
+});

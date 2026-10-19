@@ -20,7 +20,7 @@
  * dependency graph backwards.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
 import type { DiffHunk, DiffLine, DiffSegment, FileDiff, OpenFileRequest } from '../../types';
 import { highlightToTokens, peekTokens, plainTokens } from '../../lib/highlight';
@@ -608,6 +608,12 @@ export interface DiffProps {
    * context" bar on top would read the file only to find nothing left.
    */
   contextPath?: string | null;
+  /**
+   * Show the file's path in the header. Off where the path is already on
+   * screen -- the editor's title bar -- so it is not said twice. The counts
+   * and the layout toggle stay either way.
+   */
+  showPath?: boolean;
 }
 
 export function Diff({
@@ -616,6 +622,7 @@ export function Diff({
   layout = 'auto',
   absoluteLines = false,
   contextPath,
+  showPath = true,
 }: DiffProps): ReactNode {
   const [ref, width] = useContainerWidth();
   const [override, setOverride] = useState<'split' | 'unified' | null>(null);
@@ -737,7 +744,7 @@ export function Diff({
   if (diff.hunks.length === 0) {
     return (
       <div className="tx-d" ref={ref}>
-        <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} />
+        <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} showPath={showPath} />
         <div className="tx-d-empty">No content changes</div>
       </div>
     );
@@ -852,6 +859,7 @@ export function Diff({
         model={model}
         resolved={resolved}
         onToggle={layout === 'auto' ? () => setOverride(resolved === 'split' ? 'unified' : 'split') : null}
+        showPath={showPath}
       />
       <div className="tx-d-body">
         {offerContext ? (
@@ -914,11 +922,13 @@ function DiffHeader({
   model,
   resolved,
   onToggle,
+  showPath,
 }: {
   diff: FileDiff;
   model: Model;
   resolved: 'split' | 'unified';
   onToggle: (() => void) | null;
+  showPath: boolean;
 }): ReactNode {
   // A rename header reads "old → new". Both sides stay visible, but only the
   // destination is a link: the source no longer exists to open.
@@ -928,13 +938,15 @@ function DiffHeader({
   const base = target.split('/').pop() ?? target;
   return (
     <div className="tx-d-head">
-      <span className="tx-d-path" title={diff.path}>
-        {renamed ? <span className="tx-d-dir">{from}</span> : null}
-        <PathLink path={target} title={target}>
-          <span className="tx-d-dir">{target.slice(0, target.length - base.length)}</span>
-          <span className="tx-d-base">{base}</span>
-        </PathLink>
-      </span>
+      {showPath ? (
+        <span className="tx-d-path" title={diff.path}>
+          {renamed ? <span className="tx-d-dir">{from}</span> : null}
+          <PathLink path={target} title={target}>
+            <span className="tx-d-dir">{target.slice(0, target.length - base.length)}</span>
+            <span className="tx-d-base">{base}</span>
+          </PathLink>
+        </span>
+      ) : null}
       <span className="tx-d-stat">
         {model.added > 0 ? <span className="tx-d-plus">+{model.added}</span> : null}
         {model.removed > 0 ? <span className="tx-d-minus">-{model.removed}</span> : null}
@@ -957,6 +969,84 @@ function DiffHeader({
  * `focusable={false}`: two tab stops per line would make a large diff
  * unnavigable by keyboard, and the file is already reachable from the header.
  */
+// ---------------------------------------------------------------------------
+// Review comments (the editor's Diff mode only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hooks for review comments, provided by the editor's Diff mode and absent
+ * everywhere else, so a transcript diff is unchanged. Lines are NEW-side
+ * numbers: a comment points at the file as it is now, so a deleted line has
+ * nothing to point at and gets no handle.
+ */
+export interface DiffAnnotations {
+  /** What to show under the row whose new-side line is `line`: cards, a draft. */
+  after(line: number): ReactNode;
+  /** The lines a drag on the + handles currently covers. */
+  picking: { from: number; to: number } | null;
+  /** A drag on the + handles moved (`done` false) or ended (`done` true). */
+  pick(from: number, to: number, done: boolean): void;
+}
+
+export const DiffAnnotationsContext = createContext<DiffAnnotations | null>(null);
+
+/** The new-side line under the pointer, from the row's data attribute. */
+function newLineAt(x: number, y: number): number | null {
+  const row = document.elementFromPoint(x, y)?.closest('[data-new-line]');
+  const n = Number(row?.getAttribute('data-new-line'));
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** The + on a row: press for that line, drag across rows for a range. */
+function CommentHandle({ line }: { line: number }): ReactNode {
+  const annotate = useContext(DiffAnnotationsContext);
+  if (!annotate) return null;
+  return (
+    <button
+      type="button"
+      className="tx-d-cmt-add"
+      tabIndex={-1}
+      aria-label={`Comment on line ${line}`}
+      title="Comment on this line (drag for several)"
+      onMouseDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const start = line;
+        let end = line;
+        annotate.pick(start, end, false);
+        const move = (ev: MouseEvent) => {
+          const n = newLineAt(ev.clientX, ev.clientY);
+          if (n === null || n === end) return;
+          end = n;
+          annotate.pick(Math.min(start, end), Math.max(start, end), false);
+        };
+        const up = () => {
+          window.removeEventListener('mousemove', move);
+          window.removeEventListener('mouseup', up);
+          annotate.pick(Math.min(start, end), Math.max(start, end), true);
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+      }}
+    >
+      +
+    </button>
+  );
+}
+
+function picked(annotate: DiffAnnotations | null, line: number | null): boolean {
+  const p = annotate?.picking;
+  return !!p && line !== null && line >= p.from && line <= p.to;
+}
+
+/** Whatever belongs under a row: cards and drafts ending on its line. */
+function Annotation({ line }: { line: number | null }): ReactNode {
+  const annotate = useContext(DiffAnnotationsContext);
+  if (!annotate || line === null) return null;
+  const content = annotate.after(line);
+  return content ? <div className="tx-d-annot">{content}</div> : null;
+}
+
 function LineNo({ n, linkPath }: { n: number | null; linkPath: string | null }): ReactNode {
   if (n === null) return <span className="tx-d-n" />;
   if (linkPath === null) return <span className="tx-d-n">{n}</span>;
@@ -978,17 +1068,26 @@ function UnifiedBody({
   newTokens: DualToken[][];
   linkPath?: string | null;
 }): ReactNode {
+  const annotate = useContext(DiffAnnotationsContext);
   return (
     <div className="tx-d-rows tx-d-unified">
       {rows.map((r, i) => {
         const tokens = r.line.kind === 'add' ? newTokens[r.newRow] : oldTokens[r.oldRow];
+        const line = r.line.newNumber;
         return (
-          <div className={`tx-d-row tx-d-${r.line.kind}`} key={i}>
-            <LineNo n={r.line.oldNumber} linkPath={null} />
-            <LineNo n={r.line.newNumber} linkPath={linkPath} />
-            <span className="tx-d-mark">{r.line.kind === 'add' ? '+' : r.line.kind === 'del' ? '-' : ' '}</span>
-            <Code pieces={composePieces(r.line.content, tokens, r.line.segments)} />
-          </div>
+          <Fragment key={i}>
+            <div
+              className={`tx-d-row tx-d-${r.line.kind}${picked(annotate, line) ? ' tx-d-picking' : ''}`}
+              data-new-line={line ?? undefined}
+            >
+              <LineNo n={r.line.oldNumber} linkPath={null} />
+              <LineNo n={line} linkPath={linkPath} />
+              <span className="tx-d-mark">{r.line.kind === 'add' ? '+' : r.line.kind === 'del' ? '-' : ' '}</span>
+              <Code pieces={composePieces(r.line.content, tokens, r.line.segments)} />
+              {line !== null ? <CommentHandle line={line} /> : null}
+            </div>
+            <Annotation line={line} />
+          </Fragment>
         );
       })}
     </div>
@@ -1007,31 +1106,50 @@ function SplitBody({
   linkPath?: string | null;
 }): ReactNode {
   const pairs = useMemo(() => pairRows(rows), [rows]);
+  const annotate = useContext(DiffAnnotationsContext);
+  // A drag that starts on one side selects only that side: the other column
+  // is taken out of selection until the next press. Without this a copy
+  // interleaves old and new lines, which is never what anyone wanted.
+  const [side, setSide] = useState<'old' | 'new' | null>(null);
   return (
-    <div className="tx-d-rows tx-d-split">
+    <div
+      className="tx-d-rows tx-d-split"
+      data-select={side ?? undefined}
+      onMouseDown={(e) => {
+        const half = (e.target as HTMLElement).closest('.tx-d-half');
+        setSide(half ? (half.previousElementSibling ? 'new' : 'old') : null);
+      }}
+    >
       {pairs.map((p, i) => (
-        <div className="tx-d-pair" key={i}>
-          <div className={`tx-d-half tx-d-${p.left ? p.left.line.kind : 'blank'}`}>
-            {p.left ? (
-              <>
-                <LineNo n={p.left.line.oldNumber} linkPath={null} />
-                <Code pieces={composePieces(p.left.line.content, oldTokens[p.left.oldRow], p.left.line.segments)} />
-              </>
-            ) : (
-              <span className="tx-d-n" />
-            )}
+        <Fragment key={i}>
+          <div className="tx-d-pair">
+            <div className={`tx-d-half tx-d-${p.left ? p.left.line.kind : 'blank'}`}>
+              {p.left ? (
+                <>
+                  <LineNo n={p.left.line.oldNumber} linkPath={null} />
+                  <Code pieces={composePieces(p.left.line.content, oldTokens[p.left.oldRow], p.left.line.segments)} />
+                </>
+              ) : (
+                <span className="tx-d-n" />
+              )}
+            </div>
+            <div
+              className={`tx-d-half tx-d-${p.right ? p.right.line.kind : 'blank'}${picked(annotate, p.right?.line.newNumber ?? null) ? ' tx-d-picking' : ''}`}
+              data-new-line={p.right?.line.newNumber ?? undefined}
+            >
+              {p.right ? (
+                <>
+                  <LineNo n={p.right.line.newNumber} linkPath={linkPath} />
+                  <Code pieces={composePieces(p.right.line.content, newTokens[p.right.newRow], p.right.line.segments)} />
+                  {p.right.line.newNumber !== null ? <CommentHandle line={p.right.line.newNumber} /> : null}
+                </>
+              ) : (
+                <span className="tx-d-n" />
+              )}
+            </div>
           </div>
-          <div className={`tx-d-half tx-d-${p.right ? p.right.line.kind : 'blank'}`}>
-            {p.right ? (
-              <>
-                <LineNo n={p.right.line.newNumber} linkPath={linkPath} />
-                <Code pieces={composePieces(p.right.line.content, newTokens[p.right.newRow], p.right.line.segments)} />
-              </>
-            ) : (
-              <span className="tx-d-n" />
-            )}
-          </div>
-        </div>
+          <Annotation line={p.right?.line.newNumber ?? null} />
+        </Fragment>
       ))}
     </div>
   );
