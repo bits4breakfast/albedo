@@ -1662,7 +1662,7 @@ export default function App() {
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
                   {selected ? (
                     <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
-                      <TouchedFiles task={selected} />
+                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} />
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
@@ -1715,7 +1715,7 @@ export default function App() {
                   <div className="pane-body">
                     {selected ? (
                       <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
-                        <TouchedFiles task={selected} />
+                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} />
                       </PaneErrorBoundary>
                     ) : (
                       <div className="placeholder">

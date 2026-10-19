@@ -209,6 +209,14 @@
 }
 
 .tf-row:hover { background: var(--panel-hover); }
+/* The file in the editor's active tab. --panel-raised is the selected-row
+   ground every text tier here is cleared against; the accent edge says it
+   without colour alone. Inset, so the row does not shift. */
+.tf-row[aria-current='true'] {
+  background: var(--panel-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tf-row[aria-current='true'] .tf-name { color: var(--text-strong); }
 .tf-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 /* The path can be selected and copied (the row is a div for exactly this).

@@ -60,9 +60,11 @@ const CLOCK_MS = 30_000;
 
 export interface TouchedFilesProps {
   task: Task;
+  /** The file in the editor's active tab, worktree-relative: its row is marked. */
+  activePath?: string | null;
 }
 
-export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
+export default function TouchedFiles({ task, activePath = null }: TouchedFilesProps): ReactNode {
   const [files, setFiles] = useState<TouchedFile[]>([]);
   const [gitError, setGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -295,6 +297,14 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
 
   const edits = useMemo(() => files.reduce((n, f) => n + f.editCount, 0), [files]);
 
+  // Keep the open file's row in view as tabs change, without yanking the
+  // list when it already shows.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activePath === null) return;
+    scrollRef.current?.querySelector<HTMLElement>('.tf-row[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [activePath, view, commits, mode]);
+
   const onOpen = useCallback(
     (file: TouchedFile) => {
       openFile({ path: file.path });
@@ -356,7 +366,7 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
         </div>
       ) : null}
 
-      <div className="tf-scroll">
+      <div className="tf-scroll" ref={scrollRef}>
         {mode === 'commit' ? (
           <>
             {view.uncommitted.length > 0 ? (
@@ -365,7 +375,14 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
                   Uncommitted<span className="tf-section-count">{view.uncommitted.length}</span>
                 </div>
                 {view.uncommitted.map((f) => (
-                  <FileRow key={f.path} file={f} change={lines.get(f.path) ?? null} now={now} onOpen={onOpen} />
+                  <FileRow
+                    key={f.path}
+                    file={f}
+                    change={lines.get(f.path) ?? null}
+                    now={now}
+                    onOpen={onOpen}
+                    current={f.path === activePath}
+                  />
                 ))}
               </section>
             ) : null}
@@ -401,6 +418,7 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
                           change={change}
                           now={now}
                           onOpen={onOpen}
+                          current={path === activePath}
                         />
                       ))
                     : null}
@@ -442,6 +460,7 @@ export default function TouchedFiles({ task }: TouchedFilesProps): ReactNode {
                       kind={kinds.get(f.path) ?? null}
                       now={now}
                       onOpen={onOpen}
+                      current={f.path === activePath}
                     />
                   ))
                 : null}
@@ -475,6 +494,7 @@ function FileRow({
   kind = null,
   now,
   onOpen,
+  current = false,
 }: {
   file: TouchedFile;
   /** Lines added/deleted against the base; null when git has no count. */
@@ -486,6 +506,8 @@ function FileRow({
   kind?: ChangeKind | null;
   now: number;
   onOpen: (f: TouchedFile) => void;
+  /** This file is in the editor's active tab. */
+  current?: boolean;
 }): ReactNode {
   const cut = file.path.lastIndexOf('/');
   // The trailing slash is its own element: `.tf-dir` clips from the FRONT
@@ -507,6 +529,7 @@ function FileRow({
       role="button"
       tabIndex={0}
       className="tf-row"
+      aria-current={current ? 'true' : undefined}
       onMouseDown={activate.onMouseDown}
       onClick={activate.onClick}
       onKeyDown={(e) => {
