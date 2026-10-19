@@ -2,11 +2,13 @@ import { createRoot } from 'react-dom/client';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import App from './App';
+import { applyPlatform } from './lib/platform';
 import { applyStoredTheme } from './ui/theme';
 
 // Before the first paint, not in an effect: an effect would render one frame
-// of the wrong theme on every launch.
+// of the wrong theme (or the wrong header padding) on every launch.
 applyStoredTheme();
+applyPlatform();
 
 const host = document.getElementById('root');
 if (!host) throw new Error('Albedo: #root is missing from index.html');

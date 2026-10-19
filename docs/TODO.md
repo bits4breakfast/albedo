@@ -28,24 +28,45 @@ events, or a no-op'd `watch()` callback, and a transcript append.
 
 ## 2. Platform and distribution
 
-### 2a. Linux build config — small, unblocks 2b
+### 2a. Linux build config — done
 
-Currently macOS-only by configuration, not by code:
+Was macOS-only by configuration, not by code. Now:
 
-- `src-tauri/tauri.conf.json` → `bundle.targets` is `["app", "dmg"]`. Add
-  `"deb"`, `"appimage"`, `"rpm"` as wanted.
-- `bundle.icon` lists only `icons/icon.icns`, even though `icon.ico`, `icon.png`
-  and the `Square*.png` set are already generated on disk. Widen it.
-- `shell:allow-execute` in `src-tauri/capabilities/default.json` still allows
-  `open` (macOS-only) alongside `phpstorm`, left there for the external-editor
-  template in §5. Whatever replaces it needs `xdg-open` on Linux.
-- `--traffic-lights-w: 78px` (`src/styles.css:113`) reserves header space for
-  the macOS stoplights. Dead padding elsewhere; gate it.
+- `bundle.targets` is `["app", "dmg", "deb", "appimage"]`; the bundler builds
+  only the ones that belong to the host. `bundle.icon` lists the png/ico set
+  as well as the icns.
+- `shell:allow-execute` allows `xdg-open` next to `open`, and
+  `src/lib/openUrl.ts` picks one per platform (`src/lib/platform.ts`, from the
+  webview's user agent). `phpstorm` is still there, for the external-editor
+  template in §5.
+- `/usr/bin/gh` is a fourth `gh` location (apt/dnf), in `GH_PROGRAMS` and the
+  scope; a test checks every name the runner tries is in the capability.
+- `--traffic-lights-w` is 0 unless `main.tsx` stamped
+  `data-platform="macos"` on the root. `titleBarStyle`/`hiddenTitle` are
+  macOS-only keys and simply ignored on Linux, which draws its own title bar.
+- `.github/workflows/ci.yml` runs typecheck, vitest (so the hook script runs
+  under dash), fmt, clippy `-D warnings`, cargo test and
+  `tauri build --bundles deb,appimage` on ubuntu-22.04, and uploads the
+  `.deb` and `.AppImage`.
 
 Already portable, no work needed: `FALLBACK_SHELL` `cfg`s to `/bin/sh` off
-macOS, and `comboOf` accepts Ctrl as well as ⌘.
+macOS, `comboOf` accepts Ctrl as well as ⌘, and pty.rs's process groups and
+`poll` are plain POSIX.
+
+**Left, not blocking:** `src/git/reconcile.ts` hardcodes two macOS
+assumptions. `normalizePath` maps `/tmp`, `/var`, `/etc` onto `/private/...`
+(firmlinks), and some of its results are used as real paths, so on Linux a
+worktree root or repo under one of those three would resolve to a directory
+that does not exist. `pathKey` lowercases for comparison (case-insensitive
+APFS), so on Linux two worktrees differing only by case would collide. Both
+are edge cases for repos under `~`; both want a platform switch.
+
+**Not yet run by a person.** CI proves it builds and the tests pass on
+Linux; nobody has launched the window.
 
 ### 2b. Windows = a Linux build under WSL, not a port
+
+How-to for a Windows user: `docs/LINUX-WSL.md`.
 
 Two things genuinely block a native Windows build, and both are ports:
 
@@ -56,11 +77,12 @@ Two things genuinely block a native Windows build, and both are ports:
   containment boundary, so it fails *closed* — nothing opens.
 
 Under WSL2 both disappear: a real Linux shell, real POSIX paths, Claude Code
-installed in WSL as normal. So 2a is most of the Windows story.
+installed in WSL as normal. With 2a done, that is the Windows story.
 
 **Hard constraint if anyone tries it:** repos *and* `~/.claude/projects` must
-live inside the WSL ext4 filesystem, never on `/mnt/c` — see item 1. Until item
-1 lands, a `/mnt/c` setup fails silently.
+live inside the WSL ext4 filesystem, never on `/mnt/c`. Since item 1 a
+`/mnt/c` setup no longer fails silently -- it degrades to the 30 s poll and
+says so -- but it is still the wrong place.
 
 **Untested, flagged not asserted:** Tauri's Linux webview is WebKitGTK, which
 under WSLg is widely reported to need `WEBKIT_DISABLE_DMABUF_RENDERER=1` to
