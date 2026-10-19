@@ -16,8 +16,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../types';
 import type { BranchCommit } from '../git/worktree';
-import { hasLivePty, onPtyPresenceChange, submitPty } from './Terminal';
-import { insertIntoComposer } from './transcript/composerBridge';
+import { hasLivePty, onPtyPresenceChange } from './Terminal';
+import { sendPrompt } from './sendPrompt';
 import { squashRebasePrompt } from './gitPrompts';
 import { relativeTime } from './TaskList';
 import './worktree.css';
@@ -70,18 +70,17 @@ export default function SquashRebaseDialog({ task, commits, uncommitted, onClose
       push,
       commitCount: n,
     });
-    if (!direct) {
-      if (insertIntoComposer({ taskId: task.id, text })) onClose();
-      else setError('Open the task’s transcript to get its message box, then try again.');
-      return;
-    }
     busyRef.current = true;
     setBusy(true);
     try {
-      if (await submitPty(task.id, text)) onClose();
-      else setError('Could not reach the session. Nothing was sent.');
-    } catch {
-      setError('Could not reach the session. Nothing was sent.');
+      const outcome = await sendPrompt(task, text);
+      if (outcome !== 'failed') onClose();
+      else
+        setError(
+          direct
+            ? 'Could not reach the session. Nothing was sent.'
+            : 'Open the task’s transcript to get its message box, then try again.',
+        );
     } finally {
       busyRef.current = false;
       setBusy(false);

@@ -29,7 +29,7 @@ import {
   type LineChange,
 } from '../git/worktree';
 import { setTouchedOrder } from './touchedOrder';
-import { insertIntoComposer } from './transcript/composerBridge';
+import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
 import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
@@ -326,9 +326,22 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
     setAskNotice(null);
     setSquashOpen(false);
   }, [task.id]);
-  const askClaude = (text: string) => {
-    const taken = insertIntoComposer({ taskId: task.id, text });
-    setAskNotice(taken ? null : 'Open the task’s transcript to get its message box, then try again.');
+  const askingRef = useRef(false);
+  const askClaude = async (text: string) => {
+    if (askingRef.current) return; // a double click must not send twice
+    askingRef.current = true;
+    try {
+      const outcome = await sendPrompt(task, text);
+      setAskNotice(
+        outcome !== 'failed'
+          ? null
+          : task.status === 'idle'
+            ? 'Could not reach the session. Nothing was sent.'
+            : 'Open the task’s transcript to get its message box, then try again.',
+      );
+    } finally {
+      askingRef.current = false;
+    }
   };
 
   return (
@@ -465,7 +478,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
           commits={commits.length}
           dirty={view.uncommitted.length}
           remote={remote}
-          onAsk={askClaude}
+          onAsk={(text) => void askClaude(text)}
           onSquash={() => setSquashOpen(true)}
           mode={mode}
           onMode={(m) => setMode(writeMode(m))}

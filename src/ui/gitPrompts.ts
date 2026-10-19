@@ -3,8 +3,8 @@
  *
  * Albedo does not run these operations itself: committing needs a message,
  * a rebase can conflict, and a rejected push needs a decision. Claude Code
- * handles all three, so the buttons hand it a prompt -- through the composer,
- * where it can be read and edited before it is sent.
+ * handles all three, so the buttons hand it a prompt (sendPrompt.ts decides
+ * whether it is submitted at once or waits in the message box).
  */
 
 import type { Task } from '../types';

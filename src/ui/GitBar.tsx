@@ -12,8 +12,9 @@
  * the list cannot show: the list's view switch and refresh live in the `⋯`
  * menu too, and the section headers carry the file counts.
  *
- * Nothing here runs git or gh. Push and Create PR put a prompt in the message
- * box (see gitPrompts.ts); Squash & rebase opens its confirm dialog first.
+ * Nothing here runs git or gh. Push and Create PR send Claude a prompt (see
+ * gitPrompts.ts and sendPrompt.ts) and so carry no ellipsis: the click is the
+ * whole action. Squash & rebase opens its confirm dialog first, and keeps one.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -37,7 +38,7 @@ export interface GitBarProps {
   dirty: number;
   /** Against the upstream; null when git could not say. */
   remote: UnmergedCommits | null;
-  /** Put a prompt in the task's message box. */
+  /** Send a prompt to the task's session (see sendPrompt.ts). */
   onAsk: (text: string) => void;
   onSquash: () => void;
   /** How the list below groups its files. */
@@ -94,10 +95,10 @@ export default function GitBar({
 
   const items: MenuItem[] = [];
   if (main !== 'push' && (dirty > 0 || unpushed > 0)) {
-    items.push({ key: 'push', label: 'Push…', hint: 'Commit what is outstanding and push', run: push });
+    items.push({ key: 'push', label: 'Push', hint: 'Commit what is outstanding and push', run: push });
   }
   if (main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
-    items.push({ key: 'pr', label: 'Create PR…', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
+    items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
   }
   if (main !== 'open-pr' && pr) {
     items.push({ key: 'open', label: `Open #${pr.number} on GitHub`, hint: pr.title, run: openPr });
@@ -163,18 +164,18 @@ export default function GitBar({
             type="button"
             className="tf-btn tf-btn-primary"
             onClick={push}
-            title="Ask Claude to commit what is outstanding and push. The prompt goes in the message box, to read and send."
+            title="Ask Claude to commit what is outstanding and push. Sent at once when the session is idle; otherwise it waits in the message box."
           >
-            Push…
+            Push
           </button>
         ) : main === 'create-pr' ? (
           <button
             type="button"
             className="tf-btn tf-btn-primary"
             onClick={createPr}
-            title={`Ask Claude to open a pull request into ${task.baseBranch}. The prompt goes in the message box, to read and send.`}
+            title={`Ask Claude to open a pull request into ${task.baseBranch}. Sent at once when the session is idle; otherwise it waits in the message box.`}
           >
-            Create PR…
+            Create PR
           </button>
         ) : main === 'open-pr' && pr ? (
           <PrButton pr={pr} onOpen={openPr} />
