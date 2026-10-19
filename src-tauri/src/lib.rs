@@ -65,6 +65,8 @@ const M0005_SUBAGENTS: &str = include_str!("../../src/db/migrations/0005_subagen
 /// v6: whether Albedo created the task's branch, so archive never deletes one
 /// the user already had.
 const M0006_CREATED_BRANCH: &str = include_str!("../../src/db/migrations/0006_created_branch.sql");
+/// v7: review comments on a task's files, sent to Claude Code.
+const M0007_COMMENTS: &str = include_str!("../../src/db/migrations/0007_comments.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -102,6 +104,12 @@ pub fn run() {
             version: 6,
             description: "tasks.created_branch",
             sql: M0006_CREATED_BRANCH,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "review comments",
+            sql: M0007_COMMENTS,
             kind: MigrationKind::Up,
         },
     ];

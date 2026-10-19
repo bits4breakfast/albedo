@@ -25,6 +25,26 @@ import FileDiffView from './FileDiffView';
 import SymbolResults, { type SymbolResultsState } from './SymbolResults';
 import { navigate, type NavAction } from './symbolNav';
 import { isPhpPath, warmPhpantom } from '../../lsp/phpantom';
+import {
+  addComment,
+  deleteComment,
+  editComment,
+  listComments,
+  moveComment,
+  onCommentsChanged,
+  relocate,
+  resolveComment,
+  type ReviewComment,
+} from '../../db/comments';
+import {
+  commentsExtension,
+  linesOfSelection,
+  commentsField,
+  setDraft,
+  setPlacedComments,
+  type CommentActions,
+  type PlacedComment,
+} from './comments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -63,6 +83,7 @@ import { onThemeChange, resolvedTheme } from '../theme';
 import type { ResolvedTheme } from '../theme';
 import { notePty } from '../Terminal';
 import './editor.css';
+import './comments.css';
 
 /** Files past this size are edited without colour. Tokenising them janks. */
 const MAX_HIGHLIGHT_CHARS = 300_000;
@@ -412,6 +433,10 @@ export default function FileEditor({
   const saveRef = useRef<() => void>(() => {});
   /** The live ⌘B / ⌥F7 handler, read by the keymap for the same reason. */
   const navRef = useRef<(action: NavAction) => void>(() => {});
+  /** Review-comment callbacks, read by the CodeMirror extension; null when comments are off. */
+  const commentActionsRef = useRef<CommentActions | null>(null);
+  /** ⇧⌘C: start a comment on the selected lines. */
+  const startCommentRef = useRef<() => void>(() => {});
 
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [resolved, setResolved] = useState<ResolvedPath | null>(null);
@@ -640,6 +665,8 @@ export default function FileEditor({
             // code intelligence: git grep and the file's imports, no LSP.
             { key: 'Mod-b', preventDefault: true, run: () => (navRef.current('declaration'), true) },
             { key: 'Alt-F7', preventDefault: true, run: () => (navRef.current('usages'), true) },
+            // A review comment on the selected lines (or the cursor's line).
+            { key: 'Shift-Mod-c', preventDefault: true, run: () => (startCommentRef.current(), true) },
           ]),
         ),
         // ⌘-click is Go to Declaration, as in PhpStorm, so adding a cursor
@@ -678,6 +705,8 @@ export default function FileEditor({
         shikiField,
         shikiHighlighting(langForPath(resolved.relative)),
         flashField,
+        // Review comments: not on a main checkout, which has no task to send them to.
+        ...(readOnly ? [] : [commentsExtension(() => commentActionsRef.current)]),
         ...(language ? [language] : []),
         themeCompartment.of(themeExtension(resolvedTheme())),
         EditorView.lineWrapping,
@@ -914,6 +943,105 @@ export default function FileEditor({
       });
   };
 
+  // --- review comments ----------------------------------------------------
+  // Stored in SQLite (src/db/comments.ts). Placed by the code they were left
+  // on, so they follow it when the agent moves it; a comment whose code is
+  // gone is listed as outdated rather than pinned to the wrong lines.
+  const commentsOn = !readOnly;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const [fileComments, setFileComments] = useState<ReviewComment[]>([]);
+  const [outdated, setOutdated] = useState<ReviewComment[]>([]);
+  const [commentNotice, setCommentNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!commentsOn || current === null) {
+      setFileComments([]);
+      return;
+    }
+    let live = true;
+    const load = () =>
+      void listComments(task.id).then((all) => {
+        if (live) setFileComments(all.filter((c) => c.path === current));
+      });
+    load();
+    const off = onCommentsChanged((id) => {
+      if (id === task.id) load();
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [commentsOn, task.id, current]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || phase.kind !== 'ready') return;
+    const text = view.state.doc.toString();
+    const placed: PlacedComment[] = [];
+    const lost: ReviewComment[] = [];
+    for (const c of fileComments) {
+      const at = relocate(c, text);
+      if (at.state === 'outdated') {
+        lost.push(c);
+        continue;
+      }
+      placed.push({ comment: c, from: view.state.doc.line(at.lineStart).from, to: view.state.doc.line(at.lineEnd).to });
+      // Moved in the file on disk: remember where. Not while the buffer holds
+      // unsaved typing, which is not the file the comment refers to.
+      if (!dirtyRef.current && (at.lineStart !== c.lineStart || at.lineEnd !== c.lineEnd)) {
+        void moveComment(task.id, c.id, at.lineStart, at.lineEnd);
+      }
+    }
+    view.dispatch({ effects: setPlacedComments.of(placed) });
+    setOutdated(lost);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileComments, phase.kind, doc?.key]);
+
+  commentActionsRef.current =
+    commentsOn && current !== null
+      ? {
+          save: (draft, text, state) => {
+            const view = viewRef.current;
+            if (!view) return;
+            if (draft.editing) {
+              void editComment(task.id, draft.editing.id, text);
+            } else {
+              // The comment quotes the file as Claude Code will read it, so
+              // it is refused while the buffer differs from what is on disk.
+              if (dirtyRef.current) {
+                setCommentNotice('Save your edits first: a comment refers to the file as it is on disk.');
+                return;
+              }
+              const a = state.doc.lineAt(draft.from);
+              const b = state.doc.lineAt(draft.to);
+              void addComment({
+                taskId: task.id,
+                path: current,
+                lineStart: a.number,
+                lineEnd: b.number,
+                anchorText: state.doc.sliceString(a.from, b.to),
+                body: text,
+              });
+            }
+            setCommentNotice(null);
+            view.dispatch({ effects: setDraft.of(null) });
+            view.focus();
+          },
+          edit: (c) => {
+            const view = viewRef.current;
+            const at = view?.state.field(commentsField).placed.find((p) => p.comment.id === c.id);
+            if (view && at) view.dispatch({ effects: setDraft.of({ from: at.from, to: at.to, editing: c }) });
+          },
+          resolve: (c) => void resolveComment(task.id, c.id),
+          remove: (c) => void deleteComment(task.id, c.id),
+        }
+      : null;
+  startCommentRef.current = () => {
+    const view = viewRef.current;
+    if (!view || !commentsOn || mode !== 'file') return;
+    view.dispatch({ effects: setDraft.of({ ...linesOfSelection(view.state), editing: null }) });
+  };
+
   if (request === null) return null;
 
   const title = resolved?.relative ?? request.path;
@@ -1083,6 +1211,39 @@ export default function FileEditor({
           <button type="button" className="ed-btn ed-danger" onClick={onClose}>
             Discard
           </button>
+        </div>
+      )}
+
+      {commentNotice && (
+        <div className="ed-notice" data-tone="warn">
+          <span>{commentNotice}</span>
+          <button type="button" className="ed-btn" onClick={() => setCommentNotice(null)}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {/* A comment whose code is no longer in the file: shown, never pinned to
+          whatever now sits at its old lines. */}
+      {outdated.length > 0 && (
+        <div className="ed-notice ed-cmt-outdated" data-tone="muted">
+          <span>
+            {outdated.length === 1 ? 'A comment' : `${outdated.length} comments`} on this file no longer match its
+            code:
+          </span>
+          {outdated.map((c) => (
+            <span key={c.id} className="ed-cmt-outdated-item" title={c.anchorText}>
+              <span className="ed-cmt-outdated-body">
+                lines {c.lineStart}–{c.lineEnd}: {c.body.split('\n')[0]}
+              </span>
+              <button type="button" className="ed-btn" onClick={() => void resolveComment(task.id, c.id)}>
+                Resolve
+              </button>
+              <button type="button" className="ed-btn ed-danger" onClick={() => void deleteComment(task.id, c.id)}>
+                Delete
+              </button>
+            </span>
+          ))}
         </div>
       )}
 

@@ -26,6 +26,7 @@ import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
+import { onComposerInsert } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
 import { resolveInWorktree } from './lib/paths';
 import UsagePanel from './ui/gauges/UsagePanel';
@@ -1011,6 +1012,17 @@ export default function App() {
     setOpenRequest(null);
     setRightTab((t) => (t === 'editor' ? 'transcript' : t));
   }, []);
+  // Text handed to the composer from elsewhere (review comments): show the
+  // transcript, where the composer is, the way opening a file shows the editor.
+  useEffect(
+    () =>
+      onComposerInsert(() => {
+        setRightTab('transcript');
+        setMode((m) => (m === 'pty' ? 'split' : m));
+      }),
+    [],
+  );
+
   /** Bumped by ⌘W: the editor closes its active tab. */
   const [editorCloseSignal, setEditorCloseSignal] = useState(0);
   /** The active tab's file, for the pane header and Quick Open. */

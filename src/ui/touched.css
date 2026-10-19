@@ -448,6 +448,77 @@ button.tf-section-head:hover { color: var(--text); }
 }
 .tf-section + .tf-section { border-top: 1px solid var(--border); }
 
+/* --- review comments ------------------------------------------------------ */
+
+.tf-comments-head { align-items: center; }
+.tf-comments-actions { margin-left: auto; display: inline-flex; gap: 4px; }
+/* The one action this section exists for: text in --text-strong on the
+   button's own --panel-raised, with the accent edge to mark it. */
+.tf-btn-primary { color: var(--text-strong); border-color: var(--accent-line); }
+
+.tf-comments-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 8px 8px;
+}
+.tf-comments-intro-label { color: var(--muted); font-size: var(--fs-xs); }
+.tf-comments-intro-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 6px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-sm);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.tf-comments-intro-input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tf-comments-notice { padding: 0 8px 6px; color: var(--warn); font-size: var(--fs-xs); }
+
+.tf-comment {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.tf-comment-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px 4px 11px;
+  text-align: left;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.tf-comment-open:hover { background: var(--panel-hover); }
+.tf-comment-open:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tf-comment-where { flex: none; font-family: var(--font-mono); color: var(--muted); }
+.tf-comment-where .tf-name { color: var(--text); }
+.tf-comment-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.tf-comment-sent { flex: none; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
+.tf-comment-sent::before { content: '✓ '; }
+.tf-comment-resolve {
+  flex: none;
+  width: 28px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tf-comment-resolve:hover { color: var(--add); background: var(--panel-hover); }
+.tf-comment-resolve:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
 /* --- view switch and commit groups ---------------------------------------- */
 
 .tf-mode {

@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpenFileRequest, Task, TouchedFile } from '../types';
 import { compareTouched, touchedFilesDetailed } from '../db/touched';
+import CommentsSection from './CommentsSection';
 import { stat } from '@tauri-apps/plugin-fs';
 import {
   branchCommits,
@@ -367,6 +368,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
       ) : null}
 
       <div className="tf-scroll" ref={scrollRef}>
+        <CommentsSection task={task} onOpen={(path, line) => openFile({ path, line })} />
         {mode === 'commit' ? (
           <>
             {view.uncommitted.length > 0 ? (

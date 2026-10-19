@@ -9,6 +9,7 @@
  */
 
 import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
+import { onComposerInsert } from './composerBridge';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
@@ -601,14 +602,40 @@ export function Composer({
     storeComposerPx(userPxRef.current);
   };
 
-  const succeeded = useCallback(() => {
-    setText('');
-    pastesRef.current = new Map();
-    pasteSeqRef.current = 0;
-    setNotice(null);
-    requestAnimationFrame(grow);
-    onSent();
-  }, [grow, onSent]);
+  /** Waiting to hear that text handed in from elsewhere was sent (see composerBridge). */
+  const insertWatchersRef = useRef<Array<(sent: string) => boolean>>([]);
+  const succeeded = useCallback(
+    (body: string) => {
+      setText('');
+      pastesRef.current = new Map();
+      pasteSeqRef.current = 0;
+      setNotice(null);
+      requestAnimationFrame(grow);
+      // A watcher that recognises its text in what was sent is done.
+      insertWatchersRef.current = insertWatchersRef.current.filter((w) => !w(body));
+      onSent();
+    },
+    [grow, onSent],
+  );
+
+  // Text handed in from elsewhere (review comments) joins the draft.
+  useEffect(
+    () =>
+      onComposerInsert((insert) => {
+        if (insert.taskId !== taskId) return false;
+        setText((prev) => (prev.trim() === '' ? insert.text : `${prev.replace(/\s+$/, '')}\n\n${insert.text}`));
+        if (insert.onSent) insertWatchersRef.current.push(insert.onSent);
+        requestAnimationFrame(() => {
+          grow();
+          const el = ref.current;
+          if (!el) return;
+          el.focus();
+          el.setSelectionRange(el.value.length, el.value.length);
+        });
+        return true;
+      }),
+    [taskId, grow],
+  );
 
   // Only a task switch discards a draft -- never a failed send.
   useEffect(() => {
@@ -619,6 +646,7 @@ export function Composer({
     setAwaiting(false);
     setHeld(false);
     pendingRef.current = null;
+    insertWatchersRef.current = [];
     inFlightRef.current = false; // or a switch mid-await wedges the composer shut
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
@@ -632,7 +660,7 @@ export function Composer({
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
     try {
-      if (await submitPty(taskId, body)) succeeded();
+      if (await submitPty(taskId, body)) succeeded(body);
       else setNotice('Could not deliver your message. It is still here — press send to retry.');
     } catch {
       setNotice('Could not send your message. It is still here — press send to retry.');
@@ -832,7 +860,7 @@ export function Composer({
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
       if (await submitPty(taskId, body)) {
-        succeeded();
+        succeeded(body);
         inFlightRef.current = false;
         return;
       }
