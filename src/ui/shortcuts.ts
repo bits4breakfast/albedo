@@ -71,7 +71,7 @@ export type Combo =
  * Bindings that are not one app-wide keystroke, documented alongside the
  * combos: a gesture, or a key bound inside the editor's own keymap.
  */
-export type Gesture = 'shift shift' | 'editor mod+b' | 'editor alt+f7';
+export type Gesture = 'shift shift' | 'editor mod+b' | 'editor alt+f7' | 'transcript mod+arrowdown';
 
 export interface ShortcutDoc {
   combo: Combo | Gesture;
@@ -99,6 +99,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in files' },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the editor: go to declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the editor: find usages' },
+  { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: jump to the latest message (not while typing)' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger text' },
   { combo: 'mod+-', keys: '⌘−', description: 'Smaller text' },
   { combo: 'mod+0', keys: '⌘0', description: 'Actual size' },

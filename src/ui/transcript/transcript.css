@@ -92,6 +92,13 @@
   box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
 }
 .tx-jump:hover { border-color: var(--accent-line); color: var(--text-strong); }
+/* The shortcut, on the pill's own --panel-raised: --muted is cleared there. */
+.tx-jump-key {
+  margin-left: 4px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: inherit;
+}
 
 /* --- queued messages ------------------------------------------------------- */
 
