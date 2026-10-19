@@ -34,6 +34,7 @@ import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
 import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/projects';
 import { deleteTask, listTasks } from './db';
+import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
 import { repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
@@ -1745,6 +1746,7 @@ export default function App() {
             void deleteTask(taskId)
               .then(() => {
                 forgetResume(taskId);
+                void endTaskEvents(taskId).catch(() => {});
                 setArchiveTarget(null);
                 return refresh();
               })
