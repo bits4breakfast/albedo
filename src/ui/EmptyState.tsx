@@ -72,7 +72,8 @@ export function emptyStateContent(
       body: (
         <>
           <span className="placeholder-key">⌘N</span> cuts a worktree in {activeProject.name} and
-          starts a session in it.
+          starts a session in it, under{' '}
+          <span className="placeholder-key">{activeProject.worktreeRoot}</span>.
         </>
       ),
       action: 'new-task',

@@ -21,7 +21,7 @@
  * as they check the call counts.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
@@ -46,6 +46,10 @@ vi.mock('../Terminal', () => {
     },
   };
 });
+
+// Paste writes through these; nothing touches a real disk.
+vi.mock('@tauri-apps/api/path', () => ({ homeDir: vi.fn(async () => '/Users/me') }));
+vi.mock('@tauri-apps/plugin-fs', () => ({ mkdir: vi.fn(async () => {}), writeFile: vi.fn(async () => {}) }));
 
 const term = (await import('../Terminal')) as unknown as {
   __emitPresence: (taskId: number, live: boolean) => void;
@@ -230,7 +234,7 @@ describe('(c) exactly-once when presence brings the session up', () => {
     type('nowhere to go');
     pressEnter();
 
-    await waitFor(() => expect(screen.getByText(/no terminal to send to/i)).toBeDefined());
+    await waitFor(() => expect(screen.getByText(/nowhere to send this/i)).toBeDefined());
     expect(box().value).toBe('nowhere to go');
     expect(box().readOnly).toBe(false);
   });
@@ -292,7 +296,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     type('please also update the tests');
     pressEnter();
 
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
     expect(submitPty).not.toHaveBeenCalled();
     // Frozen where the user left it, not cleared and not hidden.
     expect(box().value).toBe('please also update the tests');
@@ -306,7 +310,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
 
     type('please also update the tests');
     pressEnter();
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
 
     await act(async () => {
       rerender(<Composer taskId={5} status="running" onSent={onSent} />);
@@ -325,7 +329,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     const { rerender } = render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
     type('once please');
     pressEnter();
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
 
     for (const s of ['running', 'blocked', 'running', 'idle'] as const) {
       await act(async () => {
@@ -342,7 +346,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
     type('never mind');
     pressEnter();
-    await waitFor(() => expect(screen.getByText(/permission prompt/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
 
@@ -374,5 +378,193 @@ describe('placeholder when no terminal is running', () => {
     vi.mocked(canResume).mockReturnValue(false);
     render(<Composer taskId={1} onSent={vi.fn()} status="idle" />);
     expect(box().placeholder).toMatch(/new session/);
+  });
+});
+
+describe('Tab with nothing focused', () => {
+  const tab = (init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(window, { key: 'Tab', ...init });
+
+  it('focuses the composer when nothing holds focus', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    tab();
+
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('leaves Tab alone when something else has focus', () => {
+    render(
+      <>
+        <button>other</button>
+        <Composer taskId={1} onSent={() => {}} />
+      </>,
+    );
+    screen.getByText('other').focus();
+
+    tab();
+
+    expect(document.activeElement).toBe(screen.getByText('other'));
+  });
+
+  it('leaves Shift+Tab and modified Tab alone', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    tab({ shiftKey: true });
+    tab({ metaKey: true });
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('does not steal focus from behind an open dialog', () => {
+    render(
+      <>
+        <div aria-modal="true" role="dialog" />
+        <Composer taskId={1} onSent={() => {}} />
+      </>,
+    );
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    tab();
+
+    expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe('resizable composer', () => {
+  const grip = () => screen.getByRole('separator');
+
+  // This environment's localStorage is not a working Storage, so give the
+  // component a plain in-memory one.
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+  });
+
+  it('dragging the grip up sets the height, and it is remembered', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    fireEvent.pointerDown(grip(), { clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(grip(), { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(grip(), { clientY: 120, pointerId: 1 });
+
+    expect(box().style.height).toBe('80px');
+    expect(box().style.maxHeight).toBe('none');
+    expect(window.localStorage.getItem('albedo.composerPx')).toBe('80');
+  });
+
+  it('double-click resets to auto-grow and forgets the height', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    fireEvent.pointerDown(grip(), { clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(grip(), { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(grip(), { clientY: 120, pointerId: 1 });
+
+    fireEvent.doubleClick(grip());
+
+    expect(box().style.maxHeight).toBe('');
+    expect(window.localStorage.getItem('albedo.composerPx')).toBeNull();
+  });
+
+  it('starts at a remembered height', () => {
+    window.localStorage.setItem('albedo.composerPx', '96');
+    render(<Composer taskId={1} onSent={() => {}} />);
+    expect(box().style.height).toBe('96px');
+  });
+});
+
+describe('pasting a screenshot', () => {
+  const imageItem = (bytes: number[]) => ({
+    kind: 'file',
+    type: 'image/png',
+    getAsFile: () => ({ type: 'image/png', arrayBuffer: async () => new Uint8Array(bytes).buffer }) as unknown as File,
+  });
+  const textItem = { kind: 'string', type: 'text/plain', getAsFile: () => null };
+
+  it('writes the image under ~/.albedo/paste and inserts its path like a drop', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('see');
+    const notPrevented = fireEvent.paste(box(), { clipboardData: { items: [textItem, imageItem([1, 2, 3])] } });
+    expect(notPrevented).toBe(false);
+    await waitFor(() => expect(box().value).toMatch(/^see \/Users\/me\/\.albedo\/paste\/\d{8}-\d{6}-\d{3}\.png $/));
+    expect(fs.mkdir).toHaveBeenCalledWith('/Users/me/.albedo/paste', { recursive: true });
+    const [path, data] = vi.mocked(fs.writeFile).mock.calls[0]!;
+    expect(box().value).toBe(`see ${path} `);
+    expect([...(data as Uint8Array)]).toEqual([1, 2, 3]);
+  });
+
+  it('leaves a text paste to the browser, exactly as before', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: { items: [textItem] } });
+    expect(notPrevented).toBe(true);
+    expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('says so, and keeps the draft, when the write fails', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('forbidden path'));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('draft');
+    fireEvent.paste(box(), { clipboardData: { items: [imageItem([9])] } });
+    await waitFor(() => expect(screen.getByText(/Could not save the pasted image: forbidden path/)).toBeTruthy());
+    expect(box().value).toBe('draft');
+  });
+});
+
+describe('shellEscapePath', () => {
+  it('escapes spaces and shell characters the way a terminal does on drop', async () => {
+    const { shellEscapePath } = await import('./TranscriptPane');
+    expect(shellEscapePath('/T/Screenshot 2026-10-17 at 00.36.49.png')).toBe('/T/Screenshot\\ 2026-10-17\\ at\\ 00.36.49.png');
+    expect(shellEscapePath("/a/it's (1).png")).toBe("/a/it\\'s\\ \\(1\\).png");
+    expect(shellEscapePath('/plain/path.png')).toBe('/plain/path.png');
+  });
+});
+
+describe('collapsing a large text paste', () => {
+  const clip = (text: string) => ({
+    items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }],
+    getData: (t: string) => (t === 'text/plain' ? text : ''),
+  });
+  const log = 'Error: boom\n  at a (x.ts:1)\n  at b (y.ts:2)\n  at c (z.ts:3)';
+
+  it('shows a placeholder in the box and sends the real text', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('why does this fail? ');
+    box().setSelectionRange(box().value.length, box().value.length);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip(log) });
+    expect(notPrevented).toBe(false);
+    expect(box().value).toBe('why does this fail? [Pasted text #1 +4 lines]');
+
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `why does this fail? ${log}`));
+  });
+
+  it('leaves a short paste to the browser', () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip('two\nlines') });
+    expect(notPrevented).toBe(true);
+    expect(box().value).toBe('');
+  });
+
+  it('drops the text when its placeholder was deleted', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    type('never mind');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, 'never mind'));
   });
 });

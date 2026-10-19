@@ -24,8 +24,12 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 }));
 
 import {
+  archiveTask,
+  compactHistory,
   createTask,
   deleteTask,
+  findTaskByWorktreePath,
+  getMessages,
   insertMessages,
   listTranscriptFiles,
   listTranscriptFilesNeedingTitle,
@@ -35,8 +39,10 @@ import {
   resetDb,
   searchMessages,
   setTranscriptTitle,
+  touchTaskActivity,
 } from './index';
 import { listPastSessions } from './sessions';
+import { deriveStatus } from '../capture/status';
 import { usageBreakdown, usageSummary, windowUsage } from '../capture/usage';
 import { contextUsage } from '../capture/context';
 import { touchedFiles } from './touched';
@@ -343,7 +349,7 @@ describe('touchedFiles — executed', () => {
     });
     const task = await createTask({
       title: 't', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/slug', ownsWorktree: true,
+      branch: 'b', worktreePath: '/wt/slug', ownsWorktree: true, createdBranch: true,
     });
 
     // The same file, written three times, named absolutely and relatively.
@@ -822,13 +828,10 @@ describe('listUnclaimedRepos — the import candidates', () => {
 
 // ---------------------------------------------------------------------------
 
-describe('deleteTask — the promise the dialog makes on screen', () => {
+describe('deleteTask — removes the task and the conversation copy Albedo holds', () => {
   /**
-   * The delete dialog tells the user: "The conversation is kept — the
-   * transcript stays searchable and the session reappears in the session
-   * browser, so you can resume it later."
-   *
-   * These tests assert that sentence, not the SQL that implements it.
+   * The delete dialog tells the user the conversation is removed from Albedo
+   * and Claude Code's own file is untouched. These assert that sentence.
    */
   async function seedTaskWithSession(): Promise<{ taskId: number; sessionId: string }> {
     const project = await createProject({
@@ -836,7 +839,7 @@ describe('deleteTask — the promise the dialog makes on screen', () => {
     });
     const task = await createTask({
       title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'feat/retry', worktreePath: '/wt/retry', ownsWorktree: true,
+      branch: 'feat/retry', worktreePath: '/wt/retry', ownsWorktree: true, createdBranch: true,
     });
     await insertMessages([
       { taskId: task.id, sessionId: 'sess-keep', seq: 0, role: 'user', toolName: null,
@@ -852,7 +855,7 @@ describe('deleteTask — the promise the dialog makes on screen', () => {
     return { taskId: task.id, sessionId: 'sess-keep' };
   }
 
-  it('removes the task row and nothing else', async () => {
+  it('removes the task row and every message of its session', async () => {
     const { taskId } = await seedTaskWithSession();
     expect(await getTask(taskId)).not.toBeNull();
 
@@ -860,62 +863,43 @@ describe('deleteTask — the promise the dialog makes on screen', () => {
 
     expect(await getTask(taskId)).toBeNull();
     expect(await listTasks({ includeArchived: true })).toEqual([]);
-    // the messages are still there, all three of them
-    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages').get()).toEqual({ c: 3 });
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages').get()).toEqual({ c: 0 });
   });
 
-  it('THE PROMISE: the session reappears in the browser, intact and unclaimed', async () => {
+  it('removes subagent rows too: they carry the parent session id and no task id', async () => {
     const { taskId, sessionId } = await seedTaskWithSession();
-
-    // before: the session is claimed by the task
-    const before = await listPastSessions();
-    expect(before[0]?.taskId).toBe(taskId);
-    expect(before[0]?.messageCount).toBe(3);
+    await insertMessages([
+      { taskId: null, sessionId, seq: 0, role: 'user', toolName: null, targetPath: null,
+        body: 'subagent prompt', rawJson: '{}', agentId: 'agent-1', ts: 1_500 },
+    ]);
 
     await deleteTask(taskId);
 
-    const after = await listPastSessions();
-    expect(after).toHaveLength(1);
-    expect(after[0]?.sessionId).toBe(sessionId);
-    expect(after[0]?.messageCount).toBe(3);   // conversation kept
-    expect(after[0]?.taskId).toBeNull();      // and resumable, not owned
-    expect(after[0]?.title).toBe('Add a retry');
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages').get()).toEqual({ c: 0 });
   });
 
-  it('leaves the transcript searchable — the FTS index is not disturbed', async () => {
+  it('empties the search index and the session browser for that session', async () => {
     const { taskId } = await seedTaskWithSession();
     expect(await searchMessages('uploader')).not.toHaveLength(0);
 
     await deleteTask(taskId);
 
-    // An UPDATE of task_id fires the messages_au trigger, which deletes and
-    // re-inserts the FTS row. A silently emptied search index would be
-    // invisible until someone searched for something old.
-    const hits = await searchMessages('uploader');
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0]?.snippet).toContain('<mark>');
-    expect(hits[0]?.message.taskId).toBeNull();
-    expect(
-      db.raw.prepare('SELECT COUNT(*) c FROM messages_fts').get(),
-    ).toEqual({ c: 3 });
+    expect(await searchMessages('uploader')).toHaveLength(0);
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages_fts').get()).toEqual({ c: 0 });
+    expect(await listPastSessions()).toHaveLength(0);
   });
 
-  it('detaches the rows rather than orphaning them at a dead task id', async () => {
+  it('removes the transcript_files row, so the watcher no longer holds the session', async () => {
     const { taskId } = await seedTaskWithSession();
     await deleteTask(taskId);
-    // Foreign keys are not enforced, so nothing but this function prevents
-    // rows pointing at an id that no longer exists.
-    const dangling = db.raw
-      .prepare('SELECT COUNT(*) c FROM messages WHERE task_id IS NOT NULL')
-      .get();
-    expect(dangling).toEqual({ c: 0 });
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM transcript_files').get()).toEqual({ c: 0 });
   });
 
   it('touches only the deleted task', async () => {
     const { taskId } = await seedTaskWithSession();
     const other = await createTask({
       title: 'other', projectId: null, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/other', ownsWorktree: true,
+      branch: 'b', worktreePath: '/wt/other', ownsWorktree: true, createdBranch: true,
     });
     await insertMessages([
       { taskId: other.id, sessionId: 'sess-other', seq: 0, role: 'user', toolName: null,
@@ -1030,5 +1014,217 @@ describe('subagent rows do not collide with their parent session', () => {
       .prepare("SELECT bytes_ingested, last_seq FROM transcript_files WHERE path LIKE '%/subagents/%'")
       .all() as { bytes_ingested: number }[];
     expect(rewound.every((r) => r.bytes_ingested === 0)).toBe(true);
+  });
+});
+
+describe('getMessages parentOnly: a subagent mid-tool-call is not the parent waiting', () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = createTestDb();
+    harness.db = db;
+    resetDb();
+  });
+
+  const line = (seq: number, agentId: string | null, role: 'assistant' | 'tool_use', ts: number, id?: string) => ({
+    taskId: null,
+    sessionId: 'sess',
+    seq,
+    role,
+    toolName: role === 'tool_use' ? 'Bash' : null,
+    targetPath: null,
+    body: 'x',
+    rawJson: JSON.stringify(
+      role === 'tool_use'
+        ? { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id }] } }
+        : { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] } },
+    ),
+    agentId,
+    ts,
+  });
+
+  it('reads blocked from the whole session, idle from the parent alone', async () => {
+    await insertMessages([
+      line(0, null, 'assistant', 1_000), // the parent's turn ended
+      line(0, 'agent-1', 'tool_use', 2_000, 'toolu_running'), // a subagent's test run, still going
+    ]);
+
+    const all = await getMessages({ sessionId: 'sess', limit: 100 });
+    expect(deriveStatus(all, 3_000)).toBe('blocked'); // the bug
+
+    const parent = await getMessages({ sessionId: 'sess', limit: 100, parentOnly: true });
+    expect(parent).toHaveLength(1);
+    expect(deriveStatus(parent, 3_000)).toBe('idle');
+  });
+
+  it('returns agentId on rows, so callers can tell them apart', async () => {
+    await insertMessages([line(0, null, 'assistant', 1_000), line(0, 'agent-1', 'tool_use', 2_000, 't')]);
+    const all = await getMessages({ sessionId: 'sess', limit: 100 });
+    expect(all.map((m) => m.agentId)).toEqual(expect.arrayContaining([null, 'agent-1']));
+    expect(all).toHaveLength(2);
+  });
+});
+
+describe('getMessages agentId: one subagent’s own rows, for the inspector', () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = createTestDb();
+    harness.db = db;
+    resetDb();
+  });
+
+  // Subagent rows carry the PARENT's session id and a file-local seq, so two
+  // agents (and the parent) share seq values. Only agent_id tells them apart.
+  const row = (seq: number, agentId: string | null, body: string, ts: number, sessionId = 'sess') => ({
+    taskId: null,
+    sessionId,
+    seq,
+    role: 'assistant' as const,
+    toolName: null,
+    targetPath: null,
+    body,
+    rawJson: JSON.stringify({ agentId, n: body }),
+    agentId,
+    ts,
+  });
+
+  beforeEach(async () => {
+    await insertMessages([
+      row(0, null, 'parent 0', 1_000),
+      row(100, null, 'parent 1', 4_000),
+      row(0, 'agent-a', 'a 0', 2_000),
+      row(100, 'agent-a', 'a 1', 3_000),
+      row(200, 'agent-a', 'a 2', 5_000),
+      row(0, 'agent-b', 'b 0', 2_500),
+      row(0, 'agent-a', 'other session', 2_000, 'sess-2'),
+    ]);
+  });
+
+  it('returns only that agent’s rows in that session, in seq order', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-a', limit: 100 });
+    expect(rows.map((m) => m.body)).toEqual(['a 0', 'a 1', 'a 2']);
+    expect(rows.every((m) => m.agentId === 'agent-a')).toBe(true);
+  });
+
+  it('pages forward with afterSeq without picking up the parent or a sibling', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-a', afterSeq: 0, limit: 100 });
+    expect(rows.map((m) => m.body)).toEqual(['a 1', 'a 2']);
+  });
+
+  it('keeps the newest rows when the window is smaller than the run', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-a', limit: 2 });
+    expect(rows.map((m) => m.body)).toEqual(['a 1', 'a 2']);
+  });
+
+  it('wins over parentOnly rather than returning nothing', async () => {
+    const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-b', parentOnly: true, limit: 100 });
+    expect(rows.map((m) => m.body)).toEqual(['b 0']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('archiving purges the conversation copy, keeping the task row', () => {
+  async function seedArchivable(path = '/wt/retry'): Promise<number> {
+    const project = await createProject({
+      name: 'p', repoPath: '/repo', worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const task = await createTask({
+      title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
+      branch: 'feat/retry', worktreePath: path, ownsWorktree: true, createdBranch: true,
+    });
+    await insertMessages([
+      { taskId: task.id, sessionId: 'sess-a', seq: 0, role: 'user', toolName: null,
+        targetPath: null, body: 'please add a retry', rawJson: '{}', agentId: null, ts: 1_000 },
+      // A subagent row carries the parent's session and is not always tagged.
+      { taskId: null, sessionId: 'sess-a', seq: 100, role: 'assistant', toolName: null,
+        targetPath: null, body: 'sub', rawJson: '{}', agentId: 'ag1', ts: 2_000 },
+      { taskId: null, sessionId: 'other', seq: 0, role: 'user', toolName: null,
+        targetPath: null, body: 'unrelated', rawJson: '{}', agentId: null, ts: 3_000 },
+    ]);
+    seedTranscriptFile(db, { path: '/p/sess-a.jsonl', sessionId: 'sess-a', cwd: path, title: 't' });
+    seedTranscriptFile(db, { path: '/p/other.jsonl', sessionId: 'other', cwd: '/elsewhere', title: 'o' });
+    return task.id;
+  }
+
+  it('drops every message of its session and the transcript record, nothing else', async () => {
+    const id = await seedArchivable();
+    await archiveTask(id);
+
+    expect((await getTask(id))?.status).toBe('archived');
+    expect(await getMessages({ sessionId: 'sess-a', limit: 100 })).toEqual([]);
+    expect((await getMessages({ sessionId: 'other', limit: 100 })).length).toBe(1);
+    expect((await listTranscriptFiles()).map((f) => f.sessionId)).toEqual(['other']);
+  });
+
+  it('stops offering the archived worktree for adoption, so it is not re-captured', async () => {
+    const id = await seedArchivable();
+    expect(await findTaskByWorktreePath('/wt/retry', { liveOnly: true })).not.toBeNull();
+    await archiveTask(id);
+    expect(await findTaskByWorktreePath('/wt/retry', { liveOnly: true })).toBeNull();
+    expect(await findTaskByWorktreePath('/wt/retry')).not.toBeNull();
+  });
+
+  it('compactHistory purges tasks archived before archiving purged', async () => {
+    const id = await seedArchivable();
+    db.raw.prepare(`UPDATE tasks SET status = 'archived' WHERE id = ?`).run(id);
+    expect((await getMessages({ sessionId: 'sess-a', limit: 100 })).length).toBe(2);
+
+    await compactHistory();
+
+    expect(await getMessages({ sessionId: 'sess-a', limit: 100 })).toEqual([]);
+    expect((await getMessages({ sessionId: 'other', limit: 100 })).length).toBe(1);
+  });
+});
+
+describe('touchTaskActivity — notifies only when the row moved', () => {
+  it('reports and emits a change, then stays quiet for a replay of the same or older activity', async () => {
+    const task = await createTask({
+      title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main',
+      branch: 'b', worktreePath: '/wt/t', ownsWorktree: true, createdBranch: true,
+    });
+    const cb = vi.fn();
+    const off = onTasksChanged(cb);
+    try {
+      expect(await touchTaskActivity(task.id, 'sess-t', 5_000)).toBe(true);
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(await touchTaskActivity(task.id, 'sess-t', 5_000)).toBe(false);
+      expect(await touchTaskActivity(task.id, 'sess-t', 4_000)).toBe(false);
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(await touchTaskActivity(task.id, 'sess-t', 6_000)).toBe(true);
+      expect(await touchTaskActivity(task.id, 'sess-u', 6_000)).toBe(true); // a resumed session id
+      expect(cb).toHaveBeenCalledTimes(3);
+      const row = await getTask(task.id);
+      expect(row?.sessionId).toBe('sess-u');
+      expect(row?.lastActivityAt).toBe(6_000);
+    } finally {
+      off();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('created_branch (v6)', () => {
+  const base = {
+    title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'fix',
+    worktreePath: '/wt/fix', ownsWorktree: true,
+  };
+
+  it('round-trips what createTask was told, in both directions', async () => {
+    const cut = await createTask({ ...base, createdBranch: true });
+    const kept = await createTask({ ...base, worktreePath: '/wt/kept', createdBranch: false });
+    expect((await getTask(cut.id))?.createdBranch).toBe(true);
+    expect((await getTask(kept.id))?.createdBranch).toBe(false);
+  });
+
+  it('reads a row from before v6 as unknown, not as "created"', async () => {
+    db.raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    const [old] = (await listTasks()).filter((t) => t.title === 'old');
+    expect(old?.createdBranch).toBeNull();
   });
 });

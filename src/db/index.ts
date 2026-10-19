@@ -99,6 +99,7 @@ interface TaskRow {
   worktree_path: string;
   session_id: string | null;
   owns_worktree: number;
+  created_branch: number | null;
   status: string;
   created_at: number;
   last_activity_at: number | null;
@@ -129,14 +130,15 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   worktreePath: 'worktree_path',
   sessionId: 'session_id',
   ownsWorktree: 'owns_worktree',
+  createdBranch: 'created_branch',
   status: 'status',
   createdAt: 'created_at',
   lastActivityAt: 'last_activity_at',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, status, created_at, last_activity_at';
-const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, status, created_at, last_activity_at';
+const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   'idle',
@@ -160,6 +162,7 @@ function toTask(r: TaskRow): Task {
     sessionId: r.session_id,
     // SQLite has no boolean type; anything non-zero is true.
     ownsWorktree: r.owns_worktree !== 0,
+    createdBranch: r.created_branch === null ? null : r.created_branch !== 0,
     status: (VALID_STATUSES.has(r.status) ? r.status : 'idle') as TaskStatus,
     createdAt: r.created_at,
     lastActivityAt: r.last_activity_at,
@@ -212,8 +215,9 @@ export async function createTask(t: NewTask): Promise<Task> {
     // The schema default exists to backfill pre-v4 rows; as a forward default
     // it points the dangerous way (1 = "Albedo may delete this directory"), so
     // no insert from here is allowed to fall through to it.
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, 'idle', $8, NULL)`,
+    // created_branch likewise: NULL is reserved for pre-v6 rows.
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, 'idle', $8, NULL)`,
     [
       t.title,
       t.projectId,
@@ -223,6 +227,7 @@ export async function createTask(t: NewTask): Promise<Task> {
       t.worktreePath,
       t.ownsWorktree ? 1 : 0,
       createdAt,
+      t.createdBranch === null ? null : t.createdBranch ? 1 : 0,
     ],
   );
   const id = res.lastInsertId;
@@ -240,6 +245,7 @@ export async function createTask(t: NewTask): Promise<Task> {
     worktreePath: t.worktreePath,
     sessionId: null,
     ownsWorktree: t.ownsWorktree,
+    createdBranch: t.createdBranch,
     status: 'idle',
     createdAt,
     lastActivityAt: null,
@@ -268,49 +274,135 @@ export async function updateTask(id: number, patch: Partial<Task>): Promise<void
 }
 
 /**
- * Delete a task, keeping its conversation.
+ * Delete a task AND its captured conversation.
  *
- * ### The constraint is on screen, not just in this comment
+ * Claude Code's own transcript file is untouched, so the history is not lost
+ * to the user -- only Albedo's copy goes. (This reverses the earlier
+ * "conversation is kept" behaviour on purpose: the copy was growing without
+ * bound, and a deleted task should not leave gigabytes behind.)
  *
- * The delete dialog tells the user, in as many words: "The conversation is
- * kept -- the transcript stays searchable and the session reappears in the
- * session browser, so you can resume it later." If this function touched
- * `messages`, that sentence would be a lie, and M1's one rule -- captured
- * history is never lost -- would be broken by a button.
+ * ### What goes
  *
- * ### Why the UPDATE is explicit
+ * Every message for the task's session -- matched by `session_id`, not only
+ * `task_id`, because subagent rows carry the PARENT's session id and are not
+ * always tagged with the task -- plus any row still tagged with the task id.
+ * The FTS index follows through the `messages_ad` trigger.
  *
- * Foreign keys are NOT enforced: tauri-plugin-sql never issues
- * `PRAGMA foreign_keys = ON`, so `messages.task_id REFERENCES tasks(id)` is
- * documentation. Nothing in the schema nulls these rows, and nothing stops the
- * DELETE from leaving them pointing at an id that no longer exists.
+ * ### The file record goes too
+ *
+ * The watcher holds a transcript only while it has a `transcript_files` row
+ * (or a task owns its cwd). Removing the row is what makes the session
+ * unheld, so it is not re-captured; it can be brought back from History,
+ * which reads Claude Code's file again from byte 0.
  *
  * ### Order matters
  *
- * Null the messages FIRST. There is no transaction here (tauri-plugin-sql runs
- * on a connection pool -- see insertMessages), so a failure between the two
- * statements has to leave the database in the recoverable state: messages
- * detached and the task still present, rather than the task gone and its rows
- * pointing at nothing.
+ * Foreign keys are NOT enforced (tauri-plugin-sql never issues
+ * `PRAGMA foreign_keys = ON`), and there is no transaction here (the plugin
+ * runs on a connection pool -- see insertMessages). Messages go FIRST, so a
+ * failure between statements leaves the task present with fewer messages --
+ * visible and retryable -- rather than a task row gone with its rows pointing
+ * at nothing.
  */
 export async function deleteTask(id: number): Promise<void> {
+  await purgeTaskHistory(id);
   const db = await getDb();
-  await db.execute(`UPDATE messages SET task_id = NULL WHERE task_id = $1`, [id]);
   await db.execute(`DELETE FROM tasks WHERE id = $1`, [id]);
   emitTasksChanged();
 }
 
+/**
+ * Remove Albedo's copy of a task's conversation and the watcher's record of
+ * its transcript, keeping the task row. Exactly what {@link deleteTask} removes
+ * besides the row itself, for the same reasons and in the same order.
+ */
+export async function purgeTaskHistory(id: number): Promise<void> {
+  const db = await getDb();
+  const rows = await db.select<{ session_id: string | null }[]>(
+    `SELECT session_id FROM tasks WHERE id = $1`,
+    [id],
+  );
+  const sessionId = rows[0]?.session_id ?? null;
+  // The task row's own session, and any session its tagged messages belong to
+  // (the row's session_id is only set once the task is adopted). The files
+  // go first: they are looked up through the messages that are deleted next.
+  await db.execute(
+    `DELETE FROM transcript_files
+      WHERE session_id = $2
+         OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
+    [id, sessionId ?? ''],
+  );
+  await db.execute(
+    `DELETE FROM messages
+      WHERE session_id = $2
+         OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
+    [id, sessionId ?? ''],
+  );
+  await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
+}
+
+/**
+ * Archive a task and drop its captured conversation: an archived task is done,
+ * and keeping its history is what grew the database without bound. Claude
+ * Code's transcript stays on disk and can be brought back from History.
+ *
+ * The status flips FIRST. The watcher only adopts a cwd for a non-archived
+ * task, so once the row reads archived nothing can re-hold the session between
+ * the purge's statements and re-capture it from byte 0.
+ */
 export async function archiveTask(id: number): Promise<void> {
   const db = await getDb();
   await db.execute(`UPDATE tasks SET status = 'archived' WHERE id = $1`, [id]);
   emitTasksChanged();
+  await purgeTaskHistory(id);
+}
+
+/**
+ * Startup housekeeping: purge history still held for archived tasks (archived
+ * before archiving purged, or whose purge was interrupted), merge a fragmented
+ * search index, then compact the file. auto_vacuum is off, so deleted rows only become free pages; VACUUM is
+ * what gives the space back. It rewrites the file, so it runs only when at
+ * least a quarter of it, and 8 MB, is free.
+ */
+export async function compactHistory(): Promise<void> {
+  const db = await getDb();
+  const archived = await db.select<{ id: number }[]>(
+    `SELECT t.id FROM tasks t
+      WHERE t.status = 'archived'
+        AND (EXISTS (SELECT 1 FROM messages m WHERE m.task_id = t.id)
+             OR (t.session_id IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM transcript_files f WHERE f.session_id = t.session_id)))`,
+  );
+  for (const { id } of archived) await purgeTaskHistory(id);
+
+  // FTS5 keeps a tombstone per deleted row until segments merge, and many
+  // small ingest batches leave many segments: measured at 77 MB of index for
+  // 3 MB of text. 'optimize' merges it to one segment (~270 data rows on that
+  // corpus, 1 s); the threshold keeps a healthy index from being rewritten
+  // on every launch.
+  const [fts] = await db.select<{ n: number }[]>(`SELECT count(*) AS n FROM messages_fts_data`);
+  if ((fts?.n ?? 0) > 2000) {
+    await db.execute(`INSERT INTO messages_fts(messages_fts) VALUES ('optimize')`);
+  }
+
+  const [pages] = await db.select<{ n: number }[]>(`SELECT page_count AS n FROM pragma_page_count()`);
+  const [free] = await db.select<{ n: number }[]>(`SELECT freelist_count AS n FROM pragma_freelist_count()`);
+  const [size] = await db.select<{ n: number }[]>(`SELECT page_size AS n FROM pragma_page_size()`);
+  const freeBytes = (free?.n ?? 0) * (size?.n ?? 4096);
+  if (pages && free && free.n * 4 >= pages.n && freeBytes >= 8 * 1024 * 1024) {
+    await db.execute(`VACUUM`);
+  }
 }
 
 /** Capture-side: adopt a transcript whose cwd is a task's worktree. */
-export async function findTaskByWorktreePath(worktreePath: string): Promise<Task | null> {
+export async function findTaskByWorktreePath(
+  worktreePath: string,
+  { liveOnly = false }: { liveOnly?: boolean } = {},
+): Promise<Task | null> {
   const db = await getDb();
+  const live = liveOnly ? ` AND status != 'archived'` : '';
   const rows = await db.select<TaskRow[]>(
-    `SELECT ${TASK_SELECT} FROM tasks WHERE worktree_path = $1 ORDER BY id DESC LIMIT 1`,
+    `SELECT ${TASK_SELECT} FROM tasks WHERE worktree_path = $1${live} ORDER BY id DESC LIMIT 1`,
     [worktreePath],
   );
   const row = rows[0];
@@ -321,21 +413,30 @@ export async function findTaskByWorktreePath(worktreePath: string): Promise<Task
  * Record that a task's session produced activity. `last_activity_at` only ever
  * moves forward, so replaying an old file during backfill cannot rewrite a
  * live task's recency.
+ *
+ * Listeners hear about it only when the row actually changed: every ingest
+ * chunk lands here, and a no-op touch used to cost every subscriber a full
+ * task reload. Returns whether it changed.
  */
 export async function touchTaskActivity(
   taskId: number,
   sessionId: string,
   ts: number,
-): Promise<void> {
+): Promise<boolean> {
   const db = await getDb();
-  await db.execute(
+  const res = await db.execute(
     `UPDATE tasks
         SET session_id = $1,
             last_activity_at = MAX(COALESCE(last_activity_at, 0), $2)
-      WHERE id = $3`,
+      WHERE id = $3
+        AND (session_id IS NOT $1 OR COALESCE(last_activity_at, 0) < $2)`,
     [sessionId, ts, taskId],
   );
-  emitTasksChanged();
+  // A driver that does not report a count is treated as "changed": a missed
+  // notification is a stale list, an extra one is only a reload.
+  const changed = typeof res?.rowsAffected === 'number' ? res.rowsAffected > 0 : true;
+  if (changed) emitTasksChanged();
+  return changed;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +450,24 @@ export interface GetMessagesOptions {
   sessionId?: string;
   afterSeq?: number;
   limit?: number;
+  /**
+   * Only the session's own conversation, not its subagents' rows. Subagent
+   * rows are stored under the PARENT's session id, so a status derived from the
+   * whole session reads a subagent's in-flight tool call as the parent waiting
+   * on a permission prompt.
+   */
+  parentOnly?: boolean;
+  /**
+   * Only the rows ONE subagent wrote -- what the subagent inspector reads. The
+   * counterpart of `parentOnly`, and it wins over it: asking for an agent's
+   * rows and for "no agent" at once has no useful answer.
+   *
+   * Pair it with `sessionId` (the PARENT's, which is where subagent rows are
+   * stored). That makes the query seq-ordered, and `seq` is file-local -- one
+   * agent is one file, so its seqs are a consistent order and `afterSeq`
+   * pages forward through them exactly as it does for a parent session.
+   */
+  agentId?: string;
 }
 
 /**
@@ -398,6 +517,14 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
   if (opts.sessionId !== undefined) {
     binds.push(opts.sessionId);
     where.push(`session_id = $${binds.length}`);
+  }
+  if (opts.agentId !== undefined) {
+    binds.push(opts.agentId);
+    where.push(`agent_id = $${binds.length}`);
+  } else if (opts.parentOnly) {
+    // Unary + keeps SQLite off messages_agent, a worse plan for this query;
+    // messages_session_seq is ~10x faster on a long session (110 ms -> 10 ms measured).
+    where.push('+agent_id IS NULL');
   }
   if (opts.afterSeq !== undefined) {
     // exclusive: pages forward from the last seq the caller already has

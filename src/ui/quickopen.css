@@ -1,0 +1,176 @@
+/* --------------------------------------------------------------------------
+   Quick open: Go to File / Class / Symbol, Search Everywhere.
+
+   Same visual language as the session browser (sb-*): --overlay scrim,
+   --panel dialog, --panel-raised selected row with an --accent left edge,
+   --panel-hover on hover. No new surfaces, so no new contrast pairs. Every
+   text token below, measured on the worst of the three row grounds (--panel,
+   --panel-raised, --panel-hover; hover is worst in both themes):
+       light  --text 12.22  --muted 6.17  --faint 5.04  --accent 5.28
+       dark   --text 10.72  --muted 6.42  --faint 4.64  --accent 5.94
+   No tints, no opacity: the dim path is --faint, not a faded --text.
+
+   Sizes: nothing under --fs-xs. Names and paths are code, so mono.
+   -------------------------------------------------------------------------- */
+
+.qo-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  /* Near the top, where the eye already is for a type-ahead. */
+  padding: 72px 24px 24px;
+  background: var(--overlay);
+}
+
+.qo-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(820px, 100%);
+  max-height: min(640px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-menu);
+  overflow: hidden;
+}
+
+/* --- scope tabs ----------------------------------------------------------- */
+
+.qo-modes {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.qo-mode {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px 6px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.qo-mode:hover { color: var(--text); background: var(--panel-hover); }
+.qo-mode[aria-selected='true'] { color: var(--text-strong); border-bottom-color: var(--accent); }
+
+.qo-mode-keys {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.qo-mode:hover .qo-mode-keys,
+.qo-mode[aria-selected='true'] .qo-mode-keys { color: var(--muted); }
+
+/* --- input ---------------------------------------------------------------- */
+
+.qo-input {
+  flex: 0 0 auto;
+  margin: 8px;
+  height: 32px;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+  background: var(--panel-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  user-select: text;
+}
+.qo-input:focus { border-color: var(--focus); outline: none; }
+.qo-input::placeholder { color: var(--faint); font-family: var(--font-ui); }
+
+/* --- results -------------------------------------------------------------- */
+
+.qo-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.qo-row {
+  display: grid;
+  grid-template-columns: 9ch minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  padding: 5px 10px;
+  border-left: 2px solid transparent;
+}
+.qo-row:hover { background: var(--panel-hover); }
+.qo-row[aria-selected='true'] { background: var(--panel-raised); border-left-color: var(--accent); }
+
+.qo-kind {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.qo-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qo-row[aria-selected='true'] .qo-name { color: var(--text-strong); }
+
+/* Matched characters. Weight carries it as much as colour does, so it reads
+   the same whatever the row ground; --accent is measured on all three. */
+.qo-hit {
+  background: none;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* Paths truncate from the START: the end of a path is the part that tells two
+   files apart. rtl on the box moves the ellipsis left; <bdi> keeps the text
+   itself left-to-right so slashes stay where they belong. */
+.qo-where {
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qo-where .qo-hit { color: var(--text); }
+.qo-row[aria-selected='true'] .qo-where { color: var(--muted); }
+.qo-row[aria-selected='true'] .qo-where .qo-hit { color: var(--text-strong); }
+
+.qo-line { color: inherit; }
+
+/* --- footer --------------------------------------------------------------- */
+
+.qo-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+.qo-status { color: var(--muted); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qo-hint { color: var(--faint); white-space: nowrap; }
+
+/* Named only when there is no task and the search runs in a project's main
+   checkout. --muted, not --faint: it is the one line that says which folder the
+   results come from, so it must clear 4.5:1 on the dialog ground. */
+.qo-scope {
+  flex: 0 0 auto;
+  padding: 6px 10px 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

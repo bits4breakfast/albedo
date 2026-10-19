@@ -221,7 +221,10 @@ function toDual(lines: ThemedTokenWithVariants[][]): DualToken[][] {
     line.map((t) => ({
       content: t.content,
       offset: t.offset,
-      style: dualStyle(t.variants[THEMES.light], t.variants[THEMES.dark]),
+      // Variants are keyed by the names in the `themes` record passed to
+      // codeToTokensWithThemes ('light' / 'dark'), NOT by the theme ids. Looking
+      // them up by id found nothing, and every token rendered uncoloured.
+      style: dualStyle(t.variants['light'], t.variants['dark']),
     })),
   );
 }

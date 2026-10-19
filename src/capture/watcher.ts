@@ -12,9 +12,13 @@
  *  - Only complete lines are parsed. The offset only ever advances to a
  *    newline boundary, so a line being appended right now is simply left for
  *    the next pass.
- *  - Sessions with no matching task are captured with task_id NULL. A session
- *    started in a plain terminal is still history, and still searchable. This
- *    is an explicit spec requirement, not an edge case.
+ *  - Only sessions Albedo has a reason to hold are captured: those whose cwd
+ *    is a task's worktree, and those the user imported from History. Every
+ *    other transcript is left on disk for Claude Code to own -- the database
+ *    used to mirror all of them and grew to 2x the size of its source. A file
+ *    is "held" once it has a `transcript_files` row; deleting a task removes
+ *    the row, and importing writes one. (This replaces the earlier rule that
+ *    every session is captured with task_id NULL.)
  *  - Backfill is incremental, newest file first, and yields to the event loop
  *    between files so the UI never freezes.
  */
@@ -27,6 +31,7 @@ import {
   adoptSessionIntoTask,
   findTaskByWorktreePath,
   getTranscriptFile,
+  listTranscriptFiles,
   insertMessages,
   listTranscriptFilesNeedingTitle,
   setTranscriptTitle,
@@ -55,6 +60,22 @@ export const POLL_MS = 30_000;
  * watcher: the event may simply still be in flight (debounce + ingest).
  */
 export const POLL_GRACE_MS = 5_000;
+
+/** The first `cwd` carried by a line of transcript text, or null. Pure. */
+export function firstCwdIn(text: string): string | null {
+  for (const line of text.split('\n')) {
+    if (line.length === 0) continue;
+    const cwd = cwdOf(line);
+    if (cwd !== null) return cwd;
+  }
+  return null;
+}
+
+/** How much of a file's start is read to learn its cwd. */
+const HEAD_BYTES = 64 * 1024;
+
+/** How much of a file's end is read to find its latest title. */
+const TAIL_BYTES = 256 * 1024;
 
 /** Bytes pulled per pass. Bounds memory on the first import of a big file. */
 const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
@@ -266,8 +287,65 @@ class Capture implements CaptureHandle {
   private polling = false;
   private backfilled = false;
   private pollInFlight = false;
+  /**
+   * Transcripts already judged not worth holding (no task owns their cwd).
+   * Remembered for the life of the process so a busy unrelated session does
+   * not cost a head read on every append. Cleared per path by an import.
+   */
+  private readonly ignored = new Set<string>();
+  /** `${taskId}\0${sessionId}` pairs whose earlier rows were already backfilled. */
+  private readonly adopted = new Set<string>();
 
   constructor(private readonly root: string) {}
+
+  /**
+   * Should a transcript with no `transcript_files` row be captured?
+   *
+   * Yes only when its cwd is a task's worktree. Decided from the first
+   * {@link HEAD_BYTES} of the file, which is where `cwd` appears, so an
+   * unrelated multi-megabyte session costs one small read rather than a parse.
+   * `null` means "cannot tell yet" (no complete line with a cwd) and is NOT
+   * cached, so it is asked again when the file grows.
+   */
+  private async wants(path: string): Promise<boolean | null> {
+    let size: number;
+    try {
+      size = (await stat(path)).size;
+    } catch {
+      return null;
+    }
+    if (size === 0) return null;
+    const head = await readRange(path, 0, Math.min(size, HEAD_BYTES));
+    const cut = lastNewlineIndex(head);
+    if (cut < 0) return null;
+    const cwd = firstCwdIn(new TextDecoder().decode(head.subarray(0, cut + 1)));
+    // Live tasks only: an archived task's history was purged on archive, and
+    // re-holding its cwd would capture the whole session again from byte 0.
+    return cwd === null ? null : (await findTaskByWorktreePath(cwd, { liveOnly: true })) !== null;
+  }
+
+  /** Hold a transcript from byte 0 and read it now. See {@link importTranscripts}. */
+  async importFiles(paths: string[]): Promise<number> {
+    let n = 0;
+    for (const path of paths) {
+      this.ignored.delete(path);
+      if ((await getTranscriptFile(path)) === null) {
+        await upsertTranscriptFile({
+          path,
+          sessionId: sessionIdFromPath(path),
+          projectDir: projectDirOf(this.root, path),
+          cwd: null,
+          title: null,
+          bytesIngested: 0,
+          lastSeq: -1,
+          mtime: null,
+        });
+      }
+      await this.enqueue(path, projectDirOf(this.root, path));
+      n += 1;
+    }
+    return n;
+  }
 
   async start(): Promise<void> {
     // Register the watcher FIRST, so appends that happen during the backfill
@@ -301,7 +379,7 @@ class Capture implements CaptureHandle {
         error: this.liveUpdatesError,
       });
       // No watcher at all: the poll is the only live path, so say so.
-      this.enterPolling(`Live updates are being polled, not watched (${detail})`);
+      this.enterPolling(`Live updates are slower than usual: the file watcher could not start, so Albedo is checking every 30 seconds instead (${detail})`);
     }
 
     // Always on, because a watcher that starts and never fires is silent. The
@@ -403,8 +481,8 @@ class Capture implements CaptureHandle {
       const toIngest = this.polling ? [...missed, ...recent] : missed;
       if (missed.length > 0) {
         this.enterPolling(
-          'Live updates are being polled, not watched: the filesystem watcher missed changes to ' +
-            `${missed.length} transcript${missed.length === 1 ? '' : 's'}`,
+          'Live updates are slower than usual: the file watcher missed changes to ' +
+            `${missed.length} transcript${missed.length === 1 ? '' : 's'}, so Albedo is checking every 30 seconds instead.`,
         );
       }
       const byPath = new Map(found.map((f) => [f.path, f]));
@@ -537,14 +615,28 @@ class Capture implements CaptureHandle {
 
   private async ingest(path: string, projectDir: string): Promise<void> {
     if (this.stopped) return;
+    // Note the size on EVERY path in, including files that are skipped below.
+    // The poll compares disk against this, and a file never recorded looks like
+    // growth nobody reported -- which is how every skipped transcript was
+    // flagged as a missed change.
+    try {
+      this.seen.set(path, (await stat(path)).size);
+    } catch {
+      /* gone: handled below and by the next scan */
+    }
+    if (this.ignored.has(path)) return;
 
     const record = await getTranscriptFile(path);
+    if (record === null) {
+      const wanted = await this.wants(path);
+      if (wanted === false) this.ignored.add(path);
+      if (wanted !== true) return;
+    }
     let offset = record?.bytesIngested ?? 0;
     let lastSeq = record?.lastSeq ?? -1;
     let knownCwd = record?.cwd ?? null;
     let knownTitle = record?.title ?? null;
     let sessionId = record?.sessionId ?? sessionIdFromPath(path);
-    let adopted = false;
 
     // Loop so one call drains a file that grew by more than MAX_CHUNK_BYTES.
     for (;;) {
@@ -651,14 +743,16 @@ class Capture implements CaptureHandle {
       });
 
       if (task && insertable.length > 0) {
-        if (!adopted) {
-          // Rows captured before the task existed (a terminal session later
-          // adopted by a task) get their task_id backfilled. Once per ingest
-          // call: the rows written below already carry the task id.
-          adopted = true;
-          for (const sid of distinctSessionIds(insertable)) {
-            await adoptSessionIntoTask(sid, task.id);
-          }
+        // Rows captured before the task existed (a terminal session later
+        // adopted by a task) get their task_id backfilled. Once per session
+        // and task for the life of the watcher, not per ingest call: every
+        // row written from then on already carries the task id, and an ingest
+        // call is one fs event -- a live session makes hundreds.
+        for (const sid of distinctSessionIds(insertable)) {
+          const key = `${task.id}\u0000${sid}`;
+          if (this.adopted.has(key)) continue;
+          await adoptSessionIntoTask(sid, task.id);
+          this.adopted.add(key);
         }
         let latestTs = 0;
         for (const row of insertable) if (row.ts > latestTs) latestTs = row.ts;
@@ -701,6 +795,114 @@ export async function startCapture(): Promise<CaptureHandle> {
 
   await capture.start();
   return capture;
+}
+
+// ---------------------------------------------------------------------------
+// Sessions on disk that Albedo is not holding
+// ---------------------------------------------------------------------------
+
+/** A Claude Code session file, as the filesystem describes it. */
+export interface DiskSession {
+  sessionId: string;
+  path: string;
+  projectDir: string;
+  /** Real working directory, from the file's first lines. Null if not found. */
+  cwd: string | null;
+  /** Latest session title near the end of the file, if any. */
+  title: string | null;
+  mtime: number;
+  size: number;
+  /** True when Albedo already holds it (it has a `transcript_files` row). */
+  held: boolean;
+}
+
+/** How many of the newest session files {@link listDiskSessions} describes. */
+const DISK_LIST_LIMIT = 150;
+
+/**
+ * Claude Code's session files that Albedo is NOT holding, newest first.
+ *
+ * Read straight from the filesystem, never from the database: the point is to
+ * reach sessions the database does not contain. Only top-level session files
+ * are listed (subagent transcripts ride along with their parent on import).
+ * Each costs one head read (cwd) and one tail read (title), both bounded.
+ */
+export async function listDiskSessions(): Promise<DiskSession[]> {
+  const root = `${(await homeDir()).replace(/\/+$/, '')}/${PROJECTS_SUBPATH}`;
+  if (!(await exists(root))) return [];
+
+  const held = new Set((await listTranscriptFiles()).map((f) => f.path));
+  const files: Array<{ path: string; projectDir: string; mtime: number; size: number }> = [];
+  for (const dir of await readDir(root)) {
+    if (!dir.isDirectory) continue;
+    let entries;
+    try {
+      entries = await readDir(`${root}/${dir.name}`);
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (!e.isFile || !isTranscriptPath(e.name)) continue;
+      const path = `${root}/${dir.name}/${e.name}`;
+      if (held.has(path)) continue;
+      try {
+        const info = await stat(path);
+        files.push({ path, projectDir: dir.name, mtime: info.mtime?.getTime() ?? 0, size: info.size });
+      } catch {
+        /* vanished between readDir and stat */
+      }
+    }
+  }
+  files.sort((a, b) => b.mtime - a.mtime);
+
+  const out: DiskSession[] = [];
+  for (const f of files.slice(0, DISK_LIST_LIMIT)) {
+    let cwd: string | null = null;
+    let title: string | null = null;
+    try {
+      const head = await readRange(f.path, 0, Math.min(f.size, HEAD_BYTES));
+      const hc = lastNewlineIndex(head);
+      if (hc >= 0) cwd = firstCwdIn(new TextDecoder().decode(head.subarray(0, hc + 1)));
+      const from = Math.max(0, f.size - TAIL_BYTES);
+      const tail = await readRange(f.path, from, f.size - from);
+      title = lastTitleIn(new TextDecoder().decode(tail));
+    } catch {
+      /* unreadable: still listable, just unlabeled */
+    }
+    out.push({
+      sessionId: sessionIdFromPath(f.path),
+      path: f.path,
+      projectDir: f.projectDir,
+      cwd,
+      title,
+      mtime: f.mtime,
+      size: f.size,
+      held: false,
+    });
+    await yieldToEventLoop();
+  }
+  return out;
+}
+
+/**
+ * Import a session from Claude Code's files: hold it from byte 0 and ingest
+ * it, together with its subagent transcripts
+ * (`<projectDir>/<session-uuid>/subagents/*.jsonl`).
+ *
+ * Resolves once the rows are written. Throws if capture is not running.
+ */
+export async function importTranscripts(sessionFilePath: string): Promise<number> {
+  if (active === null) throw new Error('Capture is not running, so nothing can be imported.');
+  const paths = [sessionFilePath];
+  const subDir = `${sessionFilePath.replace(/\.jsonl$/, '')}/subagents`;
+  try {
+    for (const e of await readDir(subDir)) {
+      if (e.isFile && isTranscriptPath(e.name)) paths.push(`${subDir}/${e.name}`);
+    }
+  } catch {
+    /* no subagents directory: the common case */
+  }
+  return active.importFiles(paths);
 }
 
 // ---------------------------------------------------------------------------

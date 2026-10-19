@@ -1,0 +1,12 @@
+-- v6: whether Albedo created the task's branch.
+--
+-- Archive offers to delete a task's branch. That is right for a branch Albedo
+-- cut with `worktree add -b`, and wrong for one the user already had ("Check
+-- out the existing branch", or a resumed session). Until now the branch's own
+-- reflog was the only witness, which expires and can be disabled.
+--
+-- NULLABLE, deliberately: NULL means "recorded before v6, ask the reflog", which
+-- keeps every existing task behaving exactly as it did. 1 and 0 are written
+-- explicitly by createTask for every new task -- like owns_worktree, no insert
+-- may fall through to a default, so there is none.
+ALTER TABLE tasks ADD COLUMN created_branch INTEGER;

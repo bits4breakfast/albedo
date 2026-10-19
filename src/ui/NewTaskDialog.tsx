@@ -21,22 +21,38 @@ import {
   composeWorktreePath,
   createWorktree,
   listBranches,
+  undoCreateWorktree,
 } from '../git/worktree';
 import ProjectsDialog from './ProjectsDialog';
 import { readLastProjectId, writeLastProjectId } from './projectPrefs';
+import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
+import { setTaskModel } from './taskModel';
+import { nameFollowUp, type NewTaskPrefill } from './followUp';
 import './worktree.css';
 
 export interface NewTaskDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreated: (t: Task) => void;
+  /**
+   * `initialPrompt` is set only when the dialog showed a prompt field (a
+   * follow-up): it replaces the project's template for this task, and an
+   * empty string means the user cleared it and wants no prompt at all.
+   */
+  onCreated: (t: Task, initialPrompt?: string) => void;
+  /**
+   * Opens the dialog filled in -- "Follow-up…" uses it. Everything stays
+   * editable; nothing is created until the user presses Create. A new object
+   * while open (the PR lookup finishing) replaces the prompt only if the user
+   * has not touched it.
+   */
+  prefill?: NewTaskPrefill | null;
 }
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) {
+export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewTaskDialogProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(false);
@@ -44,6 +60,15 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
   const [projectsOpen, setProjectsOpen] = useState(false);
 
   const [title, setTitle] = useState('');
+  /** Shown, and sent, only when a prefill brought one. */
+  const [prompt, setPrompt] = useState('');
+  /** The prompt last put there by a prefill, to tell it from the user's edit. */
+  const appliedPrompt = useRef<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  /** '' means the user's Claude Code default; anything else is passed as --model. */
+  const [model, setModel] = useState('');
+  const [modelChoices, setModelChoices] = useState<ModelChoice[]>([]);
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
   const [baseBranch, setBaseBranch] = useState('');
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesBusy, setBranchesBusy] = useState(false);
@@ -95,7 +120,7 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
 
   useEffect(() => {
     if (!open) return;
-    void loadProjects();
+    void loadProjects(prefill?.projectId ?? undefined);
     void (async () => {
       try {
         const { homeDir } = await import('@tauri-apps/api/path');
@@ -104,18 +129,47 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
         setHome('');
       }
     })();
+    // Keyed on `open` only: a prefill update must not re-pick the project
+    // under a user who has already changed it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, loadProjects]);
 
   useEffect(() => {
     if (open) return;
     setTitle('');
+    setPrompt('');
+    appliedPrompt.current = null;
     setError(null);
     setBusy(false);
   }, [open]);
 
+  // The title arrives once per open; the prompt again whenever the prefill
+  // changes, unless the user has started writing in it.
   useEffect(() => {
-    if (open) titleRef.current?.focus();
-  }, [open]);
+    if (!open || !prefill) return;
+    // Read now: the updater runs after the ref below has moved on.
+    const applied = appliedPrompt.current;
+    if (applied === null) setTitle(prefill.title);
+    setPrompt((current) => (applied === null || current === applied ? prefill.prompt : current));
+    appliedPrompt.current = prefill.prompt;
+  }, [open, prefill]);
+
+  // A follow-up's title is already right; what only the user knows is the
+  // bug, and the prompt ends on the empty line it goes in.
+  const focusPrompt = prefill !== null;
+  // The fields mount only once projects have loaded, so that is the moment.
+  const formShown = projects.length > 0;
+  useEffect(() => {
+    if (!open) return;
+    if (!focusPrompt) {
+      titleRef.current?.focus();
+      return;
+    }
+    const el = promptRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [open, focusPrompt, formShown]);
 
   useEffect(() => {
     if (!open) return;
@@ -164,11 +218,33 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
     })();
   }, [open, project]);
 
+  // Models come from Claude Code's own files, so the list and the default are
+  // whatever Claude Code would offer and start with. The pick resets per open.
+  useEffect(() => {
+    if (!open) return;
+    setModel('');
+    let live = true;
+    void Promise.all([loadModelChoices(), loadDefaultModel()]).then(([choices, def]) => {
+      if (!live) return;
+      setModelChoices(choices);
+      setDefaultModel(def);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open]);
+
   // --- derived values, shown live -----------------------------------------
 
   // One derivation for the key, the branch and the directory, so what the
   // dialog shows is exactly what gets created.
-  const naming = useMemo(() => (title.trim() ? nameTask(title) : null), [title]);
+  // A follow-up takes its branch as its folder, so it never lands on the
+  // shipped task's bare-key folder (see `nameFollowUp`).
+  const isFollowUp = prefill !== null;
+  const naming = useMemo(
+    () => (title.trim() ? (isFollowUp ? nameFollowUp(title) : nameTask(title)) : null),
+    [title, isFollowUp],
+  );
   const branch = naming?.branch ?? '';
   const worktreePath = useMemo(
     () =>
@@ -192,17 +268,26 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
       if (busy || !project) return;
       setBusy(true);
       setError(null);
+      const created = {
+        repoPath: project.repoPath,
+        baseBranch,
+        branch,
+        path: worktreePath,
+        useExistingBranch,
+      };
       try {
-        await createWorktree({
-          repoPath: project.repoPath,
-          baseBranch,
-          branch,
-          path: worktreePath,
-          useExistingBranch,
-        });
+        await createWorktree(created);
+      } catch (e) {
+        const kind = e instanceof GitError ? e.kind : 'unknown';
+        setError({ text: messageOf(e), kind });
+        setBusy(false);
+        return;
+      }
+      let task: Task;
+      try {
         // Only once the worktree exists on disk does a task row make sense:
         // a task whose worktree is missing is worse than no task at all.
-        const task = await createTask({
+        task = await createTask({
           title: title.trim(),
           projectId: project.id,
           repoPath: project.repoPath,
@@ -213,17 +298,32 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
           // archive. A resumed session, which runs in a directory the user
           // already had, sets this false and is never offered removal.
           ownsWorktree: true,
+          // `-b` cut it unless the user chose a branch they already had.
+          createdBranch: !useExistingBranch,
         });
-        writeLastProjectId(project.id);
-        onCreated(task);
       } catch (e) {
-        const kind = e instanceof GitError ? e.kind : 'unknown';
-        setError({ text: messageOf(e), kind });
-      } finally {
+        // The worktree exists but no task names it, so a retry would fail on
+        // `path-exists`. Undo it -- unforced, and the branch only if `-b` cut
+        // it just now -- or say exactly what was left behind.
+        const leftover = await undoCreateWorktree(created);
+        setError({
+          text:
+            `The worktree was created but the task could not be saved:\n${messageOf(e)}\n\n` +
+            (leftover ?? 'The worktree has been removed again, so you can retry.'),
+          kind: 'task-save',
+        });
         setBusy(false);
+        return;
       }
+      // Outside the try on purpose: from here the row exists, so nothing that
+      // fails below may undo the worktree it names.
+      setBusy(false);
+      writeLastProjectId(project.id);
+      // Before onCreated: that is what mounts the terminal, which reads it.
+      setTaskModel(task.id, model || null);
+      onCreated(task, prefill ? prompt.trim() : undefined);
     },
-    [busy, project, baseBranch, branch, worktreePath, title, onCreated],
+    [busy, project, baseBranch, branch, worktreePath, title, model, onCreated, prefill, prompt],
   );
 
   if (!open) return null;
@@ -248,7 +348,7 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
         >
           <div className="wt-modal-head">
             <h2 className="wt-modal-title" id="wt-newtask-title">
-              New task
+              {prefill ? 'New follow-up task' : 'New task'}
             </h2>
             <span className="wt-modal-sub">
               {project ? `a worktree under ${project.worktreeRoot}` : 'in a project'}
@@ -376,6 +476,56 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
                   )}
                 </div>
 
+                <div className="wt-field">
+                  <label className="wt-label" htmlFor="wt-model">
+                    Model
+                  </label>
+                  <select
+                    id="wt-model"
+                    className="wt-select"
+                    value={model}
+                    disabled={busy}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    <option value="">
+                      {defaultModel ? `Default (${defaultModel})` : 'Default (Claude Code’s)'}
+                    </option>
+                    {modelChoices.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="wt-hint">
+                    {model === ''
+                      ? 'Your Claude Code default, as /model saved it.'
+                      : 'This task keeps this model, including when it is resumed.'}
+                  </div>
+                </div>
+
+                {prefill && (
+                  <div className="wt-field">
+                    <label className="wt-label" htmlFor="wt-prompt">
+                      Initial prompt
+                    </label>
+                    <textarea
+                      id="wt-prompt"
+                      ref={promptRef}
+                      className="wt-input wt-textarea"
+                      value={prompt}
+                      rows={8}
+                      spellCheck
+                      disabled={busy}
+                      onChange={(e) => setPrompt(e.target.value)}
+                    />
+                    <div className="wt-hint">
+                      {prefill.pending
+                        ? 'Looking up the pull request…'
+                        : 'Sent once, when the session starts. Describe the bug under “What is wrong”.'}
+                    </div>
+                  </div>
+                )}
+
                 {/* --- derived preview ------------------------------------- */}
                 <div className="wt-derived">
                   {naming?.key && (
@@ -422,7 +572,9 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
                         ? `The branch ${branch} already exists`
                         : error.kind === 'path-exists'
                           ? 'That worktree path is taken'
-                          : 'git refused'}
+                          : error.kind === 'task-save'
+                            ? 'The task could not be saved'
+                            : 'git refused'}
                     </div>
                     <pre className="wt-error-body">{error.text}</pre>
                     {error.kind === 'branch-exists' && (

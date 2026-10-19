@@ -14,6 +14,7 @@ import {
   pathKey,
   resolveAgainst,
   reclaimableTaskPaths,
+  worktreeSharedWithLiveTask,
   rootContaining,
   validateWorktreeRoot,
 } from './reconcile';
@@ -339,7 +340,9 @@ describe('classifyOrphans -- disk candidates', () => {
     ...over,
   });
 
-  it('flags a stale directory whose gitdir has gone as an orphan', () => {
+  it('never offers a directory whose gitdir is missing -- the repo may have moved', () => {
+    // A moved/renamed repo, or one on an unmounted volume, leaves every one of
+    // its worktrees looking exactly like this. Each is a full working tree.
     const out = classify({
       scans: [],
       disk: [disk({ path: '/Users/m/agents/albedo/stale', gitdirExists: false })],
@@ -347,12 +350,31 @@ describe('classifyOrphans -- disk candidates', () => {
       home: HOME,
     });
     expect(out[0]).toMatchObject({
-      classification: 'orphan',
+      classification: 'unknown',
       source: 'disk',
-      prunable: true,
+      prunable: false,
+      repoPath: null,
       branch: null,
+      gitdir: 'missing',
     });
-    expect(out[0]?.reason).toContain('no longer exists');
+    expect(out[0]?.reason).toContain('work here is intact');
+    expect(out[0]?.reason).not.toMatch(/stale/i);
+  });
+
+  it('treats a gitdir the filesystem would not answer for as unchecked, not missing', () => {
+    const out = classify({
+      scans: [],
+      disk: [disk({ path: '/Users/m/agents/albedo/vol', gitdirExists: null })],
+      knownPaths: [],
+      home: HOME,
+    });
+    expect(out[0]).toMatchObject({
+      classification: 'unknown',
+      prunable: false,
+      repoPath: null,
+      gitdir: 'unchecked',
+    });
+    expect(out[0]?.reason).toContain('could not check');
   });
 
   it('calls a live worktree of an unscanned repo unknown, not an orphan', () => {
@@ -409,11 +431,13 @@ describe('classifyOrphans -- disk candidates', () => {
 
   it('sorts orphans before unknowns', () => {
     const out = classify({
-      scans: [],
-      disk: [
-        disk({ path: '/Users/m/agents/a/zzz-live' }),
-        disk({ path: '/Users/m/agents/a/aaa-stale', gitdirExists: false }),
+      scans: [
+        scan(
+          '/Users/m/www/albedo',
+          'worktree /Users/m/www/albedo\nHEAD a\n\nworktree /Users/m/agents/albedo/zzz-git\nHEAD b\nbranch refs/heads/zzz\n\n',
+        ),
       ],
+      disk: [disk({ path: '/Users/m/agents/a/aaa-live' })],
       knownPaths: [],
       home: HOME,
     });
@@ -597,6 +621,12 @@ describe('reclaimableTaskPaths', () => {
     expect(reclaimableTaskPaths([cut()])).toEqual(['/Users/m/agents/albedo/cut-by-albedo']);
   });
 
+  it('never offers an archived worktree a live task still runs in', () => {
+    // Archive-only, then resume the session: the resumed task is live there.
+    const resumed = cut({ status: 'idle', ownsWorktree: false, worktreePath: '/Users/m/agents/albedo/Cut-By-Albedo/' });
+    expect(reclaimableTaskPaths([cut(), resumed])).toEqual([]);
+  });
+
   it('never offers a directory Albedo did not create', () => {
     // The catastrophic case: a resumed session whose cwd is the main checkout.
     expect(
@@ -638,5 +668,36 @@ describe('albedoOwnsWorktree', () => {
     expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: false })).toBe(false);
     expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: true })).toBe(true);
     expect(albedoOwnsWorktree({ worktreePath: '/a' })).toBe(true);
+  });
+});
+
+describe('worktreeSharedWithLiveTask', () => {
+  const t = (id: number, status: string, worktreePath = '/Users/m/agents/albedo/up-2398') => ({ id, status, worktreePath });
+
+  it('is true when another live task runs in the same directory', () => {
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(1, 'idle'), t(2, 'running')])).toBe(true);
+  });
+
+  it('ignores the task itself, archived tasks and other directories', () => {
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(1, 'idle')])).toBe(false);
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(2, 'archived')])).toBe(false);
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(2, 'idle', '/Users/m/agents/albedo/other')])).toBe(false);
+  });
+});
+
+describe('paths on Linux (macPaths = false)', () => {
+  it('leaves /tmp, /var and /etc alone -- they are real directories there', () => {
+    expect(normalizePath('/tmp/wt/a', false)).toBe('/tmp/wt/a');
+    expect(normalizePath('/var/repo/', false)).toBe('/var/repo');
+    expect(normalizePath('/tmp/wt/a', true)).toBe('/private/tmp/wt/a');
+  });
+
+  it('compares case-sensitively, so Repo and repo stay two worktrees', () => {
+    expect(pathKey('/home/dev/agents/Repo/x', false)).not.toBe(pathKey('/home/dev/agents/repo/x', false));
+    expect(pathKey('/Users/dev/agents/Repo/x', true)).toBe(pathKey('/Users/dev/agents/repo/x', true));
+  });
+
+  it('still collapses slashes, dots and a trailing slash', () => {
+    expect(pathKey('/home//dev/./a/../b/', false)).toBe('/home/dev/b');
   });
 });

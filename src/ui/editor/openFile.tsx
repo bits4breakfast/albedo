@@ -67,7 +67,8 @@ export function useReadFile(): (path: string) => Promise<string | null> {
 // rest of the configuration work, and shipping a second hardcoded editor while
 // waiting for that would be the same mistake with a different name.
 //
-// `shell:allow-execute` still allows `phpstorm` and `open` in
-// src-tauri/capabilities/default.json. Left in place on purpose: the template
+// `shell:allow-execute` still allows `phpstorm` in
+// src-tauri/capabilities/default.json (`open` and `xdg-open` are in use, by
+// lib/openUrl.ts for links). Left in place on purpose: the template
 // above will need a shell escape hatch, and narrowing then widening the
 // capability again is churn. Revisit if it is still unused once that lands.

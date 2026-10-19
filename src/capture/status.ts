@@ -54,11 +54,35 @@ export const ACTIVITY_ROLES: ReadonlySet<Message['role']> = new Set([
 type StatusInput = Pick<Message, 'role' | 'seq' | 'ts' | 'rawJson'>;
 
 /**
+ * How long a tool call with no result keeps a task `running` when unanswered
+ * calls do not mean `blocked`. Far longer than RUNNING_WINDOW_MS: a test suite
+ * or a build can run for minutes with nothing written to the transcript. Past
+ * this the call is assumed orphaned (the session died), not still working.
+ */
+export const UNANSWERED_RUNNING_WINDOW_MS = 15 * 60_000;
+
+export interface DeriveOptions {
+  /**
+   * Whether a tool call with no result yet means `blocked` (rule 1). Default
+   * true. A transcript cannot tell a permission prompt from a tool that is
+   * simply still running -- both are a call with no result -- so a long test
+   * run reads as "waiting on you". Turn this off where something else reports
+   * real prompts (the hook events do, see hookEvents.ts) and the call is then
+   * just work in progress.
+   */
+  unansweredToolUseBlocks?: boolean;
+}
+
+/**
  * @param messages rows for ONE session/task. Order does not matter; they are
  *                 sorted here by (ts, seq) so a caller cannot get this wrong.
  * @param now      injectable clock, for tests.
  */
-export function deriveStatus(messages: Message[], now: number = Date.now()): TaskStatus {
+export function deriveStatus(
+  messages: Message[],
+  now: number = Date.now(),
+  opts: DeriveOptions = {},
+): TaskStatus {
   if (messages.length === 0) return 'idle'; // rule 4
 
   const rows: StatusInput[] = [...messages].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
@@ -68,7 +92,11 @@ export function deriveStatus(messages: Message[], now: number = Date.now()): Tas
   // rule 1 — takes precedence over stop_reason and over recency alike. An
   // assistant line can say stop_reason 'tool_use' and still be the thing the
   // user has to click Allow on.
-  if (hasUnansweredToolUse(rows)) return 'blocked';
+  if (hasUnansweredToolUse(rows)) {
+    if (opts.unansweredToolUseBlocks !== false) return 'blocked';
+    // Something else reports real prompts, so this is a tool still executing.
+    if (now - last.ts <= UNANSWERED_RUNNING_WINDOW_MS) return 'running';
+  }
 
   // rule 2 — the transcript states the turn is over, so say so immediately
   // rather than reporting `running` for another RUNNING_WINDOW_MS.
@@ -83,6 +111,31 @@ export function deriveStatus(messages: Message[], now: number = Date.now()): Tas
   if (last.role === 'assistant') return 'idle';
 
   return 'idle';
+}
+
+/**
+ * When `deriveStatus` over these same rows would give a different answer with
+ * no new row arriving, or null if it never will.
+ *
+ * The recency windows make the status a function of the clock as well as of
+ * the rows, and nothing else re-asks: a session killed mid-turn writes no
+ * further line, so without a timer at this instant it reads `running` forever.
+ * Only the window edges can flip the answer, so each is probed in order.
+ */
+export function statusExpiresAt(
+  messages: Message[],
+  now: number = Date.now(),
+  opts: DeriveOptions = {},
+): number | null {
+  if (messages.length === 0) return null;
+  let lastTs = -Infinity;
+  for (const m of messages) if (m.ts > lastTs) lastTs = m.ts;
+  const current = deriveStatus(messages, now, opts);
+  for (const window of [RUNNING_WINDOW_MS, UNANSWERED_RUNNING_WINDOW_MS]) {
+    const edge = lastTs + window + 1; // the windows are inclusive (<=)
+    if (edge > now && deriveStatus(messages, edge, opts) !== current) return edge;
+  }
+  return null;
 }
 
 /**

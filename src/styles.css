@@ -37,6 +37,10 @@
   --bg: #eceef1;           /* window ground */
   --panel: #f6f7f9;        /* sidebar, header, pane chrome */
   --panel-raised: #e7eaef; /* selected rows, menus, buttons */
+  /* Your own messages in the transcript. A flat ground, measured, not a tint:
+     on it --text 12.51, --text-strong 15.39, --muted 6.32, --faint 5.16,
+     --accent 5.40, --add 5.30, --del 5.06. */
+  --user-row: #dce7f7;
   --panel-inset: #ffffff;  /* wells: terminal body, code blocks */
   --panel-hover: #dfe4ea;  /* see the dark block for why this is a token */
   --panel-active: #d7dde4; /* press; carries --text-strong only */
@@ -110,7 +114,10 @@
 
   /* --- metrics ----------------------------------------------------------- */
   --titlebar-h: 40px;         /* macOS overlay title bar strip */
-  --traffic-lights-w: 78px;   /* keep the top-left clear of the stoplights */
+  /* Header space for the macOS stoplights. Zero elsewhere: Linux draws a
+     native title bar above the webview, so there is nothing to clear. Set
+     to 78px by :root[data-platform='macos'] below (src/lib/platform.ts). */
+  --traffic-lights-w: 0px;
   --sidebar-min: 200px;
   --sidebar-max: 480px;
   --row-h: 50px;
@@ -122,14 +129,22 @@
     system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas,
     monospace;
-  /* Bumped one notch from 10.5/11.5/12.5/13.5. The old --fs-xs sat below
-     anything macOS uses for readable UI text, and it was carrying real
-     information -- branch names, timestamps, token counts -- not decoration.
-     Density is the point of this app; illegibility was never part of it. */
-  --fs-xs: 11.5px;
-  --fs-sm: 12.5px;
-  --fs-md: 13px;
-  --fs-lg: 14px;
+  /* Shaped on Apple's macOS text styles (HIG, Typography): Body 13/16,
+     Callout 12/15, Subheadline 11/14, Title 3 15/20, Title 2 17/22; default
+     13pt, minimum 10pt. Albedo sits ONE STEP ABOVE that scale on purpose:
+     it is a reading app -- transcripts, diffs, terminals all day -- and at
+     the HIG's stock sizes the owner found everything too small. The HIG's
+     own rule covers this ("if testing shows that some of your text is
+     difficult to read, consider using a larger type size").
+
+     macOS gives apps no Dynamic Type, so on top of this scale the user can
+     zoom the whole UI with Cmd+ / Cmd- / Cmd0 (see ui/zoom.ts). */
+  --fs-xs: 12px;     /* labels, timestamps, counts     (Subheadline + 1) */
+  --fs-sm: 13px;     /* secondary text, chips           (Callout + 1)     */
+  --fs-md: 14px;     /* UI body                         (Body + 1)        */
+  --fs-lg: 15px;     /* reading prose                   (Title 3 size)    */
+  --fs-title: 18px;  /* transcript h1                   (Title 2 + 1)     */
+  --fs-heading: 16px;/* transcript h2                   (Title 3 + 1)     */
 }
 
 /* Dark overrides. Duplicated deliberately: the media query handles "system",
@@ -143,6 +158,10 @@
   --bg: #0b0d10;
   --panel: #111419;
   --panel-raised: #171b21;
+  /* Your messages. On it: --text 10.61, --text-strong 14.49, --muted 6.35,
+     --faint 4.59, --accent 5.87, --add 6.85, --del 5.18. No lighter: --faint
+     is the tier that runs out first. */
+  --user-row: #162235;
   --panel-inset: #090b0e;
   /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
      hex typed into whichever :hover rule needed one. Contrast is a property
@@ -208,6 +227,10 @@
   --bg: #0b0d10;
   --panel: #111419;
   --panel-raised: #171b21;
+  /* Your messages. On it: --text 10.61, --text-strong 14.49, --muted 6.35,
+     --faint 4.59, --accent 5.87, --add 6.85, --del 5.18. No lighter: --faint
+     is the tier that runs out first. */
+  --user-row: #162235;
   --panel-inset: #090b0e;
   /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
      hex typed into whichever :hover rule needed one. Contrast is a property
@@ -267,6 +290,10 @@
 }
 
 :root[data-theme='light'] { color-scheme: light; }
+
+/* Only macOS overlays the stoplights on the webview (titleBarStyle "Overlay"
+   in tauri.conf.json, a macOS-only option). */
+:root[data-platform='macos'] { --traffic-lights-w: 78px; }
 
 /* --------------------------------------------------------------------------
    Reset
@@ -350,7 +377,7 @@ button {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding-left: var(--traffic-lights-w);   /* clear of the stoplights */
+  padding-left: max(var(--traffic-lights-w), 10px);   /* clear of the stoplights, if any */
   padding-right: 10px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -581,6 +608,8 @@ button {
   animation: task-attention 1.4s steps(1, end) 6;
 }
 .task-row[data-attention='finished'] { border-left-color: var(--status-done); }
+/* Accent, like the merged chip and row mark it sits beside. */
+.task-row[data-attention='merged'] { border-left-color: var(--accent); }
 
 /* Selection is the stronger statement, and clearing the mark follows it. */
 .task-row[data-selected='true'][data-attention] {
@@ -777,6 +806,26 @@ button {
   white-space: nowrap;
   user-select: text;
 }
+
+.model-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.model-pick-name { color: var(--text); }
+.model-pick-select {
+  font: inherit;
+  color: var(--muted);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 2px;
+}
+.model-pick-select:disabled { cursor: not-allowed; }
+.model-pick-note { color: var(--muted); }
 
 .seg {
   display: flex;
@@ -1040,6 +1089,14 @@ button {
 
 .tabpanel { position: absolute; inset: 0; overflow: hidden; }
 .tabpanel[hidden] { display: none !important; }
+
+/* The transcript panel stacks the subagent strip above the pane. The pane is
+   height: 100% on its own, so with the strip present the pair overflowed this
+   overflow:hidden box and the composer at the pane's foot was clipped away. As
+   a column, the pane takes whatever height the strip leaves. */
+.tabpanel-col { display: flex; flex-direction: column; }
+.tabpanel-col > .sa-bar { flex: none; }
+.tabpanel-col > .tx-pane { flex: 1 1 0; height: auto; min-height: 0; }
 
 /* --------------------------------------------------------------------------
    Context-window meters (M4)
@@ -1348,6 +1405,37 @@ button {
 
 .sb-empty { padding: 28px 14px; text-align: center; color: var(--faint); font-size: var(--fs-sm); }
 
+.sb-disk-head {
+  padding: 10px 10px 4px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+.sb-disk-note { color: var(--faint); }
+.sb-disk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.sb-disk-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-disk-meta {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-disk-row .btn { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+
 .sb-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1615,8 +1703,6 @@ button {
 .project-tab-more { color: var(--faint); }
 .project-tab-more:hover { color: var(--text); }
 
-.project-tabs-menu { position: absolute; top: 26px; right: 0; z-index: 40; }
-
 /* Menu items that have to say what they cost, not just what they are called —
    three end-a-thing verbs now meet on one surface. */
 .row-menu-hint {
@@ -1675,64 +1761,7 @@ button {
    warning: the preference is intact and will apply again by itself. */
 .tab-pin-hint { margin-left: 3px; color: var(--accent); }
 
-/* --------------------------------------------------------------------------
-   Subagents running in parallel (M4)
-
-   A strip, not a pane: present only while something is live, so a session that
-   never fans out pays no transcript height for it.
-
-   Text tokens only -- no local ground is invented here. The strip sits on
-   `--panel` like the rest of the pane chrome, so `--muted` (6.17) and
-   `--faint` (5.04 on --panel-raised) are already cleared against it and no new
-   contrast decision is made by adding this component.
-   -------------------------------------------------------------------------- */
-
-.sa-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  padding: 5px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  font-size: var(--fs-xs);
-}
-
-.sa-lede {
-  flex: none;
-  color: var(--muted);
-}
-
-.sa-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  min-width: 0;
-}
-
-.sa-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  max-width: 320px;
-}
-
-.sa-label {
-  overflow: hidden;
-  color: var(--text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sa-meta {
-  flex: none;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
+/* Subagents running in parallel: see src/ui/subagents.css. */
 
 /* Text for assistive tech only: out of sight, still in the accessibility tree. */
 .sr-only {

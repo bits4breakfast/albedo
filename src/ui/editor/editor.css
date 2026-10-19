@@ -100,7 +100,54 @@
   text-overflow: ellipsis;
   direction: rtl;         /* keep the filename visible when the path is long */
   text-align: left;
+  /* The shell turns selection off app-wide; a path is something you copy.
+     Copying takes the DOM text, so the rtl clipping above does not reorder it. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
+
+.ed-copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;   /* WCAG 2.2 target size */
+  height: 24px;
+  padding: 0 4px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.ed-copy:hover { color: var(--text-strong); background: var(--panel-raised); }
+.ed-copy:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.ed-copy[data-state='copied'] { color: var(--add); }
+.ed-copy[data-state='failed'] { color: var(--del); }
+
+.ed-nav {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.ed-nav-pos { padding: 0 4px; }
+.ed-nav-btn {
+  min-width: 24px;   /* WCAG 2.2 target size */
+  height: 24px;
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+.ed-nav-btn:hover:not(:disabled) { color: var(--text-strong); background: var(--panel-raised); }
+.ed-nav-btn:disabled { color: var(--muted); cursor: default; }
+.ed-nav-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
 .ed-line {
   font-family: var(--font-mono);

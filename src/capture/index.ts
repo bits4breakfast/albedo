@@ -13,10 +13,14 @@
  * format stops here (CLAUDE.md hard rule #1).
  */
 
-export { startCapture, onCaptureUpdate } from './watcher';
-export type { CaptureHandle, CaptureUpdate } from './watcher';
+export { startCapture, onCaptureUpdate, listDiskSessions, importTranscripts } from './watcher';
+export type { CaptureHandle, CaptureUpdate, DiskSession } from './watcher';
 
 export { deriveStatus } from './status';
+
+/** Attached images, recovered from a placeholder row's raw line. */
+export { imageAt, SEQ_STRIDE } from './adapter';
+export type { TranscriptImage } from './adapter';
 
 export { usageSummary } from './usage';
 export type { UsageSummary } from './usage';

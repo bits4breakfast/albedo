@@ -28,24 +28,42 @@ events, or a no-op'd `watch()` callback, and a transcript append.
 
 ## 2. Platform and distribution
 
-### 2a. Linux build config — small, unblocks 2b
+### 2a. Linux build config — done
 
-Currently macOS-only by configuration, not by code:
+Was macOS-only by configuration, not by code. Now:
 
-- `src-tauri/tauri.conf.json` → `bundle.targets` is `["app", "dmg"]`. Add
-  `"deb"`, `"appimage"`, `"rpm"` as wanted.
-- `bundle.icon` lists only `icons/icon.icns`, even though `icon.ico`, `icon.png`
-  and the `Square*.png` set are already generated on disk. Widen it.
-- `shell:allow-execute` in `src-tauri/capabilities/default.json` still allows
-  `open` (macOS-only) alongside `phpstorm`, left there for the external-editor
-  template in §5. Whatever replaces it needs `xdg-open` on Linux.
-- `--traffic-lights-w: 78px` (`src/styles.css:113`) reserves header space for
-  the macOS stoplights. Dead padding elsewhere; gate it.
+- `bundle.targets` is `["app", "dmg", "deb", "appimage"]`; the bundler builds
+  only the ones that belong to the host. `bundle.icon` lists the png/ico set
+  as well as the icns.
+- `shell:allow-execute` allows `xdg-open` next to `open`, and
+  `src/lib/openUrl.ts` picks one per platform (`src/lib/platform.ts`, from the
+  webview's user agent). `phpstorm` is still there, for the external-editor
+  template in §5.
+- `/usr/bin/gh` is a fourth `gh` location (apt/dnf), in `GH_PROGRAMS` and the
+  scope; a test checks every name the runner tries is in the capability.
+- `--traffic-lights-w` is 0 unless `main.tsx` stamped
+  `data-platform="macos"` on the root. `titleBarStyle`/`hiddenTitle` are
+  macOS-only keys and simply ignored on Linux, which draws its own title bar.
+- `.github/workflows/ci.yml` runs typecheck, vitest (so the hook script runs
+  under dash), fmt, clippy `-D warnings`, cargo test and
+  `tauri build --bundles deb,appimage` on ubuntu-22.04, and uploads the
+  `.deb` and `.AppImage`.
 
 Already portable, no work needed: `FALLBACK_SHELL` `cfg`s to `/bin/sh` off
-macOS, and `comboOf` accepts Ctrl as well as ⌘.
+macOS, `comboOf` accepts Ctrl as well as ⌘, and pty.rs's process groups and
+`poll` are plain POSIX.
+
+**Done:** `src/git/reconcile.ts` applied two macOS rules everywhere -- the
+`/tmp`, `/var`, `/etc` -> `/private/...` firmlinks, and case-insensitive
+`pathKey`. Both now apply only off Linux (`MAC_PATHS`, from `detectPlatform`),
+so a Linux path is compared case-sensitively and never rewritten.
+
+**Not yet run by a person.** CI proves it builds and the tests pass on
+Linux; nobody has launched the window.
 
 ### 2b. Windows = a Linux build under WSL, not a port
+
+How-to for a Windows user: `docs/LINUX-WSL.md`.
 
 Two things genuinely block a native Windows build, and both are ports:
 
@@ -56,11 +74,12 @@ Two things genuinely block a native Windows build, and both are ports:
   containment boundary, so it fails *closed* — nothing opens.
 
 Under WSL2 both disappear: a real Linux shell, real POSIX paths, Claude Code
-installed in WSL as normal. So 2a is most of the Windows story.
+installed in WSL as normal. With 2a done, that is the Windows story.
 
 **Hard constraint if anyone tries it:** repos *and* `~/.claude/projects` must
-live inside the WSL ext4 filesystem, never on `/mnt/c` — see item 1. Until item
-1 lands, a `/mnt/c` setup fails silently.
+live inside the WSL ext4 filesystem, never on `/mnt/c`. Since item 1 a
+`/mnt/c` setup no longer fails silently -- it degrades to the 30 s poll and
+says so -- but it is still the wrong place.
 
 **Untested, flagged not asserted:** Tauri's Linux webview is WebKitGTK, which
 under WSLg is widely reported to need `WEBKIT_DISABLE_DMABUF_RENDERER=1` to
@@ -266,6 +285,12 @@ separate conversation, and the ordering above may want `lastTouchedAt` anyway.
 
 ## 8. Images: paste and drag-and-drop into the composer
 
+**Sending is done.** A Finder drop inserts the shell-escaped path. A ⌘V that
+carries image data is written to `~/.albedo/paste/<timestamp>.png` and inserted
+the same way (`src/lib/pasteImage.ts`, with `fs:allow-write-file` granted). Still
+open: cleanup of `~/.albedo/paste/`, a chip in place of the raw path, and
+rendering image blocks in the transcript. The analysis below is kept.
+
 Screenshots are how you report a UI problem, and today there is no way to get
 one into a session except by switching to the terminal. Nothing in `src/ui`
 handles a drop, a paste of image data, or a `DataTransfer`.
@@ -344,7 +369,12 @@ Three separate things, reported together from the project tab strip. The first
 is a bug; the other two are missing affordances over plumbing that already
 exists.
 
-### 9a. BUG — the "+N closed" menu opens invisibly
+### 9a. BUG — the "+N closed" menu opens invisibly — done
+
+**Fixed** by the portal: `src/ui/ClosedProjectsMenu.tsx` renders the menu on
+`document.body`, positioned from the chip's rect, and closes on an outside
+press, Esc (focus returns to the chip), blur, resize, or the strip scrolling.
+The diagnosis below is kept for the record.
 
 It is not a dead button. `onClick` toggles `menuOpen` and the menu renders a
 head plus one `row-menu-item` per hidden project, each calling `onRestore`. The
@@ -470,6 +500,19 @@ Separately and independently: **the disclosure caret is too small.** Same
 `Disclosure` component is used by the tool chips, the subagent chip, injected
 context and this row, so sizing it up is one change in one place — worth doing
 regardless of what happens above.
+
+## 13. Follow-up tasks: what was left out
+
+"Follow-up…" (merged PR badge, row menu for merged or archived tasks) only
+prefills the new-task dialog. Two gaps, deliberately:
+
+- **No lineage.** Nothing records which task a follow-up came from. That needs
+  a `followup_of INTEGER REFERENCES tasks(id)` column -- a `schema.sql` change,
+  so a proposal, not something to slip in. With it the row could show "follow-up
+  of #42" and the prompt could be rebuilt later.
+- **The prompt override is in memory.** It is consumed at the first spawn,
+  which is immediate; quitting between Create and the session starting loses it
+  and the project template applies instead.
 
 ---
 

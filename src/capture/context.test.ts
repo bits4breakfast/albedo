@@ -623,3 +623,27 @@ describe('windowUsage aggregates across sessions', () => {
     expect(totals.oldestTs).toBe(10);
   });
 });
+
+describe('deriveContextUsage / model catalog', () => {
+  const line = JSON.stringify({
+    type: 'assistant',
+    message: {
+      model: 'claude-opus-5-5',
+      usage: { input_tokens: 1, cache_read_input_tokens: 144_999, cache_creation_input_tokens: 0, output_tokens: 5 },
+    },
+  });
+  const input = { latestRawJson: line, latestTs: 1, peakUsed: 145_000 };
+
+  it('uses the catalog window and calls it known', () => {
+    const u = deriveContextUsage(input, new Map([['claude-opus-5-5', 1_000_000]]));
+    expect(u?.limit).toBe(1_000_000);
+    expect(u?.limitBasis).toBe('known');
+    expect(u?.fraction).toBeCloseTo(0.145, 3);
+  });
+
+  it('falls back to inference for a model the catalog does not list', () => {
+    const u = deriveContextUsage(input, new Map([['claude-other', 1_000_000]]));
+    expect(u?.limit).toBe(200_000);
+    expect(u?.limitBasis).toBe('inferred');
+  });
+});

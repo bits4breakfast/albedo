@@ -24,6 +24,7 @@ import { exists } from '@tauri-apps/plugin-fs';
 import type { Project, Task } from '../types';
 import type { PastSession } from '../db/sessions';
 import { listPastSessions } from '../db/sessions';
+import { importTranscripts, listDiskSessions, type DiskSession } from '../capture';
 import { adoptSessionIntoTask, createTask, updateTask } from '../db';
 import { findProjectByRepo } from '../db/projects';
 import { listBranches, repoRootFor } from '../git/worktree';
@@ -60,6 +61,12 @@ function messageOf(err: unknown): string {
 function basename(path: string): string {
   const parts = path.split('/').filter(Boolean);
   return parts.length > 0 ? (parts[parts.length - 1] as string) : path;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function homeRelative(path: string): string {
@@ -131,6 +138,10 @@ export default function SessionBrowser({
   /** Overrides a recorded cwd that no longer exists. */
   const [cwdOverride, setCwdOverride] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  /** Claude Code session files Albedo is not holding. Read from disk, not the db. */
+  const [disk, setDisk] = useState<DiskSession[]>([]);
+  const [diskLoading, setDiskLoading] = useState(false);
+  const [importing, setImporting] = useState<string | null>(null);
 
   /** cwd -> exists. The db layer deliberately never stats the disk. */
   const [cwdState, setCwdState] = useState<Map<string, boolean>>(() => new Map());
@@ -162,6 +173,36 @@ export default function SessionBrowser({
     }
   }, []);
 
+  const loadDisk = useCallback(async () => {
+    setDiskLoading(true);
+    try {
+      const rows = await listDiskSessions();
+      if (aliveRef.current) setDisk(rows);
+    } catch (err) {
+      if (aliveRef.current) setDisk([]);
+      console.warn('[history] could not list Claude Code sessions on disk', err);
+    } finally {
+      if (aliveRef.current) setDiskLoading(false);
+    }
+  }, []);
+
+  const importSession = useCallback(
+    async (d: DiskSession) => {
+      if (importing) return;
+      setImporting(d.sessionId);
+      setError(null);
+      try {
+        await importTranscripts(d.path);
+        await Promise.all([load(query), loadDisk()]);
+      } catch (err) {
+        setError(`Could not import: ${messageOf(err)}`);
+      } finally {
+        if (aliveRef.current) setImporting(null);
+      }
+    },
+    [importing, load, loadDisk, query],
+  );
+
   // Reset and focus each time it opens.
   useEffect(() => {
     if (!open) return;
@@ -170,9 +211,10 @@ export default function SessionBrowser({
     setCwdOverride(null);
     setNow(Date.now());
     void load('');
+    void loadDisk();
     const id = window.setTimeout(() => searchRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
-  }, [open, load]);
+  }, [open, load, loadDisk]);
 
   // Debounced search.
   useEffect(() => {
@@ -233,6 +275,17 @@ export default function SessionBrowser({
   );
 
   const commonCwd = useMemo(() => modalCwd(sessions), [sessions]);
+
+  /** On-disk sessions the db does not hold, narrowed by the search box. */
+  const diskShown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const held = new Set(sessions.map((x) => x.sessionId));
+    return disk.filter(
+      (d) =>
+        !held.has(d.sessionId) &&
+        (q === '' || `${d.title ?? ''} ${d.cwd ?? ''}`.toLowerCase().includes(q)),
+    );
+  }, [disk, sessions, query]);
 
   const resumeBlocker = useCallback(
     (session: PastSession, override: string | null): 'no-cwd' | 'cwd-missing' | null => {
@@ -322,6 +375,8 @@ export default function SessionBrowser({
           // project a directory belongs to says nothing about who created it.
           worktreePath: cwd,
           ownsWorktree: false,
+          // The session's branch was the user's before Albedo saw it.
+          createdBranch: false,
         });
 
         const args = ['--resume', session.sessionId];
@@ -499,6 +554,36 @@ export default function SessionBrowser({
             </button>
             );
           })}
+
+          {/* Sessions Claude Code still has on disk that Albedo does not hold.
+              Deleting a task clears Albedo's copy; this is the way back. They
+              are listed from the filesystem, so they are not searchable until
+              imported. */}
+          {diskShown.length > 0 && (
+            <div className="sb-disk" aria-label="Sessions in Claude Code not imported">
+              <div className="sb-disk-head">
+                In Claude Code, not imported
+                <span className="sb-disk-note"> — import to search or resume with history</span>
+              </div>
+              {diskShown.map((d) => (
+                <div className="sb-disk-row" key={d.path} title={d.cwd ? homeRelative(d.cwd) : d.path}>
+                  <span className="sb-disk-title">{d.title || (d.cwd ? displayName(d.cwd) : d.sessionId.slice(0, 8))}</span>
+                  <span className="sb-disk-meta">
+                    {d.cwd ? homeRelative(d.cwd) : d.projectDir} · {relativeTime(d.mtime, now)} ·{' '}
+                    {formatBytes(d.size)}
+                  </span>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={importing !== null}
+                    onClick={() => void importSession(d)}
+                  >
+                    {importing === d.sessionId ? 'importing…' : 'Import'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {diskLoading && diskShown.length === 0 && <div className="sb-empty">reading Claude Code sessions…</div>}
         </div>
 
         {selected && (

@@ -26,6 +26,8 @@ import type { DiffHunk, DiffLine, DiffSegment, FileDiff, OpenFileRequest } from 
 import { highlightToTokens, peekTokens, plainTokens } from '../../lib/highlight';
 import type { DualToken } from '../../lib/highlight';
 import { parsePathRef } from '../../lib/paths';
+import { openExternal } from '../../lib/openUrl';
+import { splitUrls } from '../../lib/urls';
 import { useOpenFile } from '../editor/openFile';
 import { anchorBlock, fileLines, type AnchorFailure } from '../../lib/anchor';
 import { useReadFile } from '../editor/openFile';
@@ -164,6 +166,41 @@ export function PathLink({
 }
 
 /**
+ * A web link. Opens in the default browser; only http(s) ever reaches here
+ * (callers check, and `openExternal` refuses anything else). The visible text
+ * is whatever the caller shows, so the real address is always in the tooltip.
+ */
+export function ExternalLink({
+  url,
+  className,
+  children,
+}: {
+  url: string;
+  className?: string;
+  children?: ReactNode;
+}): ReactNode {
+  const handlers = useActivate(() => void openExternal(url));
+  return (
+    <span
+      className={`tx-url${className ? ` ${className}` : ''}`}
+      role="link"
+      tabIndex={0}
+      title={url}
+      onMouseDown={handlers.onMouseDown}
+      onClick={handlers.onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          void openExternal(url);
+        }
+      }}
+    >
+      {children ?? url}
+    </span>
+  );
+}
+
+/**
  * Render text, turning path references into links.
  *
  * Extraction is delegated to `parsePathRef` -- one line at a time, because that
@@ -190,6 +227,16 @@ function linkifyLines(text: string): ReactNode[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     const suffix = i < lines.length - 1 ? '\n' : '';
+    // A line with a web URL is linked as URLs; path detection would otherwise
+    // read `//host/path` out of it.
+    const parts = line.includes('://') ? splitUrls(line) : null;
+    if (parts && parts.some((p) => typeof p !== 'string')) {
+      parts.forEach((p, k) => {
+        out.push(typeof p === 'string' ? p : <ExternalLink key={`${i}-u${k}`} url={p.url} />);
+      });
+      if (suffix) out.push(suffix);
+      continue;
+    }
     let ref: { path: string; line: number | null } | null = null;
     try {
       ref = parsePathRef(line);
@@ -554,6 +601,11 @@ export interface DiffProps {
    *
    * Passed to `useReadFile`, which resolves it: this component never joins a
    * transcript path to a filesystem path (see `useOpenPath`).
+   *
+   * Omitted means "the diff's own path". Explicit null is honoured as none: the
+   * editor's Diff mode passes it, because it hands over both WHOLE files in
+   * `expand` and the gaps already reach every line there is -- a "more
+   * context" bar on top would read the file only to find nothing left.
    */
   contextPath?: string | null;
 }
@@ -563,7 +615,7 @@ export function Diff({
   expand = null,
   layout = 'auto',
   absoluteLines = false,
-  contextPath = null,
+  contextPath,
 }: DiffProps): ReactNode {
   const [ref, width] = useContainerWidth();
   const [override, setOverride] = useState<'split' | 'unified' | null>(null);
@@ -611,7 +663,11 @@ export function Diff({
 
   // A rename's destination is the file that exists to be read.
   const readPath =
-    contextPath ?? (diff.path.includes(' → ') ? (diff.path.split(' → ').pop() ?? null) : diff.path);
+    contextPath !== undefined
+      ? contextPath
+      : diff.path.includes(' → ')
+        ? (diff.path.split(' → ').pop() ?? null)
+        : diff.path;
 
   /**
    * Where the diff's content sits in the current file.

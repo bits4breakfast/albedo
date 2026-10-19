@@ -1,3 +1,5 @@
+import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
+import { listen } from '@tauri-apps/api/event';
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import type { OpenFileRequest, Project, Task } from './types';
@@ -8,14 +10,20 @@ import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
-import { useShortcuts } from './ui/shortcuts';
+import { useDoubleShift, useShortcuts } from './ui/shortcuts';
 import ShortcutsHelp from './ui/ShortcutsHelp';
+import QuickOpen from './ui/QuickOpen';
+import FindInFiles from './ui/FindInFiles';
+import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import StatusDot from './ui/StatusDot';
-import Terminal from './ui/Terminal';
+import ClosedProjectsMenu from './ui/ClosedProjectsMenu';
+import Terminal, { focusPty } from './ui/Terminal';
+import ModelPicker from './ui/ModelPicker';
 import NewTaskDialog from './ui/NewTaskDialog';
 import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
+import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import FileEditor from './ui/editor/FileEditor';
 import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
@@ -25,13 +33,25 @@ import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
 import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/projects';
-import { listTasks } from './db';
+import { deleteTask, listTasks } from './db';
+import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
-import { repoRootFor } from './git/worktree';
+import { composeWorktreePath, listBranches, listWorktrees, probePath, repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
 import { grantProjectDirs } from './lib/fsGrants';
+import {
+  buildFollowUp,
+  followUpTaken,
+  followUpTitle,
+  freeFollowUpTitle,
+  type NewTaskPrefill,
+} from './ui/followUp';
+import { useMergeNotices } from './ui/mergeNotice';
+import { getPrStatus } from './gh/prStore';
+import { fetchPrStatus } from './gh/gh';
+import type { PrStatus } from './gh/prStatus';
 
 /**
  * The frame.
@@ -321,17 +341,6 @@ function ProjectTabs({
   hidden: Project[];
   onRestore: (projectId: number) => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = () => setMenuOpen(false);
-    window.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', close);
-    return () => {
-      window.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', close);
-    };
-  }, [menuOpen]);
   // Never offer to hide the last one: that would leave a bar with nothing in
   // it but the restore chip.
   const canHide = tabs.length > 1;
@@ -384,40 +393,7 @@ function ProjectTabs({
       {/* Always reachable from where it was closed. Without this the bar can
           become a one-way door -- close a tab, and with the bar gone there is
           nowhere left that knows the project is merely hidden. */}
-      {hidden.length > 0 && (
-        <div className="project-tabs-restore">
-          <button
-            className="project-tab project-tab-more"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-expanded={menuOpen}
-            title="Closed projects"
-          >
-            +{hidden.length} closed
-          </button>
-          {menuOpen && (
-            <div
-              className="row-menu project-tabs-menu"
-              role="menu"
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <div className="row-menu-head">Closed — still here, just not shown</div>
-              {hidden.map((project) => (
-                <button
-                  key={project.id}
-                  className="row-menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onRestore(project.id);
-                  }}
-                >
-                  {project.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {hidden.length > 0 && <ClosedProjectsMenu hidden={hidden} onRestore={onRestore} />}
     </div>
   );
 }
@@ -469,9 +445,19 @@ export default function App() {
   const [panesWidth, setPanesWidth] = useState(0);
 
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  /** Set while the new-task dialog is open as a follow-up; null otherwise. */
+  const [newTaskPrefill, setNewTaskPrefill] = useState<NewTaskPrefill | null>(null);
+  /**
+   * The prompt a follow-up was created with, for its first spawn. In memory
+   * on purpose: the session starts the moment the task is created, and a
+   * prompt for a session that has already started is never sent again.
+   */
+  const [promptOverrides, setPromptOverrides] = useState<Map<number, string>>(() => new Map());
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
+  const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   /**
    * Resume argv for tasks created in THIS run. A fork lands under a new
@@ -641,6 +627,38 @@ export default function App() {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+
+  /**
+   * With no task selected, Go to File and Find in Files search the active
+   * project's main checkout -- the repo folder itself -- and open what they
+   * find read-only. This stands in for a task so the search dialogs and the
+   * editor need no second code path. Its id is negative, so it can never meet
+   * a real task's id, and it is never written anywhere: the editor is
+   * read-only for it (the folder is the user's real repo, not a worktree).
+   */
+  const browseTask = useMemo<Task | null>(() => {
+    if (selected !== null || activeProject === null || !activeProject.repoPath) return null;
+    return {
+      id: -activeProject.id,
+      title: activeProject.name,
+      projectId: activeProject.id,
+      repoPath: activeProject.repoPath,
+      baseBranch: '',
+      branch: '',
+      worktreePath: activeProject.repoPath,
+      sessionId: null,
+      ownsWorktree: false,
+      createdBranch: false,
+      status: 'idle',
+      createdAt: 0,
+      lastActivityAt: null,
+    };
+  }, [selected, activeProject]);
+  const browseTaskRef = useRef(browseTask);
+  browseTaskRef.current = browseTask;
+  /** The folder the search dialogs work in: the task's worktree, else the checkout. */
+  const searchTask = selected ?? browseTask;
+  const searchScopeLabel = selected === null && browseTask ? `${browseTask.title} · main checkout` : null;
   /* Read by `readFileText`, which is registered once and must not close over
      the task that was selected when it was created. */
   const selectedRef = useRef(selected);
@@ -732,11 +750,67 @@ export default function App() {
   const initialPromptFor = useCallback(
     (task: Task): string | null => {
       if (task.sessionId !== null) return null;
+      // A follow-up's prompt was written in the dialog; empty is "none".
+      const override = promptOverrides.get(task.id);
+      if (override !== undefined) return override || null;
       const project = projects.find((p) => p.id === task.projectId) ?? null;
       return renderPromptTemplate(task, project);
     },
-    [projects],
+    [projects, promptOverrides],
   );
+
+  /**
+   * "Follow-up…": open the new-task dialog prefilled. Never creates anything.
+   *
+   * The title is chosen first, against what is actually there -- branches,
+   * worktrees, task paths, the disk -- so the usual case, right after a merge
+   * with the shipped worktree still in place, opens on a name that will work.
+   * All local and quick; a failure to look only means the default title.
+   *
+   * A live task's PR is in the store already. An archived task's is not
+   * polled, so it is fetched once here; the dialog opens at once with the
+   * branch-only prompt and swaps in the PR version if the lookup finds a merged
+   * PR before the user has touched the prompt.
+   */
+  const followUpSeq = useRef(0);
+  const followUpCtx = useRef({ tasks, projects });
+  followUpCtx.current = { tasks, projects };
+  const openFollowUp = useCallback(async (task: Task, known?: PrStatus | null) => {
+    const seq = ++followUpSeq.current;
+    const { tasks: all, projects: ps } = followUpCtx.current;
+    const project = ps.find((p) => p.id === task.projectId) ?? null;
+    let title = followUpTitle(task);
+    if (project) {
+      try {
+        const [home, branches, worktrees] = await Promise.all([
+          import('@tauri-apps/api/path').then((m) => m.homeDir()).catch(() => ''),
+          listBranches(project.repoPath).then((b) => b.all).catch(() => [] as string[]),
+          listWorktrees(project.repoPath).catch(() => []),
+        ]);
+        title = await freeFollowUpTitle(
+          task,
+          followUpTaken({
+            branches: [...branches, ...all.map((t) => t.branch)],
+            paths: [...worktrees.map((w) => w.path), ...all.map((t) => t.worktreePath)],
+            pathFor: (dir) => composeWorktreePath(project.worktreeRoot, dir, home),
+            exists: probePath,
+          }),
+        );
+      } catch {
+        /* keep the default; the dialog still shows git's refusal verbatim */
+      }
+    }
+    if (seq !== followUpSeq.current) return;
+    const pr = known ?? getPrStatus(task.id) ?? null;
+    const lookUp = task.status === 'archived' && pr === null;
+    setNewTaskPrefill({ ...buildFollowUp(task, pr, title), pending: lookUp });
+    setNewTaskOpen(true);
+    if (!lookUp) return;
+    const found = await fetchPrStatus(task).catch(() => null);
+    if (seq !== followUpSeq.current) return;
+    setNewTaskPrefill(buildFollowUp(task, found, title));
+  }, []);
+
 
   /**
    * Read a file's current text for the diff view's context expansion.
@@ -805,6 +879,7 @@ export default function App() {
     setAnnouncement(text);
   }, [attention]);
   useEffect(() => watchFocus(), []);
+  useMergeNotices(tasks);
 
   /**
    * Adopt pre-projects task rows on launch.
@@ -874,7 +949,7 @@ export default function App() {
   selectedIdRef.current = selectedId;
 
   const openFile = useCallback((request: OpenFileRequest) => {
-    const taskId = selectedIdRef.current;
+    const taskId = selectedIdRef.current ?? browseTaskRef.current?.id ?? null;
     if (taskId === null) return;
     setOpenRequest({ taskId, request });
     setRightTab('editor');
@@ -945,6 +1020,15 @@ export default function App() {
     if (candidate) select(candidate.id);
   }, [loading, visibleTasks, selectedId, select]);
 
+  // A selection restored from the last run is shown but was never opened, so it
+  // had no terminal and the message box could not send to it. Selecting by
+  // click opens the task; a restored selection must too.
+  useEffect(() => {
+    if (selectedId === null || loading) return;
+    if (!tasks.some((t) => t.id === selectedId && t.status !== 'archived')) return;
+    setOpenIds((prev) => (prev.includes(selectedId) ? prev : [...prev, selectedId]));
+  }, [selectedId, tasks, loading]);
+
   // Terminals outlive tab switches, but not the task itself.
   useEffect(() => {
     setOpenIds((prev) => {
@@ -963,9 +1047,10 @@ export default function App() {
 
   /** The editor only exists for the task its request came from. */
   const editorTask = useMemo(() => {
-    if (!openRequest || !selected) return null;
-    return openRequest.taskId === selected.id ? selected : null;
-  }, [openRequest, selected]);
+    if (!openRequest) return null;
+    if (selected) return openRequest.taskId === selected.id ? selected : null;
+    return browseTask && openRequest.taskId === browseTask.id ? browseTask : null;
+  }, [openRequest, selected, browseTask]);
 
   /**
    * Is there room for the column, right now?
@@ -1064,6 +1149,28 @@ export default function App() {
     [filesColumnShown, editorTask],
   );
 
+  // ⌘W. The native menu owns the shortcut (see src-tauri/src/lib.rs) and tells
+  // us rather than closing the window, which would quit the app and every live
+  // terminal in it. It closes an open file, and otherwise does nothing.
+  const editorOpenRef = useRef(false);
+  editorOpenRef.current = editorTask !== null;
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    void listen('albedo://close-tab', () => {
+      if (editorOpenRef.current) closeEditor();
+    })
+      .then((un) => {
+        if (gone) un();
+        else off = un;
+      })
+      .catch((err) => console.warn('[menu] close shortcut unavailable', err));
+    return () => {
+      gone = true;
+      off?.();
+    };
+  }, [closeEditor]);
+
   const stepReadingTab = useCallback(
     (delta: number) => {
       const tabs = readingTabs;
@@ -1075,7 +1182,61 @@ export default function App() {
     [readingTabs, activeTab],
   );
 
+  // Text size (HIG: macOS has no Dynamic Type, so the app offers its own).
+  const zoomRef = useRef(storedZoom());
+  useEffect(() => {
+    if (zoomRef.current !== 1) void applyZoom(zoomRef.current);
+  }, []);
+  const zoomTo = (z: number) => {
+    zoomRef.current = z;
+    void applyZoom(z);
+  };
+
+  /**
+   * Open the palette in a mode, or close it if it is already showing that mode.
+   * Pressing another mode's keys while it is open switches mode and keeps the
+   * query. Without a task it searches the active project's main checkout (see
+   * browseTask); with neither there is nothing to search. Never on top of
+   * another dialog, which would leave two modals fighting for focus.
+   */
+  const quickOpenRef = useRef(quickOpen);
+  quickOpenRef.current = quickOpen;
+  const toggleQuickOpen = useCallback((next: QuickOpenMode) => {
+    if (!selectedRef.current && !browseTaskRef.current) return;
+    const current = quickOpenRef.current;
+    if (current === null && document.querySelector('[aria-modal="true"]') !== null) return;
+    setQuickOpen(current === next ? null : next);
+  }, []);
+  const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
+  useDoubleShift(() => toggleQuickOpen('all'));
+
+  /** Find in Files (⇧⌘F): same guards as the palette -- a folder, and no other modal. */
+  const [findOpen, setFindOpen] = useState(false);
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+  const toggleFind = useCallback(() => {
+    if (!selectedRef.current && !browseTaskRef.current) return;
+    if (!findOpenRef.current && document.querySelector('[aria-modal="true"]') !== null) return;
+    setFindOpen((o) => !o);
+  }, []);
+  const closeFind = useCallback(() => setFindOpen(false), []);
+
+  /** The editor's file, worktree-relative, so the palette can rank it first. */
+  const editorFile = useMemo(
+    () => (editorTask && openRequest ? worktreeRelative(editorTask.worktreePath, openRequest.request.path) : null),
+    [editorTask, openRequest],
+  );
+
   useShortcuts({
+    // PhpStorm's keymap. Live while typing: nothing in a text field, the
+    // terminal included, binds ⌘O (Ctrl+O is left alone -- see shortcuts.ts).
+    'mod+shift+o': () => toggleQuickOpen('file'),
+    'mod+o': () => toggleQuickOpen('class'),
+    'mod+alt+o': () => toggleQuickOpen('symbol'),
+    'mod+shift+f': toggleFind,
+    'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
+    'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
+    'mod+0': () => zoomTo(1),
     'mod+/': () => setShortcutsOpen((o) => !o),
     'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),
     // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
@@ -1236,6 +1397,7 @@ export default function App() {
               setEndIntent('delete');
               setArchiveTarget(task);
             }}
+            onFollowUp={(task) => void openFollowUp(task)}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             attention={attention}
@@ -1291,6 +1453,15 @@ export default function App() {
                   <span className="main-ident-title" title={wrapForTooltip(selected.title)}>
                     {selected.title}
                   </span>
+                  <ModelPicker task={selected} />
+                  <PrBadge
+                    task={selected}
+                    onEnd={(intent) => {
+                      setEndIntent(intent);
+                      setArchiveTarget(selected);
+                    }}
+                    onFollowUp={(pr) => void openFollowUp(selected, pr)}
+                  />
                   <span className="main-ident-path">{selected.worktreePath}</span>
                 </>
               ) : (
@@ -1455,12 +1626,12 @@ export default function App() {
               {/* All three panels stay mounted so scroll position and editor
                   buffer survive a tab flip; only the task identity resets them. */}
               <div className="pane-body">
-                <div className="tabpanel" hidden={activeTab !== 'transcript'}>
+                <div className="tabpanel tabpanel-col" hidden={activeTab !== 'transcript'}>
                   {/* Above the transcript, and only while something is live:
                       when a session fans out the transcript itself goes quiet,
                       which is exactly when you need to know what is running. */}
                   <PaneErrorBoundary key={`sa-${selected?.id ?? 'none'}`} label="Subagents">
-                    <Subagents sessionId={selected?.sessionId ?? null} />
+                    <Subagents sessionId={selected?.sessionId ?? null} taskTitle={selected?.title ?? null} />
                   </PaneErrorBoundary>
                   <PaneErrorBoundary key={`tx-${selected?.id ?? 'none'}`} label="Transcript">
                     <TranscriptPane
@@ -1469,6 +1640,12 @@ export default function App() {
                       /* So the composer can hold a message rather than typing
                          it into a permission prompt. */
                       status={selected?.status ?? null}
+                      /* The prompt is answered in the terminal; make sure it
+                         is on screen, then give it the keyboard. */
+                      onAnswerInTerminal={(id) => {
+                        setMode((m) => (m === 'transcript' ? 'split' : m));
+                        window.requestAnimationFrame(() => focusPty(id));
+                      }}
                     />
                   </PaneErrorBoundary>
                 </div>
@@ -1490,6 +1667,7 @@ export default function App() {
                         task={editorTask}
                         request={openRequest?.request ?? null}
                         onClose={closeEditor}
+                        readOnly={editorTask === browseTask}
                       />
                     </PaneErrorBoundary>
                   )}
@@ -1545,8 +1723,18 @@ export default function App() {
       <PaneErrorBoundary label="New task">
         <NewTaskDialog
           open={newTaskOpen}
-          onClose={() => setNewTaskOpen(false)}
-          onCreated={(task: Task) => {
+          prefill={newTaskPrefill}
+          onClose={() => {
+            followUpSeq.current++;
+            setNewTaskOpen(false);
+            setNewTaskPrefill(null);
+          }}
+          onCreated={(task: Task, initialPrompt?: string) => {
+            if (initialPrompt !== undefined) {
+              setPromptOverrides((prev) => new Map(prev).set(task.id, initialPrompt));
+            }
+            followUpSeq.current++;
+            setNewTaskPrefill(null);
             upsertTask(task);
             // Switch scope BEFORE selecting: the auto-select effect re-picks
             // from the active tab's list, so selecting into a tab that is not
@@ -1572,6 +1760,26 @@ export default function App() {
           archived once the dialog reports the worktree work succeeded --
           flipping first would strand the worktree, reachable from nothing. */}
       <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <PaneErrorBoundary label="Go to">
+        <QuickOpen
+          mode={searchTask ? quickOpen : null}
+          worktreePath={searchTask?.worktreePath ?? null}
+          scopeLabel={searchScopeLabel}
+          currentFile={editorFile}
+          onMode={setQuickOpen}
+          onClose={closeQuickOpen}
+          onOpen={openFile}
+        />
+      </PaneErrorBoundary>
+      <PaneErrorBoundary label="Find in Files">
+        <FindInFiles
+          open={searchTask !== null && findOpen}
+          worktreePath={searchTask?.worktreePath ?? null}
+          scopeLabel={searchScopeLabel}
+          onClose={closeFind}
+          onOpen={openFile}
+        />
+      </PaneErrorBoundary>
       <PaneErrorBoundary label="Projects">
         <ProjectsDialog
           open={projectsOpen}
@@ -1649,6 +1857,7 @@ export default function App() {
         <ArchiveTaskDialog
           task={archiveTarget}
           intent={endIntent}
+          otherTasks={tasks}
           onClose={() => setArchiveTarget(null)}
           onArchived={(taskId) => {
             void archive(taskId);
@@ -1656,11 +1865,17 @@ export default function App() {
           }}
           onDeleted={(taskId) => {
             // Same ordering discipline as onArchived: the row only leaves the
-            // list once the destructive work has actually completed. The task
-            // is already gone from the db by here, so this just resyncs.
-            forgetResume(taskId);
-            setArchiveTarget(null);
-            void refresh();
+            // list once the destructive work has actually completed. The dialog
+            // only does the git side, so the task and its captured messages are
+            // removed here (see deleteTask).
+            void deleteTask(taskId)
+              .then(() => {
+                forgetResume(taskId);
+                void endTaskEvents(taskId).catch(() => {});
+                setArchiveTarget(null);
+                return refresh();
+              })
+              .catch((e) => console.error('deleteTask failed', e));
           }}
         />
       </PaneErrorBoundary>

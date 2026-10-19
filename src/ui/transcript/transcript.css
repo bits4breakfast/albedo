@@ -89,6 +89,19 @@
    A foot, not a takeover: one line tall until there is something to say, and
    not rendered at all without a task. The read surface keeps the pane.
 */
+/* Drag handle on the composer's top edge. A hairline at rest, so it costs no
+   space and no contrast; the 6px hit area is what makes it findable. */
+.tx-grip {
+  flex: none;
+  height: 6px;
+  margin-bottom: -6px;
+  position: relative;
+  z-index: 1;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.tx-grip:hover { background: var(--border-strong); }
+
 .tx-composer {
   flex: none;
   display: grid;
@@ -167,11 +180,15 @@
 
 /* --- rows ----------------------------------------------------------------- */
 
+/* One content column for everything: prose, chips, collapsed lines and your
+   own messages all start at the same x. Rhythm comes from the row's padding
+   alone -- the blocks inside a row drop their outer margins (below) -- so the
+   gap between any two rows is the same 8px whatever they contain. */
 .tx-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 8px;
-  padding: 3px 0;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 0;
   align-items: start;
 }
 
@@ -185,13 +202,55 @@
 }
 
 .tx-content { min-width: 0; }
+.tx-content > :first-child { margin-top: 0; }
+.tx-content > :last-child { margin-bottom: 0; }
 
-.tx-row-user {
-  margin: 8px 0 4px;
-  padding: 4px 0 5px;
-  border-top: 1px solid var(--border);
+/* Two sizes in the transcript: prose at --fs-lg, everything structural (chips,
+   collapsed lines, labels) at --fs-sm. Line height is set for reading, not
+   for the dense chrome around the pane. */
+.tx-md,
+.tx-user-text {
+  font-size: var(--fs-lg);
+  line-height: 1.6;
 }
-.tx-row-user .tx-gutter { color: var(--accent); }
+
+/* Your messages are the landmarks of a long transcript, so they are a band:
+   their own flat ground (--user-row, measured for every text tier in the
+   token block), a solid accent edge, and the "you" tag filled. No opacity and
+   no tint, so nothing here changes a ratio the tokens guarantee. */
+/* The band is drawn behind the row, not as the row's own border and padding,
+   so your text sits on exactly the same column as everything else. */
+.tx-row-user {
+  position: relative;
+  isolation: isolate;
+  margin: 14px 0 8px;
+  padding: 10px 14px 10px 0;
+}
+.tx-row-user::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--user-row);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+}
+.tx-row-user .tx-gutter {
+  align-self: start;
+  justify-self: end;
+  /* Centred on the first line of 14px/1.6 text (22.4px). */
+  margin-top: 3px;
+  padding: 1px 6px;
+  line-height: 1.4;
+  border-radius: var(--radius);
+  /* --panel-inset is white in light (6.75 on --accent) and near-black in dark
+     (7.24 on --accent): the readable side of the accent in each theme. */
+  background: var(--accent);
+  color: var(--panel-inset);
+  font-weight: 600;
+}
+.tx-row-user .tx-content { color: var(--text-strong); }
 
 .tx-user-text {
   white-space: pre-wrap;
@@ -256,6 +315,9 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  /* 1px chip border + 8px chip padding: the caret lands on the same column as
+     a tool chip's, so a run of chips and collapsed lines reads as one list. */
+  padding: 2px 0 2px 9px;
   color: var(--faint);
   font-size: var(--fs-sm);
   font-style: italic;
@@ -264,7 +326,7 @@
 .tx-sidechain-head:hover { color: var(--muted); }
 
 .tx-think-body {
-  margin-top: 3px;
+  margin: 3px 0 0 9px;
   padding-left: 9px;
   border-left: 1px solid var(--border);
   color: var(--muted);
@@ -281,7 +343,7 @@
 .tx-sidechain-head { font-style: normal; }
 
 .tx-sidechain-body {
-  margin-top: 4px;
+  margin: 4px 0 0 9px;
   padding-left: 9px;
   border-left: 1px solid var(--border);
 }
@@ -291,20 +353,21 @@
 .tx-md { overflow-wrap: anywhere; }
 
 .tx-md-p {
-  margin: 0 0 7px;
+  margin: 0 0 10px;
   white-space: pre-wrap;
 }
 .tx-md > :last-child { margin-bottom: 0; }
 
 .tx-md-h {
-  margin: 10px 0 5px;
+  margin: 14px 0 6px;
+  line-height: 1.35;
   color: var(--text-strong);
   font-weight: 600;
 }
-.tx-md-h1 { font-size: var(--fs-lg); }
-.tx-md-h2 { font-size: var(--fs-lg); }
-.tx-md-h3 { font-size: var(--fs-md); }
-.tx-md-h4 { font-size: var(--fs-md); color: var(--muted); }
+.tx-md-h1 { font-size: var(--fs-title); }
+.tx-md-h2 { font-size: var(--fs-heading); }
+.tx-md-h3 { font-size: var(--fs-lg); }
+.tx-md-h4 { font-size: var(--fs-lg); color: var(--muted); }
 
 .tx-md-hr {
   margin: 9px 0;
@@ -312,10 +375,11 @@
 }
 
 .tx-md-list {
-  margin: 0 0 7px;
-  padding-left: 18px;
+  margin: 0 0 10px;
+  padding-left: 20px;
 }
-.tx-md-list li { margin: 1px 0; }
+.tx-md-list li { margin: 3px 0; }
+.tx-md-list li::marker { color: var(--muted); }
 
 .tx-md-quote {
   margin: 0 0 7px;
@@ -325,13 +389,17 @@
   white-space: pre-wrap;
 }
 
+/* A quiet ground, no box: wide identifiers read as words in a sentence, not
+   a row of buttons. --panel-raised is the ground every text tier is measured
+   against (CLAUDE.md), so the text keeps its contrast. */
 .tx-md-code {
-  padding: 0 3px;
-  border: 1px solid var(--border);
-  background: var(--panel-inset);
+  padding: 1px 4px;
+  background: var(--panel-raised);
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: 0.86em;
   border-radius: var(--radius);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .tx-md-link {
@@ -382,7 +450,7 @@
 /* --- tool chip ------------------------------------------------------------ */
 
 .tx-chip {
-  margin: 1px 0;
+  margin: 0;
   border: 1px solid var(--border);
   background: var(--panel);
   border-radius: var(--radius);
@@ -394,7 +462,8 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 2px 7px;
+  min-height: 28px;
+  padding: 3px 8px;
   font-size: var(--fs-sm);
   text-align: left;
   /* The whole row toggles; the path inside it opts out and opens the file. */
@@ -449,7 +518,8 @@
   flex: none;
   color: var(--text);
   font-family: var(--font-mono);
-  font-weight: 500;
+  font-size: var(--fs-sm);
+  font-weight: 600;
 }
 
 .tx-chip-target {
@@ -485,7 +555,7 @@
 .tx-chip-pending .tx-chip-state { color: var(--warn); }
 
 .tx-chip-body {
-  padding: 4px 7px 7px;
+  padding: 6px 8px 8px;
   border-top: 1px solid var(--border);
 }
 
@@ -994,3 +1064,114 @@
 }
 
 :root[data-theme='dark'] .tx-tok { color: var(--shiki-dark, inherit); }
+
+/* Waiting prompt. Flat --panel-raised ground, no tint and no opacity, so the
+   text tokens keep the contrast they were chosen for: --warn clears 5.6 (light)
+   and 8.4 (dark) on it, --text and --muted are the usual body tiers. */
+.tx-prompt {
+  flex: none;
+  margin: 6px 12px 0;
+  padding: 8px 10px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  max-height: 40%;
+  overflow: auto;
+}
+.tx-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tx-prompt-tag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tx-prompt-block { margin-top: 6px; }
+.tx-prompt-sub { font-size: var(--fs-xs); color: var(--muted); }
+.tx-prompt-q { margin-top: 4px; color: var(--text-strong); font-weight: 600; }
+.tx-prompt-opts { margin: 4px 0 0; padding-left: 20px; color: var(--text); }
+.tx-prompt-opt { color: var(--text-strong); }
+.tx-prompt-desc { color: var(--muted); }
+.tx-prompt-cmd { font-family: var(--font-mono); font-weight: 400; color: var(--text); word-break: break-all; }
+
+/* Web links. Same accent token the markdown link already used, so contrast is
+   unchanged; the host hint is muted and only shown when the label hides it. */
+.tx-url {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.tx-url:hover { text-decoration-color: var(--accent); }
+.tx-url:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.tx-url-host { color: var(--muted); text-decoration: none; word-break: normal; }
+
+/* --- attached images ------------------------------------------------------ */
+
+/* A thumbnail inside your band. Bounded on both axes so a tall screenshot
+   cannot push the conversation off the screen; the full size is one click. */
+.tx-img-thumb {
+  display: block;
+  margin: 8px 0 4px;
+  padding: 0;
+  max-width: min(100%, 520px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.tx-img-thumb img {
+  display: block;
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+}
+.tx-img-thumb:hover { border-color: var(--border-strong); }
+.tx-img-thumb:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+/* The file name Claude Code noted for the image: a caption, not a message. */
+.tx-img-source {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-img-missing {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-style: italic;
+}
+
+/* Full size. A solid ground (no translucency: rule 5/6 in CLAUDE.md) so the
+   picture reads the same in either theme. */
+.tx-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--bg);
+  cursor: zoom-out;
+}
+.tx-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* The message box while files are dragged over the window. */
+.tx-composer[data-drop='true'] .tx-composer-input {
+  border-color: var(--accent);
+  border-style: dashed;
+}

@@ -6,16 +6,19 @@
  * conservative and splits its findings in two:
  *
  *   `orphan`  - we are confident this is an Albedo-created worktree that no
- *               task row claims, or a directory under ~/agents whose `.git`
- *               file points at a gitdir that no longer exists.
+ *               task row claims, and git can see it, so removal goes through
+ *               `git worktree remove`.
  *   `unknown` - a worktree git knows about that no task claims, but which lives
  *               outside ~/agents (the user's own ~/www/worktrees, for example).
  *               The UI treats these as informational and offers no remove.
+ *               A directory whose `.git` points at a gitdir that is missing or
+ *               unreadable lands here too: a moved repo looks exactly like that.
  *
  * Everything that makes a decision is a pure function so it can be unit-tested;
  * the async entry point only gathers the inputs.
  */
 
+import { detectPlatform } from '../lib/platform';
 import {
   basename,
   git,
@@ -45,6 +48,13 @@ export interface OrphanInfo extends WorktreeInfo {
   prunable: boolean;
   bare: boolean;
   detached: boolean;
+  /**
+   * Set only for a disk-found worktree whose gitdir is not where its `.git`
+   * file says: `missing` when the filesystem said it is not there, `unchecked`
+   * when the filesystem would not say. Neither is ever offered for removal --
+   * see {@link classifyOrphans}.
+   */
+  gitdir?: 'missing' | 'unchecked';
 }
 
 /** One repo's `git worktree list --porcelain`, already parsed. */
@@ -61,13 +71,26 @@ export interface DiskCandidate {
   hasGitFile: boolean;
   /** Absolute gitdir the `.git` file points at, if it parsed. */
   gitdirTarget: string | null;
-  /** Whether that gitdir still exists. */
-  gitdirExists: boolean;
+  /**
+   * Whether that gitdir still exists. **null = could not check** (permissions,
+   * fs scope, an unmounted volume that errors rather than answering). An
+   * unchecked gitdir is never treated as a missing one.
+   */
+  gitdirExists: boolean | null;
 }
 
 // ---------------------------------------------------------------------------
 // Pure path normalisation
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether paths follow macOS rules: the `/private` firmlinks below, and a
+ * case-insensitive default volume. Linux has neither -- `/tmp` is a real
+ * directory and `Repo` and `repo` are two -- so applying them there would
+ * rewrite real paths and merge distinct worktrees. Anything not positively
+ * Linux (including the Node test runner) keeps the macOS rules.
+ */
+const MAC_PATHS = detectPlatform() !== 'linux';
 
 /**
  * macOS firmlinks. `/tmp`, `/var` and `/etc` are symlinks into `/private`, and
@@ -91,10 +114,10 @@ export function expandTilde(p: string, home: string): string {
 
 /**
  * Textual canonicalisation: collapse duplicate slashes, drop `.` segments,
- * resolve `..` segments, strip a trailing slash, and apply the macOS firmlinks.
+ * resolve `..` segments, strip a trailing slash, and (on macOS) apply the firmlinks.
  * Case is preserved -- see {@link pathKey} for the comparison form.
  */
-export function normalizePath(p: string): string {
+export function normalizePath(p: string, macPaths: boolean = MAC_PATHS): string {
   let s = (p ?? '').trim();
   if (s.length === 0) return '';
   const absolute = s.startsWith('/');
@@ -111,6 +134,7 @@ export function normalizePath(p: string): string {
   s = (absolute ? '/' : '') + parts.join('/');
   if (s.length > 1) s = s.replace(/\/+$/, '');
 
+  if (!macPaths) return s;
   for (const [short, real] of FIRMLINKS) {
     if (s === short) return real;
     if (s.startsWith(`${short}/`)) return real + s.slice(short.length);
@@ -123,8 +147,9 @@ export function normalizePath(p: string): string {
  * `/Users/x/agents/Repo/slug` and `/users/x/agents/repo/slug` are the same
  * directory and must not be reported as two different worktrees.
  */
-export function pathKey(p: string): string {
-  return normalizePath(p).toLowerCase();
+export function pathKey(p: string, macPaths: boolean = MAC_PATHS): string {
+  const s = normalizePath(p, macPaths);
+  return macPaths ? s.toLowerCase() : s;
 }
 
 /** The first root in `roots` that contains `path`, or null. */
@@ -213,11 +238,34 @@ export function albedoOwnsWorktree(task: OwnershipFacts): boolean {
  * an orphan with a remove button next to it.
  */
 export function reclaimableTaskPaths(tasks: OwnershipFacts[]): string[] {
+  // A directory can outlive the task that made it: resuming that task's session
+  // (or reusing its slug) starts a live task in the same cwd. Being archived
+  // does not make a path reclaimable while anything live still runs there.
+  const live = new Set(
+    tasks.filter((t) => t.status !== 'archived' && t.worktreePath).map((t) => pathKey(t.worktreePath)),
+  );
   return tasks
     .filter((t) => t.status === 'archived')
     .filter(albedoOwnsWorktree)
     .map((t) => t.worktreePath)
-    .filter((p): p is string => typeof p === 'string' && p.length > 0);
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    .filter((p) => !live.has(pathKey(p)));
+}
+
+/**
+ * True when another non-archived task runs in `task`'s directory. Removing the
+ * worktree would pull it out from under that session, so the archive dialog
+ * treats a shared directory exactly like one Albedo does not own.
+ */
+export function worktreeSharedWithLiveTask(
+  task: OwnershipFacts & { id: number },
+  others: readonly (OwnershipFacts & { id: number })[],
+): boolean {
+  if (!task.worktreePath) return false;
+  const key = pathKey(task.worktreePath);
+  return others.some(
+    (t) => t.id !== task.id && t.status !== 'archived' && !!t.worktreePath && pathKey(t.worktreePath) === key,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -445,21 +493,32 @@ export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
     if (!cand.hasGitFile) continue;
 
     emitted.add(key);
-    if (!cand.gitdirExists) {
+    // A gitdir that is not where the `.git` file says is NOT evidence that the
+    // worktree is garbage. The commonest causes are a repository that was
+    // moved or renamed, or one on a volume that is not mounted right now --
+    // and in both cases this directory is a full working tree with whatever
+    // uncommitted work was in it. So it is reported, never offered for
+    // removal, and the advice is `git worktree repair`, not deletion.
+    if (cand.gitdirExists !== true) {
+      const unchecked = cand.gitdirExists === null;
       out.push({
         path: cand.path,
         branch: null,
         head: '',
         locked: false,
-        classification: 'orphan',
-        reason: cand.gitdirTarget
-          ? `Stale worktree: its .git points at ${cand.gitdirTarget}, which no longer exists.`
-          : 'Stale worktree: its .git file could not be resolved to a gitdir.',
+        classification: 'unknown',
+        reason: !cand.gitdirTarget
+          ? 'Its .git file could not be resolved to a gitdir.'
+          : unchecked
+            ? `Its .git points at ${cand.gitdirTarget}, which Albedo could not check.`
+            : `Its .git points at ${cand.gitdirTarget}, which is not there. If the repository was ` +
+              'moved, renamed or is on a volume that is not mounted, the work here is intact.',
         repoPath: null,
         source: 'disk',
-        prunable: true,
+        prunable: false,
         bare: false,
         detached: false,
+        gitdir: unchecked ? 'unchecked' : 'missing',
       });
     } else {
       out.push({
@@ -639,12 +698,13 @@ async function scanWorktreeRoot(root: string): Promise<DiskCandidate[]> {
     }
     const target = parseDotGitFile(text);
     const absTarget = target ? resolveAgainst(path, target) : null;
-    let gitdirExists = false;
+    // An unresolvable target stays null too: "could not tell" is never "gone".
+    let gitdirExists: boolean | null = null;
     if (absTarget) {
       try {
         gitdirExists = await fs.exists(absTarget);
       } catch {
-        gitdirExists = false;
+        gitdirExists = null;
       }
     }
     return { path, hasGitFile: true, gitdirTarget: absTarget, gitdirExists };

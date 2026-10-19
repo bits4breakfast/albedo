@@ -3,7 +3,10 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from '../lib/pty';
+import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
+import { endTaskEvents, hookSettingsArg, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
+import { getTaskModel } from './taskModel';
+import { submitDelayFor } from '../lib/ptyInput';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 
@@ -43,6 +46,9 @@ const livePtys = new Map<number, string>();
  * is the only thing that can actually spawn — see {@link startPty}.
  */
 const starters = new Map<number, () => boolean>();
+
+/** Give a task's terminal keyboard focus. Registered while its Terminal is mounted. */
+const focusers = new Map<number, () => void>();
 
 /**
  * Tasks whose next start would RESUME their conversation rather than begin a
@@ -122,6 +128,8 @@ export async function notePty(taskId: number, text: string): Promise<boolean> {
  * the handful of bytes saved, and a conditional wrapper is the kind of thing
  * that gets tested only on the easy case. Callers must NOT wrap again.
  *
+ * The submitting `\r` is a separate write after a pause -- see the body.
+ *
  * Returns false when the task has no live pty, so the caller can offer to
  * start the session rather than silently dropping what the user typed.
  */
@@ -133,11 +141,34 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
   const body = text.replace(/\r\n?/g, '\n').replace(/\s+$/, '');
   if (body.length === 0) return false;
   try {
-    await writePty(ptyId, `\x1b[200~${body}\x1b[201~\r`);
+    // The paste and the Enter go as TWO writes, with a pause between. Sent in
+    // one write, Claude Code dropped the Enter that arrived on the heels of
+    // the paste: the message sat unsent in its input box, the composer had
+    // already cleared, and the next message was appended to it and sent
+    // both. An image path takes longer still, because Claude Code reads the
+    // file to turn it into an attachment before it will take Enter. Nothing
+    // here can observe readiness -- that would mean reading terminal output --
+    // so the pause is a fixed, generous one.
+    await writePty(ptyId, `\x1b[200~${body}\x1b[201~`);
+    await sleep(submitDelayFor(body));
+    if (livePtys.get(taskId) !== ptyId) return false; // exited in the pause
+    await writePty(ptyId, '\r');
     return true;
   } catch {
     return false;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Move keyboard focus into the task's terminal. False when none is mounted. */
+export function focusPty(taskId: number): boolean {
+  const focus = focusers.get(taskId);
+  if (!focus) return false;
+  focus();
+  return true;
 }
 
 /** True when the task has a spawned, un-exited pty. */
@@ -392,12 +423,14 @@ export default function Terminal({
 
     const term = new XTerm({
       fontFamily: cssVar('--font-mono', 'ui-monospace, Menlo, monospace'),
-      fontSize: 13,
+      fontSize: 14,
       lineHeight: 1.3,
       letterSpacing: 0,
       cursorBlink: true,
       cursorStyle: 'block',
-      scrollback: 20000,
+      // ~12 bytes a cell: 20k lines at 200 columns was ~48 MB per terminal, and
+      // every task's terminal stays mounted. The transcript is the real history.
+      scrollback: 5000,
       allowProposedApi: true,
       convertEol: false,
       macOptionIsMeta: true,
@@ -503,55 +536,79 @@ export default function Terminal({
       setPhase('starting');
       spawningRef.current = true;
 
+      // Hooks tell Albedo when the session is waiting on the user, which the
+      // transcript cannot (see capture/hookEvents.ts). Never allowed to stop a
+      // session starting: without them the task simply reads as it did before.
+      // The task's chosen model, on every spawn: a resume after restart would
+      // otherwise fall back to the user's default and quietly switch models.
+      const model = getTaskModel(task.id);
+      let spawnArgs = model ? ['--model', model, ...args] : args;
       try {
-        const id = await spawnPty({
-          cwd: task.worktreePath,
-          command: 'claude',
-          args,
-          cols: term.cols,
-          rows: term.rows,
-        });
+        const script = await startHookEvents();
+        await resetTaskEvents(task.id);
+        spawnArgs = ['--settings', hookSettingsArg(task.id, script), ...spawnArgs];
+      } catch (err) {
+        console.warn('[terminal] hooks unavailable, starting without them', err);
+      }
+
+      // Assigned the moment spawnPty resolves. The bridge never calls a
+      // handler before then, so both handlers below always see it set.
+      let id = '';
+
+      const onOutput = (bytes: Uint8Array) => {
+        // Counting that bytes arrived is not reading them. Nothing here
+        // interprets the stream -- it only distinguishes "died before it
+        // produced anything", which is what a rejected --resume looks like.
+        sawOutputRef.current = true;
+        try {
+          term.write(bytes);
+        } catch {
+          /* a write after dispose is harmless */
+        }
+      };
+
+      const onExit = (code: number | null) => {
+        deadRef.current = true;
+        // A resume that died without producing a byte is a rejected
+        // session id. Recorded here so a later start does not retry the
+        // same dead id forever.
+        resumeRejectedRef.current =
+          usedResumeRef.current && !sawOutputRef.current && code !== 0;
+        // Synchronously, and BEFORE unregisterPty: presence listeners
+        // re-render immediately on that call, and would otherwise read a
+        // stale `canResume` on the very render that reports the exit.
+        if (resumeRejectedRef.current) resumable.delete(task.id);
+        unregisterPty(task.id, id);
+        // Whatever it was waiting on died with it (no SessionEnd on a crash).
+        void endTaskEvents(task.id);
+        setExitCode(code);
+        setPhase('exited');
+        // Leave the scrollback intact and readable.
+        onExitRef.current?.(code);
+      };
+
+      try {
+        const handle = await spawnPty(
+          {
+            cwd: task.worktreePath,
+            command: 'claude',
+            args: spawnArgs,
+            cols: term.cols,
+            rows: term.rows,
+          },
+          { onOutput, onExit },
+        );
+        id = handle.id;
         if (disposed) {
+          handle.detach();
           void killPty(id).catch(() => {});
           return;
         }
+        ptyUnsubs.push(handle.detach);
         ptyIdRef.current = id;
         spawningRef.current = false;
         registerPty(task.id, id);
         setPhase('live');
-
-        ptyUnsubs.push(
-          onPtyOutput(id, (bytes) => {
-            // Counting that bytes arrived is not reading them. Nothing here
-            // interprets the stream -- it only distinguishes "died before it
-            // produced anything", which is what a rejected --resume looks like.
-            sawOutputRef.current = true;
-            try {
-              term.write(bytes);
-            } catch {
-              /* a write after dispose is harmless */
-            }
-          }),
-        );
-        ptyUnsubs.push(
-          onPtyExit(id, (code) => {
-            deadRef.current = true;
-            // A resume that died without producing a byte is a rejected
-            // session id. Recorded here so a later start does not retry the
-            // same dead id forever.
-            resumeRejectedRef.current =
-              usedResumeRef.current && !sawOutputRef.current && code !== 0;
-            // Synchronously, and BEFORE unregisterPty: presence listeners
-            // re-render immediately on that call, and would otherwise read a
-            // stale `canResume` on the very render that reports the exit.
-            if (resumeRejectedRef.current) resumable.delete(task.id);
-            unregisterPty(task.id, id);
-            setExitCode(code);
-            setPhase('exited');
-            // Leave the scrollback intact and readable.
-            onExitRef.current?.(code);
-          }),
-        );
 
         const queued = pendingRef.current;
         pendingRef.current = [];
@@ -580,6 +637,7 @@ export default function Terminal({
      * in flight — without the second, a click during the async spawn would
      * produce a second pty for the same task and orphan the first.
      */
+    focusers.set(task.id, () => termRef.current?.focus());
     starters.set(task.id, () => {
       if (livePtys.has(task.id)) return true;
       if (spawningRef.current) return true;
@@ -638,6 +696,7 @@ export default function Terminal({
       restartRef.current = null;
       spawningRef.current = false;
       starters.delete(task.id);
+      focusers.delete(task.id);
       for (const off of [...unsubs, ...ptyUnsubs]) {
         try {
           off();

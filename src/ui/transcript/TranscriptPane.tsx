@@ -8,14 +8,20 @@
  * scrolling up to read is never interrupted.
  */
 
+import { expandPastes, placeholderFor, shouldCollapse } from './pastedText';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { SEQ_STRIDE } from '../../capture';
+import { imageSourceNote, isImagePlaceholder } from './envelopes';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate } from '../../capture';
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { imageFromClipboard, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
-import MessageRow from './MessageRow';
+import { MemoMessageRow as MessageRow } from './MessageRow';
+import PromptCard from './PromptCard';
 import { isSidechain, toolUseId } from './ToolChip';
 import './transcript.css';
 
@@ -39,9 +45,19 @@ export interface TranscriptPaneProps {
    * without it the composer behaves exactly as it did before.
    */
   status?: TaskStatus | null;
+  /**
+   * Take the user to the terminal, where the waiting prompt is answered.
+   * Absent: the card still shows what is being asked, without the button.
+   */
+  onAnswerInTerminal?: (taskId: number) => void;
 }
 
-export function TranscriptPane({ taskId, sessionId, status = null }: TranscriptPaneProps): ReactNode {
+export function TranscriptPane({
+  taskId,
+  sessionId,
+  status = null,
+  onAnswerInTerminal,
+}: TranscriptPaneProps): ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
   const [limit, setLimit] = useState(PAGE);
   const [loading, setLoading] = useState(false);
@@ -283,7 +299,7 @@ export function TranscriptPane({ taskId, sessionId, status = null }: TranscriptP
           item.kind === 'sidechain' ? (
             <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
           ) : (
-            <MessageRow key={item.key} message={item.message} result={item.result} />
+            <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
           ),
         )}
       </div>
@@ -294,6 +310,7 @@ export function TranscriptPane({ taskId, sessionId, status = null }: TranscriptP
         </button>
       ) : null}
 
+      {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}
     </div>
   );
@@ -307,6 +324,29 @@ export default TranscriptPane;
 
 /** Auto-grow ceiling. Past this the composer scrolls instead of eating the pane. */
 const COMPOSER_MAX_PX = 140;
+
+/** Smallest a dragged composer can be: one line of text. */
+const COMPOSER_MIN_PX = 28;
+const COMPOSER_PX_KEY = 'albedo.composerPx';
+
+/** The height the user dragged it to, or null for auto-grow. Never throws. */
+function storedComposerPx(): number | null {
+  try {
+    const n = Number(window.localStorage.getItem(COMPOSER_PX_KEY));
+    return Number.isFinite(n) && n >= COMPOSER_MIN_PX ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeComposerPx(px: number | null): void {
+  try {
+    if (px === null) window.localStorage.removeItem(COMPOSER_PX_KEY);
+    else window.localStorage.setItem(COMPOSER_PX_KEY, String(Math.round(px)));
+  } catch {
+    /* storage unavailable: the height just is not remembered */
+  }
+}
 
 /** How long to wait for a session that `startPty` said was on its way. */
 const START_TIMEOUT_MS = 12_000;
@@ -361,12 +401,17 @@ export function Composer({
   status?: TaskStatus | null;
 }): ReactNode {
   const [text, setText] = useState('');
+  /** Large text pastes kept aside; the draft holds their placeholders. */
+  const pastesRef = useRef(new Map<number, string>());
+  const pasteSeqRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   /** Held because the session is on a permission prompt. See `send`. */
   const [held, setHeld] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [live, setLive] = useState(true);
+  /** Files are being dragged over the window. */
+  const [dropping, setDropping] = useState(false);
 
   const ref = useRef<HTMLTextAreaElement>(null);
   /** The body waiting for a session. Taken, not read, so it can only fire once. */
@@ -374,15 +419,62 @@ export function Composer({
   const inFlightRef = useRef(false);
   const timerRef = useRef(0);
 
+  /**
+   * A height the user dragged the composer to. While set it is the height --
+   * typing no longer auto-grows it -- and double-clicking the grip clears it.
+   */
+  const [userPx, setUserPx] = useState<number | null>(storedComposerPx);
+  const userPxRef = useRef(userPx);
+  userPxRef.current = userPx;
+
   const grow = useCallback(() => {
     const el = ref.current;
     if (!el) return;
+    const fixed = userPxRef.current;
+    if (fixed !== null) {
+      el.style.maxHeight = 'none';
+      el.style.height = `${fixed}px`;
+      return;
+    }
+    el.style.maxHeight = '';
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
   }, []);
 
+  useEffect(() => {
+    grow();
+  }, [userPx, grow]);
+
+  const dragRef = useRef<{ y: number; h: number } | null>(null);
+  const onGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    if (!el) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragRef.current = { y: e.clientY, h: el.offsetHeight };
+  };
+  const onGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    // Up grows it: the composer hangs from the bottom of the pane.
+    const max = Math.max(COMPOSER_MIN_PX, Math.floor(window.innerHeight * 0.6));
+    setUserPx(Math.min(max, Math.max(COMPOSER_MIN_PX, d.h + (d.y - e.clientY))));
+  };
+  const onGripUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    storeComposerPx(userPxRef.current);
+  };
+
   const succeeded = useCallback(() => {
     setText('');
+    pastesRef.current = new Map();
+    pasteSeqRef.current = 0;
     setNotice(null);
     requestAnimationFrame(grow);
     onSent();
@@ -391,6 +483,8 @@ export function Composer({
   // Only a task switch discards a draft -- never a failed send.
   useEffect(() => {
     setText('');
+    pastesRef.current = new Map();
+    pasteSeqRef.current = 0;
     setNotice(null);
     setAwaiting(false);
     setHeld(false);
@@ -409,9 +503,9 @@ export function Composer({
     timerRef.current = 0;
     try {
       if (await submitPty(taskId, body)) succeeded();
-      else setNotice('The terminal started but would not take the message. It is still here — press send to retry.');
+      else setNotice('Could not deliver your message. It is still here — press send to retry.');
     } catch {
-      setNotice('Could not reach the terminal. Your message is kept here.');
+      setNotice('Could not send your message. It is still here — press send to retry.');
     } finally {
       setAwaiting(false);
       setHeld(false);
@@ -452,6 +546,128 @@ export function Composer({
 
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
+  /*
+     Tab with nothing focused lands in the composer. Only then: if anything at
+     all holds focus (the terminal, a list row, a button) Tab keeps its normal
+     meaning, and an open dialog keeps it too, so focus never slips behind one.
+     "Nothing focused" is `document.body` being the active element, which is
+     what the page reports after a click on bare background or a closed dialog.
+  */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.defaultPrevented) return;
+      if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+      const active = document.activeElement;
+      if (active !== null && active !== document.body && active !== document.documentElement) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      const el = ref.current;
+      if (!el || el.disabled) return;
+      e.preventDefault();
+      el.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /*
+     Drop files on the window and their paths land in the message box. That is
+     how Claude Code itself takes a picture dragged into a terminal: it sees an
+     image path in the input and attaches the file, so nothing here reads or
+     uploads the file. The webview delivers drops as native paths (the DOM drop
+     event never sees them), hence Tauri's event rather than onDrop.
+  */
+  /** Type paths into the draft the way a terminal does for a drop. Paste uses it too. */
+  const insertPaths = useCallback(
+    (paths: string[]) => {
+      if (paths.length === 0) return;
+      const insert = paths.map(shellEscapePath).join(' ');
+      setText((t) => withInsertedPath(t, insert));
+      requestAnimationFrame(() => {
+        ref.current?.focus();
+        grow();
+      });
+    },
+    [grow],
+  );
+
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    let webview: ReturnType<typeof getCurrentWebview>;
+    try {
+      webview = getCurrentWebview();
+    } catch {
+      return; // not inside Tauri (tests, a browser build): no drop target
+    }
+    void webview
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === 'enter') setDropping(true);
+        else if (p.type === 'leave') setDropping(false);
+        else if (p.type === 'drop') {
+          setDropping(false);
+          insertPaths(p.paths);
+        }
+      })
+      .then((un) => {
+        if (gone) un();
+        else off = un;
+      })
+      .catch(() => {
+        /* no webview events (tests, a browser build): drop simply does nothing */
+      });
+    return () => {
+      gone = true;
+      off?.();
+    };
+  }, [insertPaths]);
+
+  /*
+     ⌘V with image data -- a screenshot copied with ⌃⇧⌘4, an image copied in a
+     browser -- carries bytes, not a path, so it is written to
+     ~/.albedo/paste/ first and then inserted exactly as a drop is (TODO §8).
+     Anything without an image file item returns before preventDefault: a text
+     paste is the browser's, untouched.
+  */
+  const onPaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const image = imageFromClipboard(e.clipboardData?.items);
+      if (!image) {
+        // A large text paste collapses to a placeholder, as in Claude Code: the
+        // text is kept aside and goes back in on send (see pastedText.ts).
+        const cd = e.clipboardData;
+        const pasted = cd && typeof cd.getData === 'function' ? cd.getData('text/plain') : '';
+        if (!shouldCollapse(pasted) || inFlightRef.current) return;
+        e.preventDefault();
+        const id = ++pasteSeqRef.current;
+        pastesRef.current.set(id, pasted);
+        const token = placeholderFor(id, pasted);
+        const el = e.currentTarget;
+        el.focus();
+        // insertText keeps the edit on the textarea's undo stack, so Cmd+Z
+        // takes the placeholder out like any other typing. jsdom and older
+        // engines lack it; splicing the value is the fallback.
+        const inserted = typeof document.execCommand === 'function' && document.execCommand('insertText', false, token);
+        if (!inserted) {
+          const start = el.selectionStart ?? el.value.length;
+          const end = el.selectionEnd ?? start;
+          setText((t) => t.slice(0, start) + token + t.slice(end));
+        }
+        requestAnimationFrame(grow);
+        return;
+      }
+      e.preventDefault();
+      // The draft is frozen while a send is pending; so is what lands in it.
+      if (inFlightRef.current) return;
+      savePastedImage(image)
+        .then((path) => insertPaths([path]))
+        .catch((err: unknown) => {
+          setNotice(`Could not save the pasted image: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    },
+    [insertPaths, grow],
+  );
+
   /** Take the held message back, so a prompt nobody answers is not a trap. */
   const cancelHold = useCallback(() => {
     pendingRef.current = null;
@@ -464,6 +680,8 @@ export function Composer({
     // A ref, because two Enters in one tick both see stale `busy` state.
     if (inFlightRef.current) return;
     if (text.trim().length === 0) return;
+    // What Claude Code receives: the draft with its paste placeholders filled.
+    const body = expandPastes(text, pastesRef.current);
     /*
        Checked BEFORE submitPty, because submitPty types into the prompt. No
        timeout here, unlike the pty-start hold: a permission prompt waits for a
@@ -471,10 +689,10 @@ export function Composer({
        failure. `Cancel` on the notice is the way out.
     */
     if (status === 'blocked') {
-      pendingRef.current = text;
+      pendingRef.current = body;
       inFlightRef.current = true;
       setHeld(true);
-      setNotice('Waiting — this session is on a permission prompt. Answer it in the terminal and this sends itself.');
+      setNotice('Waiting — Claude is asking you something. Answer it in the terminal and your message sends itself.');
       return;
     }
     inFlightRef.current = true;
@@ -483,22 +701,22 @@ export function Composer({
       // submitPty owns the bracketed-paste wrapper and the submitting \r (see
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
-      if (await submitPty(taskId, text)) {
+      if (await submitPty(taskId, body)) {
         succeeded();
         inFlightRef.current = false;
         return;
       }
       if (startPty(taskId)) {
         // Coming up. Hold the body and let the presence event send it.
-        pendingRef.current = text;
+        pendingRef.current = body;
         setAwaiting(true);
-        setNotice('Starting the terminal — your message will send as soon as it is up.');
+        setNotice('Starting the session — your message sends as soon as it is ready.');
         timerRef.current = window.setTimeout(() => {
           if (pendingRef.current === null) return;
           pendingRef.current = null;
           setAwaiting(false);
           inFlightRef.current = false;
-          setNotice('The terminal did not start. Your message is kept here — press send to try again.');
+          setNotice('The session did not start. Your message is still here — press send to try again.');
         }, START_TIMEOUT_MS);
         // `startPty` also returns true when a pty is ALREADY live -- submitPty
         // can fail on a write error alone. No presence event is coming in that
@@ -506,10 +724,10 @@ export function Composer({
         if (hasLivePty(taskId)) void flushRef.current();
         return; // otherwise inFlightRef stays set until the retry or the timeout
       }
-      setNotice('This task is not open, so there is no terminal to send to. Your message is kept here.');
+      setNotice('This task\u2019s session isn\u2019t running, so there is nowhere to send this. Select the task in the list to start it, then press send. Your message is still here.');
       inFlightRef.current = false;
     } catch {
-      setNotice('Could not reach the terminal. Your message is kept here.');
+      setNotice('Could not send your message. It is still here — press send to retry.');
       inFlightRef.current = false;
     } finally {
       setBusy(false);
@@ -536,7 +754,23 @@ export function Composer({
         : 'Terminal not running — your conversation is saved. Send to start a new session.';
 
   return (
-    <div className="tx-composer">
+    <>
+    <div
+      className="tx-grip"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize message box (double-click to reset)"
+      title="Drag to resize the message box · double-click to reset"
+      onPointerDown={onGripDown}
+      onPointerMove={onGripMove}
+      onPointerUp={onGripUp}
+      onPointerCancel={onGripUp}
+      onDoubleClick={() => {
+        setUserPx(null);
+        storeComposerPx(null);
+      }}
+    />
+    <div className="tx-composer" data-drop={dropping}>
       {notice ? (
         <div className="tx-composer-notice">
           <span>{notice}</span>
@@ -566,6 +800,7 @@ export function Composer({
           setText(e.target.value);
           grow();
         }}
+        onPaste={onPaste}
         onKeyDown={(e) => {
           // Match the TUI: Enter sends, Shift+Enter is a newline. `isComposing`
           // keeps an IME's Enter from submitting a half-typed word.
@@ -585,23 +820,37 @@ export function Composer({
         {awaiting || held ? '…' : 'send'}
       </button>
     </div>
+    </>
   );
+}
+
+/**
+ * A path as a terminal types it when a file is dropped on it: shell-special
+ * characters backslash-escaped, so a screenshot's "Screenshot 2026-10-17 at
+ * 00.36.49.png" stays one path. Claude Code reads image paths in this form.
+ */
+export function shellEscapePath(path: string): string {
+  return path.replace(/([ \t'"\\()&;|<>$`!*?[\]{}#~])/g, '\\$1');
 }
 
 // ---------------------------------------------------------------------------
 // Grouping
 // ---------------------------------------------------------------------------
 
-type Item =
-  | { kind: 'row'; key: string; message: Message; result: Message | null }
+export type Item =
+  | { kind: 'row'; key: string; message: Message; result: Message | null; extras?: Message[] }
   | { kind: 'sidechain'; key: string; rows: Message[]; results: Map<number, Message | null> };
 
 /**
  * Pair each `tool_use` with its `tool_result`, and fold runs of sidechain rows
  * into a single collapsible group. Subagent traffic is noise until you go
  * looking for it.
+ *
+ * `foldSidechains: false` is for the subagent inspector, which IS going looking
+ * for it: every row it shows is sidechain, so folding would hide the whole run
+ * behind one disclosure.
  */
-function groupRows(messages: readonly Message[]): Item[] {
+export function groupRows(messages: readonly Message[], { foldSidechains = true } = {}): Item[] {
   const resultByCallId = new Map<string, Message>();
   for (const m of messages) {
     if (m.role !== 'tool_result') continue;
@@ -629,7 +878,7 @@ function groupRows(messages: readonly Message[]): Item[] {
   while (i < messages.length) {
     const m = messages[i];
     if (!m) break;
-    if (isSidechain(m)) {
+    if (foldSidechains && isSidechain(m)) {
       const rows: Message[] = [];
       const results = new Map<number, Message | null>();
       while (i < messages.length) {
@@ -645,6 +894,28 @@ function groupRows(messages: readonly Message[]): Item[] {
       continue;
     }
     if (!consumed.has(m.id)) {
+      if (m.role === 'user') {
+        // One thing you sent is one band. Claude Code writes a message with an
+        // attachment as several rows -- your text and the image are blocks of
+        // the same line, and the "[Image: source: ...]" note is the line after
+        // -- and each used to render as its own "you" band.
+        const extras: Message[] = [];
+        let hasImage = isImagePlaceholder(m.body);
+        let j = i + 1;
+        while (j < messages.length) {
+          const n = messages[j];
+          if (!n || n.role !== 'user' || isSidechain(n) || consumed.has(n.id)) break;
+          const sameLine = Math.floor(n.seq / SEQ_STRIDE) === Math.floor(m.seq / SEQ_STRIDE) && n.sessionId === m.sessionId;
+          const note = hasImage && imageSourceNote(n.body ?? '') !== null;
+          if (!sameLine && !note) break;
+          extras.push(n);
+          if (isImagePlaceholder(n.body)) hasImage = true;
+          j++;
+        }
+        items.push({ kind: 'row', key: `m-${m.id}`, message: m, result: null, extras });
+        i = j;
+        continue;
+      }
       items.push({ kind: 'row', key: `m-${m.id}`, message: m, result: resultFor(m) });
     }
     i++;

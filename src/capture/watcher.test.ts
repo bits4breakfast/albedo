@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  firstCwdIn,
   findUnreportedGrowth,
   isTranscriptPath,
   lastNewlineIndex,
@@ -201,5 +202,21 @@ describe('findUnreportedGrowth', () => {
   it('treats a file ingest has never seen as growth', () => {
     const r = findUnreportedGrowth([{ path: 'new', size: 5, mtime: 0 }], new Map(), NOW, GRACE, never);
     expect(r.missed).toEqual(['new']);
+  });
+});
+
+describe('firstCwdIn', () => {
+  it('returns the first cwd, skipping bookkeeping lines that carry none', () => {
+    const text = [
+      JSON.stringify({ type: 'mode', mode: 'auto' }),
+      JSON.stringify({ type: 'user', cwd: '/wt/ACME-1', message: { role: 'user', content: 'hi' } }),
+      JSON.stringify({ type: 'user', cwd: '/elsewhere', message: { role: 'user', content: 'x' } }),
+    ].join('\n');
+    expect(firstCwdIn(text)).toBe('/wt/ACME-1');
+  });
+
+  it('is null when no line has one, and never throws on junk', () => {
+    expect(firstCwdIn('')).toBeNull();
+    expect(firstCwdIn('not json\n{"type":"mode"}\n')).toBeNull();
   });
 });

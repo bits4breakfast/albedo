@@ -18,6 +18,10 @@
  *    re-reads the file and refuses to overwrite a version that moved under us.
  */
 
+import { copyText } from '../../lib/clipboard';
+import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
+import { useOpenFile } from './openFile';
+import FileDiffView from './FileDiffView';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -349,13 +353,19 @@ export interface FileEditorProps {
   task: Task;
   request: OpenFileRequest | null;
   onClose: () => void;
+  /**
+   * Browse only: no edits, no save, no Diff. Set when `task` stands for a
+   * project's main checkout (no task selected) -- that folder is the user's
+   * real repo, not a throwaway worktree, so nothing typed here may reach it.
+   */
+  readOnly?: boolean;
 }
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export default function FileEditor({ task, request, onClose }: FileEditorProps) {
+export default function FileEditor({ task, request, onClose, readOnly = false }: FileEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** Content as it was last known to be on disk. The overwrite guard's baseline. */
@@ -376,8 +386,43 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   const [handEdited, setHandEdited] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
 
+  /*
+   * File | Diff. Component state, NOT reset when the request changes: stepping
+   * to the next changed file is a new request, and walking the change set as
+   * diffs is the point. Reset on close, so the next file opened from scratch
+   * opens as a file. The CodeMirror view stays alive (hidden) in Diff mode, so
+   * unsaved edits, undo history and scroll survive a look at the diff.
+   */
+  const [mode, setMode] = useState<'file' | 'diff'>('file');
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  /** A line asked for while in Diff mode, revealed once the file is showing. */
+  const pendingLineRef = useRef<number | null>(null);
+  /** Bumped on save so an open diff re-reads the file it describes. */
+  const [savedKey, setSavedKey] = useState(0);
+
   const requestPath = request?.path ?? null;
   const requestLine = request?.line ?? null;
+
+  /** The request path the current view was built for. */
+  const viewPathRef = useRef<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Reveal a line, clamped -- a stale trace can name line 900 of a file that
+      is now 40 lines long -- and flash it. */
+  const revealLine = (view: EditorView, requested: number) => {
+    const lineNo = Math.min(Math.max(1, Math.trunc(requested)), view.state.doc.lines);
+    const line = view.state.doc.line(lineNo);
+    view.dispatch({
+      selection: { anchor: line.from },
+      effects: [EditorView.scrollIntoView(line.from, { y: 'center' }), setFlashLine.of(line.from)],
+    });
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => {
+      flashTimer.current = null;
+      if (viewRef.current === view) view.dispatch({ effects: setFlashLine.of(null) });
+    }, FLASH_MS);
+  };
 
   // --- resolve + read ------------------------------------------------------
   useEffect(() => {
@@ -391,6 +436,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
 
     if (requestPath === null) {
       setPhase({ kind: 'idle' });
+      setMode('file');
       return;
     }
 
@@ -448,7 +494,12 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
   }, [task.id, resolved]);
 
   // --- save ----------------------------------------------------------------
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const save = useCallback(async () => {
+    // Belt and braces: the view is not editable and the button is not shown,
+    // but a stray Cmd+S must still never write to a main checkout.
+    if (readOnlyRef.current) return;
     const view = viewRef.current;
     const target = resolvedRef.current;
     if (!view || !target) return;
@@ -498,6 +549,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     existedRef.current = true;
     overwriteRef.current = false;
     setDirty(false);
+    setSavedKey((k) => k + 1);
 
     // Order matters and is fixed by the spec: write, mark, then note.
     markHandEdited(task.id, target.relative);
@@ -564,6 +616,8 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         indentUnit.of('  '),
         EditorState.allowMultipleSelections.of(true),
+        EditorState.readOnly.of(readOnly),
+        EditorView.editable.of(!readOnly),
         // No autocompletion, no linting, no LSP -- per spec. If you are about
         // to add `@codemirror/autocomplete` here, that is the line it breaks.
 
@@ -594,33 +648,82 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
       view.dispatch({ effects: themeCompartment.reconfigure(themeExtension(theme)) });
     });
 
-    // Reveal the requested line, clamped -- a stale trace can name line 900 of
-    // a file that is now 40 lines long.
-    let flashTimer: ReturnType<typeof setTimeout> | null = null;
-    if (requestLine !== null && requestLine > 0) {
-      const lineNo = Math.min(Math.max(1, Math.trunc(requestLine)), view.state.doc.lines);
-      const line = view.state.doc.line(lineNo);
-      view.dispatch({
-        selection: { anchor: line.from },
-        effects: [
-          EditorView.scrollIntoView(line.from, { y: 'center' }),
-          setFlashLine.of(line.from),
-        ],
-      });
-      flashTimer = setTimeout(() => {
-        if (viewRef.current === view) view.dispatch({ effects: setFlashLine.of(null) });
-      }, FLASH_MS);
-    }
+    viewPathRef.current = requestPath;
+    if (requestLine !== null && requestLine > 0) revealLine(view, requestLine);
 
     return () => {
-      if (flashTimer) clearTimeout(flashTimer);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
       offTheme();
       viewRef.current = null;
       view.destroy();
     };
     // `doc.key` changes on open and on reload-from-disk; both want a fresh view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc?.key, resolved]);
+  }, [doc?.key, resolved, readOnly]);
+
+  // --- a new line in the file already open ----------------------------------
+  // The view is rebuilt only when the PATH changes, so a second request for
+  // the same file -- Go to Symbol on a method in the open file -- would land
+  // nowhere. Keyed on the request object, so asking for the same line twice
+  // still jumps. A request for another path is the effect above's business:
+  // the view here is still the old file's.
+  //
+  // A line is a place in the FILE, so a request carrying one leaves Diff mode
+  // -- which is what a click on a diff line number is. The reveal waits for
+  // the surface to be visible (below); a hidden CodeMirror cannot measure.
+  // A request for another path is revealed by the view built for it.
+  useEffect(() => {
+    if (request === null || request.line == null || request.line < 1) return;
+    if (modeRef.current === 'diff') {
+      pendingLineRef.current = request.path === viewPathRef.current ? request.line : null;
+      setMode('file');
+      return;
+    }
+    const view = viewRef.current;
+    if (!view || request.path !== viewPathRef.current) return;
+    revealLine(view, request.line);
+    view.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
+
+  // --- back from Diff mode ---------------------------------------------------
+  useEffect(() => {
+    const view = viewRef.current;
+    if (mode !== 'file' || !view) return;
+    const line = pendingLineRef.current;
+    pendingLineRef.current = null;
+    // The surface was display:none while the diff showed.
+    view.requestMeasure();
+    if (line !== null) revealLine(view, line);
+    view.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // --- File | Diff: Shift-Command-D -----------------------------------------
+  // Not PhpStorm's Command-D: CodeMirror binds Mod-d to "select next
+  // occurrence", and an editor where that key stopped working would be worse
+  // than a different chord. Shift-Command-D is bound by neither CodeMirror,
+  // the default macOS menu, nor the app keymap. Command only, matched on the
+  // physical key (Shift makes `key` "D"), and Control is left alone: it would
+  // reach the terminal as Ctrl-D, which is EOF. Capture phase, so it works
+  // with the cursor inside the editor -- same as the stepping keys.
+  // A main checkout has no task base to diff against.
+  const canDiff = !readOnly && resolved !== null && phase.kind === 'ready';
+  const toggleMode = useCallback(() => {
+    if (!canDiff) return;
+    setMode((m) => (m === 'file' ? 'diff' : 'file'));
+  }, [canDiff]);
+  useEffect(() => {
+    if (request === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'KeyD') return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMode();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [request, toggleMode]);
 
   // --- close ---------------------------------------------------------------
   const requestClose = useCallback(() => {
@@ -642,6 +745,37 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
     return () => window.removeEventListener('keydown', onKey);
   }, [requestClose]);
 
+  // --- stepping through the change set --------------------------------------
+  // The touched-files list publishes its order; the editor walks it. Blocked
+  // while there are unsaved edits, so a keystroke can never discard work.
+  const openFile = useOpenFile();
+  const [order, setOrder] = useState<readonly string[]>(() => touchedOrder(task.id));
+  useEffect(() => {
+    setOrder(touchedOrder(task.id));
+    return onTouchedOrderChange(() => setOrder(touchedOrder(task.id)));
+  }, [task.id]);
+  const current = resolved?.relative ?? null;
+  const position = current === null ? -1 : order.indexOf(current);
+  const step = useCallback(
+    (dir: 1 | -1) => {
+      if (dirty || current === null) return;
+      const next = neighbour(order, current, dir);
+      if (next !== null) openFile({ path: next });
+    },
+    [dirty, current, order, openFile],
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.altKey || e.ctrlKey) return;
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      e.stopPropagation();
+      step(e.key === 'ArrowDown' ? 1 : -1);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [step]);
+
   if (request === null) return null;
 
   const title = resolved?.relative ?? request.path;
@@ -652,6 +786,34 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
         <span className="ed-path" title={resolved?.absolute ?? request.path}>
           {title}
         </span>
+        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} />
+        {position >= 0 && order.length > 1 ? (
+          <span className="ed-nav" aria-label="Changed files">
+            <button
+              type="button"
+              className="ed-nav-btn"
+              onClick={() => step(-1)}
+              disabled={dirty}
+              title={dirty ? 'Save or discard your edits first' : 'Previous changed file (⌥⌘↑)'}
+              aria-label="Previous changed file"
+            >
+              ‹
+            </button>
+            <span className="ed-nav-pos">
+              {position + 1} / {order.length}
+            </span>
+            <button
+              type="button"
+              className="ed-nav-btn"
+              onClick={() => step(1)}
+              disabled={dirty}
+              title={dirty ? 'Save or discard your edits first' : 'Next changed file (⌥⌘↓)'}
+              aria-label="Next changed file"
+            >
+              ›
+            </button>
+          </span>
+        ) : null}
         {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
         {handEdited && (
           <span className="ed-badge" title="You saved this file by hand in this session">
@@ -662,17 +824,48 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
 
         <span className="ed-spacer" />
 
-        <SaveIndicator state={saveState} />
+        {readOnly ? (
+          <span className="ed-badge" title="Opened with no task selected: this is the project's own folder, so it is shown and never saved">
+            read-only · main checkout
+          </span>
+        ) : (
+          <>
+            <span className="ed-mode" role="group" aria-label="Show">
+              <button
+                type="button"
+                className="ed-mode-btn"
+                aria-pressed={mode === 'file'}
+                onClick={() => setMode('file')}
+                title="The file as it is now (⇧⌘D toggles)"
+              >
+                File
+              </button>
+              <button
+                type="button"
+                className="ed-mode-btn"
+                aria-pressed={mode === 'diff'}
+                aria-keyshortcuts="Shift+Meta+D"
+                onClick={() => canDiff && setMode('diff')}
+                disabled={!canDiff}
+                title="This task's change to the file: the branch's base against the working tree, committed and uncommitted together (⇧⌘D)"
+              >
+                Diff
+              </button>
+            </span>
 
-        <button
-          type="button"
-          className="ed-btn"
-          onClick={() => saveRef.current()}
-          disabled={phase.kind !== 'ready' || saveState.kind === 'saving'}
-          title="Save to the worktree (⌘S)"
-        >
-          Save
-        </button>
+            <SaveIndicator state={saveState} />
+
+            <button
+              type="button"
+              className="ed-btn"
+              onClick={() => saveRef.current()}
+              disabled={phase.kind !== 'ready' || saveState.kind === 'saving'}
+              title="Save to the worktree (⌘S)"
+            >
+              Save
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="ed-btn"
@@ -680,7 +873,7 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
             const view = viewRef.current;
             if (view) openSearchPanel(view);
           }}
-          disabled={phase.kind !== 'ready'}
+          disabled={phase.kind !== 'ready' || mode === 'diff'}
           title="Find (⌘F)"
         >
           Find
@@ -766,7 +959,10 @@ export default function FileEditor({ task, request, onClose }: FileEditorProps) 
             <div className="ed-message-sub">{phase.message}</div>
           </div>
         )}
-        <div className="ed-surface" ref={hostRef} hidden={phase.kind !== 'ready'} />
+        {mode === 'diff' && resolved !== null && phase.kind === 'ready' ? (
+          <FileDiffView task={task} target={resolved} reloadKey={savedKey} unsaved={dirty} />
+        ) : null}
+        <div className="ed-surface" ref={hostRef} hidden={phase.kind !== 'ready' || mode === 'diff'} />
       </div>
     </div>
   );
@@ -789,4 +985,60 @@ function SaveIndicator({ state }: { state: SaveState }) {
     default:
       return null;
   }
+}
+
+/**
+ * Copy the path shown above the editor. A click copies it as shown (relative
+ * to the worktree, which is what you paste into a prompt or a command run
+ * there); Option-click copies the absolute path. "copied" confirms it for a
+ * moment rather than leaving you to wonder whether it worked.
+ */
+function CopyPathButton({ path, absolute }: { path: string; absolute: string | null }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const t = setTimeout(() => setState('idle'), 1400);
+    return () => clearTimeout(t);
+  }, [state]);
+
+  const copy = useCallback(
+    (wantAbsolute: boolean) => {
+      const text = wantAbsolute && absolute ? absolute : path;
+      void copyText(text).then((ok) => setState(ok ? 'copied' : 'failed'));
+    },
+    [path, absolute],
+  );
+
+  // Option-Command-C, Finder's "Copy as Pathname" (VS Code agrees); with Shift,
+  // the absolute path. Matched on `code`, because Option turns `key` into "ç".
+  // Capture phase, so it works with the cursor inside the editor too.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.altKey || e.ctrlKey || e.code !== 'KeyC') return;
+      e.preventDefault();
+      e.stopPropagation();
+      copy(e.shiftKey);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [copy]);
+
+  return (
+    <button
+      type="button"
+      className="ed-copy"
+      data-state={state}
+      onClick={(e) => copy(e.altKey)}
+      title={absolute ? 'Copy path (⌥⌘C) · absolute path: ⌥-click or ⇧⌥⌘C' : 'Copy path (⌥⌘C)'}
+      aria-label="Copy path"
+      aria-keyshortcuts="Alt+Meta+C"
+    >
+      {state === 'copied' ? 'copied' : state === 'failed' ? 'copy failed' : (
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      )}
+    </button>
+  );
 }

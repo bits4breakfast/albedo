@@ -422,7 +422,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'feat/retry',
       worktreePath: '/Users/x/www/worktrees/albedo/retry',
-      ownsWorktree: true,
+      ownsWorktree: true, createdBranch: true,
     });
     expect(task.projectId).toBe(project.id);
     expect(store.tasks[0]?.['project_id']).toBe(project.id);
@@ -441,7 +441,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
-      ownsWorktree: true,
+      ownsWorktree: true, createdBranch: true,
     });
     expect((await listTasks()).map((t) => t.projectId)).toEqual([project.id]);
   });
@@ -454,7 +454,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
-      ownsWorktree: true,
+      ownsWorktree: true, createdBranch: true,
     });
     expect(task.projectId).toBeNull();
     expect((await getTask(task.id))?.projectId).toBeNull();
@@ -469,7 +469,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
-      ownsWorktree: true,
+      ownsWorktree: true, createdBranch: true,
     });
     await updateTask(task.id, { projectId: project.id });
     expect((await getTask(task.id))?.projectId).toBe(project.id);
@@ -594,14 +594,14 @@ describe('ownsWorktree — the archive-safety flag', () => {
   };
 
   it('round-trips true for a worktree Albedo cut', async () => {
-    const t = await createTask({ ...TASK, worktreePath: '/wt/slug', ownsWorktree: true });
+    const t = await createTask({ ...TASK, worktreePath: '/wt/slug', ownsWorktree: true, createdBranch: true });
     expect(t.ownsWorktree).toBe(true);
     expect(store.tasks[0]?.['owns_worktree']).toBe(1);
     expect((await getTask(t.id))?.ownsWorktree).toBe(true);
   });
 
   it('round-trips false for a resumed session in the user’s own checkout', async () => {
-    const t = await createTask({ ...TASK, ownsWorktree: false });
+    const t = await createTask({ ...TASK, ownsWorktree: false, createdBranch: false });
     expect(t.ownsWorktree).toBe(false);
     expect(store.tasks[0]?.['owns_worktree']).toBe(0);
     expect((await getTask(t.id))?.ownsWorktree).toBe(false);
@@ -614,20 +614,20 @@ describe('ownsWorktree — the archive-safety flag', () => {
     // it would let the archive flow offer `git worktree remove` on the user's
     // main checkout. So every insert names the column.
     store.lastInsertSql = '';
-    await createTask({ ...TASK, ownsWorktree: false });
+    await createTask({ ...TASK, ownsWorktree: false, createdBranch: false });
     expect(store.lastInsertSql).toContain('owns_worktree');
     expect(store.tasks[0]?.['owns_worktree']).toBe(0);
   });
 
   it('converts the boolean to SQLite 0/1 on update too', async () => {
-    const t = await createTask({ ...TASK, ownsWorktree: true });
-    await updateTask(t.id, { ownsWorktree: false });
+    const t = await createTask({ ...TASK, ownsWorktree: true, createdBranch: true });
+    await updateTask(t.id, { ownsWorktree: false, createdBranch: false });
     expect(store.tasks[0]?.['owns_worktree']).toBe(0);
     expect((await getTask(t.id))?.ownsWorktree).toBe(false);
   });
 
   it('reads any non-zero stored value as true', async () => {
-    const t = await createTask({ ...TASK, ownsWorktree: true });
+    const t = await createTask({ ...TASK, ownsWorktree: true, createdBranch: true });
     store.tasks[0]!['owns_worktree'] = 1;
     expect((await getTask(t.id))?.ownsWorktree).toBe(true);
     store.tasks[0]!['owns_worktree'] = 0;

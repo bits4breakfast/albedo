@@ -11,14 +11,16 @@
  * chose.
  */
 
-import { useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import Diff, { Code, Disclosure, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import Diff, { Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
-import { isAllEnvelopes, parseUserBody, type UserBlock } from './envelopes';
+import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, type UserBlock } from './envelopes';
+import { imageAt } from '../../capture';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -26,12 +28,17 @@ export interface MessageRowProps {
   message: Message;
   /** The paired `tool_result` row for a `tool_use`, when it has arrived. */
   result?: Message | null;
+  /**
+   * For a user row: the rest of the same message -- an attached image, the
+   * note naming its file -- so it renders as one band. See groupRows.
+   */
+  extras?: readonly Message[];
 }
 
-export function MessageRow({ message, result = null }: MessageRowProps): ReactNode {
+export function MessageRow({ message, result = null, extras = [] }: MessageRowProps): ReactNode {
   switch (message.role) {
     case 'user':
-      return <UserRow message={message} />;
+      return <UserRow message={message} extras={extras} />;
     case 'assistant':
       return message.toolName === 'thinking' ? <ThinkingRow message={message} /> : <AssistantRow message={message} />;
     case 'system':
@@ -45,6 +52,21 @@ export function MessageRow({ message, result = null }: MessageRowProps): ReactNo
       return null;
   }
 }
+
+/**
+ * Rows are immutable once captured, so a row whose message, result and extras
+ * are the same objects renders the same. Without this every live append
+ * re-rendered (and re-tokenised) the whole transcript. `extras` is rebuilt by
+ * groupRows on each pass, so it is compared element by element.
+ */
+function sameRow(a: MessageRowProps, b: MessageRowProps): boolean {
+  if (a.message !== b.message || (a.result ?? null) !== (b.result ?? null)) return false;
+  const ea = a.extras ?? [];
+  const eb = b.extras ?? [];
+  return ea.length === eb.length && ea.every((m, i) => m === eb[i]);
+}
+
+export const MemoMessageRow = memo(MessageRow, sameRow);
 
 export default MessageRow;
 
@@ -65,21 +87,84 @@ export default MessageRow;
  * rendering as italic is a far smaller cost than a subagent's 60-line report
  * rendering as source, and ~9% of typed rows contain markdown anyway.
  */
-function UserRow({ message }: { message: Message }): ReactNode {
-  const blocks = useMemo(() => parseUserBody(message.body ?? ''), [message.body]);
-  if (blocks.length === 0) return null;
-  // Nothing a human typed: drop the "you said" framing rather than attributing
-  // a harness notification to the user.
-  const machine = isAllEnvelopes(blocks);
+type UserPart =
+  | { kind: 'blocks'; blocks: UserBlock[] }
+  | { kind: 'image'; src: string | null }
+  | { kind: 'source'; path: string };
+
+function UserRow({ message, extras }: { message: Message; extras: readonly Message[] }): ReactNode {
+  const parts = useMemo<UserPart[]>(() => {
+    const out: UserPart[] = [];
+    for (const m of [message, ...extras]) {
+      const body = m.body ?? '';
+      if (isImagePlaceholder(body)) {
+        out.push({ kind: 'image', src: imageAt(m.rawJson, m.seq)?.src ?? null });
+        continue;
+      }
+      const source = imageSourceNote(body);
+      if (source !== null) {
+        out.push({ kind: 'source', path: source });
+        continue;
+      }
+      const blocks = parseUserBody(body);
+      if (blocks.length > 0) out.push({ kind: 'blocks', blocks });
+    }
+    return out;
+  }, [message, extras]);
+
+  if (parts.length === 0) return null;
+  // Nothing a human typed or attached: drop the "you said" framing rather than
+  // attributing a harness notification to the user.
+  const machine = parts.every((p) => p.kind === 'blocks' && isAllEnvelopes(p.blocks));
   return (
     <div className={`tx-row ${machine ? 'tx-row-machine' : 'tx-row-user'}`}>
       <div className="tx-gutter">{machine ? '' : 'you'}</div>
       <div className="tx-content">
-        {blocks.map((b, i) => (
-          <UserBlockView key={i} block={b} />
-        ))}
+        {parts.map((p, i) =>
+          p.kind === 'blocks' ? (
+            p.blocks.map((b, j) => <UserBlockView key={`${i}-${j}`} block={b} />)
+          ) : p.kind === 'image' ? (
+            <AttachedImage key={i} src={p.src} />
+          ) : (
+            <div key={i} className="tx-img-source" title={p.path}>
+              {p.path.split('/').pop()}
+            </div>
+          ),
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * An image you attached. A thumbnail in the band; click for the full size,
+ * Esc or a click anywhere to close. Null `src` means the picture could not be
+ * recovered from the transcript (another source type), which is said, not
+ * hidden.
+ */
+function AttachedImage({ src }: { src: string | null }): ReactNode {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (src === null) return <div className="tx-img-missing">image (not stored in the transcript)</div>;
+  return (
+    <>
+      <button type="button" className="tx-img-thumb" onClick={() => setOpen(true)} title="Show full size">
+        <img src={src} alt="Attached image" loading="lazy" />
+      </button>
+      {open ? (
+        <div className="tx-lightbox" role="dialog" aria-modal="true" aria-label="Attached image" onClick={() => setOpen(false)}>
+          <img src={src} alt="Attached image, full size" />
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -98,6 +183,12 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
       );
     case 'system-reminder':
       return <Collapsed label="injected context" text={block.text} />;
+    case 'skill':
+      return <SkillBlock block={block} />;
+    case 'pasted': {
+      const lines = block.text.split('\n').length;
+      return <Collapsed label={`pasted text · ${lines} line${lines === 1 ? '' : 's'}`} text={block.text} />;
+    }
     case 'output':
       return (
         <pre className="tx-pre tx-output">
@@ -151,6 +242,24 @@ function Collapsed({ label, text }: { label: string; text: string }): ReactNode 
         <Disclosure open={open} /> {label}
       </button>
       {open ? <div className="tx-think-body">{text}</div> : null}
+    </div>
+  );
+}
+
+/** A loaded skill: its name and where it lives, with the SKILL.md folded away. */
+function SkillBlock({ block }: { block: Extract<UserBlock, { kind: 'skill' }> }): ReactNode {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="tx-collapsed">
+      <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <Disclosure open={open} /> skill loaded · <span className="tx-cmd-name">{block.name}</span>
+      </button>
+      {open ? (
+        <div className="tx-think-body">
+          <div className="tx-cmd-args">{block.dir}</div>
+          <Markdown text={block.text} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -443,25 +552,38 @@ function codeSpanRef(text: string): { path: string; line: number | null } | null
 }
 
 const INLINE_RE =
-  /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|\*([^*\n]+?)\*|_([^_\n]+?)_|~~([\s\S]+?)~~|\[([^\]\n]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/g;
+  /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|(?<![\p{L}\p{N}_])__([\s\S]+?)__(?![\p{L}\p{N}_])|\*([^*\n]+?)\*|(?<![\p{L}\p{N}_])_([^_\n]+?)_(?![\p{L}\p{N}_])|~~([\s\S]+?)~~|\[([^\]\n]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/gu;
 
 /** Inline markdown to React nodes. Never produces raw HTML. */
 export function parseInline(text: string, depth = 0): ReactNode[] {
   if (depth > 3) return [text];
   const out: ReactNode[] = [];
-  const re = new RegExp(INLINE_RE.source, 'g');
+  const re = new RegExp(INLINE_RE.source, 'gu');
   let last = 0;
   let m: RegExpExecArray | null;
   let key = 0;
 
+  /** Plain text between markup, with any web URL in it made a link. */
+  const pushPlain = (chunk: string): void => {
+    for (const part of splitUrls(chunk)) {
+      if (typeof part === 'string') out.push(part);
+      else out.push(<ExternalLink key={key++} url={part.url} />);
+    }
+  };
+
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) pushPlain(text.slice(last, m.index));
     const [, , codeText, strongA, strongB, emA, emB, strike, linkText, linkUrl] = m;
 
     if (codeText !== undefined) {
       const ref = codeSpanRef(codeText);
+      const asUrl = safeHttpUrl(codeText);
       out.push(
-        ref ? (
+        asUrl !== null && /^https?:\/\//i.test(codeText.trim()) ? (
+          <ExternalLink key={key++} url={asUrl} className="tx-md-code">
+            {codeText}
+          </ExternalLink>
+        ) : ref ? (
           <PathLink key={key++} path={ref.path} line={ref.line} className="tx-md-code tx-md-code-link">
             {codeText}
           </PathLink>
@@ -478,19 +600,34 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
     } else if (strike !== undefined) {
       out.push(<s key={key++}>{parseInline(strike, depth + 1)}</s>);
     } else if (linkText !== undefined) {
-      // Deliberately not an anchor: model output does not get to be clickable.
-      out.push(
-        <span key={key++} className="tx-md-link" title={linkUrl ?? ''}>
-          {linkText.length > 0 ? linkText : (linkUrl ?? '')}
-        </span>,
-      );
+      const target = linkUrl ? safeHttpUrl(linkUrl) : null;
+      const label = linkText.length > 0 ? linkText : (linkUrl ?? '');
+      if (target === null) {
+        // Not a web link (relative, `file:`, `javascript:` ...): shown, not clickable.
+        out.push(
+          <span key={key++} className="tx-md-link" title={linkUrl ?? ''}>
+            {label}
+          </span>,
+        );
+      } else {
+        // The label is the model's; the host is the truth. When they differ the
+        // host is shown beside it, so a label cannot disguise the destination.
+        const host = hostOf(target);
+        const labelIsUrl = /^https?:\/\//i.test(label.trim());
+        out.push(
+          <ExternalLink key={key++} url={target} className="tx-md-link">
+            {label}
+            {host && !labelIsUrl ? <span className="tx-url-host"> ({host})</span> : null}
+          </ExternalLink>,
+        );
+      }
     } else {
       out.push(m[0]);
     }
     last = m.index + m[0].length;
   }
 
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) pushPlain(text.slice(last));
   return out;
 }
 
