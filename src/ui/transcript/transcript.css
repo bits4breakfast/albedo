@@ -19,6 +19,16 @@
   cursor: auto;
 }
 
+/* Holds the scroller and the "latest" button, which is positioned against
+   this box: against the pane it landed on the composer and covered Send. */
+.tx-scroll-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .tx-scroll {
   flex: 1;
   min-height: 0;
@@ -368,6 +378,34 @@
 .tx-md-h2 { font-size: var(--fs-heading); }
 .tx-md-h3 { font-size: var(--fs-lg); }
 .tx-md-h4 { font-size: var(--fs-lg); color: var(--muted); }
+
+/* Tables: hairline grid, the header on --panel. Text keeps its own tokens,
+   which are cleared against --panel-raised -- a darker ground than --panel in
+   light and a lighter one in dark -- so the header row cannot cost contrast.
+   The wrapper scrolls sideways; the pane never grows to fit a wide table. */
+.tx-md-table-wrap {
+  margin: 0 0 10px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.tx-md-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
+}
+.tx-md-table th,
+.tx-md-table td {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.tx-md-table th {
+  background: var(--panel);
+  color: var(--text-strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
 
 .tx-md-hr {
   margin: 9px 0;

@@ -71,6 +71,13 @@ export function TranscriptPane({
   /** Scroll anchor captured before a backwards page is applied. */
   const anchorRef = useRef<{ height: number; top: number } | null>(null);
   const pendingScrollRef = useRef<'bottom' | 'anchor' | null>('bottom');
+  /**
+   * Set when the backwards page has actually been applied. Until then a
+   * pending 'anchor' belongs to it alone: a tail row landing first must not
+   * consume the anchor, or the page arrives with nothing to restore and the
+   * window load sends the reader to the bottom.
+   */
+  const pageAppliedRef = useRef(false);
 
   const selectorKey = `${taskId ?? ''}|${sessionId ?? ''}`;
 
@@ -135,8 +142,11 @@ export function TranscriptPane({
     void getMessages({ ...query, limit })
       .then((rows) => {
         if (!live) return;
-        // A backwards page restores the anchor; anything else lands at the end.
-        if (pendingScrollRef.current !== 'anchor') pendingScrollRef.current = 'bottom';
+        // A backwards page restores the anchor. Anything else lands at the end
+        // only for a reader who is following: someone reading further up keeps
+        // their place, whatever caused the reload.
+        if (pendingScrollRef.current === 'anchor') pageAppliedRef.current = true;
+        else pendingScrollRef.current = followingRef.current ? 'bottom' : null;
         setMessages(rows);
         // `limit` keeps the most recent rows, so a full page means there is more
         // history behind it.
@@ -233,6 +243,7 @@ export function TranscriptPane({
     const el = scrollRef.current;
     if (el) anchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
     pendingScrollRef.current = 'anchor';
+    pageAppliedRef.current = false;
     setLimit((l) => l + PAGE);
   }, []);
 
@@ -254,11 +265,15 @@ export function TranscriptPane({
     if (mode === 'bottom') {
       el.scrollTop = el.scrollHeight;
       pendingScrollRef.current = null;
-    } else if (mode === 'anchor') {
+    } else if (mode === 'anchor' && pageAppliedRef.current) {
+      // Measured from the bottom, so rows appended since the anchor was taken
+      // would skew it -- but no tail row can arrive between the page landing
+      // and this effect, which runs in the same commit.
       const anchor = anchorRef.current;
       if (anchor) el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
       anchorRef.current = null;
       pendingScrollRef.current = null;
+      pageAppliedRef.current = false;
     }
   }, [messages]);
 
@@ -278,37 +293,41 @@ export function TranscriptPane({
 
   return (
     <div className="tx-pane">
-      <div className="tx-scroll" ref={scrollRef} onScroll={onScroll}>
-        {hasMore ? (
-          <div className="tx-page-top">
-            <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
-              {loading ? 'loading…' : 'Load earlier messages'}
-            </button>
-          </div>
-        ) : messages.length > 0 ? (
-          <div className="tx-page-top tx-page-start">start of conversation</div>
+      {/* The jump button is positioned against this wrapper, not the pane, so
+          it sits at the foot of the transcript and never over the composer. */}
+      <div className="tx-scroll-wrap">
+        <div className="tx-scroll" ref={scrollRef} onScroll={onScroll}>
+          {hasMore ? (
+            <div className="tx-page-top">
+              <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
+                {loading ? 'loading…' : 'Load earlier messages'}
+              </button>
+            </div>
+          ) : messages.length > 0 ? (
+            <div className="tx-page-top tx-page-start">start of conversation</div>
+          ) : null}
+
+          {error ? <div className="tx-error">Could not read the transcript: {error}</div> : null}
+
+          {messages.length === 0 && !loading && !error ? (
+            <div className="tx-pane-empty">No messages in this conversation yet</div>
+          ) : null}
+
+          {items.map((item) =>
+            item.kind === 'sidechain' ? (
+              <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
+            ) : (
+              <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
+            ),
+          )}
+        </div>
+
+        {!following ? (
+          <button type="button" className="tx-jump" onClick={jumpToEnd}>
+            ↓ latest
+          </button>
         ) : null}
-
-        {error ? <div className="tx-error">Could not read the transcript: {error}</div> : null}
-
-        {messages.length === 0 && !loading && !error ? (
-          <div className="tx-pane-empty">No messages in this conversation yet</div>
-        ) : null}
-
-        {items.map((item) =>
-          item.kind === 'sidechain' ? (
-            <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
-          ) : (
-            <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
-          ),
-        )}
       </div>
-
-      {!following ? (
-        <button type="button" className="tx-jump" onClick={jumpToEnd}>
-          ↓ latest
-        </button>
-      ) : null}
 
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}

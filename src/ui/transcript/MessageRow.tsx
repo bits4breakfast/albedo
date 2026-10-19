@@ -422,12 +422,62 @@ type Block =
   | { t: 'code'; lang: string; code: string }
   | { t: 'list'; ordered: boolean; items: string[] }
   | { t: 'quote'; text: string }
-  | { t: 'hr' };
+  | { t: 'hr' }
+  | { t: 'table'; align: Align[]; head: string[]; rows: string[][] };
+
+type Align = 'left' | 'center' | 'right' | null;
 
 const FENCE_RE = /^\s*(`{3,}|~{3,})\s*([^\s`]*)/;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const HR_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
 const ITEM_RE = /^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)$/;
+/** A GFM delimiter row: `|---|:--:|`, outer pipes optional. */
+const DELIM_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/**
+ * A table row's cells, GFM style: outer pipes optional, `\|` is a literal
+ * pipe, and a pipe inside a code span does not split.
+ */
+export function splitRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  const cells: string[] = [];
+  let cell = '';
+  let tick = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i] as string;
+    if (c === '\\' && s[i + 1] === '|') {
+      cell += '|';
+      i++;
+    } else if (c === '`') {
+      let run = 1;
+      while (s[i + run] === '`') run++;
+      cell += '`'.repeat(run);
+      i += run - 1;
+      tick = tick === 0 ? run : tick === run ? 0 : tick;
+    } else if (c === '|' && tick === 0) {
+      cells.push(cell.trim());
+      cell = '';
+    } else cell += c;
+  }
+  // A trailing pipe closes the last cell rather than opening an empty one.
+  if (cell.trim() !== '' || !s.trimEnd().endsWith('|')) cells.push(cell.trim());
+  return cells;
+}
+
+/** Whether `lines[i]` opens a table: a header row followed by its delimiter row. */
+function tableStartsAt(lines: readonly string[], i: number): boolean {
+  const head = lines[i] ?? '';
+  const delim = lines[i + 1] ?? '';
+  if (!head.includes('|') || !DELIM_RE.test(delim)) return false;
+  return splitRow(head).length === splitRow(delim).length;
+}
+
+function alignOf(cell: string): Align {
+  const left = cell.startsWith(':');
+  const right = cell.endsWith(':');
+  return left && right ? 'center' : right ? 'right' : left ? 'left' : null;
+}
 
 export function parseBlocks(src: string): Block[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
@@ -460,6 +510,25 @@ export function parseBlocks(src: string): Block[] {
       }
       void closed; // an unclosed fence still renders as code, which is what the author meant
       out.push({ t: 'code', lang, code: buf.join('\n') });
+      continue;
+    }
+
+    // Before HR: a delimiter row like `---|---` must never read as a rule.
+    if (tableStartsAt(lines, i)) {
+      const head = splitRow(line);
+      const align = splitRow(lines[i + 1] ?? '').map(alignOf);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length) {
+        const l = lines[i] ?? '';
+        if (l.trim() === '' || !l.includes('|')) break;
+        // Short rows are padded and long ones cut, so every row has the header's width.
+        const cells = splitRow(l).slice(0, head.length);
+        while (cells.length < head.length) cells.push('');
+        rows.push(cells);
+        i++;
+      }
+      out.push({ t: 'table', align, head, rows });
       continue;
     }
 
@@ -518,6 +587,8 @@ export function parseBlocks(src: string): Block[] {
       if (l.trim() === '') break;
       if (FENCE_RE.test(l) || HEADING_RE.test(l) || HR_RE.test(l) || ITEM_RE.test(l)) break;
       if (l.trimStart().startsWith('>')) break;
+      // A table may start straight after a paragraph line, as on GitHub.
+      if (tableStartsAt(lines, i)) break;
       buf.push(l);
       i++;
     }
@@ -650,6 +721,34 @@ export function Markdown({ text }: { text: string }): ReactNode {
           }
           case 'hr':
             return <div key={i} className="tx-md-hr" />;
+          case 'table':
+            return (
+              // The wrapper scrolls sideways, so a wide table never widens the pane.
+              <div key={i} className="tx-md-table-wrap">
+                <table className="tx-md-table">
+                  <thead>
+                    <tr>
+                      {b.head.map((cell, j) => (
+                        <th key={j} style={b.align[j] ? { textAlign: b.align[j] } : undefined}>
+                          {parseInline(cell)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((row, r) => (
+                      <tr key={r}>
+                        {row.map((cell, j) => (
+                          <td key={j} style={b.align[j] ? { textAlign: b.align[j] } : undefined}>
+                            {parseInline(cell)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           case 'quote':
             return (
               <blockquote key={i} className="tx-md-quote">
