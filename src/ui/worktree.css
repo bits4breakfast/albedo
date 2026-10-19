@@ -848,3 +848,29 @@
 .shortcuts-row dt, .shortcuts-row dd { margin: 0; }
 .shortcuts-row kbd { font-family: var(--mono, ui-monospace, monospace); color: var(--text); }
 .shortcuts-row dd { color: var(--text); }
+
+/* --- squash & rebase ------------------------------------------------------ */
+
+.sq-commits {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+}
+
+.sq-commit {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 10px;
+  font-size: var(--fs-sm);
+}
+
+.sq-sha { font-family: var(--font-mono); color: var(--muted); }
+.sq-subject { color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-when { font-size: var(--fs-xs); color: var(--muted); }

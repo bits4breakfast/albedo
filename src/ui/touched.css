@@ -98,37 +98,8 @@
 }
 
 /* --------------------------------------------------------------------------
-   Header
+   Buttons
    -------------------------------------------------------------------------- */
-
-.tf-head {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-
-.tf-head-title {
-  font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-.tf-head-count {
-  flex: 1 1 auto;
-  min-width: 0;            /* or the refresh button is pushed off a 180px pane */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
 
 .tf-btn {
   flex: 0 0 auto;
@@ -388,9 +359,6 @@
     column-gap: 6px;
     padding-inline: 6px;
   }
-  /* The column has its own "files" header at these widths, so the in-pane
-     title is the same word twice — and at 240px it wraps onto two lines. */
-  .tf-head-title { display: none; }
   .tf-path { flex-wrap: wrap; }
   /* flex-basis 0 so the basename never CAUSES a wrap (line-breaking looks at
      base sizes, not shrink factors): without it a long name pushes the badges
@@ -521,23 +489,6 @@ button.tf-section-head:hover { color: var(--text); }
 
 /* --- view switch and commit groups ---------------------------------------- */
 
-.tf-mode {
-  display: inline-flex;
-  margin-left: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-.tf-mode-btn {
-  padding: 2px 8px;
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-}
-.tf-mode-btn + .tf-mode-btn { border-left: 1px solid var(--border); }
-.tf-mode-btn:hover { color: var(--text); }
-.tf-mode-btn[aria-pressed='true'] { color: var(--text-strong); background: var(--panel-raised); }
-.tf-mode-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 /* A commit: its subject reads first, normal case; sha and age trail. */
 .tf-commit-head { text-transform: none; letter-spacing: 0; font-weight: 500; }
@@ -556,6 +507,59 @@ button.tf-section-head:hover { color: var(--text); }
   font-family: var(--font-mono);
   font-weight: 400;
 }
-/* In a narrow pinned column the switch wraps under the title rather than
-   squeezing the count and the refresh button. */
-.tf-head { flex-wrap: wrap; row-gap: 4px; }
+
+/* --------------------------------------------------------------------------
+   Git bar (GitBar.tsx) — under the list: branch and where it stands, then
+   the one action it needs next and ⋯. One line, because every row it takes
+   is a file the list cannot show.
+   -------------------------------------------------------------------------- */
+
+.tf-git {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+/* Branch first, then the state, all on one line. When it does not fit, the
+   state is clipped before the branch is: the branch says which one this is. */
+.tf-git-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tf-git-id > span { flex: 0 0 auto; }
+.tf-git-id > span + span::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--faint);
+}
+.tf-git-id > span[data-tone='warn'] { color: var(--warn); }
+
+.tf-git-branch {
+  flex: 0 1 auto !important;
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+}
+
+.tf-git-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tf-git-more { padding-inline: 6px; }

@@ -22,11 +22,16 @@ import {
   changeKinds,
   committedFileTimes,
   lineChanges,
+  unmergedCommits,
   type BranchCommit,
+  type UnmergedCommits,
   type ChangeKind,
   type LineChange,
 } from '../git/worktree';
 import { setTouchedOrder } from './touchedOrder';
+import { insertIntoComposer } from './transcript/composerBridge';
+import GitBar from './GitBar';
+import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
 import { useOpenFile } from './editor/openFile';
@@ -83,6 +88,8 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
   const [modifiedAt, setModifiedAt] = useState<Map<string, number>>(() => new Map());
   /** The branch's commits, newest first, for the by-commit view. */
   const [commits, setCommits] = useState<BranchCommit[]>([]);
+  /** Commits not on the upstream yet. Null when git could not say. */
+  const [remote, setRemote] = useState<UnmergedCommits | null>(null);
   const [mode, setMode] = useState<ViewMode>(readMode);
   /** Commits the user folded away in the by-commit view. */
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
@@ -108,6 +115,13 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
       })
       .catch(() => {
         if (live) setKinds(new Map());
+      });
+    void unmergedCommits(task.worktreePath, task.baseBranch)
+      .then((r) => {
+        if (live) setRemote(r);
+      })
+      .catch(() => {
+        if (live) setRemote(null);
       });
     void branchCommits(task.worktreePath, task.baseBranch)
       .then((c) => {
@@ -305,45 +319,29 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
     [openFile],
   );
 
+  /** Why a git button could not hand its prompt over. Cleared on the next try. */
+  const [askNotice, setAskNotice] = useState<string | null>(null);
+  const [squashOpen, setSquashOpen] = useState(false);
+  useEffect(() => {
+    setAskNotice(null);
+    setSquashOpen(false);
+  }, [task.id]);
+  const askClaude = (text: string) => {
+    const taken = insertIntoComposer({ taskId: task.id, text });
+    setAskNotice(taken ? null : 'Open the task’s transcript to get its message box, then try again.');
+  };
+
   return (
     <div className="tf-pane">
-      <div className="tf-head">
-        <span className="tf-head-title">Touched files</span>
-        <span className="tf-head-count">
-          {view.uncommitted.length + view.committed.length} file
-          {view.uncommitted.length + view.committed.length === 1 ? '' : 's'}
-        </span>
-        <span className="tf-mode" role="group" aria-label="Group files">
-          <button
-            type="button"
-            className="tf-mode-btn"
-            aria-pressed={mode === 'branch'}
-            onClick={() => setMode(writeMode('branch'))}
-            title="Every file changed on this branch, once, by where it stands"
-          >
-            Branch
-          </button>
-          <button
-            type="button"
-            className="tf-mode-btn"
-            aria-pressed={mode === 'commit'}
-            onClick={() => setMode(writeMode('commit'))}
-            title="Each commit on this branch with the files it changed"
-          >
-            By commit
-          </button>
-        </span>
-        <button
-          type="button"
-          className="tf-btn"
-          onClick={() => setReloadKey((k) => k + 1)}
-          disabled={loading}
-          title="Re-read the transcript and git status"
-        >
-          {loading ? 'reading…' : 'refresh'}
-        </button>
-      </div>
-
+      {askNotice !== null ? <div className="tf-warn">{askNotice}</div> : null}
+      {squashOpen ? (
+        <SquashRebaseDialog
+          task={task}
+          commits={commits}
+          uncommitted={view.uncommitted.map((f) => f.path)}
+          onClose={() => setSquashOpen(false)}
+        />
+      ) : null}
       {error !== null ? (
         <div className="tf-error">
           <span className="tf-error-label">Could not build the change set</span>
@@ -461,6 +459,20 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
 
         {!loaded && loading ? <div className="tf-empty">reading the change set…</div> : null}
       </div>
+      {loaded ? (
+        <GitBar
+          task={task}
+          commits={commits.length}
+          dirty={view.uncommitted.length}
+          remote={remote}
+          onAsk={askClaude}
+          onSquash={() => setSquashOpen(true)}
+          mode={mode}
+          onMode={(m) => setMode(writeMode(m))}
+          onRefresh={() => setReloadKey((k) => k + 1)}
+          refreshing={loading}
+        />
+      ) : null}
     </div>
   );
 }

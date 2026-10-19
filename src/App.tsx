@@ -1712,8 +1712,9 @@ export default function App() {
                   style={{ flex: `0 0 ${Math.round(filesWidth)}px` }}
                 >
                   <div className="pane-head">
+                    {/* The branch is in the git row at the foot of the pane, beside its actions. */}
                     <span>files</span>
-                    <span className="pane-head-note">{selected?.branch ?? ''}</span>
+                    <span className="pane-head-note" />
                     <button
                       className="pane-head-pin"
                       data-on
