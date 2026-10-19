@@ -94,6 +94,11 @@
       "identifier": "shell:allow-spawn",
       "allow": [
         {
+          "name": "binaries/phpantom_lsp",
+          "sidecar": true,
+          "args": ["--stdio"]
+        },
+        {
           "name": "phpantom",
           "cmd": "$HOME/.albedo/bin/phpantom_lsp",
           "args": ["--stdio"]

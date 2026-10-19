@@ -48,8 +48,10 @@ The editor spec says no LSP. The owner made one narrow exception
 (`src/lsp/phpantom.ts`): the PHPantom language server answers Go to
 Declaration and Find Usages, nothing else -- no completion, no diagnostics, no
 formatting, and its PHPStan/PHPCS/PHPMD/Mago runners are switched off in the
-config Albedo writes. It is optional (`scripts/install-phpantom.sh` puts a
-pinned, checksummed binary in `~/.albedo/bin`; Albedo never downloads), starts
+config Albedo writes. It is optional: `./build.sh --with-phpantom` bundles a
+pinned, checksummed binary into the app as a Tauri sidecar, and
+`scripts/install-phpantom.sh` puts one in `~/.albedo/bin` (the bundled copy
+wins). Albedo itself never downloads anything. It starts
 only when a `.php` file is opened or navigated from, and git grep
 (`src/git/phpRefs.ts`) answers whenever it cannot. It is a native binary, not
 a Node sidecar. Its index lives in memory and goes stale unless told: every

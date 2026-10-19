@@ -4,6 +4,7 @@
 #   ./build.sh                 checks + release build (.app/.dmg on macOS, .deb/.AppImage on Linux)
 #   ./build.sh --skip-checks   build only (no typecheck, no tests)
 #   ./build.sh --install       also install it (macOS: /Applications; Linux: the .deb, via sudo apt)
+#   ./build.sh --with-phpantom bundle PHPantom (~48 MB) for type-aware PHP navigation
 #
 # On Windows, run it inside WSL2 -- see docs/LINUX-WSL.md. Nothing here installs
 # system packages on its own: a missing prerequisite is reported with the exact
@@ -15,12 +16,14 @@ cd "$(dirname "$0")"
 
 skip_checks=0
 install=0
+with_phpantom=0
 for arg in "$@"; do
   case "$arg" in
     --skip-checks) skip_checks=1 ;;
     --install) install=1 ;;
+    --with-phpantom) with_phpantom=1 ;;
     -h | --help)
-      sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -95,9 +98,26 @@ if [ "$skip_checks" -eq 0 ]; then
   npx vitest run
 fi
 
+# --- PHPantom (optional) --------------------------------------------------------
+# Bundled as a Tauri sidecar: the binary sits next to Albedo's own inside the
+# app, named with the target triple as Tauri requires. The externalBin entry is
+# passed for this build only, so a build without the flag is unchanged and no
+# config file has to be edited back. scripts/install-phpantom.sh does the
+# pinned download and the checksum check.
+tauri_config=()
+if [ "$with_phpantom" -eq 1 ]; then
+  step "Fetching PHPantom to bundle"
+  triple=$(rustc -vV | sed -n 's/^host: //p')
+  [ -n "$triple" ] || fail "could not read the Rust host triple from rustc -vV"
+  scripts/install-phpantom.sh --to "src-tauri/binaries/phpantom_lsp-$triple"
+  tauri_config=(--config '{"bundle":{"externalBin":["binaries/phpantom_lsp"]}}')
+fi
+
 # --- build ---------------------------------------------------------------------
 step "Building release bundles: $bundles"
-npm run tauri build -- --bundles "$bundles"
+# Unquoted on purpose: bash 3.2 (macOS) with set -u needs this form to expand
+# an empty array to nothing rather than to an empty argument.
+npm run tauri build -- --bundles "$bundles" ${tauri_config[@]+"${tauri_config[@]}"}
 
 bundle_dir=src-tauri/target/release/bundle
 step "Built"

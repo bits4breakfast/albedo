@@ -6,8 +6,9 @@
  *
  * ## Optional
  *
- * The binary lives at `~/.albedo/bin/phpantom_lsp`, put there by
- * `scripts/install-phpantom.sh`. Albedo never downloads it. Absent, broken or
+ * Bundled inside the app by `build.sh --with-phpantom` (a Tauri sidecar), or
+ * installed at `~/.albedo/bin/phpantom_lsp` by `scripts/install-phpantom.sh`;
+ * the bundled copy is tried first. Albedo never downloads it. Absent, broken or
  * too slow, every caller gets null and `symbolNav.ts` answers with git grep,
  * which needs nothing installed.
  *
@@ -45,6 +46,8 @@ import { Connection, type Transport } from './jsonrpc';
 
 /** The name in `capabilities/default.json`'s shell scope. */
 const SCOPE_NAME = 'phpantom';
+/** The copy bundled inside the app by `build.sh --with-phpantom` (a Tauri sidecar). */
+const SIDECAR_NAME = 'binaries/phpantom_lsp';
 const BIN_RELATIVE = '.albedo/bin/phpantom_lsp';
 const CONFIG_HOME_RELATIVE = '.albedo/phpantom';
 
@@ -330,25 +333,33 @@ async function writeConfig(): Promise<string> {
   return configHome;
 }
 
-async function evictToFit(): Promise<void> {
-  const live = (await Promise.all([...servers.values()])).filter((s): s is PhpServer => s !== null && !s.stopped);
+/**
+ * Stop least-recently-used servers until there is room for one more. The
+ * worktree being started is left out: its entry is the very start that is
+ * waiting here, and waiting on it would never end.
+ */
+async function evictToFit(starting: string): Promise<void> {
+  const others = [...servers.entries()].filter(([root]) => root !== starting).map(([, p]) => p);
+  const live = (await Promise.all(others)).filter((s): s is PhpServer => s !== null && !s.stopped);
   live.sort((a, b) => a.lastUsed - b.lastUsed);
   while (live.length >= MAX_SERVERS) await live.shift()!.stop();
 }
 
 async function start(root: string): Promise<PhpServer | null> {
-  if (!(await phpantomInstalled())) return null;
-  await evictToFit();
   const configHome = await writeConfig();
-
-  const command = Command.create(SCOPE_NAME, ['--stdio'], {
+  const options = {
     cwd: root,
-    encoding: 'raw',
+    encoding: 'raw' as const,
     // The plugin cannot clear an environment and add to it at once, so the
     // inherited one is kept and the Anthropic credentials are blanked: the
     // rule is that no process Albedo spawns carries them (see pty.rs).
     env: { XDG_CONFIG_HOME: configHome, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' },
-  });
+  };
+  // The copy bundled in the app first (pinned with this build), then one the
+  // user installed. A build without the bundled copy refuses the sidecar
+  // spawn at once, which is how its absence shows.
+  const candidates: Array<() => Command<Uint8Array>> = [() => Command.sidecar(SIDECAR_NAME, ['--stdio'], options)];
+  if (await phpantomInstalled()) candidates.push(() => Command.create(SCOPE_NAME, ['--stdio'], options));
 
   let server: PhpServer | null = null;
   let child: Child | null = null;
@@ -368,19 +379,24 @@ async function start(root: string): Promise<PhpServer | null> {
       if (method === '$/progress' && p?.token === 'phpantom/full-index' && p.value?.kind === 'end') server?.markReady();
     },
   );
-  command.stdout.on('data', (chunk) => conn.receive(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)));
-  command.on('close', () => {
-    conn.close(new Error('phpantom exited'));
-    void server?.stop();
-  });
-  command.on('error', (err) => console.error('[phpantom]', err));
-
-  try {
-    child = await command.spawn();
-  } catch (err) {
-    console.error('[phpantom] could not start', err);
-    return null;
+  for (const make of candidates) {
+    const command = make();
+    command.stdout.on('data', (chunk) => conn.receive(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)));
+    command.on('close', () => {
+      conn.close(new Error('phpantom exited'));
+      void server?.stop();
+    });
+    command.on('error', (err) => console.error('[phpantom]', err));
+    try {
+      child = await command.spawn();
+      break;
+    } catch {
+      /* not this one: try the next */
+    }
   }
+  // Neither bundled nor installed: git grep answers, as it always could.
+  if (!child) return null;
+  await evictToFit(root);
   server = new PhpServer(root, child, conn, (s) => {
     if (servers.get(s.root) && s === server) servers.delete(s.root);
   });
