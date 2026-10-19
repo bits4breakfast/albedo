@@ -33,6 +33,12 @@ export interface EditorTabsProps {
 /** Open tabs per task, so switching tasks and back keeps them (not their unsaved edits). */
 const remembered = new Map<number, TabsState>();
 
+/**
+ * The last File / Diff choice, for every task: reviewing as diffs should not
+ * have to be switched on again for each file opened.
+ */
+let preferredMode: 'file' | 'diff' = 'file';
+
 /** Forget a task's tabs: the editor was closed on purpose. */
 export function forgetEditorTabs(taskId: number): void {
   remembered.delete(taskId);
@@ -121,6 +127,10 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
     }
   }, [state.tabs.length, task.id, onCloseAll]);
 
+  const rememberMode = useCallback((mode: 'file' | 'diff') => {
+    preferredMode = mode;
+  }, []);
+
   const step = useCallback(
     (path: string) => setState((s) => replaceActiveTab(s, keyFor(path), { path })),
     [keyFor],
@@ -194,6 +204,11 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
                 onDirtyChange={dirtyHandler(t.id)}
                 onStep={step}
                 closeSignal={closeAsks.get(t.id) ?? 0}
+                // A new file opens in the last mode chosen. One opened at a
+                // line (a ⌘B jump, a path:line link) still shows that line in
+                // File, without changing what is remembered.
+                initialMode={preferredMode}
+                onModeChosen={rememberMode}
               />
             </div>
           ) : null,

@@ -13,6 +13,8 @@ interface StubProps {
   active: boolean;
   onClose: () => void;
   closeSignal: number;
+  initialMode: 'file' | 'diff';
+  onModeChosen: (mode: 'file' | 'diff') => void;
 }
 const rendered = new Map<string, StubProps>();
 vi.mock('./FileEditor', async () => {
@@ -80,6 +82,17 @@ describe('EditorTabs', () => {
     expect(tabs()).toEqual(['a.php', 'c.php*', 'b.php']);
     fireEvent.click(screen.getByRole('button', { name: 'Close c.php' }));
     expect(tabs()).toEqual(['a.php*', 'b.php']);
+  });
+
+  it('a newly opened file starts in the last mode chosen', () => {
+    const { open } = setup();
+    expect(rendered.get('a.php')!.initialMode).toBe('file');
+    act(() => rendered.get('a.php')!.onModeChosen('diff'));
+    open('b.php');
+    expect(rendered.get('b.php')!.initialMode).toBe('diff');
+    act(() => rendered.get('b.php')!.onModeChosen('file'));
+    open('c.php');
+    expect(rendered.get('c.php')!.initialMode).toBe('file');
   });
 
   it('⌘W closes the active tab, and the last close closes the editor', () => {

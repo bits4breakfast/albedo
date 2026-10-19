@@ -377,6 +377,10 @@ export interface FileEditorProps {
   onStep?: (path: string) => void;
   /** Bumped to ask this editor to close, through its unsaved-edits prompt. */
   closeSignal?: number;
+  /** File or Diff to start in: the tabs carry the last choice to a new tab. */
+  initialMode?: 'file' | 'diff';
+  /** The person picked File or Diff (a button or ⇧⌘D), not a line jump. */
+  onModeChosen?: (mode: 'file' | 'diff') => void;
 }
 
 function message(err: unknown): string {
@@ -392,6 +396,8 @@ export default function FileEditor({
   onDirtyChange,
   onStep,
   closeSignal = 0,
+  initialMode = 'file',
+  onModeChosen,
 }: FileEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -418,11 +424,11 @@ export default function FileEditor({
   /*
    * File | Diff. Component state, NOT reset when the request changes: stepping
    * to the next changed file is a new request, and walking the change set as
-   * diffs is the point. Reset on close, so the next file opened from scratch
-   * opens as a file. The CodeMirror view stays alive (hidden) in Diff mode, so
+   * diffs is the point. A new tab starts in the last mode chosen (see
+   * EditorTabs). The CodeMirror view stays alive (hidden) in Diff mode, so
    * unsaved edits, undo history and scroll survive a look at the diff.
    */
-  const [mode, setMode] = useState<'file' | 'diff'>('file');
+  const [mode, setMode] = useState<'file' | 'diff'>(() => (initialMode === 'diff' && !readOnly ? 'diff' : 'file'));
   const modeRef = useRef(mode);
   modeRef.current = mode;
   /** A line asked for while in Diff mode, revealed once the file is showing. */
@@ -756,10 +762,18 @@ export default function FileEditor({
   // with the cursor inside the editor -- same as the stepping keys.
   // A main checkout has no task base to diff against.
   const canDiff = !readOnly && resolved !== null && phase.kind === 'ready';
+  /** A choice the person made, which the tabs remember for the next file. */
+  const chooseMode = useCallback(
+    (next: 'file' | 'diff') => {
+      if (next === 'diff' && !canDiff) return;
+      setMode(next);
+      onModeChosen?.(next);
+    },
+    [canDiff, onModeChosen],
+  );
   const toggleMode = useCallback(() => {
-    if (!canDiff) return;
-    setMode((m) => (m === 'file' ? 'diff' : 'file'));
-  }, [canDiff]);
+    chooseMode(modeRef.current === 'file' ? 'diff' : 'file');
+  }, [chooseMode]);
   useEffect(() => {
     if (request === null || !active) return;
     const onKey = (e: KeyboardEvent) => {
@@ -968,7 +982,7 @@ export default function FileEditor({
                 type="button"
                 className="ed-mode-btn"
                 aria-pressed={mode === 'file'}
-                onClick={() => setMode('file')}
+                onClick={() => chooseMode('file')}
                 title="The file as it is now (⇧⌘D toggles)"
               >
                 File
@@ -978,7 +992,7 @@ export default function FileEditor({
                 className="ed-mode-btn"
                 aria-pressed={mode === 'diff'}
                 aria-keyshortcuts="Shift+Meta+D"
-                onClick={() => canDiff && setMode('diff')}
+                onClick={() => chooseMode('diff')}
                 disabled={!canDiff}
                 title="This task's change to the file: the branch's base against the working tree, committed and uncommitted together (⇧⌘D)"
               >
