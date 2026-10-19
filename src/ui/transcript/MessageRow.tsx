@@ -19,7 +19,7 @@ import Diff, { Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composeP
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
-import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, type UserBlock } from './envelopes';
+import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, type UserBlock } from './envelopes';
 import { imageAt } from '../../capture';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -181,6 +181,21 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
           {block.args ? <span className="tx-cmd-args">{block.args}</span> : null}
         </div>
       );
+    case 'shell-input':
+      return (
+        <div className="tx-cmd tx-shell-in" title="Run in Claude Code's shell mode">
+          <span className="tx-cmd-name">!</span>
+          <span className="tx-shell-cmd">{block.command}</span>
+        </div>
+      );
+    case 'shell-output':
+      return <ShellOutput stdout={block.stdout} stderr={block.stderr} />;
+    case 'cleared':
+      return (
+        <div className="tx-cleared" role="separator">
+          <span>context cleared</span>
+        </div>
+      );
     case 'system-reminder':
       return <Collapsed label="injected context" text={block.text} />;
     case 'skill':
@@ -228,6 +243,47 @@ function NotificationChip({ block }: { block: Extract<UserBlock, { kind: 'task-n
           <FieldList fields={fields} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** Past this, only the tail shows until asked: a build's last lines are its verdict. */
+const SHELL_TAIL_LINES = 8;
+const SHELL_FOLD_AT = 14;
+
+/** Output of a `!` command. stderr after stdout, in its own colour. */
+function ShellOutput({ stdout, stderr }: { stdout: string; stderr: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const outLines = stdout.length > 0 ? stdout.split('\n') : [];
+  const errLines = stderr.length > 0 ? stderr.split('\n') : [];
+  const total = outLines.length + errLines.length;
+  const folded = !open && total > SHELL_FOLD_AT;
+
+  // Folded, keep the last lines across both streams, stderr being the later.
+  const errShown = folded ? errLines.slice(-SHELL_TAIL_LINES) : errLines;
+  const outShown = folded ? outLines.slice(-Math.max(0, SHELL_TAIL_LINES - errShown.length)) : outLines;
+  const hidden = total - outShown.length - errShown.length;
+
+  return (
+    <div className="tx-shell-out">
+      {hidden > 0 ? (
+        <button type="button" className="tx-think-head" onClick={() => setOpen(true)} aria-expanded={false}>
+          <Disclosure open={false} /> {hidden} earlier line{hidden === 1 ? '' : 's'}
+        </button>
+      ) : open ? (
+        <button type="button" className="tx-think-head" onClick={() => setOpen(false)} aria-expanded>
+          <Disclosure open /> {total} lines
+        </button>
+      ) : null}
+      <pre className="tx-pre tx-output">
+        {outShown.length > 0 ? <LinkifiedText text={outShown.join('\n')} /> : null}
+        {outShown.length > 0 && errShown.length > 0 ? '\n' : null}
+        {errShown.length > 0 ? (
+          <span className="tx-stderr">
+            <LinkifiedText text={errShown.join('\n')} />
+          </span>
+        ) : null}
+      </pre>
     </div>
   );
 }
@@ -293,7 +349,7 @@ function ThinkingRow({ message }: { message: Message }): ReactNode {
 }
 
 function SystemRow({ message }: { message: Message }): ReactNode {
-  const text = (message.body ?? '').trim();
+  const text = systemRowText(message.body);
   if (text.length === 0) return null;
   return (
     <div className="tx-row tx-row-system">

@@ -337,7 +337,29 @@
 .tx-cmd-name { color: var(--accent); }
 .tx-cmd-args { color: var(--muted); }
 
+/* `/clear`: a boundary across the row, not a chip. Above it is out of context. */
+.tx-cleared {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.tx-cleared::before,
+.tx-cleared::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
 .tx-collapsed { margin: 1px 0; }
+
+/* `!` commands from Claude Code's shell mode. The command reads as the
+   user's; its output as the terminal's. */
+.tx-shell-cmd { color: var(--text-strong); white-space: pre-wrap; word-break: break-all; }
+.tx-shell-out { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.tx-shell-out .tx-pre { align-self: stretch; }
+.tx-stderr { color: var(--danger); }
 
 .tx-output {
   border: 1px solid var(--border);
