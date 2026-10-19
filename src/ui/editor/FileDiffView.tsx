@@ -18,6 +18,7 @@ import type { Task } from '../../types';
 import type { ResolvedPath } from '../../lib/paths';
 import { loadTaskFileDiff, type ChangeKind, type TaskFileDiff } from '../../git/fileDiff';
 import { Diff } from '../transcript/Diff';
+import { dismissAfterFocusedTime } from '../../lib/focusTimer';
 import './diffview.css';
 
 /** The working-tree side: the file on disk, null when it does not exist. */
@@ -58,32 +59,26 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
   }, [target.relative]);
 
   /**
-   * What the last refresh found, shown on the button for a moment. A refresh
-   * that changes nothing changes nothing on screen either, which reads exactly
-   * like a button that does not work -- so it says so.
+   * A refresh that changes nothing changes nothing on screen either, which
+   * reads exactly like a button that does not work -- so it confirms itself.
    */
-  const [outcome, setOutcome] = useState<'refreshing' | 'updated' | 'unchanged' | null>(null);
+  const [outcome, setOutcome] = useState<'refreshing' | 'refreshed' | null>(null);
   useEffect(() => {
-    if (outcome !== 'updated' && outcome !== 'unchanged') return;
-    const timer = setTimeout(() => setOutcome(null), 2000);
-    return () => clearTimeout(timer);
+    if (outcome !== 'refreshed') return;
+    // Five seconds of the window having focus: not missed by looking away.
+    return dismissAfterFocusedTime(5000, () => setOutcome(null));
   }, [outcome]);
 
   useEffect(() => {
     let live = true;
     // Keep the previous diff on screen while a refresh of the SAME file runs;
     // a step to another file clears it, so the wrong file never shows.
-    let before: string | null = null;
-    setLoad((prev) => {
-      if (prev.kind !== 'ready') return { kind: 'loading' };
-      before = JSON.stringify(prev.data);
-      return prev;
-    });
+    setLoad((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }));
     void loadTaskFileDiff(task.worktreePath, task.baseBranch, target.relative, () => readWorking(target.absolute))
       .then((data) => {
         if (!live) return;
         setLoad({ kind: 'ready', data });
-        setOutcome((o) => (o === 'refreshing' ? (JSON.stringify(data) === before ? 'unchanged' : 'updated') : o));
+        setOutcome((o) => (o === 'refreshing' ? 'refreshed' : o));
       })
       .catch((err: unknown) => {
         if (!live) return;
@@ -132,7 +127,7 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
           title="Re-read the file and git"
           aria-live="polite"
         >
-          {outcome === 'refreshing' ? 'refreshing…' : outcome === 'updated' ? 'updated' : outcome === 'unchanged' ? 'no changes' : 'refresh'}
+          {outcome === 'refreshing' ? 'refreshing…' : outcome === 'refreshed' ? 'refreshed' : 'refresh'}
         </button>
       </div>
       <div className="ed-diff-scroll">
