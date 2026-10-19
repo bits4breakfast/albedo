@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { nameTask } from '../git/slug';
-import { buildFollowUp, canFollowUp, followUpPrompt, followUpTitle } from './followUp';
+import {
+  buildFollowUp,
+  canFollowUp,
+  followUpPrompt,
+  followUpTaken,
+  followUpTitle,
+  freeFollowUpTitle,
+  nameFollowUp,
+} from './followUp';
 
 const keyed = {
   title: 'ACME-2398 fix the login loop',
@@ -77,14 +85,79 @@ describe('followUpPrompt', () => {
 });
 
 describe('buildFollowUp', () => {
-  it('carries the project and the original worktree, never the shipped branch as base', () => {
+  it('carries the project, never the shipped branch as base', () => {
     const f = buildFollowUp(keyed, PR);
-    expect(f).toMatchObject({
-      projectId: 3,
-      title: 'ACME-2398 follow-up',
-      originalWorktreePath: '/Users/m/agents/app/ACME-2398',
-    });
+    expect(f).toMatchObject({ projectId: 3, title: 'ACME-2398 follow-up' });
     expect(f).not.toHaveProperty('baseBranch');
+    expect(buildFollowUp(keyed, PR, 'ACME-2398 follow-up 3').title).toBe('ACME-2398 follow-up 3');
+  });
+});
+
+describe('follow-up worktree folder', () => {
+  const root = '/Users/m/agents/app';
+  const pathFor = (dir: string) => `${root}/${dir}`;
+
+  it('takes the branch as its folder, so it never lands on the bare-key one', () => {
+    expect(nameFollowUp('ACME-2398 follow-up')).toMatchObject({
+      branch: 'ACME-2398-follow-up',
+      dirName: 'ACME-2398-follow-up',
+    });
+    // A normal keyed task still gets the bare key: unchanged.
+    expect(nameTask('ACME-2398 follow-up').dirName).toBe('ACME-2398');
+  });
+
+  it('is distinct from the original while its worktree is still there', async () => {
+    const taken = followUpTaken({
+      branches: ['main', keyed.branch],
+      paths: [keyed.worktreePath],
+      pathFor,
+      exists: async (p) => p === keyed.worktreePath,
+    });
+    const title = await freeFollowUpTitle(keyed, taken);
+    expect(title).toBe('ACME-2398 follow-up');
+    expect(pathFor(nameFollowUp(title).dirName)).not.toBe(keyed.worktreePath);
+  });
+
+  it('keeps repeated follow-ups distinct: branch, task path or folder on disk', async () => {
+    // First follow-up exists as a task with a branch.
+    let taken = followUpTaken({
+      branches: ['ACME-2398-follow-up'],
+      paths: [],
+      pathFor,
+      exists: async () => false,
+    });
+    expect(await freeFollowUpTitle(keyed, taken)).toBe('ACME-2398 follow-up 2');
+
+    // Second one's branch is gone but a task still names its path.
+    taken = followUpTaken({
+      branches: ['ACME-2398-follow-up'],
+      paths: [`${root}/ACME-2398-follow-up-2/`],
+      pathFor,
+      exists: async () => false,
+    });
+    expect(await freeFollowUpTitle(keyed, taken)).toBe('ACME-2398 follow-up 3');
+
+    // A leftover directory nobody tracks.
+    taken = followUpTaken({
+      branches: [],
+      paths: [],
+      pathFor,
+      exists: async (p) => p === `${root}/follow-up-fix-the-login-loop`,
+    });
+    expect(await freeFollowUpTitle(plain, taken)).toBe('Follow-up: Fix the login loop 2');
+  });
+
+  it('treats a failed disk probe as taken', async () => {
+    const taken = followUpTaken({
+      branches: [],
+      paths: [],
+      pathFor,
+      exists: async (p) => {
+        if (p.endsWith('ACME-2398-follow-up')) throw new Error('denied');
+        return false;
+      },
+    });
+    expect(await freeFollowUpTitle(keyed, taken)).toBe('ACME-2398 follow-up 2');
   });
 });
 

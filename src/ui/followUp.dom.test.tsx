@@ -166,6 +166,8 @@ describe('NewTaskDialog prefilled as a follow-up', () => {
     // The project's default, not the repo's current (shipped) branch.
     await waitFor(() => expect((screen.getByLabelText('Base branch') as HTMLSelectElement).value).toBe('main'));
     expect(screen.getByText('ACME-2398-follow-up')).toBeTruthy();
+    // Its own folder, not the shipped task's /w/app/ACME-2398.
+    expect(screen.getByText('/w/app/ACME-2398-follow-up')).toBeTruthy();
     expect(wt.createWorktree).not.toHaveBeenCalled();
 
     // Everything is editable, and what the user wrote is what is sent.
@@ -177,6 +179,7 @@ describe('NewTaskDialog prefilled as a follow-up', () => {
     expect(vi.mocked(wt.createWorktree).mock.calls[0]?.[0]).toMatchObject({
       baseBranch: 'main',
       branch: 'ACME-2398-follow-up',
+      path: '/w/app/ACME-2398-follow-up',
     });
     expect(onCreated.mock.calls[0]?.[1]).toMatch(/PR #42[\s\S]*Safari\.$/);
   });

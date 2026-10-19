@@ -27,7 +27,7 @@ import ProjectsDialog from './ProjectsDialog';
 import { readLastProjectId, writeLastProjectId } from './projectPrefs';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { setTaskModel } from './taskModel';
-import type { NewTaskPrefill } from './followUp';
+import { nameFollowUp, type NewTaskPrefill } from './followUp';
 import './worktree.css';
 
 export interface NewTaskDialogProps {
@@ -238,7 +238,13 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
 
   // One derivation for the key, the branch and the directory, so what the
   // dialog shows is exactly what gets created.
-  const naming = useMemo(() => (title.trim() ? nameTask(title) : null), [title]);
+  // A follow-up takes its branch as its folder, so it never lands on the
+  // shipped task's bare-key folder (see `nameFollowUp`).
+  const isFollowUp = prefill !== null;
+  const naming = useMemo(
+    () => (title.trim() ? (isFollowUp ? nameFollowUp(title) : nameTask(title)) : null),
+    [title, isFollowUp],
+  );
   const branch = naming?.branch ?? '';
   const worktreePath = useMemo(
     () =>
@@ -549,12 +555,6 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
                         (project ? `${project.worktreeRoot}/<slug>` : 'choose a project')}
                     </span>
                   </div>
-                  {prefill && worktreePath !== '' && worktreePath === prefill.originalWorktreePath && (
-                    <div className="wt-hint">
-                      The shipped task used this folder too. If its worktree is still there, archive
-                      it first.
-                    </div>
-                  )}
                   <div className="wt-derived-row">
                     <span className="wt-derived-key">Command</span>
                     <span className="wt-derived-val" data-pending={!canSubmit}>

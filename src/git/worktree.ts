@@ -164,6 +164,11 @@ let pathExists: PathExistsProbe = async (path) => {
   return fs.exists(path);
 };
 
+/** Whether anything is at `path`, through the same swappable probe. */
+export function probePath(path: string): Promise<boolean> {
+  return pathExists(path);
+}
+
 /** Test seam. Returns the previous probe so a test can restore it. */
 export function setPathExistsProbe(next: PathExistsProbe): PathExistsProbe {
   const prev = pathExists;

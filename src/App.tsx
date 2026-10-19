@@ -36,12 +36,18 @@ import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/pr
 import { deleteTask, listTasks } from './db';
 import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
-import { repoRootFor } from './git/worktree';
+import { composeWorktreePath, listBranches, listWorktrees, probePath, repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
 import { grantProjectDirs } from './lib/fsGrants';
-import { buildFollowUp, type NewTaskPrefill } from './ui/followUp';
+import {
+  buildFollowUp,
+  followUpTaken,
+  followUpTitle,
+  freeFollowUpTitle,
+  type NewTaskPrefill,
+} from './ui/followUp';
 import { useMergeNotices } from './ui/mergeNotice';
 import { getPrStatus } from './gh/prStore';
 import { fetchPrStatus } from './gh/gh';
@@ -724,25 +730,53 @@ export default function App() {
   /**
    * "Follow-up…": open the new-task dialog prefilled. Never creates anything.
    *
+   * The title is chosen first, against what is actually there -- branches,
+   * worktrees, task paths, the disk -- so the usual case, right after a merge
+   * with the shipped worktree still in place, opens on a name that will work.
+   * All local and quick; a failure to look only means the default title.
+   *
    * A live task's PR is in the store already. An archived task's is not
    * polled, so it is fetched once here; the dialog opens at once with the
    * branch-only prompt and swaps in the PR version if the lookup finds a merged
    * PR before the user has touched the prompt.
    */
   const followUpSeq = useRef(0);
-  const openFollowUp = useCallback((task: Task, known?: PrStatus | null) => {
+  const followUpCtx = useRef({ tasks, projects });
+  followUpCtx.current = { tasks, projects };
+  const openFollowUp = useCallback(async (task: Task, known?: PrStatus | null) => {
     const seq = ++followUpSeq.current;
+    const { tasks: all, projects: ps } = followUpCtx.current;
+    const project = ps.find((p) => p.id === task.projectId) ?? null;
+    let title = followUpTitle(task);
+    if (project) {
+      try {
+        const [home, branches, worktrees] = await Promise.all([
+          import('@tauri-apps/api/path').then((m) => m.homeDir()).catch(() => ''),
+          listBranches(project.repoPath).then((b) => b.all).catch(() => [] as string[]),
+          listWorktrees(project.repoPath).catch(() => []),
+        ]);
+        title = await freeFollowUpTitle(
+          task,
+          followUpTaken({
+            branches: [...branches, ...all.map((t) => t.branch)],
+            paths: [...worktrees.map((w) => w.path), ...all.map((t) => t.worktreePath)],
+            pathFor: (dir) => composeWorktreePath(project.worktreeRoot, dir, home),
+            exists: probePath,
+          }),
+        );
+      } catch {
+        /* keep the default; the dialog still shows git's refusal verbatim */
+      }
+    }
+    if (seq !== followUpSeq.current) return;
     const pr = known ?? getPrStatus(task.id) ?? null;
     const lookUp = task.status === 'archived' && pr === null;
-    setNewTaskPrefill({ ...buildFollowUp(task, pr), pending: lookUp });
+    setNewTaskPrefill({ ...buildFollowUp(task, pr, title), pending: lookUp });
     setNewTaskOpen(true);
     if (!lookUp) return;
-    void fetchPrStatus(task)
-      .catch(() => null)
-      .then((found) => {
-        if (seq !== followUpSeq.current) return;
-        setNewTaskPrefill(buildFollowUp(task, found));
-      });
+    const found = await fetchPrStatus(task).catch(() => null);
+    if (seq !== followUpSeq.current) return;
+    setNewTaskPrefill(buildFollowUp(task, found, title));
   }, []);
 
 
@@ -1329,7 +1363,7 @@ export default function App() {
               setEndIntent('delete');
               setArchiveTarget(task);
             }}
-            onFollowUp={(task) => openFollowUp(task)}
+            onFollowUp={(task) => void openFollowUp(task)}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             attention={attention}
@@ -1392,7 +1426,7 @@ export default function App() {
                       setEndIntent(intent);
                       setArchiveTarget(selected);
                     }}
-                    onFollowUp={(pr) => openFollowUp(selected, pr)}
+                    onFollowUp={(pr) => void openFollowUp(selected, pr)}
                   />
                   <span className="main-ident-path">{selected.worktreePath}</span>
                 </>

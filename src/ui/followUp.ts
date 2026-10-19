@@ -14,7 +14,7 @@
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
 import { parseIssueKey } from '../lib/issueKey';
-import { nameTask } from '../git/slug';
+import { nameTask, type TaskNaming } from '../git/slug';
 
 /** What the new-task dialog opens with. */
 export interface NewTaskPrefill {
@@ -23,13 +23,31 @@ export interface NewTaskPrefill {
   title: string;
   /** Initial prompt, editable. Replaces the project's template for this task. */
   prompt: string;
-  /**
-   * The shipped task's worktree, so the dialog can say so when the new one
-   * would land on the same path (a keyed title keeps the bare-key folder).
-   */
-  originalWorktreePath: string;
   /** True while the PR is still being looked up (archived tasks). */
   pending?: boolean;
+}
+
+/**
+ * How a follow-up is named: as `nameTask`, except that the folder is the
+ * branch rather than the bare issue key.
+ *
+ * A normal keyed task keeps the one-worktree-per-issue folder (`ACME-2398`);
+ * existing tasks and reconcile rely on it, so that rule is untouched. A
+ * follow-up is the exception it was not written for: it is usually created
+ * right after the merge, while the shipped task's worktree still occupies that
+ * folder. The branch is already distinct, and safe as a path segment.
+ */
+export function nameFollowUp(title: string): TaskNaming {
+  const n = nameTask(title);
+  return { ...n, dirName: n.branch };
+}
+
+/** `ACME-2398 follow-up`, `… follow-up 2`, … (or `Follow-up: <title>`, …). */
+function* followUpTitles(task: Pick<Task, 'title'>): Generator<string> {
+  const issue = parseIssueKey(task.title);
+  const base = issue ? `${issue.key} follow-up` : `Follow-up: ${task.title.trim()}`;
+  yield base;
+  for (let n = 2; n < 100; n++) yield `${base} ${n}`;
 }
 
 /**
@@ -39,13 +57,28 @@ export interface NewTaskPrefill {
  * follow-up would -- so a number is appended until it does not.
  */
 export function followUpTitle(task: Pick<Task, 'title' | 'branch'>): string {
-  const issue = parseIssueKey(task.title);
-  const base = issue ? `${issue.key} follow-up` : `Follow-up: ${task.title.trim()}`;
-  let title = base;
-  for (let n = 2; n < 100 && nameTask(title).branch === task.branch; n++) {
-    title = `${base} ${n}`;
+  for (const title of followUpTitles(task)) {
+    if (nameFollowUp(title).branch !== task.branch) return title;
   }
-  return title;
+  return `Follow-up: ${task.title.trim()}`;
+}
+
+/**
+ * The first follow-up title whose branch and folder are both free: not the
+ * shipped task's branch, and nothing `isTaken` reports (an existing branch,
+ * worktree, task path or directory). A second follow-up of the same task
+ * therefore lands on `-follow-up-2` rather than on the first one.
+ */
+export async function freeFollowUpTitle(
+  task: Pick<Task, 'title' | 'branch'>,
+  isTaken: (naming: TaskNaming) => boolean | Promise<boolean>,
+): Promise<string> {
+  for (const title of followUpTitles(task)) {
+    const naming = nameFollowUp(title);
+    if (naming.branch === task.branch) continue;
+    if (!(await isTaken(naming))) return title;
+  }
+  return followUpTitle(task);
 }
 
 /**
@@ -79,14 +112,44 @@ export function followUpPrompt(
 
 /** Everything the dialog is prefilled with for a follow-up of `task`. */
 export function buildFollowUp(
-  task: Pick<Task, 'title' | 'branch' | 'baseBranch' | 'projectId' | 'worktreePath'>,
+  task: Pick<Task, 'title' | 'branch' | 'baseBranch' | 'projectId'>,
   pr: Pick<PrStatus, 'number' | 'url' | 'state'> | null,
+  /** From {@link freeFollowUpTitle}, when the caller has checked the disk. */
+  title: string = followUpTitle(task),
 ): NewTaskPrefill {
   return {
     projectId: task.projectId,
-    title: followUpTitle(task),
+    title,
     prompt: followUpPrompt(task, pr),
-    originalWorktreePath: task.worktreePath,
+  };
+}
+
+/** What is already on the machine, for {@link followUpTaken}. */
+export interface TakenNames {
+  /** Branches in the repository, and every task's branch. */
+  branches: Iterable<string>;
+  /** Paths of the repository's worktrees, and every task's worktree path. */
+  paths: Iterable<string>;
+  /** Where a folder would be: the project's worktree root plus `dirName`. */
+  pathFor: (dirName: string) => string;
+  /** Whether anything is on disk at a path; the I/O, injected. */
+  exists: (path: string) => Promise<boolean>;
+}
+
+/**
+ * The `isTaken` for {@link freeFollowUpTitle}: a naming is taken when its
+ * branch exists or is a task's, or its folder is a worktree, a task's path, or
+ * simply already on disk. A probe that fails counts as taken -- skipping a
+ * free name costs a digit, using a taken one costs a refusal from git.
+ */
+export function followUpTaken(known: TakenNames): (naming: TaskNaming) => Promise<boolean> {
+  const branches = new Set(known.branches);
+  const paths = new Set([...known.paths].map((p) => p.replace(/\/+$/, '')));
+  return async (naming) => {
+    if (branches.has(naming.branch)) return true;
+    const path = known.pathFor(naming.dirName);
+    if (paths.has(path)) return true;
+    return known.exists(path).catch(() => true);
   };
 }
 
