@@ -22,9 +22,10 @@ Clone into `~`, and run `claude` from there, so `~/.claude` is the WSL one.
 
 ## Option A: download a build from CI
 
-Every push builds a `.deb` and an `.AppImage` on GitHub Actions. Open the
-repository's **Actions** tab, pick the latest green **CI** run on `main`, and
-download the `albedo-linux` artifact (a zip). Inside WSL:
+GitHub Actions builds a `.deb` and an `.AppImage` on demand. Open the
+repository's **Actions** tab, choose **CI**, then **Run workflow** on `main`.
+When the run is green, download its `albedo-linux` artifact (a zip). Inside
+WSL:
 
 ```sh
 unzip albedo-linux.zip

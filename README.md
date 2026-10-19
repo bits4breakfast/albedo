@@ -39,8 +39,8 @@ or the `.deb`/`.AppImage` on Linux. `--install` also installs it, and
 `--skip-checks` builds only. See `./build.sh --help`.
 
 Builds on macOS and Linux. On Windows it runs as a Linux app under WSL2 --
-see `docs/LINUX-WSL.md`. CI (`.github/workflows/ci.yml`) builds the Linux
-`.deb` and `.AppImage` on every push.
+see `docs/LINUX-WSL.md`. CI (`.github/workflows/ci.yml`) runs the checks on
+every push, and builds the Linux `.deb` and `.AppImage` on demand.
 
 ```sh
 npm test          # vitest
