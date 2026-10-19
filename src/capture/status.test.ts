@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { deriveStatus, RUNNING_WINDOW_MS, UNANSWERED_RUNNING_WINDOW_MS } from './status';
+import { deriveStatus, RUNNING_WINDOW_MS, statusExpiresAt, UNANSWERED_RUNNING_WINDOW_MS } from './status';
 import { parseTranscript } from './adapter';
 import type { Message, MessageRole } from '../types';
 
@@ -451,5 +451,37 @@ describe('deriveStatus — fed straight from the adapter', () => {
     ].join('\n');
     // a thinking block is still an assistant row, so recent => running
     expect(deriveStatus(asMessages(thinkingOnly), NOW)).toBe('running');
+  });
+});
+
+describe('statusExpiresAt — when the clock alone changes the answer', () => {
+  it('is the far edge of the running window for a turn still in progress', () => {
+    reset();
+    const rows = [row('user', { ageMs: 10_000, text: 'go' })];
+    const at = statusExpiresAt(rows, NOW);
+    expect(at).toBe(NOW - 10_000 + RUNNING_WINDOW_MS + 1);
+    expect(deriveStatus(rows, (at as number) - 1)).toBe('running');
+    expect(deriveStatus(rows, at as number)).toBe('idle');
+  });
+
+  it('is the 15-minute edge for an unanswered call when hooks report prompts', () => {
+    reset();
+    const rows = [
+      row('user', { ageMs: 400_000, text: 'go' }),
+      row('tool_use', { ageMs: 300_000, toolId: 'a' }),
+    ];
+    const opts = { unansweredToolUseBlocks: false };
+    expect(statusExpiresAt(rows, NOW, opts)).toBe(NOW - 300_000 + UNANSWERED_RUNNING_WINDOW_MS + 1);
+  });
+
+  it('is null when nothing time-dependent is in play', () => {
+    reset();
+    expect(statusExpiresAt([], NOW)).toBeNull();
+    expect(statusExpiresAt([row('assistant', { ageMs: 1_000, text: 'done' })], NOW)).toBeNull();
+    reset();
+    // blocked holds until something answers it, however long that takes
+    expect(statusExpiresAt([row('tool_use', { ageMs: 1_000, toolId: 'a' })], NOW)).toBeNull();
+    reset();
+    expect(statusExpiresAt([row('user', { ageMs: RUNNING_WINDOW_MS + 5, text: 'x' })], NOW)).toBeNull();
   });
 });

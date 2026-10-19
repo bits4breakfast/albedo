@@ -54,11 +54,6 @@ export const ACTIVITY_ROLES: ReadonlySet<Message['role']> = new Set([
 type StatusInput = Pick<Message, 'role' | 'seq' | 'ts' | 'rawJson'>;
 
 /**
- * @param messages rows for ONE session/task. Order does not matter; they are
- *                 sorted here by (ts, seq) so a caller cannot get this wrong.
- * @param now      injectable clock, for tests.
- */
-/**
  * How long a tool call with no result keeps a task `running` when unanswered
  * calls do not mean `blocked`. Far longer than RUNNING_WINDOW_MS: a test suite
  * or a build can run for minutes with nothing written to the transcript. Past
@@ -78,6 +73,11 @@ export interface DeriveOptions {
   unansweredToolUseBlocks?: boolean;
 }
 
+/**
+ * @param messages rows for ONE session/task. Order does not matter; they are
+ *                 sorted here by (ts, seq) so a caller cannot get this wrong.
+ * @param now      injectable clock, for tests.
+ */
 export function deriveStatus(
   messages: Message[],
   now: number = Date.now(),
@@ -111,6 +111,31 @@ export function deriveStatus(
   if (last.role === 'assistant') return 'idle';
 
   return 'idle';
+}
+
+/**
+ * When `deriveStatus` over these same rows would give a different answer with
+ * no new row arriving, or null if it never will.
+ *
+ * The recency windows make the status a function of the clock as well as of
+ * the rows, and nothing else re-asks: a session killed mid-turn writes no
+ * further line, so without a timer at this instant it reads `running` forever.
+ * Only the window edges can flip the answer, so each is probed in order.
+ */
+export function statusExpiresAt(
+  messages: Message[],
+  now: number = Date.now(),
+  opts: DeriveOptions = {},
+): number | null {
+  if (messages.length === 0) return null;
+  let lastTs = -Infinity;
+  for (const m of messages) if (m.ts > lastTs) lastTs = m.ts;
+  const current = deriveStatus(messages, now, opts);
+  for (const window of [RUNNING_WINDOW_MS, UNANSWERED_RUNNING_WINDOW_MS]) {
+    const edge = lastTs + window + 1; // the windows are inclusive (<=)
+    if (edge > now && deriveStatus(messages, edge, opts) !== current) return edge;
+  }
+  return null;
 }
 
 /**

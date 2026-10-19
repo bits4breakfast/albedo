@@ -407,21 +407,30 @@ export async function findTaskByWorktreePath(
  * Record that a task's session produced activity. `last_activity_at` only ever
  * moves forward, so replaying an old file during backfill cannot rewrite a
  * live task's recency.
+ *
+ * Listeners hear about it only when the row actually changed: every ingest
+ * chunk lands here, and a no-op touch used to cost every subscriber a full
+ * task reload. Returns whether it changed.
  */
 export async function touchTaskActivity(
   taskId: number,
   sessionId: string,
   ts: number,
-): Promise<void> {
+): Promise<boolean> {
   const db = await getDb();
-  await db.execute(
+  const res = await db.execute(
     `UPDATE tasks
         SET session_id = $1,
             last_activity_at = MAX(COALESCE(last_activity_at, 0), $2)
-      WHERE id = $3`,
+      WHERE id = $3
+        AND (session_id IS NOT $1 OR COALESCE(last_activity_at, 0) < $2)`,
     [sessionId, ts, taskId],
   );
-  emitTasksChanged();
+  // A driver that does not report a count is treated as "changed": a missed
+  // notification is a stale list, an extra one is only a reload.
+  const changed = typeof res?.rowsAffected === 'number' ? res.rowsAffected > 0 : true;
+  if (changed) emitTasksChanged();
+  return changed;
 }
 
 // ---------------------------------------------------------------------------

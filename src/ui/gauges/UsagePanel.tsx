@@ -12,8 +12,10 @@
  *
  * Three clocks, deliberately different:
  *
- *  1. `onCaptureUpdate`, debounced 500ms — the real trigger. Rows landing is
- *     the only event that can change a token figure.
+ *  1. `onCaptureUpdate` — the real trigger. Rows landing is the only event
+ *     that can change a token figure. The selected session's context reloads
+ *     500ms after an update to that session only; the window totals, a scan
+ *     across every session, at most once per WINDOW_MIN_INTERVAL_MS.
  *  2. A 30s fallback interval, in case the watcher is not running or a
  *     subscription is dropped. A permanently visible panel that silently
  *     freezes is worse than one that is a few seconds stale.
@@ -50,6 +52,12 @@ import './gauges.css';
 
 /** Coalesce a burst of capture updates into one query. */
 const DEBOUNCE_MS = 500;
+/**
+ * Floor between window-usage rescans. Those sum every session's rows over 5h
+ * and a week, and ran on every burst of any session; a figure read at the
+ * scale of minutes does not need refreshing more than this.
+ */
+const WINDOW_MIN_INTERVAL_MS = 15_000;
 /** Belt-and-braces refresh, in case no update event ever arrives. */
 const FALLBACK_MS = 30_000;
 /** Countdown tick. Local only — never a database round-trip. */
@@ -155,82 +163,109 @@ export default function UsagePanel({ task }: UsagePanelProps) {
   const [now, setNow] = useState(() => Date.now());
 
   const aliveRef = useRef(true);
-  const genRef = useRef(0);
+  const ctxGenRef = useRef(0);
+  const winGenRef = useRef(0);
+  const winLoadedAtRef = useRef(0);
 
-  const load = useCallback(async () => {
-    const gen = ++genRef.current;
-    const fresh = () => aliveRef.current && genRef.current === gen;
-
+  const loadContext = useCallback(async () => {
+    const gen = ++ctxGenRef.current;
     if (!sessionId) {
       setCtx({ usage: null, bands: null, state: 'no-session' });
+      return;
     }
-
-    const jobs: Promise<unknown>[] = [
-      windowUsage('5h'),
-      windowUsage('week'),
-      sessionId ? contextUsage(sessionId) : Promise.resolve(null),
-      sessionId ? contextBands(sessionId) : Promise.resolve(null),
-    ];
-    const [rFive, rWeek, rUsage, rBands] = await Promise.allSettled(jobs);
-    if (!fresh()) return;
-
-    setWin({
-      five: rFive?.status === 'fulfilled' ? asWindowUsage(rFive.value) : null,
-      week: rWeek?.status === 'fulfilled' ? asWindowUsage(rWeek.value) : null,
-      fiveState: rFive?.status === 'fulfilled' ? 'ready' : 'unavailable',
-      weekState: rWeek?.status === 'fulfilled' ? 'ready' : 'unavailable',
-      fetchedAt: Date.now(),
+    const [rUsage, rBands] = await Promise.allSettled([
+      contextUsage(sessionId),
+      contextBands(sessionId),
+    ]);
+    if (!aliveRef.current || ctxGenRef.current !== gen) return;
+    setCtx({
+      usage: rUsage.status === 'fulfilled' ? asContextUsage(rUsage.value) : null,
+      bands: rBands.status === 'fulfilled' ? asContextBands(rBands.value) : null,
+      state: rUsage.status === 'fulfilled' ? 'ready' : 'unavailable',
     });
-
-    if (sessionId) {
-      setCtx({
-        usage: rUsage?.status === 'fulfilled' ? asContextUsage(rUsage.value) : null,
-        bands: rBands?.status === 'fulfilled' ? asContextBands(rBands.value) : null,
-        state: rUsage?.status === 'fulfilled' ? 'ready' : 'unavailable',
-      });
-    }
   }, [sessionId]);
 
-  // Kept in a ref so the subscription below is installed exactly once and does
+  const loadWindows = useCallback(async () => {
+    const gen = ++winGenRef.current;
+    winLoadedAtRef.current = Date.now();
+    const [rFive, rWeek] = await Promise.allSettled([windowUsage('5h'), windowUsage('week')]);
+    if (!aliveRef.current || winGenRef.current !== gen) return;
+    setWin({
+      five: rFive.status === 'fulfilled' ? asWindowUsage(rFive.value) : null,
+      week: rWeek.status === 'fulfilled' ? asWindowUsage(rWeek.value) : null,
+      fiveState: rFive.status === 'fulfilled' ? 'ready' : 'unavailable',
+      weekState: rWeek.status === 'fulfilled' ? 'ready' : 'unavailable',
+      fetchedAt: Date.now(),
+    });
+  }, []);
+
+  // Kept in refs so the subscription below is installed exactly once and does
   // not tear down and re-subscribe every time the selected task changes.
-  const loadRef = useRef(load);
+  const loadContextRef = useRef(loadContext);
+  const sessionRef = useRef(sessionId);
   useEffect(() => {
-    loadRef.current = load;
-  }, [load]);
+    loadContextRef.current = loadContext;
+    sessionRef.current = sessionId;
+  }, [loadContext, sessionId]);
 
   useEffect(() => {
     aliveRef.current = true;
-    void load();
     return () => {
       aliveRef.current = false;
     };
-  }, [load]);
+  }, []);
 
   useEffect(() => {
-    let debounce: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
-      if (debounce !== null) return; // trailing edge: one query per burst
-      debounce = setTimeout(() => {
-        debounce = null;
-        void loadRef.current();
-      }, DEBOUNCE_MS);
+    void loadContext();
+  }, [loadContext]);
+
+  useEffect(() => {
+    void loadWindows();
+  }, [loadWindows]);
+
+  useEffect(() => {
+    let ctxTimer: ReturnType<typeof setTimeout> | null = null;
+    let winTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const onUpdate = (u: { sessionId?: unknown } | null | undefined) => {
+      // The selected session's context: one query per burst, and only for
+      // updates to THAT session -- another session's append cannot move it.
+      if (ctxTimer === null && u?.sessionId === sessionRef.current) {
+        ctxTimer = setTimeout(() => {
+          ctxTimer = null;
+          void loadContextRef.current();
+        }, DEBOUNCE_MS);
+      }
+      // The windows sum every session's rows, so any update moves them, but
+      // the scan is the expensive one and the figure is read in minutes.
+      if (winTimer === null) {
+        const due = winLoadedAtRef.current + WINDOW_MIN_INTERVAL_MS - Date.now();
+        winTimer = setTimeout(() => {
+          winTimer = null;
+          void loadWindows();
+        }, Math.max(DEBOUNCE_MS, due));
+      }
     };
 
     let unsubscribe: () => void = () => {};
     try {
-      const off = onCaptureUpdate(schedule);
+      const off = onCaptureUpdate(onUpdate);
       if (typeof off === 'function') unsubscribe = off;
     } catch (err) {
       console.warn('[gauges] capture updates unavailable', err);
     }
 
-    const fallback = setInterval(() => void loadRef.current(), FALLBACK_MS);
+    const fallback = setInterval(() => {
+      void loadContextRef.current();
+      void loadWindows();
+    }, FALLBACK_MS);
     return () => {
       unsubscribe();
       clearInterval(fallback);
-      if (debounce !== null) clearTimeout(debounce);
+      if (ctxTimer !== null) clearTimeout(ctxTimer);
+      if (winTimer !== null) clearTimeout(winTimer);
     };
-  }, []);
+  }, [loadWindows]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), TICK_MS);

@@ -293,6 +293,8 @@ class Capture implements CaptureHandle {
    * not cost a head read on every append. Cleared per path by an import.
    */
   private readonly ignored = new Set<string>();
+  /** `${taskId}\0${sessionId}` pairs whose earlier rows were already backfilled. */
+  private readonly adopted = new Set<string>();
 
   constructor(private readonly root: string) {}
 
@@ -635,7 +637,6 @@ class Capture implements CaptureHandle {
     let knownCwd = record?.cwd ?? null;
     let knownTitle = record?.title ?? null;
     let sessionId = record?.sessionId ?? sessionIdFromPath(path);
-    let adopted = false;
 
     // Loop so one call drains a file that grew by more than MAX_CHUNK_BYTES.
     for (;;) {
@@ -742,14 +743,16 @@ class Capture implements CaptureHandle {
       });
 
       if (task && insertable.length > 0) {
-        if (!adopted) {
-          // Rows captured before the task existed (a terminal session later
-          // adopted by a task) get their task_id backfilled. Once per ingest
-          // call: the rows written below already carry the task id.
-          adopted = true;
-          for (const sid of distinctSessionIds(insertable)) {
-            await adoptSessionIntoTask(sid, task.id);
-          }
+        // Rows captured before the task existed (a terminal session later
+        // adopted by a task) get their task_id backfilled. Once per session
+        // and task for the life of the watcher, not per ingest call: every
+        // row written from then on already carries the task id, and an ingest
+        // call is one fs event -- a live session makes hundreds.
+        for (const sid of distinctSessionIds(insertable)) {
+          const key = `${task.id}\u0000${sid}`;
+          if (this.adopted.has(key)) continue;
+          await adoptSessionIntoTask(sid, task.id);
+          this.adopted.add(key);
         }
         let latestTs = 0;
         for (const row of insertable) if (row.ts > latestTs) latestTs = row.ts;

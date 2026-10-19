@@ -3,6 +3,7 @@ import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged, compactHistory } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
+import { statusExpiresAt } from '../capture/status';
 import { hasHooks, onPromptChange, pendingPrompt } from '../capture/hookEvents';
 import { noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
@@ -34,6 +35,11 @@ const STATUS_WINDOW = 400;
 const TASKS_CHANGED_DEBOUNCE_MS = 120;
 /** One batched context query per burst, never one per row. */
 const CONTEXT_DEBOUNCE_MS = 400;
+/**
+ * Slack after a status window lapses before it is re-derived, so the check
+ * lands on the far side of the edge even if the timer fires a little early.
+ */
+const EXPIRY_SLACK_MS = 50;
 
 export interface UseTasksResult {
   tasks: Task[];
@@ -63,6 +69,90 @@ function message(err: unknown): string {
   return String(err);
 }
 
+/** Same keys, same values. Task and ContextUsage are both flat records. */
+export function shallowEqual<T extends object>(a: T, b: T): boolean {
+  if (a === b) return true;
+  const keys = Object.keys(a) as (keyof T)[];
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const k of keys) if (a[k] !== b[k]) return false;
+  return true;
+}
+
+/**
+ * The reloaded list, reusing every previous object whose row did not change --
+ * and the previous ARRAY when none did.
+ *
+ * Every transcript append touches a task row, and each touch reloads the list.
+ * Handing React all-new objects for that made the selected task and every
+ * Terminal's `task` prop change identity on every line Claude wrote, so the
+ * whole shell re-rendered for a recency bump on one row.
+ */
+export function reconcileTasks(prev: Task[], rows: Task[]): Task[] {
+  const byId = new Map(prev.map((t) => [t.id, t]));
+  let same = prev.length === rows.length;
+  const next = rows.map((row, i) => {
+    const old = byId.get(row.id);
+    const kept = old !== undefined && shallowEqual(old, row) ? old : row;
+    if (kept !== prev[i]) same = false;
+    return kept;
+  });
+  return same ? prev : next;
+}
+
+/**
+ * `prev` with `ids` re-read from `result`, sessions no longer live dropped,
+ * and `prev` itself back when nothing moved. An id that was asked for and is
+ * absent from `result` has no reading any more, so its meter goes too.
+ */
+export function mergeContext(
+  prev: Map<string, ContextUsage>,
+  ids: string[],
+  result: Map<string, ContextUsage>,
+  live: Set<string>,
+): Map<string, ContextUsage> {
+  const next = new Map(prev);
+  let changed = false;
+  for (const id of prev.keys()) {
+    if (!live.has(id)) {
+      next.delete(id);
+      changed = true;
+    }
+  }
+  for (const id of ids) {
+    if (!live.has(id)) continue;
+    const fresh = result.get(id);
+    const old = next.get(id);
+    if (fresh === undefined) {
+      if (old !== undefined) {
+        next.delete(id);
+        changed = true;
+      }
+    } else if (old === undefined || !shallowEqual(old, fresh)) {
+      next.set(id, fresh);
+      changed = true;
+    }
+  }
+  return changed ? next : prev;
+}
+
+function liveSessionIds(tasks: Task[]): string[] {
+  const ids = new Set<string>();
+  for (const t of tasks) if (t.status !== 'archived' && t.sessionId) ids.add(t.sessionId);
+  return [...ids];
+}
+
+/**
+ * A task write this hook has made in memory and not yet seen come back from
+ * the database. See `refresh` for why it is laid over every reload.
+ */
+interface PendingWrite {
+  patch: Partial<Task>;
+  /** Write-clock value when the write landed; null while in flight or failed. */
+  settledAt: number | null;
+  /** The write failed; the next status refresh for the task retries it. */
+  failed: boolean;
+}
+
 export function useTasks(): UseTasksResult {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,33 +163,121 @@ export function useTasks(): UseTasksResult {
   );
   const [projects, setProjects] = useState<Project[]>([]);
 
-  /** Latest tasks, readable from callbacks without re-subscribing. */
+  /**
+   * Latest tasks, readable from callbacks without re-subscribing. Written
+   * SYNCHRONOUSLY by `commit`, not copied from state on render: two status
+   * refreshes landing in one tick must see each other's result, or both read
+   * the same old status and both announce the transition.
+   */
   const tasksRef = useRef<Task[]>([]);
-  tasksRef.current = tasks;
 
   const aliveRef = useRef(true);
   const timersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /** One timer per task, for the instant its derived status goes stale. */
+  const expiryRef = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  /** Per-task derivation counter: an older derivation never lands on a newer. */
+  const statusGenRef = useRef(new Map<number, number>());
+  const pendingRef = useRef(new Map<number, PendingWrite>());
+  /** Monotonic clock over write completions, compared against reload starts. */
+  const writeClockRef = useRef(0);
 
-  const applyTask = useCallback((id: number, patch: Partial<Task>) => {
-    setTasks((prev) => {
-      let changed = false;
-      const next = prev.map((t) => {
-        if (t.id !== id) return t;
-        const merged = { ...t, ...patch };
-        for (const key of Object.keys(patch) as (keyof Task)[]) {
-          if (t[key] !== merged[key]) changed = true;
-        }
-        return merged;
-      });
-      return changed ? next : prev;
-    });
+  const commit = useCallback((update: (prev: Task[]) => Task[]) => {
+    const prev = tasksRef.current;
+    const next = update(prev);
+    if (next === prev) return;
+    tasksRef.current = next;
+    setTasks(next);
   }, []);
 
+  const applyTask = useCallback(
+    (id: number, patch: Partial<Task>) => {
+      commit((prev) => {
+        let changed = false;
+        const next = prev.map((t) => {
+          if (t.id !== id) return t;
+          const merged = { ...t, ...patch };
+          if (shallowEqual(t, merged)) return t;
+          changed = true;
+          return merged;
+        });
+        return changed ? next : prev;
+      });
+    },
+    [commit],
+  );
+
+  /**
+   * Persist a change already applied in memory, keeping it laid over reloads
+   * until the database is known to hold it. Resolves to the error, or null.
+   *
+   * Failure is never silent. With `rollback`, the in-memory change is undone
+   * so the next capture update redoes it from scratch; without, it is kept --
+   * it is what the transcript says -- and marked for the next status refresh
+   * to write again.
+   */
+  const persist = useCallback(
+    (
+      id: number,
+      patch: Partial<Task>,
+      opts: { write?: () => Promise<void>; rollback?: () => void } = {},
+    ): Promise<unknown> => {
+      const pending = pendingRef.current;
+      const entry: PendingWrite = {
+        patch: { ...pending.get(id)?.patch, ...patch },
+        settledAt: null,
+        failed: false,
+      };
+      pending.set(id, entry);
+      // The merged patch, not just this one: a superseded write that failed
+      // must not leave its fields shown in memory and never written.
+      const write = opts.write ?? (() => updateTask(id, entry.patch));
+      return write().then(
+        () => {
+          if (pending.get(id) === entry) entry.settledAt = ++writeClockRef.current;
+          return null;
+        },
+        (err: unknown) => {
+          console.error(`[tasks] could not persist task ${id}`, patch, err);
+          if (pending.get(id) === entry) {
+            if (opts.rollback) pending.delete(id);
+            else entry.failed = true;
+          }
+          opts.rollback?.();
+          return err ?? new Error('write failed');
+        },
+      );
+    },
+    [],
+  );
+
+  /**
+   * Reload from the database.
+   *
+   * The read can be older than memory: it may have started before a status
+   * write this hook already fired landed, and the pool does not order a read
+   * behind a write. Landing as-is put the old status back, and the next
+   * derivation then "saw" the same transition again -- a second dock bounce.
+   * So every write still unconfirmed when the read began is laid over it.
+   */
   const refresh = useCallback(async () => {
     try {
+      const startedAt = writeClockRef.current;
       const rows = await listTasks();
       if (!aliveRef.current) return;
-      setTasks(Array.isArray(rows) ? rows : []);
+      const pending = pendingRef.current;
+      const merged = (Array.isArray(rows) ? rows : []).map((row) => {
+        const edit = pending.get(row.id);
+        if (!edit) return row;
+        if (edit.settledAt !== null && edit.settledAt <= startedAt) {
+          pending.delete(row.id); // this read began after the write landed
+          return row;
+        }
+        const patch = { ...edit.patch };
+        // An archive done elsewhere outranks a status derived here.
+        if (row.status === 'archived') delete patch.status;
+        return { ...row, ...patch };
+      });
+      commit((prev) => reconcileTasks(prev, merged));
       setLoadError(null);
     } catch (err) {
       if (!aliveRef.current) return;
@@ -107,7 +285,7 @@ export function useTasks(): UseTasksResult {
     } finally {
       if (aliveRef.current) setLoading(false);
     }
-  }, []);
+  }, [commit]);
 
   const refreshProjects = useCallback(async () => {
     try {
@@ -119,27 +297,41 @@ export function useTasks(): UseTasksResult {
     }
   }, []);
 
-  const upsertTask = useCallback((task: Task) => {
-    setTasks((prev) => {
-      const i = prev.findIndex((t) => t.id === task.id);
-      if (i === -1) return [task, ...prev];
-      const next = prev.slice();
-      next[i] = task;
-      return next;
-    });
-  }, []);
+  const upsertTask = useCallback(
+    (task: Task) => {
+      commit((prev) => {
+        const i = prev.findIndex((t) => t.id === task.id);
+        if (i === -1) return [task, ...prev];
+        if (shallowEqual(prev[i] as Task, task)) return prev;
+        const next = prev.slice();
+        next[i] = task;
+        return next;
+      });
+    },
+    [commit],
+  );
 
   const archive = useCallback(
     async (id: number) => {
       applyTask(id, { status: 'archived' });
-      try {
-        await archiveTask(id);
-      } catch (err) {
-        setLoadError(`Could not archive task: ${message(err)}`);
-      }
+      // On failure the overlay is dropped, not the status reverted: archiveTask
+      // flips the row before purging, so a failure may or may not have
+      // archived, and a reload shows whichever is true.
+      const err = await persist(
+        id,
+        { status: 'archived' },
+        { write: () => archiveTask(id), rollback: () => void refresh() },
+      );
+      if (err !== null && aliveRef.current) setLoadError(`Could not archive task: ${message(err)}`);
     },
-    [applyTask],
+    [applyTask, persist, refresh],
   );
+
+  const clearExpiry = useCallback((taskId: number) => {
+    const t = expiryRef.current.get(taskId);
+    if (t !== undefined) clearTimeout(t);
+    expiryRef.current.delete(taskId);
+  }, []);
 
   /** Re-derive one session's status from persisted rows. */
   const refreshStatus = useCallback(
@@ -156,89 +348,133 @@ export function useTasks(): UseTasksResult {
         if (candidate) {
           task = { ...candidate, sessionId };
           applyTask(candidate.id, { sessionId });
-          void updateTask(candidate.id, { sessionId }).catch(() => {
-            /* best effort; the next capture tick retries */
+          // Undone on failure, so the next capture update adopts it again
+          // rather than the task showing a session the database never got.
+          void persist(candidate.id, { sessionId }, {
+            rollback: () => {
+              const live = tasksRef.current.find((t) => t.id === candidate.id);
+              if (live?.sessionId === sessionId) applyTask(candidate.id, { sessionId: null });
+            },
           });
         }
       }
       if (!task) return; // transcript for a session Albedo does not own — fine.
+      const taskId = task.id;
+      const gen = (statusGenRef.current.get(taskId) ?? 0) + 1;
+      statusGenRef.current.set(taskId, gen);
 
       let status: TaskStatus;
+      let expiresAt: number | null;
+      let newestTs = 0;
       try {
         // Parent rows only: a subagent's tool call that is still running has no
         // result yet, and would read as this task waiting on a permission prompt.
-        const messages = await getMessages({ sessionId, limit: STATUS_WINDOW, parentOnly: true });
-        status = deriveStatus(messages ?? [], Date.now(), { unansweredToolUseBlocks: !hasHooks(task.id) });
+        const messages = (await getMessages({ sessionId, limit: STATUS_WINDOW, parentOnly: true })) ?? [];
+        const now = Date.now();
+        const opts = { unansweredToolUseBlocks: !hasHooks(taskId) };
+        status = deriveStatus(messages, now, opts);
+        expiresAt = statusExpiresAt(messages, now, opts);
+        for (const m of messages) if (m.ts > newestTs) newestTs = m.ts;
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
-        if (pendingPrompt(task.id) !== null) status = 'blocked';
+        if (pendingPrompt(taskId) !== null) status = 'blocked';
       } catch (err) {
-        setCaptureError(`Status refresh failed: ${message(err)}`);
+        if (aliveRef.current) setCaptureError(`Status refresh failed: ${message(err)}`);
         return;
       }
       if (!aliveRef.current) return;
+      if (statusGenRef.current.get(taskId) !== gen) return; // a newer one ran
       setCaptureError(null);
 
-      const lastActivityAt = Date.now();
-      const prior = tasksRef.current.find((t) => t.id === task.id);
+      clearExpiry(taskId);
+      const prior = tasksRef.current.find((t) => t.id === taskId);
       if (!prior || prior.status === 'archived') return;
 
-      applyTask(task.id, { status, lastActivityAt });
+      // The status windows are measured against the clock, and once a session
+      // dies mid-turn no new row ever comes to re-ask. So re-ask at the
+      // instant the answer would change on its own.
+      if (expiresAt !== null) {
+        const delay = Math.max(0, expiresAt - Date.now()) + EXPIRY_SLACK_MS;
+        expiryRef.current.set(
+          taskId,
+          setTimeout(() => {
+            expiryRef.current.delete(taskId);
+            const live = tasksRef.current.find((t) => t.id === taskId);
+            if (live?.sessionId) void refreshStatus(live.sessionId, null);
+          }, delay),
+        );
+      }
+
+      // Activity is the newest ROW, as touchTaskActivity records it -- never
+      // "now": a re-derivation at launch or at a window edge is not activity.
+      const lastActivityAt =
+        newestTs > (prior.lastActivityAt ?? 0) ? newestTs : prior.lastActivityAt;
+      applyTask(taskId, { status, lastActivityAt });
       if (prior.status !== status) {
         // A transition, not a level: this is the one place that knows a task
         // just *became* blocked rather than having been blocked all along.
-        noteStatusChange(task.id, prior.status, status, task.title);
-        void updateTask(task.id, { status, lastActivityAt }).catch(() => {});
+        noteStatusChange(taskId, prior.status, status, prior.title);
       }
+      const retry = pendingRef.current.get(taskId)?.failed === true;
+      if (prior.status !== status || retry) void persist(taskId, { status, lastActivityAt });
     },
-    [applyTask],
+    [applyTask, persist, clearExpiry],
   );
 
   /**
-   * One batched query for every live session. Never per row: with several
-   * sessions open that would be N queries on every transcript append.
+   * Context for the given sessions only, merged into what is held. Asking for
+   * every live session on every append ran a json_extract scan per session
+   * for a change that touched one of them.
    */
-  const refreshContext = useCallback(async () => {
-    const ids = Array.from(
-      new Set(
-        tasksRef.current
-          .filter((t) => t.status !== 'archived' && t.sessionId)
-          .map((t) => t.sessionId as string),
-      ),
-    );
-    if (ids.length === 0) {
-      setContextBySession((prev) => (prev.size === 0 ? prev : new Map()));
-      return;
+  const refreshContext = useCallback(async (requested: string[]) => {
+    const live = new Set(liveSessionIds(tasksRef.current));
+    const ids = [...new Set(requested)].filter((id) => live.has(id));
+    let result = new Map<string, ContextUsage>();
+    if (ids.length > 0) {
+      try {
+        const r = await contextUsageForSessions(ids);
+        if (!aliveRef.current) return;
+        if (r instanceof Map) result = r;
+      } catch {
+        /* Keep the last good reading rather than blanking the meters. */
+        return;
+      }
     }
-    try {
-      const result = await contextUsageForSessions(ids);
-      if (!aliveRef.current) return;
-      setContextBySession(result instanceof Map ? new Map(result) : new Map());
-    } catch {
-      /* Keep the last good reading rather than blanking the meters. */
-    }
+    setContextBySession((prev) => mergeContext(prev, ids, result, live));
   }, []);
 
   /** Identity of the live session set — refetch when a task joins or leaves. */
-  const sessionKey = tasks
-    .filter((t) => t.status !== 'archived' && t.sessionId)
-    .map((t) => t.sessionId)
-    .sort()
-    .join(',');
+  const sessionKey = liveSessionIds(tasks).sort().join(',');
+
+  const contextRef = useRef(contextBySession);
+  contextRef.current = contextBySession;
 
   useEffect(() => {
-    void refreshContext();
+    // Only sessions with no reading yet; the rest are kept current by capture
+    // updates, and leavers are pruned by the merge.
+    const ids = sessionKey === '' ? [] : sessionKey.split(',');
+    void refreshContext(ids.filter((id) => !contextRef.current.has(id)));
   }, [sessionKey, refreshContext]);
 
-  // Initial load.
+  // Initial load, then a fresh look at every task's status: the database holds
+  // whatever was derived last time, and a session that died mid-turn left
+  // `running` behind with nothing to ever clear it.
   useEffect(() => {
     aliveRef.current = true;
-    void refresh();
+    const expiry = expiryRef.current;
+    void refresh().then(() => {
+      if (!aliveRef.current) return;
+      for (const t of tasksRef.current) {
+        if (t.status !== 'archived' && t.sessionId) void refreshStatus(t.sessionId, null);
+      }
+    });
     void refreshProjects();
     return () => {
       aliveRef.current = false;
+      for (const t of expiry.values()) clearTimeout(t);
+      expiry.clear();
     };
-  }, [refresh, refreshProjects]);
+  }, [refresh, refreshProjects, refreshStatus]);
 
   // Projects mutate from the dialog, and from the launch backfill.
   useEffect(() => {
@@ -277,6 +513,7 @@ export function useTasks(): UseTasksResult {
     let stopped = false;
     let unsubscribe: (() => void) | null = null;
     let contextTimer: ReturnType<typeof setTimeout> | null = null;
+    const contextDirty = new Set<string>();
     const timers = timersRef.current;
 
     try {
@@ -292,9 +529,16 @@ export function useTasks(): UseTasksResult {
           }, COALESCE_MS),
         );
 
-        // Context is event-driven too — no polling. One batch per burst.
+        // Context is event-driven too — no polling. One batch per burst,
+        // covering only the sessions the burst touched.
+        contextDirty.add(u.sessionId);
         if (contextTimer) clearTimeout(contextTimer);
-        contextTimer = setTimeout(() => void refreshContext(), CONTEXT_DEBOUNCE_MS);
+        contextTimer = setTimeout(() => {
+          contextTimer = null;
+          const ids = [...contextDirty];
+          contextDirty.clear();
+          void refreshContext(ids);
+        }, CONTEXT_DEBOUNCE_MS);
       });
     } catch (err) {
       setCaptureError(`Capture updates unavailable: ${message(err)}`);
@@ -344,12 +588,12 @@ export function useTasks(): UseTasksResult {
         if (task.status === 'blocked') return;
         applyTask(taskId, { status: 'blocked' });
         noteStatusChange(taskId, task.status, 'blocked', task.title);
-        void updateTask(taskId, { status: 'blocked' }).catch(() => {});
+        void persist(taskId, { status: 'blocked' });
       } else if (task.sessionId) {
         void refreshStatus(task.sessionId, null);
       }
     });
-  }, [applyTask, refreshStatus]);
+  }, [applyTask, persist, refreshStatus]);
 
   return useMemo(
     () => ({

@@ -39,6 +39,7 @@ import {
   resetDb,
   searchMessages,
   setTranscriptTitle,
+  touchTaskActivity,
 } from './index';
 import { listPastSessions } from './sessions';
 import { deriveStatus } from '../capture/status';
@@ -1172,5 +1173,31 @@ describe('archiving purges the conversation copy, keeping the task row', () => {
 
     expect(await getMessages({ sessionId: 'sess-a', limit: 100 })).toEqual([]);
     expect((await getMessages({ sessionId: 'other', limit: 100 })).length).toBe(1);
+  });
+});
+
+describe('touchTaskActivity — notifies only when the row moved', () => {
+  it('reports and emits a change, then stays quiet for a replay of the same or older activity', async () => {
+    const task = await createTask({
+      title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main',
+      branch: 'b', worktreePath: '/wt/t', ownsWorktree: true,
+    });
+    const cb = vi.fn();
+    const off = onTasksChanged(cb);
+    try {
+      expect(await touchTaskActivity(task.id, 'sess-t', 5_000)).toBe(true);
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(await touchTaskActivity(task.id, 'sess-t', 5_000)).toBe(false);
+      expect(await touchTaskActivity(task.id, 'sess-t', 4_000)).toBe(false);
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(await touchTaskActivity(task.id, 'sess-t', 6_000)).toBe(true);
+      expect(await touchTaskActivity(task.id, 'sess-u', 6_000)).toBe(true); // a resumed session id
+      expect(cb).toHaveBeenCalledTimes(3);
+      const row = await getTask(task.id);
+      expect(row?.sessionId).toBe('sess-u');
+      expect(row?.lastActivityAt).toBe(6_000);
+    } finally {
+      off();
+    }
   });
 });
