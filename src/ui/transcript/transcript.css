@@ -354,6 +354,11 @@
 
 .tx-collapsed { margin: 1px 0; }
 
+/* An action started from an Albedo button: the chip is the act, the prompt
+   folds under it. */
+.tx-action-head { cursor: pointer; }
+.tx-action-head:hover { border-color: var(--border-strong); background: var(--panel-hover); }
+
 /* `!` commands from Claude Code's shell mode. The command reads as the
    user's; its output as the terminal's. */
 .tx-shell-cmd { color: var(--text-strong); white-space: pre-wrap; word-break: break-all; }

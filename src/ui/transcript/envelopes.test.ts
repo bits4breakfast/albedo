@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAllEnvelopes, parseUserBody, systemRowText, type UserBlock } from './envelopes';
+import { actionLabelOf, isAllEnvelopes, parseUserBody, systemRowText, wrapAction, type UserBlock } from './envelopes';
 
 const kinds = (blocks: UserBlock[]) => blocks.map((b) => b.kind);
 const first = <K extends UserBlock['kind']>(blocks: UserBlock[], kind: K) =>
@@ -390,5 +390,42 @@ describe('pasted content', () => {
       { kind: 'text', text: 'look at this' },
       { kind: 'pasted', id: '4c5b', text: 'error: boom' },
     ]);
+  });
+});
+
+describe('Albedo actions', () => {
+  const prompt = 'Push branch `build-script` to origin.\n\n- Set the upstream if the branch has none.';
+
+  it('round-trips through the paste wrapper Claude Code adds, either closing form', () => {
+    const wrapped = wrapAction('push', prompt);
+    for (const close of ['</pasted_content id="bc88">', '</pasted_content>']) {
+      const blocks = parseUserBody(`<pasted_content id="bc88">\n${wrapped}\n${close}`);
+      expect(blocks).toEqual([{ kind: 'action', action: 'push', label: 'Push', text: prompt }]);
+      expect(isAllEnvelopes(blocks)).toBe(false); // the user started it
+    }
+  });
+
+  it('reads one sent without a paste wrapper too', () => {
+    expect(parseUserBody(wrapAction('create-pr', 'Open a PR.'))).toEqual([
+      { kind: 'action', action: 'create-pr', label: 'Create PR', text: 'Open a PR.' },
+    ]);
+  });
+
+  it('degrades an unknown kind to the text Claude was given', () => {
+    expect(parseUserBody('<albedo-action kind="deploy">\nShip it.\n</albedo-action>')).toEqual([
+      { kind: 'text', text: 'Ship it.' },
+    ]);
+  });
+
+  it('leaves a paste that merely contains an action among other text as a paste', () => {
+    const blocks = parseUserBody(`<pasted_content id="1">\nsee: ${wrapAction('push', 'x')}\n</pasted_content>`);
+    expect(blocks.map((b) => b.kind)).toEqual(['text']);
+  });
+
+  it('labels a queued action by what it is', () => {
+    expect(actionLabelOf(`<pasted_content id="bc88">\n${wrapAction('squash-rebase', 'x')}\n</pasted_content id="bc88">`)).toBe(
+      'Squash & rebase',
+    );
+    expect(actionLabelOf('just typing')).toBeNull();
   });
 });

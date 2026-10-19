@@ -4,22 +4,24 @@
  * Albedo does not run these operations itself: committing needs a message,
  * a rebase can conflict, and a rejected push needs a decision. Claude Code
  * handles all three, so the buttons hand it a prompt (sendPrompt.ts decides
- * whether it is submitted at once or waits in the message box).
+ * whether it is submitted at once or waits in the message box). Each is
+ * wrapped as an action so the transcript shows "Push", not the instructions.
  */
 
 import type { Task } from '../types';
+import { wrapAction } from './transcript/envelopes';
 
 type GitTask = Pick<Task, 'branch' | 'baseBranch'>;
 
 /** Commit what is outstanding, then push the branch. */
 export function pushPrompt(task: GitTask): string {
-  return [
+  return wrapAction('push', [
     `Push branch \`${task.branch}\` to origin.`,
     '',
     '- If there are uncommitted changes, commit them first: group them into sensible commits with clear messages. Ask me if something looks like it should not be committed.',
     '- Set the upstream if the branch has none.',
     '- If the push is rejected because this branch was rebased, push with `--force-with-lease`. If it is rejected because the remote has commits this branch does not, stop and tell me.',
-  ].join('\n');
+  ].join('\n'));
 }
 
 export interface SquashOptions {
@@ -35,7 +37,7 @@ export interface SquashOptions {
 export function squashRebasePrompt(task: GitTask, opts: SquashOptions): string {
   const base = task.baseBranch;
   const n = opts.commitCount;
-  return [
+  return wrapAction('squash-rebase', [
     `Squash this branch into one commit and rebase it onto the latest \`${base}\`.`,
     '',
     `- Fetch first, and rebase onto \`origin/${base}\` if it exists, otherwise onto \`${base}\`.`,
@@ -48,19 +50,19 @@ export function squashRebasePrompt(task: GitTask, opts: SquashOptions): string {
     opts.push
       ? `- When it is done, push \`${task.branch}\` with \`--force-with-lease\` (set the upstream if it has none).`
       : '- Do not push.',
-  ].join('\n');
+  ].join('\n'));
 }
 
 /** Open a pull request for the branch, written from everything on it. */
 export function createPrPrompt(task: GitTask): string {
-  return [
+  return wrapAction('create-pr', [
     `Open a pull request for \`${task.branch}\` into \`${task.baseBranch}\`.`,
     '',
     '- If there are uncommitted changes, ask me whether they belong in it before you commit anything.',
     '- Push the branch first if the remote does not have all of it (set the upstream if it has none).',
     `- Write the title and description from every commit on the branch and the diff against \`${task.baseBranch}\`, not just the latest commit: what changed and why, and how it was checked. Follow the repository's PR template if it has one.`,
     `- Create it with \`gh pr create --base ${task.baseBranch}\`, and give me the URL.`,
-  ].join('\n');
+  ].join('\n'));
 }
 
 /** What the git bar's main button offers: the next thing this branch needs. */

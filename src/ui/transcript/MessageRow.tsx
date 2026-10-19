@@ -181,6 +181,8 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
           {block.args ? <span className="tx-cmd-args">{block.args}</span> : null}
         </div>
       );
+    case 'action':
+      return <ActionBlock block={block} />;
     case 'shell-input':
       return (
         <div className="tx-cmd tx-shell-in" title="Run in Claude Code's shell mode">
@@ -241,6 +243,35 @@ function NotificationChip({ block }: { block: Extract<UserBlock, { kind: 'task-n
             </div>
           ) : null}
           <FieldList fields={fields} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Something the user started from an Albedo button. Reads as the act -- "Push"
+ * -- with the prompt Claude was given folded under it, for when it matters
+ * exactly what was asked.
+ */
+function ActionBlock({ block }: { block: Extract<UserBlock, { kind: 'action' }> }): ReactNode {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="tx-action">
+      <button
+        type="button"
+        className="tx-cmd tx-action-head"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title={open ? 'Hide the prompt Claude was given' : 'Show the prompt Claude was given'}
+      >
+        <Disclosure open={open} />
+        <span className="tx-cmd-name">{block.label}</span>
+        <span className="tx-cmd-args">from Albedo</span>
+      </button>
+      {open ? (
+        <div className="tx-think-body">
+          <Markdown text={block.text} />
         </div>
       ) : null}
     </div>

@@ -4,6 +4,14 @@ import { canSquashRebase, createPrPrompt, nextStep, pushPrompt, squashRebaseProm
 const task = { branch: 'albedo/fix-retry', baseBranch: 'main' };
 
 describe('git prompts', () => {
+  it('wraps each prompt as the action it is, for the transcript to name', () => {
+    expect(pushPrompt(task)).toMatch(/^<albedo-action kind="push">\n[\s\S]*\n<\/albedo-action>$/);
+    expect(createPrPrompt(task)).toContain('<albedo-action kind="create-pr">');
+    expect(squashRebasePrompt(task, { includeUncommitted: false, push: false, commitCount: 1 })).toContain(
+      '<albedo-action kind="squash-rebase">',
+    );
+  });
+
   it('names the branch to push and never forces blindly', () => {
     const p = pushPrompt(task);
     expect(p).toContain('`albedo/fix-retry`');

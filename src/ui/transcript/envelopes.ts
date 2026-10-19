@@ -52,6 +52,11 @@ export type UserBlock =
   | { kind: 'command'; name: string; args: string | null; message: string | null }
   /** `/clear`: the conversation before this point is no longer in context. */
   | { kind: 'cleared' }
+  /**
+   * An action the user started from an Albedo button (Push, Create PR, ...).
+   * `text` is the prompt Claude received; the row shows `label` and folds it.
+   */
+  | { kind: 'action'; action: AlbedoAction; label: string; text: string }
   /** A `!` command the user ran in Claude Code's shell mode. Typed by the user. */
   | { kind: 'shell-input'; command: string }
   /** What that command printed. Either side may be empty, never both. */
@@ -81,6 +86,47 @@ export type UserBlock =
   | { kind: 'pasted'; id: string | null; text: string }
   /** A skill's SKILL.md, loaded into context when it was invoked. */
   | { kind: 'skill'; name: string; dir: string; text: string };
+
+/**
+ * Albedo's own envelope: `<albedo-action kind="push">prompt</albedo-action>`.
+ *
+ * The buttons that send Claude a prompt wrap it in this, so the transcript can
+ * say what was asked -- "Push" -- instead of replaying four bullet points of
+ * instructions the user never typed. The prompt inside stays plain prose:
+ * Claude reads exactly what it would read without the wrapper, and the tag
+ * only names it. Written and read here, so this file still owns every tag.
+ */
+export type AlbedoAction = 'push' | 'create-pr' | 'squash-rebase';
+
+const ACTION_LABEL: Record<AlbedoAction, string> = {
+  push: 'Push',
+  'create-pr': 'Create PR',
+  'squash-rebase': 'Squash & rebase',
+};
+
+function isAction(v: string | null): v is AlbedoAction {
+  return v !== null && Object.prototype.hasOwnProperty.call(ACTION_LABEL, v);
+}
+
+export function wrapAction(action: AlbedoAction, prompt: string): string {
+  return `<albedo-action kind="${action}">\n${prompt}\n</albedo-action>`;
+}
+
+/** The action a whole message is, or null. For one-line labels (the queued strip). */
+export function actionLabelOf(text: string): string | null {
+  const blocks = parseUserBody(text);
+  const only = blocks.length === 1 ? blocks[0] : undefined;
+  return only && only.kind === 'action' ? only.label : null;
+}
+
+/** `<albedo-action>` filling the whole of a string, as Claude Code's paste wrapper leaves it. */
+const SOLE_ACTION_RE = /^\s*<albedo-action\b([^<>]*)>([\s\S]*?)<\/albedo-action>\s*$/;
+
+function parseAction(attrs: string, inner: string): UserBlock | null {
+  const action = attr(attrs, 'kind');
+  if (!isAction(action)) return null; // an unknown kind degrades to text
+  return { kind: 'action', action, label: ACTION_LABEL[action], text: unescapeXml(inner).trim() };
+}
 
 /**
  * A loaded skill arrives as a plain user row with no tags at all: the first
@@ -119,6 +165,7 @@ const KNOWN_TAGS = [
   'agent-message',
   'context',
   'pasted_content',
+  'albedo-action',
 ] as const;
 
 /**
@@ -435,8 +482,22 @@ export function parseUserBody(body: string): UserBlock[] {
         case 'agent-message':
           out.push(parseAgentMessage(attrs, inner));
           break;
-        case 'pasted_content':
-          out.push({ kind: 'pasted', id: attr(attrs, 'id'), text: unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, '') });
+        case 'pasted_content': {
+          // A button's action arrives inside the paste wrapper: the composer
+          // sends everything as a bracketed paste.
+          const sole = SOLE_ACTION_RE.exec(inner);
+          const action = sole ? parseAction(sole[1] ?? '', sole[2] ?? '') : null;
+          out.push(
+            action ?? {
+              kind: 'pasted',
+              id: attr(attrs, 'id'),
+              text: unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, ''),
+            },
+          );
+          break;
+        }
+        case 'albedo-action':
+          out.push(parseAction(attrs, inner) ?? { kind: 'text', text: unescapeXml(inner).trim() });
           break;
         case 'context':
           out.push({ kind: 'context', ref: attr(attrs, 'ref'), text: unescapeXml(inner.trim()) });
@@ -479,8 +540,8 @@ export function parseUserBody(body: string): UserBlock[] {
 
 /**
  * True when the row is nothing but machine-generated envelopes. A `!` command
- * arrives in an envelope too, but the user typed it.
+ * and an Albedo action arrive in envelopes too, but the user started them.
  */
 export function isAllEnvelopes(blocks: readonly UserBlock[]): boolean {
-  return blocks.length > 0 && blocks.every((b) => b.kind !== 'text' && b.kind !== 'shell-input');
+  return blocks.length > 0 && blocks.every((b) => b.kind !== 'text' && b.kind !== 'shell-input' && b.kind !== 'action');
 }
