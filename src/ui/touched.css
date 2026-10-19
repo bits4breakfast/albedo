@@ -5,8 +5,7 @@
 
    Density matches the task list and the transcript: hairline rows, mono for
    anything a human compares character by character (paths, status codes,
-   counts), and one accent — the `shell` badge on an uncommitted file the
-   transcript has no edit-tool call for.
+   counts). Rows show what git says; how a file was changed is not shown.
    ========================================================================== */
 
 .tf-pane {
@@ -48,7 +47,7 @@
        --tf-wash    badge ground (rows are no longer washed; the ceilings
                     below were set when they were, and still bound the badge)
        --tf-tint    notice ground
-       --tf-rule    3px row edge, notice/legend edge   (UI, needs 3.0)
+       --tf-rule    notice edge                        (UI, needs 3.0)
        --tf-hairline 1px badge edge                    (UI, needs 3.0)
        --tf-ink     amber TEXT: badge label, notice detail
        --tf-notice-ink / --tf-hand-ink   notice body, hand badge
@@ -185,20 +184,6 @@
    measures 3.7. --tf-ink is --warn in dark and a darkened amber in light. */
 .tf-warn-detail { font-family: var(--font-mono); color: var(--tf-ink); }
 
-/* The legend for `source: 'git'` rows. Present only when such a row exists —
-   it explains the accent above the rows it applies to, rather than sitting
-   there as permanent chrome. */
-.tf-legend {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
-  border-left: 2px solid var(--tf-rule);
-  background: var(--panel);
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  line-height: 1.5;
-}
-
 /* --------------------------------------------------------------------------
    Rows
    -------------------------------------------------------------------------- */
@@ -241,9 +226,8 @@
 .tf-row:hover .tf-when,
 .tf-row:hover .tf-sep { color: var(--muted); }
 
-/* No row is washed or ruled. The status letter carries WHAT changed; a file
-   the agent changed outside its edit tool gets the `shell` badge, and only
-   while that change is uncommitted. Row grounds are left to hover and focus. */
+/* No row is washed or ruled: every row is what git says, the status letter
+   carries what changed. Row grounds are left to hover and focus. */
 
 .tf-status {
   font-family: var(--font-mono);
