@@ -166,6 +166,8 @@ function DiffBody({ data }: { data: TaskFileDiff }): ReactNode {
           expand={{ oldText: result.oldText, newText: result.newText }}
           absoluteLines={result.change !== 'deleted'}
           contextPath={null}
+          // The title bar above already names the file.
+          showPath={false}
         />
       );
     case 'binary':

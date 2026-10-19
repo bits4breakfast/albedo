@@ -608,6 +608,12 @@ export interface DiffProps {
    * context" bar on top would read the file only to find nothing left.
    */
   contextPath?: string | null;
+  /**
+   * Show the file's path in the header. Off where the path is already on
+   * screen -- the editor's title bar -- so it is not said twice. The counts
+   * and the layout toggle stay either way.
+   */
+  showPath?: boolean;
 }
 
 export function Diff({
@@ -616,6 +622,7 @@ export function Diff({
   layout = 'auto',
   absoluteLines = false,
   contextPath,
+  showPath = true,
 }: DiffProps): ReactNode {
   const [ref, width] = useContainerWidth();
   const [override, setOverride] = useState<'split' | 'unified' | null>(null);
@@ -737,7 +744,7 @@ export function Diff({
   if (diff.hunks.length === 0) {
     return (
       <div className="tx-d" ref={ref}>
-        <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} />
+        <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} showPath={showPath} />
         <div className="tx-d-empty">No content changes</div>
       </div>
     );
@@ -852,6 +859,7 @@ export function Diff({
         model={model}
         resolved={resolved}
         onToggle={layout === 'auto' ? () => setOverride(resolved === 'split' ? 'unified' : 'split') : null}
+        showPath={showPath}
       />
       <div className="tx-d-body">
         {offerContext ? (
@@ -914,11 +922,13 @@ function DiffHeader({
   model,
   resolved,
   onToggle,
+  showPath,
 }: {
   diff: FileDiff;
   model: Model;
   resolved: 'split' | 'unified';
   onToggle: (() => void) | null;
+  showPath: boolean;
 }): ReactNode {
   // A rename header reads "old → new". Both sides stay visible, but only the
   // destination is a link: the source no longer exists to open.
@@ -928,13 +938,15 @@ function DiffHeader({
   const base = target.split('/').pop() ?? target;
   return (
     <div className="tx-d-head">
-      <span className="tx-d-path" title={diff.path}>
-        {renamed ? <span className="tx-d-dir">{from}</span> : null}
-        <PathLink path={target} title={target}>
-          <span className="tx-d-dir">{target.slice(0, target.length - base.length)}</span>
-          <span className="tx-d-base">{base}</span>
-        </PathLink>
-      </span>
+      {showPath ? (
+        <span className="tx-d-path" title={diff.path}>
+          {renamed ? <span className="tx-d-dir">{from}</span> : null}
+          <PathLink path={target} title={target}>
+            <span className="tx-d-dir">{target.slice(0, target.length - base.length)}</span>
+            <span className="tx-d-base">{base}</span>
+          </PathLink>
+        </span>
+      ) : null}
       <span className="tx-d-stat">
         {model.added > 0 ? <span className="tx-d-plus">+{model.added}</span> : null}
         {model.removed > 0 ? <span className="tx-d-minus">-{model.removed}</span> : null}
