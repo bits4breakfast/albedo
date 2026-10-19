@@ -501,6 +501,24 @@ Separately and independently: **the disclosure caret is too small.** Same
 context and this row, so sizing it up is one change in one place — worth doing
 regardless of what happens above.
 
+## 13. Follow-up tasks: what was left out
+
+"Follow-up…" (merged PR badge, row menu for merged or archived tasks) only
+prefills the new-task dialog. Three gaps, deliberately:
+
+- **No lineage.** Nothing records which task a follow-up came from. That needs
+  a `followup_of INTEGER REFERENCES tasks(id)` column -- a `schema.sql` change,
+  so a proposal, not something to slip in. With it the row could show "follow-up
+  of #42" and the prompt could be rebuilt later.
+- **Keyed titles share the folder.** `ACME-2398 follow-up` gets its own branch
+  (`ACME-2398-follow-up`) but, by `nameTask`'s one-worktree-per-issue rule, the
+  bare-key folder `ACME-2398`. If the shipped task still has its worktree, git
+  refuses with `path-exists`; the dialog warns, and archiving first is the fix.
+  Revisit if follow-ups-before-archiving turns out to be the common case.
+- **The prompt override is in memory.** It is consumed at the first spawn,
+  which is immediate; quitting between Create and the session starting loses it
+  and the project template applies instead.
+
 ---
 
 ## Already recorded elsewhere — do not duplicate here

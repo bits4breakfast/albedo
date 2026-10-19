@@ -43,7 +43,13 @@ export type AttentionKind =
   /** Waiting on a permission prompt. It will sit there until you answer. */
   | 'blocked'
   /** The turn ended. Nothing is stuck; you just have a result to read. */
-  | 'finished';
+  | 'finished'
+  /**
+   * The task's PR was merged. Not a session event at all -- it comes from
+   * `gh` (see `mergeNotice`) -- but it asks the same question of the owner:
+   * archive this, or follow it up.
+   */
+  | 'merged';
 
 /** Task ids currently asking for attention, newest-set last. */
 const marked = new Map<number, AttentionKind>();
@@ -108,11 +114,21 @@ export function shouldNotify(
 }
 
 /** What the banner says. The task's title leads: it is the whole point. */
-export function notificationFor(kind: AttentionKind, title: string | null, taskId: number): {
+export function notificationFor(
+  kind: AttentionKind,
+  title: string | null,
+  taskId: number,
+  /** The PR's number, for `merged`. */
+  prNumber: number | null = null,
+): {
   title: string;
   body: string;
 } {
   const name = title && title.trim().length > 0 ? title.trim() : `Task ${taskId}`;
+  if (kind === 'merged') {
+    const pr = prNumber === null ? 'PR' : `PR #${prNumber}`;
+    return { title: name, body: `${pr} merged — archive or follow up.` };
+  }
   return kind === 'blocked'
     ? { title: name, body: 'Waiting on you — Claude is asking for permission or has a question.' }
     : { title: name, body: 'Finished its turn. The result is ready to read.' };
@@ -275,6 +291,38 @@ export function noteStatusChange(
 }
 
 /**
+ * A task's PR was merged. The caller has already decided this is news (see
+ * `mergeNoticeFor`): `notify` false is a merge that happened before this run,
+ * which earns the row mark and nothing louder -- a launch must not open with a
+ * banner per PR merged last week.
+ *
+ * Same rules as a status change otherwise: the mark always, the bounce and the
+ * banner only while unfocused, and the banner through the per-(task, kind)
+ * rate limit. A "blocked" mark is never replaced: a prompt that is waiting on
+ * you outranks a merge that will still be merged in an hour.
+ */
+export function noteMerged(
+  taskId: number,
+  title: string | null,
+  prNumber: number | null,
+  notify: boolean,
+): void {
+  if (marked.get(taskId) === 'blocked') return;
+  marked.set(taskId, 'merged');
+  if (notify && !focused) {
+    requestOsAttention(false);
+    if (notificationsEnabled() && shouldNotify(lastNotified, taskId, 'merged', Date.now())) {
+      try {
+        postNotification(notificationFor('merged', title, taskId, prNumber));
+      } catch {
+        /* as in noteStatusChange */
+      }
+    }
+  }
+  emit();
+}
+
+/**
  * The transition table, kept separate so it can be tested without a window.
  *
  * `running -> idle` is the "it finished" signal. It is deliberately NOT
@@ -312,7 +360,13 @@ export function announcementFor(
   for (const [id, kind] of next) {
     if (prev.get(id) === kind) continue;
     const title = titleOf(id) ?? `Task ${id}`;
-    parts.push(kind === 'blocked' ? `${title} needs you: waiting on a permission prompt.` : `${title} finished.`);
+    parts.push(
+      kind === 'blocked'
+        ? `${title} needs you: waiting on a permission prompt.`
+        : kind === 'merged'
+          ? `${title}: pull request merged.`
+          : `${title} finished.`,
+    );
   }
   return parts.join(' ');
 }

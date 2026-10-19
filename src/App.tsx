@@ -41,6 +41,11 @@ import ImportProjects from './ui/ImportProjects';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
 import { grantProjectDirs } from './lib/fsGrants';
+import { buildFollowUp, type NewTaskPrefill } from './ui/followUp';
+import { useMergeNotices } from './ui/mergeNotice';
+import { getPrStatus } from './gh/prStore';
+import { fetchPrStatus } from './gh/gh';
+import type { PrStatus } from './gh/prStatus';
 
 /**
  * The frame.
@@ -434,6 +439,14 @@ export default function App() {
   const [panesWidth, setPanesWidth] = useState(0);
 
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  /** Set while the new-task dialog is open as a follow-up; null otherwise. */
+  const [newTaskPrefill, setNewTaskPrefill] = useState<NewTaskPrefill | null>(null);
+  /**
+   * The prompt a follow-up was created with, for its first spawn. In memory
+   * on purpose: the session starts the moment the task is created, and a
+   * prompt for a session that has already started is never sent again.
+   */
+  const [promptOverrides, setPromptOverrides] = useState<Map<number, string>>(() => new Map());
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -699,11 +712,39 @@ export default function App() {
   const initialPromptFor = useCallback(
     (task: Task): string | null => {
       if (task.sessionId !== null) return null;
+      // A follow-up's prompt was written in the dialog; empty is "none".
+      const override = promptOverrides.get(task.id);
+      if (override !== undefined) return override || null;
       const project = projects.find((p) => p.id === task.projectId) ?? null;
       return renderPromptTemplate(task, project);
     },
-    [projects],
+    [projects, promptOverrides],
   );
+
+  /**
+   * "Follow-up…": open the new-task dialog prefilled. Never creates anything.
+   *
+   * A live task's PR is in the store already. An archived task's is not
+   * polled, so it is fetched once here; the dialog opens at once with the
+   * branch-only prompt and swaps in the PR version if the lookup finds a merged
+   * PR before the user has touched the prompt.
+   */
+  const followUpSeq = useRef(0);
+  const openFollowUp = useCallback((task: Task, known?: PrStatus | null) => {
+    const seq = ++followUpSeq.current;
+    const pr = known ?? getPrStatus(task.id) ?? null;
+    const lookUp = task.status === 'archived' && pr === null;
+    setNewTaskPrefill({ ...buildFollowUp(task, pr), pending: lookUp });
+    setNewTaskOpen(true);
+    if (!lookUp) return;
+    void fetchPrStatus(task)
+      .catch(() => null)
+      .then((found) => {
+        if (seq !== followUpSeq.current) return;
+        setNewTaskPrefill(buildFollowUp(task, found));
+      });
+  }, []);
+
 
   /**
    * Read a file's current text for the diff view's context expansion.
@@ -772,6 +813,7 @@ export default function App() {
     setAnnouncement(text);
   }, [attention]);
   useEffect(() => watchFocus(), []);
+  useMergeNotices(tasks);
 
   /**
    * Adopt pre-projects task rows on launch.
@@ -1287,6 +1329,7 @@ export default function App() {
               setEndIntent('delete');
               setArchiveTarget(task);
             }}
+            onFollowUp={(task) => openFollowUp(task)}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             attention={attention}
@@ -1349,6 +1392,7 @@ export default function App() {
                       setEndIntent(intent);
                       setArchiveTarget(selected);
                     }}
+                    onFollowUp={(pr) => openFollowUp(selected, pr)}
                   />
                   <span className="main-ident-path">{selected.worktreePath}</span>
                 </>
@@ -1610,8 +1654,18 @@ export default function App() {
       <PaneErrorBoundary label="New task">
         <NewTaskDialog
           open={newTaskOpen}
-          onClose={() => setNewTaskOpen(false)}
-          onCreated={(task: Task) => {
+          prefill={newTaskPrefill}
+          onClose={() => {
+            followUpSeq.current++;
+            setNewTaskOpen(false);
+            setNewTaskPrefill(null);
+          }}
+          onCreated={(task: Task, initialPrompt?: string) => {
+            if (initialPrompt !== undefined) {
+              setPromptOverrides((prev) => new Map(prev).set(task.id, initialPrompt));
+            }
+            followUpSeq.current++;
+            setNewTaskPrefill(null);
             upsertTask(task);
             // Switch scope BEFORE selecting: the auto-select effect re-picks
             // from the active tab's list, so selecting into a tab that is not

@@ -9,6 +9,7 @@ import type { ContextUsage } from '../capture';
 import type { AttentionKind } from './attention';
 import { useShortcuts } from './shortcuts';
 import { PrRowMark } from './PrBadge';
+import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 
 /**
@@ -33,6 +34,12 @@ export interface TaskListProps {
    * the menu copy, which has to keep three verbs apart on one surface.
    */
   onDelete?: (task: Task) => void;
+  /**
+   * Opens the new-task dialog prefilled as a follow-up. Offered in the menu
+   * only for a task whose PR is merged, or that is archived (whose PR is not
+   * polled, so merged or not is looked up when the dialog opens).
+   */
+  onFollowUp?: (task: Task) => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
   contextBySession?: Map<string, ContextUsage>;
   /**
@@ -129,6 +136,7 @@ export default function TaskList({
   onNew,
   onArchive,
   onDelete,
+  onFollowUp,
   contextBySession,
   onManageProjects,
   projects,
@@ -449,6 +457,20 @@ export default function TaskList({
           >
             Copy worktree path
           </button>
+          {onFollowUp && canFollowUp(menu.task, getPrStatus(menu.task.id)) && (
+            <button
+              className="row-menu-item"
+              role="menuitem"
+              onClick={() => {
+                const task = menu.task;
+                setMenu(null);
+                onFollowUp(task);
+              }}
+            >
+              Follow-up…
+              <span className="row-menu-hint">new task from the base</span>
+            </button>
+          )}
           {/*
             Three verbs now meet on one surface and the wording is what keeps
             them apart, so each says what it costs rather than just naming

@@ -295,6 +295,14 @@
   outline-offset: -1px;
 }
 
+/* The follow-up prompt: prose, several lines, sized by the user. */
+.wt-textarea {
+  display: block;
+  min-height: 9em;
+  line-height: 1.45;
+  resize: vertical;
+}
+
 .wt-input::placeholder {
   color: var(--faint);
 }

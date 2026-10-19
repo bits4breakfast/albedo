@@ -27,19 +27,32 @@ import ProjectsDialog from './ProjectsDialog';
 import { readLastProjectId, writeLastProjectId } from './projectPrefs';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { setTaskModel } from './taskModel';
+import type { NewTaskPrefill } from './followUp';
 import './worktree.css';
 
 export interface NewTaskDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreated: (t: Task) => void;
+  /**
+   * `initialPrompt` is set only when the dialog showed a prompt field (a
+   * follow-up): it replaces the project's template for this task, and an
+   * empty string means the user cleared it and wants no prompt at all.
+   */
+  onCreated: (t: Task, initialPrompt?: string) => void;
+  /**
+   * Opens the dialog filled in -- "Follow-up…" uses it. Everything stays
+   * editable; nothing is created until the user presses Create. A new object
+   * while open (the PR lookup finishing) replaces the prompt only if the user
+   * has not touched it.
+   */
+  prefill?: NewTaskPrefill | null;
 }
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) {
+export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewTaskDialogProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(false);
@@ -47,6 +60,11 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
   const [projectsOpen, setProjectsOpen] = useState(false);
 
   const [title, setTitle] = useState('');
+  /** Shown, and sent, only when a prefill brought one. */
+  const [prompt, setPrompt] = useState('');
+  /** The prompt last put there by a prefill, to tell it from the user's edit. */
+  const appliedPrompt = useRef<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   /** '' means the user's Claude Code default; anything else is passed as --model. */
   const [model, setModel] = useState('');
   const [modelChoices, setModelChoices] = useState<ModelChoice[]>([]);
@@ -102,7 +120,7 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
 
   useEffect(() => {
     if (!open) return;
-    void loadProjects();
+    void loadProjects(prefill?.projectId ?? undefined);
     void (async () => {
       try {
         const { homeDir } = await import('@tauri-apps/api/path');
@@ -111,18 +129,47 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
         setHome('');
       }
     })();
+    // Keyed on `open` only: a prefill update must not re-pick the project
+    // under a user who has already changed it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, loadProjects]);
 
   useEffect(() => {
     if (open) return;
     setTitle('');
+    setPrompt('');
+    appliedPrompt.current = null;
     setError(null);
     setBusy(false);
   }, [open]);
 
+  // The title arrives once per open; the prompt again whenever the prefill
+  // changes, unless the user has started writing in it.
   useEffect(() => {
-    if (open) titleRef.current?.focus();
-  }, [open]);
+    if (!open || !prefill) return;
+    // Read now: the updater runs after the ref below has moved on.
+    const applied = appliedPrompt.current;
+    if (applied === null) setTitle(prefill.title);
+    setPrompt((current) => (applied === null || current === applied ? prefill.prompt : current));
+    appliedPrompt.current = prefill.prompt;
+  }, [open, prefill]);
+
+  // A follow-up's title is already right; what only the user knows is the
+  // bug, and the prompt ends on the empty line it goes in.
+  const focusPrompt = prefill !== null;
+  // The fields mount only once projects have loaded, so that is the moment.
+  const formShown = projects.length > 0;
+  useEffect(() => {
+    if (!open) return;
+    if (!focusPrompt) {
+      titleRef.current?.focus();
+      return;
+    }
+    const el = promptRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [open, focusPrompt, formShown]);
 
   useEffect(() => {
     if (!open) return;
@@ -268,9 +315,9 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
       writeLastProjectId(project.id);
       // Before onCreated: that is what mounts the terminal, which reads it.
       setTaskModel(task.id, model || null);
-      onCreated(task);
+      onCreated(task, prefill ? prompt.trim() : undefined);
     },
-    [busy, project, baseBranch, branch, worktreePath, title, model, onCreated],
+    [busy, project, baseBranch, branch, worktreePath, title, model, onCreated, prefill, prompt],
   );
 
   if (!open) return null;
@@ -295,7 +342,7 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
         >
           <div className="wt-modal-head">
             <h2 className="wt-modal-title" id="wt-newtask-title">
-              New task
+              {prefill ? 'New follow-up task' : 'New task'}
             </h2>
             <span className="wt-modal-sub">
               {project ? `a worktree under ${project.worktreeRoot}` : 'in a project'}
@@ -450,6 +497,29 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
                   </div>
                 </div>
 
+                {prefill && (
+                  <div className="wt-field">
+                    <label className="wt-label" htmlFor="wt-prompt">
+                      Initial prompt
+                    </label>
+                    <textarea
+                      id="wt-prompt"
+                      ref={promptRef}
+                      className="wt-input wt-textarea"
+                      value={prompt}
+                      rows={8}
+                      spellCheck
+                      disabled={busy}
+                      onChange={(e) => setPrompt(e.target.value)}
+                    />
+                    <div className="wt-hint">
+                      {prefill.pending
+                        ? 'Looking up the pull request…'
+                        : 'Sent once, when the session starts. Describe the bug under “What is wrong”.'}
+                    </div>
+                  </div>
+                )}
+
                 {/* --- derived preview ------------------------------------- */}
                 <div className="wt-derived">
                   {naming?.key && (
@@ -479,6 +549,12 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
                         (project ? `${project.worktreeRoot}/<slug>` : 'choose a project')}
                     </span>
                   </div>
+                  {prefill && worktreePath !== '' && worktreePath === prefill.originalWorktreePath && (
+                    <div className="wt-hint">
+                      The shipped task used this folder too. If its worktree is still there, archive
+                      it first.
+                    </div>
+                  )}
                   <div className="wt-derived-row">
                     <span className="wt-derived-key">Command</span>
                     <span className="wt-derived-val" data-pending={!canSubmit}>

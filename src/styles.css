@@ -608,6 +608,8 @@ button {
   animation: task-attention 1.4s steps(1, end) 6;
 }
 .task-row[data-attention='finished'] { border-left-color: var(--status-done); }
+/* Accent, like the merged chip and row mark it sits beside. */
+.task-row[data-attention='merged'] { border-left-color: var(--accent); }
 
 /* Selection is the stronger statement, and clearing the mark follows it. */
 .task-row[data-selected='true'][data-attention] {

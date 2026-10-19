@@ -21,10 +21,15 @@ export interface PrBadgeProps {
    * archiving is a decision, not a side effect of someone else's merge button.
    */
   onEnd?: (intent: 'archive' | 'delete') => void;
+  /**
+   * Opens the new-task dialog prefilled for a follow-up of this PR. Same
+   * discipline as `onEnd`: offered once merged, and it only opens a dialog.
+   */
+  onFollowUp?: (pr: PrStatus) => void;
 }
 
 /** Header badge: "#6 ✓ checks", "#6 ✗ 2 failing", "#6 merged  Archive… Delete…". */
-export function PrBadge({ task, onEnd }: PrBadgeProps) {
+export function PrBadge({ task, onEnd, onFollowUp }: PrBadgeProps) {
   const pr = usePrStatus(task);
   if (!task || !pr) return null;
   const label = prLabel(pr);
@@ -46,6 +51,18 @@ export function PrBadge({ task, onEnd }: PrBadgeProps) {
         )}
         <span>{label.text}</span>
       </button>
+      {pr.state === 'merged' && onFollowUp && (
+        // First: of the three, it is the one that starts work rather than
+        // ending it.
+        <button
+          type="button"
+          className="pr-end"
+          title="Merged — start a new task for a bug in what shipped (opens the new-task dialog)"
+          onClick={() => onFollowUp(pr)}
+        >
+          Follow-up…
+        </button>
+      )}
       {pr.state === 'merged' && onEnd && (
         <>
           {/* Same verbs and ellipses as the row menu: both open the dialog,
