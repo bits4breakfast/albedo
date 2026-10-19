@@ -835,7 +835,8 @@
   border: 1px solid var(--border);
   background: var(--panel-inset);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* `clip`, not `hidden`: see .tx-d-body. Clips to the radius all the same. */
+  overflow: clip;
 }
 
 .tx-d-head {
@@ -878,7 +879,16 @@
 }
 
 .tx-d-body {
-  overflow-x: hidden;
+  /*
+     `clip`, never `hidden`. `overflow-x: hidden` silently turns the other axis
+     from `visible` into `auto`, which made the whole diff body a vertical
+     scroll container with no height limit -- scrollable by a sub-pixel of
+     rounding at most. WebKit latches a wheel gesture to the scroller under
+     the pointer, so the first gesture over a diff landed here, rubber-banded
+     and moved nothing; only the next one reached the real scroller. `clip`
+     clips the same and never makes a scroll container.
+  */
+  overflow-x: clip;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   line-height: 1.5;
