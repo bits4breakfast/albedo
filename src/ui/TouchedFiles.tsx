@@ -81,13 +81,11 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
   const [committedAt, setCommittedAt] = useState<Map<string, number>>(() => new Map());
   /** When each uncommitted file last changed on disk. */
   const [modifiedAt, setModifiedAt] = useState<Map<string, number>>(() => new Map());
-  const [showOutside, setShowOutside] = useState(false);
   /** The branch's commits, newest first, for the by-commit view. */
   const [commits, setCommits] = useState<BranchCommit[]>([]);
   const [mode, setMode] = useState<ViewMode>(readMode);
   /** Commits the user folded away in the by-commit view. */
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
-  const [showUnchanged, setShowUnchanged] = useState(false);
 
   const openFile = useSafeOpenFile();
 
@@ -227,23 +225,19 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
   }, []);
 
   /*
-     Sections, by where the change stands -- which is the question a reviewer
-     brings, and which a flat list made you work out row by row:
+     The branch's change set, as git sees it, in two sections:
 
        uncommitted   git status sees it
        committed     in a commit on this branch, clean now
-       no net change the transcript edited it, but neither git status nor the
-                     branch diff shows a difference (edited back, or edited
-                     before the branch left its base)
-       outside       not in this worktree at all (a memory file, /tmp)
 
-     Files the branch committed but this transcript never mentions are added
-     from git -- the change set is the branch's, not only this session's.
+     A file the transcript touched that git shows no change for (edited back,
+     or outside the worktree altogether) is not part of the change set and is
+     not listed. Files the branch committed that this transcript never
+     mentions are added from git: the change set is the branch's, not only
+     this session's.
   */
   const view = useMemo(() => {
-    const inside: TouchedFile[] = [];
-    const outside: TouchedFile[] = [];
-    for (const f of files) (f.path.startsWith('/') ? outside : inside).push(f);
+    const inside = files.filter((f) => !f.path.startsWith('/'));
     const known = new Set(inside.map((f) => f.path));
     const fromGit: TouchedFile[] = [];
     for (const path of lines.keys()) {
@@ -268,8 +262,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
     const committed = [...inside.filter((f) => f.gitStatus === null && lines.has(f.path)), ...fromGit]
       .map(withTime)
       .sort(byRecent);
-    const unchanged = inside.filter((f) => f.gitStatus === null && !lines.has(f.path));
-    return { uncommitted, committed, unchanged, outside };
+    return { uncommitted, committed };
   }, [files, lines, committedAt, modifiedAt]);
 
   // The order the editor steps through with next / previous file: what is on
@@ -296,7 +289,6 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
     [view],
   );
 
-  const edits = useMemo(() => files.reduce((n, f) => n + f.editCount, 0), [files]);
 
   // Keep the open file's row in view as tabs change, without yanking the
   // list when it already shows.
@@ -320,7 +312,6 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
         <span className="tf-head-count">
           {view.uncommitted.length + view.committed.length} file
           {view.uncommitted.length + view.committed.length === 1 ? '' : 's'}
-          {edits > 0 ? ` · ${edits} edit${edits === 1 ? '' : 's'}` : ''}
         </span>
         <span className="tf-mode" role="group" aria-label="Group files">
           <button
@@ -434,48 +425,36 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
         ) : null}
         {mode === 'commit' ? null : (
           [
-            ['Uncommitted', view.uncommitted, true, null],
-            ['Committed on this branch', view.committed, true, null],
-            ['No net change', view.unchanged, showUnchanged, () => setShowUnchanged((v) => !v)],
-            ['Outside this worktree', view.outside, showOutside, () => setShowOutside((v) => !v)],
+            ['Uncommitted', view.uncommitted],
+            ['Committed on this branch', view.committed],
           ] as const
-        ).map(([label, rows, open, toggle]) =>
+        ).map(([label, rows]) =>
           rows.length === 0 ? null : (
             <section key={label} className="tf-section">
-              {toggle ? (
-                <button type="button" className="tf-section-head" aria-expanded={open} onClick={toggle}>
-                  <span className="tf-section-caret">{open ? '▾' : '▸'}</span> {label}
-                  <span className="tf-section-count">{rows.length}</span>
-                </button>
-              ) : (
-                <div className="tf-section-head">
-                  {label}
-                  <span className="tf-section-count">{rows.length}</span>
-                </div>
-              )}
-              {open
-                ? rows.map((f) => (
-                    <FileRow
-                      key={f.path}
-                      file={f}
-                      change={lines.get(f.path) ?? null}
-                      kind={kinds.get(f.path) ?? null}
-                      now={now}
-                      onOpen={onOpen}
-                      current={f.path === activePath}
-                    />
-                  ))
-                : null}
+              <div className="tf-section-head">
+                {label}
+                <span className="tf-section-count">{rows.length}</span>
+              </div>
+              {rows.map((f) => (
+                <FileRow
+                  key={f.path}
+                  file={f}
+                  change={lines.get(f.path) ?? null}
+                  kind={kinds.get(f.path) ?? null}
+                  now={now}
+                  onOpen={onOpen}
+                  current={f.path === activePath}
+                />
+              ))}
             </section>
           ),
         )}
 
-        {files.length === 0 && loaded && error === null ? (
+        {mode !== 'commit' && view.uncommitted.length === 0 && view.committed.length === 0 && loaded && error === null ? (
           <div className="tf-empty">
-            Nothing touched yet.
+            No changes yet.
             <span className="tf-empty-hint">
-              Files appear here as the agent edits them, and whenever git sees a change in{' '}
-              <span className="tf-mono">{task.worktreePath}</span>.
+              Files appear here as soon as git sees a change in <span className="tf-mono">{task.worktreePath}</span>.
             </span>
           </div>
         ) : null}
@@ -609,8 +588,7 @@ const KIND_WORDS: Record<ChangeKind, string> = {
 
 function rowTitle(file: TouchedFile, kind: ChangeKind | null, now: number): string {
   const facts: string[] = [];
-  facts.push(file.editCount === 0 ? 'no edit-tool calls' : `${file.editCount} edit call${file.editCount === 1 ? '' : 's'}`);
-  if (file.lastTouchedAt !== null) facts.push(`last touched ${relativeTime(file.lastTouchedAt, now)} ago`);
+  if (file.lastTouchedAt !== null) facts.push(`changed ${relativeTime(file.lastTouchedAt, now)} ago`);
   if (file.gitStatus !== null) facts.push(`git ${file.gitStatus.trim() || '--'}`);
   else if (kind !== null) facts.push(KIND_WORDS[kind]);
   if (file.handEdited) facts.push('saved by hand in the editor');
