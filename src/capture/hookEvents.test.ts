@@ -5,6 +5,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   alwaysAllowRules,
+  applyHookEvents,
+  completeLines,
+  currentPrompt,
+  emptyPending,
+  isQuiet,
+  MAX_LINE_CHARS,
   ANSWER_WINDOW_S,
   answerFileName,
   answerText,
@@ -16,7 +22,6 @@ import {
   parseHookLines,
   permissionDecision,
   questionDecision,
-  withoutAnswered,
   type HookEvent,
   type PendingPrompt,
 } from './hookEvents';
@@ -67,7 +72,7 @@ describe('derivePending', () => {
     expect(derivePending([ask, ev('UserPromptSubmit')])).toBeNull();
   });
 
-  it('a permission prompt (no tool_use_id) is cleared by the next PostToolUse', () => {
+  it('a permission line with no request id (no waiting hook) is still cleared by the next PostToolUse', () => {
     const perm = ev('PermissionRequest', { toolName: 'Bash', toolInput: { command: 'ls' } });
     expect(derivePending([perm, ev('PostToolUse', { toolUseId: 'x' })])).toBeNull();
   });
@@ -104,7 +109,17 @@ describe('hookSettingsArg', () => {
   it('is valid JSON naming every hook, quoting the script path', () => {
     const j = JSON.parse(hookSettingsArg(7, '/Users/a b/.albedo/hook.sh'));
     expect(Object.keys(j.hooks).sort()).toEqual(
-      ['Notification', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreToolUse', 'Stop', 'UserPromptSubmit'].sort(),
+      [
+        'Notification',
+        'PermissionRequest',
+        'PostToolUse',
+        'PostToolUseFailure',
+        'PreToolUse',
+        'SessionEnd',
+        'SessionStart',
+        'Stop',
+        'UserPromptSubmit',
+      ].sort(),
     );
     expect(j.hooks.PreToolUse[0].matcher).toBe('AskUserQuestion');
     expect(j.hooks.Stop[0].hooks[0].command).toBe('sh "/Users/a b/.albedo/hook.sh" 7');
@@ -337,16 +352,13 @@ describe('isAnswerable', () => {
   });
 });
 
-describe('withoutAnswered', () => {
-  it('retires a prompt whose answer the hook took, and nothing else', () => {
-    const done = new Set(['9-1700000000000']);
-    expect(withoutAnswered(perm(), done)).toBeNull();
-    expect(withoutAnswered(question(), done)).toBeNull();
-    const other = perm({ requestId: '10-1700000000000' });
-    expect(withoutAnswered(other, done)).toBe(other);
-    const noHook = perm({ requestId: null });
-    expect(withoutAnswered(noHook, done)).toBe(noHook);
-    expect(withoutAnswered(null, done)).toBeNull();
+describe('derivePending: answers already taken', () => {
+  it('skips a request whose answer the hook took, and shows the next one', () => {
+    const a = ev('PermissionRequest', { toolName: 'Bash', toolInput: { command: 'a' }, requestId: '9-1700000000000' }, 1);
+    const b = ev('PermissionRequest', { toolName: 'Bash', toolInput: { command: 'b' }, requestId: '10-1700000000000' }, 2);
+    expect(derivePending([a], new Set(['9-1700000000000']))).toBeNull();
+    expect(derivePending([a, b], new Set(['9-1700000000000']))).toMatchObject({ requestId: '10-1700000000000' });
+    expect(derivePending([a, b], new Set(['other']))).toMatchObject({ requestId: '9-1700000000000' });
   });
 });
 
@@ -401,5 +413,179 @@ describe('HOOK_SCRIPT waiting for an answer, run for real', () => {
     );
     expect(stdout).toBe('');
     expect(ms).toBeGreaterThanOrEqual(900);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Request lifetime: end markers, concurrency, session end
+// ---------------------------------------------------------------------------
+
+const req = (id: string, command: string, at = 1) =>
+  ev('PermissionRequest', { toolName: 'Bash', toolInput: { command }, requestId: id }, at);
+const end = (id: string) => ev('AlbedoReqEnd', { requestId: id });
+
+describe('derivePending: a waiting request ends only by its own end marker', () => {
+  it('retires the request named by the marker, however the hook ended', () => {
+    // Terminal "No" or Esc: no PostToolUse, no Stop -- only the marker.
+    expect(derivePending([req('1-1700000000000', 'ls'), end('1-1700000000000')])).toBeNull();
+    expect(derivePending([req('1-1700000000000', 'ls'), end('2-1700000000000')])).toMatchObject({ requestId: '1-1700000000000' });
+  });
+
+  it('an unrelated PostToolUse (a parallel subagent) does not clear it', () => {
+    const p = derivePending([req('1-1700000000000', 'ls'), ev('PostToolUse', { toolUseId: 'sub-read' }), ev('PostToolUseFailure')]);
+    expect(p).toMatchObject({ kind: 'permission', requestId: '1-1700000000000' });
+  });
+
+  it('a question that adopted its tool_use_id still clears on that PostToolUse, or on its marker', () => {
+    const pre = ev('PreToolUse', { toolName: 'AskUserQuestion', toolUseId: 'tu1', toolInput: ASK_INPUT }, 1);
+    const q = ev('PermissionRequest', { toolName: 'AskUserQuestion', toolInput: ASK_INPUT, requestId: '3-1700000000000' }, 2);
+    expect(derivePending([pre, q, ev('PostToolUse', { toolUseId: 'other' })])).toMatchObject({ kind: 'question' });
+    expect(derivePending([pre, q, ev('PostToolUse', { toolUseId: 'tu1' })])).toBeNull();
+    expect(derivePending([pre, q, end('3-1700000000000')])).toBeNull();
+  });
+
+  it('several open at once: the oldest shows, and the task stays blocked until all end', () => {
+    const evs = [req('1-1700000000000', 'a', 1), req('2-1700000000000', 'b', 2), req('3-1700000000000', 'c', 3)];
+    expect(derivePending(evs)).toMatchObject({ summary: 'Bash: a' });
+    expect(derivePending([...evs, end('1-1700000000000')])).toMatchObject({ summary: 'Bash: b' });
+    expect(derivePending([...evs, end('2-1700000000000')])).toMatchObject({ summary: 'Bash: a' });
+    expect(derivePending([...evs, end('1-1700000000000'), end('2-1700000000000')])).toMatchObject({ summary: 'Bash: c' });
+    expect(derivePending([...evs, end('1-1700000000000'), end('2-1700000000000'), end('3-1700000000000')])).toBeNull();
+  });
+
+  it('SessionEnd, SessionStart, Stop and a new prompt clear every open request', () => {
+    const evs = [req('1-1700000000000', 'a'), req('2-1700000000000', 'b')];
+    for (const name of ['SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit']) expect(derivePending([...evs, ev(name)])).toBeNull();
+  });
+
+  it('applies incrementally: the same events in two batches derive the same prompt', () => {
+    const evs = [req('1-1700000000000', 'a', 1), req('2-1700000000000', 'b', 2), end('1-1700000000000')];
+    const s = emptyPending();
+    applyHookEvents(s, evs.slice(0, 2));
+    expect(isQuiet(s)).toBe(false);
+    applyHookEvents(s, evs.slice(2));
+    expect(currentPrompt(s)).toEqual(derivePending(evs));
+    applyHookEvents(s, [end('2-1700000000000')]);
+    expect(isQuiet(s)).toBe(true);
+  });
+});
+
+describe('completeLines', () => {
+  it('holds back a trailing partial line, and cuts on bytes, not characters', () => {
+    const enc = new TextEncoder();
+    expect(completeLines(enc.encode('{"a":1}\n{"b":'))).toEqual({ text: '{"a":1}\n', consumed: 8 });
+    expect(completeLines(enc.encode('{"b":'))).toEqual({ text: '', consumed: 0 });
+    const multi = enc.encode('"é"\n');
+    expect(completeLines(multi).consumed).toBe(multi.length);
+  });
+});
+
+async function until<T>(get: () => T | null, ms = 5_000): Promise<T> {
+  const stop = Date.now() + ms;
+  for (;;) {
+    const v = get();
+    if (v !== null) return v;
+    if (Date.now() > stop) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, 30));
+  }
+}
+
+function setupScript(): { home: string; script: string; file: string } {
+  const home = mkdtempSync(join(tmpdir(), 'albedo-hook-'));
+  const script = join(home, 'hook.sh');
+  writeFileSync(script, HOOK_SCRIPT);
+  return { home, script, file: join(home, '.albedo/events/task-42.jsonl') };
+}
+
+const linesOf = (file: string) => (existsSync(file) ? parseHookLines(readFileSync(file, 'utf8')) : []);
+
+describe('HOOK_SCRIPT: end markers, run for real', () => {
+  const PAYLOAD = JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } });
+
+  it('writes the marker when the window closes unanswered', () => {
+    const { home, script, file } = setupScript();
+    spawnSync('sh', [script, '42', '1'], { input: PAYLOAD, env: { ...process.env, HOME: home } });
+    const [r, e] = linesOf(file);
+    expect(e).toMatchObject({ event: 'AlbedoReqEnd', requestId: r?.requestId });
+    expect(derivePending(linesOf(file))).toBeNull();
+  });
+
+  it('writes the marker after printing a card answer', async () => {
+    const { home, script, file } = setupScript();
+    const child = spawn('sh', [script, '42', '5'], { env: { ...process.env, HOME: home } });
+    let out = '';
+    child.stdout.on('data', (b: Buffer) => (out += b.toString()));
+    const closed = new Promise((r) => child.on('close', r));
+    child.stdin.end(PAYLOAD);
+    const id = await until(() => linesOf(file)[0]?.requestId ?? null);
+    writeFileSync(join(home, '.albedo/events', answerFileName(42, id)), '{"ok":1}');
+    await closed;
+    expect(out).toBe('{"ok":1}');
+    expect(linesOf(file).map((e) => e.event)).toEqual(['PermissionRequest', 'AlbedoReqEnd']);
+  });
+
+  it('writes the marker promptly when SIGTERMed (the terminal answered), printing nothing', async () => {
+    const { home, script, file } = setupScript();
+    const child = spawn('sh', [script, '42', '30'], { env: { ...process.env, HOME: home } });
+    let out = '';
+    child.stdout.on('data', (b: Buffer) => (out += b.toString()));
+    const closed = new Promise((r) => child.on('close', r));
+    child.stdin.end(PAYLOAD);
+    const id = await until(() => linesOf(file)[0]?.requestId ?? null);
+    const t = Date.now();
+    child.kill('SIGTERM');
+    await closed;
+    expect(Date.now() - t).toBeLessThan(2_000);
+    expect(out).toBe('');
+    expect(linesOf(file)[1]).toMatchObject({ event: 'AlbedoReqEnd', requestId: id });
+    expect(derivePending(linesOf(file))).toBeNull();
+  });
+});
+
+describe('HOOK_SCRIPT: safety, run for real', () => {
+  const env = (home: string) => ({ ...process.env, HOME: home });
+
+  it('ignores a non-numeric task id: nothing is written anywhere', () => {
+    const { home, script } = setupScript();
+    const r = spawnSync('sh', [script, '../x', '1'], { input: '{"hook_event_name":"Stop"}', env: env(home) });
+    expect(r.status).toBe(0);
+    expect(existsSync(join(home, '.albedo'))).toBe(false);
+  });
+
+  it('treats the payload as data: format specifiers and shell syntax are kept, never run', () => {
+    const { home, script, file } = setupScript();
+    const nasty = `%s %n $(touch ${join(home, 'pwned')}) \`touch ${join(home, 'pwned2')}\` \\" ' \${HOME}`;
+    const payload = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 't', tool_input: { x: nasty } });
+    spawnSync('sh', [script, '42', '1'], { input: payload, env: env(home) });
+    expect(linesOf(file)[0]?.toolInput).toEqual({ x: nasty });
+    expect(existsSync(join(home, 'pwned')) || existsSync(join(home, 'pwned2'))).toBe(false);
+  });
+
+  it('reduces an oversized prompt payload to its name and tool, still one valid line', () => {
+    const { home, script, file } = setupScript();
+    const payload = JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: { content: 'x'.repeat(MAX_LINE_CHARS + 10) } });
+    spawnSync('sh', [script, '42', '0'], { input: payload, env: env(home) });
+    const text = readFileSync(file, 'utf8');
+    expect(text.length).toBeLessThan(1_000);
+    expect(linesOf(file)[0]).toMatchObject({ event: 'PermissionRequest', toolName: 'Write', toolInput: null });
+    expect(derivePending(linesOf(file).slice(0, 1))).toMatchObject({ kind: 'permission', summary: 'Write' });
+  });
+
+  it('concurrent hooks with large payloads never tear a line', async () => {
+    const { home, script, file } = setupScript();
+    const N = 16;
+    await Promise.all(
+      Array.from({ length: N }, (_, i) => {
+        const payload = JSON.stringify({ hook_event_name: 'Notification', notification_type: 'x', message: String(i % 10).repeat(60_000) });
+        return new Promise<void>((resolve) => {
+          const c = spawn('sh', [script, '42'], { env: env(home) });
+          c.on('close', () => resolve());
+          c.stdin.end(payload);
+        });
+      }),
+    );
+    const text = readFileSync(file, 'utf8');
+    expect(text.split('\n').filter(Boolean)).toHaveLength(N);
+    expect(parseHookLines(text)).toHaveLength(N);
   });
 });

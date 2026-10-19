@@ -60,7 +60,18 @@
  */
 
 import { homeDir } from '@tauri-apps/api/path';
-import { exists, mkdir, readTextFile, rename, watch, writeTextFile, type UnwatchFn } from '@tauri-apps/plugin-fs';
+import {
+  exists,
+  mkdir,
+  open,
+  readTextFile,
+  rename,
+  SeekMode,
+  stat,
+  watch,
+  writeTextFile,
+  type UnwatchFn,
+} from '@tauri-apps/plugin-fs';
 
 // ---------------------------------------------------------------------------
 // What a prompt is
@@ -263,30 +274,70 @@ function sameQuestions(a: readonly PromptQuestion[], b: readonly PromptQuestion[
 }
 
 /**
- * The prompt a session is waiting on right now, or null.
+ * Written by HOOK_SCRIPT when a PermissionRequest hook ends, however it ends:
+ * its answer printed, its window closed, or Claude Code killing it because the
+ * terminal answered first. Carries the request id, nothing else.
  *
- * Replays events in order. A prompt is raised by `PermissionRequest` (a
- * permission dialog) or by `PreToolUse` of AskUserQuestion, and cleared by
- * anything that proves Claude moved on: the tool finishing, the turn stopping,
- * a new user prompt, or a different tool starting.
+ * This is what retires a permission prompt. Nothing else can: the payload has
+ * no tool_use_id, a refused tool fires no PostToolUse, and an interrupted turn
+ * (the terminal's "No", or Esc) fires no Stop.
+ */
+const REQ_END = 'AlbedoReqEnd';
+
+/**
+ * Everything derivation carries from one event to the next. Kept, not
+ * recomputed, so the event file can be read incrementally and compacted.
+ */
+export interface PendingState {
+  /**
+   * Prompts whose PermissionRequest hook is still waiting, by request id, in
+   * arrival order. Several can be open at once: parallel subagents each ask.
+   */
+  open: Map<string, PendingPrompt>;
+  /**
+   * A prompt with no waiting hook behind it: AskUserQuestion's PreToolUse
+   * before its PermissionRequest lands, a fallback notice, or a request line
+   * with no id. Cleared by the older, looser rules below.
+   */
+  loose: PendingPrompt | null;
+}
+
+export function emptyPending(): PendingState {
+  return { open: new Map(), loose: null };
+}
+
+/** True when nothing is waiting: replaying from empty would be equivalent. */
+export function isQuiet(s: PendingState): boolean {
+  return s.open.size === 0 && s.loose === null;
+}
+
+/**
+ * Advance `s` by `events`, in order. Mutates and returns it.
+ *
+ * A prompt is raised by `PermissionRequest` (a permission dialog) or by
+ * `PreToolUse` of AskUserQuestion. A request with a waiting hook is retired
+ * ONLY by its own end marker (or by its tool_use_id finishing, for a question
+ * that adopted one) -- never by an unrelated PostToolUse, which may be a
+ * parallel subagent's. Stop, a new user prompt, and the session ending or
+ * restarting retire everything: none can happen while a dialog is up.
  *
  * `Notification` is only a fallback (see the `notice` kind): it fires for idle
  * reminders as well as prompts, and the events above carry the detail.
  */
-export function derivePending(events: readonly HookEvent[]): PendingPrompt | null {
-  let pending: PendingPrompt | null = null;
+export function applyHookEvents(s: PendingState, events: readonly HookEvent[]): PendingState {
   for (const e of events) {
     switch (e.event) {
-      case 'PermissionRequest':
+      case 'PermissionRequest': {
+        let prompt: PendingPrompt;
         if (e.toolName === ASK_TOOL) {
           // AskUserQuestion asks permission too: this is the same question its
           // PreToolUse raised, now with a hook waiting to carry the answer. Keep
           // that tool_use_id (this payload has none) so its PostToolUse clears it.
           const questions = questionsOf(e.toolInput);
-          // (Widened: tsc narrows the loop variable to its initial null here.)
-          const prev = pending as PendingPrompt | null;
+          const prev = s.loose;
           const keep = prev?.kind === 'question' && sameQuestions(prev.questions, questions) ? prev : null;
-          pending = {
+          if (keep) s.loose = null;
+          prompt = {
             kind: 'question',
             toolUseId: keep?.toolUseId ?? null,
             questions,
@@ -294,21 +345,32 @@ export function derivePending(events: readonly HookEvent[]): PendingPrompt | nul
             requestId: e.requestId,
             at: e.at,
           };
-          break;
+        } else {
+          prompt = {
+            kind: 'permission',
+            toolUseId: e.toolUseId,
+            toolName: e.toolName ?? 'a tool',
+            summary: summarize(e.toolName ?? 'a tool', e.toolInput),
+            requestId: e.requestId,
+            alwaysAllow: alwaysAllowRules(e.suggestions),
+            at: e.at,
+          };
         }
-        pending = {
-          kind: 'permission',
-          toolUseId: e.toolUseId,
-          toolName: e.toolName ?? 'a tool',
-          summary: summarize(e.toolName ?? 'a tool', e.toolInput),
-          requestId: e.requestId,
-          alwaysAllow: alwaysAllowRules(e.suggestions),
-          at: e.at,
-        };
+        if (e.requestId === null) {
+          s.loose = prompt;
+        } else {
+          // A fallback notice for this same dialog is now redundant.
+          if (s.loose?.kind === 'notice') s.loose = null;
+          s.open.set(e.requestId, prompt);
+        }
+        break;
+      }
+      case REQ_END:
+        if (e.requestId !== null) s.open.delete(e.requestId);
         break;
       case 'PreToolUse':
         if (e.toolName === ASK_TOOL) {
-          pending = {
+          s.loose = {
             kind: 'question',
             toolUseId: e.toolUseId,
             questions: questionsOf(e.toolInput),
@@ -316,37 +378,57 @@ export function derivePending(events: readonly HookEvent[]): PendingPrompt | nul
             requestId: null,
             at: e.at,
           };
-        } else if (pending && e.toolUseId !== pending.toolUseId) {
-          pending = null;
+        } else if (s.loose && e.toolUseId !== s.loose.toolUseId) {
+          s.loose = null;
         }
         break;
       case 'Notification':
         // Only the types that mean "needs you", and only when nothing more
         // detailed is already showing. Idle reminders are not prompts.
         if (
-          pending === null &&
+          isQuiet(s) &&
           (e.notificationType === 'permission_prompt' || e.notificationType === 'elicitation_dialog')
         ) {
-          pending = { kind: 'notice', toolUseId: null, message: e.message ?? 'Claude needs your input', at: e.at };
+          s.loose = { kind: 'notice', toolUseId: null, message: e.message ?? 'Claude needs your input', at: e.at };
         }
         break;
       case 'PostToolUse':
-      case 'PostToolUseFailure':
-        if (pending && (e.toolUseId === null || pending.toolUseId === null || e.toolUseId === pending.toolUseId)) {
-          pending = null;
+      case 'PostToolUseFailure': {
+        const l = s.loose;
+        if (l && (e.toolUseId === null || l.toolUseId === null || e.toolUseId === l.toolUseId)) s.loose = null;
+        // Only an exact id: a request without one waits for its end marker.
+        if (e.toolUseId !== null) {
+          for (const [req, p] of s.open) if (p.toolUseId === e.toolUseId) s.open.delete(req);
         }
         break;
+      }
       case 'Stop':
       case 'UserPromptSubmit':
       case 'SessionEnd':
       case 'SessionStart':
-        pending = null;
+        s.open.clear();
+        s.loose = null;
         break;
       default:
         break;
     }
   }
-  return pending;
+  return s;
+}
+
+/**
+ * What the card shows: the OLDEST open request whose answer was not already
+ * taken (`done`), else the loose prompt, else null. The task reads blocked
+ * while this is non-null, i.e. while any request is open.
+ */
+export function currentPrompt(s: PendingState, done: ReadonlySet<string> = new Set()): PendingPrompt | null {
+  for (const [req, p] of s.open) if (!done.has(req)) return p;
+  return s.loose;
+}
+
+/** The prompt a session is waiting on, replaying `events` from nothing. Pure. */
+export function derivePending(events: readonly HookEvent[], done?: ReadonlySet<string>): PendingPrompt | null {
+  return currentPrompt(applyHookEvents(emptyPending(), events), done);
 }
 
 // ---------------------------------------------------------------------------
@@ -479,12 +561,24 @@ export function answerFileName(taskId: number, requestId: string): string {
 export const ALBEDO_DIR = '.albedo';
 
 /**
+ * Longest prompt payload HOOK_SCRIPT keeps whole, in characters. Well under
+ * what one `cat` writes in a single write(2), so a line stays one write.
+ */
+export const MAX_LINE_CHARS = 65_536;
+
+/**
  * POSIX sh, no dependencies (no jq, no python: macOS may not have them).
  *
  * Reads one payload, stamps it with a time, and appends ONE line. Detail is
  * kept only for the events that raise a prompt; everything else is reduced to
  * its name and tool_use_id, because a PostToolUse payload carries the whole
- * tool_response and can be megabytes. Always exits 0.
+ * tool_response and can be megabytes. A prompt payload over
+ * {@link MAX_LINE_CHARS} is reduced too, to its name and tool name: the card
+ * then shows less, and the terminal still has it all. Always exits 0.
+ *
+ * Each line is built in a scratch file and appended by one `cat`, i.e. one
+ * write(2) to an O_APPEND file: concurrent hooks (parallel subagents) cannot
+ * interleave inside a line, which a shell `printf >>` of a large payload can.
  *
  * Every event but one prints nothing, so it can never block or alter Claude
  * Code. The exception is `PermissionRequest`: it stamps a request id, then
@@ -493,37 +587,65 @@ export const ALBEDO_DIR = '.albedo';
  * running out, or Claude Code killing it because the terminal answered first
  * -- leaves the decision to the terminal, which is the behaviour without
  * Albedo. Nothing here can produce a decision the user did not click.
+ *
+ * However that hook ends, its EXIT trap appends {@link REQ_END} with its
+ * request id; TERM/INT/HUP are trapped to exit through it. The wait is
+ * `sleep & wait`, so a signal interrupts it at once rather than after the
+ * sleep. Only SIGKILL skips the marker, and Stop or the pty exiting covers it.
+ *
+ * The payload only ever reaches printf as a `%s` argument or a variable
+ * expansion, never as code or a format; the task id is checked to be numeric
+ * before it becomes part of a path.
  */
 export const HOOK_SCRIPT = `#!/bin/sh
 # Written by Albedo. Appends Claude Code hook events to a per-task file.
+case "$1" in ''|*[!0-9]*) exit 0 ;; esac
 dir="$HOME/${ALBEDO_DIR}/events"
 mkdir -p "$dir" 2>/dev/null
 f="$dir/task-$1.jsonl"
+# One line, one write: concurrent hooks must not interleave inside a line.
+emit() {
+  t="$dir/.line-$$-$2"
+  printf '%s\\n' "$1" > "$t" && cat "$t" >> "$f"
+  rm -f "$t"
+}
 payload=$(cat)
 now=$(date +%s)000
-ev=$(printf '%s' "$payload" | sed -n 's/.*"hook_event_name" *: *"\\([^"]*\\)".*/\\1/p')
+ev=$(printf '%s' "$payload" | sed -n 's/.*"hook_event_name" *: *"\\([^"\\\\]*\\)".*/\\1/p')
+case "$ev" in
+  PermissionRequest|PreToolUse|Notification)
+    body=$(printf '%s' "$payload" | tr -d '\\n')
+    if [ "\${#body}" -gt ${MAX_LINE_CHARS} ]; then
+      tool=$(printf '%s' "$body" | sed -n 's/.*"tool_name" *: *"\\([^"\\\\]*\\)".*/\\1/p')
+      body="{\\"hook_event_name\\":\\"$ev\\",\\"tool_name\\":\\"$tool\\"}"
+    fi ;;
+esac
 case "$ev" in
   PermissionRequest)
     req="$$-$now"
-    body=$(printf '%s' "$payload" | tr -d '\\n')
-    printf '%s,"albedo_at":%s,"albedo_req":"%s"}\\n' "\${body%\\}}" "$now" "$req" >> "$f"
-    # Answers written after their hook was gone are never read; sweep them.
-    find "$dir" -name 'answer-*' -mmin +180 -exec rm -f {} + 2>/dev/null
+    # However this hook ends -- answered here, window closed, or killed because
+    # the terminal answered -- say so, by request id.
+    trap 'emit "{\\"hook_event_name\\":\\"${REQ_END}\\",\\"albedo_req\\":\\"$req\\",\\"albedo_at\\":$(date +%s)000}" end' EXIT
+    trap 'exit 0' TERM INT HUP
+    emit "\${body%\\}},\\"albedo_at\\":$now,\\"albedo_req\\":\\"$req\\"}" req
+    # Answers written after their hook was gone are never read; sweep them,
+    # and any scratch line a killed hook left behind.
+    find "$dir" \\( -name 'answer-*' -o -name '.line-*' \\) -mmin +180 -exec rm -f {} + 2>/dev/null
     ans="$dir/answer-$1-$req.json"
     # $2 overrides the window, in seconds; only the tests pass it.
     win=\${2:-${ANSWER_WINDOW_S}}
     i=0
     while [ "$i" -lt $((win * 2)) ]; do
       if [ -f "$ans" ]; then cat "$ans"; rm -f "$ans"; exit 0; fi
-      sleep 0.5
+      sleep 0.5 >/dev/null 2>&1 &
+      wait $!
       i=$((i + 1))
     done ;;
   PreToolUse|Notification)
-    body=$(printf '%s' "$payload" | tr -d '\\n')
-    printf '%s,"albedo_at":%s}\\n' "\${body%\\}}" "$now" >> "$f" ;;
+    emit "\${body%\\}},\\"albedo_at\\":$now}" ev ;;
   *)
-    id=$(printf '%s' "$payload" | sed -n 's/.*"tool_use_id" *: *"\\([^"]*\\)".*/\\1/p')
-    printf '{"hook_event_name":"%s","tool_use_id":"%s","albedo_at":%s}\\n' "$ev" "$id" "$now" >> "$f" ;;
+    id=$(printf '%s' "$payload" | sed -n 's/.*"tool_use_id" *: *"\\([^"\\\\]*\\)".*/\\1/p')
+    emit "{\\"hook_event_name\\":\\"$ev\\",\\"tool_use_id\\":\\"$id\\",\\"albedo_at\\":$now}" ev ;;
 esac
 exit 0
 `;
@@ -537,7 +659,9 @@ exit 0
  * hook entries from the user's own settings still run alongside these.
  *
  * `PermissionRequest` payloads carry no `tool_use_id` (documented), so a
- * permission prompt is cleared by the next PostToolUse of any tool, or by Stop.
+ * permission prompt is cleared by its own end marker ({@link REQ_END}), never
+ * by another tool's PostToolUse. `SessionStart` and `SessionEnd` clear
+ * everything: `/clear`, `/exit`, and a resume start over.
  *
  * `PermissionRequest` gets its own `timeout`, a little past the script's own
  * window so the script quits first: the default (600 s) would cut the answer
@@ -556,6 +680,8 @@ export function hookSettingsArg(taskId: number, scriptPath: string): string {
       PostToolUseFailure: [{ hooks: hook }],
       Stop: [{ hooks: hook }],
       UserPromptSubmit: [{ hooks: hook }],
+      SessionStart: [{ hooks: hook }],
+      SessionEnd: [{ hooks: hook }],
     },
   });
 }
@@ -568,7 +694,12 @@ type Listener = (taskId: number, prompt: PendingPrompt | null) => void;
 
 const listeners = new Set<Listener>();
 const pending = new Map<number, PendingPrompt>();
-const fileTasks = new Set<number>();
+/**
+ * Tasks whose session is running with the hooks, this run: the only ones
+ * swept or refreshed. Added at spawn, removed when the pty exits, so a task
+ * that is gone costs nothing and a late watch event cannot resurrect its card.
+ */
+const live = new Set<number>();
 let started: Promise<void> | null = null;
 let unwatch: UnwatchFn | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -612,17 +743,157 @@ function publish(taskId: number, next: PendingPrompt | null): void {
   }
 }
 
-async function refreshTask(taskId: number): Promise<void> {
+// ---------------------------------------------------------------------------
+// Reading the event file: incremental, compacted
+// ---------------------------------------------------------------------------
+
+/**
+ * How far a task's file has been read, and what that much of it derived.
+ * Only whole lines are consumed; a trailing partial line waits for its end.
+ */
+interface Tail {
+  offset: number;
+  state: PendingState;
+}
+
+const tails = new Map<number, Tail>();
+
+/**
+ * Compact once a quiet file has grown past this. Quiet means nothing is open,
+ * so the state is empty and dropping every line read so far loses nothing.
+ * The threshold keeps a rename from happening after every short turn.
+ */
+export const COMPACT_AT_BYTES = 64 * 1024;
+
+/**
+ * The complete lines at the head of `bytes`, and how many bytes they span.
+ * Cut on the raw `\n` byte, which never occurs inside a UTF-8 sequence.
+ */
+export function completeLines(bytes: Uint8Array): { text: string; consumed: number } {
+  let cut = -1;
+  for (let i = bytes.length - 1; i >= 0; i--) {
+    if (bytes[i] === 0x0a) {
+      cut = i;
+      break;
+    }
+  }
+  if (cut < 0) return { text: '', consumed: 0 };
+  return { text: new TextDecoder().decode(bytes.subarray(0, cut + 1)), consumed: cut + 1 };
+}
+
+async function readFrom(path: string, offset: number, length: number): Promise<Uint8Array> {
+  const file = await open(path, { read: true });
   try {
-    const path = `${await home()}/${ALBEDO_DIR}/events/task-${taskId}.jsonl`;
-    if (!(await exists(path))) return publish(taskId, null);
-    publish(taskId, withoutAnswered(derivePending(parseHookLines(await readTextFile(path))), answered));
-  } catch {
-    /* unreadable this tick; the next one retries */
+    await file.seek(offset, SeekMode.Start);
+    const out = new Uint8Array(length);
+    let filled = 0;
+    while (filled < length) {
+      const n = await file.read(out.subarray(filled));
+      if (n === null || n <= 0) break;
+      filled += n;
+    }
+    return out.subarray(0, filled);
+  } finally {
+    await file.close();
   }
 }
 
+/** Apply the complete lines of `path` past `tail.offset`. */
+async function consume(path: string, tail: Tail): Promise<void> {
+  const size = (await stat(path)).size;
+  if (size < tail.offset) {
+    // Shorter than what was read: emptied under us. Start over with it.
+    tail.offset = 0;
+    tail.state = emptyPending();
+  }
+  if (size === tail.offset) return;
+  const { text, consumed } = completeLines(await readFrom(path, tail.offset, size - tail.offset));
+  if (consumed === 0) return;
+  applyHookEvents(tail.state, parseHookLines(text));
+  tail.offset += consumed;
+}
+
+/**
+ * Drop the lines already read, without losing any that are being written.
+ *
+ * The file is renamed aside, not truncated: a hook appends by path, so every
+ * hook after the rename creates a fresh file, and anything that landed between
+ * the last read and the rename is still in the renamed one, read here. Only a
+ * hook caught between its open(2) and its write(2) at that instant could be
+ * lost -- one `cat`, microseconds.
+ */
+async function compact(path: string, tail: Tail): Promise<void> {
+  const aside = `${path}.old`;
+  try {
+    await rename(path, aside);
+  } catch {
+    return; // nothing to compact, or not now; the next quiet read retries
+  }
+  try {
+    await consume(aside, tail);
+  } catch {
+    /* read what we could */
+  }
+  tail.offset = 0;
+  try {
+    await writeTextFile(aside, '');
+  } catch {
+    /* a stale copy costs disk, never correctness */
+  }
+}
+
+/** Per-task queue: two reads of one file at once would apply its lines twice. */
+const queues = new Map<number, Promise<void>>();
+
+function serial(taskId: number, work: () => Promise<void>): Promise<void> {
+  const next = (queues.get(taskId) ?? Promise.resolve()).then(work, work);
+  queues.set(taskId, next);
+  void next.finally(() => {
+    if (queues.get(taskId) === next) queues.delete(taskId);
+  });
+  return next;
+}
+
+async function eventsPath(taskId: number): Promise<string> {
+  return `${await home()}/${ALBEDO_DIR}/events/task-${taskId}.jsonl`;
+}
+
+function refreshTask(taskId: number): Promise<void> {
+  return serial(taskId, async () => {
+    if (!live.has(taskId)) return;
+    let tail = tails.get(taskId);
+    if (!tail) tails.set(taskId, (tail = { offset: 0, state: emptyPending() }));
+    try {
+      const path = await eventsPath(taskId);
+      // Missing is normal right after a compaction: nothing new, state stands.
+      if (await exists(path)) {
+        await consume(path, tail);
+        if (isQuiet(tail.state) && tail.offset >= COMPACT_AT_BYTES) await compact(path, tail);
+      }
+    } catch {
+      /* unreadable this tick; the next one retries from the same offset */
+    }
+    if (live.has(taskId)) publish(taskId, currentPrompt(tail.state, answered));
+  });
+}
+
 const TASK_FILE = /task-(\d+)\.jsonl$/;
+
+/**
+ * Write the script only when it differs, and then by rename: a hook that is
+ * running it right now (one waits up to an hour) keeps reading the old inode
+ * rather than a file being rewritten under it.
+ */
+async function installScript(path: string): Promise<void> {
+  try {
+    if ((await exists(path)) && (await readTextFile(path)) === HOOK_SCRIPT) return;
+  } catch {
+    /* unreadable: rewrite it */
+  }
+  const tmp = `${path}.${Date.now()}.tmp`;
+  await writeTextFile(tmp, HOOK_SCRIPT);
+  await rename(tmp, path);
+}
 
 /**
  * Write the hook script and begin watching the event files. Idempotent, and
@@ -633,17 +904,14 @@ export async function startHookEvents(): Promise<string> {
   const scriptPath = `${base}/hook.sh`;
   started ??= (async () => {
     await mkdir(`${base}/events`, { recursive: true });
-    await writeTextFile(scriptPath, HOOK_SCRIPT);
-    const sweep = () => void Promise.all([...fileTasks].map((id) => refreshTask(id)));
+    await installScript(scriptPath);
+    const sweep = () => void Promise.all([...live].map((id) => refreshTask(id)));
     try {
       unwatch = await watch(`${base}/events`, (event) => {
         for (const p of event.paths) {
           const m = TASK_FILE.exec(p);
-          if (m) {
-            const id = Number(m[1]);
-            fileTasks.add(id);
-            void refreshTask(id);
-          }
+          // Only sessions running now: a file's own task may be long gone.
+          if (m && live.has(Number(m[1]))) void refreshTask(Number(m[1]));
         }
       }, { delayMs: 100 });
     } catch (err) {
@@ -659,18 +927,11 @@ export async function startHookEvents(): Promise<string> {
 /**
  * Requests whose hook took an answer from the card, this run.
  *
- * Needed because a deny interrupts the turn, and an interrupted turn fires no
- * Stop (measured; the same is true of Esc in the terminal). Without this the
- * card -- and the task's blocked status -- would outlive the answer until the
- * next prompt. A taken answer is proof the request is over, so it retires it.
+ * The hook's end marker retires the request too, but it is appended a moment
+ * after the answer file disappears. A taken answer is already proof the
+ * request is over, so the card goes at once rather than on the next read.
  */
 const answered = new Set<string>();
-
-/** The prompt, unless the card's answer to it was already taken. Pure. */
-export function withoutAnswered(p: PendingPrompt | null, done: ReadonlySet<string>): PendingPrompt | null {
-  if (p === null || p.kind === 'notice' || p.requestId === null) return p;
-  return done.has(p.requestId) ? null : p;
-}
 
 /** How long to wait for the hook to take a written answer. It polls at 2 Hz. */
 const TAKE_TIMEOUT_MS = 3_000;
@@ -741,16 +1002,34 @@ export function hasHooks(taskId: number): boolean {
   return hooked.has(taskId);
 }
 
-/** Forget a task's events: at (re)spawn, and when the task is deleted. */
-export async function resetTaskEvents(taskId: number): Promise<void> {
-  hooked.add(taskId);
-  fileTasks.add(taskId);
+/** Empty a task's event file and forget what was read of it. Run in its queue. */
+async function forget(taskId: number): Promise<void> {
+  tails.delete(taskId);
   try {
-    const path = `${await home()}/${ALBEDO_DIR}/events/task-${taskId}.jsonl`;
+    const path = await eventsPath(taskId);
     if (await exists(path)) await writeTextFile(path, '');
   } catch {
-    /* nothing to reset */
+    /* nothing to empty */
   }
+}
+
+/** Start a task's events afresh: at (re)spawn, before `claude` runs. */
+export async function resetTaskEvents(taskId: number): Promise<void> {
+  hooked.add(taskId);
+  live.add(taskId);
+  await serial(taskId, () => forget(taskId));
+  publish(taskId, null);
+}
+
+/**
+ * The task's session is over -- its pty exited (`/exit`, Ctrl-C, a crash) or
+ * the task is being deleted. Nothing it was waiting on can be answered any
+ * more, and a crash fires no SessionEnd, so its prompt is cleared here. The
+ * task stops being swept and its event file is emptied.
+ */
+export async function endTaskEvents(taskId: number): Promise<void> {
+  live.delete(taskId);
+  await serial(taskId, () => forget(taskId));
   publish(taskId, null);
 }
 
