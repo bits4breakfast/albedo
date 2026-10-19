@@ -72,8 +72,11 @@ npm ci
 
 npm run tauri dev                                   # run from source, hot reload
 # or
-npm run tauri build -- --bundles deb,appimage       # release build
+./build.sh --install                                # checks, release build, install the .deb
 ```
+
+`./build.sh` stops with the exact `apt-get` command if a library is missing, and
+warns if the checkout is under `/mnt/c`. Without `--install` it only builds.
 
 A release build lands in `src-tauri/target/release/`:
 
