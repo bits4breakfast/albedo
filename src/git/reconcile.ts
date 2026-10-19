@@ -6,11 +6,13 @@
  * conservative and splits its findings in two:
  *
  *   `orphan`  - we are confident this is an Albedo-created worktree that no
- *               task row claims, or a directory under ~/agents whose `.git`
- *               file points at a gitdir that no longer exists.
+ *               task row claims, and git can see it, so removal goes through
+ *               `git worktree remove`.
  *   `unknown` - a worktree git knows about that no task claims, but which lives
  *               outside ~/agents (the user's own ~/www/worktrees, for example).
  *               The UI treats these as informational and offers no remove.
+ *               A directory whose `.git` points at a gitdir that is missing or
+ *               unreadable lands here too: a moved repo looks exactly like that.
  *
  * Everything that makes a decision is a pure function so it can be unit-tested;
  * the async entry point only gathers the inputs.
@@ -45,6 +47,13 @@ export interface OrphanInfo extends WorktreeInfo {
   prunable: boolean;
   bare: boolean;
   detached: boolean;
+  /**
+   * Set only for a disk-found worktree whose gitdir is not where its `.git`
+   * file says: `missing` when the filesystem said it is not there, `unchecked`
+   * when the filesystem would not say. Neither is ever offered for removal --
+   * see {@link classifyOrphans}.
+   */
+  gitdir?: 'missing' | 'unchecked';
 }
 
 /** One repo's `git worktree list --porcelain`, already parsed. */
@@ -61,8 +70,12 @@ export interface DiskCandidate {
   hasGitFile: boolean;
   /** Absolute gitdir the `.git` file points at, if it parsed. */
   gitdirTarget: string | null;
-  /** Whether that gitdir still exists. */
-  gitdirExists: boolean;
+  /**
+   * Whether that gitdir still exists. **null = could not check** (permissions,
+   * fs scope, an unmounted volume that errors rather than answering). An
+   * unchecked gitdir is never treated as a missing one.
+   */
+  gitdirExists: boolean | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -468,21 +481,32 @@ export function classifyOrphans(input: ClassifyInput): OrphanInfo[] {
     if (!cand.hasGitFile) continue;
 
     emitted.add(key);
-    if (!cand.gitdirExists) {
+    // A gitdir that is not where the `.git` file says is NOT evidence that the
+    // worktree is garbage. The commonest causes are a repository that was
+    // moved or renamed, or one on a volume that is not mounted right now --
+    // and in both cases this directory is a full working tree with whatever
+    // uncommitted work was in it. So it is reported, never offered for
+    // removal, and the advice is `git worktree repair`, not deletion.
+    if (cand.gitdirExists !== true) {
+      const unchecked = cand.gitdirExists === null;
       out.push({
         path: cand.path,
         branch: null,
         head: '',
         locked: false,
-        classification: 'orphan',
-        reason: cand.gitdirTarget
-          ? `Stale worktree: its .git points at ${cand.gitdirTarget}, which no longer exists.`
-          : 'Stale worktree: its .git file could not be resolved to a gitdir.',
+        classification: 'unknown',
+        reason: !cand.gitdirTarget
+          ? 'Its .git file could not be resolved to a gitdir.'
+          : unchecked
+            ? `Its .git points at ${cand.gitdirTarget}, which Albedo could not check.`
+            : `Its .git points at ${cand.gitdirTarget}, which is not there. If the repository was ` +
+              'moved, renamed or is on a volume that is not mounted, the work here is intact.',
         repoPath: null,
         source: 'disk',
-        prunable: true,
+        prunable: false,
         bare: false,
         detached: false,
+        gitdir: unchecked ? 'unchecked' : 'missing',
       });
     } else {
       out.push({
@@ -662,12 +686,13 @@ async function scanWorktreeRoot(root: string): Promise<DiskCandidate[]> {
     }
     const target = parseDotGitFile(text);
     const absTarget = target ? resolveAgainst(path, target) : null;
-    let gitdirExists = false;
+    // An unresolvable target stays null too: "could not tell" is never "gone".
+    let gitdirExists: boolean | null = null;
     if (absTarget) {
       try {
         gitdirExists = await fs.exists(absTarget);
       } catch {
-        gitdirExists = false;
+        gitdirExists = null;
       }
     }
     return { path, hasGitFile: true, gitdirTarget: absTarget, gitdirExists };

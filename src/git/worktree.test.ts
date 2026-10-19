@@ -20,7 +20,13 @@ import {
   parseStatusPorcelain,
   parseUpstream,
   parseWorktreePorcelain,
+  RiskChangedError,
+  branchCreatedWithTask,
+  parseBranchCreation,
   removeWorktree,
+  riskGrew,
+  taskCreatedBranch,
+  undoCreateWorktree,
   repoRootFor,
   repoRootFromCommonDir,
   revRange,
@@ -795,6 +801,142 @@ describe('listWorktrees / listBranches / uncommittedChanges', () => {
   });
 });
 
+const HEAD_A = 'a'.repeat(40);
+const HEAD_B = 'b'.repeat(40);
+
+/**
+ * Replies for the probe {@link removeWorktree} runs before forcing. `files`
+ * is raw `status -z` output, or null for "status fails"; every other command
+ * succeeds silently.
+ */
+function probeReplies(o: { files: string | null; ahead: number; head?: string }) {
+  return ({ args }: Call): GitResult | undefined => {
+    if (args[0] === 'status') {
+      return o.files === null
+        ? { code: 128, stdout: '', stderr: 'fatal: not a git repository' }
+        : { code: 0, stdout: o.files, stderr: '' };
+    }
+    if (args[0] === 'rev-parse' && args.includes('@{u}')) {
+      return { code: 128, stdout: '', stderr: 'fatal: no upstream configured' };
+    }
+    if (args[0] === 'rev-list') return { code: 0, stdout: `${o.ahead}\n`, stderr: '' };
+    if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+      return { code: 0, stdout: `${o.head ?? HEAD_A}\n`, stderr: '' };
+    }
+    return undefined;
+  };
+}
+
+/** Only the commands that change anything. */
+function mutating(calls: Call[]): string[][] {
+  return calls.map((c) => c.args).filter((a) => a[0] === 'worktree' || a[0] === 'branch');
+}
+
+describe('riskGrew', () => {
+  const acked: WorkAtRisk = { files: [' M a.ts'], ahead: 2, aheadBase: 'main', head: HEAD_A };
+  const del = { deleteBranch: true };
+  const keep = { deleteBranch: false };
+
+  it('is false for the same facts', () => {
+    expect(riskGrew(acked, { ...acked }, del)).toBe(false);
+  });
+  it('flags a new file, and an unreadable status', () => {
+    expect(riskGrew(acked, { ...acked, files: [' M a.ts', '?? b.ts'] }, keep)).toBe(true);
+    expect(riskGrew(acked, { ...acked, files: null }, keep)).toBe(true);
+  });
+  it('does not flag fewer files', () => {
+    expect(riskGrew(acked, { ...acked, files: [] }, keep)).toBe(false);
+  });
+  it('flags more commits, a moved HEAD, or an unknown count -- only when deleting the branch', () => {
+    expect(riskGrew(acked, { ...acked, ahead: 3, head: HEAD_B }, del)).toBe(true);
+    expect(riskGrew(acked, { ...acked, head: HEAD_B }, del)).toBe(true); // reset + recommit
+    expect(riskGrew(acked, { ...acked, ahead: null }, del)).toBe(true);
+    expect(riskGrew(acked, { ...acked, ahead: 3, head: HEAD_B }, keep)).toBe(false);
+  });
+  it('does not flag a branch that is now fully merged', () => {
+    expect(riskGrew(acked, { ...acked, ahead: 0, head: HEAD_B }, del)).toBe(false);
+  });
+});
+
+describe('undoCreateWorktree', () => {
+  const opts = { repoPath: '/repo', baseBranch: 'main', branch: 'fix', path: '/wt' };
+
+  it('removes the worktree unforced and deletes a branch it cut with -d', async () => {
+    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
+    expect(await undoCreateWorktree(opts)).toBeNull();
+    expect(mutating(calls)).toEqual([
+      ['worktree', 'remove', '--', '/wt'],
+      ['branch', '-d', '--', 'fix'],
+      ['worktree', 'prune'],
+    ]);
+  });
+
+  it('never deletes a branch that already existed', async () => {
+    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
+    expect(await undoCreateWorktree({ ...opts, useExistingBranch: true })).toBeNull();
+    expect(mutating(calls)).toEqual([
+      ['worktree', 'remove', '--', '/wt'],
+      ['worktree', 'prune'],
+    ]);
+  });
+
+  it('says what was left behind instead of forcing', async () => {
+    install(({ args }) =>
+      args[0] === 'status' ? { code: 0, stdout: '?? new.txt\u0000', stderr: '' } : undefined,
+    );
+    const left = await undoCreateWorktree(opts);
+    expect(left).toContain('/wt was left on disk');
+    expect(left).toContain('branch fix was kept');
+  });
+
+  it('names a branch -d refused to delete', async () => {
+    install(({ args }) =>
+      args[0] === 'branch'
+        ? { code: 1, stdout: '', stderr: "error: the branch 'fix' is not fully merged" }
+        : undefined,
+    );
+    expect(await undoCreateWorktree(opts)).toContain('the branch fix was left behind');
+  });
+});
+
+describe('branch provenance', () => {
+  // 2026-10-19T10:00:00Z, in ms, as tasks.created_at stores it.
+  const TASK_MS = 1_792_404_000_000;
+  const T = TASK_MS / 1000;
+
+  it('reads the creation entry from the oldest reflog line', () => {
+    const out = `fix@{${T + 600}}\tcommit: x\nfix@{${T - 1}}\tbranch: Created from main\n`;
+    expect(parseBranchCreation(out)).toEqual({ at: T - 1 });
+  });
+  it('returns null when the oldest surviving entry is not a creation', () => {
+    expect(parseBranchCreation(`fix@{${T}}\tcommit: x\n`)).toBeNull();
+    expect(parseBranchCreation(`fix@{${T}}\tBranch: renamed refs/heads/a to refs/heads/fix\n`)).toBeNull();
+    expect(parseBranchCreation('')).toBeNull();
+  });
+  it('counts a branch as the task’s only if created alongside the row', () => {
+    expect(branchCreatedWithTask({ at: T - 1 }, TASK_MS)).toBe(true);
+    // "Check out the existing branch": made long before the task.
+    expect(branchCreatedWithTask({ at: T - 86_400 }, TASK_MS)).toBe(false);
+    expect(branchCreatedWithTask({ at: T + 3_600 }, TASK_MS)).toBe(false);
+    expect(branchCreatedWithTask(null, TASK_MS)).toBe(false);
+  });
+  it('answers false, never throws, when the reflog cannot be read', async () => {
+    install(() => ({ code: 128, stdout: '', stderr: 'fatal: ambiguous argument' }));
+    expect(await taskCreatedBranch('/repo', 'fix', TASK_MS)).toBe(false);
+  });
+  it('asks git for the branch reflog with unix dates', async () => {
+    const calls = install(() => ({
+      code: 0,
+      stdout: `fix@{${T}}\tbranch: Created from main\n`,
+      stderr: '',
+    }));
+    expect(await taskCreatedBranch('/repo', 'fix', TASK_MS)).toBe(true);
+    expect(calls[0]?.args).toEqual([
+      'reflog', 'show', '--date=unix', '--format=%gd%x09%gs', 'refs/heads/fix', '--',
+    ]);
+  });
+});
+
 describe('removeWorktree', () => {
   const statusArgs = ['status', '--porcelain=v1', '-z', '--untracked-files=all'];
 
@@ -832,15 +974,16 @@ describe('removeWorktree', () => {
   });
 
   it('uses --force and -D only when forced, and skips the dirty check', async () => {
-    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
+    const calls = install(probeReplies({ files: '', ahead: 0 }));
     await removeWorktree({
       repoPath: '/repo',
       path: '/wt',
       branch: 'fix',
       force: true,
       deleteBranch: true,
+      acknowledged: { risk: { files: [], ahead: 0, aheadBase: 'main', head: HEAD_A }, baseBranch: 'main' },
     });
-    expect(calls.map((c) => c.args)).toEqual([
+    expect(mutating(calls)).toEqual([
       ['worktree', 'remove', '--force', '--', '/wt'],
       ['branch', '-D', '--', 'fix'],
       ['worktree', 'prune'],
@@ -848,18 +991,89 @@ describe('removeWorktree', () => {
   });
 
   it('leaves the branch alone when deleteBranch is false', async () => {
-    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
+    const calls = install(probeReplies({ files: '', ahead: 0 }));
     await removeWorktree({
       repoPath: '/repo',
       path: '/wt',
       branch: 'fix',
       force: true,
       deleteBranch: false,
+      acknowledged: { risk: { files: [], ahead: 0, aheadBase: 'main', head: HEAD_A }, baseBranch: 'main' },
     });
-    expect(calls.map((c) => c.args)).toEqual([
+    expect(mutating(calls)).toEqual([
       ['worktree', 'remove', '--force', '--', '/wt'],
       ['worktree', 'prune'],
     ]);
+  });
+
+  // --- the acknowledgement is only good for what it described -------------
+
+  it('refuses to force without the acknowledged state, before spawning anything', async () => {
+    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
+    await expect(
+      removeWorktree({ repoPath: '/repo', path: '/wt', branch: 'fix', force: true, deleteBranch: true }),
+    ).rejects.toThrow(/without the acknowledged state/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('aborts when Claude committed after the tick, and hands back the new facts', async () => {
+    // Acknowledged: 1 dirty file, 0 unmerged. Now: 3 commits, HEAD moved.
+    const calls = install(probeReplies({ files: '', ahead: 3, head: HEAD_B }));
+    const err = await removeWorktree({
+      repoPath: '/repo',
+      path: '/wt',
+      branch: 'fix',
+      force: true,
+      deleteBranch: true,
+      acknowledged: {
+        risk: { files: [' M a.ts'], ahead: 0, aheadBase: 'main', head: HEAD_A },
+        baseBranch: 'main',
+      },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RiskChangedError);
+    expect((err as RiskChangedError).now.risk).toMatchObject({ ahead: 3, head: HEAD_B, files: [] });
+    expect(mutating(calls)).toEqual([]);
+  });
+
+  it('aborts when a new uncommitted file appeared after the tick', async () => {
+    const calls = install(probeReplies({ files: ' M a.ts\u0000?? b.ts\u0000', ahead: 0 }));
+    const err = await removeWorktree({
+      repoPath: '/repo',
+      path: '/wt',
+      branch: 'fix',
+      force: true,
+      deleteBranch: false,
+      acknowledged: { risk: { files: [' M a.ts'], ahead: 0, aheadBase: 'main', head: HEAD_A }, baseBranch: 'main' },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RiskChangedError);
+    expect(mutating(calls)).toEqual([]);
+  });
+
+  it('proceeds when the work only shrank (the dirty file was committed, branch kept)', async () => {
+    const calls = install(probeReplies({ files: '', ahead: 1, head: HEAD_B }));
+    await removeWorktree({
+      repoPath: '/repo',
+      path: '/wt',
+      branch: 'fix',
+      force: true,
+      deleteBranch: false,
+      acknowledged: { risk: { files: [' M a.ts'], ahead: 0, aheadBase: 'main', head: HEAD_A }, baseBranch: 'main' },
+    });
+    expect(mutating(calls)[0]).toEqual(['worktree', 'remove', '--force', '--', '/wt']);
+  });
+
+  it('aborts when status became unreadable after the tick', async () => {
+    const calls = install(probeReplies({ files: null, ahead: 0 }));
+    const err = await removeWorktree({
+      repoPath: '/repo',
+      path: '/wt',
+      branch: 'fix',
+      force: true,
+      deleteBranch: false,
+      acknowledged: { risk: { files: [], ahead: 0, aheadBase: 'main', head: HEAD_A }, baseBranch: 'main' },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RiskChangedError);
+    expect(mutating(calls)).toEqual([]);
   });
 
   it('surfaces an unmerged-branch failure but still prunes', async () => {

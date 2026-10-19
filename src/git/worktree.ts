@@ -866,6 +866,100 @@ export interface WorkAtRisk {
   /** Commits not merged into {@link aheadBase}; null = could not establish. */
   ahead: number | null;
   aheadBase: string | null;
+  /**
+   * The commit HEAD pointed at when this was probed; null = unreadable.
+   * Optional so a hand-built value stays valid -- but an acknowledgement taken
+   * without it cannot tell "same commits" from "different commits, same
+   * count", so {@link riskGrew} treats its absence as a change.
+   */
+  head?: string | null;
+}
+
+/** {@link WorkAtRisk} plus git's own words for whatever could not be read. */
+export interface WorkProbe {
+  risk: WorkAtRisk;
+  filesError: string | null;
+  aheadError: string | null;
+}
+
+/**
+ * Probe everything {@link assessLoss} needs, in one place, so the dialogs'
+ * first look and {@link removeWorktree}'s last look cannot ask different
+ * questions. `baseBranch` null means there is nothing to compare against, which
+ * is an unknown, never a zero.
+ */
+export async function probeWorkAtRisk(
+  worktreePath: string,
+  baseBranch: string | null,
+): Promise<WorkProbe> {
+  const risk: WorkAtRisk = { files: null, ahead: null, aheadBase: baseBranch, head: null };
+  let filesError: string | null = null;
+  let aheadError: string | null = null;
+  try {
+    risk.files = (await uncommittedChanges(worktreePath)).files;
+  } catch (e) {
+    filesError = e instanceof Error ? e.message : String(e);
+  }
+  if (baseBranch === null) {
+    aheadError = 'No base branch to compare against, so unmerged commits are unknown.';
+  } else {
+    try {
+      const un = await unmergedCommits(worktreePath, baseBranch);
+      risk.ahead = un.ahead;
+      risk.aheadBase = un.upstream ?? baseBranch;
+    } catch (e) {
+      aheadError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const h = await git(['rev-parse', '--verify', '--quiet', 'HEAD'], worktreePath);
+  const head = h.code === 0 ? h.stdout.trim() : '';
+  risk.head = /^[0-9a-f]{40,64}$/.test(head) ? head : null;
+  return { risk, filesError, aheadError };
+}
+
+/**
+ * Has the work at risk grown since the user acknowledged losing it?
+ *
+ * The acknowledgement names what was on screen. Claude keeps working while the
+ * dialog is open, so by the time Confirm is clicked there may be more: a new
+ * file, or commits that `branch -D` would destroy without ever having been
+ * shown. Anything new, or anything that has become unreadable, is growth.
+ * Shrinking is not -- committing a file the user already agreed to lose only
+ * moves it somewhere safer.
+ *
+ * Commits are compared by HEAD as well as by count: a reset-and-recommit can
+ * keep the count while replacing every commit the user was told about.
+ */
+export function riskGrew(acked: WorkAtRisk, now: WorkAtRisk, plan: LossPlan): boolean {
+  if (now.files === null && acked.files !== null) return true;
+  if (now.files !== null && acked.files !== null) {
+    const seen = new Set(acked.files);
+    if (now.files.some((f) => !seen.has(f))) return true;
+  }
+  if (!plan.deleteBranch) return false; // committed work survives on the branch
+  if (now.ahead === null) return acked.ahead !== null;
+  if (now.ahead === 0) return false; // nothing unmerged: nothing for -D to destroy
+  if (acked.ahead === null) return false; // already acknowledged as unknown
+  if (now.ahead > acked.ahead) return true;
+  if (now.aheadBase !== acked.aheadBase) return true;
+  return (now.head ?? null) === null || (now.head ?? null) !== (acked.head ?? null);
+}
+
+/**
+ * Thrown by {@link removeWorktree} instead of removing anything when the work
+ * at risk grew after it was acknowledged. Carries the fresh probe so the dialog
+ * can show the new facts and ask again.
+ */
+export class RiskChangedError extends Error {
+  readonly now: WorkProbe;
+  constructor(now: WorkProbe) {
+    super(
+      'The worktree changed after you confirmed: there is more at risk than you were shown. ' +
+        'Nothing was removed. Review the updated list and confirm again.',
+    );
+    this.name = 'RiskChangedError';
+    this.now = now;
+  }
 }
 
 /** The part of the user's choice that changes what is actually destroyed. */
@@ -932,6 +1026,13 @@ export interface RemoveWorktreeOptions {
   branch: string | null;
   force: boolean;
   deleteBranch: boolean;
+  /**
+   * What the user saw when they ticked the acknowledgement, and the base it
+   * was measured against. **Required when `force` is true**: forcing is only
+   * ever justified by an acknowledgement, and an acknowledgement is only good
+   * for the work it described. See {@link riskGrew}.
+   */
+  acknowledged?: { risk: WorkAtRisk; baseBranch: string | null };
 }
 
 /**
@@ -944,10 +1045,24 @@ export interface RemoveWorktreeOptions {
  * Refuses to proceed when the worktree is dirty unless `force` is true. We
  * never delete the directory ourselves -- git owns that, and `prune` cleans up
  * the administrative files afterwards.
+ *
+ * With `force`, the work at risk is probed again immediately before anything
+ * runs, and {@link RiskChangedError} is thrown if it grew since it was
+ * acknowledged. The window that remains is the few milliseconds between this
+ * probe and `worktree remove`, rather than however long the dialog sat open.
  */
 export async function removeWorktree(o: RemoveWorktreeOptions): Promise<void> {
   assertNotOptionLike(o.path, 'worktree path');
   if (o.branch !== null) assertValidRefName(o.branch, 'branch');
+
+  if (o.force) {
+    if (!o.acknowledged) {
+      throw new Error('Refusing to force-remove a worktree without the acknowledged state to check against.');
+    }
+    const now = await probeWorkAtRisk(o.path, o.acknowledged.baseBranch);
+    const plan = { deleteBranch: o.deleteBranch && o.branch !== null };
+    if (riskGrew(o.acknowledged.risk, now.risk, plan)) throw new RiskChangedError(now);
+  }
 
   if (!o.force) {
     let status: UncommittedChanges | null = null;
@@ -993,6 +1108,116 @@ export async function removeWorktree(o: RemoveWorktreeOptions): Promise<void> {
   }
 
   await gitOk(['worktree', 'prune'], o.repoPath);
+}
+
+/**
+ * Undo a {@link createWorktree} whose task row could not be written, so a
+ * retry does not fail on `path-exists` against a worktree no task knows about.
+ *
+ * Never forced: the worktree was created moments ago and should be clean, and
+ * if anything has already been written into it, `git worktree remove` refusing
+ * is the right outcome. The branch is deleted only when this call created it
+ * with `-b`, and then with `-d`, never `-D` -- a branch that was checked out
+ * because it already existed belongs to the user.
+ *
+ * Returns null when everything was undone, otherwise a sentence naming exactly
+ * what was left behind, for the dialog to show. Never throws.
+ */
+export async function undoCreateWorktree(o: CreateWorktreeOptions): Promise<string | null> {
+  const createdBranch = !o.useExistingBranch;
+  try {
+    await removeWorktree({
+      repoPath: o.repoPath,
+      path: o.path,
+      branch: createdBranch ? o.branch : null,
+      force: false,
+      deleteBranch: createdBranch,
+    });
+    return null;
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    // removeWorktree runs `branch -d` only after `worktree remove` succeeded.
+    if (e instanceof GitError && e.args[0] === 'branch') {
+      return `The worktree was removed, but the branch ${o.branch} was left behind:\n${why}`;
+    }
+    return (
+      `The worktree at ${o.path} was left on disk` +
+      (createdBranch ? ` and the branch ${o.branch} was kept` : '') +
+      `. Remove it from Reconcile worktrees, or with git, before retrying:\n${why}`
+    );
+  }
+}
+
+/**
+ * How close to the task row a branch's creation must be to count as Albedo's.
+ * `git worktree add -b` runs immediately before the row is inserted, so the gap
+ * is the database write; the slack absorbs a slow disk, not a human.
+ */
+const BRANCH_CREATION_WINDOW_BEFORE_S = 30;
+const BRANCH_CREATION_WINDOW_AFTER_S = 5;
+
+/**
+ * The creation entry of a branch's reflog, from
+ * `git reflog show --date=unix --format=%gd%x09%gs refs/heads/<b>`.
+ *
+ * The reflog lists newest first, so the creation is the LAST line -- and only
+ * if that line actually says `branch: Created from`. When the creation entry
+ * has expired, been renamed over, or the reflog is disabled, the oldest
+ * surviving line is something else and this returns null: unknown, never a
+ * guess.
+ */
+export function parseBranchCreation(stdout: string): { at: number } | null {
+  const lines = (stdout ?? '').split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  const last = lines[lines.length - 1];
+  if (!last) return null;
+  const m = /^\S+@\{(\d+)\}\t(.*)$/.exec(last);
+  if (!m) return null;
+  if (!(m[2] ?? '').startsWith('branch: Created from ')) return null;
+  return { at: Number(m[1]) };
+}
+
+/**
+ * Was the branch created by Albedo for this task (i.e. by `worktree add -b`)?
+ *
+ * Without a column recording it, the branch's own reflog is the only witness:
+ * a branch Albedo cut was created within seconds of the task row, and one the
+ * user already had -- "Check out the existing branch" -- was created earlier.
+ * Pure; `taskCreatedAtMs` is the row's `createdAt`.
+ */
+export function branchCreatedWithTask(
+  creation: { at: number } | null,
+  taskCreatedAtMs: number,
+): boolean {
+  if (creation === null || !Number.isFinite(taskCreatedAtMs)) return false;
+  const task = taskCreatedAtMs / 1000;
+  return (
+    creation.at >= task - BRANCH_CREATION_WINDOW_BEFORE_S &&
+    creation.at <= task + BRANCH_CREATION_WINDOW_AFTER_S
+  );
+}
+
+/**
+ * Whether Albedo may offer to delete this task's branch. False whenever it
+ * cannot be shown that the task created it -- deleting a branch the user
+ * already had is never the right default, and "could not tell" is not
+ * permission. Never throws.
+ */
+export async function taskCreatedBranch(
+  repoPath: string,
+  branch: string,
+  taskCreatedAtMs: number,
+): Promise<boolean> {
+  if (!isValidRefName(branch)) return false;
+  try {
+    const r = await git(
+      ['reflog', 'show', '--date=unix', '--format=%gd%x09%gs', `refs/heads/${branch}`, '--'],
+      repoPath,
+    );
+    if (r.code !== 0) return false;
+    return branchCreatedWithTask(parseBranchCreation(r.stdout), taskCreatedAtMs);
+  } catch {
+    return false;
+  }
 }
 
 /** Re-exported from ./reconcile so the frozen module surface stays in one file. */
