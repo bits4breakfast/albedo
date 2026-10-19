@@ -75,6 +75,12 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  /* The shell turns selection off app-wide; code in a diff is something you
+     copy. The transcript pane re-enables it for its own diffs, this pane did
+     not, so nothing here could be copied. Line numbers and +/- marks stay
+     out of a selection (transcript.css). */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* The transcript's diff card, as a pane. */

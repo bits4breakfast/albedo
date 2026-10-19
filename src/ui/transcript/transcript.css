@@ -941,6 +941,12 @@
   min-width: 0;
 }
 .tx-d-half:first-child { border-right: 1px solid var(--border); }
+/* A selection stays on the side it started on (set on mousedown in Diff.tsx). */
+.tx-d-split[data-select='old'] .tx-d-half:last-child,
+.tx-d-split[data-select='new'] .tx-d-half:first-child {
+  user-select: none;
+  -webkit-user-select: none;
+}
 /* The empty half of a split pair: a faint recess, not a wash of white. */
 .tx-d-blank { background: var(--tx-blank); }
 

@@ -1007,8 +1007,19 @@ function SplitBody({
   linkPath?: string | null;
 }): ReactNode {
   const pairs = useMemo(() => pairRows(rows), [rows]);
+  // A drag that starts on one side selects only that side: the other column
+  // is taken out of selection until the next press. Without this a copy
+  // interleaves old and new lines, which is never what anyone wanted.
+  const [side, setSide] = useState<'old' | 'new' | null>(null);
   return (
-    <div className="tx-d-rows tx-d-split">
+    <div
+      className="tx-d-rows tx-d-split"
+      data-select={side ?? undefined}
+      onMouseDown={(e) => {
+        const half = (e.target as HTMLElement).closest('.tx-d-half');
+        setSide(half ? (half.previousElementSibling ? 'new' : 'old') : null);
+      }}
+    >
       {pairs.map((p, i) => (
         <div className="tx-d-pair" key={i}>
           <div className={`tx-d-half tx-d-${p.left ? p.left.line.kind : 'blank'}`}>
