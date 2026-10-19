@@ -4,7 +4,7 @@ import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from '../lib/pty';
-import { hookSettingsArg, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
+import { endTaskEvents, hookSettingsArg, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { getTaskModel } from './taskModel';
 import { submitDelayFor } from '../lib/ptyInput';
 import type { Task } from '../types';
@@ -594,6 +594,8 @@ export default function Terminal({
             // stale `canResume` on the very render that reports the exit.
             if (resumeRejectedRef.current) resumable.delete(task.id);
             unregisterPty(task.id, id);
+            // Whatever it was waiting on died with it (no SessionEnd on a crash).
+            void endTaskEvents(task.id);
             setExitCode(code);
             setPhase('exited');
             // Leave the scrollback intact and readable.
