@@ -529,3 +529,42 @@ describe('shellEscapePath', () => {
     expect(shellEscapePath('/plain/path.png')).toBe('/plain/path.png');
   });
 });
+
+describe('collapsing a large text paste', () => {
+  const clip = (text: string) => ({
+    items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }],
+    getData: (t: string) => (t === 'text/plain' ? text : ''),
+  });
+  const log = 'Error: boom\n  at a (x.ts:1)\n  at b (y.ts:2)\n  at c (z.ts:3)';
+
+  it('shows a placeholder in the box and sends the real text', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('why does this fail? ');
+    box().setSelectionRange(box().value.length, box().value.length);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip(log) });
+    expect(notPrevented).toBe(false);
+    expect(box().value).toBe('why does this fail? [Pasted text #1 +4 lines]');
+
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `why does this fail? ${log}`));
+  });
+
+  it('leaves a short paste to the browser', () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip('two\nlines') });
+    expect(notPrevented).toBe(true);
+    expect(box().value).toBe('');
+  });
+
+  it('drops the text when its placeholder was deleted', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    type('never mind');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, 'never mind'));
+  });
+});

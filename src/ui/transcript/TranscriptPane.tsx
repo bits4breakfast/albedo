@@ -8,6 +8,7 @@
  * scrolling up to read is never interrupted.
  */
 
+import { expandPastes, placeholderFor, shouldCollapse } from './pastedText';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
@@ -400,6 +401,9 @@ export function Composer({
   status?: TaskStatus | null;
 }): ReactNode {
   const [text, setText] = useState('');
+  /** Large text pastes kept aside; the draft holds their placeholders. */
+  const pastesRef = useRef(new Map<number, string>());
+  const pasteSeqRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   /** Held because the session is on a permission prompt. See `send`. */
@@ -469,6 +473,8 @@ export function Composer({
 
   const succeeded = useCallback(() => {
     setText('');
+    pastesRef.current = new Map();
+    pasteSeqRef.current = 0;
     setNotice(null);
     requestAnimationFrame(grow);
     onSent();
@@ -477,6 +483,8 @@ export function Composer({
   // Only a task switch discards a draft -- never a failed send.
   useEffect(() => {
     setText('');
+    pastesRef.current = new Map();
+    pasteSeqRef.current = 0;
     setNotice(null);
     setAwaiting(false);
     setHeld(false);
@@ -624,7 +632,30 @@ export function Composer({
   const onPaste = useCallback(
     (e: ClipboardEvent<HTMLTextAreaElement>) => {
       const image = imageFromClipboard(e.clipboardData?.items);
-      if (!image) return;
+      if (!image) {
+        // A large text paste collapses to a placeholder, as in Claude Code: the
+        // text is kept aside and goes back in on send (see pastedText.ts).
+        const cd = e.clipboardData;
+        const pasted = cd && typeof cd.getData === 'function' ? cd.getData('text/plain') : '';
+        if (!shouldCollapse(pasted) || inFlightRef.current) return;
+        e.preventDefault();
+        const id = ++pasteSeqRef.current;
+        pastesRef.current.set(id, pasted);
+        const token = placeholderFor(id, pasted);
+        const el = e.currentTarget;
+        el.focus();
+        // insertText keeps the edit on the textarea's undo stack, so Cmd+Z
+        // takes the placeholder out like any other typing. jsdom and older
+        // engines lack it; splicing the value is the fallback.
+        const inserted = typeof document.execCommand === 'function' && document.execCommand('insertText', false, token);
+        if (!inserted) {
+          const start = el.selectionStart ?? el.value.length;
+          const end = el.selectionEnd ?? start;
+          setText((t) => t.slice(0, start) + token + t.slice(end));
+        }
+        requestAnimationFrame(grow);
+        return;
+      }
       e.preventDefault();
       // The draft is frozen while a send is pending; so is what lands in it.
       if (inFlightRef.current) return;
@@ -634,7 +665,7 @@ export function Composer({
           setNotice(`Could not save the pasted image: ${err instanceof Error ? err.message : String(err)}`);
         });
     },
-    [insertPaths],
+    [insertPaths, grow],
   );
 
   /** Take the held message back, so a prompt nobody answers is not a trap. */
@@ -649,6 +680,8 @@ export function Composer({
     // A ref, because two Enters in one tick both see stale `busy` state.
     if (inFlightRef.current) return;
     if (text.trim().length === 0) return;
+    // What Claude Code receives: the draft with its paste placeholders filled.
+    const body = expandPastes(text, pastesRef.current);
     /*
        Checked BEFORE submitPty, because submitPty types into the prompt. No
        timeout here, unlike the pty-start hold: a permission prompt waits for a
@@ -656,7 +689,7 @@ export function Composer({
        failure. `Cancel` on the notice is the way out.
     */
     if (status === 'blocked') {
-      pendingRef.current = text;
+      pendingRef.current = body;
       inFlightRef.current = true;
       setHeld(true);
       setNotice('Waiting — Claude is asking you something. Answer it in the terminal and your message sends itself.');
@@ -668,14 +701,14 @@ export function Composer({
       // submitPty owns the bracketed-paste wrapper and the submitting \r (see
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
-      if (await submitPty(taskId, text)) {
+      if (await submitPty(taskId, body)) {
         succeeded();
         inFlightRef.current = false;
         return;
       }
       if (startPty(taskId)) {
         // Coming up. Hold the body and let the presence event send it.
-        pendingRef.current = text;
+        pendingRef.current = body;
         setAwaiting(true);
         setNotice('Starting the session — your message sends as soon as it is ready.');
         timerRef.current = window.setTimeout(() => {
