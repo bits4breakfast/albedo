@@ -54,9 +54,12 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
   useEffect(() => {
     let live = true;
     const load = () =>
-      void listComments(task.id).then((rows) => {
-        if (live) setComments(rows);
-      });
+      void listComments(task.id).then(
+        (rows) => {
+          if (live) setComments(rows);
+        },
+        (err: unknown) => console.warn('[comments] could not load', err),
+      );
     load();
     const off = onCommentsChanged((id) => {
       if (id === task.id) load();
@@ -80,7 +83,11 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
       // that it was put in the composer, where it may be edited or dropped.
       onSent: (sent) => {
         const delivered = batch.filter((c) => sent.includes(commentLocation(c)));
-        if (delivered.length > 0) void markCommentsSent(task.id, delivered.map((c) => c.id));
+        if (delivered.length > 0) {
+          markCommentsSent(task.id, delivered.map((c) => c.id)).catch((err: unknown) =>
+            setNotice(`The message went out, but the comments could not be marked as sent: ${String(err)}`),
+          );
+        }
         return delivered.length > 0;
       },
     });
@@ -156,7 +163,9 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
           <button
             type="button"
             className="tf-comment-resolve"
-            onClick={() => void resolveComment(task.id, c.id)}
+            onClick={() =>
+              resolveComment(task.id, c.id).catch((err: unknown) => setNotice(`Could not resolve the comment: ${String(err)}`))
+            }
             title="Resolve"
             aria-label={`Resolve the comment on ${commentLocation(c)}`}
           >

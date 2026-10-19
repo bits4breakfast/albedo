@@ -960,9 +960,14 @@ export default function FileEditor({
     }
     let live = true;
     const load = () =>
-      void listComments(task.id).then((all) => {
-        if (live) setFileComments(all.filter((c) => c.path === current));
-      });
+      void listComments(task.id).then(
+        (all) => {
+          if (live) setFileComments(all.filter((c) => c.path === current));
+        },
+        // Comments are a layer on the file: failing to read them must not
+        // break the editor. Logged, and the file shows without them.
+        (err: unknown) => console.warn('[comments] could not load', err),
+      );
     load();
     const off = onCommentsChanged((id) => {
       if (id === task.id) load();
@@ -989,7 +994,10 @@ export default function FileEditor({
       // Moved in the file on disk: remember where. Not while the buffer holds
       // unsaved typing, which is not the file the comment refers to.
       if (!dirtyRef.current && (at.lineStart !== c.lineStart || at.lineEnd !== c.lineEnd)) {
-        void moveComment(task.id, c.id, at.lineStart, at.lineEnd);
+        // Best effort: if it fails, the comment is simply found again next time.
+        moveComment(task.id, c.id, at.lineStart, at.lineEnd).catch((err: unknown) =>
+          console.warn('[comments] could not record the new position', err),
+        );
       }
     }
     view.dispatch({ effects: setPlacedComments.of(placed) });
@@ -997,14 +1005,20 @@ export default function FileEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileComments, phase.kind, doc?.key]);
 
+  /** A comment write that failed says so, rather than leaving the list quietly wrong. */
+  const reportFailure = (write: Promise<unknown>, what: string) => {
+    write.catch((err: unknown) => setCommentNotice(`Could not ${what}: ${message(err)}`));
+  };
+
   commentActionsRef.current =
     commentsOn && current !== null
       ? {
           save: (draft, text, state) => {
             const view = viewRef.current;
             if (!view) return;
+            let write: Promise<unknown>;
             if (draft.editing) {
-              void editComment(task.id, draft.editing.id, text);
+              write = editComment(task.id, draft.editing.id, text);
             } else {
               // The comment quotes the file as Claude Code will read it, so
               // it is refused while the buffer differs from what is on disk.
@@ -1014,7 +1028,7 @@ export default function FileEditor({
               }
               const a = state.doc.lineAt(draft.from);
               const b = state.doc.lineAt(draft.to);
-              void addComment({
+              write = addComment({
                 taskId: task.id,
                 path: current,
                 lineStart: a.number,
@@ -1023,17 +1037,24 @@ export default function FileEditor({
                 body: text,
               });
             }
-            setCommentNotice(null);
-            view.dispatch({ effects: setDraft.of(null) });
-            view.focus();
+            // The box closes only once the comment is stored: until then the
+            // text lives nowhere else, and a failed write must not lose it.
+            write.then(
+              () => {
+                setCommentNotice(null);
+                view.dispatch({ effects: setDraft.of(null) });
+                view.focus();
+              },
+              (err: unknown) => setCommentNotice(`Could not save the comment, which is still in its box: ${message(err)}`),
+            );
           },
           edit: (c) => {
             const view = viewRef.current;
             const at = view?.state.field(commentsField).placed.find((p) => p.comment.id === c.id);
             if (view && at) view.dispatch({ effects: setDraft.of({ from: at.from, to: at.to, editing: c }) });
           },
-          resolve: (c) => void resolveComment(task.id, c.id),
-          remove: (c) => void deleteComment(task.id, c.id),
+          resolve: (c) => reportFailure(resolveComment(task.id, c.id), 'resolve the comment'),
+          remove: (c) => reportFailure(deleteComment(task.id, c.id), 'delete the comment'),
         }
       : null;
   startCommentRef.current = () => {
@@ -1236,10 +1257,14 @@ export default function FileEditor({
               <span className="ed-cmt-outdated-body">
                 lines {c.lineStart}–{c.lineEnd}: {c.body.split('\n')[0]}
               </span>
-              <button type="button" className="ed-btn" onClick={() => void resolveComment(task.id, c.id)}>
+              <button type="button" className="ed-btn" onClick={() => reportFailure(resolveComment(task.id, c.id), 'resolve the comment')}>
                 Resolve
               </button>
-              <button type="button" className="ed-btn ed-danger" onClick={() => void deleteComment(task.id, c.id)}>
+              <button
+                type="button"
+                className="ed-btn ed-danger"
+                onClick={() => reportFailure(deleteComment(task.id, c.id), 'delete the comment')}
+              >
                 Delete
               </button>
             </span>

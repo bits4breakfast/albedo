@@ -86,6 +86,18 @@ describe('FileEditor review comments', () => {
     });
   });
 
+  it('a comment that fails to save stays in its box, with the reason', async () => {
+    addComment.mockRejectedValueOnce(new Error('disk full'));
+    const content = await editorContent();
+    fireEvent.keyDown(content, { key: 'C', code: 'KeyC', keyCode: 67, ctrlKey: true, shiftKey: true });
+    const box = (await screen.findByPlaceholderText(/Leave a comment/)) as HTMLTextAreaElement;
+    box.value = 'Do not lose me.';
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect(await screen.findByText(/Could not save the comment, which is still in its box: disk full/)).toBeTruthy();
+    const still = screen.getByPlaceholderText(/Leave a comment/) as HTMLTextAreaElement;
+    expect(still.value).toBe('Do not lose me.');
+  });
+
   it('shows a stored comment as a card under its code, found by its text', async () => {
     stored.push({
       id: 9, taskId: 4, path: 'src/a.ts', lineStart: 1, lineEnd: 1, anchorText: 'beta',
