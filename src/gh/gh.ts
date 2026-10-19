@@ -30,8 +30,12 @@ export interface GhResult {
  * solves the same problem for `claude` with a login shell; for a read-only
  * status probe two fixed Homebrew locations are the smaller hammer, and the
  * scope stays an exact binary rather than "anything a shell can run".
+ *
+ * `gh-usr-bin` is Linux: the apt and dnf packages install `/usr/bin/gh`. A
+ * desktop launcher's PATH normally has `/usr/bin` already, so it is a
+ * backstop, tried last; on macOS it is one more failed spawn, once.
  */
-export const GH_PROGRAMS = ['gh', 'gh-homebrew', 'gh-usr-local'] as const;
+export const GH_PROGRAMS = ['gh', 'gh-homebrew', 'gh-usr-local', 'gh-usr-bin'] as const;
 export type GhProgram = (typeof GH_PROGRAMS)[number];
 
 /** Swappable runner. Throws only when the program could not be spawned. */

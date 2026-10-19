@@ -114,7 +114,10 @@
 
   /* --- metrics ----------------------------------------------------------- */
   --titlebar-h: 40px;         /* macOS overlay title bar strip */
-  --traffic-lights-w: 78px;   /* keep the top-left clear of the stoplights */
+  /* Header space for the macOS stoplights. Zero elsewhere: Linux draws a
+     native title bar above the webview, so there is nothing to clear. Set
+     to 78px by :root[data-platform='macos'] below (src/lib/platform.ts). */
+  --traffic-lights-w: 0px;
   --sidebar-min: 200px;
   --sidebar-max: 480px;
   --row-h: 50px;
@@ -288,6 +291,10 @@
 
 :root[data-theme='light'] { color-scheme: light; }
 
+/* Only macOS overlays the stoplights on the webview (titleBarStyle "Overlay"
+   in tauri.conf.json, a macOS-only option). */
+:root[data-platform='macos'] { --traffic-lights-w: 78px; }
+
 /* --------------------------------------------------------------------------
    Reset
    -------------------------------------------------------------------------- */
@@ -370,7 +377,7 @@ button {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding-left: var(--traffic-lights-w);   /* clear of the stoplights */
+  padding-left: max(var(--traffic-lights-w), 10px);   /* clear of the stoplights, if any */
   padding-right: 10px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);

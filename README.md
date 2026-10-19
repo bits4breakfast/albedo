@@ -26,12 +26,16 @@ and `docs/TRANSCRIPT-FORMAT.md` for the transcript format the adapter isolates.
 
 ## Setup
 
-Requires Node 20+ and a Rust toolchain (`rustup`, installed at `~/.cargo`).
+Requires Node 22+ and a Rust toolchain (`rustup`, installed at `~/.cargo`).
 
 ```sh
 npm install
 npm run tauri dev
 ```
+
+Builds on macOS and Linux. On Windows it runs as a Linux app under WSL2 --
+see `docs/LINUX-WSL.md`. CI (`.github/workflows/ci.yml`) builds the Linux
+`.deb` and `.AppImage` on every push.
 
 ```sh
 npm test          # vitest

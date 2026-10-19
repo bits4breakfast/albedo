@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { fetchPrStatus, gh, prLookupBranch, setGhRunner, type GhRunner, type GhProgram } from './gh';
+import { urlOpener } from '../lib/platform';
+import { GH_PROGRAMS, fetchPrStatus, gh, prLookupBranch, setGhRunner, type GhRunner, type GhProgram } from './gh';
 
 const task = {
   branch: 'feat/x',
@@ -98,5 +100,23 @@ describe('fetchPrStatus', () => {
     const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
     expect(await fetchPrStatus({ ...task, branch: 'main' })).toBeNull();
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('shell scope', () => {
+  // A name missing from the capability fails only at runtime, as a spawn error
+  // gh() swallows -- so on the platform that needs it, the badge just never
+  // appears. Check the names against the file instead.
+  const caps = JSON.parse(readFileSync(new URL('../../src-tauri/capabilities/default.json', import.meta.url), 'utf8'));
+  const exec = caps.permissions.find((p: { identifier?: string }) => p.identifier === 'shell:allow-execute');
+  const allowed = new Set((exec.allow as { name: string }[]).map((a) => a.name));
+
+  it('allows every gh location the runner tries', () => {
+    for (const p of GH_PROGRAMS) expect(allowed).toContain(p);
+  });
+
+  it('allows the URL opener of both platforms', () => {
+    expect(allowed).toContain(urlOpener('macos'));
+    expect(allowed).toContain(urlOpener('linux'));
   });
 });
