@@ -20,7 +20,7 @@ import { onCaptureUpdate } from '../../capture';
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import { imageFromClipboard, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
-import MessageRow from './MessageRow';
+import { MemoMessageRow as MessageRow } from './MessageRow';
 import PromptCard from './PromptCard';
 import { isSidechain, toolUseId } from './ToolChip';
 import './transcript.css';

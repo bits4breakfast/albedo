@@ -254,9 +254,9 @@ export function prTooltip(pr: PrStatus, opts: { clickable?: boolean; maxLines?: 
   const facts: string[] = [pr.state];
   if (pr.review) facts.push(REVIEW_TEXT[pr.review]);
   const c = pr.checks;
-  if (c.kind === 'passing') facts.push(`${c.total} checks passing`);
-  else if (c.kind === 'failing') facts.push(`${c.failing} of ${c.total} checks failing`);
-  else if (c.kind === 'pending') facts.push(`${c.pending} of ${c.total} checks pending`);
+  if (c.kind === 'passing') facts.push(`${c.total === 1 ? '1 check' : `${c.total} checks`} passing`);
+  else if (c.kind === 'failing') facts.push(`${c.failing} of ${c.total} ${c.total === 1 ? 'check' : 'checks'} failing`);
+  else if (c.kind === 'pending') facts.push(`${c.pending} of ${c.total} ${c.total === 1 ? 'check' : 'checks'} pending`);
   else facts.push('no checks');
   const out = [head, facts.join(' · ')];
   const shown = pr.lines.slice(0, maxLines);

@@ -317,7 +317,9 @@ class Capture implements CaptureHandle {
     const cut = lastNewlineIndex(head);
     if (cut < 0) return null;
     const cwd = firstCwdIn(new TextDecoder().decode(head.subarray(0, cut + 1)));
-    return cwd === null ? null : (await findTaskByWorktreePath(cwd)) !== null;
+    // Live tasks only: an archived task's history was purged on archive, and
+    // re-holding its cwd would capture the whole session again from byte 0.
+    return cwd === null ? null : (await findTaskByWorktreePath(cwd, { liveOnly: true })) !== null;
   }
 
   /** Hold a transcript from byte 0 and read it now. See {@link importTranscripts}. */

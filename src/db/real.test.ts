@@ -24,8 +24,11 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 }));
 
 import {
+  archiveTask,
+  compactHistory,
   createTask,
   deleteTask,
+  findTaskByWorktreePath,
   getMessages,
   insertMessages,
   listTranscriptFiles,
@@ -1114,5 +1117,60 @@ describe('getMessages agentId: one subagent’s own rows, for the inspector', ()
   it('wins over parentOnly rather than returning nothing', async () => {
     const rows = await getMessages({ sessionId: 'sess', agentId: 'agent-b', parentOnly: true, limit: 100 });
     expect(rows.map((m) => m.body)).toEqual(['b 0']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('archiving purges the conversation copy, keeping the task row', () => {
+  async function seedArchivable(path = '/wt/retry'): Promise<number> {
+    const project = await createProject({
+      name: 'p', repoPath: '/repo', worktreeRoot: '/wt', defaultBaseBranch: null,
+    });
+    const task = await createTask({
+      title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
+      branch: 'feat/retry', worktreePath: path, ownsWorktree: true,
+    });
+    await insertMessages([
+      { taskId: task.id, sessionId: 'sess-a', seq: 0, role: 'user', toolName: null,
+        targetPath: null, body: 'please add a retry', rawJson: '{}', agentId: null, ts: 1_000 },
+      // A subagent row carries the parent's session and is not always tagged.
+      { taskId: null, sessionId: 'sess-a', seq: 100, role: 'assistant', toolName: null,
+        targetPath: null, body: 'sub', rawJson: '{}', agentId: 'ag1', ts: 2_000 },
+      { taskId: null, sessionId: 'other', seq: 0, role: 'user', toolName: null,
+        targetPath: null, body: 'unrelated', rawJson: '{}', agentId: null, ts: 3_000 },
+    ]);
+    seedTranscriptFile(db, { path: '/p/sess-a.jsonl', sessionId: 'sess-a', cwd: path, title: 't' });
+    seedTranscriptFile(db, { path: '/p/other.jsonl', sessionId: 'other', cwd: '/elsewhere', title: 'o' });
+    return task.id;
+  }
+
+  it('drops every message of its session and the transcript record, nothing else', async () => {
+    const id = await seedArchivable();
+    await archiveTask(id);
+
+    expect((await getTask(id))?.status).toBe('archived');
+    expect(await getMessages({ sessionId: 'sess-a', limit: 100 })).toEqual([]);
+    expect((await getMessages({ sessionId: 'other', limit: 100 })).length).toBe(1);
+    expect((await listTranscriptFiles()).map((f) => f.sessionId)).toEqual(['other']);
+  });
+
+  it('stops offering the archived worktree for adoption, so it is not re-captured', async () => {
+    const id = await seedArchivable();
+    expect(await findTaskByWorktreePath('/wt/retry', { liveOnly: true })).not.toBeNull();
+    await archiveTask(id);
+    expect(await findTaskByWorktreePath('/wt/retry', { liveOnly: true })).toBeNull();
+    expect(await findTaskByWorktreePath('/wt/retry')).not.toBeNull();
+  });
+
+  it('compactHistory purges tasks archived before archiving purged', async () => {
+    const id = await seedArchivable();
+    db.raw.prepare(`UPDATE tasks SET status = 'archived' WHERE id = ?`).run(id);
+    expect((await getMessages({ sessionId: 'sess-a', limit: 100 })).length).toBe(2);
+
+    await compactHistory();
+
+    expect(await getMessages({ sessionId: 'sess-a', limit: 100 })).toEqual([]);
+    expect((await getMessages({ sessionId: 'other', limit: 100 })).length).toBe(1);
   });
 });

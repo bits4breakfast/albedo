@@ -14,6 +14,7 @@ import {
   pathKey,
   resolveAgainst,
   reclaimableTaskPaths,
+  worktreeSharedWithLiveTask,
   rootContaining,
   validateWorktreeRoot,
 } from './reconcile';
@@ -597,6 +598,12 @@ describe('reclaimableTaskPaths', () => {
     expect(reclaimableTaskPaths([cut()])).toEqual(['/Users/m/agents/albedo/cut-by-albedo']);
   });
 
+  it('never offers an archived worktree a live task still runs in', () => {
+    // Archive-only, then resume the session: the resumed task is live there.
+    const resumed = cut({ status: 'idle', ownsWorktree: false, worktreePath: '/Users/m/agents/albedo/Cut-By-Albedo/' });
+    expect(reclaimableTaskPaths([cut(), resumed])).toEqual([]);
+  });
+
   it('never offers a directory Albedo did not create', () => {
     // The catastrophic case: a resumed session whose cwd is the main checkout.
     expect(
@@ -638,5 +645,19 @@ describe('albedoOwnsWorktree', () => {
     expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: false })).toBe(false);
     expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: true })).toBe(true);
     expect(albedoOwnsWorktree({ worktreePath: '/a' })).toBe(true);
+  });
+});
+
+describe('worktreeSharedWithLiveTask', () => {
+  const t = (id: number, status: string, worktreePath = '/Users/m/agents/albedo/up-2398') => ({ id, status, worktreePath });
+
+  it('is true when another live task runs in the same directory', () => {
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(1, 'idle'), t(2, 'running')])).toBe(true);
+  });
+
+  it('ignores the task itself, archived tasks and other directories', () => {
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(1, 'idle')])).toBe(false);
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(2, 'archived')])).toBe(false);
+    expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(2, 'idle', '/Users/m/agents/albedo/other')])).toBe(false);
   });
 });

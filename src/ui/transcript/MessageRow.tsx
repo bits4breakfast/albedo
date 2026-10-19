@@ -11,7 +11,7 @@
  * chose.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
@@ -52,6 +52,21 @@ export function MessageRow({ message, result = null, extras = [] }: MessageRowPr
       return null;
   }
 }
+
+/**
+ * Rows are immutable once captured, so a row whose message, result and extras
+ * are the same objects renders the same. Without this every live append
+ * re-rendered (and re-tokenised) the whole transcript. `extras` is rebuilt by
+ * groupRows on each pass, so it is compared element by element.
+ */
+function sameRow(a: MessageRowProps, b: MessageRowProps): boolean {
+  if (a.message !== b.message || (a.result ?? null) !== (b.result ?? null)) return false;
+  const ea = a.extras ?? [];
+  const eb = b.extras ?? [];
+  return ea.length === eb.length && ea.every((m, i) => m === eb[i]);
+}
+
+export const MemoMessageRow = memo(MessageRow, sameRow);
 
 export default MessageRow;
 

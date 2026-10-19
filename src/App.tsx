@@ -1731,6 +1731,7 @@ export default function App() {
         <ArchiveTaskDialog
           task={archiveTarget}
           intent={endIntent}
+          otherTasks={tasks}
           onClose={() => setArchiveTarget(null)}
           onArchived={(taskId) => {
             void archive(taskId);

@@ -213,11 +213,34 @@ export function albedoOwnsWorktree(task: OwnershipFacts): boolean {
  * an orphan with a remove button next to it.
  */
 export function reclaimableTaskPaths(tasks: OwnershipFacts[]): string[] {
+  // A directory can outlive the task that made it: resuming that task's session
+  // (or reusing its slug) starts a live task in the same cwd. Being archived
+  // does not make a path reclaimable while anything live still runs there.
+  const live = new Set(
+    tasks.filter((t) => t.status !== 'archived' && t.worktreePath).map((t) => pathKey(t.worktreePath)),
+  );
   return tasks
     .filter((t) => t.status === 'archived')
     .filter(albedoOwnsWorktree)
     .map((t) => t.worktreePath)
-    .filter((p): p is string => typeof p === 'string' && p.length > 0);
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    .filter((p) => !live.has(pathKey(p)));
+}
+
+/**
+ * True when another non-archived task runs in `task`'s directory. Removing the
+ * worktree would pull it out from under that session, so the archive dialog
+ * treats a shared directory exactly like one Albedo does not own.
+ */
+export function worktreeSharedWithLiveTask(
+  task: OwnershipFacts & { id: number },
+  others: readonly (OwnershipFacts & { id: number })[],
+): boolean {
+  if (!task.worktreePath) return false;
+  const key = pathKey(task.worktreePath);
+  return others.some(
+    (t) => t.id !== task.id && t.status !== 'archived' && !!t.worktreePath && pathKey(t.worktreePath) === key,
+  );
 }
 
 // ---------------------------------------------------------------------------

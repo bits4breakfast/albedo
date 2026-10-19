@@ -428,7 +428,9 @@ export default function Terminal({
       letterSpacing: 0,
       cursorBlink: true,
       cursorStyle: 'block',
-      scrollback: 20000,
+      // ~12 bytes a cell: 20k lines at 200 columns was ~48 MB per terminal, and
+      // every task's terminal stays mounted. The transcript is the real history.
+      scrollback: 5000,
       allowProposedApi: true,
       convertEol: false,
       macOptionIsMeta: true,

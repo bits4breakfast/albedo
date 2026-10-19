@@ -299,6 +299,18 @@ export async function updateTask(id: number, patch: Partial<Task>): Promise<void
  * at nothing.
  */
 export async function deleteTask(id: number): Promise<void> {
+  await purgeTaskHistory(id);
+  const db = await getDb();
+  await db.execute(`DELETE FROM tasks WHERE id = $1`, [id]);
+  emitTasksChanged();
+}
+
+/**
+ * Remove Albedo's copy of a task's conversation and the watcher's record of
+ * its transcript, keeping the task row. Exactly what {@link deleteTask} removes
+ * besides the row itself, for the same reasons and in the same order.
+ */
+export async function purgeTaskHistory(id: number): Promise<void> {
   const db = await getDb();
   const rows = await db.select<{ session_id: string | null }[]>(
     `SELECT session_id FROM tasks WHERE id = $1`,
@@ -321,21 +333,70 @@ export async function deleteTask(id: number): Promise<void> {
     [id, sessionId ?? ''],
   );
   await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
-  await db.execute(`DELETE FROM tasks WHERE id = $1`, [id]);
-  emitTasksChanged();
 }
 
+/**
+ * Archive a task and drop its captured conversation: an archived task is done,
+ * and keeping its history is what grew the database without bound. Claude
+ * Code's transcript stays on disk and can be brought back from History.
+ *
+ * The status flips FIRST. The watcher only adopts a cwd for a non-archived
+ * task, so once the row reads archived nothing can re-hold the session between
+ * the purge's statements and re-capture it from byte 0.
+ */
 export async function archiveTask(id: number): Promise<void> {
   const db = await getDb();
   await db.execute(`UPDATE tasks SET status = 'archived' WHERE id = $1`, [id]);
   emitTasksChanged();
+  await purgeTaskHistory(id);
+}
+
+/**
+ * Startup housekeeping: purge history still held for archived tasks (archived
+ * before archiving purged, or whose purge was interrupted), merge a fragmented
+ * search index, then compact the file. auto_vacuum is off, so deleted rows only become free pages; VACUUM is
+ * what gives the space back. It rewrites the file, so it runs only when at
+ * least a quarter of it, and 8 MB, is free.
+ */
+export async function compactHistory(): Promise<void> {
+  const db = await getDb();
+  const archived = await db.select<{ id: number }[]>(
+    `SELECT t.id FROM tasks t
+      WHERE t.status = 'archived'
+        AND (EXISTS (SELECT 1 FROM messages m WHERE m.task_id = t.id)
+             OR (t.session_id IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM transcript_files f WHERE f.session_id = t.session_id)))`,
+  );
+  for (const { id } of archived) await purgeTaskHistory(id);
+
+  // FTS5 keeps a tombstone per deleted row until segments merge, and many
+  // small ingest batches leave many segments: measured at 77 MB of index for
+  // 3 MB of text. 'optimize' merges it to one segment (~270 data rows on that
+  // corpus, 1 s); the threshold keeps a healthy index from being rewritten
+  // on every launch.
+  const [fts] = await db.select<{ n: number }[]>(`SELECT count(*) AS n FROM messages_fts_data`);
+  if ((fts?.n ?? 0) > 2000) {
+    await db.execute(`INSERT INTO messages_fts(messages_fts) VALUES ('optimize')`);
+  }
+
+  const [pages] = await db.select<{ n: number }[]>(`SELECT page_count AS n FROM pragma_page_count()`);
+  const [free] = await db.select<{ n: number }[]>(`SELECT freelist_count AS n FROM pragma_freelist_count()`);
+  const [size] = await db.select<{ n: number }[]>(`SELECT page_size AS n FROM pragma_page_size()`);
+  const freeBytes = (free?.n ?? 0) * (size?.n ?? 4096);
+  if (pages && free && free.n * 4 >= pages.n && freeBytes >= 8 * 1024 * 1024) {
+    await db.execute(`VACUUM`);
+  }
 }
 
 /** Capture-side: adopt a transcript whose cwd is a task's worktree. */
-export async function findTaskByWorktreePath(worktreePath: string): Promise<Task | null> {
+export async function findTaskByWorktreePath(
+  worktreePath: string,
+  { liveOnly = false }: { liveOnly?: boolean } = {},
+): Promise<Task | null> {
   const db = await getDb();
+  const live = liveOnly ? ` AND status != 'archived'` : '';
   const rows = await db.select<TaskRow[]>(
-    `SELECT ${TASK_SELECT} FROM tasks WHERE worktree_path = $1 ORDER BY id DESC LIMIT 1`,
+    `SELECT ${TASK_SELECT} FROM tasks WHERE worktree_path = $1${live} ORDER BY id DESC LIMIT 1`,
     [worktreePath],
   );
   const row = rows[0];
@@ -446,7 +507,9 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
     binds.push(opts.agentId);
     where.push(`agent_id = $${binds.length}`);
   } else if (opts.parentOnly) {
-    where.push('agent_id IS NULL');
+    // Unary + keeps SQLite off messages_agent, a worse plan for this query;
+    // messages_session_seq is ~10x faster on a long session (110 ms -> 10 ms measured).
+    where.push('+agent_id IS NULL');
   }
   if (opts.afterSeq !== undefined) {
     // exclusive: pages forward from the last seq the caller already has

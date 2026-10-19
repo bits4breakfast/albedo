@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { Task } from '../types';
-import { albedoOwnsWorktree } from '../git/reconcile';
+import { albedoOwnsWorktree, worktreeSharedWithLiveTask } from '../git/reconcile';
 import {
   GitError,
   type WorkAtRisk,
@@ -72,6 +72,11 @@ export interface ArchiveTaskDialogProps {
    * removed from Albedo. That sentence is a promise the data layer keeps.
    */
   onDeleted?: (taskId: number) => void;
+  /**
+   * The other tasks, to tell whether a live one runs in the same directory
+   * (a resumed session, a reused slug). If so, removal is not offered.
+   */
+  otherTasks?: readonly Task[];
 }
 
 interface Probe {
@@ -102,6 +107,7 @@ export function ArchiveTaskDialog({
   onClose,
   onArchived,
   onDeleted,
+  otherTasks = [],
 }: ArchiveTaskDialogProps) {
   const deleting = intent === 'delete';
   const [probe, setProbe] = useState<Probe>(EMPTY_PROBE);
@@ -120,7 +126,7 @@ export function ArchiveTaskDialog({
    * disabled button, not an unselected radio. An option that dangerous should
    * not exist on the screen at all.
    */
-  const owned = task === null || albedoOwnsWorktree(task);
+  const owned = task === null || (albedoOwnsWorktree(task) && !worktreeSharedWithLiveTask(task, otherTasks));
 
   // --- probe: the two kinds of work at risk -------------------------------
 

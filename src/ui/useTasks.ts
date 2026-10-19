@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Task, TaskStatus } from '../types';
-import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged } from '../db';
+import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged, compactHistory } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
 import { hasHooks, onPromptChange, pendingPrompt } from '../capture/hookEvents';
@@ -309,6 +309,9 @@ export function useTasks(): UseTasksResult {
 
     void (async () => {
       try {
+        // Before capture starts, so a VACUUM never contends with ingest.
+        // Housekeeping only: a failure must not keep capture from starting.
+        await compactHistory().catch((err) => console.error('[db] compactHistory failed', err));
         handle = await startCapture();
         if (!stopped && handle?.liveUpdatesError) setCaptureError(handle.liveUpdatesError);
         if (stopped) {
