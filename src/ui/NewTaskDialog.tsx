@@ -21,6 +21,7 @@ import {
   composeWorktreePath,
   createWorktree,
   listBranches,
+  undoCreateWorktree,
 } from '../git/worktree';
 import ProjectsDialog from './ProjectsDialog';
 import { readLastProjectId, writeLastProjectId } from './projectPrefs';
@@ -214,17 +215,26 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
       if (busy || !project) return;
       setBusy(true);
       setError(null);
+      const created = {
+        repoPath: project.repoPath,
+        baseBranch,
+        branch,
+        path: worktreePath,
+        useExistingBranch,
+      };
       try {
-        await createWorktree({
-          repoPath: project.repoPath,
-          baseBranch,
-          branch,
-          path: worktreePath,
-          useExistingBranch,
-        });
+        await createWorktree(created);
+      } catch (e) {
+        const kind = e instanceof GitError ? e.kind : 'unknown';
+        setError({ text: messageOf(e), kind });
+        setBusy(false);
+        return;
+      }
+      let task: Task;
+      try {
         // Only once the worktree exists on disk does a task row make sense:
         // a task whose worktree is missing is worse than no task at all.
-        const task = await createTask({
+        task = await createTask({
           title: title.trim(),
           projectId: project.id,
           repoPath: project.repoPath,
@@ -236,16 +246,27 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
           // already had, sets this false and is never offered removal.
           ownsWorktree: true,
         });
-        writeLastProjectId(project.id);
-        // Before onCreated: that is what mounts the terminal, which reads it.
-        setTaskModel(task.id, model || null);
-        onCreated(task);
       } catch (e) {
-        const kind = e instanceof GitError ? e.kind : 'unknown';
-        setError({ text: messageOf(e), kind });
-      } finally {
+        // The worktree exists but no task names it, so a retry would fail on
+        // `path-exists`. Undo it -- unforced, and the branch only if `-b` cut
+        // it just now -- or say exactly what was left behind.
+        const leftover = await undoCreateWorktree(created);
+        setError({
+          text:
+            `The worktree was created but the task could not be saved:\n${messageOf(e)}\n\n` +
+            (leftover ?? 'The worktree has been removed again, so you can retry.'),
+          kind: 'task-save',
+        });
         setBusy(false);
+        return;
       }
+      // Outside the try on purpose: from here the row exists, so nothing that
+      // fails below may undo the worktree it names.
+      setBusy(false);
+      writeLastProjectId(project.id);
+      // Before onCreated: that is what mounts the terminal, which reads it.
+      setTaskModel(task.id, model || null);
+      onCreated(task);
     },
     [busy, project, baseBranch, branch, worktreePath, title, model, onCreated],
   );
@@ -473,7 +494,9 @@ export function NewTaskDialog({ open, onClose, onCreated }: NewTaskDialogProps) 
                         ? `The branch ${branch} already exists`
                         : error.kind === 'path-exists'
                           ? 'That worktree path is taken'
-                          : 'git refused'}
+                          : error.kind === 'task-save'
+                            ? 'The task could not be saved'
+                            : 'git refused'}
                     </div>
                     <pre className="wt-error-body">{error.text}</pre>
                     {error.kind === 'branch-exists' && (

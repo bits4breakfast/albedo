@@ -26,12 +26,14 @@ import type { Task } from '../types';
 import { albedoOwnsWorktree, worktreeSharedWithLiveTask } from '../git/reconcile';
 import {
   GitError,
+  RiskChangedError,
   type WorkAtRisk,
+  type WorkProbe,
   ackLabel,
   assessLoss,
+  probeWorkAtRisk,
   removeWorktree,
-  uncommittedChanges,
-  unmergedCommits,
+  taskCreatedBranch,
 } from '../git/worktree';
 import './worktree.css';
 
@@ -85,6 +87,13 @@ interface Probe {
   ahead: number | null;
   aheadBase: string | null;
   aheadError: string | null;
+  head: string | null;
+  /**
+   * Whether this task's branch was cut by Albedo for it. False when the user
+   * chose "Check out the existing branch" -- or when that cannot be shown, in
+   * which case deleting the branch is simply not offered.
+   */
+  createdBranch: boolean;
   done: boolean;
 }
 
@@ -94,8 +103,24 @@ const EMPTY_PROBE: Probe = {
   ahead: null,
   aheadBase: null,
   aheadError: null,
+  head: null,
+  createdBranch: false,
   done: false,
 };
+
+/** Fold a fresh {@link WorkProbe} into the dialog's probe state. */
+function fromWorkProbe(p: WorkProbe, createdBranch: boolean): Probe {
+  return {
+    files: p.risk.files,
+    filesError: p.filesError,
+    ahead: p.risk.ahead,
+    aheadBase: p.risk.aheadBase,
+    aheadError: p.aheadError,
+    head: p.risk.head ?? null,
+    createdBranch,
+    done: true,
+  };
+}
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -115,10 +140,15 @@ export function ArchiveTaskDialog({
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The error is "more at risk than you ticked for", not a git failure. */
+  const [riskChanged, setRiskChanged] = useState(false);
 
   const taskId = task?.id ?? null;
   const worktreePath = task?.worktreePath ?? '';
   const baseBranch = task?.baseBranch ?? '';
+  const repoPath = task?.repoPath ?? '';
+  const branch = task?.branch ?? '';
+  const createdAt = task?.createdAt ?? 0;
   /**
    * Whether Albedo created this directory. False for a resumed session, which
    * runs in whatever cwd it originally used -- frequently the user's main
@@ -136,6 +166,7 @@ export function ArchiveTaskDialog({
       setMode('remove-keep-branch');
       setAck(false);
       setError(null);
+      setRiskChanged(false);
       setBusy(false);
       return;
     }
@@ -150,29 +181,17 @@ export function ArchiveTaskDialog({
     let cancelled = false;
     setProbe(EMPTY_PROBE);
     void (async () => {
-      const next: Probe = { ...EMPTY_PROBE, done: true };
-      try {
-        const st = await uncommittedChanges(worktreePath);
-        next.files = st.files;
-      } catch (e) {
-        next.files = null;
-        next.filesError = messageOf(e);
-      }
-      try {
-        const un = await unmergedCommits(worktreePath, baseBranch);
-        next.ahead = un.ahead;
-        next.aheadBase = un.upstream ?? baseBranch;
-      } catch (e) {
-        next.ahead = null;
-        next.aheadBase = baseBranch;
-        next.aheadError = messageOf(e);
-      }
-      if (!cancelled) setProbe(next);
+      const work = await probeWorkAtRisk(worktreePath, baseBranch || null);
+      const created = await taskCreatedBranch(repoPath, branch, createdAt);
+      if (cancelled) return;
+      setProbe(fromWorkProbe(work, created));
+      // Never leave a selection on an option that is no longer offered.
+      if (!created) setMode((m) => (m === 'remove-delete-branch' ? 'remove-keep-branch' : m));
     })();
     return () => {
       cancelled = true;
     };
-  }, [taskId, worktreePath, baseBranch, owned]);
+  }, [taskId, worktreePath, baseBranch, repoPath, branch, createdAt, owned]);
 
   // Changing the plan changes what is destroyed, so a stale tick must not
   // carry over from a more dangerous option to a safer one and back.
@@ -210,18 +229,36 @@ export function ArchiveTaskDialog({
           // `force` means the user acknowledged losing work, and is also what
           // turns `git branch -d` into `-D`. It can only be true via the tick.
           force: ack,
-          deleteBranch: mode === 'remove-delete-branch',
+          // Re-checked here as well as in the render, like `owned`: a branch
+          // the task did not create is never deleted.
+          deleteBranch: mode === 'remove-delete-branch' && probe.createdBranch,
+          // What the tick was given for. removeWorktree probes again and
+          // refuses if Claude has added to it since the dialog opened.
+          acknowledged: {
+            risk: { files: probe.files, ahead: probe.ahead, aheadBase: probe.aheadBase, head: probe.head },
+            baseBranch: task.baseBranch || null,
+          },
         });
       }
       // Git is done (or was not needed). Only now is it safe to touch the row.
       if (deleting) (onDeleted ?? onArchived)(task.id);
       else onArchived(task.id);
     } catch (e) {
-      setError(e instanceof GitError ? e.message : `${messageOf(e)}\n(not a git failure)`);
+      if (e instanceof RiskChangedError) {
+        // Show what is there now and take the tick away: it was given for
+        // less than is now at stake.
+        setProbe(fromWorkProbe(e.now, probe.createdBranch));
+        setAck(false);
+        setRiskChanged(true);
+        setError(e.message);
+      } else {
+        setRiskChanged(false);
+        setError(e instanceof GitError ? e.message : `${messageOf(e)}\n(not a git failure)`);
+      }
     } finally {
       setBusy(false);
     }
-  }, [task, busy, mode, ack, owned, deleting, onArchived, onDeleted]);
+  }, [task, busy, mode, ack, owned, deleting, probe, onArchived, onDeleted]);
 
   if (!task) return null;
 
@@ -229,11 +266,13 @@ export function ArchiveTaskDialog({
     files: probe.files,
     ahead: probe.ahead,
     aheadBase: probe.aheadBase,
+    head: probe.head,
   };
   // Not owned means there is nothing to remove, so nothing is offered and the
   // dialog is a different act with a different name. See the render below.
   const removing = owned && mode !== 'keep-worktree';
-  const loss = assessLoss(risk, { deleteBranch: mode === 'remove-delete-branch' });
+  const deleteBranch = mode === 'remove-delete-branch' && probe.createdBranch;
+  const loss = assessLoss(risk, { deleteBranch });
   const needsAck = removing && loss.needsAck;
   const hasUnmerged = probe.ahead !== null && probe.ahead > 0;
   const fileCount = probe.files?.length ?? 0;
@@ -343,7 +382,17 @@ export function ArchiveTaskDialog({
               </>,
             )}
 
-            {option(
+            {/* Offered only for a branch this task's `worktree add -b` cut. A
+                branch checked out because it already existed is the user's,
+                and "could not tell" is treated the same way. */}
+            {probe.done && !probe.createdBranch && (
+              <div className="wt-hint">
+                Deleting <span className="wt-mono">{task.branch}</span> is not offered: Albedo
+                cannot show that this task created it, so it may be a branch you already had.
+              </div>
+            )}
+
+            {probe.createdBranch && option(
               'remove-delete-branch',
               'Remove the worktree and delete the branch',
               <>
@@ -398,7 +447,7 @@ export function ArchiveTaskDialog({
           )}
 
           {/* --- loss 2: commits that exist nowhere else -------------------- */}
-          {mode === 'remove-delete-branch' && hasUnmerged && (
+          {deleteBranch && hasUnmerged && (
             <div className="wt-notice" data-tone="unmerged">
               <strong>
                 {probe.ahead} commit(s) on {task.branch} are not merged into{' '}
@@ -409,7 +458,7 @@ export function ArchiveTaskDialog({
             </div>
           )}
 
-          {mode === 'remove-delete-branch' && probe.aheadError && (
+          {deleteBranch && probe.aheadError && (
             <div className="wt-notice">
               Could not work out whether this branch has unmerged commits, so there may be committed
               work here that exists nowhere else.
@@ -438,13 +487,17 @@ export function ArchiveTaskDialog({
                 disabled={busy}
                 onChange={(e) => setAck(e.target.checked)}
               />
-              <span>{ackLabel(risk, { deleteBranch: mode === 'remove-delete-branch' })}</span>
+              <span>{ackLabel(risk, { deleteBranch })}</span>
             </label>
           )}
 
           {error && (
             <div className="wt-error">
-              <div className="wt-error-head">git refused — the task has NOT been archived</div>
+              <div className="wt-error-head">
+                {riskChanged
+                  ? 'The worktree changed — nothing was removed or archived'
+                  : 'git refused — the task has NOT been archived'}
+              </div>
               <pre className="wt-error-body">{error}</pre>
               <div className="wt-error-actions">
                 <span className="wt-modal-sub">

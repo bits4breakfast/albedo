@@ -340,7 +340,9 @@ describe('classifyOrphans -- disk candidates', () => {
     ...over,
   });
 
-  it('flags a stale directory whose gitdir has gone as an orphan', () => {
+  it('never offers a directory whose gitdir is missing -- the repo may have moved', () => {
+    // A moved/renamed repo, or one on an unmounted volume, leaves every one of
+    // its worktrees looking exactly like this. Each is a full working tree.
     const out = classify({
       scans: [],
       disk: [disk({ path: '/Users/m/agents/albedo/stale', gitdirExists: false })],
@@ -348,12 +350,31 @@ describe('classifyOrphans -- disk candidates', () => {
       home: HOME,
     });
     expect(out[0]).toMatchObject({
-      classification: 'orphan',
+      classification: 'unknown',
       source: 'disk',
-      prunable: true,
+      prunable: false,
+      repoPath: null,
       branch: null,
+      gitdir: 'missing',
     });
-    expect(out[0]?.reason).toContain('no longer exists');
+    expect(out[0]?.reason).toContain('work here is intact');
+    expect(out[0]?.reason).not.toMatch(/stale/i);
+  });
+
+  it('treats a gitdir the filesystem would not answer for as unchecked, not missing', () => {
+    const out = classify({
+      scans: [],
+      disk: [disk({ path: '/Users/m/agents/albedo/vol', gitdirExists: null })],
+      knownPaths: [],
+      home: HOME,
+    });
+    expect(out[0]).toMatchObject({
+      classification: 'unknown',
+      prunable: false,
+      repoPath: null,
+      gitdir: 'unchecked',
+    });
+    expect(out[0]?.reason).toContain('could not check');
   });
 
   it('calls a live worktree of an unscanned repo unknown, not an orphan', () => {
@@ -410,11 +431,13 @@ describe('classifyOrphans -- disk candidates', () => {
 
   it('sorts orphans before unknowns', () => {
     const out = classify({
-      scans: [],
-      disk: [
-        disk({ path: '/Users/m/agents/a/zzz-live' }),
-        disk({ path: '/Users/m/agents/a/aaa-stale', gitdirExists: false }),
+      scans: [
+        scan(
+          '/Users/m/www/albedo',
+          'worktree /Users/m/www/albedo\nHEAD a\n\nworktree /Users/m/agents/albedo/zzz-git\nHEAD b\nbranch refs/heads/zzz\n\n',
+        ),
       ],
+      disk: [disk({ path: '/Users/m/agents/a/aaa-live' })],
       knownPaths: [],
       home: HOME,
     });

@@ -4,12 +4,13 @@
  * Two lists, deliberately:
  *
  *   Orphaned   worktrees under ~/agents that Albedo created and nothing now
- *              references, plus stale directories whose gitdir has gone.
- *              These are removable, one at a time, behind a confirmation that
- *              shows the uncommitted files.
+ *              references. These are removable, one at a time, behind a
+ *              confirmation that shows the uncommitted files.
  *   Not tracked  everything else git told us about — the user's own
- *              ~/www/worktrees, say. Informational only: no remove button, on
- *              purpose. A false positive here would invite deleting real work.
+ *              ~/www/worktrees, say — and directories whose gitdir is missing
+ *              or unreadable, which is what a moved repo looks like.
+ *              Informational only: no remove button, on purpose. A false
+ *              positive here would invite deleting real work.
  *
  * Nothing destructive happens without an explicit per-row confirm, and a dirty
  * worktree needs a second, separate acknowledgement on top of that.
@@ -28,13 +29,15 @@ import {
 } from '../git/reconcile';
 import {
   GitError,
+  RiskChangedError,
   type WorkAtRisk,
+  type WorkProbe,
   ackLabel,
   assessLoss,
   listBranches,
+  probeWorkAtRisk,
   removeWorktree,
-  uncommittedChanges,
-  unmergedCommits,
+  taskCreatedBranch,
 } from '../git/worktree';
 import './worktree.css';
 
@@ -55,6 +58,18 @@ interface Row extends OrphanInfo {
   ahead: number | null;
   aheadBase: string | null;
   aheadError: string | null;
+  /** False until the first probe lands; nothing can be confirmed before. */
+  probed: boolean;
+  /** HEAD when probed -- part of what an acknowledgement is checked against. */
+  probedHead: string | null;
+  /** The base the probe compared against; removal re-probes with the same. */
+  probeBase: string | null;
+  /**
+   * Whether deleting the branch may be offered at all. False for an archived
+   * task's branch unless its reflog shows the task created it: "Check out the
+   * existing branch" hands Albedo a branch the user already had.
+   */
+  branchDeletable: boolean;
 }
 
 /** Project a row onto the shared {@link WorkAtRisk} shape. */
@@ -63,6 +78,22 @@ function riskOf(row: Row): WorkAtRisk {
     files: row.dirtyError !== null || row.dirty === null ? null : row.files,
     ahead: row.ahead,
     aheadBase: row.aheadBase,
+    head: row.probedHead,
+  };
+}
+
+/** The row fields a probe fills in. */
+function patchFrom(p: WorkProbe, base: string | null): Partial<Row> {
+  return {
+    dirty: p.risk.files === null ? null : p.risk.files.length > 0,
+    files: p.risk.files ?? [],
+    dirtyError: p.filesError,
+    ahead: p.risk.ahead,
+    aheadBase: p.risk.aheadBase,
+    aheadError: p.aheadError,
+    probed: true,
+    probedHead: p.risk.head ?? null,
+    probeBase: base,
   };
 }
 
@@ -72,6 +103,8 @@ interface ConfirmState {
   deleteBranch: boolean;
   busy: boolean;
   error: string | null;
+  /** The error is "more at risk than you ticked for", not a git failure. */
+  changed?: boolean;
 }
 
 function messageOf(e: unknown): string {
@@ -121,8 +154,17 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
       // An archived task knows the branch it was cut from; prefer that over
       // the repo's current branch when comparing for unmerged commits.
       const recordedBase = new Map<string, string>();
+      // Every task that names this path, for the branch-provenance check. A row
+      // backed by a task may only offer branch deletion if the task cut it.
+      const recordedTasks = new Map<string, Array<{ repoPath: string; branch: string; createdAt: number }>>();
       for (const t of tasks) {
-        if (t.worktreePath && t.baseBranch) recordedBase.set(pathKey(t.worktreePath), t.baseBranch);
+        if (!t.worktreePath) continue;
+        const k = pathKey(t.worktreePath);
+        if (t.baseBranch) recordedBase.set(k, t.baseBranch);
+        recordedTasks.set(k, [
+          ...(recordedTasks.get(k) ?? []),
+          { repoPath: t.repoPath, branch: t.branch, createdAt: t.createdAt },
+        ]);
       }
 
       const found = await findOrphans({
@@ -139,6 +181,12 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
         ahead: null,
         aheadBase: null,
         aheadError: null,
+        probed: false,
+        probedHead: null,
+        probeBase: null,
+        // A task-backed row starts NOT deletable and earns it below; a row no
+        // task names has no creation time to check against.
+        branchDeletable: !recordedTasks.has(pathKey(o.path)),
       }));
       setRows(initial);
       setLoading(false);
@@ -172,29 +220,20 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
       // Probe one at a time, updating as we go: the list is useful immediately
       // and fills in rather than blocking on the slowest repo.
       for (const o of found) {
-        let patch: Partial<Row>;
-        try {
-          const st = await uncommittedChanges(o.path);
-          patch = { dirty: st.dirty, files: st.files, dirtyError: null };
-        } catch (e) {
-          patch = { dirty: null, files: [], dirtyError: messageOf(e) };
-        }
-
         const base =
           recordedBase.get(pathKey(o.path)) ?? (o.repoPath ? await baseFor(o.repoPath) : null);
-        if (base === null) {
-          patch.aheadError = 'No base branch to compare against, so unmerged commits are unknown.';
-        } else {
-          try {
-            const un = await unmergedCommits(o.path, base);
-            patch.ahead = un.ahead;
-            patch.aheadBase = un.upstream ?? base;
-            patch.aheadError = null;
-          } catch (e) {
-            patch.ahead = null;
-            patch.aheadBase = base;
-            patch.aheadError = messageOf(e);
+        const patch = patchFrom(await probeWorkAtRisk(o.path, base), base);
+
+        const owners = recordedTasks.get(pathKey(o.path));
+        if (owners && o.branch) {
+          let created = true;
+          for (const t of owners) {
+            if (t.branch !== o.branch || !(await taskCreatedBranch(t.repoPath, t.branch, t.createdAt))) {
+              created = false;
+              break;
+            }
           }
+          patch.branchDeletable = created;
         }
 
         setRows((prev) => prev.map((r) => (r.path === o.path ? { ...r, ...patch } : r)));
@@ -228,7 +267,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
   const doRemove = useCallback(
     async (row: Row, state: ConfirmState) => {
       if (!row.repoPath) return;
-      setConfirm({ ...state, busy: true, error: null });
+      setConfirm({ ...state, busy: true, error: null, changed: false });
       try {
         await removeWorktree({
           repoPath: row.repoPath,
@@ -239,14 +278,25 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
           // into `-D`, so it must be set for unmerged commits too, not only for
           // a dirty working tree. It can only be true via the acknowledgement.
           force: state.ack,
-          deleteBranch: state.deleteBranch && row.branch !== null,
+          deleteBranch: state.deleteBranch && row.branch !== null && row.branchDeletable,
+          // What the tick was given for. removeWorktree probes again and
+          // refuses if Claude has added to it since.
+          acknowledged: { risk: riskOf(row), baseBranch: row.probeBase },
         });
         setRows((prev) => prev.filter((r) => r.path !== row.path));
         setConfirm(null);
       } catch (e) {
+        if (e instanceof RiskChangedError) {
+          // Show the new facts and take the tick away: the old one was given
+          // for less than is now at stake.
+          const patch = patchFrom(e.now, row.probeBase);
+          setRows((prev) => prev.map((r) => (r.path === row.path ? { ...r, ...patch } : r)));
+          setConfirm({ ...state, ack: false, busy: false, error: e.message, changed: true });
+          return;
+        }
         const text =
           e instanceof GitError ? e.message : `${messageOf(e)}\n(not a git failure)`;
-        setConfirm({ ...state, busy: false, error: text });
+        setConfirm({ ...state, busy: false, error: text, changed: false });
       }
     },
     [],
@@ -264,9 +314,10 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
     // The chips describe the worst case (branch deleted too); the confirmation
     // below re-assesses against what the user has actually ticked, so keeping
     // the branch correctly stops warning about unmerged commits.
-    const summary = assessLoss(risk, { deleteBranch: true });
-    const loss =
-      confirming && confirm ? assessLoss(risk, { deleteBranch: confirm.deleteBranch }) : summary;
+    const canDeleteBranch = row.branch !== null && row.branchDeletable;
+    const deleteBranch = confirming && !!confirm?.deleteBranch && canDeleteBranch;
+    const summary = assessLoss(risk, { deleteBranch: canDeleteBranch });
+    const loss = confirming ? assessLoss(risk, { deleteBranch }) : summary;
     const dirty = loss.dirty;
     const hasUnmerged = row.ahead !== null && row.ahead > 0;
 
@@ -291,11 +342,14 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
             <button
               type="button"
               className="btn"
+              // Not before the probe lands: an acknowledgement given while the
+              // row still says "checking…" would be for work nobody has seen.
+              disabled={!row.probed}
               onClick={() =>
                 setConfirm({
                   path: row.path,
                   ack: false,
-                  deleteBranch: row.branch !== null,
+                  deleteBranch: canDeleteBranch,
                   busy: false,
                   error: null,
                 })
@@ -337,10 +391,19 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
 
         <div className="wt-item-reason">{row.reason}</div>
 
-        {row.classification === 'orphan' && !row.repoPath && (
+        {/* Never "delete it yourself": a missing gitdir is what a moved repo
+            looks like, and this directory is still a full working tree. */}
+        {row.gitdir === 'missing' && (
           <div className="wt-item-reason">
-            No repository to run <span className="wt-mono">git worktree remove</span> from, so
-            Albedo will not touch it. Delete the directory yourself once you are sure.
+            Albedo will not touch it. If the repository moved, run{' '}
+            <span className="wt-mono">git worktree repair {row.path}</span> from the repository’s
+            new location to reconnect it.
+          </div>
+        )}
+        {row.gitdir === 'unchecked' && (
+          <div className="wt-item-reason">
+            Albedo could not read the filesystem there (permissions, or a volume that is not
+            mounted), so it will not touch this worktree. Rescan once it is reachable.
           </div>
         )}
 
@@ -384,7 +447,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
               </div>
             )}
 
-            {row.aheadError && confirm.deleteBranch && (
+            {row.aheadError && deleteBranch && (
               <div className="wt-notice">
                 Could not work out whether this worktree has unmerged commits, so there may be
                 committed work here that exists nowhere else.
@@ -392,13 +455,24 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
               </div>
             )}
 
-            {row.branch && (
+            {row.branch && !canDeleteBranch && (
+              <div className="wt-item-reason">
+                The branch <span className="wt-mono">{row.branch}</span> is kept: Albedo cannot show
+                that its task created it, and it will not offer to delete a branch you already had.
+              </div>
+            )}
+
+            {row.branch && canDeleteBranch && (
               <label className="wt-check">
                 <input
                   type="checkbox"
-                  checked={confirm.deleteBranch}
+                  checked={deleteBranch}
                   disabled={confirm.busy}
-                  onChange={(e) => setConfirm({ ...confirm, deleteBranch: e.target.checked })}
+                  // A tick given for keeping the branch is not a tick for
+                  // deleting it, so changing the plan takes it away.
+                  onChange={(e) =>
+                    setConfirm({ ...confirm, deleteBranch: e.target.checked, ack: false })
+                  }
                 />
                 <span>
                   Also delete the branch <span className="wt-mono">{row.branch}</span>
@@ -427,13 +501,15 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
                   disabled={confirm.busy}
                   onChange={(e) => setConfirm({ ...confirm, ack: e.target.checked })}
                 />
-                <span>{ackLabel(risk, { deleteBranch: confirm.deleteBranch })}</span>
+                <span>{ackLabel(risk, { deleteBranch })}</span>
               </label>
             )}
 
             {confirm.error && (
               <div className="wt-error">
-                <div className="wt-error-head">git refused</div>
+                <div className="wt-error-head">
+                  {confirm.changed ? 'Changed since you confirmed — nothing was removed' : 'git refused'}
+                </div>
                 <pre className="wt-error-body">{confirm.error}</pre>
               </div>
             )}
