@@ -93,6 +93,48 @@
 }
 .tx-jump:hover { border-color: var(--accent-line); color: var(--text-strong); }
 
+/* --- queued messages ------------------------------------------------------- */
+
+/* What Claude Code has not taken yet, between the transcript and the
+   composer. On --panel like the composer it introduces; the label is --muted
+   (cleared against the darker --panel-raised), the messages keep --text, and
+   a hairline marks each one as waiting rather than said. Never `opacity`. */
+.tx-queued {
+  flex: none;
+  max-height: 30vh;
+  overflow-y: auto;
+  padding: 6px 12px 4px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+}
+.tx-queued-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.tx-queued-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.tx-queued-hint { margin-left: auto; }
+.tx-queued-item {
+  margin: 0 0 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* Two lines each; the full text is in the tooltip. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* --- composer -------------------------------------------------------------- */
 
 /*

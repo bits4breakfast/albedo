@@ -36,3 +36,8 @@ export function expandPastes(draft: string, store: ReadonlyMap<number, string>):
   if (store.size === 0) return draft;
   return draft.replace(PLACEHOLDER_RE, (whole, id: string) => store.get(Number(id)) ?? whole);
 }
+
+/** A queued message as one short line: a pasted block reads as a mention of it. */
+export function queuedLabel(text: string): string {
+  return text.replace(/<pasted_content\b[^>]*>[\s\S]*?<\/pasted_content\b[^>]*>/g, '[pasted text]').trim();
+}

@@ -400,6 +400,79 @@ export function lastTitleIn(text: string): string | null {
 }
 
 /**
+ * One change to Claude Code's input queue: what was typed (or injected) while
+ * a turn was running, and what became of it.
+ *
+ * Claude Code writes these as `queue-operation` lines, in real time:
+ *  - `enqueue` carries the text, written the moment Enter is pressed;
+ *  - `dequeue` carries nothing and takes the OLDEST entry, when it starts
+ *    the next turn with it;
+ *  - `remove` carries the text of the entry it takes, when the entry was
+ *    folded into the turn already running (`absorbed_mid_turn`) or withdrawn.
+ *
+ * Measured across 65 transcripts on Claude Code 2.1.303: 1030 enqueues,
+ * 571 dequeues, 457 removes. Content was always a string.
+ */
+export type QueueOperation =
+  | { op: 'enqueue'; sessionId: string; text: string; ts: number }
+  | { op: 'dequeue'; sessionId: string; ts: number }
+  | { op: 'remove'; sessionId: string; text: string; ts: number };
+
+/**
+ * The text of a message the person sent while a turn was running, which
+ * Claude Code folded into that turn instead of starting a new one. Null for
+ * every other attachment.
+ *
+ * Such a message is written ONLY as a `queued_command` attachment: no `user`
+ * line follows it, so without this it never appears in the transcript. A
+ * message that starts a new turn instead gets an ordinary `user` line and no
+ * attachment, so nothing is shown twice. Only `origin.kind === "human"`: the
+ * same attachment also carries task notifications and agent-to-agent
+ * messages (measured: 184 human of 488).
+ */
+export function absorbedPromptText(line: Record<string, unknown>): string | null {
+  const att = line['attachment'];
+  if (!isRecord(att) || att['type'] !== 'queued_command') return null;
+  const origin = att['origin'];
+  if (!isRecord(origin) || origin['kind'] !== 'human') return null;
+  const text = textOfUnknown(att['prompt']);
+  return text && text.trim() !== '' ? text : null;
+}
+
+/** The queue operations in a chunk, in order. Same cheap pre-filter as titles. */
+export function queueOperationsIn(text: string): QueueOperation[] {
+  const out: QueueOperation[] = [];
+  for (const line of text.split('\n')) {
+    if (line.length === 0 || !line.includes('"queue-operation"')) continue;
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (obj.type !== 'queue-operation') continue;
+    const sessionId = typeof obj.sessionId === 'string' ? obj.sessionId : '';
+    const parsed = typeof obj.timestamp === 'string' ? Date.parse(obj.timestamp) : NaN;
+    const ts = Number.isNaN(parsed) ? 0 : parsed;
+    const content = typeof obj.content === 'string' ? obj.content : null;
+    if (obj.operation === 'enqueue' && content !== null) out.push({ op: 'enqueue', sessionId, text: content, ts });
+    else if (obj.operation === 'dequeue') out.push({ op: 'dequeue', sessionId, ts });
+    else if (obj.operation === 'remove' && content !== null) out.push({ op: 'remove', sessionId, text: content, ts });
+    // Any other operation is unknown: ignored rather than guessed at.
+  }
+  return out;
+}
+
+/**
+ * Queue entries Claude Code puts there itself rather than the person typing:
+ * a background task finishing, a subagent's message. They take part in the
+ * queue's order -- a `dequeue` can take one -- but are not "your message".
+ */
+export function isInjectedQueueText(text: string): boolean {
+  return /^<(task-notification|agent-message)\b/.test(text.trimStart());
+}
+
+/**
  * Prefixes marking a `user` row that Claude Code injected rather than the human
  * typing it: slash-command envelopes (`<command-name>…`), system reminders, and
  * interruption notices (`[Request interrupted…]`).
@@ -463,7 +536,8 @@ function parseLineWithContext(
 
   const type = line['type'];
   if (typeof type !== 'string') return [];
-  if (!PERSISTED_LINE_TYPES.has(type)) return [];
+  const absorbed = type === 'attachment' ? absorbedPromptText(line) : null;
+  if (!PERSISTED_LINE_TYPES.has(type) && absorbed === null) return [];
 
   const base = {
     sessionId: stringOr(line['sessionId'], ''),
@@ -494,6 +568,8 @@ function parseLineWithContext(
     agentId: base.agentId,
     ts: base.ts,
   });
+
+  if (absorbed !== null) return [emit(0, 'user', absorbed, null, null)];
 
   if (type === 'system') {
     // `system` lines carry their text at the TOP level (`content`), not under

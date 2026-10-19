@@ -8,7 +8,7 @@
  * scrolling up to read is never interrupted.
  */
 
-import { expandPastes, placeholderFor, shouldCollapse } from './pastedText';
+import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
@@ -16,7 +16,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
-import { onCaptureUpdate } from '../../capture';
+import { onCaptureUpdate, onQueueChange, queuedFor, type QueuedEntry } from '../../capture';
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import { imageFromClipboard, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
@@ -329,6 +329,7 @@ export function TranscriptPane({
         ) : null}
       </div>
 
+      <QueuedStrip sessionId={sessionId} status={status} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}
     </div>
@@ -336,6 +337,52 @@ export function TranscriptPane({
 }
 
 export default TranscriptPane;
+
+// ---------------------------------------------------------------------------
+// Queued messages
+// ---------------------------------------------------------------------------
+
+/**
+ * What you sent while Claude Code was busy and it has not taken yet, read
+ * from the transcript's queue records (src/capture/queue.ts). Each entry
+ * leaves the moment Claude Code takes it, either as the next turn or folded
+ * into the one running -- and then appears in the transcript as your message.
+ *
+ * Only while a turn is live: a queue cannot be waiting in an idle session,
+ * so anything left at idle is what a killed session never took, and showing
+ * it would claim it is still coming. Entries Claude Code queued itself (a
+ * background task finishing, a subagent's message) are not shown.
+ */
+export function QueuedStrip({ sessionId, status }: { sessionId: string | null; status: TaskStatus | null }): ReactNode {
+  const [entries, setEntries] = useState<readonly QueuedEntry[]>(() => (sessionId ? queuedFor(sessionId) : []));
+  useEffect(() => {
+    if (sessionId === null) {
+      setEntries([]);
+      return;
+    }
+    setEntries([...queuedFor(sessionId)]);
+    return onQueueChange((sid) => {
+      if (sid === sessionId) setEntries([...queuedFor(sessionId)]);
+    });
+  }, [sessionId]);
+
+  const live = status === 'running' || status === 'blocked';
+  const mine = entries.filter((e) => !e.injected);
+  if (!live || mine.length === 0) return null;
+  return (
+    <div className="tx-queued" role="status" aria-label="Queued messages">
+      <div className="tx-queued-head">
+        Queued <span className="tx-queued-count">{mine.length}</span>
+        <span className="tx-queued-hint">sent when Claude Code finishes its current step</span>
+      </div>
+      {mine.map((e, i) => (
+        <div key={`${e.ts}-${i}`} className="tx-queued-item" title={e.text}>
+          {queuedLabel(e.text)}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Composer

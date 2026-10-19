@@ -26,7 +26,8 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { exists, open, readDir, SeekMode, stat, watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
 
-import { countLines, cwdOf, lastTitleIn, parseTranscript, SEQ_STRIDE } from './adapter';
+import { countLines, cwdOf, lastTitleIn, parseTranscript, queueOperationsIn, SEQ_STRIDE } from './adapter';
+import { recordQueueOperations, seedQueue } from './queue';
 import {
   adoptSessionIntoTask,
   findTaskByWorktreePath,
@@ -293,6 +294,8 @@ class Capture implements CaptureHandle {
    * not cost a head read on every append. Cleared per path by an import.
    */
   private readonly ignored = new Set<string>();
+  /** Files whose queue history has been replayed this run (see `seedQueueFrom`). */
+  private readonly queueSeeded = new Set<string>();
   /** `${taskId}\0${sessionId}` pairs whose earlier rows were already backfilled. */
   private readonly adopted = new Set<string>();
 
@@ -661,6 +664,15 @@ class Capture implements CaptureHandle {
       const remaining = info.size - offset;
       if (remaining <= 0) return;
 
+      // The queue lives in memory, so after a restart a session that is busy
+      // right now has entries this run never saw being added. Replay the
+      // file's history once, the first time it grows -- a queue only exists
+      // while a turn runs, and a running turn writes lines.
+      if (!this.queueSeeded.has(path)) {
+        this.queueSeeded.add(path);
+        if (offset > 0) await seedQueueFrom(path, offset, sessionId);
+      }
+
       // Grow the read window until it contains a newline, so a single
       // pathologically long line (a huge tool_result) cannot wedge the file.
       let windowSize = Math.min(remaining, MAX_CHUNK_BYTES);
@@ -685,6 +697,9 @@ class Capture implements CaptureHandle {
       // leaves whatever was already recorded alone.
       const chunkTitle = lastTitleIn(text);
       if (chunkTitle !== null) knownTitle = chunkTitle;
+
+      // Queue lines are bookkeeping too: no rows, only "waiting" state.
+      recordQueueOperations(queueOperationsIn(text));
 
       // Resolve identity from the rows themselves. sessionId can change
       // mid-file after a resume or compaction, so the LAST row wins and the
@@ -908,6 +923,27 @@ export async function importTranscripts(sessionFilePath: string): Promise<number
 // ---------------------------------------------------------------------------
 // Filesystem plumbing
 // ---------------------------------------------------------------------------
+
+/** How much history `seedQueueFrom` replays. Queues are short-lived; this is generous. */
+const QUEUE_SEED_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Rebuild a session's queue from the part of its transcript already ingested.
+ * Bounded: past `QUEUE_SEED_BYTES` only the tail is read, starting at the
+ * first whole line. A dequeue whose enqueue fell before the window then pops
+ * a later entry, which can hide one queued message until it is taken -- the
+ * price of not reading a huge file on startup.
+ */
+async function seedQueueFrom(path: string, upTo: number, sessionId: string): Promise<void> {
+  try {
+    const start = Math.max(0, upTo - QUEUE_SEED_BYTES);
+    let text = new TextDecoder().decode(await readRange(path, start, upTo - start));
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    seedQueue([sessionId], queueOperationsIn(text));
+  } catch {
+    /* a queue we cannot rebuild just starts empty */
+  }
+}
 
 async function readRange(path: string, offset: number, length: number): Promise<Uint8Array> {
   const file = await open(path, { read: true });
