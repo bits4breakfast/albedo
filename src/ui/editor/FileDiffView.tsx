@@ -57,22 +57,48 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     setLoad({ kind: 'loading' });
   }, [target.relative]);
 
+  /**
+   * What the last refresh found, shown on the button for a moment. A refresh
+   * that changes nothing changes nothing on screen either, which reads exactly
+   * like a button that does not work -- so it says so.
+   */
+  const [outcome, setOutcome] = useState<'refreshing' | 'updated' | 'unchanged' | null>(null);
+  useEffect(() => {
+    if (outcome !== 'updated' && outcome !== 'unchanged') return;
+    const timer = setTimeout(() => setOutcome(null), 2000);
+    return () => clearTimeout(timer);
+  }, [outcome]);
+
   useEffect(() => {
     let live = true;
     // Keep the previous diff on screen while a refresh of the SAME file runs;
     // a step to another file clears it, so the wrong file never shows.
-    setLoad((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }));
+    let before: string | null = null;
+    setLoad((prev) => {
+      if (prev.kind !== 'ready') return { kind: 'loading' };
+      before = JSON.stringify(prev.data);
+      return prev;
+    });
     void loadTaskFileDiff(task.worktreePath, task.baseBranch, target.relative, () => readWorking(target.absolute))
       .then((data) => {
-        if (live) setLoad({ kind: 'ready', data });
+        if (!live) return;
+        setLoad({ kind: 'ready', data });
+        setOutcome((o) => (o === 'refreshing' ? (JSON.stringify(data) === before ? 'unchanged' : 'updated') : o));
       })
       .catch((err: unknown) => {
-        if (live) setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        if (!live) return;
+        setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        setOutcome(null);
       });
     return () => {
       live = false;
     };
   }, [task.worktreePath, task.baseBranch, target.relative, target.absolute, reloadKey, again]);
+
+  const refresh = () => {
+    setOutcome('refreshing');
+    setAgain((n) => n + 1);
+  };
 
   if (load.kind === 'loading') return <div className="ed-message">reading the change…</div>;
   if (load.kind === 'error') {
@@ -98,8 +124,15 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
           against {against}
         </span>
         {unsaved ? <span className="ed-diff-unsaved">unsaved edits are not included</span> : null}
-        <button type="button" className="ed-btn ed-diff-refresh" onClick={() => setAgain((n) => n + 1)} title="Re-read the file and git">
-          refresh
+        <button
+          type="button"
+          className="ed-btn ed-diff-refresh"
+          onClick={refresh}
+          disabled={outcome === 'refreshing'}
+          title="Re-read the file and git"
+          aria-live="polite"
+        >
+          {outcome === 'refreshing' ? 'refreshing…' : outcome === 'updated' ? 'updated' : outcome === 'unchanged' ? 'no changes' : 'refresh'}
         </button>
       </div>
       <div className="ed-diff-scroll">
