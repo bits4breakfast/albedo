@@ -229,7 +229,6 @@
 .ed-btn.ed-danger { color: var(--danger); }
 .ed-btn.ed-danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 
-.ed-close { padding: 3px 7px; font-size: var(--fs-md); line-height: 1; }
 
 /* --- notices ------------------------------------------------------------- */
 

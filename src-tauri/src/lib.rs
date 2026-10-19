@@ -10,14 +10,15 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 const CLOSE_TAB_EVENT: &str = "albedo://close-tab";
 const CLOSE_TAB_ID: &str = "close-tab";
 
-/// The default menu, with every "Close Window" (Cmd+W) swapped for "Close Editor".
+/// The default menu, with every "Close Window" (Cmd+W) swapped for "Close Tab".
 ///
 /// Albedo has one window, so the stock Cmd+W quit the whole app -- including
 /// every live terminal -- when the user only meant to dismiss an open file.
 /// The default menu carries a "Close Window" in BOTH the File and the Window
 /// submenus, so all of them go; one removed alone leaves the shortcut live.
-/// The new item tells the webview, which closes the editor if one is open and
-/// otherwise does nothing. The window's own close button is untouched.
+/// The new item tells the webview, which closes the active editor tab if one
+/// is open and otherwise does nothing. The window's own close button is
+/// untouched.
 fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(handle)?;
     let mut home: Option<tauri::menu::Submenu<R>> = None;
@@ -37,13 +38,7 @@ fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
             }
         }
     }
-    let close = MenuItem::with_id(
-        handle,
-        CLOSE_TAB_ID,
-        "Close Editor",
-        true,
-        Some("CmdOrCtrl+W"),
-    )?;
+    let close = MenuItem::with_id(handle, CLOSE_TAB_ID, "Close Tab", true, Some("CmdOrCtrl+W"))?;
     match home {
         Some(sub) => sub.append(&close)?,
         None => {

@@ -362,13 +362,37 @@ export interface FileEditorProps {
    * real repo, not a throwaway worktree, so nothing typed here may reach it.
    */
   readOnly?: boolean;
+  /**
+   * The tab on screen. Several editors stay mounted, one per open tab, so
+   * each keeps its buffer, undo history and scroll; only the active one may
+   * answer the window-level keys (Esc, ⇧⌘D, ⌥⌘↑↓, ⌥⌘C). Default true.
+   */
+  active?: boolean;
+  /** Told when unsaved edits appear or go, for the tab's dot. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * The ‹ › arrows walk the change set in place: given, a step replaces this
+   * tab's file instead of opening another tab.
+   */
+  onStep?: (path: string) => void;
+  /** Bumped to ask this editor to close, through its unsaved-edits prompt. */
+  closeSignal?: number;
 }
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export default function FileEditor({ task, request, onClose, readOnly = false }: FileEditorProps) {
+export default function FileEditor({
+  task,
+  request,
+  onClose,
+  readOnly = false,
+  active = true,
+  onDirtyChange,
+  onStep,
+  closeSignal = 0,
+}: FileEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** Content as it was last known to be on disk. The overwrite guard's baseline. */
@@ -737,7 +761,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     setMode((m) => (m === 'file' ? 'diff' : 'file'));
   }, [canDiff]);
   useEffect(() => {
-    if (request === null) return;
+    if (request === null || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'KeyD') return;
       e.preventDefault();
@@ -746,7 +770,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [request, toggleMode]);
+  }, [request, toggleMode, active]);
 
   // --- close ---------------------------------------------------------------
   const requestClose = useCallback(() => {
@@ -758,6 +782,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
   }, [dirty, onClose]);
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -766,7 +791,28 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [requestClose]);
+  }, [requestClose, active]);
+
+  // The tab's × and ⌘W ask through here, so they get the same prompt.
+  const closeSignalSeen = useRef(closeSignal);
+  useEffect(() => {
+    if (closeSignal === closeSignalSeen.current) return;
+    closeSignalSeen.current = closeSignal;
+    requestClose();
+  }, [closeSignal, requestClose]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  // Shown again: a hidden CodeMirror cannot measure, and the keys go here now.
+  useEffect(() => {
+    if (!active) return;
+    const view = viewRef.current;
+    if (!view) return;
+    view.requestMeasure();
+    view.focus();
+  }, [active]);
 
   // --- stepping through the change set --------------------------------------
   // The touched-files list publishes its order; the editor walks it. Blocked
@@ -783,11 +829,14 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     (dir: 1 | -1) => {
       if (dirty || current === null) return;
       const next = neighbour(order, current, dir);
-      if (next !== null) openFile({ path: next });
+      if (next === null) return;
+      if (onStep) onStep(next);
+      else openFile({ path: next });
     },
-    [dirty, current, order, openFile],
+    [dirty, current, order, openFile, onStep],
   );
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.altKey || e.ctrlKey) return;
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -797,7 +846,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [step]);
+  }, [step, active]);
 
   // --- Go to Declaration / Find Usages --------------------------------------
   // A PHP file opened is the one signal that starts PHPantom, ahead of the
@@ -898,7 +947,7 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
           </span>
           {folder && <span className="ed-folder">{folder}</span>}
         </span>
-        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} />
+        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} active={active} />
         {handEdited && (
           <span className="ed-badge" title="You saved this file by hand in this session">
             hand-edited
@@ -961,9 +1010,6 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
           title="Find (⌘F)"
         >
           Find
-        </button>
-        <button type="button" className="ed-btn ed-close" onClick={requestClose} title="Close (Esc)">
-          ✕
         </button>
       </div>
 
@@ -1078,7 +1124,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
  * there); Option-click copies the absolute path. "copied" confirms it for a
  * moment rather than leaving you to wonder whether it worked.
  */
-function CopyPathButton({ path, absolute }: { path: string; absolute: string | null }) {
+function CopyPathButton({ path, absolute, active }: { path: string; absolute: string | null; active: boolean }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
@@ -1098,6 +1144,7 @@ function CopyPathButton({ path, absolute }: { path: string; absolute: string | n
   // the absolute path. Matched on `code`, because Option turns `key` into "ç".
   // Capture phase, so it works with the cursor inside the editor too.
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.altKey || e.ctrlKey || e.code !== 'KeyC') return;
       e.preventDefault();
@@ -1106,7 +1153,7 @@ function CopyPathButton({ path, absolute }: { path: string; absolute: string | n
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [copy]);
+  }, [copy, active]);
 
   return (
     <button
