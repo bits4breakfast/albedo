@@ -516,6 +516,47 @@ prefills the new-task dialog. Two gaps, deliberately:
 
 ---
 
+## 14. PHP: search the type hierarchy
+
+Asked for while using Go to Declaration and Find Usages: from a type, find the
+types related to it.
+
+- **Which classes implement an interface.**
+- **Which classes extend a class** (direct subclasses first; the whole tree is
+  a nice-to-have).
+- **Which classes use a trait.**
+
+Find Usages already lists every reference, but these three are the questions
+asked of a type, and a usage list buries them among parameter types,
+`instanceof` checks and docblocks.
+
+### Two engines, like ⌘B and ⌥F7
+
+- **PHPantom, when present** (bundled with `build.sh --with-phpantom`, or in
+  `~/.albedo/bin`). Its README lists go to implementation and type hierarchy:
+  `textDocument/implementation` answers the interface question, and
+  `typeHierarchy/subtypes` the extends one. Check whether either also covers
+  trait users before writing a fallback for that case. The client
+  (`src/lsp/phpantom.ts`) needs two more requests and the capabilities that
+  advertise them; the server pool and freshness rules stay as they are.
+- **git grep otherwise** (`src/git/phpRefs.ts`). The name resolution is
+  already there: grep the short name, read each candidate file's namespace
+  and imports, and keep the declaration lines -- `class X extends Name`,
+  `class X implements A, Name`, `interface X extends Name` -- whose resolved
+  name is the target. A trait user is an *indented* `use Name;` inside a class
+  body, which `phpRefs` already reads as a reference rather than an import.
+  Line-based like the rest of `phpRefs`: an `implements` list split across
+  lines is missed, and should be said, not hidden.
+
+### Where it lives in the UI
+
+PhpStorm's key is ⌥⌘B ("Go to Implementation"). On an interface it lists the
+implementers, on a class its subclasses, on a trait its users. Results go in
+the same dialog as Find Usages (`SymbolResults`), titled with what was asked
+("Classes implementing `Name`"). A single result jumps straight there, like ⌘B.
+
+---
+
 ## Already recorded elsewhere — do not duplicate here
 
 `STATUS.md` → **Known gaps** owns: no reprocessor, thin component coverage,
