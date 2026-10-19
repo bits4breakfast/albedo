@@ -17,7 +17,8 @@ import type { ReactNode } from 'react';
 import type { Task } from '../../types';
 import type { ResolvedPath } from '../../lib/paths';
 import { loadTaskFileDiff, type ChangeKind, type TaskFileDiff } from '../../git/fileDiff';
-import { Diff } from '../transcript/Diff';
+import { Diff, DiffAnnotationsContext } from '../transcript/Diff';
+import { useDiffComments } from './diffComments';
 import { dismissAfterFocusedTime } from '../../lib/focusTimer';
 import './diffview.css';
 
@@ -95,6 +96,14 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     setAgain((n) => n + 1);
   };
 
+  // Review comments on the new side: only when there is a current file for
+  // them to point at (not a deleted file, not a binary).
+  const currentText =
+    load.kind === 'ready' && 'newText' in load.data.result && load.data.result.change !== 'deleted'
+      ? load.data.result.newText
+      : null;
+  const comments = useDiffComments(task.id, target.relative, currentText, unsaved);
+
   if (load.kind === 'loading') return <div className="ed-message">reading the change…</div>;
   if (load.kind === 'error') {
     return (
@@ -130,8 +139,18 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
           {outcome === 'refreshing' ? 'refreshing…' : outcome === 'refreshed' ? 'refreshed' : 'refresh'}
         </button>
       </div>
+      {comments.notice ? (
+        <div className="ed-notice" data-tone="warn">
+          <span>{comments.notice}</span>
+          <button type="button" className="ed-btn" onClick={comments.clearNotice}>
+            OK
+          </button>
+        </div>
+      ) : null}
       <div className="ed-diff-scroll">
-        <DiffBody data={load.data} />
+        <DiffAnnotationsContext.Provider value={comments.annotations}>
+          <DiffBody data={load.data} />
+        </DiffAnnotationsContext.Provider>
       </div>
     </div>
   );

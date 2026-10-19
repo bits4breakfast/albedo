@@ -958,6 +958,40 @@
   min-width: 0;
 }
 .tx-d-half:first-child { border-right: 1px solid var(--border); }
+/* --- review comments in a diff (the editor's Diff mode only) -------------- */
+
+/* The + to start a comment: on hover, over the +/- column in unified and just
+   after the line number in split. An edge, not a tint, marks the lines a drag
+   covers: the add/del tints underneath were measured on their own (CLAUDE.md,
+   contrast rules 4-6) and a second wash would undo that. */
+.tx-d-row,
+.tx-d-half { position: relative; }
+.tx-d-cmt-add {
+  position: absolute;
+  top: 0;
+  left: 82px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--panel-inset);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tx-d-half > .tx-d-cmt-add { left: 40px; }
+.tx-d-row:hover > .tx-d-cmt-add,
+.tx-d-half:hover > .tx-d-cmt-add { display: flex; }
+.tx-d-picking { box-shadow: inset 2px 0 0 var(--accent); }
+.tx-d-annot { padding: 2px 0 4px; font-size: var(--fs-sm); }
+
 /* A selection stays on the side it started on (set on mousedown in Diff.tsx). */
 .tx-d-split[data-select='old'] .tx-d-half:last-child,
 .tx-d-split[data-select='new'] .tx-d-half:first-child {

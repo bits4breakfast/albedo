@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EditorSelection, EditorState } from '@codemirror/state';
-import { commentsField, linesOfSelection, setDraft, setPlacedComments } from './comments';
+import { commentsField, lineRange, linesOfSelection, setDraft, setPicking, setPlacedComments } from './comments';
 import type { ReviewComment } from '../../db/comments';
 
 const doc = 'one\ntwo\nthree\nfour\n';
@@ -45,5 +45,20 @@ describe('commentsField', () => {
     let s = stateWith(EditorSelection.single(0)).update({ effects: setDraft.of({ from: 0, to: 3, editing: null }) }).state;
     s = s.update({ effects: setDraft.of(null) }).state;
     expect(s.field(commentsField).draft).toBeNull();
+  });
+});
+
+describe('picking lines in the gutter', () => {
+  it('lineRange covers whole lines, in either drag direction', () => {
+    const s = stateWith(EditorSelection.single(0));
+    expect(lineRange(s, 2, 3)).toEqual({ from: 4, to: 13 });
+    expect(lineRange(s, 3, 2)).toEqual({ from: 4, to: 13 });
+  });
+
+  it('holds the range being dragged until it is cleared', () => {
+    let s = stateWith(EditorSelection.single(0)).update({ effects: setPicking.of({ from: 4, to: 13 }) }).state;
+    expect(s.field(commentsField).picking).toEqual({ from: 4, to: 13 });
+    s = s.update({ effects: setPicking.of(null) }).state;
+    expect(s.field(commentsField).picking).toBeNull();
   });
 });

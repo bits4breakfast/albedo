@@ -39,16 +39,19 @@ export interface CommentActions {
 
 export const setPlacedComments = StateEffect.define<PlacedComment[]>();
 export const setDraft = StateEffect.define<Draft | null>();
+/** The lines a drag down the gutter covers so far; null when not dragging. */
+export const setPicking = StateEffect.define<{ from: number; to: number } | null>();
 
 interface CommentsState {
   placed: PlacedComment[];
   draft: Draft | null;
+  picking: { from: number; to: number } | null;
 }
 
 export const commentsField = StateField.define<CommentsState>({
-  create: () => ({ placed: [], draft: null }),
+  create: () => ({ placed: [], draft: null, picking: null }),
   update(value, tr) {
-    let { placed, draft } = value;
+    let { placed, draft, picking } = value;
     if (tr.docChanged) {
       placed = placed.map((p) => ({ ...p, from: tr.changes.mapPos(p.from, -1), to: tr.changes.mapPos(p.to, 1) }));
       if (draft) draft = { ...draft, from: tr.changes.mapPos(draft.from, -1), to: tr.changes.mapPos(draft.to, 1) };
@@ -56,10 +59,18 @@ export const commentsField = StateField.define<CommentsState>({
     for (const e of tr.effects) {
       if (e.is(setPlacedComments)) placed = e.value;
       if (e.is(setDraft)) draft = e.value;
+      if (e.is(setPicking)) picking = e.value;
     }
-    return placed === value.placed && draft === value.draft ? value : { placed, draft };
+    return placed === value.placed && draft === value.draft && picking === value.picking
+      ? value
+      : { placed, draft, picking };
   },
 });
+
+/** Whole lines from line `a` to line `b` (1-based, either order) as offsets. */
+export function lineRange(state: EditorState, a: number, b: number): { from: number; to: number } {
+  return { from: state.doc.line(Math.min(a, b)).from, to: state.doc.line(Math.max(a, b)).to };
+}
 
 /** The whole lines a selection covers, as [start of first, end of last]. */
 export function linesOfSelection(state: EditorState): { from: number; to: number } {
@@ -162,6 +173,10 @@ class DraftBox extends WidgetType {
         e.preventDefault();
         e.stopPropagation();
         cancel();
+      } else {
+        // Everything else is typing in the comment -- plain Enter a new line
+        // -- and belongs to nothing around it.
+        e.stopPropagation();
       }
     });
     const foot = el('div', 'ed-cmt-foot');
@@ -201,7 +216,7 @@ export function commentsExtension(actions: () => CommentActions | null): Extensi
   };
 
   const decorations = EditorView.decorations.compute([commentsField], (state): DecorationSet => {
-    const { placed, draft } = state.field(commentsField);
+    const { placed, draft, picking } = state.field(commentsField);
     const ranges: Range<Decoration>[] = [];
     const shade = (from: number, to: number) => {
       for (let pos = from; pos <= to; ) {
@@ -215,6 +230,7 @@ export function commentsExtension(actions: () => CommentActions | null): Extensi
       shade(p.from, p.to);
       ranges.push(Decoration.widget({ widget: new CommentCard(p, proxy), block: true, side: 1 }).range(p.to));
     }
+    if (picking) shade(picking.from, picking.to);
     if (draft) {
       shade(draft.from, draft.to);
       ranges.push(Decoration.widget({ widget: new DraftBox(draft, proxy), block: true, side: 2 }).range(draft.to));
@@ -230,12 +246,32 @@ export function commentsExtension(actions: () => CommentActions | null): Extensi
     },
     lineMarkerChange: (update) => update.transactions.some((t) => t.effects.some((e) => e.is(setPlacedComments))),
     domEventHandlers: {
+      // Press for one line, drag down (or up) the gutter for several, the way
+      // a review tool picks a range. A press inside a multi-line selection,
+      // released without dragging, comments the selection.
       mousedown(view, line, event) {
-        if ((event as MouseEvent).button !== 0) return false;
-        // On a line inside the selection, comment the selection; else the line.
+        const e = event as MouseEvent;
+        if (e.button !== 0 || !actions()) return false;
         const sel = linesOfSelection(view.state);
-        const range = line.from >= sel.from && line.to <= sel.to ? sel : { from: line.from, to: line.to };
-        view.dispatch({ effects: setDraft.of({ ...range, editing: null }) });
+        const inSelection = line.from >= sel.from && line.to <= sel.to && sel.to - sel.from > line.to - line.from;
+        const start = view.state.doc.lineAt(line.from).number;
+        let end = start;
+        view.dispatch({ effects: setPicking.of(lineRange(view.state, start, end)) });
+        const move = (ev: MouseEvent) => {
+          const block = view.lineBlockAtHeight(ev.clientY - view.documentTop);
+          const n = view.state.doc.lineAt(block.from).number;
+          if (n === end) return;
+          end = n;
+          view.dispatch({ effects: setPicking.of(lineRange(view.state, start, end)) });
+        };
+        const up = () => {
+          window.removeEventListener('mousemove', move);
+          window.removeEventListener('mouseup', up);
+          const range = end === start && inSelection ? sel : lineRange(view.state, start, end);
+          view.dispatch({ effects: [setPicking.of(null), setDraft.of({ ...range, editing: null })] });
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
         return true;
       },
     },
