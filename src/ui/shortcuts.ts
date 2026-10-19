@@ -41,7 +41,8 @@
  *    live key in the terminal -- Claude Code's own transcript toggle -- and
  *    stealing it would break the thing this app wraps.
  *
- * `⇧⌘F` (Find in Files) follows the same two rules for the same reasons.
+ * `⇧⌘F` (Find in Files) follows the same two rules for the same reasons, and
+ * `⌥F12` (the shell drawer, PhpStorm's Terminal) is read from `code` too.
  *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
@@ -65,7 +66,8 @@ export type Combo =
   | 'mod+o'
   | 'mod+shift+o'
   | 'mod+alt+o'
-  | 'mod+shift+f';
+  | 'mod+shift+f'
+  | 'alt+f12';
 
 /**
  * Bindings that are not one app-wide keystroke, documented alongside the
@@ -106,6 +108,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the editor: find usages' },
   { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the editor: comment on the selected lines' },
   { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: jump to the latest message (not while typing)' },
+  { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the main checkout' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger text' },
   { combo: 'mod+-', keys: '⌘−', description: 'Smaller text' },
   { combo: 'mod+0', keys: '⌘0', description: 'Actual size' },
@@ -145,6 +148,12 @@ export function comboOf(e: KeyboardEvent): { combo: Combo; digit: number | null 
   // (Ctrl+Shift+F belongs to the terminal) and read from `code`.
   if (e.code === 'KeyF' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+f', digit: null };
+  }
+  // PhpStorm's Terminal tool window. Option with a function key composes
+  // nothing, so the Alt rule has no reason to apply; matched on `code` like
+  // the O family.
+  if (e.code === 'F12' && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+    return { combo: 'alt+f12', digit: null };
   }
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
   const key = e.key.toLowerCase();

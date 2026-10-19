@@ -268,7 +268,7 @@ export interface TerminalProps {
   onError?: (message: string) => void;
 }
 
-function cssVar(name: string, fallback: string): string {
+export function cssVar(name: string, fallback: string): string {
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
@@ -324,7 +324,7 @@ const ANSI_LIGHT = {
 } as const;
 
 /** Palette derived from the shell tokens in styles.css. */
-function terminalTheme(): ITheme {
+export function terminalTheme(): ITheme {
   return {
     background: cssVar('--panel-inset', '#090b0e'),
     foreground: cssVar('--text', '#ccd3de'),

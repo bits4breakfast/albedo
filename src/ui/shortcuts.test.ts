@@ -69,6 +69,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'O', code: 'KeyO', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true }))?.combo,
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
     ]);
     // The one gesture is reachable through its own detector.
     const shift = createDoubleShift();
@@ -80,6 +81,14 @@ describe('SHORTCUTS', () => {
       if (s.combo.startsWith('editor ') || s.combo.startsWith('transcript ')) continue;
       expect(reachable).toContain(s.combo);
     }
+  });
+});
+
+describe('shell drawer key', () => {
+  it('is Option-F12 alone, read from code', () => {
+    expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo).toBe('alt+f12');
+    expect(comboOf(ev({ key: 'F12', code: 'F12' }))).toBeNull();
+    expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true, metaKey: true }))).toBeNull();
   });
 });
 

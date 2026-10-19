@@ -738,8 +738,13 @@ button {
 .splitter:hover::after,
 .splitter[data-dragging='true']::after { background: var(--accent-line); }
 
+/* The shell drawer docks under the panes, the full width of main. */
+.shell-drawer { border-top: 1px solid var(--border); }
+.shell-drawer-close { margin-left: 4px; height: 18px; padding: 0 5px; }
+
 /* While dragging, don't let the terminal eat pointer events. */
 .app[data-dragging='true'] { cursor: col-resize; }
+.app[data-drag='shell'] { cursor: row-resize; }
 .app[data-dragging='true'] .pane-body { pointer-events: none; }
 
 /* --------------------------------------------------------------------------
@@ -1314,6 +1319,7 @@ button {
 
 .project-tab[data-status='blocked'] .project-tab-count { color: var(--status-blocked); }
 .project-tab[data-status='blocked'] { color: var(--text); }
+.project-tab[data-dragging='true'] { cursor: grabbing; color: var(--text-strong); background: var(--panel-hover); }
 
 /* --------------------------------------------------------------------------
    Issue key chip (M4)

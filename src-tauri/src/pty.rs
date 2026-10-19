@@ -315,8 +315,16 @@ fn shell_script(shell: &str, opts: &SpawnOptions) -> String {
         format!("unset {names}")
     };
 
+    // An empty command is the login shell itself, for the main-checkout shell
+    // drawer. Same cd and same unset first: a plain shell must not hand
+    // ANTHROPIC_API_KEY to a `claude` the user types into it either.
     let mut exec = String::from("exec ");
-    exec.push_str(&shell_quote(&opts.command));
+    if opts.command.is_empty() {
+        exec.push_str(&shell_quote(shell));
+        exec.push_str(" -l");
+    } else {
+        exec.push_str(&shell_quote(&opts.command));
+    }
     for arg in &opts.args {
         exec.push(' ');
         exec.push_str(&shell_quote(arg));
@@ -414,7 +422,11 @@ pub async fn pty_spawn(
         // Names the shell as well as the command: if the spawn fails it is
         // almost always the shell that is missing, and "failed to spawn
         // claude" would send whoever reads it looking in the wrong place.
-        &format!("{} via {shell}", opts.command),
+        &if opts.command.is_empty() {
+            format!("login shell {shell}")
+        } else {
+            format!("{} via {shell}", opts.command)
+        },
         events,
     )?;
     Ok(pty_id)
@@ -915,6 +927,17 @@ mod tests {
         // The unset must land after the profile has been sourced and before the
         // command runs. Reordering these reintroduces the billing bug.
         assert!(cd < unset && unset < exec);
+    }
+
+    #[test]
+    fn an_empty_command_execs_the_login_shell_after_the_unset() {
+        let script = shell_script("/bin/zsh", &opts("", &[], "/tmp/repo"));
+        assert_eq!(
+            script,
+            "cd '/tmp/repo' || exit 1; \
+             unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL; \
+             exec '/bin/zsh' -l"
+        );
     }
 
     #[test]

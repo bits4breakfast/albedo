@@ -20,6 +20,7 @@ import ClosedProjectsMenu from './ui/ClosedProjectsMenu';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
 import NewTaskDialog from './ui/NewTaskDialog';
+import ShellTerminal from './ui/ShellTerminal';
 import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
@@ -103,7 +104,14 @@ const LS = {
   rightTab: 'albedo.shell.rightTab',
   filesPinned: 'albedo.shell.filesPinned',
   filesWidth: 'albedo.shell.filesWidth',
+  shellOpen: 'albedo.shell.shellDrawerOpen',
+  shellHeight: 'albedo.shell.shellDrawerHeight',
 } as const;
+
+const SHELL_MIN = 80;
+const SHELL_DEFAULT = 220;
+/** Room the panes above always keep, so the drawer can never swallow them. */
+const SHELL_PANES_MIN = 160;
 
 function readStored<T>(key: string, parse: (raw: string) => T | null, fallback: T): T {
   try {
@@ -128,6 +136,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 
 const DISMISSED_KEY = 'albedo.shell.dismissedNotices';
 const HIDDEN_PROJECTS_KEY = 'albedo.shell.hiddenProjects';
+const PROJECT_ORDER_KEY = 'albedo.shell.projectOrder';
 
 function readHiddenProjects(): number[] {
   try {
@@ -145,6 +154,38 @@ function writeHiddenProjects(ids: number[]): void {
   } catch {
     /* a reappearing tab is not worth throwing over */
   }
+}
+
+/** Tab order as the user dragged it. View state, like hiding: ids only. */
+function readProjectOrder(): number[] {
+  try {
+    const raw = window.localStorage.getItem(PROJECT_ORDER_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeProjectOrder(ids: number[]): void {
+  try {
+    window.localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(ids));
+  } catch {
+    /* tabs falling back to name order is not worth throwing over */
+  }
+}
+
+/**
+ * Projects in the user's tab order. A project the order has never seen (just
+ * added) keeps its place in `projects` relative to the others but lands after
+ * every ordered one, so adding a project never reshuffles the bar.
+ */
+function orderProjects(projects: Project[], order: number[]): Project[] {
+  const rank = new Map(order.map((id, i) => [id, i]));
+  return projects
+    .map((p, i) => ({ p, r: rank.get(p.id) ?? order.length + i }))
+    .sort((a, b) => a.r - b.r)
+    .map(({ p }) => p);
 }
 
 function readDismissed(): string[] {
@@ -248,8 +289,8 @@ class PaneErrorBoundary extends Component<BoundaryProps, BoundaryState> {
 // Deliberately absent until they are needed. One project is the expected case,
 // and in that case this is a no-op: no bar, no chrome, no vertical space — the
 // app exactly as it was. The second project summons the bar, and that is the
-// entire interaction. No reordering, no per-tab state, nothing else: a rare
-// case earns correctness, not a surface.
+// entire interaction, plus drag-to-reorder (view state, like closing a tab).
+// No per-tab state beyond that: a rare case earns correctness, not a surface.
 //
 // The one thing the bar MUST do is keep the app's core promise working. Tabs
 // hide every task outside the active project, so a session that blocks in a
@@ -334,6 +375,7 @@ function ProjectTabs({
   onHide,
   hidden,
   onRestore,
+  onReorder,
 }: {
   tabs: ProjectTab[];
   activeKey: string;
@@ -341,13 +383,81 @@ function ProjectTabs({
   onHide: (projectId: number) => void;
   hidden: Project[];
   onRestore: (projectId: number) => void;
+  /** The visible project tabs' ids in their new order. */
+  onReorder: (projectIds: number[]) => void;
 }) {
   // Never offer to hide the last one: that would leave a bar with nothing in
   // it but the restore chip.
   const canHide = tabs.length > 1;
+
+  /*
+   * Pointer events, not HTML5 drag-and-drop: the Tauri window owns native
+   * drag-drop, and a tab is a click target first. The drag only begins past a
+   * small threshold, so a plain click still selects, and the click a drag ends
+   * on is swallowed. The bar previews the new order live and commits on
+   * release; "Other" never moves and is never a drop target.
+   */
+  const [preview, setPreview] = useState<string[] | null>(null);
+  const drag = useRef<{ key: string; x: number; active: boolean; pointer: number } | null>(null);
+  const swallowClick = useRef(false);
+  const tabEls = useRef(new Map<string, HTMLElement>());
+
+  const order = preview ?? tabs.map((t) => t.key);
+  const byKey = new Map(tabs.map((t) => [t.key, t]));
+  const shown = [
+    ...order.map((k) => byKey.get(k)).filter((t): t is ProjectTab => t !== undefined),
+    // A tab that appeared mid-drag still shows, after the previewed ones.
+    ...tabs.filter((t) => !order.includes(t.key)),
+  ];
+
+  const onPointerDown = (e: ReactPointerEvent, tab: ProjectTab) => {
+    if (e.button !== 0 || tab.project === null) return;
+    drag.current = { key: tab.key, x: e.clientX, active: false, pointer: e.pointerId };
+  };
+
+  const onPointerMove = (e: ReactPointerEvent) => {
+    const d = drag.current;
+    if (!d || d.pointer !== e.pointerId) return;
+    if (!d.active) {
+      if (Math.abs(e.clientX - d.x) < 4) return;
+      d.active = true;
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    }
+    const movable = (preview ?? tabs.map((t) => t.key)).filter((k) => k !== 'orphans');
+    const rest = movable.filter((k) => k !== d.key);
+    // Insert before the first tab whose midpoint is right of the pointer.
+    let at = rest.length;
+    for (let i = 0; i < rest.length; i++) {
+      const r = tabEls.current.get(rest[i]!)?.getBoundingClientRect();
+      if (r && e.clientX < r.left + r.width / 2) {
+        at = i;
+        break;
+      }
+    }
+    const next = [...rest.slice(0, at), d.key, ...rest.slice(at)];
+    if (tabs.some((t) => t.key === 'orphans')) next.push('orphans');
+    if (next.join() !== order.join()) setPreview(next);
+  };
+
+  const endDrag = (e: ReactPointerEvent, commit: boolean) => {
+    const d = drag.current;
+    if (!d || d.pointer !== e.pointerId) return;
+    drag.current = null;
+    if (!d.active) return;
+    swallowClick.current = true;
+    if (commit && preview) {
+      onReorder(
+        preview
+          .map((k) => byKey.get(k)?.project?.id)
+          .filter((id): id is number => id !== undefined),
+      );
+    }
+    setPreview(null);
+  };
+
   return (
     <div className="project-tabs" role="tablist" aria-label="Projects">
-      {tabs.map((tab) => {
+      {shown.map((tab) => {
         const status = tab.blocked > 0 ? 'blocked' : tab.running > 0 ? 'running' : null;
         const badge =
           tab.blocked > 0 ? tab.blocked : tab.running > 0 ? tab.running : tab.tasks.length;
@@ -358,7 +468,22 @@ function ProjectTabs({
             aria-selected={tab.key === activeKey}
             className="project-tab"
             data-status={status ?? 'quiet'}
-            onClick={() => onSelect(tab.key)}
+            data-dragging={preview !== null && drag.current?.key === tab.key ? 'true' : undefined}
+            ref={(el) => {
+              if (el) tabEls.current.set(tab.key, el);
+              else tabEls.current.delete(tab.key);
+            }}
+            onPointerDown={(e) => onPointerDown(e, tab)}
+            onPointerMove={onPointerMove}
+            onPointerUp={(e) => endDrag(e, true)}
+            onPointerCancel={(e) => endDrag(e, false)}
+            onClick={() => {
+              if (swallowClick.current) {
+                swallowClick.current = false;
+                return;
+              }
+              onSelect(tab.key);
+            }}
             title={
               tab.blocked > 0
                 ? `${tab.label}: ${tab.blocked} waiting on you`
@@ -487,7 +612,21 @@ export default function App() {
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
   /** Which verb the end-task dialog was opened with. */
   const [endIntent, setEndIntent] = useState<'archive' | 'delete'>('archive');
-  const [dragging, setDragging] = useState<null | 'sidebar' | 'split' | 'files'>(null);
+  const [dragging, setDragging] = useState<null | 'sidebar' | 'split' | 'files' | 'shell'>(null);
+  /**
+   * The shell drawer: a plain login shell in the active project's main
+   * checkout, PhpStorm's Terminal tool window. One shell per project, spawned
+   * on first open and kept alive after -- closing the drawer hides it, the way
+   * the pty pane hides task terminals rather than killing them.
+   */
+  const [shellOpen, setShellOpen] = useState(() =>
+    readStored(LS.shellOpen, (raw) => (raw === '1' ? true : raw === '0' ? false : null), false),
+  );
+  const [shellHeight, setShellHeight] = useState(() =>
+    readStored(LS.shellHeight, (raw) => Math.max(SHELL_MIN, Number(raw) || SHELL_DEFAULT), SHELL_DEFAULT),
+  );
+  const [shellProjectIds, setShellProjectIds] = useState<number[]>([]);
+  const mainRef = useRef<HTMLElement | null>(null);
 
   const panesRef = useRef<HTMLDivElement | null>(null);
   const selectTabRef = useRef<((key: string) => void) | null>(null);
@@ -501,6 +640,8 @@ export default function App() {
   }, [rightTab]);
   useEffect(() => store(LS.filesPinned, filesPinned ? '1' : '0'), [filesPinned]);
   useEffect(() => store(LS.filesWidth, String(Math.round(filesWidth))), [filesWidth]);
+  useEffect(() => store(LS.shellOpen, shellOpen ? '1' : '0'), [shellOpen]);
+  useEffect(() => store(LS.shellHeight, String(Math.round(shellHeight))), [shellHeight]);
 
   // Measure the pane row, not the read pane: the read pane's width DEPENDS on
   // whether the column is showing, so observing it would feed back on itself.
@@ -513,7 +654,28 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  const allTabs = useMemo(() => buildTabs(projects, tasks), [projects, tasks]);
+  const [projectOrder, setProjectOrder] = useState<number[]>(() => readProjectOrder());
+  const allTabs = useMemo(
+    () => buildTabs(orderProjects(projects, projectOrder), tasks),
+    [projects, projectOrder, tasks],
+  );
+
+  /**
+   * Hidden projects keep their slot: the dragged ids are the visible ones, so
+   * they are written back into the full order around the hidden ones rather
+   * than replacing it.
+   */
+  const reorderProjects = useCallback(
+    (visibleIds: number[]) => {
+      const full = orderProjects(projects, projectOrder).map((p) => p.id);
+      const moved = new Set(visibleIds);
+      const queue = [...visibleIds];
+      const next = full.map((id) => (moved.has(id) ? queue.shift()! : id));
+      setProjectOrder(next);
+      writeProjectOrder(next);
+    },
+    [projects, projectOrder],
+  );
 
   /**
    * A closed tab must never swallow the one signal this app exists to deliver.
@@ -655,6 +817,14 @@ export default function App() {
       lastActivityAt: null,
     };
   }, [selected, activeProject]);
+  /** Whose main checkout the shell drawer is in: the project the list shows. */
+  const shellProject = activeProject?.repoPath ? activeProject : null;
+  // Spawned lazily, per project, the first time the drawer shows it.
+  useEffect(() => {
+    if (!shellOpen || !shellProject) return;
+    const id = shellProject.id;
+    setShellProjectIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, [shellOpen, shellProject]);
   const browseTaskRef = useRef(browseTask);
   browseTaskRef.current = browseTask;
   /** The folder the search dialogs work in: the task's worktree, else the checkout. */
@@ -1153,6 +1323,22 @@ export default function App() {
     window.addEventListener('pointerup', up);
   };
 
+  const startShellDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const rect = mainRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setDragging('shell');
+    const move = (ev: PointerEvent) =>
+      setShellHeight(clamp(rect.bottom - ev.clientY, SHELL_MIN, Math.max(SHELL_MIN, rect.height - SHELL_PANES_MIN)));
+    const up = () => {
+      setDragging(null);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
   // --- shortcuts -----------------------------------------------------------
 
   /*
@@ -1255,6 +1441,7 @@ export default function App() {
     'mod+o': () => toggleQuickOpen('class'),
     'mod+alt+o': () => toggleQuickOpen('symbol'),
     'mod+shift+f': toggleFind,
+    'alt+f12': () => setShellOpen((o) => !o),
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
     'mod+0': () => zoomTo(1),
@@ -1318,7 +1505,7 @@ export default function App() {
   return (
     <FileOpenContext.Provider value={openFile}>
     <FileTextContext.Provider value={readFileText}>
-    <div className="app" data-dragging={dragging !== null}>
+    <div className="app" data-dragging={dragging !== null} data-drag={dragging ?? undefined}>
       <Header
         onReconcile={() => setReconcileOpen(true)}
         onProjects={() => setProjectsOpen(true)}
@@ -1403,6 +1590,7 @@ export default function App() {
               onHide={hideProject}
               hidden={hiddenProjects}
               onRestore={restoreProject}
+              onReorder={reorderProjects}
             />
           )}
           <TaskList
@@ -1446,7 +1634,7 @@ export default function App() {
           aria-orientation="vertical"
         />
 
-        <main className="main">
+        <main className="main" ref={mainRef}>
           <div className="main-bar">
             {/* These panes follow the SELECTED TASK, not the active tab, so
                 the task on screen can belong to a different project than the
@@ -1513,6 +1701,20 @@ export default function App() {
               disabled={!split}
             >
               {orientation === 'row' ? '↔' : '↕'}
+            </button>
+
+            <button
+              className="btn btn-ghost"
+              aria-pressed={shellOpen && shellProject !== null}
+              onClick={() => setShellOpen((o) => !o)}
+              disabled={!shellProject}
+              title={
+                shellProject
+                  ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
+                  : 'No project to open a shell in'
+              }
+            >
+              $_
             </button>
           </div>
 
@@ -1741,6 +1943,57 @@ export default function App() {
             )}
             </div>
           </div>
+
+          {shellOpen && shellProject && (
+            <div
+              className="splitter splitter-h"
+              data-dragging={dragging === 'shell'}
+              onPointerDown={startShellDrag}
+              role="separator"
+              aria-orientation="horizontal"
+            />
+          )}
+          {/* Kept mounted once a shell exists: unmounting would kill it. */}
+          {shellProjectIds.length > 0 && (
+            <section
+              className="pane shell-drawer"
+              style={{ flex: `0 0 ${shellHeight}px` }}
+              hidden={!shellOpen || !shellProject}
+            >
+              <div className="pane-head">
+                <span>shell</span>
+                {shellProject && (
+                  <span className="pane-head-note" title={shellProject.repoPath}>
+                    {shellProject.name} · main checkout
+                  </span>
+                )}
+                <button
+                  className="btn btn-ghost shell-drawer-close"
+                  onClick={() => setShellOpen(false)}
+                  title="Hide the shell (⌥F12) — it keeps running"
+                  aria-label="Hide the shell"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="pane-body">
+                <div className="term-stack">
+                  {shellProjectIds.map((id) => {
+                    const project = projects.find((p) => p.id === id);
+                    if (!project?.repoPath) return null;
+                    return (
+                      <PaneErrorBoundary key={`shell-${id}`} label="Shell">
+                        <ShellTerminal
+                          cwd={project.repoPath}
+                          active={shellOpen && shellProject?.id === id}
+                        />
+                      </PaneErrorBoundary>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+          )}
         </main>
       </div>
 
@@ -1748,6 +2001,7 @@ export default function App() {
         <NewTaskDialog
           open={newTaskOpen}
           prefill={newTaskPrefill}
+          defaultProjectId={activeProject?.id ?? null}
           onClose={() => {
             followUpSeq.current++;
             setNewTaskOpen(false);

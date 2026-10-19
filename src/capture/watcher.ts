@@ -75,6 +75,26 @@ export function firstCwdIn(text: string): string | null {
 /** How much of a file's start is read to learn its cwd. */
 const HEAD_BYTES = 64 * 1024;
 
+/**
+ * The cwd from the start of a transcript, or null if no complete line has one.
+ *
+ * Starts at {@link HEAD_BYTES} and grows like ingest's window does: the first
+ * line carrying a cwd is the first user message, and a pasted screenshot makes
+ * that one line hundreds of KB. A fixed head cut it mid-line, saw only the
+ * bookkeeping lines before it, and answered "cannot tell yet" on every append
+ * for the life of the session -- so the session was never captured at all.
+ */
+async function headCwd(path: string, size: number): Promise<string | null> {
+  let windowSize = Math.min(size, HEAD_BYTES);
+  for (;;) {
+    const head = await readRange(path, 0, windowSize);
+    const cut = lastNewlineIndex(head);
+    const cwd = cut < 0 ? null : firstCwdIn(new TextDecoder().decode(head.subarray(0, cut + 1)));
+    if (cwd !== null || windowSize >= size || windowSize >= MAX_CHUNK_BYTES) return cwd;
+    windowSize = Math.min(size, MAX_CHUNK_BYTES, windowSize * 4);
+  }
+}
+
 /** How much of a file's end is read to find its latest title. */
 const TAIL_BYTES = 256 * 1024;
 
@@ -305,7 +325,7 @@ class Capture implements CaptureHandle {
    * Should a transcript with no `transcript_files` row be captured?
    *
    * Yes only when its cwd is a task's worktree. Decided from the first
-   * {@link HEAD_BYTES} of the file, which is where `cwd` appears, so an
+   * file's head (see {@link headCwd}), which is where `cwd` appears, so an
    * unrelated multi-megabyte session costs one small read rather than a parse.
    * `null` means "cannot tell yet" (no complete line with a cwd) and is NOT
    * cached, so it is asked again when the file grows.
@@ -318,10 +338,7 @@ class Capture implements CaptureHandle {
       return null;
     }
     if (size === 0) return null;
-    const head = await readRange(path, 0, Math.min(size, HEAD_BYTES));
-    const cut = lastNewlineIndex(head);
-    if (cut < 0) return null;
-    const cwd = firstCwdIn(new TextDecoder().decode(head.subarray(0, cut + 1)));
+    const cwd = await headCwd(path, size);
     // Live tasks only: an archived task's history was purged on archive, and
     // re-holding its cwd would capture the whole session again from byte 0.
     return cwd === null ? null : (await findTaskByWorktreePath(cwd, { liveOnly: true })) !== null;
@@ -875,9 +892,7 @@ export async function listDiskSessions(): Promise<DiskSession[]> {
     let cwd: string | null = null;
     let title: string | null = null;
     try {
-      const head = await readRange(f.path, 0, Math.min(f.size, HEAD_BYTES));
-      const hc = lastNewlineIndex(head);
-      if (hc >= 0) cwd = firstCwdIn(new TextDecoder().decode(head.subarray(0, hc + 1)));
+      cwd = await headCwd(f.path, f.size);
       const from = Math.max(0, f.size - TAIL_BYTES);
       const tail = await readRange(f.path, from, f.size - from);
       title = lastTitleIn(new TextDecoder().decode(tail));

@@ -46,13 +46,24 @@ export interface NewTaskDialogProps {
    * has not touched it.
    */
   prefill?: NewTaskPrefill | null;
+  /**
+   * The project the task list is showing. Wins over the remembered last
+   * project: a "New task" pressed under the albedo tab means albedo.
+   */
+  defaultProjectId?: number | null;
 }
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewTaskDialogProps) {
+export function NewTaskDialog({
+  open,
+  onClose,
+  onCreated,
+  prefill = null,
+  defaultProjectId = null,
+}: NewTaskDialogProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(false);
@@ -120,7 +131,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
 
   useEffect(() => {
     if (!open) return;
-    void loadProjects(prefill?.projectId ?? undefined);
+    void loadProjects(prefill?.projectId ?? defaultProjectId ?? undefined);
     void (async () => {
       try {
         const { homeDir } = await import('@tauri-apps/api/path');
