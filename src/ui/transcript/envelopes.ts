@@ -124,8 +124,15 @@ const KNOWN_TAGS = [
 /**
  * `<tag attrs>inner</tag>`. Group 2 is the raw attribute list, which is empty
  * for most tags; matching it is what lets `agent-message` be recognised at all.
+ *
+ * The CLOSING tag may carry attributes too: `<pasted_content id="bc88">` is
+ * closed by `</pasted_content id="bc88">` as often as by a bare one. Requiring
+ * the bare form left those envelopes unmatched, printed as raw tags.
  */
-const ENVELOPE_RE = new RegExp(`<(${KNOWN_TAGS.join('|')})((?:\\s[^<>]*)?)>([\\s\\S]*?)</\\1>`, 'g');
+const ENVELOPE_RE = new RegExp(
+  `<(${KNOWN_TAGS.join('|')})((?:\\s[^<>]*)?)>([\\s\\S]*?)</\\1(?:\\s[^<>]*)?>`,
+  'g',
+);
 
 /** Fields lifted out of a `<task-notification>`; the rest are shown as-is. */
 const NOTIFICATION_RE = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
