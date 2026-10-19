@@ -162,3 +162,15 @@
 }
 .qo-status { color: var(--muted); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qo-hint { color: var(--faint); white-space: nowrap; }
+
+/* Named only when there is no task and the search runs in a project's main
+   checkout. --muted, not --faint: it is the one line that says which folder the
+   results come from, so it must clear 4.5:1 on the dialog ground. */
+.qo-scope {
+  flex: 0 0 auto;
+  padding: 6px 10px 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
