@@ -249,7 +249,8 @@ export function TranscriptPane({
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    // Hidden (another tab is showing): there is no position to read.
+    if (!el || el.clientHeight === 0) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
     if (atBottom !== followingRef.current) {
       followingRef.current = atBottom;
@@ -284,6 +285,34 @@ export function TranscriptPane({
     followingRef.current = true;
     setFollowing(true);
   }, []);
+
+  // Back on screen, or resized: a reader who was following stays at the end.
+  // While the pane is hidden (another tab showing) new rows still arrive, but
+  // scrolling a hidden element does nothing, so they piled up below the old
+  // position and the pane came back short of the bottom. Its own size going
+  // from nothing to something is the moment it is shown again.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    // Whether the reader was following when the pane went away. Read at the
+    // moment it hides, because a scroll event on the way back in can report
+    // "not at the bottom" (the rows that arrived meanwhile) before this runs.
+    let followingWhenHidden: boolean | null = null;
+    const ro = new ResizeObserver(() => {
+      if (el.clientHeight === 0) {
+        followingWhenHidden ??= followingRef.current;
+        return;
+      }
+      const follow = followingWhenHidden ?? followingRef.current;
+      followingWhenHidden = null;
+      if (!follow) return;
+      el.scrollTop = el.scrollHeight;
+      followingRef.current = true;
+      setFollowing(true);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [inactive]);
 
   // ⌘↓: to the latest message, without having to click into the transcript
   // first. It acts only when the keyboard is not busy elsewhere: nothing
