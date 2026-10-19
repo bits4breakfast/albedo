@@ -42,6 +42,20 @@ that bytes arrived and never looks at them, so it is immune to any change in wha
 Claude Code renders — which is the entire reason the rule exists. Looking *at*
 the bytes is still forbidden.
 
+## PHPantom: navigation only, PHP only
+
+The editor spec says no LSP. The owner made one narrow exception
+(`src/lsp/phpantom.ts`): the PHPantom language server answers Go to
+Declaration and Find Usages, nothing else -- no completion, no diagnostics, no
+formatting, and its PHPStan/PHPCS/PHPMD/Mago runners are switched off in the
+config Albedo writes. It is optional (`scripts/install-phpantom.sh` puts a
+pinned, checksummed binary in `~/.albedo/bin`; Albedo never downloads), starts
+only when a `.php` file is opened or navigated from, and git grep
+(`src/git/phpRefs.ts`) answers whenever it cannot. It is a native binary, not
+a Node sidecar. Its index lives in memory and goes stale unless told: every
+running server has a watcher on its worktree, and that watcher is not
+optional.
+
 ## Hard rules
 
 1. **Only `src/capture/adapter.ts` knows the JSONL format.** Everything else
@@ -92,6 +106,7 @@ read it. Three rules came out of the fix:
 src/capture/   transcript watcher + adapter + status derivation   (M1, M2)
 src/db/        SQLite access layer and schema
 src/git/       worktree create/remove/reconcile                    (M3)
+src/lsp/       PHPantom client: JSON-RPC framing and the server pool
 src/ui/        React shell, task list, xterm pane                  (M2)
 src/ui/transcript/  transcript renderer and diff component         (M4)
 src-tauri/     Tauri shell; src/pty.rs is the only Rust we write

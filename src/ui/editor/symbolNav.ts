@@ -1,15 +1,24 @@
 /**
  * Go to Declaration (⌘B, ⌘-click) and Find Usages (⌥F7) from the editor.
  *
- * PHP classes go through `src/git/phpRefs.ts`, which resolves names through
- * each file's namespace and imports. Everything else -- a method, a function,
- * a TypeScript name -- falls back to the code index by name, and its usages
- * to a whole-word text search. The fallback says so in its title, so a list
- * of text matches is never mistaken for a resolved one.
+ * Three tiers, best first, each falling through to the next when it has no
+ * answer:
+ *
+ * 1. PHPantom (`src/lsp/phpantom.ts`), for PHP files only and only when
+ *    installed: resolves methods and properties by type, not just classes.
+ * 2. `src/git/phpRefs.ts` for PHP class names: git grep, resolved through
+ *    each file's namespace and imports. Needs nothing installed, and reads
+ *    the disk on every lookup, so it is never stale.
+ * 3. Everything else -- a TypeScript name, or a PHP name neither of the above
+ *    could place -- by name from the code index, and usages by whole-word
+ *    text search. Its title says so, so a list of text matches is never
+ *    mistaken for a resolved one.
  */
 
+import { readTextFile } from '@tauri-apps/plugin-fs';
 import { loadCodeIndex, TYPE_KINDS, type CodeSymbol } from '../../git/codeIndex';
-import type { FindResult } from '../../git/findInFiles';
+import type { FindMatch, FindResult } from '../../git/findInFiles';
+import { isPhpPath, phpantomFor, READY_WAIT_MS, type Location } from '../../lsp/phpantom';
 import {
   findPhpUsages,
   findWord,
@@ -72,11 +81,75 @@ async function phpUsages(root: string, fqcn: string): Promise<NavOutcome> {
   return { kind: 'list', title: `Usages of ${fqcn}`, result };
 }
 
+/**
+ * Locations as a result list, each row the line as it is on disk with the
+ * name marked. A file that cannot be read keeps its rows, unmarked.
+ */
+export async function locationsAsResult(
+  root: string,
+  locations: readonly Location[],
+  word: string,
+  read: (absolute: string) => Promise<string> = readTextFile,
+): Promise<FindResult> {
+  const texts = new Map<string, string[] | null>();
+  for (const path of new Set(locations.map((l) => l.path))) {
+    texts.set(path, await read(`${root}/${path}`).then((t) => t.split('\n'), () => null));
+  }
+  const re = new RegExp(`(?<![\\w$\\\\])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\w)`, 'gi');
+  const groups = new Map<string, FindMatch[]>();
+  const sorted = [...locations].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
+  for (const loc of sorted) {
+    const text = texts.get(loc.path)?.[loc.line - 1] ?? '';
+    const ranges: Array<[number, number]> = [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+    const match: FindMatch = { path: loc.path, line: loc.line, text, ranges };
+    const g = groups.get(loc.path);
+    if (g) {
+      if (!g.some((m) => m.line === loc.line)) g.push(match);
+    } else groups.set(loc.path, [match]);
+  }
+  const out = [...groups].map(([path, matches]) => ({ path, matches }));
+  return { groups: out, count: out.reduce((n, g) => n + g.matches.length, 0), capped: false };
+}
+
+/**
+ * Tier 1. Null whenever PHPantom has nothing to say -- not installed, not
+ * ready within `READY_WAIT_MS`, failed, or an empty answer -- so the caller
+ * falls through to git grep rather than reporting "nothing".
+ */
+async function viaPhpantom(ctx: NavContext, action: NavAction, line0: number, col: number, word: string): Promise<NavOutcome | null> {
+  try {
+    const server = await phpantomFor(ctx.root);
+    if (!server || !(await server.whenReady(READY_WAIT_MS))) return null;
+
+    if (action === 'declaration') {
+      const defs = await server.definition(ctx.path, ctx.text, line0, col);
+      if (defs.length === 0) return null;
+      // Asked on the declaration itself: answer with its usages, as PhpStorm does.
+      const self = defs.length === 1 && defs[0]!.path === ctx.path && defs[0]!.line === line0 + 1;
+      if (!self) {
+        if (defs.length === 1) return { kind: 'open', path: defs[0]!.path, line: defs[0]!.line };
+        return { kind: 'list', title: `Declarations of ${word}`, result: await locationsAsResult(ctx.root, defs, word) };
+      }
+    }
+    const refs = await server.references(ctx.path, ctx.text, line0, col);
+    if (refs.length === 0) return null;
+    return { kind: 'list', title: `Usages of ${word}`, result: await locationsAsResult(ctx.root, refs, word) };
+  } catch (err) {
+    console.warn('[phpantom] falling back to git grep:', err);
+    return null;
+  }
+}
+
 /** Where ⌘B or ⌥F7 at the cursor leads. */
 export async function navigate(ctx: NavContext, action: NavAction): Promise<NavOutcome> {
   const { line, col, number } = lineAround(ctx.text, ctx.offset);
 
-  if (/\.php$/i.test(ctx.path)) {
+  if (isPhpPath(ctx.path)) {
+    const at = nameAt(line, col);
+    if (at) {
+      const answer = await viaPhpantom(ctx, action, number - 1, col, lastSegment(at.name));
+      if (answer) return answer;
+    }
     const header = parsePhpHeader(ctx.text.split('\n'));
     const target = phpTargetAt(line, col, header);
     if (target) {

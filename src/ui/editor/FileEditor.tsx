@@ -24,6 +24,7 @@ import { useOpenFile } from './openFile';
 import FileDiffView from './FileDiffView';
 import SymbolResults, { type SymbolResultsState } from './SymbolResults';
 import { navigate, type NavAction } from './symbolNav';
+import { isPhpPath, warmPhpantom } from '../../lsp/phpantom';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
@@ -799,6 +800,14 @@ export default function FileEditor({ task, request, onClose, readOnly = false }:
   }, [step]);
 
   // --- Go to Declaration / Find Usages --------------------------------------
+  // A PHP file opened is the one signal that starts PHPantom, ahead of the
+  // first ⌘B so its ~1s of indexing overlaps the reading. Any other file
+  // type never starts it. A no-op when it is not installed or already up.
+  const worktree = task.worktreePath;
+  useEffect(() => {
+    if (current !== null && isPhpPath(current)) warmPhpantom(worktree);
+  }, [current, worktree]);
+
   // Like stepping, a jump to another file is blocked while there are unsaved
   // edits; a jump within this file is not, since nothing is reloaded.
   const [nav, setNav] = useState<SymbolResultsState | null>(null);
