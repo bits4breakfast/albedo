@@ -136,3 +136,39 @@ export async function fetchPrStatus(
   }
   return null;
 }
+
+/** What a branch's pull request says about it, for checking the branch out. */
+export interface PrBase {
+  number: number;
+  title: string;
+  /** The branch the PR merges into. */
+  base: string;
+}
+
+/**
+ * The pull request whose head is `branch`, read for its base: the base of a
+ * colleague's branch is a fact GitHub holds, not something to guess. Null for
+ * no PR or no answer, like everything here.
+ */
+export async function fetchPrBase(branch: string, repoPath: string): Promise<PrBase | null> {
+  const b = branch.trim();
+  if (!b || b.startsWith('-')) return null;
+  const r = await gh(['pr', 'view', b, '--json', 'number,title,baseRefName,headRefName'], repoPath);
+  if (!r || r.code !== 0) return null;
+  return parsePrBase(r.stdout, b);
+}
+
+/** Pure half of {@link fetchPrBase}. gh resolves a bare name loosely, so the head must match. */
+export function parsePrBase(stdout: string, branch: string): PrBase | null {
+  let d: unknown;
+  try {
+    d = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!d || typeof d !== 'object') return null;
+  const o = d as Record<string, unknown>;
+  if (typeof o.number !== 'number' || typeof o.baseRefName !== 'string' || !o.baseRefName) return null;
+  if (typeof o.headRefName === 'string' && o.headRefName !== branch) return null;
+  return { number: o.number, title: typeof o.title === 'string' ? o.title : '', base: o.baseRefName };
+}

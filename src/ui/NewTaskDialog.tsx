@@ -27,9 +27,11 @@ import {
   baseFreshness,
   composeWorktreePath,
   createWorktree,
+  defaultBranchOf,
+  fetchAll,
+  guessBaseBranch,
   cutPoint,
   type BaseFreshness,
-  fetchAll,
   listBranches,
   localCheckoutFor,
   probeMainCheckout,
@@ -38,6 +40,7 @@ import {
   type BranchList,
   type MainCheckout,
 } from '../git/worktree';
+import { fetchPrBase } from '../gh/gh';
 import ProjectsDialog from './ProjectsDialog';
 import { readLastProjectId, writeLastProjectId } from './projectPrefs';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
@@ -150,6 +153,13 @@ export function NewTaskDialog({
   const [mainCheckout, setMainCheckout] = useState<MainCheckout | null>(null);
   /** A live task already running in the main checkout, which a switch moves too. */
   const [mainTask, setMainTask] = useState<string | null>(null);
+  /** Where an existing branch's base came from, once worked out. */
+  const [baseFrom, setBaseFrom] = useState<
+    { kind: 'pr'; number: number; title: string } | { kind: 'guess'; ahead: number } | null
+  >(null);
+  const [baseBusy, setBaseBusy] = useState(false);
+  /** The user picked the base by hand: nothing worked out may replace it. */
+  const baseTouched = useRef(false);
   const [branchesBusy, setBranchesBusy] = useState(false);
   const [branchesError, setBranchesError] = useState<string | null>(null);
   // How the base stands against its remote. The promise is kept so submit can
@@ -229,6 +239,7 @@ export function NewTaskDialog({
     setExistingRef('');
     setFetchError(null);
     fetchedFor.current = null;
+    baseTouched.current = false;
   }, [open]);
 
   // The title arrives once per open; the prompt again whenever the prefill
@@ -415,6 +426,52 @@ export function NewTaskDialog({
   );
 
   const branch = source === 'new' ? (naming?.branch ?? '') : (checkout?.branch ?? '');
+
+  /*
+   * An existing branch's base is worked out, not asked for: what its pull
+   * request merges into, and failing that the usual base it is fewest commits
+   * ahead of. The select stays editable, and a hand-picked base wins.
+   */
+  const checkoutBranch = checkout?.branch ?? null;
+  useEffect(() => {
+    setBaseFrom(null);
+    setBaseBusy(false);
+    if (!open || !project || source !== 'existing' || !checkoutBranch) return;
+    baseTouched.current = false;
+    let live = true;
+    setBaseBusy(true);
+    // A name GitHub or git gives, as the select lists it: local, else remote.
+    const listed = (b: string) =>
+      branches.includes(b)
+        ? b
+        : (branchList.remotes.map((r) => `${r}/${b}`).find((x) => branches.includes(x)) ?? null);
+    void (async () => {
+      try {
+        const pr = await fetchPrBase(checkoutBranch, project.repoPath);
+        const fromPr = pr ? listed(pr.base) : null;
+        if (!live) return;
+        if (pr && fromPr && fromPr !== existingRef) {
+          if (!baseTouched.current) setBaseBranch(fromPr);
+          setBaseFrom({ kind: 'pr', number: pr.number, title: pr.title });
+          return;
+        }
+        const repoDefault = await defaultBranchOf(project.repoPath).catch(() => null);
+        const candidates = [project.defaultBaseBranch, repoDefault, 'main', 'master', 'develop']
+          .filter((b): b is string => !!b)
+          .map(listed)
+          .filter((b): b is string => b !== null && b !== existingRef && b !== checkoutBranch);
+        const guess = await guessBaseBranch(project.repoPath, existingRef, candidates);
+        if (!live || !guess) return;
+        if (!baseTouched.current) setBaseBranch(guess.base);
+        setBaseFrom({ kind: 'guess', ahead: guess.ahead });
+      } finally {
+        if (live) setBaseBusy(false);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [open, project, source, checkoutBranch, existingRef, branches, branchList]);
   /** Existing branches name their folder after the branch, not the title. */
   const dirName = source === 'new' ? (naming?.dirName ?? '') : branch ? nameTask(branch).dirName : '';
   const mainOk = mainCheckout !== null && mainCheckout.dirty === 0;
@@ -427,7 +484,8 @@ export function NewTaskDialog({
     if (onMain) return mainCheckout?.path ?? '';
     return project && dirName ? composeWorktreePath(project.worktreeRoot, dirName, home) : '';
   }, [onMain, mainCheckout, project, dirName, home]);
-  const taskTitle = title.trim() || (source === 'existing' ? branch : '');
+  const prTitle = baseFrom?.kind === 'pr' && baseFrom.title ? `#${baseFrom.number} ${baseFrom.title}` : '';
+  const taskTitle = title.trim() || (source === 'existing' ? prTitle || branch : '');
 
   const command = useMemo(() => {
     if (!branch || !worktreePath) return null;
@@ -450,6 +508,7 @@ export function NewTaskDialog({
     !busy &&
     !branchesBusy &&
     !fetching &&
+    !(source === 'existing' && baseBusy) &&
     project !== null &&
     taskTitle !== '' &&
     baseBranch !== '' &&
@@ -772,7 +831,7 @@ export function NewTaskDialog({
                     value={title}
                     placeholder={
                       source === 'existing'
-                        ? branch || 'Defaults to the branch name'
+                        ? prTitle || branch || 'Defaults to the pull request or branch name'
                         : 'Fix the login redirect loop'
                     }
                     spellCheck={false}
@@ -797,6 +856,7 @@ export function NewTaskDialog({
                     value={baseBranch}
                     disabled={busy || branchesBusy || branches.length === 0}
                     onChange={(e) => {
+                      baseTouched.current = true;
                       setBaseBranch(e.target.value);
                       setError(null);
                     }}
@@ -810,7 +870,15 @@ export function NewTaskDialog({
                   </select>
                   {branchesBusy && <div className="wt-hint">Reading branches…</div>}
                   {source === 'existing' ? (
-                    <div className="wt-hint">What its changes are measured against.</div>
+                    <div className="wt-hint">
+                      {baseBusy
+                        ? 'Looking for its pull request…'
+                        : baseTouched.current || !baseFrom
+                          ? 'What its changes are measured against.'
+                          : baseFrom.kind === 'pr'
+                            ? `What pull request #${baseFrom.number} merges into.`
+                            : `No pull request found: the usual base it is fewest commits ahead of (${baseFrom.ahead}).`}
+                    </div>
                   ) : (
                     <>
                       {!branchesBusy && shownFresh && (

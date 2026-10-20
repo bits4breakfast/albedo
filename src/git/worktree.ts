@@ -788,6 +788,28 @@ export function localCheckoutFor(
 }
 
 /**
+ * The base `ref` most likely branched from, when no pull request says: of the
+ * usual candidates, the one with the fewest commits on `ref` that it lacks.
+ * Ties go to the earlier candidate, so the caller lists its preference first.
+ * Null when none can be compared.
+ */
+export async function guessBaseBranch(
+  repoPath: string,
+  ref: string,
+  candidates: readonly string[],
+): Promise<{ base: string; ahead: number } | null> {
+  assertNotOptionLike(ref, 'branch');
+  let best: { base: string; ahead: number } | null = null;
+  for (const base of new Set(candidates)) {
+    if (base === ref || base.startsWith('-')) continue;
+    const r = await git(['rev-list', '--count', `${base}..${ref}`], repoPath).catch(() => null);
+    const ahead = r?.code === 0 ? Number.parseInt(r.stdout.trim(), 10) : Number.NaN;
+    if (Number.isFinite(ahead) && (best === null || ahead < best.ahead)) best = { base, ahead };
+  }
+  return best;
+}
+
+/**
  * `git fetch --all --prune`: what colleagues pushed, minus what they deleted.
  * Never prompts (no terminal is attached): a credential problem fails at
  * once, and git's stderr says why.

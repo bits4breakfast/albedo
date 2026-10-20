@@ -41,6 +41,7 @@ import {
   setPathExistsProbe,
   shortenRef,
   fetchAll,
+  guessBaseBranch,
   localCheckoutFor,
   probeMainCheckout,
   switchCleanCheckout,
@@ -1399,5 +1400,25 @@ describe('switchCleanCheckout', () => {
     const err = await switchCleanCheckout({ path: '/repo', branch: 'mine' }).catch((e: unknown) => e);
     expect((err as GitError).kind).toBe('dirty');
     expect(calls.some((c) => c.args[0] === 'switch')).toBe(false);
+  });
+});
+
+describe('guessBaseBranch', () => {
+  it('picks the candidate the branch is fewest commits ahead of, earlier on a tie', async () => {
+    const ahead: Record<string, string> = { main: '9', develop: '2', master: '2' };
+    const calls = install(({ args }) => {
+      const base = args[2]?.split('..')[0] ?? '';
+      return ahead[base] ? { code: 0, stdout: `${ahead[base]}\n`, stderr: '' } : { code: 128, stdout: '', stderr: 'bad' };
+    });
+    expect(await guessBaseBranch('/repo', 'origin/x', ['main', 'develop', 'master', 'gone'])).toEqual({
+      base: 'develop',
+      ahead: 2,
+    });
+    expect(calls[0]?.args).toEqual(['rev-list', '--count', 'main..origin/x']);
+  });
+
+  it('is null when nothing can be compared', async () => {
+    install(() => ({ code: 128, stdout: '', stderr: 'bad' }));
+    expect(await guessBaseBranch('/repo', 'x', ['main'])).toBeNull();
   });
 });

@@ -31,6 +31,7 @@ vi.mock('../db/projects', () => ({
     },
   ]),
 }));
+vi.mock('../gh/gh', () => ({ fetchPrBase: vi.fn(async () => null) }));
 vi.mock('./projectPrefs', () => ({
   readLastProjectId: vi.fn(() => null),
   writeLastProjectId: vi.fn(),
@@ -40,8 +41,8 @@ vi.mock('../git/worktree', async (orig) => ({
   createWorktree: vi.fn(async () => undefined),
   listBranches: vi.fn(async () => ({
     current: 'main',
-    all: ['main', 'origin/main', 'origin/anna/fix-tz'],
-    locals: ['main'],
+    all: ['main', 'develop', 'origin/main', 'origin/anna/fix-tz'],
+    locals: ['main', 'develop'],
     remoteRefs: ['origin/main', 'origin/anna/fix-tz'],
     remotes: ['origin'],
   })),
@@ -53,6 +54,7 @@ vi.mock('../git/worktree', async (orig) => ({
 
 const wt = await import('../git/worktree');
 const db = await import('../db');
+const ghMod = await import('../gh/gh');
 const { NewTaskDialog } = await import('./NewTaskDialog');
 
 afterEach(() => {
@@ -139,6 +141,27 @@ describe('NewTaskDialog existing branch and main checkout', () => {
       ownsWorktree: true,
       createdBranch: false,
     });
+  });
+
+  it('takes the base and the title from the branch\'s pull request', async () => {
+    created();
+    vi.mocked(ghMod.fetchPrBase).mockResolvedValue({ number: 42, title: 'Fix tz', base: 'develop' });
+    const onCreated = vi.fn();
+    render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
+    fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    fireEvent.change(screen.getByLabelText('Branch to Check Out'), {
+      target: { value: 'origin/anna/fix-tz' },
+    });
+    await screen.findByText('What pull request #42 merges into.');
+    expect((screen.getByLabelText('Base Branch') as HTMLSelectElement).value).toBe('develop');
+    fireEvent.click(screen.getByRole('button', { name: 'Create Worktree' }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(ghMod.fetchPrBase).toHaveBeenCalledWith('anna/fix-tz', '/Users/m/www/albedo');
+    expect(vi.mocked(db.createTask).mock.calls[0]?.[0]).toMatchObject({
+      title: '#42 Fix tz',
+      baseBranch: 'develop',
+    });
+    vi.mocked(ghMod.fetchPrBase).mockResolvedValue(null);
   });
 
   it('cuts a new branch in the main checkout instead of a worktree', async () => {
