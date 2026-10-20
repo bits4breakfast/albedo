@@ -47,6 +47,7 @@ import type { BackfillResult } from './db/projects';
 import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor, unmergedCommits } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import MoveTaskDialog from './ui/MoveTaskDialog';
+import MoreGlyph from './ui/MoreGlyph';
 import { normalizePath } from './git/reconcile';
 import PanelToggle from './ui/PanelToggle';
 import { displayName, wrapForTooltip } from './ui/text';
@@ -1696,25 +1697,18 @@ export default function App() {
                       >
                         {selectedProject.name}
                       </span>
-                      <span className="task-sep">/</span>
+                      <span className="main-ident-sep" aria-hidden="true">›</span>
                     </>
                   )}
-                  {/* The task's name opens what acts on the task; ⋯ at the
-                      bar's end keeps what acts on the panes. */}
+                  <span className="main-ident-title" title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}`}>
+                    {selected.title}
+                  </span>
+                  {/* What acts on the task, right after its name; the ⋯ at
+                      the bar's end keeps what acts on the panes. */}
                   <OverflowMenu
                     label={`Actions for ${selected.title}`}
-                    title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nClick for task actions`}
-                    trigger={{
-                      className: 'main-ident-title main-ident-menu',
-                      content: (
-                        <>
-                          <span className="main-ident-text">{selected.title}</span>
-                          <svg className="main-ident-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M4 6l4 4 4-4" />
-                          </svg>
-                        </>
-                      ),
-                    }}
+                    title="Task actions"
+                    trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
                     items={[
                         {
                           id: 'copy-path',
@@ -1823,7 +1817,7 @@ export default function App() {
                 shell keeps ⌥F12 and its own hide button on the drawer. */}
             <OverflowMenu
               label="Pane actions"
-              title="Pane orientation and the shell. Task actions: click the task's name"
+              title="Pane orientation and the shell"
               items={[
                 ...(split
                   ? [
