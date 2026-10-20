@@ -18,8 +18,11 @@ import { listProjects } from '../db/projects';
 import { nameTask } from '../git/slug';
 import {
   GitError,
+  baseFreshness,
   composeWorktreePath,
   createWorktree,
+  cutPoint,
+  type BaseFreshness,
   listBranches,
   undoCreateWorktree,
 } from '../git/worktree';
@@ -84,6 +87,10 @@ export function NewTaskDialog({
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesBusy, setBranchesBusy] = useState(false);
   const [branchesError, setBranchesError] = useState<string | null>(null);
+  // How the base stands against its remote. The promise is kept so submit can
+  // wait for a fetch still in flight rather than cut from a stale base.
+  const freshProbe = useRef<{ key: string; result: Promise<BaseFreshness | null> } | null>(null);
+  const [fresh, setFresh] = useState<{ key: string; value: BaseFreshness | null; pending: boolean } | null>(null);
   const [home, setHome] = useState('');
 
   const [busy, setBusy] = useState(false);
@@ -229,6 +236,28 @@ export function NewTaskDialog({
     })();
   }, [open, project]);
 
+  // --- is the base up to date with its remote? ----------------------------
+
+  const freshKey = project && baseBranch ? `${project.repoPath}\0${baseBranch}` : '';
+
+  useEffect(() => {
+    if (!open || !project || !baseBranch) {
+      freshProbe.current = null;
+      setFresh(null);
+      return;
+    }
+    const key = `${project.repoPath}\0${baseBranch}`;
+    const result = baseFreshness(project.repoPath, baseBranch).catch(() => null);
+    freshProbe.current = { key, result };
+    setFresh({ key, value: null, pending: true });
+    void result.then((value) => {
+      if (freshProbe.current?.key === key) setFresh({ key, value, pending: false });
+    });
+  }, [open, project, baseBranch]);
+
+  const shownFresh = fresh?.key === freshKey ? fresh : null;
+  const startPoint = cutPoint(baseBranch, shownFresh?.value ?? null);
+
   // Models come from Claude Code's own files, so the list and the default are
   // whatever Claude Code would offer and start with. The pick resets per open.
   useEffect(() => {
@@ -279,9 +308,15 @@ export function NewTaskDialog({
       if (busy || !project) return;
       setBusy(true);
       setError(null);
+      const probe = freshProbe.current;
+      const from = cutPoint(
+        baseBranch,
+        probe && probe.key === `${project.repoPath}\0${baseBranch}` ? await probe.result : null,
+      );
       const created = {
         repoPath: project.repoPath,
         baseBranch,
+        startPoint: from === baseBranch ? undefined : from,
         branch,
         path: worktreePath,
         useExistingBranch,
@@ -476,6 +511,9 @@ export function NewTaskDialog({
                     ))}
                   </select>
                   {branchesBusy && <div className="wt-hint">Reading branches…</div>}
+                  {!branchesBusy && shownFresh && (
+                    <FreshnessHint base={baseBranch} pending={shownFresh.pending} f={shownFresh.value} />
+                  )}
                   {project?.defaultBaseBranch && baseBranch === project.defaultBaseBranch && (
                     <div className="wt-hint">The project&rsquo;s default.</div>
                   )}
@@ -570,7 +608,7 @@ export function NewTaskDialog({
                     <span className="wt-derived-key">Command</span>
                     <span className="wt-derived-val" data-pending={!canSubmit}>
                       {canSubmit
-                        ? `git worktree add -b ${branch} -- ${worktreePath} ${baseBranch}`
+                        ? `git worktree add --no-track -b ${branch} -- ${worktreePath} ${startPoint}`
                         : 'git worktree add …'}
                     </span>
                   </div>
@@ -653,3 +691,23 @@ export function NewTaskDialog({
 }
 
 export default NewTaskDialog;
+
+/**
+ * One line under Base Branch, only when there is something to say: an
+ * up-to-date base needs no comment.
+ */
+function FreshnessHint({ base, pending, f }: { base: string; pending: boolean; f: BaseFreshness | null }) {
+  if (pending) return <div className="wt-hint">Checking {base} against its remote…</div>;
+  if (!f || (f.ahead === 0 && f.behind === 0)) {
+    return f && !f.fetched ? <div className="wt-hint">Could not reach the remote; using local {base}.</div> : null;
+  }
+  const n = (k: number) => `${k} commit${k === 1 ? '' : 's'}`;
+  const stale = f.fetched ? '' : ' (as of the last fetch; the remote did not answer)';
+  const text =
+    f.ahead === 0
+      ? `${base} is ${n(f.behind)} behind ${f.upstream}, so the task starts from ${f.upstream}${stale}.`
+      : f.behind === 0
+        ? `${base} has ${n(f.ahead)} not on ${f.upstream}; starting from local ${base} to keep them.`
+        : `${base} has diverged from ${f.upstream} (${f.ahead} ahead, ${f.behind} behind); starting from local ${base} to keep its commits.`;
+  return <div className="wt-hint">{text}</div>;
+}
