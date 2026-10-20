@@ -3,10 +3,10 @@ import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged, compactHistory } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
-import { endsOnQuestion, RUNNING_WINDOW_MS, statusExpiresAt } from '../capture/status';
+import { pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt } from '../capture/status';
 import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
-import { noteStatusChange } from './attention';
+import { noteQuestion, noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
 /** Shape of the `onCaptureUpdate` payload, per docs/INTERFACES.md. */
@@ -199,6 +199,8 @@ export function useTasks(): UseTasksResult {
   /** Per-task derivation counter: an older derivation never lands on a newer. */
   const statusGenRef = useRef(new Map<number, number>());
   const pendingRef = useRef(new Map<number, PendingWrite>());
+  /** The pending question per task as last derived; see refreshStatus. */
+  const questionSeenRef = useRef(new Map<number, string | null>());
   /** Monotonic clock over write completions, compared against reload starts. */
   const writeClockRef = useRef(0);
 
@@ -371,7 +373,7 @@ export function useTasks(): UseTasksResult {
       let expiresAt: number | null;
       let newestTs = 0;
       let agents = 0;
-      let question = false;
+      let asked: string | null = null;
       try {
         // Parent rows only: a subagent's tool call that is still running has no
         // result yet, and would read as this task waiting on a permission prompt.
@@ -384,7 +386,7 @@ export function useTasks(): UseTasksResult {
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
         if (pendingPrompt(taskId) !== null) status = 'blocked';
-        question = status !== 'blocked' && endsOnQuestion(messages);
+        asked = status !== 'blocked' ? pendingQuestion(messages) : null;
         // Background agents report back to the session when they finish, and
         // it carries on by itself: a turn handed back while they work is not
         // idle. Same liveness as the "Agents Running" strip.
@@ -407,6 +409,13 @@ export function useTasks(): UseTasksResult {
       clearExpiry(taskId);
       const prior = tasksRef.current.find((t) => t.id === taskId);
       if (!prior || prior.status === 'archived') return;
+
+      const question = asked !== null;
+      // The question as last seen, per task. Absent until the first derivation,
+      // which describes the past (a question left open at launch is not news).
+      const seen = questionSeenRef.current;
+      const newQuestion = seen.has(taskId) && seen.get(taskId) === null && asked !== null;
+      seen.set(taskId, asked);
 
       setSignals((prev) => {
         const old = prev.get(taskId);
@@ -441,7 +450,9 @@ export function useTasks(): UseTasksResult {
       if (prior.status !== status) {
         // A transition, not a level: this is the one place that knows a task
         // just *became* blocked rather than having been blocked all along.
-        noteStatusChange(taskId, prior.status, status, prior.title);
+        noteStatusChange(taskId, prior.status, status, prior.title, newQuestion ? asked : null);
+      } else if (newQuestion && asked !== null) {
+        noteQuestion(taskId, prior.title, asked);
       }
       const retry = pendingRef.current.get(taskId)?.failed === true;
       if (prior.status !== status || retry) void persist(taskId, { status, lastActivityAt });

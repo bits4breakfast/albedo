@@ -45,6 +45,12 @@ export type AttentionKind =
   /** The turn ended. Nothing is stuck; you just have a result to read. */
   | 'finished'
   /**
+   * The turn ended on a question for you, or one was asked while the task's
+   * agents keep working. Nothing waits on it, so it bounces once, like
+   * `finished`; the banner quotes the question, which is what to read first.
+   */
+  | 'question'
+  /**
    * The task's PR was merged. Not a session event at all -- it comes from
    * `gh` (see `mergeNotice`) -- but it asks the same question of the owner:
    * archive this, or follow it up.
@@ -90,6 +96,9 @@ let requestOsAttention: (critical: boolean) => void = (critical) => {
  */
 export const NOTIFY_MIN_INTERVAL_MS = 60_000;
 
+/** A banner is a glance, not the transcript: longer questions are cut. */
+const QUESTION_BODY_MAX = 160;
+
 /** localStorage key for the off switch. Absent means on. */
 export const NOTIFICATIONS_KEY = 'albedo.notifications';
 
@@ -118,16 +127,23 @@ export function notificationFor(
   kind: AttentionKind,
   title: string | null,
   taskId: number,
-  /** The PR's number, for `merged`. */
-  prNumber: number | null = null,
+  /** The PR's number, for `merged`; the question itself, for `question`. */
+  detail: number | string | null = null,
 ): {
   title: string;
   body: string;
 } {
   const name = title && title.trim().length > 0 ? title.trim() : `Task ${taskId}`;
   if (kind === 'merged') {
-    const pr = prNumber === null ? 'PR' : `PR #${prNumber}`;
+    const pr = typeof detail === 'number' ? `PR #${detail}` : 'PR';
     return { title: name, body: `${pr} merged — archive or follow up.` };
+  }
+  if (kind === 'question') {
+    const q = typeof detail === 'string' ? detail.trim() : '';
+    return {
+      title: name,
+      body: q ? (q.length > QUESTION_BODY_MAX ? `${q.slice(0, QUESTION_BODY_MAX - 1)}…` : q) : 'Asks you a question.',
+    };
   }
   return kind === 'blocked'
     ? { title: name, body: 'Waiting on you — Claude is asking for permission or has a question.' }
@@ -269,9 +285,31 @@ export function noteStatusChange(
   next: TaskStatus,
   /** For the notification banner. Absent, it says "Task <id>". */
   title: string | null = null,
+  /**
+   * A question the turn just ended on. It turns "finished" into "question" --
+   * one bounce and one banner that says what was asked, not two.
+   */
+  question: string | null = null,
 ): void {
-  const kind = attentionFor(prior, next);
+  let kind = attentionFor(prior, next);
+  if (kind === 'finished' && question !== null) kind = 'question';
   if (kind === null) return;
+  raise(taskId, kind, title, kind === 'question' ? question : null);
+}
+
+/**
+ * A question appeared without the status changing: the session asked
+ * something while its agents keep the task running. The caller passes only a
+ * NEW question, never one that was there at launch.
+ */
+export function noteQuestion(taskId: number, title: string | null, question: string): void {
+  // A prompt waiting on you outranks a question that can wait.
+  if (marked.get(taskId) === 'blocked') return;
+  raise(taskId, 'question', title, question);
+}
+
+/** The mark always; the bounce and the banner only while unfocused. */
+function raise(taskId: number, kind: AttentionKind, title: string | null, detail: number | string | null): void {
   marked.set(taskId, kind);
   if (!focused) {
     // Critical bounces until the app is activated; informational bounces
@@ -281,7 +319,7 @@ export function noteStatusChange(
     // the same noise the dock bounce already avoids.
     if (notificationsEnabled() && shouldNotify(lastNotified, taskId, kind, Date.now())) {
       try {
-        postNotification(notificationFor(kind, title, taskId));
+        postNotification(notificationFor(kind, title, taskId, detail));
       } catch {
         /* never let a notification take the status update down */
       }
@@ -365,7 +403,9 @@ export function announcementFor(
         ? `${title} needs you: waiting on a permission prompt.`
         : kind === 'merged'
           ? `${title}: pull request merged.`
-          : `${title} finished.`,
+          : kind === 'question'
+            ? `${title} asks you a question.`
+            : `${title} finished.`,
     );
   }
   return parts.join(' ');

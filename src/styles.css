@@ -758,6 +758,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .task-row[data-attention='finished'] { box-shadow: inset 2px 0 0 var(--status-done); }
 /* Accent, like the merged chip and row mark it sits beside. */
 .task-row[data-attention='merged'] { box-shadow: inset 2px 0 0 var(--accent); }
+/* Accent too: the same colour as the row's "?" badge. */
+.task-row[data-attention='question'] { box-shadow: inset 2px 0 0 var(--accent); }
 
 /* Selection is the stronger statement, and clearing the mark follows it. */
 .task-row[data-selected='true'][data-attention] {
