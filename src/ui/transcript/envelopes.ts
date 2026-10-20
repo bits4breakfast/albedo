@@ -440,6 +440,14 @@ export function imageSourceNote(body: string): string | null {
   return m ? (m[1] ?? '').trim() || null : null;
 }
 
+/**
+ * Your text without Claude Code's `[Image #N]` markers -- where in the prompt
+ * a picture was pasted -- for when the pictures themselves are on screen.
+ */
+export function withoutImageMarkers(text: string): string {
+  return text.replace(/\[Image #\d+\][ \t]*/g, '');
+}
+
 /** The placeholder body the adapter gives an image block. */
 export function isImagePlaceholder(body: string | null): boolean {
   return (body ?? '').trim() === '[image]';

@@ -781,8 +781,13 @@ class Capture implements CaptureHandle {
       // a session started there by hand is that task's work too. Never a
       // shared folder, and never by changing the task's session: that was the
       // restart bug, where the main checkout's newest file became the task's.
-      let task = await findTaskBySessionId(sessionId);
-      if (task === null && cwd !== null) task = await findTaskByWorktreePath(cwd, { ownedOnly: true });
+      // Live tasks only: archiving drops a task's rows but keeps its session
+      // id, so a session brought back from History would otherwise land on a
+      // task nobody can open, and History would offer only "Open Task".
+      let task = await findTaskBySessionId(sessionId, { liveOnly: true });
+      if (task === null && cwd !== null) {
+        task = await findTaskByWorktreePath(cwd, { liveOnly: true, ownedOnly: true });
+      }
       const taskId = task?.id ?? null;
 
       const insertable: InsertableMessage[] = rows.map((row) => ({

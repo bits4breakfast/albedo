@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { urlOpener } from '../lib/platform';
-import { GH_PROGRAMS, fetchPrStatus, gh, prLookupBranch, setGhRunner, type GhRunner, type GhProgram } from './gh';
+import { GH_PROGRAMS, fetchPrStatus, gh, parsePrBase, prLookupBranch, setGhRunner, type GhRunner, type GhProgram } from './gh';
 
 const task = {
   branch: 'feat/x',
@@ -118,5 +118,19 @@ describe('shell scope', () => {
   it('allows the URL opener of both platforms', () => {
     expect(allowed).toContain(urlOpener('macos'));
     expect(allowed).toContain(urlOpener('linux'));
+  });
+});
+
+describe('parsePrBase', () => {
+  it('reads the base of the PR whose head is the branch', () => {
+    const out = JSON.stringify({ number: 42, title: 'Fix tz', baseRefName: 'develop', headRefName: 'anna/fix-tz' });
+    expect(parsePrBase(out, 'anna/fix-tz')).toEqual({ number: 42, title: 'Fix tz', base: 'develop' });
+  });
+
+  it('ignores a PR gh matched loosely, and anything that is not one', () => {
+    const out = JSON.stringify({ number: 42, title: 'x', baseRefName: 'main', headRefName: 'other' });
+    expect(parsePrBase(out, 'anna/fix-tz')).toBeNull();
+    expect(parsePrBase('not json', 'b')).toBeNull();
+    expect(parsePrBase('{"number":1}', 'b')).toBeNull();
   });
 });

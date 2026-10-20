@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { BUILD, buildLabel } from '../lib/build';
 import OverflowMenu from './OverflowMenu';
 import type { ThemeChoice } from './theme';
 
@@ -118,6 +119,20 @@ export default function Header({
               onSelect: onShortcuts,
               title: 'Keyboard shortcuts (⌘/)',
               group: true,
+            },
+            {
+              // What is running: the commit it was built from ("+": with
+              // uncommitted changes). A click copies it.
+              id: 'build',
+              label: `Build ${buildLabel()}`,
+              group: true,
+              title: BUILD
+                ? `Built from ${BUILD.sha}${BUILD.dirty ? ' with uncommitted changes' : ''}. Click to copy`
+                : 'Built outside a git checkout',
+              disabled: BUILD === null,
+              onSelect: () => {
+                if (BUILD) void navigator.clipboard?.writeText(BUILD.sha).catch(() => {});
+              },
             },
           ]}
         />

@@ -41,8 +41,10 @@
  *    live key in the terminal -- Claude Code's own transcript toggle -- and
  *    stealing it would break the thing this app wraps.
  *
- * `⇧⌘F` (Find in Files) follows the same two rules for the same reasons, and
- * `⌥F12` (the shell drawer, PhpStorm's Terminal) is read from `code` too.
+ * `⇧⌘F` (Find in Files), `⇧⌘P` (Push) and `⌘U` (Attach) follow the same two
+ * rules for the same reasons -- Ctrl+P and Ctrl+U are the terminal's
+ * previous-command and kill-line keys -- and `⌥F12`
+ * (the shell drawer, PhpStorm's Terminal) is read from `code` too.
  *
  * ## Project tabs: ⌥1–9 (⌥⌘1–9 too), and Alt+1–9 off a Mac
  *
@@ -81,6 +83,8 @@ export type Combo =
   | 'mod+shift+o'
   | 'mod+alt+o'
   | 'mod+shift+f'
+  | 'mod+shift+p'
+  | 'mod+u'
   | 'alt+f12';
 
 /**
@@ -92,7 +96,8 @@ export type Gesture =
   | 'editor mod+b'
   | 'editor alt+f7'
   | 'editor mod+shift+c'
-  | 'transcript mod+arrowdown';
+  | 'transcript mod+arrowdown'
+  | 'new-task mod+enter';
 
 export interface ShortcutDoc {
   combo: Combo | Gesture;
@@ -119,10 +124,13 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+alt+o', keys: '⌥⌘O', description: 'Go to Symbol' },
   { combo: 'shift shift', keys: '⇧⇧', description: 'Search Everywhere' },
   { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
+  { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
+  { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
   { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Comment on the Selected Lines' },
   { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
+  { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger Text' },
   { combo: 'mod+-', keys: '⌘−', description: 'Smaller Text' },
@@ -172,6 +180,15 @@ export function comboOf(
   // (Ctrl+Shift+F belongs to the terminal) and read from `code`.
   if (e.code === 'KeyF' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+f', digit: null };
+  }
+  // Push, on the same terms: two modifiers, because it starts a commit and a
+  // push, and Command only, because Ctrl+P belongs to the terminal.
+  if (e.code === 'KeyP' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+p', digit: null };
+  }
+  // Attach files. Command only: Ctrl+U is the terminal's kill-line.
+  if (e.code === 'KeyU' && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+u', digit: null };
   }
   // PhpStorm's Terminal tool window. Option with a function key composes
   // nothing, so the Alt rule has no reason to apply; matched on `code` like

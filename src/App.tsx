@@ -8,6 +8,8 @@ import useTasks from './ui/useTasks';
 import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
+import { createPrPrompt, pushPrompt } from './ui/gitPrompts';
+import { sendPrompt } from './ui/sendPrompt';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
@@ -30,7 +32,7 @@ import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
-import { onComposerInsert } from './ui/transcript/composerBridge';
+import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
@@ -42,8 +44,12 @@ import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/pr
 import { deleteTask, listTasks, repairSelfBasedTasks } from './db';
 import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
-import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor } from './git/worktree';
+import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor, unmergedCommits } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
+import MoveTaskDialog from './ui/MoveTaskDialog';
+import MoreGlyph from './ui/MoreGlyph';
+import { normalizePath } from './git/reconcile';
+import PanelToggle from './ui/PanelToggle';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
 import { grantProjectDirs } from './lib/fsGrants';
@@ -502,7 +508,7 @@ function ProjectTabs({
 // ---------------------------------------------------------------------------
 
 export default function App() {
-  const { tasks, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive } =
+  const { tasks, signals, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive } =
     useTasks();
 
   const [selectedId, setSelectedId] = useState<number | null>(() =>
@@ -585,6 +591,9 @@ export default function App() {
     () => new Set(readHiddenProjects()),
   );
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
+  const [moveTarget, setMoveTarget] = useState<Task | null>(null);
+  /** Tasks whose terminal is down while they move: unmounting ends the session. */
+  const [stopped, setStopped] = useState<ReadonlySet<number>>(() => new Set());
   /** Which verb the end-task dialog was opened with. */
   const [endIntent, setEndIntent] = useState<'archive' | 'delete'>('archive');
   const [dragging, setDragging] = useState<null | 'sidebar' | 'split' | 'files' | 'shell'>(null);
@@ -1416,6 +1425,31 @@ export default function App() {
     [editorTask, editorActivePath],
   );
 
+  /**
+   * ⇧⌘P: what the Files pane's Push does, for the selected task -- the same
+   * prompt, through the same path (submitted on an idle session, otherwise
+   * left in the message box). The message box lives in the transcript, so in
+   * terminal-only mode a busy task gets the split view and a second try.
+   */
+  const pushSelected = async () => {
+    const task = selected;
+    if (!task || task.status === 'archived') return;
+    // As the Files pane: on no branch there is nothing to push, and pushing a
+    // stale detached copy could overwrite the branch with old commits.
+    const remote = await unmergedCommits(task.worktreePath, task.baseBranch).catch(() => null);
+    if (remote?.detached) {
+      console.warn('[push] HEAD is detached in', task.worktreePath, '- nothing to push');
+      return;
+    }
+    const text = pushPrompt(task);
+    if ((await sendPrompt(task, text)) !== 'failed') return;
+    setMode((m) => (m === 'pty' ? 'split' : m));
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    if ((await sendPrompt(task, text)) === 'failed') {
+      console.warn('[push] no live session or message box for task', task.id);
+    }
+  };
+
   useShortcuts({
     // PhpStorm's keymap. Live while typing: nothing in a text field, the
     // terminal included, binds ⌘O (Ctrl+O is left alone -- see shortcuts.ts).
@@ -1423,6 +1457,15 @@ export default function App() {
     'mod+o': () => toggleQuickOpen('class'),
     'mod+alt+o': () => toggleQuickOpen('symbol'),
     'mod+shift+f': toggleFind,
+    'mod+shift+p': () => void pushSelected(),
+    // The message box is in the transcript: show it, then ask it to attach.
+    'mod+u': () => {
+      if (!selected) return;
+      const id = selected.id;
+      setRightTab('transcript');
+      setMode((m) => (m === 'pty' ? 'split' : m));
+      if (!requestAttach(id)) window.setTimeout(() => requestAttach(id), 150);
+    },
     'alt+f12': () => setShellOpen((o) => !o),
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
@@ -1615,6 +1658,7 @@ export default function App() {
             onFollowUp={(task) => void openFollowUp(task)}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
+            signals={signals}
             attention={attention}
             projects={projects}
             activeProject={activeProject}
@@ -1653,12 +1697,65 @@ export default function App() {
                       >
                         {selectedProject.name}
                       </span>
-                      <span className="task-sep">/</span>
+                      <span className="main-ident-sep" aria-hidden="true">›</span>
                     </>
                   )}
                   <span className="main-ident-title" title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}`}>
                     {selected.title}
                   </span>
+                  {/* What acts on the task, right after its name; the ⋯ at
+                      the bar's end keeps what acts on the panes. */}
+                  <OverflowMenu
+                    label={`Actions for ${selected.title}`}
+                    title="Task actions"
+                    trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
+                    items={[
+                        {
+                          id: 'copy-path',
+                          label: 'Copy Worktree Path',
+                          onSelect: () => {
+                            void navigator.clipboard?.writeText(selected.worktreePath).catch(() => {});
+                          },
+                        },
+                        {
+                          id: 'copy-session',
+                          label: 'Copy Session ID',
+                          disabled: selected.sessionId === null,
+                          title: selected.sessionId ?? 'No session yet',
+                          onSelect: () => {
+                            if (selected.sessionId) void navigator.clipboard?.writeText(selected.sessionId).catch(() => {});
+                          },
+                        },
+                        {
+                          id: 'move',
+                          label:
+                            normalizePath(selected.worktreePath) === normalizePath(selected.repoPath)
+                              ? 'Move to a Worktree…'
+                              : 'Move to Main Checkout…',
+                          title: 'Same branch, same conversation; uncommitted changes come along',
+                          onSelect: () => setMoveTarget(selected),
+                        },
+                        {
+                          id: 'archive',
+                          label: 'Archive Task…',
+                          title: 'Out of the active list (opens the archive dialog)',
+                          onSelect: () => {
+                            setEndIntent('archive');
+                            setArchiveTarget(selected);
+                          },
+                        },
+                        {
+                          id: 'delete',
+                          label: 'Delete Task…',
+                          tone: 'danger' as const,
+                          title: 'Worktree optional, conversation kept (opens the delete dialog)',
+                          onSelect: () => {
+                            setEndIntent('delete');
+                            setArchiveTarget(selected);
+                          },
+                        },
+                    ]}
+                  />
                   {/* The branch and folder live here and nowhere else on screen:
                       the sidebar row repeats the branch only when it adds to
                       the title, the Files bar not at all. Icons say which is
@@ -1679,6 +1776,7 @@ export default function App() {
                       setArchiveTarget(selected);
                     }}
                     onFollowUp={(pr) => void openFollowUp(selected, pr)}
+                    onCreatePr={() => void sendPrompt(selected, createPrPrompt(selected))}
                   />
                   {/* The folder only where it says something: a worktree Albedo
                       cut is always <root>/<branch>, so naming it cost the room
@@ -1714,80 +1812,44 @@ export default function App() {
               </button>
             </div>
 
-            {/* Everything else on this row lives behind ⋯. The orientation
-                switch only appears in split, as the inline button did; the
-                shell keeps ⌥F12 and its own hide button on the drawer. */}
-            <OverflowMenu
-              label="Task actions"
-              title="Pane orientation, shell, task actions"
-              items={[
-                ...(split
-                  ? [
-                      {
-                        id: 'orientation',
-                        label: orientation === 'row' ? 'Stack Panes' : 'Panes Side by Side',
-                        aside: orientation === 'row' ? '↕' : '↔',
-                        title:
-                          orientation === 'row'
-                            ? 'Panes side by side — click to stack them'
-                            : 'Panes stacked — click to put them side by side',
-                        onSelect: () => setOrientation((o) => (o === 'row' ? 'column' : 'row')),
-                      },
-                    ]
-                  : []),
-                {
-                  id: 'shell',
-                  label: shellProject ? `Shell in ${shellProject.name}'s Main Checkout` : 'Shell',
-                  aside: '⌥F12',
-                  checked: shellOpen && shellProject !== null,
-                  disabled: !shellProject,
-                  title: shellProject
-                    ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
-                    : 'No project to open a shell in',
-                  onSelect: () => setShellOpen((o) => !o),
-                },
-                ...(selected
-                  ? [
-                      {
-                        id: 'copy-path',
-                        label: 'Copy Worktree Path',
-                        group: true,
-                        onSelect: () => {
-                          void navigator.clipboard?.writeText(selected.worktreePath).catch(() => {});
-                        },
-                      },
-                      {
-                        id: 'copy-session',
-                        label: 'Copy Session ID',
-                        disabled: selected.sessionId === null,
-                        title: selected.sessionId ?? 'No session yet',
-                        onSelect: () => {
-                          if (selected.sessionId) void navigator.clipboard?.writeText(selected.sessionId).catch(() => {});
-                        },
-                      },
-                      {
-                        id: 'archive',
-                        label: 'Archive Task…',
-                        title: 'Out of the active list (opens the archive dialog)',
-                        onSelect: () => {
-                          setEndIntent('archive');
-                          setArchiveTarget(selected);
-                        },
-                      },
-                      {
-                        id: 'delete',
-                        label: 'Delete Task…',
-                        tone: 'danger' as const,
-                        title: 'Worktree optional, conversation kept (opens the delete dialog)',
-                        onSelect: () => {
-                          setEndIntent('delete');
-                          setArchiveTarget(selected);
-                        },
-                      },
-                    ]
-                  : []),
-              ]}
-            />
+            {/* Two icons where a ⋯ held two items: the orientation only
+                means something in Split, and the shell keeps ⌥F12. */}
+            {split && (
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label={orientation === 'row' ? 'Stack Panes' : 'Panes Side by Side'}
+                title={
+                  orientation === 'row'
+                    ? 'Terminal and reading pane side by side. Click to stack them'
+                    : 'Terminal and reading pane stacked. Click to put them side by side'
+                }
+                onClick={() => setOrientation((o) => (o === 'row' ? 'column' : 'row'))}
+              >
+                <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
+                  {orientation === 'row' ? <path d="M8 3v10" /> : <path d="M2 8h12" />}
+                </svg>
+              </button>
+            )}
+            <button
+              type="button"
+              className="icon-btn icon-btn-on"
+              aria-pressed={shellOpen && shellProject !== null}
+              aria-label="Shell"
+              disabled={!shellProject}
+              title={
+                shellProject
+                  ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
+                  : 'No project to open a shell in'
+              }
+              onClick={() => setShellOpen((o) => !o)}
+            >
+              <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
+                <path d="M4.5 6.5 6.5 8l-2 1.5M8 10h3.5" />
+              </svg>
+            </button>
           </div>
 
           <div className="panes" data-orientation={orientation} data-mode={mode} ref={panesRef}>
@@ -1829,9 +1891,11 @@ export default function App() {
               )}
               <div className="pane-body">
                 <div className="term-stack">
-                  {openTasks.map((task) => (
+                  {openTasks.filter((task) => !stopped.has(task.id)).map((task) => (
                     <Terminal
-                      key={task.id}
+                      /* The folder is part of the identity: a task that moved
+                         starts again there, resuming the same session. */
+                      key={`${task.id}@${task.worktreePath}`}
                       task={task}
                       active={task.id === selectedId}
                       initialPrompt={initialPromptFor(task) ?? undefined}
@@ -1898,33 +1962,21 @@ export default function App() {
                 <span className="pane-head-note" title={noteFor(activeTab)}>
                   {noteFor(activeTab)}
                 </span>
-                {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
                     ✕
                   </button>
                 )}
-                {/* Labelled, not a bare ⇥. This is a preference that changes
-                    the whole reading layout and persists across restarts, and
-                    as a lone glyph behind a native tooltip nobody found it --
-                    it was asked for as a missing feature while already built.
-                    `aria-pressed` carries the state; the word carries what it
-                    does. */}
+                {/* Moves to the column's head once the column shows. */}
                 {!filesColumnShown && (
-                  <button
-                    className="pane-head-pin"
-                    data-on={filesPinned}
-                    onClick={() => setFilesPinned((v) => !v)}
-                    title={
-                      filesPinned
-                        ? 'Files are pinned as a column; unpin to keep them as a tab'
-                        : 'Keep files always visible as a column beside the transcript'
-                    }
-                    aria-pressed={filesPinned}
-                  >
-                    ⇥ Column
-                  </button>
+                  <PanelToggle
+                    on={filesPinned}
+                    waiting={filesPinned}
+                    onToggle={() => setFilesPinned((v) => !v)}
+                  />
                 )}
+                {/* Last, so it lines up with the ⋯ of the rows above. */}
+                {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
               </div>
               )}
 
@@ -2011,17 +2063,10 @@ export default function App() {
                   <div className="pane-head">
                     <span>Files</span>
                     <span className="pane-head-note" />
-                    {/* The git ⋯ menu lands here (GitBar portals into it). */}
+                    <PanelToggle on onToggle={() => setFilesPinned(false)} />
+                    {/* The git ⋯ menu lands here (GitBar portals into it).
+                        Last, so it lines up with the ⋯ of the rows above. */}
                     <span className="pane-head-slot" ref={setColumnFilesSlot} />
-                    <button
-                      className="pane-head-pin"
-                      data-on
-                      onClick={() => setFilesPinned(false)}
-                      title="Unpin — put files back in the tab strip"
-                      aria-pressed
-                    >
-                      ⇥ Column
-                    </button>
                   </div>
                   <div className="pane-body">
                     {selected ? (
@@ -2228,6 +2273,30 @@ export default function App() {
             // anywhere in your history is the point of the browser.
             revealTask(task);
             void refresh();
+          }}
+        />
+      </PaneErrorBoundary>
+
+      <PaneErrorBoundary label="Move task">
+        <MoveTaskDialog
+          task={moveTarget}
+          project={projects.find((p) => p.id === moveTarget?.projectId) ?? null}
+          onClose={() => setMoveTarget(null)}
+          onStop={async (task) => {
+            setStopped((prev) => new Set(prev).add(task.id));
+            // Unmounting kills the pty; give claude a moment to exit before
+            // git touches the folder it was running in.
+            await new Promise((resolve) => window.setTimeout(resolve, 600));
+          }}
+          onDone={(moved) => {
+            upsertTask(moved);
+            // Its tabs are paths in the old folder.
+            if (openRequestRef.current?.taskId === moved.id) closeEditor();
+            setStopped((prev) => {
+              const next = new Set(prev);
+              next.delete(moved.id);
+              return next;
+            });
           }}
         />
       </PaneErrorBoundary>

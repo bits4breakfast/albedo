@@ -46,7 +46,7 @@ describe('createPrPrompt', () => {
   it('targets the base and writes from the whole branch', () => {
     const p = createPrPrompt(task);
     expect(p).toContain('`albedo/fix-retry` into `main`');
-    expect(p).toContain('gh pr create --base main');
+    expect(p).toContain('gh pr create --base main --head albedo/fix-retry');
     expect(p).toContain('every commit on the branch');
   });
 });

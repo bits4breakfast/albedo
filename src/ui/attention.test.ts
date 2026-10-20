@@ -5,6 +5,7 @@ import {
   attentionFor,
   attentionMarks,
   clearAttention,
+  noteQuestion,
   noteStatusChange,
   notificationFor,
   NOTIFICATIONS_KEY,
@@ -147,6 +148,26 @@ describe('system notifications', () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('quotes the question when a turn ends on one, instead of "finished"', () => {
+    noteStatusChange(1, 'running', 'idle', 'Security audit', 'Fold these into the report, or do them now?');
+    expect(posted).toEqual([{ title: 'Security audit', body: 'Fold these into the report, or do them now?' }]);
+    expect(attentionMarks().get(1)).toBe('question');
+  });
+
+  it('bounces once and posts for a question asked while agents keep the task running', () => {
+    const bounces: boolean[] = [];
+    __setAttentionBackend((critical) => bounces.push(critical), false, (n) => posted.push(n));
+    noteQuestion(3, 'Audit', 'Shall I push?');
+    expect(bounces).toEqual([false]);
+    expect(posted).toEqual([{ title: 'Audit', body: 'Shall I push?' }]);
+  });
+
+  it('never lets a question replace a prompt that is waiting on you', () => {
+    noteStatusChange(4, 'running', 'blocked', 'Deploy');
+    noteQuestion(4, 'Deploy', 'Go?');
+    expect(attentionMarks().get(4)).toBe('blocked');
   });
 
   it('reads the switch from storage', () => {

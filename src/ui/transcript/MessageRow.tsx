@@ -15,12 +15,12 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import Diff, { Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
-import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, type UserBlock } from './envelopes';
-import { imageAt } from '../../capture';
+import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
+import { imageAt, imagesIn } from '../../capture';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -94,8 +94,19 @@ type UserPart =
 
 function UserRow({ message, extras }: { message: Message; extras: readonly Message[] }): ReactNode {
   const parts = useMemo<UserPart[]>(() => {
+    const rows = [message, ...extras];
+    // Claude Code marks where a picture went with `[Image #N]`. With the
+    // picture itself on screen the marker says nothing, so it goes.
+    const pictured = rows.some((m) => {
+      const body = m.body ?? '';
+      return isImagePlaceholder(body) || body.split('\n').some((l) => isImagePlaceholder(l));
+    });
     const out: UserPart[] = [];
-    for (const m of [message, ...extras]) {
+    const pushText = (text: string) => {
+      const blocks = parseUserBody(pictured ? withoutImageMarkers(text) : text);
+      if (blocks.length > 0) out.push({ kind: 'blocks', blocks });
+    };
+    for (const m of rows) {
       const body = m.body ?? '';
       if (isImagePlaceholder(body)) {
         out.push({ kind: 'image', src: imageAt(m.rawJson, m.seq)?.src ?? null });
@@ -106,8 +117,26 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
         out.push({ kind: 'source', path: source });
         continue;
       }
-      const blocks = parseUserBody(body);
-      if (blocks.length > 0) out.push({ kind: 'blocks', blocks });
+      // A message sent mid-turn is one row: its text and an `[image]` line
+      // per picture (see imagesIn). Each such line is its picture.
+      const lines = body.split('\n');
+      if (lines.length > 1 && lines.some((l) => isImagePlaceholder(l))) {
+        const images = imagesIn(m.rawJson);
+        let k = 0;
+        let text: string[] = [];
+        for (const l of lines) {
+          if (!isImagePlaceholder(l)) {
+            text.push(l);
+            continue;
+          }
+          if (text.length > 0) pushText(text.join('\n'));
+          text = [];
+          out.push({ kind: 'image', src: images[k++]?.src ?? null });
+        }
+        if (text.length > 0) pushText(text.join('\n'));
+        continue;
+      }
+      pushText(body);
     }
     return out;
   }, [message, extras]);
@@ -430,7 +459,7 @@ function ToolUseRow({ message, result }: { message: Message; result: Message | n
         <div className="tx-content">
           <ToolChip message={message} result={result} />
           {rendered.diffs.map((d, i) => (
-            <Diff key={i} diff={d} expand={rendered.expand[i] ?? null} absoluteLines={rendered.absoluteLines} />
+            <CollapsibleDiff key={i} diff={d} expand={rendered.expand[i] ?? null} absoluteLines={rendered.absoluteLines} />
           ))}
         </div>
       </div>

@@ -309,7 +309,35 @@ export function imageAt(rawJson: string, seq: number): TranscriptImage | null {
   const line = safeParse(rawJson);
   const message = line?.['message'];
   if (!isRecord(message) || !Array.isArray(message['content'])) return null;
-  const block = (message['content'] as unknown[])[seq % SEQ_STRIDE];
+  return imageOf((message['content'] as unknown[])[seq % SEQ_STRIDE]);
+}
+
+/**
+ * Every image a line carries, in order. A message sent while a turn ran is a
+ * `queued_command` attachment, whose images sit in `attachment.prompt` rather
+ * than `message.content`, and whose row holds the whole prompt as one body
+ * with an `[image]` line per picture -- this is how those are recovered.
+ */
+export function imagesIn(rawJson: string): TranscriptImage[] {
+  const line = safeParse(rawJson);
+  if (!line) return [];
+  const message = line['message'];
+  const att = line['attachment'];
+  const blocks = isRecord(message) && Array.isArray(message['content'])
+    ? (message['content'] as unknown[])
+    : isRecord(att) && Array.isArray(att['prompt'])
+      ? (att['prompt'] as unknown[])
+      : [];
+  const out: TranscriptImage[] = [];
+  for (const b of blocks) {
+    const img = imageOf(b);
+    if (img) out.push(img);
+  }
+  return out;
+}
+
+/** An inline base64 image block of a web type, or null. See {@link imageAt}. */
+function imageOf(block: unknown): TranscriptImage | null {
   if (!isRecord(block) || block['type'] !== 'image') return null;
   const source = block['source'];
   if (!isRecord(source) || source['type'] !== 'base64') return null;

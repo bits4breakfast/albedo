@@ -3,9 +3,10 @@ import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged, compactHistory } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
-import { statusExpiresAt } from '../capture/status';
+import { pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt } from '../capture/status';
+import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
-import { noteStatusChange } from './attention';
+import { noteQuestion, noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
 /** Shape of the `onCaptureUpdate` payload, per docs/INTERFACES.md. */
@@ -41,8 +42,27 @@ const CONTEXT_DEBOUNCE_MS = 400;
  */
 const EXPIRY_SLACK_MS = 50;
 
+/**
+ * What a task's status alone does not say, kept beside it rather than on the
+ * Task row (src/types.ts is a shared contract): how many of its subagents are
+ * still working, and whether its last turn ended on a question for the user.
+ */
+export interface TaskSignals {
+  agents: number;
+  question: boolean;
+}
+
+/**
+ * While the session has handed control back but its agents still work, they
+ * write to their own files and the parent writes nothing, so nothing re-asks
+ * when one dies quietly. Re-check this often until they are done.
+ */
+const AGENT_RECHECK_MS = RUNNING_WINDOW_MS / 3;
+
 export interface UseTasksResult {
   tasks: Task[];
+  /** Keyed by task id; absent means no agents and no question. */
+  signals: Map<number, TaskSignals>;
   loading: boolean;
   /** Fatal-ish problems worth surfacing in a banner. Null when healthy. */
   loadError: string | null;
@@ -162,6 +182,7 @@ export function useTasks(): UseTasksResult {
     () => new Map(),
   );
   const [projects, setProjects] = useState<Project[]>([]);
+  const [signals, setSignals] = useState<Map<number, TaskSignals>>(() => new Map());
 
   /**
    * Latest tasks, readable from callbacks without re-subscribing. Written
@@ -178,6 +199,8 @@ export function useTasks(): UseTasksResult {
   /** Per-task derivation counter: an older derivation never lands on a newer. */
   const statusGenRef = useRef(new Map<number, number>());
   const pendingRef = useRef(new Map<number, PendingWrite>());
+  /** The pending question per task as last derived; see refreshStatus. */
+  const questionSeenRef = useRef(new Map<number, string | null>());
   /** Monotonic clock over write completions, compared against reload starts. */
   const writeClockRef = useRef(0);
 
@@ -349,6 +372,8 @@ export function useTasks(): UseTasksResult {
       let status: TaskStatus;
       let expiresAt: number | null;
       let newestTs = 0;
+      let agents = 0;
+      let asked: string | null = null;
       try {
         // Parent rows only: a subagent's tool call that is still running has no
         // result yet, and would read as this task waiting on a permission prompt.
@@ -361,6 +386,18 @@ export function useTasks(): UseTasksResult {
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
         if (pendingPrompt(taskId) !== null) status = 'blocked';
+        asked = status !== 'blocked' ? pendingQuestion(messages) : null;
+        // Background agents report back to the session when they finish, and
+        // it carries on by itself: a turn handed back while they work is not
+        // idle. Same liveness as the "Agents Running" strip.
+        if (status !== 'blocked') {
+          agents = liveRuns(await listSubagents(sessionId).catch(() => [])).length;
+          if (agents > 0 && status === 'idle') {
+            status = 'running';
+            const recheck = Date.now() + AGENT_RECHECK_MS;
+            expiresAt = expiresAt === null ? recheck : Math.min(expiresAt, recheck);
+          }
+        }
       } catch (err) {
         if (aliveRef.current) setCaptureError(`Status refresh failed: ${message(err)}`);
         return;
@@ -372,6 +409,23 @@ export function useTasks(): UseTasksResult {
       clearExpiry(taskId);
       const prior = tasksRef.current.find((t) => t.id === taskId);
       if (!prior || prior.status === 'archived') return;
+
+      const question = asked !== null;
+      // The question as last seen, per task. Absent until the first derivation,
+      // which describes the past (a question left open at launch is not news).
+      const seen = questionSeenRef.current;
+      const newQuestion = seen.has(taskId) && seen.get(taskId) === null && asked !== null;
+      seen.set(taskId, asked);
+
+      setSignals((prev) => {
+        const old = prev.get(taskId);
+        const none = agents === 0 && !question;
+        if (none ? old === undefined : old?.agents === agents && old.question === question) return prev;
+        const next = new Map(prev);
+        if (none) next.delete(taskId);
+        else next.set(taskId, { agents, question });
+        return next;
+      });
 
       // The status windows are measured against the clock, and once a session
       // dies mid-turn no new row ever comes to re-ask. So re-ask at the
@@ -396,7 +450,9 @@ export function useTasks(): UseTasksResult {
       if (prior.status !== status) {
         // A transition, not a level: this is the one place that knows a task
         // just *became* blocked rather than having been blocked all along.
-        noteStatusChange(taskId, prior.status, status, prior.title);
+        noteStatusChange(taskId, prior.status, status, prior.title, newQuestion ? asked : null);
+      } else if (newQuestion && asked !== null) {
+        noteQuestion(taskId, prior.title, asked);
       }
       const retry = pendingRef.current.get(taskId)?.failed === true;
       if (prior.status !== status || retry) void persist(taskId, { status, lastActivityAt });
@@ -588,6 +644,7 @@ export function useTasks(): UseTasksResult {
   return useMemo(
     () => ({
       tasks,
+      signals,
       loading,
       loadError,
       captureError,
@@ -597,7 +654,7 @@ export function useTasks(): UseTasksResult {
       upsertTask,
       archive,
     }),
-    [tasks, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive],
+    [tasks, signals, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive],
   );
 }
 

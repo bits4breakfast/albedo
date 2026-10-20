@@ -47,7 +47,7 @@ vi.mock('../capture/hookEvents', () => ({
   onStatusSnapshot: () => () => {},
   pendingPrompt: () => null,
 }));
-vi.mock('./attention', () => ({ noteStatusChange: vi.fn() }));
+vi.mock('./attention', () => ({ noteStatusChange: vi.fn(), noteQuestion: vi.fn() }));
 
 const db = await import('../db');
 const { noteStatusChange } = await import('./attention');
@@ -126,7 +126,7 @@ describe('status that depends on the clock is re-checked', () => {
     await tick(2_000);
     expect(result.current.tasks[0]?.status).toBe('idle');
     expect(noteStatusChange).toHaveBeenCalledTimes(1);
-    expect(noteStatusChange).toHaveBeenCalledWith(1, 'running', 'idle', 't');
+    expect(noteStatusChange).toHaveBeenCalledWith(1, 'running', 'idle', 't', null);
     // Re-deriving is not activity: recency stays the newest row's.
     expect(result.current.tasks[0]?.lastActivityAt).toBe(T0 - 10_000);
 

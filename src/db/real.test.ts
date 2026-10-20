@@ -24,6 +24,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 }));
 
 import {
+  adoptSessionIntoTask,
   archiveTask,
   compactHistory,
   createTask,
@@ -199,11 +200,32 @@ describe('listPastSessions — executed', () => {
     expect(recent[0]?.messageCount).toBe(10);
   });
 
+  const taskBase = {
+    projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'b',
+    worktreePath: '/wt/b', ownsWorktree: true, createdBranch: true,
+  };
+
   it('surfaces taskId when any row of the session was adopted', async () => {
+    const t = await createTask({ ...taskBase, title: 't' });
     seedTurn(db, { sessionId: 's1', line: 0, ts: 1, taskId: null });
-    seedTurn(db, { sessionId: 's1', line: 1, ts: 2, taskId: 42 });
+    seedTurn(db, { sessionId: 's1', line: 1, ts: 2, taskId: t.id });
     seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1' });
-    expect((await listPastSessions())[0]?.taskId).toBe(42);
+    expect((await listPastSessions())[0]?.taskId).toBe(t.id);
+  });
+
+  // Archiving keeps the task row and its session id, so a session imported
+  // back from History was tagged with it: "Open Task" then opened nothing.
+  it('treats rows of an archived task as held by no task, and lets a new task adopt them', async () => {
+    const old = await createTask({ ...taskBase, title: 'old' });
+    await updateTask(old.id, { sessionId: 's1' });
+    await archiveTask(old.id);
+    seedTurn(db, { sessionId: 's1', line: 0, ts: 1, taskId: old.id });
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1' });
+    expect((await listPastSessions())[0]?.taskId).toBeNull();
+
+    const resumed = await createTask({ ...taskBase, title: 'resumed', ownsWorktree: false });
+    await adoptSessionIntoTask('s1', resumed.id);
+    expect((await listPastSessions())[0]?.taskId).toBe(resumed.id);
   });
 
   it('survives punctuation in the query instead of raising an FTS5 syntax error', async () => {

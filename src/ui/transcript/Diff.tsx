@@ -618,6 +618,11 @@ export interface DiffProps {
    * and the layout toggle stay either way.
    */
   showPath?: boolean;
+  /**
+   * Set by {@link CollapsibleDiff}: the header gets an open caret, and a click
+   * on it closes the diff again.
+   */
+  onCollapse?: () => void;
 }
 
 export function Diff({
@@ -627,6 +632,7 @@ export function Diff({
   absoluteLines = false,
   contextPath,
   showPath = true,
+  onCollapse,
 }: DiffProps): ReactNode {
   const [ref, width] = useContainerWidth();
   const [override, setOverride] = useState<'split' | 'unified' | null>(null);
@@ -864,6 +870,7 @@ export function Diff({
         resolved={resolved}
         onToggle={layout === 'auto' ? () => setOverride(resolved === 'split' ? 'unified' : 'split') : null}
         showPath={showPath}
+        disclosure={onCollapse ? { open: true, onToggle: onCollapse } : null}
       />
       <div className="tx-d-body">
         {offerContext ? (
@@ -917,6 +924,36 @@ export function Diff({
 
 export default Diff;
 
+/**
+ * A transcript diff, closed until asked for: the header alone -- caret, path
+ * and counts -- and the whole diff on a click. A long session holds hundreds
+ * of edits, and reading the conversation means scrolling past them.
+ *
+ * Closed costs only the line counts: the body, its syntax highlighting and any
+ * file read for context wait until it is opened. Closing it again drops what
+ * was revealed inside, which reopening shows from the start.
+ */
+export function CollapsibleDiff({
+  defaultOpen = false,
+  ...props
+}: DiffProps & { defaultOpen?: boolean }): ReactNode {
+  const [open, setOpen] = useState(defaultOpen);
+  const model = useMemo(() => (open ? null : buildModel(props.diff.hunks)), [open, props.diff]);
+  if (open || model === null) return <Diff {...props} onCollapse={() => setOpen(false)} />;
+  return (
+    <div className="tx-d tx-d-closed">
+      <DiffHeader
+        diff={props.diff}
+        model={model}
+        resolved="unified"
+        onToggle={null}
+        showPath={props.showPath ?? true}
+        disclosure={{ open: false, onToggle: () => setOpen(true) }}
+      />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
@@ -927,13 +964,19 @@ function DiffHeader({
   resolved,
   onToggle,
   showPath,
+  disclosure = null,
 }: {
   diff: FileDiff;
   model: Model;
   resolved: 'split' | 'unified';
   onToggle: (() => void) | null;
   showPath: boolean;
+  /** Present when the diff opens and closes from its header. */
+  disclosure?: { open: boolean; onToggle: () => void } | null;
 }): ReactNode {
+  // As on a tool chip: the whole row toggles, the path opts out and opens the
+  // file, and a drag-select over the row is not a click.
+  const toggle = useActivate(() => disclosure?.onToggle());
   // A rename header reads "old → new". Both sides stay visible, but only the
   // destination is a link: the source no longer exists to open.
   const renamed = diff.path.includes(' → ');
@@ -941,7 +984,21 @@ function DiffHeader({
   const from = renamed ? diff.path.slice(0, diff.path.length - target.length) : '';
   const base = target.split('/').pop() ?? target;
   return (
-    <div className="tx-d-head">
+    <div
+      className={disclosure ? 'tx-d-head tx-d-head-toggle' : 'tx-d-head'}
+      onMouseDown={disclosure ? toggle.onMouseDown : undefined}
+      onClick={disclosure ? toggle.onClick : undefined}
+    >
+      {disclosure ? (
+        <button
+          type="button"
+          className="tx-d-toggle"
+          aria-expanded={disclosure.open}
+          aria-label={`${disclosure.open ? 'Collapse' : 'Expand'} diff of ${base}`}
+        >
+          <Disclosure open={disclosure.open} />
+        </button>
+      ) : null}
       {showPath ? (
         <span className="tx-d-path" title={diff.path}>
           {renamed ? <span className="tx-d-dir">{from}</span> : null}
@@ -956,7 +1013,15 @@ function DiffHeader({
         {model.removed > 0 ? <span className="tx-d-minus">-{model.removed}</span> : null}
       </span>
       {onToggle ? (
-        <button type="button" className="tx-btn tx-d-layout" onClick={onToggle}>
+        <button
+          type="button"
+          className="tx-btn tx-d-layout"
+          onClick={(e) => {
+            // Not a click on the row: that would close the diff too.
+            e.stopPropagation();
+            onToggle();
+          }}
+        >
           {resolved === 'split' ? 'Unified' : 'Split'}
         </button>
       ) : null}

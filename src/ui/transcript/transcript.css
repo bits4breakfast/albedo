@@ -129,6 +129,62 @@
   font-size: inherit;
 }
 
+/* --- something is happening ------------------------------------------------- */
+
+/* Your message, shown the moment it is sent, until the transcript has it. Its
+   text is --muted rather than faded: never `opacity` (Contrast rule 2). */
+.tx-row-echo .tx-echo-text {
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tx-row-working { margin: 6px 0 14px; }
+.tx-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.tx-working-time { font-variant-numeric: tabular-nums; }
+/* Three dots that swell in turn. Scale, not opacity, so the dots keep the
+   --muted they are drawn in. */
+.tx-working-dots { display: inline-flex; gap: 3px; }
+.tx-working-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: tx-working 1.2s ease-in-out infinite;
+}
+.tx-working-dots span:nth-child(2) { animation-delay: 0.15s; }
+.tx-working-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes tx-working {
+  0%, 60%, 100% { transform: scale(0.6); }
+  30% { transform: scale(1); }
+}
+
+/* The Send button while the paste goes in. */
+.tx-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tx-spin 0.8s linear infinite;
+}
+@keyframes tx-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tx-working-dots span,
+  .tx-spinner { animation: none; }
+}
+
 /* --- queued messages ------------------------------------------------------- */
 
 /* What Claude Code has not taken yet, between the transcript and the
@@ -266,16 +322,31 @@
   padding: 4px 8px 8px 10px;
 }
 .tx-composer-accessory { display: flex; align-items: center; min-width: 0; }
+/* Attach: a "+" inside the box at its bottom left, as on claude.ai; the
+   controls that act on the message stay at the right, by Send. Quiet like
+   the model picker until hovered. */
+.tx-composer-attach {
+  flex: none;
+  margin-right: auto;
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.tx-composer-attach:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
+.tx-composer-attach:disabled { color: var(--faint); }
 /* The model reads as text with a chevron, as on claude.ai, not as a boxed
    field: it is a setting of the message, not a form control beside it. */
 .tx-composer-accessory .model-pick-select {
-  appearance: none;
-  -webkit-appearance: none;
   height: 30px;
   padding: 0 22px 0 8px;
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 16 16' fill='none' stroke='%237a7d87' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 7px center;
+  background-color: transparent;
+  background-position: right 7px center;
+  background-size: 10px 10px;
   color: var(--muted);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -954,6 +1025,20 @@
   background: var(--panel-chrome);
   font-size: var(--fs-sm);
 }
+
+/* A transcript diff opens and closes from its header (CollapsibleDiff). */
+.tx-d-head-toggle {
+  align-items: center;
+  cursor: pointer;
+}
+.tx-d-head-toggle:hover { background: var(--panel-hover); }
+.tx-d-closed .tx-d-head { border-bottom: none; }
+.tx-d-toggle {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+.tx-d-head-toggle:hover .tx-disc { color: var(--text); }
 
 .tx-d-path {
   min-width: 0;

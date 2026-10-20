@@ -280,11 +280,19 @@
   color: var(--text);
   font: inherit;
   font-size: var(--fs-md);
-  background: var(--panel-inset);
+  /* background-color, not background: a select's chevron is its image. */
+  background-color: var(--panel-inset);
   border: 1px solid var(--border-mid);
   border-radius: var(--radius);
   user-select: text;
 }
+
+.wt-select {
+  /* Room for the chevron, so a long branch name never runs under it. */
+  padding-right: 32px;
+  text-overflow: ellipsis;
+}
+.wt-select:disabled { color: var(--faint); }
 
 .wt-input:focus,
 .wt-select:focus {
@@ -303,6 +311,61 @@
 
 .wt-input::placeholder {
   color: var(--faint);
+}
+
+/* Segmented choice (New / Existing, New Worktree / Main Checkout). Drawn as
+   the shell's .seg in styles.css: one edge, the track's; the selected segment
+   lifted by --seg-on and the card shadow, never a ring. */
+.wt-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.wt-seg-option {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.wt-seg-option:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.wt-seg-option[aria-checked='true'] {
+  color: var(--text-strong);
+  background: var(--seg-on);
+  box-shadow: var(--card-shadow);
+}
+
+/* Disabled is the --faint token, never opacity (CLAUDE.md, Contrast 2). */
+.wt-seg-option:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* A move's steps, in the order they run. */
+.wt-steps {
+  margin: 4px 0 14px;
+  padding-left: 20px;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+.wt-blockers { margin: 6px 0 0; padding-left: 18px; font-size: var(--fs-sm); }
+
+/* Two fields on one line, each its own column. */
+.wt-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
 }
 
 .wt-row {

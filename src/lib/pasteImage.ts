@@ -88,3 +88,39 @@ export async function savePastedImage(image: Blob, at = new Date()): Promise<str
 export function withInsertedPath(text: string, insert: string): string {
   return text.length === 0 || /\s$/.test(text) ? `${text}${insert} ` : `${text} ${insert} `;
 }
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|heic|tiff?|bmp)$/i;
+
+/**
+ * A file macOS will delete shortly: the screenshot thumbnail's drag source
+ * (`/var/folders/.../T/TemporaryItems/NSIRD_screencaptureui_*`) is gone moments
+ * after the drop, before Claude Code reads it on send.
+ */
+export function isEphemeralPath(path: string): boolean {
+  return /^(\/private)?\/var\/folders\//.test(path) || path.includes('/TemporaryItems/');
+}
+
+/**
+ * The path to insert for a dropped file: a temporary image is copied to
+ * `~/.albedo/paste/` first, as a pasted one is, and anything else is left
+ * where it is. A drop is in the fs scope already (tauri-plugin-fs allows every
+ * dropped path). On failure the original path goes in, which is no worse than
+ * before.
+ */
+export async function keepDroppedFile(path: string, at = new Date()): Promise<string> {
+  if (!isEphemeralPath(path) || !IMAGE_EXT_RE.test(path)) return path;
+  try {
+    const [{ homeDir }, { mkdir, readFile, writeFile }] = await Promise.all([
+      import('@tauri-apps/api/path'),
+      import('@tauri-apps/plugin-fs'),
+    ]);
+    const ext = (IMAGE_EXT_RE.exec(path)?.[1] ?? 'png').toLowerCase();
+    const type = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+    const { dir, path: kept } = pastedImagePath(await homeDir(), pastedImageName(type, at));
+    await mkdir(dir, { recursive: true });
+    await writeFile(kept, await readFile(path));
+    return kept;
+  } catch {
+    return path;
+  }
+}

@@ -40,6 +40,12 @@ import {
   setGitRunner,
   setPathExistsProbe,
   shortenRef,
+  commitsOnBranch,
+  fetchAll,
+  guessBaseBranch,
+  localCheckoutFor,
+  probeMainCheckout,
+  switchCleanCheckout,
   uncommittedChanges,
   unmergedCommits,
 } from './worktree';
@@ -293,7 +299,7 @@ describe('unmergedCommits', () => {
       if (args[0] === 'rev-list') return { code: 0, stdout: '2\n', stderr: '' };
       return undefined;
     });
-    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 2, upstream: 'origin/main' });
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 2, upstream: 'origin/main', detached: false });
     expect(calls.map((c) => c.args)).toEqual([
       upstreamArgs,
       ['rev-list', '--count', 'origin/main..HEAD', '--'],
@@ -309,8 +315,17 @@ describe('unmergedCommits', () => {
       if (args[0] === 'rev-list') return { code: 0, stdout: '3\n', stderr: '' };
       return undefined;
     });
-    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 3, upstream: null });
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 3, upstream: null, detached: false });
     expect(calls[1]?.args).toEqual(['rev-list', '--count', 'main..HEAD', '--']);
+  });
+
+  it('says when HEAD is on no branch, so nothing reads as unpushed', async () => {
+    install(({ args }) =>
+      args[0] === 'rev-parse'
+        ? { code: 128, stdout: '', stderr: 'fatal: HEAD does not point to a branch' }
+        : { code: 0, stdout: '7\n', stderr: '' },
+    );
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 7, upstream: null, detached: true });
   });
 
   it('reports 0 for a fully merged branch', async () => {
@@ -319,7 +334,7 @@ describe('unmergedCommits', () => {
         ? { code: 128, stdout: '', stderr: 'fatal: no upstream' }
         : { code: 0, stdout: '0\n', stderr: '' },
     );
-    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 0, upstream: null });
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 0, upstream: null, detached: false });
   });
 
   it('surfaces git stderr instead of reporting 0 when the base is unknown', async () => {
@@ -712,6 +727,20 @@ describe('createWorktree', () => {
       useExistingBranch: true,
     });
     expect(calls[0]?.args).toEqual(['worktree', 'add', '--', '/wt', 'fix-login']);
+  });
+
+  it('adds --track when checking out a remote branch under a new local name', async () => {
+    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
+    await createWorktree({
+      repoPath: '/repo',
+      baseBranch: 'origin/anna/fix-tz',
+      branch: 'anna/fix-tz',
+      path: '/wt',
+      track: true,
+    });
+    expect(calls[0]?.args).toEqual([
+      'worktree', 'add', '--track', '-b', 'anna/fix-tz', '--', '/wt', 'origin/anna/fix-tz',
+    ]);
   });
 
   it('refuses a path that already exists rather than writing into it', async () => {
@@ -1295,5 +1324,128 @@ describe('base freshness', () => {
       return undefined;
     });
     expect(await baseFreshness('/repo', 'main')).toMatchObject({ behind: 1, fetched: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Checking out an existing branch, in a worktree or the main checkout
+// ---------------------------------------------------------------------------
+
+describe('localCheckoutFor', () => {
+  const list = { locals: ['main', 'mine'], remotes: ['origin', 'origin-eu'] };
+
+  it('cuts a tracking local branch from a remote one', () => {
+    expect(localCheckoutFor('origin/anna/fix-tz', list)).toEqual({
+      branch: 'anna/fix-tz',
+      track: 'origin/anna/fix-tz',
+    });
+  });
+
+  it('takes the longest remote that prefixes the ref', () => {
+    expect(localCheckoutFor('origin-eu/x', list)).toEqual({ branch: 'x', track: 'origin-eu/x' });
+  });
+
+  it('uses a local branch as it is, also when picked by its remote name', () => {
+    expect(localCheckoutFor('mine', list)).toEqual({ branch: 'mine', track: null });
+    expect(localCheckoutFor('origin/mine', list)).toEqual({ branch: 'mine', track: null });
+  });
+
+  it('reads a slash in a local name as part of the name', () => {
+    expect(localCheckoutFor('feat/x', { locals: [], remotes: ['origin'] })).toEqual({
+      branch: 'feat/x',
+      track: null,
+    });
+  });
+});
+
+describe('fetchAll', () => {
+  it('fetches every remote and prunes deleted branches', async () => {
+    const calls = install(() => undefined);
+    await fetchAll('/repo');
+    expect(calls).toEqual([{ args: ['fetch', '--all', '--prune', '--quiet'], cwd: '/repo' }]);
+  });
+});
+
+describe('probeMainCheckout', () => {
+  it('describes the first worktree git lists, with its uncommitted count', async () => {
+    install(({ args }) => {
+      if (args[0] === 'worktree') {
+        return {
+          code: 0,
+          stdout: 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /wt/x\nHEAD def\nbranch refs/heads/x\n\n',
+          stderr: '',
+        };
+      }
+      if (args[0] === 'status') return { code: 0, stdout: ' M a.ts\0', stderr: '' };
+      return undefined;
+    });
+    expect(await probeMainCheckout('/repo')).toEqual({ path: '/repo', current: 'main', dirty: 1 });
+  });
+
+  it('is null, not an error, when git cannot say', async () => {
+    install(() => ({ code: 128, stdout: '', stderr: 'fatal: not a git repository' }));
+    expect(await probeMainCheckout('/nope')).toBeNull();
+  });
+});
+
+describe('switchCleanCheckout', () => {
+  it('switches to an existing branch', async () => {
+    const calls = install(() => undefined);
+    await switchCleanCheckout({ path: '/repo', branch: 'mine' });
+    expect(calls.at(-1)).toEqual({ args: ['switch', 'mine'], cwd: '/repo' });
+  });
+
+  it('cuts a new branch from a base, or a tracking one from a remote', async () => {
+    const calls = install(() => undefined);
+    await switchCleanCheckout({ path: '/repo', branch: 'fix', from: 'main' });
+    expect(calls.at(-1)?.args).toEqual(['switch', '--no-track', '-c', 'fix', 'main']);
+    await switchCleanCheckout({ path: '/repo', branch: 'x', from: 'origin/x', track: true });
+    expect(calls.at(-1)?.args).toEqual(['switch', '--track', '-c', 'x', 'origin/x']);
+  });
+
+  it('refuses, without switching, while the folder has changes', async () => {
+    const calls = install(({ args }) =>
+      args[0] === 'status' ? { code: 0, stdout: '?? new.txt\0', stderr: '' } : undefined,
+    );
+    const err = await switchCleanCheckout({ path: '/repo', branch: 'mine' }).catch((e: unknown) => e);
+    expect((err as GitError).kind).toBe('dirty');
+    expect(calls.some((c) => c.args[0] === 'switch')).toBe(false);
+  });
+});
+
+describe('guessBaseBranch', () => {
+  it('picks the candidate the branch is fewest commits ahead of, earlier on a tie', async () => {
+    const ahead: Record<string, string> = { main: '9', develop: '2', master: '2' };
+    const calls = install(({ args }) => {
+      const base = args[2]?.split('..')[0] ?? '';
+      return ahead[base] ? { code: 0, stdout: `${ahead[base]}\n`, stderr: '' } : { code: 128, stdout: '', stderr: 'bad' };
+    });
+    expect(await guessBaseBranch('/repo', 'origin/x', ['main', 'develop', 'master', 'gone'])).toEqual({
+      base: 'develop',
+      ahead: 2,
+    });
+    expect(calls[0]?.args).toEqual(['rev-list', '--count', 'main..origin/x']);
+  });
+
+  it('is null when nothing can be compared', async () => {
+    install(() => ({ code: 128, stdout: '', stderr: 'bad' }));
+    expect(await guessBaseBranch('/repo', 'x', ['main'])).toBeNull();
+  });
+});
+
+describe('commitsOnBranch', () => {
+  it('counts the branch against its base in the repository, wherever it is checked out', async () => {
+    const calls = install(({ args }) => (args[0] === 'rev-list' ? { code: 0, stdout: '18\n', stderr: '' } : undefined));
+    expect(await commitsOnBranch('/repo', 'main', 'fix-import')).toBe(18);
+    expect(calls.map((c) => c.args)).toEqual([
+      ['rev-parse', '--verify', '--quiet', 'refs/heads/fix-import'],
+      ['rev-list', '--count', 'main..refs/heads/fix-import', '--'],
+    ]);
+    expect(calls.every((c) => c.cwd === '/repo')).toBe(true);
+  });
+
+  it('is null for a branch git does not have', async () => {
+    install(({ args }) => (args[0] === 'rev-parse' ? { code: 1, stdout: '', stderr: '' } : undefined));
+    expect(await commitsOnBranch('/repo', 'main', 'gone')).toBeNull();
   });
 });

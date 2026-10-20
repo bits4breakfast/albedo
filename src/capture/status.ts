@@ -151,6 +151,56 @@ export function statusExpiresAt(
   return null;
 }
 
+/**
+ * Whether the session handed control back with a question for the user: the
+ * turn ended (rule 2) and its closing text asks something.
+ *
+ * A plain-text question is not `blocked`: nothing waits on it, and the user
+ * may answer whenever they like. It is still worth marking, because with
+ * several sessions the one that asked you something is the one to read next.
+ * Answering writes a `user` row, so the mark clears by itself.
+ */
+export function endsOnQuestion(messages: Pick<Message, 'role' | 'seq' | 'ts' | 'rawJson' | 'body'>[]): boolean {
+  return pendingQuestion(messages) !== null;
+}
+
+/** The question {@link endsOnQuestion} found, as written, or null. */
+export function pendingQuestion(
+  messages: Pick<Message, 'role' | 'seq' | 'ts' | 'rawJson' | 'body'>[],
+): string | null {
+  let last: (typeof messages)[number] | null = null;
+  for (const m of messages) {
+    if (last === null || m.ts > last.ts || (m.ts === last.ts && m.seq > last.seq)) last = m;
+  }
+  if (last === null || !handedControlBack(last)) return null;
+  return questionIn(last.body ?? '');
+}
+
+/**
+ * A line of prose that ends in `?`. Code blocks and quotes are someone else's
+ * words; trailing emphasis, quotes and brackets are looked through. A question
+ * anywhere in the closing message counts, not only in its last line: the ask
+ * is often followed by a list of sources or links.
+ */
+export function asksAQuestion(text: string): boolean {
+  return questionIn(text) !== null;
+}
+
+/** The first line {@link asksAQuestion} accepts, markdown emphasis removed. */
+export function questionIn(text: string): string | null {
+  let fenced = false;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('```') || line.startsWith('~~~')) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || line.startsWith('>')) continue;
+    if (/\?[\s*_"'\u201d\u2019)\]]*$/u.test(line)) return line.replace(/[*_`]+/g, '').trim();
+  }
+  return null;
+}
+
 /** The newest row that is not an `isMeta` line Claude Code added on its own. */
 function lastNonMeta(rows: StatusInput[]): StatusInput {
   for (let i = rows.length - 1; i >= 0; i--) {

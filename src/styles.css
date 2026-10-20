@@ -47,6 +47,9 @@
   /* --- surfaces (light) --------------------------------------------------- */
   --bg: #f6f6f7;           /* window ground */
   --panel: #fcfcfd;        /* panes, dialogs, menus */
+  /* The selected segment of a .seg: lifted ABOVE the chrome track, by fill
+     alone. --text-strong on it: 16+ light (white), as on --panel-raised dark. */
+  --seg-on: #ffffff;
   /* Sidebar, title bar, pane heads, kbd chips. Between --panel and the
      selected row so a selected row still reads as a step down from it. */
   --panel-chrome: #f1f1f3;
@@ -81,6 +84,9 @@
   --text: #1b1c20;         /* primary            13.68 | tints >= 13.05 */
   --text-strong: #08090b;  /* titles, active row 16.00 | tints >= 15.26 */
   --muted: #53565f;        /* repo, branch, time  5.89 | tints >= 5.62 */
+  /* Every select's chevron, drawn in --muted: a data URI cannot read a
+     variable, so the colour is spelled out per theme. Keep it in step. */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%2353565f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
   --faint: #5f626b;        /* labels, paths, hints 4.90 | tints >= 4.67 */
 
   /* --- accent + diff (light) ---------------------------------------------- */
@@ -208,6 +214,7 @@
     --bg: #0e0f11;
     --panel: #131417;
     --panel-chrome: #191a1e;
+    --seg-on: #23242a;       /* = --panel-raised: the lighter step is the lifted one */
     /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
        worst ground for every text tier. */
     --panel-raised: #23242a;
@@ -235,6 +242,7 @@
     --text: #e4e5e9;         /* 12.29 | 11.24 */
     --text-strong: #f7f7f8;  /* 14.45 | 13.21 */
     --muted: #a5a8b0;        /*  6.50 |  5.95 */
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%23a5a8b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
     --faint: #9093a0;        /*  5.06 |  4.62 -- the floor tier */
 
     /* --- accent + diff (dark) --- */
@@ -292,6 +300,7 @@
   --bg: #0e0f11;
   --panel: #131417;
   --panel-chrome: #191a1e;
+  --seg-on: #23242a;       /* = --panel-raised: the lighter step is the lifted one */
   /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
      worst ground for every text tier. */
   --panel-raised: #23242a;
@@ -319,6 +328,7 @@
   --text: #e4e5e9;         /* 12.29 | 11.24 */
   --text-strong: #f7f7f8;  /* 14.45 | 13.21 */
   --muted: #a5a8b0;        /*  6.50 |  5.95 */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%23a5a8b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
   --faint: #9093a0;        /*  5.06 |  4.62 -- the floor tier */
 
   /* --- accent + diff (dark) --- */
@@ -473,7 +483,9 @@ button {
      first project tab then starts on the sidebar's edge, New Task and the
      rows' highlight, all at 8px. */
   padding-left: max(var(--traffic-lights-w), 8px);
-  padding-right: 10px;
+  /* The card's inset, its border and the task bar's own padding, so this
+     row's ⋯ ends on the same line as the task bar's and the pane heads'. */
+  padding-right: calc(8px + 1px + 8px);
   background: var(--panel-chrome);
 }
 
@@ -561,6 +573,14 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .icon-btn:hover,
 .icon-btn[aria-expanded='true'] { background: var(--panel-hover); color: var(--text); }
 .icon-btn[disabled] { color: var(--faint); background: transparent; }
+/* A toggle whose glyph does not change (the shell): on is a ground and ink,
+   as a pressed .seg segment, never colour alone. */
+.icon-btn-on[aria-pressed='true'] { color: var(--text-strong); background: var(--panel-raised); }
+
+/* Drawn glyphs in icon buttons. The Files column toggle's fill carries
+   on/off, as in every macOS sidebar toggle, so it keeps the ⋯'s grey. */
+.panel-toggle svg,
+.more-glyph { display: block; width: 16px; height: 16px; }
 
 /* A keyboard hint, shown inline where the binding is (⌘N, ⌘1). */
 .kbd {
@@ -741,6 +761,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .task-row[data-attention='finished'] { box-shadow: inset 2px 0 0 var(--status-done); }
 /* Accent, like the merged chip and row mark it sits beside. */
 .task-row[data-attention='merged'] { box-shadow: inset 2px 0 0 var(--accent); }
+/* Accent too: the same colour as the row's "?" badge. */
+.task-row[data-attention='question'] { box-shadow: inset 2px 0 0 var(--accent); }
 
 /* Selection is the stronger statement, and clearing the mark follows it. */
 .task-row[data-selected='true'][data-attention] {
@@ -787,6 +809,24 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   color: var(--faint);
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* Agents still working under the task: a count, quiet like the age. */
+.task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* A question for you: the accent pair the chosen rows use (5.32 light on
+   --accent-soft). A shape, a glyph and a colour, never colour alone. */
+.task-question {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--on-accent-soft);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 50%;
 }
 
 .task-repo { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
@@ -959,6 +999,11 @@ button.usage-waiting:hover { background: var(--panel-hover); }
    fact worth noticing, not a problem. */
 .main-ident-project[data-foreign='true'] { color: var(--text-strong); }
 
+/* Breadcrumb: project › task. */
+.main-ident-sep { flex: none; color: var(--faint); }
+/* The task's ⋯ sits against its name, a step smaller than the bar's own. */
+.main-ident-more { flex: none; width: 24px; height: 24px; }
+
 .main-ident-title {
   /* Gives way last: the branch and folder shrink four and eight times as
      fast. A min-width did this before and padded a short title with empty
@@ -1038,14 +1083,32 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   font-size: var(--fs-xs);
 }
 .model-pick-name { color: var(--muted); font-family: var(--font-mono); }
+/*
+ * Selects are drawn by the app, never by the system. macOS's native popup
+ * button ignores padding and height, so it came out shorter than the field
+ * beside it and in a different style; every select now shares one chevron
+ * and the box of the inputs it sits with.
+ */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
+  cursor: pointer;
+}
+select:disabled { cursor: default; }
+
 .model-pick-select {
   font: inherit;
   height: 24px;
   color: var(--text);
-  background: var(--panel);
+  background-color: var(--panel);
   border: 1px solid var(--border-mid);
   border-radius: var(--radius-sm);
-  padding: 0 4px;
+  padding: 0 26px 0 8px;
+  background-position: right 7px center;
 }
 .model-pick-select:disabled { cursor: not-allowed; color: var(--faint); }
 .model-pick-note { color: var(--muted); }
@@ -1071,9 +1134,11 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 }
 .seg button:hover { color: var(--text); }
 .seg button[aria-pressed='true'] {
+  /* One edge, the track's. A ring here as well drew a box inside a box; the
+     selection is carried by fill and shadow, as a macOS segmented control. */
   color: var(--text-strong);
-  background: var(--panel);
-  box-shadow: 0 0 0 1px var(--border-mid);
+  background: var(--seg-on);
+  box-shadow: var(--card-shadow);
 }
 
 .panes {
@@ -1102,7 +1167,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 6px 0 14px;
+  /* 8px on the right, as .main-bar: a trailing ⋯ lines up with the one above. */
+  padding: 0 8px 0 14px;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text);
@@ -1110,6 +1176,10 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   /* No line under a pane head: inside the card the only separator is the
      task bar's: one line under the page header. */
 }
+
+/* The Files column's label starts where its section text does: the list's
+   8px, the card's 1px border, the section head's 12px. */
+.pane-files > .pane-head { padding-left: calc(8px + 1px + 12px); }
 
 .pane-head-note {
   flex: 1 1 auto;
@@ -1987,6 +2057,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   font-size: var(--fs-xs);
   color: var(--faint);
 }
+/* Under the label, not under the tick: the check column's width and gap. */
+.row-menu-item[data-check-col='true'] .row-menu-hint { padding-left: calc(1.2em + 10px); }
 .row-menu-item:hover .row-menu-hint { color: var(--muted); }
 .row-menu-item[data-tone='danger']:hover .row-menu-hint { color: var(--on-del-soft); }
 
@@ -2018,22 +2090,6 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 }
 
 .panes[data-orientation='column'] .read-area { border-top: 1px solid var(--border); }
-
-.pane-head-pin {
-  flex: 0 0 auto;
-  /* Was a 20px square holding one glyph. It carries a word now, so it sizes
-     to the word -- see the comment at the call site for why. */
-  height: 26px;
-  padding: 0 8px;
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  line-height: 1;
-  color: var(--muted);
-  border-radius: var(--radius-sm);
-}
-.pane-head-pin:hover { color: var(--text-strong); background: var(--panel-hover); }
-.pane-head-pin[data-on='true'] { color: var(--accent); }
 
 /* Pinned, but the window is too narrow for it right now. A dot rather than a
    warning: the preference is intact and will apply again by itself. */

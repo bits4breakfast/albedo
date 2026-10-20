@@ -562,6 +562,24 @@ export function revRange(base: string, head = 'HEAD'): string {
   return `${base}..${head}`;
 }
 
+/**
+ * Commits on `branch` that its base lacks: what a PR from it would hold.
+ * Asked of the repository, not of a folder: a PR comes from the branch,
+ * wherever it is checked out -- the task's worktree, the main checkout, or
+ * nowhere. Null when the branch does not exist or git cannot say. Never throws.
+ */
+export async function commitsOnBranch(repoPath: string, baseBranch: string, branch: string): Promise<number | null> {
+  try {
+    assertValidRefName(branch, 'branch');
+    const ref = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoPath);
+    if (ref.code !== 0) return null;
+    const r = await git(['rev-list', '--count', revRange(baseBranch, `refs/heads/${branch}`), '--'], repoPath);
+    return r.code === 0 ? parseCommitCount(r.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Parse the newline-separated output of `git for-each-ref --format=...`. */
 export function parseRefList(stdout: string): string[] {
   return (stdout ?? '')
@@ -716,7 +734,18 @@ export async function defaultBranchOf(repoPath: string): Promise<string | null> 
  * On a detached HEAD, `current` is the short commit id and is NOT included in
  * `all` -- the dialog shows it as a hint but the user must pick a real base.
  */
-export async function listBranches(repoPath: string): Promise<{ current: string; all: string[] }> {
+export interface BranchList {
+  current: string;
+  /** Local branches first, then remote ones not named the same. */
+  all: string[];
+  locals: string[];
+  /** Remote branches as `<remote>/<branch>`, without `<remote>/HEAD`. */
+  remoteRefs: string[];
+  /** `git remote`, to tell a remote ref's remote from a slash in a branch. */
+  remotes: string[];
+}
+
+export async function listBranches(repoPath: string): Promise<BranchList> {
   const locals = parseRefList(
     await gitOk(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], repoPath),
   );
@@ -735,6 +764,9 @@ export async function listBranches(repoPath: string): Promise<{ current: string;
     current = head.code === 0 ? head.stdout.trim() : '';
   }
 
+  const names = await git(['remote'], repoPath);
+  const remoteNames = names.code === 0 ? parseRefList(names.stdout) : [];
+
   const seen = new Set<string>();
   const all: string[] = [];
   for (const b of [...locals, ...remotes]) {
@@ -743,7 +775,126 @@ export async function listBranches(repoPath: string): Promise<{ current: string;
       all.push(b);
     }
   }
-  return { current, all };
+  return { current, all, locals, remoteRefs: remotes, remotes: remoteNames };
+}
+
+/** How to have a local branch for `ref`, picked from {@link BranchList.all}. */
+export interface LocalCheckout {
+  /** The local branch the task will be on. */
+  branch: string;
+  /** The remote ref to cut `branch` from with `--track`; null when it exists. */
+  track: string | null;
+}
+
+/**
+ * `origin/anna/fix-tz` becomes the local `anna/fix-tz`, tracking it -- unless a
+ * local branch of that name exists already, which is then used as it is. The
+ * remote is matched against `git remote`, longest first, because a branch may
+ * itself contain slashes. Pure.
+ */
+export function localCheckoutFor(
+  ref: string,
+  list: Pick<BranchList, 'locals' | 'remotes'>,
+): LocalCheckout {
+  if (list.locals.includes(ref)) return { branch: ref, track: null };
+  const remote = [...list.remotes]
+    .sort((a, b) => b.length - a.length)
+    .find((r) => ref.startsWith(`${r}/`) && ref.length > r.length + 1);
+  if (!remote) return { branch: ref, track: null };
+  const branch = ref.slice(remote.length + 1);
+  return { branch, track: list.locals.includes(branch) ? null : ref };
+}
+
+/**
+ * The base `ref` most likely branched from, when no pull request says: of the
+ * usual candidates, the one with the fewest commits on `ref` that it lacks.
+ * Ties go to the earlier candidate, so the caller lists its preference first.
+ * Null when none can be compared.
+ */
+export async function guessBaseBranch(
+  repoPath: string,
+  ref: string,
+  candidates: readonly string[],
+): Promise<{ base: string; ahead: number } | null> {
+  assertNotOptionLike(ref, 'branch');
+  let best: { base: string; ahead: number } | null = null;
+  for (const base of new Set(candidates)) {
+    if (base === ref || base.startsWith('-')) continue;
+    const r = await git(['rev-list', '--count', `${base}..${ref}`], repoPath).catch(() => null);
+    const ahead = r?.code === 0 ? Number.parseInt(r.stdout.trim(), 10) : Number.NaN;
+    if (Number.isFinite(ahead) && (best === null || ahead < best.ahead)) best = { base, ahead };
+  }
+  return best;
+}
+
+/**
+ * `git fetch --all --prune`: what colleagues pushed, minus what they deleted.
+ * Never prompts (no terminal is attached): a credential problem fails at
+ * once, and git's stderr says why.
+ */
+export async function fetchAll(repoPath: string): Promise<void> {
+  const args = ['fetch', '--all', '--prune', '--quiet'];
+  const r = await git(args, repoPath, { GIT_TERMINAL_PROMPT: '0' });
+  if (r.code !== 0) throw new GitError({ args, cwd: repoPath, code: r.code, stderr: r.stderr, stdout: r.stdout });
+}
+
+/** The repository's main working tree, as a place a task can run in. */
+export interface MainCheckout {
+  path: string;
+  /** Its branch; null when detached. */
+  current: string | null;
+  /** Uncommitted changes; null when unreadable. Only 0 allows a switch. */
+  dirty: number | null;
+}
+
+/** Null when the repo has none (bare) or git cannot say. Never throws. */
+export async function probeMainCheckout(repoPath: string): Promise<MainCheckout | null> {
+  try {
+    // `worktree list` always lists the main working tree first.
+    const first = (await listWorktreesDetailed(repoPath))[0];
+    if (!first || first.bare || first.prunable) return null;
+    const dirty = await uncommittedChanges(first.path).then((c) => c.files.length, () => null);
+    return { path: first.path, current: first.branch, dirty };
+  } catch {
+    return null;
+  }
+}
+
+export interface SwitchCheckoutOptions {
+  path: string;
+  branch: string;
+  /** Cut `branch` from this (`switch -c`); omitted, `branch` must exist. */
+  from?: string;
+  /** With `from`, a remote branch to track. */
+  track?: boolean;
+}
+
+/**
+ * `git switch` in a working tree that is the user's own -- the main checkout.
+ * Refuses unless it is clean *now*: anything the caller counted earlier is
+ * stale, and nothing in this folder may be carried onto another branch unasked.
+ */
+export async function switchCleanCheckout(o: SwitchCheckoutOptions): Promise<void> {
+  assertValidRefName(o.branch, 'branch');
+  if (o.from !== undefined) assertNotOptionLike(o.from, 'start point');
+  const args =
+    o.from === undefined
+      ? ['switch', o.branch]
+      : // --no-track as for worktrees: a new branch cut from `origin/main` must
+        // not push to main.
+        ['switch', o.track ? '--track' : '--no-track', '-c', o.branch, o.from];
+  const changes = await uncommittedChanges(o.path);
+  if (changes.files.length > 0) {
+    throw new GitError({
+      args,
+      cwd: o.path,
+      code: null,
+      stdout: '',
+      stderr: `${o.path} now has ${changes.files.length} uncommitted change(s). Commit or stash them first; nothing was switched.`,
+      kind: 'dirty',
+    });
+  }
+  await gitOk(args, o.path);
 }
 
 /**
@@ -769,6 +920,11 @@ export interface CreateWorktreeOptions {
    */
   useExistingBranch?: boolean;
   /**
+   * `baseBranch` is a remote branch to check out locally: `-b` cuts `branch`
+   * from it with `--track`, so pulling and pushing go where it came from.
+   */
+  track?: boolean;
+  /**
    * What `-b` cuts from, when not `baseBranch` itself: its upstream
    * (`origin/main`) when the local branch is behind -- see {@link cutPoint}.
    * The task still records `baseBranch`; only the starting commit differs.
@@ -778,7 +934,8 @@ export interface CreateWorktreeOptions {
 
 /**
  * `git worktree add -b <branch> <path> <baseBranch>` (or, with
- * `useExistingBranch`, `git worktree add <path> <branch>`).
+ * `useExistingBranch`, `git worktree add <path> <branch>`; with `track`,
+ * `--track` is added).
  *
  * Uncommitted changes in the origin repo are fine and are deliberately not
  * checked: a worktree is an independent checkout.
@@ -815,9 +972,13 @@ export async function createWorktree(o: CreateWorktreeOptions): Promise<void> {
 
   const args = o.useExistingBranch
     ? ['worktree', 'add', '--', o.path, o.branch]
-    : // --no-track: cut from `origin/main`, git would otherwise make that the
-      // new branch's upstream, and a later push would aim at main.
-      ['worktree', 'add', '--no-track', '-b', o.branch, '--', o.path, o.startPoint ?? o.baseBranch];
+    : // --track for a colleague's remote branch, so pull and push go where it
+      // came from. Otherwise --no-track: cut from `origin/main`, git would make
+      // that the new branch's upstream, and a later push would aim at main.
+      [
+        'worktree', 'add', o.track ? '--track' : '--no-track',
+        '-b', o.branch, '--', o.path, o.startPoint ?? o.baseBranch,
+      ];
 
   const r = await git(args, o.repoPath);
   if (r.code !== 0) {
@@ -875,6 +1036,12 @@ export interface UnmergedCommits {
   ahead: number;
   /** The configured upstream, or null when the branch has none. */
   upstream: string | null;
+  /**
+   * HEAD is on no branch. There is nothing to push then, and `ahead` --
+   * counted against the base -- is not "unpushed": after a rebase it is the
+   * old copies of commits the remote already has in their new form.
+   */
+  detached: boolean;
 }
 
 /**
@@ -900,6 +1067,9 @@ export async function unmergedCommits(
     worktreePath,
   );
   const upstream = up.code === 0 ? parseUpstream(up.stdout) : null;
+  // git's wording, pinned like classifyGitError's: asked for the upstream of
+  // a detached HEAD, it says so instead of "no upstream configured".
+  const detached = up.code !== 0 && /does not point to a branch/i.test(up.stderr);
 
   const base = upstream ?? baseBranch;
   const args = ['rev-list', '--count', revRange(base), '--'];
@@ -913,7 +1083,7 @@ export async function unmergedCommits(
       stdout: r.stdout,
     });
   }
-  return { ahead: parseCommitCount(r.stdout), upstream };
+  return { ahead: parseCommitCount(r.stdout), upstream, detached };
 }
 
 // ---------------------------------------------------------------------------

@@ -724,10 +724,14 @@ export const MESSAGE_INSERT_CHUNK_ROWS = INSERT_CHUNK_ROWS;
  */
 export async function adoptSessionIntoTask(sessionId: string, taskId: number): Promise<void> {
   const db = await getDb();
-  await db.execute(`UPDATE messages SET task_id = $1 WHERE session_id = $2 AND task_id IS NULL`, [
-    taskId,
-    sessionId,
-  ]);
+  // Rows held by an archived task are free too: archiving keeps the task row,
+  // so a session imported back from History may have been tagged with it.
+  await db.execute(
+    `UPDATE messages SET task_id = $1
+      WHERE session_id = $2
+        AND (task_id IS NULL OR task_id IN (SELECT id FROM tasks WHERE status = 'archived'))`,
+    [taskId, sessionId],
+  );
 }
 
 // ---------------------------------------------------------------------------

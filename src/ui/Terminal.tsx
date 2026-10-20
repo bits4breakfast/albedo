@@ -9,7 +9,7 @@ import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } f
 import { getTaskModel } from './taskModel';
 import { isResumePlan, planSpawn } from './sessionSpawn';
 import { displayName } from './text';
-import { submitDelayFor } from '../lib/ptyInput';
+import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment } from '../lib/ptyInput';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { terminalTakesKey } from './shortcuts';
@@ -153,7 +153,16 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
     // file to turn it into an attachment before it will take Enter. Nothing
     // here can observe readiness -- that would mean reading terminal output --
     // so the pause is a fixed, generous one.
-    await writePty(ptyId, `\x1b[200~${body}\x1b[201~`);
+    // One paste per image path, or Claude Code takes the path as text and the
+    // picture never reaches the model (see pasteSegments).
+    const segments = pasteSegments(body);
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i] as PasteSegment;
+      await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`);
+      // It reads the file before it takes the next keystroke.
+      if (seg.image && i < segments.length - 1) await sleep(SUBMIT_DELAY_IMAGE_MS);
+      if (livePtys.get(taskId) !== ptyId) return false;
+    }
     await sleep(submitDelayFor(body));
     if (livePtys.get(taskId) !== ptyId) return false; // exited in the pause
     await writePty(ptyId, '\r');

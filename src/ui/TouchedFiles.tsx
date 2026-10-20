@@ -217,6 +217,16 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
     };
   }, [task.id, task.worktreePath]);
 
+  // --- refresh when you come back -------------------------------------------
+  // Changes made outside the session -- an editor, a terminal -- write no
+  // transcript row. They happen while Albedo is in the background, so coming
+  // back to it is when to look again. This replaced a Refresh menu item.
+  useEffect(() => {
+    const onFocus = () => setReloadKey((k) => k + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [task.id]);
+
   // --- hand-edited marker ---------------------------------------------------
   // Saving in the built-in editor writes to the worktree without going through
   // a tool call, so no capture update follows it.
@@ -492,8 +502,6 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           onSquash={() => setSquashOpen(true)}
           mode={mode}
           onMode={(m) => setMode(writeMode(m))}
-          onRefresh={() => setReloadKey((k) => k + 1)}
-          refreshing={loading}
           menuSlot={menuSlot}
           actionSlot={actionSlot}
         />

@@ -25,7 +25,7 @@ import type { Task } from '../types';
 import type { UnmergedCommits } from '../git/worktree';
 import { getPrStatus, usePrStatus } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
-import { menuPosition } from './ClosedProjectsMenu';
+import MoreGlyph from './MoreGlyph';
 import { canSquashRebase, createPrPrompt, nextStep, pushPrompt } from './gitPrompts';
 import './pr.css';
 
@@ -43,15 +43,14 @@ export interface GitBarProps {
   /** How the list below groups its files. */
   mode: 'branch' | 'commit';
   onMode: (mode: 'branch' | 'commit') => void;
-  onRefresh: () => void;
   /**
-   * Where the ⋯ menu goes: the Files pane's head row, beside its other
-   * controls. Without one (not mounted yet) it stays in the bar.
+   * Where the head controls go -- the group-by toggle, and ⋯ when it holds an
+   * action: the Files pane's head row. Without one (not mounted yet) they
+   * stay in the bar.
    */
   menuSlot?: HTMLElement | null;
   /** Where the main action goes: the first section heading's right end. */
   actionSlot?: HTMLElement | null;
-  refreshing: boolean;
 }
 
 interface MenuItem {
@@ -75,8 +74,6 @@ export default function GitBar({
   onSquash,
   mode,
   onMode,
-  onRefresh,
-  refreshing,
   menuSlot = null,
   actionSlot = null,
 }: GitBarProps): ReactNode {
@@ -92,7 +89,10 @@ export default function GitBar({
    * withheld when there was something.
    */
   const unpushed = remote === null || remote.upstream === null ? commits : remote.ahead;
-  const step = nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
+  // On no branch there is nothing to push or open a PR from -- and "Push
+  // branch X" from a stale detached copy could overwrite X with old commits.
+  const detached = remote?.detached === true;
+  const step = detached ? 'none' : nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
   // An existing PR is not this bar's to show: the task bar carries the branch
   // and its PR badge, the one place git and GitHub state appears. This bar
   // keeps only the actions that act on the files above it.
@@ -102,13 +102,13 @@ export default function GitBar({
   const createPr = () => onAsk(createPrPrompt(task));
 
   const items: MenuItem[] = [];
-  if (main !== 'push' && (dirty > 0 || unpushed > 0)) {
+  if (!detached && main !== 'push' && (dirty > 0 || unpushed > 0)) {
     items.push({ key: 'push', label: 'Push', hint: 'Commit what is outstanding and push', run: push });
   }
-  if (main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
+  if (!detached && main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
     items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
   }
-  if (canSquashRebase(task) && commits > 0) {
+  if (!detached && canSquashRebase(task) && commits > 0) {
     items.push({
       key: 'squash',
       label: 'Squash & Rebase…',
@@ -116,36 +116,15 @@ export default function GitBar({
       run: onSquash,
     });
   }
-  items.push(
-    {
-      key: 'by-branch',
-      label: 'Group by Branch',
-      hint: 'Every changed file once, by where it stands',
-      run: () => onMode('branch'),
-      checked: mode === 'branch',
-      group: items.length > 0,
-    },
-    {
-      key: 'by-commit',
-      label: 'Group by Commit',
-      hint: 'Each commit with the files it changed',
-      run: () => onMode('commit'),
-      checked: mode === 'commit',
-    },
-    {
-      key: 'refresh',
-      label: refreshing ? 'Reading…' : 'Refresh',
-      hint: 'Re-read the transcript and git status',
-      run: onRefresh,
-      group: true,
-      disabled: refreshing,
-    },
+  // The head holds the view toggle, and ⋯ only when there is an action for
+  // it: a menu of view options alone was a click to reach one of two states.
+  // This bar appears only when there is a main action (Push, Create PR).
+  const menu = (
+    <>
+      <GroupToggle mode={mode} onMode={onMode} />
+      {items.length > 0 ? <MoreMenu items={items} drop={menuSlot ? 'down' : 'up'} /> : null}
+    </>
   );
-
-  // The menu sits in the pane head; this bar appears only when there is an
-  // action to take (Push, Create PR). A bar holding nothing but ⋯ was a whole
-  // row of chrome for one button.
-  const menu = <MoreMenu items={items} drop={menuSlot ? 'down' : 'up'} />;
   const placed = menuSlot ? createPortal(menu, menuSlot) : null;
   if (main !== 'push' && main !== 'create-pr' && menuSlot) return placed;
 
@@ -157,7 +136,7 @@ export default function GitBar({
             onClick={push}
             title={
               (unpushed > 0 ? `${unpushed} commit(s) not on the remote. ` : '') +
-              'Ask Claude to commit what is outstanding and push. Sent at once when the session is idle; otherwise it waits in the message box.'
+              'Ask Claude to commit what is outstanding and push (⇧⌘P). Sent at once (queued if Claude is working); while it waits on a permission prompt, it waits in the message box.'
             }
           >
             {/* The count rides on the action: how much is waiting is the
@@ -169,7 +148,7 @@ export default function GitBar({
             type="button"
             className="tf-btn tf-btn-primary"
             onClick={createPr}
-            title={`Ask Claude to open a pull request into ${task.baseBranch}. Sent at once when the session is idle; otherwise it waits in the message box.`}
+            title={`Ask Claude to open a pull request into ${task.baseBranch}. Sent at once (queued if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
           >
             Create PR
           </button>
@@ -197,12 +176,59 @@ export default function GitBar({
   );
 }
 
+/**
+ * Group the list by where each file stands, or by commit. One button with two
+ * states: the glyph shows the grouping in effect, the label what a click does.
+ */
+function GroupToggle({
+  mode,
+  onMode,
+}: {
+  mode: 'branch' | 'commit';
+  onMode: (mode: 'branch' | 'commit') => void;
+}): ReactNode {
+  const byCommit = mode === 'commit';
+  const label = byCommit ? 'Group by Branch' : 'Group by Commit';
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      aria-pressed={byCommit}
+      aria-label={label}
+      title={
+        byCommit
+          ? 'Grouped by commit. Click to list every changed file once, by where it stands'
+          : 'Grouped by where each file stands. Click to group by commit'
+      }
+      onClick={() => onMode(byCommit ? 'branch' : 'commit')}
+    >
+      <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
+        {byCommit ? (
+          // Commits on a line.
+          <>
+            <path d="M8 1.5v3M8 6.5v3M8 11.5v3" />
+            <circle cx="8" cy="5.5" r="1.4" fill="currentColor" />
+            <circle cx="8" cy="10.5" r="1.4" fill="currentColor" />
+          </>
+        ) : (
+          // A flat list.
+          <path d="M3 4h10M3 8h10M3 12h10" />
+        )}
+      </svg>
+    </button>
+  );
+}
+
+/** Gap kept between the menu and the window edge. */
+const MENU_EDGE = 8;
+
 /** The `⋯` button and its menu. Same mechanics as the closed-projects menu. */
 function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): ReactNode {
-  const [at, setAt] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const [at, setAt] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const open = at !== null;
+  const anyCheck = items.some((i) => i.checked !== undefined);
 
   const toggle = () => {
     if (open) {
@@ -211,9 +237,12 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
     }
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const { left, top } = menuPosition(rect, window.innerWidth);
+    // Right edges aligned, whatever the menu's width: the ⋯ ends its row, so
+    // the menu opens back toward the pane. Placing it by its LEFT edge
+    // assumed the minimum width, and a wider menu ran off the window.
+    const right = Math.max(MENU_EDGE, window.innerWidth - rect.right);
     // Upward from the bar at the foot of the pane; downward from the head.
-    setAt(drop === 'up' ? { left, bottom: window.innerHeight - rect.top + 2 } : { left, top });
+    setAt(drop === 'up' ? { right, bottom: window.innerHeight - rect.top + 2 } : { right, top: rect.bottom + 2 });
   };
 
   useEffect(() => {
@@ -262,14 +291,14 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
       <button
         ref={buttonRef}
         type="button"
-        className="tf-btn tf-git-more"
+        className="icon-btn"
         onClick={toggle}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="More actions"
         title="More actions and view options"
       >
-        ⋯
+        <MoreGlyph />
       </button>
       {open &&
         createPortal(
@@ -278,7 +307,7 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
             className="row-menu"
             role="menu"
             aria-label="Git actions"
-            style={{ left: at.left, top: at.top, bottom: at.bottom }}
+            style={{ right: at.right, top: at.top, bottom: at.bottom }}
             onKeyDown={onMenuKey}
           >
             {items.map((item) => (
@@ -289,17 +318,20 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
                 role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
                 aria-checked={item.checked}
                 data-group={item.group ? 'true' : undefined}
+                data-check-col={anyCheck || undefined}
                 disabled={item.disabled}
                 onClick={() => {
                   setAt(null);
                   item.run();
                 }}
               >
-                {item.checked === undefined ? null : (
+                {/* One column for the tick, kept on every row once any row
+                    can have one: labels and hints share one left edge. */}
+                {anyCheck ? (
                   <span className="row-menu-check" aria-hidden="true">
                     {item.checked ? '✓' : ''}
                   </span>
-                )}
+                ) : null}
                 {item.label}
                 {item.hint ? <span className="row-menu-hint">{item.hint}</span> : null}
               </button>
