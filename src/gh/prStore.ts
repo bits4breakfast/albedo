@@ -6,7 +6,9 @@
  * The cost of starting cold is one `gh` call per visible task.
  *
  * Three refresh triggers, one rule:
- *   - every {@link POLL_MS} for the tasks on screen,
+ *   - every {@link POLL_MS} for the tasks on screen -- every
+ *     {@link POLL_PENDING_MS} for a PR whose checks are still running, which
+ *     is when the answer changes and someone is waiting on it,
  *   - on window focus -- coming back from the browser is exactly when the
  *     owner wants to know whether CI went green,
  *   - on demand, when a task is selected.
@@ -20,6 +22,8 @@ import { fetchPrStatus } from './gh';
 import type { PrStatus } from './prStatus';
 
 export const POLL_MS = 60_000;
+/** While a PR's checks run: soon enough to see them finish, not a hammering. */
+export const POLL_PENDING_MS = 15_000;
 /** Focus and selection churn; this keeps a burst of them to one fetch. */
 export const MIN_AGE_MS = 15_000;
 /** gh is a network round trip each; ten tasks should not be ten at once. */
@@ -174,10 +178,18 @@ export function usePrPolling(tasks: PrTask[]): void {
       }
     };
     sweep();
-    // A hidden window has nobody reading the badge; focus catches it up.
-    const timer = setInterval(() => {
-      if (!document.hidden) sweep();
-    }, POLL_MS);
+    // One tick at the fast rate; each task is due at its own: a PR with
+    // checks running every tick, every other only once POLL_MS has passed.
+    const tick = () => {
+      if (document.hidden) return; // nobody reading the badge; focus catches it up
+      for (const t of ref.current) {
+        if (t.status === 'archived') continue;
+        const e = cache.get(t.id);
+        const pending = e?.pr?.checks.kind === 'pending';
+        if (!e || pending || now() - e.fetchedAt >= POLL_MS) void refreshPrStatus(t);
+      }
+    };
+    const timer = setInterval(tick, POLL_PENDING_MS);
     window.addEventListener('focus', sweep);
     return () => {
       clearInterval(timer);

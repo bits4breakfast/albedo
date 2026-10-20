@@ -37,6 +37,9 @@ export interface PrBadgeProps {
   onCreatePr?: () => void;
 }
 
+/** After a turn ends, when to look again for the checks a push started. */
+const AFTER_TURN_RECHECK_MS = [10_000, 30_000];
+
 /** Header badge: "#6 ✓ checks", "#6 ✗ 2 failing", "#6 merged  Archive… Delete…". */
 export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
   const pr = usePrStatus(task);
@@ -47,12 +50,19 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
   usePrStatusVersion();
 
   // A turn that just ended is when a Create PR or a Push has just finished:
-  // ask GitHub then, rather than at the next minute's poll.
+  // ask GitHub then, and again shortly after -- a push's checks are only
+  // registered some seconds later, so the first answer still shows the last
+  // run's result. Pending checks are then followed by the store's fast poll.
   const lastStatus = useRef(task?.status ?? null);
   useEffect(() => {
     const was = lastStatus.current;
     lastStatus.current = task?.status ?? null;
-    if (task && was === 'running' && task.status === 'idle') void refreshPrStatus(task, { force: true });
+    if (!task || was !== 'running' || task.status !== 'idle') return;
+    void refreshPrStatus(task, { force: true });
+    const timers = AFTER_TURN_RECHECK_MS.map((ms) =>
+      window.setTimeout(() => void refreshPrStatus(task, { force: true }), ms),
+    );
+    return () => timers.forEach((t) => window.clearTimeout(t));
   }, [task?.id, task?.status]);
 
   const answered = task ? getPrStatus(task.id) !== undefined : false;
