@@ -37,25 +37,18 @@ import { onHandEditedChange } from '../lib/handEdited';
 import { useOpenFile } from './editor/openFile';
 import { relativeTime } from './TaskList';
 import { useActivate } from './transcript/Diff';
+import { KEYS, oneOfCodec, readPersisted, writePersisted } from './persisted';
 import './touched.css';
 
 type ViewMode = 'branch' | 'commit';
-const MODE_KEY = 'albedo.touched.mode';
+const modeCodec = oneOfCodec<ViewMode>(['branch', 'commit']);
 
 function readMode(): ViewMode {
-  try {
-    return localStorage.getItem(MODE_KEY) === 'commit' ? 'commit' : 'branch';
-  } catch {
-    return 'branch';
-  }
+  return readPersisted(KEYS.touchedMode, modeCodec, 'branch');
 }
 
 function writeMode(m: ViewMode): ViewMode {
-  try {
-    localStorage.setItem(MODE_KEY, m);
-  } catch {
-    /* not remembered */
-  }
+  writePersisted(KEYS.touchedMode, modeCodec, m);
   return m;
 }
 

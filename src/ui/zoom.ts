@@ -9,18 +9,22 @@
  */
 
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
 
 /** The steps Safari uses, trimmed to the range that stays usable. */
 export const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.5, 1.75] as const;
-const KEY = 'albedo.zoom';
+
+/** Only a step on the scale; anything else reads as 100%. */
+export const zoomCodec: Codec<number> = {
+  decode: (raw) => {
+    const n = Number(raw);
+    return ZOOM_STEPS.includes(n as (typeof ZOOM_STEPS)[number]) ? n : null;
+  },
+  encode: (z) => String(z),
+};
 
 export function storedZoom(): number {
-  try {
-    const n = Number(localStorage.getItem(KEY));
-    return ZOOM_STEPS.includes(n as (typeof ZOOM_STEPS)[number]) ? n : 1;
-  } catch {
-    return 1;
-  }
+  return readPersisted(KEYS.zoom, zoomCodec, 1);
 }
 
 /** The next step up or down from `current`, clamped to the ends. */
@@ -33,11 +37,7 @@ export function stepZoom(current: number, dir: 1 | -1): number {
 
 /** Apply and remember. Never throws: a failed zoom leaves the UI as it was. */
 export async function applyZoom(z: number): Promise<void> {
-  try {
-    localStorage.setItem(KEY, String(z));
-  } catch {
-    /* not remembered */
-  }
+  writePersisted(KEYS.zoom, zoomCodec, z);
   try {
     await getCurrentWebview().setZoom(z);
   } catch (err) {

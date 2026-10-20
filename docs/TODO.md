@@ -1,7 +1,6 @@
 # TODO — the actionable backlog
 
-`STATUS.md` says where the build **is**; this says what to **do** next, roughly
-in the order I would do it. Each item carries the reason, because the reason is
+This says what to **do** next, roughly in priority order. Each item carries the reason, because the reason is
 what decides whether it is still worth doing in three weeks.
 
 Nothing here is a bug in shipped behaviour unless it says so.
@@ -113,20 +112,17 @@ subscription is not.
 Found in the review pass; none of it is a bug, all of it is drift that gets
 more expensive.
 
-- **`App.tsx` is ~1,600 lines with 26 `useState`, 15 `useEffect`, 11
-  `useCallback`.** Three cohesive groups are sitting there ready to move:
-  layout geometry (`sidebarWidth`, `mode`, `orientation`, `ratio`,
-  `panesWidth`, `filesWidth`, `filesPinned`, `dragging`), dialog open/close
-  (`newTaskOpen`, `reconcileOpen`, `projectsOpen`, `sessionsOpen`, `importOpen`,
-  `archiveTarget`, `endIntent`), and launch notices (`dismissed`,
-  `hiddenProjectIds`, `startupError`, `backfill`). `useTasks.ts` is the
-  precedent for what that looks like done well.
-- **Three hand-rolled localStorage read/write pairs** with the identical
-  try/catch shape (`readStored`/`store`, `readHiddenProjects`/
-  `writeHiddenProjects`, `readDismissed`/`writeDismissed`), nine keys in `LS`
-  and two more as loose consts, plus six `useEffect(() => store(...))` lines
-  that are pure boilerplate. One `usePersisted(key, codec, fallback)` collapses
-  all of it and puts every key in one place.
+- **`App.tsx` split — done.** Layout geometry, dialog state, launch notices
+  and the project tab bar moved to hooks in `src/ui/app/` (`useLayout`,
+  `useDialogs`, `useLaunchNotices`, `useProjectTabs`), the `ProjectTabs`
+  component and `PaneErrorBoundary` to their own files. 2,334 → ~1,600 lines,
+  43 → 14 `useState`. What remains is mostly the render tree; selection,
+  file-open and Go to / Find in Files state stay in `App.tsx` because they
+  cross every group above.
+- **localStorage — done.** `src/ui/persisted.ts` lists every key the app uses
+  and reads/writes them through a codec (`readPersisted`, `writePersisted`,
+  `usePersisted`). Stored formats are unchanged and pinned by
+  `persisted.test.ts`.
 - **Two conventions for CSS.** Five components co-locate a stylesheet
   (`transcript.css`, `worktree.css`, `touched.css`, `editor.css`,
   `gauges.css`); sixteen more live in a ~1,735-line `styles.css`, including a
@@ -275,7 +271,7 @@ existing `git status` call.
 
 ### Contract note
 
-`TouchedFile` in `src/types.ts` is a frozen contract (`docs/INTERFACES.md`).
+`TouchedFile` in `src/types.ts` is a shared contract (see CLAUDE.md).
 Outside the renderer, `editCount` and `lastTouchedAt` are referenced only by
 `src/db/touched.test.ts`. Still, **stop rendering them before proposing their
 removal** — adding `added`/`deleted` is additive and safe, deleting fields is a
@@ -582,9 +578,8 @@ lighter.
 
 ## Already recorded elsewhere — do not duplicate here
 
-`STATUS.md` → **Known gaps** owns: no reprocessor, thin component coverage,
-forked-task ancestry, the 1.3MB bundle chunk, `beforeSeq`. `STATUS.md` →
-**Open right now** owns whatever is mid-flight this week.
+`docs/ARCHITECTURE.md` → **Known gaps** owns: no reprocessor, forked-task
+ancestry, the worktree/reconcile import cycle.
 
-M5 scope (file tree, filename search, ripgrep sidecar, cross-task search,
-per-task usage and auth mode) lives in the Notion spec, not here.
+Not planned yet: a file tree, cross-task search, a ripgrep sidecar, and
+per-task usage and auth mode.

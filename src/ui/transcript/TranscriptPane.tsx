@@ -25,6 +25,7 @@ import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import PromptCard from './PromptCard';
 import { isSidechain, toolUseId } from './ToolChip';
+import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
 import './transcript.css';
 
 /** Rows in the initial window, and the size of each step backwards. */
@@ -538,25 +539,24 @@ const COMPOSER_MAX_PX = 140;
 
 /** Smallest a dragged composer can be: one line of text. */
 const COMPOSER_MIN_PX = 28;
-const COMPOSER_PX_KEY = 'albedo.composerPx';
+
+/** Whole pixels; auto-grow (null) removes the key. */
+const composerPxCodec: Codec<number | null> = {
+  decode: (raw) => {
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= COMPOSER_MIN_PX ? n : null;
+  },
+  encode: (px) => (px === null ? null : String(Math.round(px))),
+};
 
 /** The height the user dragged it to, or null for auto-grow. Never throws. */
 function storedComposerPx(): number | null {
-  try {
-    const n = Number(window.localStorage.getItem(COMPOSER_PX_KEY));
-    return Number.isFinite(n) && n >= COMPOSER_MIN_PX ? n : null;
-  } catch {
-    return null;
-  }
+  return readPersisted(KEYS.composerPx, composerPxCodec, null);
 }
 
+/** Storage unavailable: the height just is not remembered. */
 function storeComposerPx(px: number | null): void {
-  try {
-    if (px === null) window.localStorage.removeItem(COMPOSER_PX_KEY);
-    else window.localStorage.setItem(COMPOSER_PX_KEY, String(Math.round(px)));
-  } catch {
-    /* storage unavailable: the height just is not remembered */
-  }
+  writePersisted(KEYS.composerPx, composerPxCodec, px);
 }
 
 /** How long to wait for a session that `startPty` said was on its way. */

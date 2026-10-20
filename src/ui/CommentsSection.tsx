@@ -20,24 +20,21 @@ import {
   type ReviewComment,
 } from '../db/comments';
 import { insertIntoComposer } from './transcript/composerBridge';
+import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
 
-const INTRO_KEY = 'albedo.comments.intro';
+/** Stored only when rewritten; the default removes the key. An empty intro is kept. */
+const introCodec: Codec<string> = {
+  decode: (raw) => raw,
+  encode: (text) => (text === DEFAULT_COMMENTS_INTRO ? null : text),
+};
 
 function readIntro(): string {
-  try {
-    return window.localStorage.getItem(INTRO_KEY) ?? DEFAULT_COMMENTS_INTRO;
-  } catch {
-    return DEFAULT_COMMENTS_INTRO;
-  }
+  return readPersisted(KEYS.commentsIntro, introCodec, DEFAULT_COMMENTS_INTRO);
 }
 
+/** Kept for this session only when storage throws. */
 function writeIntro(text: string): void {
-  try {
-    if (text === DEFAULT_COMMENTS_INTRO) window.localStorage.removeItem(INTRO_KEY);
-    else window.localStorage.setItem(INTRO_KEY, text);
-  } catch {
-    /* kept for this session only */
-  }
+  writePersisted(KEYS.commentsIntro, introCodec, text);
 }
 
 export interface CommentsSectionProps {
