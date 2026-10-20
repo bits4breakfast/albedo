@@ -84,6 +84,9 @@
   --text: #1b1c20;         /* primary            13.68 | tints >= 13.05 */
   --text-strong: #08090b;  /* titles, active row 16.00 | tints >= 15.26 */
   --muted: #53565f;        /* repo, branch, time  5.89 | tints >= 5.62 */
+  /* Every select's chevron, drawn in --muted: a data URI cannot read a
+     variable, so the colour is spelled out per theme. Keep it in step. */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%2353565f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
   --faint: #5f626b;        /* labels, paths, hints 4.90 | tints >= 4.67 */
 
   /* --- accent + diff (light) ---------------------------------------------- */
@@ -239,6 +242,7 @@
     --text: #e4e5e9;         /* 12.29 | 11.24 */
     --text-strong: #f7f7f8;  /* 14.45 | 13.21 */
     --muted: #a5a8b0;        /*  6.50 |  5.95 */
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%23a5a8b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
     --faint: #9093a0;        /*  5.06 |  4.62 -- the floor tier */
 
     /* --- accent + diff (dark) --- */
@@ -324,6 +328,7 @@
   --text: #e4e5e9;         /* 12.29 | 11.24 */
   --text-strong: #f7f7f8;  /* 14.45 | 13.21 */
   --muted: #a5a8b0;        /*  6.50 |  5.95 */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%23a5a8b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
   --faint: #9093a0;        /*  5.06 |  4.62 -- the floor tier */
 
   /* --- accent + diff (dark) --- */
@@ -1050,14 +1055,32 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   font-size: var(--fs-xs);
 }
 .model-pick-name { color: var(--muted); font-family: var(--font-mono); }
+/*
+ * Selects are drawn by the app, never by the system. macOS's native popup
+ * button ignores padding and height, so it came out shorter than the field
+ * beside it and in a different style; every select now shares one chevron
+ * and the box of the inputs it sits with.
+ */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
+  cursor: pointer;
+}
+select:disabled { cursor: default; }
+
 .model-pick-select {
   font: inherit;
   height: 24px;
   color: var(--text);
-  background: var(--panel);
+  background-color: var(--panel);
   border: 1px solid var(--border-mid);
   border-radius: var(--radius-sm);
-  padding: 0 4px;
+  padding: 0 26px 0 8px;
+  background-position: right 7px center;
 }
 .model-pick-select:disabled { cursor: not-allowed; color: var(--faint); }
 .model-pick-note { color: var(--muted); }

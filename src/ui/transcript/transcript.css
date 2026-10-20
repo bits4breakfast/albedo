@@ -269,13 +269,13 @@
 /* The model reads as text with a chevron, as on claude.ai, not as a boxed
    field: it is a setting of the message, not a form control beside it. */
 .tx-composer-accessory .model-pick-select {
-  appearance: none;
-  -webkit-appearance: none;
   height: 30px;
   padding: 0 22px 0 8px;
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 16 16' fill='none' stroke='%237a7d87' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 7px center;
+  background-color: transparent;
+  background-position: right 7px center;
+  background-size: 10px 10px;
   color: var(--muted);
   font-size: var(--fs-sm);
   cursor: pointer;

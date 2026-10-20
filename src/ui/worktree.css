@@ -280,11 +280,19 @@
   color: var(--text);
   font: inherit;
   font-size: var(--fs-md);
-  background: var(--panel-inset);
+  /* background-color, not background: a select's chevron is its image. */
+  background-color: var(--panel-inset);
   border: 1px solid var(--border-mid);
   border-radius: var(--radius);
   user-select: text;
 }
+
+.wt-select {
+  /* Room for the chevron, so a long branch name never runs under it. */
+  padding-right: 32px;
+  text-overflow: ellipsis;
+}
+.wt-select:disabled { color: var(--faint); }
 
 .wt-input:focus,
 .wt-select:focus {
