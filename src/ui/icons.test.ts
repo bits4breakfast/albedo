@@ -7,8 +7,8 @@ describe('branchRepeatsTitle', () => {
     expect(branchRepeatsTitle('Fix login', 'fix-login')).toBe(true);
   });
   it('is false when the branch says something the title does not', () => {
-    expect(branchRepeatsTitle('Review the backend plan', 'UP-2364')).toBe(false);
-    expect(branchRepeatsTitle('UP-2364 Review the plan', 'UP-2364')).toBe(true);
+    expect(branchRepeatsTitle('Review the backend plan', 'ACME-142')).toBe(false);
+    expect(branchRepeatsTitle('ACME-142 Review the plan', 'ACME-142')).toBe(true);
     expect(branchRepeatsTitle('polishing', '')).toBe(false);
   });
 });

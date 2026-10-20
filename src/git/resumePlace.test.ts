@@ -125,7 +125,7 @@ describe('projectOwningPath', () => {
   });
 
   it('finds the project whose worktree root holds the folder, expanding ~', () => {
-    const ps = [project(1, '~/www/upsell-worktree'), project(2, '~/www/albedo-agents')];
+    const ps = [project(1, '~/www/other-worktrees'), project(2, '~/www/albedo-agents')];
     expect(projectOwningPath(ps, '/Users/m/www/albedo-agents/polishing', '/Users/m')?.id).toBe(2);
   });
 

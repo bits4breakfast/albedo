@@ -58,14 +58,14 @@ export function homeRelative(path: string): string {
 /**
  * Should a row show the branch under the title? Not when it only repeats it:
  * a task called "polishing" on branch `polishing`, or "Fix login" on
- * `fix-login`. An issue-key branch (`UP-2364`) under a prose title says
+ * `fix-login`. An issue-key branch (`ACME-142`) under a prose title says
  * something the title does not, so it stays.
  */
 export function branchRepeatsTitle(title: string, branch: string): boolean {
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
   if (branch.length === 0) return false;
   const b = norm(branch);
-  // The whole title, or its first word: "UP-2364 Review the plan" on branch
-  // `UP-2364` already shows the key as the row's lead.
+  // The whole title, or its first word: "ACME-142 Review the plan" on branch
+  // `ACME-142` already shows the key as the row's lead.
   return norm(title) === b || norm(title.trim().split(/\s+/)[0] ?? '') === b;
 }
