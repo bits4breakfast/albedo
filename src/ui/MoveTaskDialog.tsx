@@ -203,7 +203,11 @@ export default function MoveTaskDialog({ task, project, onClose, onStop, onDone 
                         ? 'The worktree is removed. Its branch and commits stay.'
                         : 'The folder stays, on a detached HEAD: Albedo did not create it.'}
                     </li>
-                    <li>The main checkout switches to {plan.branch}.</li>
+                    <li>
+                      {plan.switchMain
+                        ? `The main checkout switches to ${plan.branch}.`
+                        : `The main checkout is on ${plan.branch} already: the task is pointed there.`}
+                    </li>
                   </>
                 ) : (
                   <>

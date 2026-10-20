@@ -53,6 +53,14 @@ describe('decideMove', () => {
     );
   });
 
+  it('re-points a task left on a detached HEAD whose branch the main checkout already has', () => {
+    const p = decideMove(facts({ currentBranch: null, dirtyHere: 0, main: { path: '/repo', current: 'fix-import', dirty: 2 } }));
+    expect(p).toMatchObject({ direction: 'to-main', to: '/repo', switchMain: false, carry: 0, oldFolder: 'remove', blockers: [] });
+    // Uncommitted work on no branch has nowhere safe to go.
+    const dirty = decideMove(facts({ currentBranch: null, dirtyHere: 1, main: { path: '/repo', current: 'fix-import', dirty: 0 } }));
+    expect(dirty.blockers[0]).toMatch(/on no branch/);
+  });
+
   it('refuses a taken worktree folder, and sending main back to the same branch', () => {
     const inMain = { task: { ...task, worktreePath: '/repo' } };
     expect(decideMove(facts({ ...inMain, newPathTaken: true })).blockers[0]).toMatch(/already exists/);
@@ -97,6 +105,7 @@ describe('runMove', () => {
     carry: 2,
     oldFolder: 'remove',
     mainBackTo: null,
+    switchMain: true,
     blockers: [],
   };
 
@@ -125,6 +134,13 @@ describe('runMove', () => {
     const after = calls.slice(calls.findIndex((c) => c.args[0] === 'switch'));
     expect(after.some((c) => c.args[0] === 'worktree' && c.args[1] === 'add' && c.args.includes('/wt/fix-import'))).toBe(true);
     expect(after.some((c) => c.cwd === '/wt/fix-import' && c.args[1] === 'apply')).toBe(true);
+  });
+
+  it('only removes the stale folder when the main checkout has the branch already', async () => {
+    const calls = fakeGit();
+    await runMove({ ...toMain, carry: 0, switchMain: false }, '/repo', 7);
+    const ran = calls.filter((c) => c.args[0] !== 'status').map((c) => c.args.slice(0, 2).join(' '));
+    expect(ran).toEqual(['worktree remove', 'worktree prune']);
   });
 
   it('moves to a worktree: the main checkout goes back first, then the worktree is added', async () => {

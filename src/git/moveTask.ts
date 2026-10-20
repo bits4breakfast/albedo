@@ -60,6 +60,12 @@ export interface MovePlan {
   oldFolder: 'remove' | 'detach' | null;
   /** to-worktree: what the main checkout switches to, to free the branch. */
   mainBackTo: string | null;
+  /**
+   * to-main: false when the main checkout is on the branch already -- the
+   * task's folder was left behind on a detached HEAD -- so the move only
+   * points the task there and clears the old folder away.
+   */
+  switchMain: boolean;
   /** Why the move cannot run now. Empty means it can. */
   blockers: string[];
 }
@@ -89,8 +95,18 @@ export function decideMove(f: MoveFacts): MovePlan {
   const direction: MoveDirection = inMain ? 'to-worktree' : 'to-main';
   const blockers: string[] = [];
 
+  // The branch already moved to the main checkout by hand, leaving this folder
+  // detached: nothing for git to switch, only the task to point there.
+  const alreadyThere = direction === 'to-main' && !!f.task.branch && f.main?.current === f.task.branch;
+
   if (f.busy) blockers.push('The session is working. Wait until it is idle: moving restarts it.');
-  if (!f.task.branch || f.currentBranch === null) {
+  if (alreadyThere) {
+    if (f.currentBranch === null && (f.dirtyHere ?? 0) > 0) {
+      blockers.push(
+        `${f.task.worktreePath} has ${f.dirtyHere} uncommitted change(s) on no branch: commit them on a branch, or discard them, first.`,
+      );
+    }
+  } else if (!f.task.branch || f.currentBranch === null) {
     blockers.push(`${f.task.worktreePath} is not on a branch, so there is no branch to move.`);
   } else if (f.currentBranch !== f.task.branch) {
     blockers.push(`${f.task.worktreePath} is on ${f.currentBranch}, not the task's ${f.task.branch}.`);
@@ -101,7 +117,7 @@ export function decideMove(f: MoveFacts): MovePlan {
   if (direction === 'to-main' && f.main) {
     // The user's own folder: nothing in it may be carried onto another branch.
     if (f.main.dirty === null) blockers.push(`Could not read ${f.main.path}.`);
-    else if (f.main.dirty > 0) {
+    else if (f.main.dirty > 0 && !alreadyThere) {
       blockers.push(
         `${f.main.path} has ${f.main.dirty} uncommitted change(s) of its own: commit or stash them first.`,
       );
@@ -119,9 +135,11 @@ export function decideMove(f: MoveFacts): MovePlan {
     branch: f.task.branch,
     from: f.task.worktreePath,
     to: direction === 'to-main' ? (f.main?.path ?? '') : (f.newWorktreePath ?? ''),
-    carry: f.dirtyHere ?? 0,
+    // Nothing to carry onto a checkout that is the branch already.
+    carry: alreadyThere ? 0 : (f.dirtyHere ?? 0),
     oldFolder: direction === 'to-main' ? (f.task.ownsWorktree ? 'remove' : 'detach') : null,
     mainBackTo: direction === 'to-worktree' ? f.mainBackTo : null,
+    switchMain: direction === 'to-main' && !alreadyThere,
     blockers,
   };
 }
@@ -213,7 +231,7 @@ export async function runMove(
           run: () =>
             createWorktree({ repoPath, baseBranch: plan.branch, branch: plan.branch, path: plan.from, useExistingBranch: true }),
         });
-      } else {
+      } else if (plan.switchMain) {
         await gitOk(['switch', '--detach'], plan.from);
         undo.push({
           what: `switch ${plan.from} back to ${plan.branch}`,
@@ -222,8 +240,8 @@ export async function runMove(
           },
         });
       }
-      // 3. Check it out in the main checkout.
-      await switchCleanCheckout({ path: plan.to, branch: plan.branch });
+      // 3. Check it out in the main checkout, unless it is there already.
+      if (plan.switchMain) await switchCleanCheckout({ path: plan.to, branch: plan.branch });
     } else {
       const back = plan.mainBackTo as string;
       // 2. Free the branch: the main checkout goes back.
