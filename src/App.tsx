@@ -46,6 +46,8 @@ import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
 import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor, unmergedCommits } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
+import MoveTaskDialog from './ui/MoveTaskDialog';
+import { normalizePath } from './git/reconcile';
 import PanelToggle from './ui/PanelToggle';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
@@ -588,6 +590,9 @@ export default function App() {
     () => new Set(readHiddenProjects()),
   );
   const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
+  const [moveTarget, setMoveTarget] = useState<Task | null>(null);
+  /** Tasks whose terminal is down while they move: unmounting ends the session. */
+  const [stopped, setStopped] = useState<ReadonlySet<number>>(() => new Set());
   /** Which verb the end-task dialog was opened with. */
   const [endIntent, setEndIntent] = useState<'archive' | 'delete'>('archive');
   const [dragging, setDragging] = useState<null | 'sidebar' | 'split' | 'files' | 'shell'>(null);
@@ -1796,6 +1801,15 @@ export default function App() {
                         },
                       },
                       {
+                        id: 'move',
+                        label:
+                          normalizePath(selected.worktreePath) === normalizePath(selected.repoPath)
+                            ? 'Move to a Worktree…'
+                            : 'Move to Main Checkout…',
+                        title: 'Same branch, same conversation; uncommitted changes come along',
+                        onSelect: () => setMoveTarget(selected),
+                      },
+                      {
                         id: 'archive',
                         label: 'Archive Task…',
                         title: 'Out of the active list (opens the archive dialog)',
@@ -1859,9 +1873,11 @@ export default function App() {
               )}
               <div className="pane-body">
                 <div className="term-stack">
-                  {openTasks.map((task) => (
+                  {openTasks.filter((task) => !stopped.has(task.id)).map((task) => (
                     <Terminal
-                      key={task.id}
+                      /* The folder is part of the identity: a task that moved
+                         starts again there, resuming the same session. */
+                      key={`${task.id}@${task.worktreePath}`}
                       task={task}
                       active={task.id === selectedId}
                       initialPrompt={initialPromptFor(task) ?? undefined}
@@ -2239,6 +2255,30 @@ export default function App() {
             // anywhere in your history is the point of the browser.
             revealTask(task);
             void refresh();
+          }}
+        />
+      </PaneErrorBoundary>
+
+      <PaneErrorBoundary label="Move task">
+        <MoveTaskDialog
+          task={moveTarget}
+          project={projects.find((p) => p.id === moveTarget?.projectId) ?? null}
+          onClose={() => setMoveTarget(null)}
+          onStop={async (task) => {
+            setStopped((prev) => new Set(prev).add(task.id));
+            // Unmounting kills the pty; give claude a moment to exit before
+            // git touches the folder it was running in.
+            await new Promise((resolve) => window.setTimeout(resolve, 600));
+          }}
+          onDone={(moved) => {
+            upsertTask(moved);
+            // Its tabs are paths in the old folder.
+            if (openRequestRef.current?.taskId === moved.id) closeEditor();
+            setStopped((prev) => {
+              const next = new Set(prev);
+              next.delete(moved.id);
+              return next;
+            });
           }}
         />
       </PaneErrorBoundary>

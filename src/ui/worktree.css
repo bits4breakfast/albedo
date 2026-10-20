@@ -351,6 +351,16 @@
   cursor: default;
 }
 
+/* A move's steps, in the order they run. */
+.wt-steps {
+  margin: 4px 0 14px;
+  padding-left: 20px;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+.wt-blockers { margin: 6px 0 0; padding-left: 18px; font-size: var(--fs-sm); }
+
 /* Two fields on one line, each its own column. */
 .wt-pair {
   display: grid;
