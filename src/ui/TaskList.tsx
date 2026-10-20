@@ -4,6 +4,7 @@ import type { Project, Task, TaskStatus } from '../types';
 import StatusDot, { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import { parseIssueKey } from '../lib/issueKey';
 import EmptyState from './EmptyState';
+import MoreGlyph from './MoreGlyph';
 import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
 import type { AttentionKind } from './attention';
@@ -461,7 +462,7 @@ export default function TaskList({
                       onClick={(e) => openMenu(e, task)}
                       onContextMenu={(e) => openMenu(e, task)}
                     >
-                      ⋯
+                      <MoreGlyph />
                     </button>
                   )}
                 </div>

@@ -1904,8 +1904,7 @@ export default function App() {
                     ✕
                   </button>
                 )}
-                {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
-                {/* Last: the corner. Moves to the column's head once shown. */}
+                {/* Moves to the column's head once the column shows. */}
                 {!filesColumnShown && (
                   <PanelToggle
                     on={filesPinned}
@@ -1913,6 +1912,8 @@ export default function App() {
                     onToggle={() => setFilesPinned((v) => !v)}
                   />
                 )}
+                {/* Last, so it lines up with the ⋯ of the rows above. */}
+                {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
               </div>
               )}
 
@@ -1999,9 +2000,10 @@ export default function App() {
                   <div className="pane-head">
                     <span>Files</span>
                     <span className="pane-head-note" />
-                    {/* The git ⋯ menu lands here (GitBar portals into it). */}
-                    <span className="pane-head-slot" ref={setColumnFilesSlot} />
                     <PanelToggle on onToggle={() => setFilesPinned(false)} />
+                    {/* The git ⋯ menu lands here (GitBar portals into it).
+                        Last, so it lines up with the ⋯ of the rows above. */}
+                    <span className="pane-head-slot" ref={setColumnFilesSlot} />
                   </div>
                   <div className="pane-body">
                     {selected ? (

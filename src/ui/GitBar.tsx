@@ -26,6 +26,7 @@ import type { UnmergedCommits } from '../git/worktree';
 import { getPrStatus, usePrStatus } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
 import { menuPosition } from './ClosedProjectsMenu';
+import MoreGlyph from './MoreGlyph';
 import { canSquashRebase, createPrPrompt, nextStep, pushPrompt } from './gitPrompts';
 import './pr.css';
 
@@ -203,6 +204,7 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const open = at !== null;
+  const anyCheck = items.some((i) => i.checked !== undefined);
 
   const toggle = () => {
     if (open) {
@@ -269,7 +271,7 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
         aria-label="More actions"
         title="More actions and view options"
       >
-        ⋯
+        <MoreGlyph />
       </button>
       {open &&
         createPortal(
@@ -289,17 +291,20 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
                 role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
                 aria-checked={item.checked}
                 data-group={item.group ? 'true' : undefined}
+                data-check-col={anyCheck || undefined}
                 disabled={item.disabled}
                 onClick={() => {
                   setAt(null);
                   item.run();
                 }}
               >
-                {item.checked === undefined ? null : (
+                {/* One column for the tick, kept on every row once any row
+                    can have one: labels and hints share one left edge. */}
+                {anyCheck ? (
                   <span className="row-menu-check" aria-hidden="true">
                     {item.checked ? '✓' : ''}
                   </span>
-                )}
+                ) : null}
                 {item.label}
                 {item.hint ? <span className="row-menu-hint">{item.hint}</span> : null}
               </button>

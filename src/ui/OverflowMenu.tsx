@@ -11,6 +11,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import MoreGlyph from './MoreGlyph';
 
 export interface OverflowItem {
   /** Stable key. */
@@ -125,7 +126,7 @@ export default function OverflowMenu({ label, items, title, heading }: OverflowM
           setOpen((o) => !o);
         }}
       >
-        ⋯
+        <MoreGlyph />
       </button>
       {open && (
         <div
@@ -145,6 +146,7 @@ export default function OverflowMenu({ label, items, title, heading }: OverflowM
               role={item.checked === undefined ? 'menuitem' : item.radio ? 'menuitemradio' : 'menuitemcheckbox'}
               aria-checked={item.checked}
               data-group={item.group || undefined}
+              data-check-col={anyCheck || undefined}
               data-tone={item.tone}
               disabled={item.disabled}
               title={item.title}

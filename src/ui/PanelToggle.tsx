@@ -2,10 +2,9 @@
  * PanelToggle -- shows or hides the Files column, as one icon with two
  * states: an empty right panel when off, a filled one when on.
  *
- * It sits at the far right of whichever head is rightmost -- the transcript's
- * while Files is a tab, the column's own once it is pinned -- so it stays in
- * the corner as the column comes and goes. Same 28px square as every ⋯, so
- * the trailing edge of the rows above still lines up.
+ * It sits at the right end of whichever head is rightmost -- the transcript's
+ * while Files is a tab, the column's own once it is pinned -- just before the
+ * Files ⋯, which stays last so the ⋯ of every row form one column.
  */
 
 import type { ReactNode } from 'react';
