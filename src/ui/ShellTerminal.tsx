@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
 import { cssVar, terminalTheme } from './Terminal';
 import { onThemeChange } from './theme';
+import { terminalTakesKey } from './shortcuts';
 
 /**
  * A plain login shell in a project's main checkout -- the shell drawer.
@@ -62,6 +63,8 @@ export default function ShellTerminal({ cwd, active }: { cwd: string; active: bo
       theme: terminalTheme(),
     });
     termRef.current = term;
+    // App shortcuts on Option (the project jump) must not reach the shell too.
+    term.attachCustomKeyEventHandler(terminalTakesKey);
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     try {

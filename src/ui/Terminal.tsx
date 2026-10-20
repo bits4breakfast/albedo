@@ -12,6 +12,7 @@ import { displayName } from './text';
 import { submitDelayFor } from '../lib/ptyInput';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
+import { terminalTakesKey } from './shortcuts';
 
 /**
  * The embedded pty.
@@ -436,6 +437,8 @@ export default function Terminal({
       theme: terminalTheme(),
     });
     termRef.current = term;
+    // App shortcuts on Option (the project jump) must not reach the pty too.
+    term.attachCustomKeyEventHandler(terminalTakesKey);
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);

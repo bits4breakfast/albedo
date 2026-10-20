@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS } from './shortcuts';
+import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS, terminalTakesKey } from './shortcuts';
 
 const ev = (init: Partial<KeyboardEvent> & { key: string }) =>
   ({ altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, code: '', ...init }) as KeyboardEvent;
@@ -27,14 +27,14 @@ describe('comboOf', () => {
     expect(comboOf(ev({ key: '[', metaKey: true, altKey: true }))).toBeNull();
   });
 
-  it('jumps projects with ⌥⌘digit on macOS, read from the physical key', () => {
+  it('jumps projects with ⌥digit (and ⌥⌘digit) on macOS, read from the physical key', () => {
     // Option rewrites `key` (⌥1 is ¡), so the code is what counts.
-    expect(comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')).toEqual({
-      combo: 'mod+alt+digit',
-      digit: 1,
-    });
-    // A bare ⌥digit composes a character on macOS and must reach the terminal.
-    expect(comboOf(ev({ key: '¡', code: 'Digit1', altKey: true }), 'macos')).toBeNull();
+    const hit = { combo: 'mod+alt+digit', digit: 1 };
+    expect(comboOf(ev({ key: '¡', code: 'Digit1', altKey: true }), 'macos')).toEqual(hit);
+    expect(comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')).toEqual(hit);
+    // Shift and Control stay out: ⇧⌥digit and ⌃⌥digit are left alone.
+    expect(comboOf(ev({ key: '⁄', code: 'Digit1', altKey: true, shiftKey: true }), 'macos')).toBeNull();
+    expect(comboOf(ev({ key: '1', code: 'Digit1', altKey: true, ctrlKey: true }), 'macos')).toBeNull();
     expect(comboOf(ev({ key: '0', code: 'Digit0', metaKey: true, altKey: true }), 'macos')).toBeNull();
   });
 
@@ -202,5 +202,13 @@ describe('createDoubleShift', () => {
     d(sh(0));
     expect(d(sh(100))).toBe(true);
     expect(d(sh(200))).toBe(false);
+  });
+});
+
+describe('terminalTakesKey', () => {
+  it('keeps the project jump from the terminal, and leaves everything else to it', () => {
+    expect(terminalTakesKey(ev({ key: '¡', code: 'Digit1', altKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: 'b', code: 'KeyB', altKey: true }))).toBe(true);
+    expect(terminalTakesKey(ev({ key: '1', code: 'Digit1', metaKey: true }))).toBe(true);
   });
 });

@@ -44,14 +44,17 @@
  * `⇧⌘F` (Find in Files) follows the same two rules for the same reasons, and
  * `⌥F12` (the shell drawer, PhpStorm's Terminal) is read from `code` too.
  *
- * ## Project tabs: ⌥⌘1–9, and Alt+1–9 off a Mac
+ * ## Project tabs: ⌥1–9 (⌥⌘1–9 too), and Alt+1–9 off a Mac
  *
- * The task jump is ⌘1–9, so the project jump adds Option, as browsers do for
- * a level above tabs. Read from `code` (`⌥1` is `¡` on macOS). Off a Mac the
+ * The task jump is ⌘1–9; the project jump is the same digits on Option, the
+ * owner's choice. Read from `code` (`⌥1` is `¡` on macOS). That takes ⌥1–9
+ * from text fields and the terminal everywhere: on the ABC layout they compose
+ * `¡ ™ £ ¢ ∞ § ¶ • ª`, rare enough to give up. On a layout where an Option
+ * digit types something needed (Italian ⌥9 is the backtick), this binding is
+ * the one to revisit. ⌥⌘1–9, the earlier binding, still works. Off a Mac the
  * obvious Ctrl+Alt+1–9 is AltGr on most European layouts on Windows, where it
  * types characters (`{`, `²`, `@`), so there it is Alt+1–9 -- what Firefox
- * and many Linux apps use for tab N. On macOS a bare ⌥digit is left alone: it
- * composes a character the terminal may want.
+ * and many Linux apps use for tab N.
  *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
@@ -105,7 +108,7 @@ export interface ShortcutDoc {
 export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+n', keys: '⌘N', description: 'New Task' },
   { combo: 'mod+digit', keys: '⌘1…9', description: 'Jump to the Nth Task' },
-  { combo: 'mod+alt+digit', keys: '⌥⌘1…9', description: 'Jump to the Nth Project (Alt+1…9 on Windows and Linux)' },
+  { combo: 'mod+alt+digit', keys: '⌥1…9', description: 'Jump to the Nth Project (Alt+1…9 on Windows and Linux)' },
   { combo: 'mod+[', keys: '⌘[', description: 'Previous Task' },
   { combo: 'mod+]', keys: '⌘]', description: 'Next Task' },
   { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous Reading Tab' },
@@ -153,7 +156,8 @@ export function comboOf(
 ): { combo: Combo; digit: number | null } | null {
   // Project jump. Before the Alt check; see the module comment.
   const projectDigit = /^Digit([1-9])$/.exec(e.code ?? '');
-  if (projectDigit && e.altKey && !e.shiftKey && !e.ctrlKey && e.metaKey === (platform === 'macos')) {
+  const projectMods = platform === 'macos' ? true : !e.metaKey;
+  if (projectDigit && e.altKey && !e.shiftKey && !e.ctrlKey && projectMods) {
     return { combo: 'mod+alt+digit', digit: Number(projectDigit[1]) };
   }
   // Before the Alt check, which would otherwise reject ⌥⌘O. See the module
@@ -205,6 +209,19 @@ export function comboOf(
     default:
       return null;
   }
+}
+
+/** Combos the app takes from a focused terminal rather than sharing them. */
+const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit']);
+
+/**
+ * For xterm's `attachCustomKeyEventHandler`: false when the key is one of the
+ * app's that the terminal must not also act on. The terminals treat Option as
+ * Meta, so without this ⌥1 would switch project AND send `Esc 1` to the pty.
+ */
+export function terminalTakesKey(e: KeyboardEvent): boolean {
+  const hit = comboOf(e);
+  return hit === null || !TAKEN_FROM_TERMINAL.has(hit.combo);
 }
 
 /**
