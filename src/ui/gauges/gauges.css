@@ -68,14 +68,20 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 8px 9px;
+  gap: 14px;
+  /* The same card as the work area beside it: inset 8px on the chrome
+     ground, the soft card edge and shadow, its foot level with the main
+     card's (both 8px off the window's bottom). It used to be a white slab
+     glued to the sidebar's sides and bottom with a line on top. */
+  margin: 0 8px 8px;
+  padding: 12px 12px 12px;
   background: var(--panel);
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
   font-size: var(--fs-xs);
   color: var(--muted);
   min-width: 0;
-  width: 100%;
   align-self: stretch;
   overflow: hidden;
   /* --- surface shared with the shell's task-row meter ---------------------
@@ -96,7 +102,7 @@
 .gz-section {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -459,9 +465,12 @@
 /* --------------------------------------------------------------------------
    Narrow sidebar. At the 200px minimum the "ages out in" key is the first
    thing to go: the countdown and its tooltip still say everything needed.
+   160px is the panel's content width there, now that it is an inset card
+   (8px margins, 12px padding); 224px was the old flush slab's, and hid the
+   key at ordinary widths once the card took its insets.
    -------------------------------------------------------------------------- */
 
-@container (max-width: 224px) {
+@container (max-width: 160px) {
   .gz-ages-key { display: none; }
   .gz-stats { column-gap: 3px; }
 }
