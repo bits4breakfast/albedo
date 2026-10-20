@@ -950,6 +950,10 @@ export function Composer({
           ) : null}
         </div>
       ) : null}
+      {/* claude.ai's shape: one rounded box holding the text and, under it,
+          the controls -- the model and Send at the bottom right. Beside a
+          tall box they floated at its foot; inside it they move with it. */}
+      <div className="tx-composer-box">
       <textarea
         ref={ref}
         className="tx-composer-input"
@@ -979,16 +983,26 @@ export function Composer({
           }
         }}
       />
-      <div className="tx-composer-accessory">{accessory}</div>
-      <button
-        type="button"
-        className="tx-composer-send"
-        onClick={() => void send()}
-        disabled={busy || awaiting || held || text.trim().length === 0}
-        title="Enter to send, Shift+Enter for a newline"
-      >
-        {awaiting || held ? '…' : 'Send'}
-      </button>
+      <div className="tx-composer-foot">
+        <div className="tx-composer-accessory">{accessory}</div>
+        <button
+          type="button"
+          className="tx-composer-send"
+          onClick={() => void send()}
+          disabled={busy || awaiting || held || text.trim().length === 0}
+          title="Send (Enter). Shift+Enter for a newline"
+          aria-label="Send"
+        >
+          {awaiting || held ? (
+            '…'
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+            </svg>
+          )}
+        </button>
+      </div>
+      </div>
     </div>
     </>
   );

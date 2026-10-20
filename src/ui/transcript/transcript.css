@@ -192,18 +192,10 @@
 
 .tx-composer {
   flex: none;
-  display: grid;
-  /* message | model | Send */
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: end;
-  padding: 10px 14px 12px;
-  border-top: 1px solid var(--border);
+  padding: 8px 14px 12px;
   background: var(--panel);
 }
-
 .tx-composer-notice {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -232,47 +224,85 @@
 }
 .tx-composer-undo:hover { background: var(--panel-raised); }
 
-.tx-composer-accessory { display: flex; align-items: center; min-height: 34px; }
-.tx-composer-accessory:empty { display: none; }
+
+/* claude.ai's composer: one rounded box, the text on top, the controls in a
+   row inside it. The box carries the edge and the focus ring; the textarea
+   inside is bare. */
+.tx-composer-box {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-inset);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
+}
+.tx-composer-box:focus-within { border-color: var(--border-strong); }
 
 .tx-composer-input {
   width: 100%;
-  min-height: 34px;
-  max-height: 140px;
-  padding: 6px 10px;
-  border: 1px solid var(--border-mid);
-  background: var(--panel-inset);
+  min-height: 44px;
+  max-height: 240px;
+  padding: 12px 14px 4px;
+  border: none;
+  background: transparent;
   color: var(--text);
   /* Prose you are writing to Claude, so the reading face, not the code one. */
   font-family: var(--font-ui);
   font-size: var(--fs-md);
   line-height: 1.5;
-  border-radius: var(--radius);
   resize: none;
   overflow-y: auto;
 }
-.tx-composer-input:focus-visible {
-  border-color: var(--accent);
-  outline: none;
-}
+.tx-composer-input:focus-visible { outline: none; }
 .tx-composer-input::placeholder { color: var(--faint); }
 /* Frozen while a send is pending -- readOnly keeps the caret, this shows why. */
-.tx-composer-input:read-only { color: var(--muted); border-style: dashed; }
+.tx-composer-input:read-only { color: var(--muted); }
 
-.tx-composer-send {
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid var(--border-mid);
-  background: var(--panel);
-  color: var(--text);
-  font-size: var(--fs-sm);
-  font-weight: 500;
+.tx-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 8px 8px 10px;
+}
+.tx-composer-accessory { display: flex; align-items: center; min-width: 0; }
+/* The model reads as text with a chevron, as on claude.ai, not as a boxed
+   field: it is a setting of the message, not a form control beside it. */
+.tx-composer-accessory .model-pick-select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 30px;
+  padding: 0 22px 0 8px;
+  border: none;
   border-radius: var(--radius-sm);
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 16 16' fill='none' stroke='%237a7d87' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 7px center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
-.tx-composer-send:hover:not(:disabled) { color: var(--text-strong); background: var(--panel-hover); }
+.tx-composer-accessory .model-pick-select:hover:not(:disabled) { color: var(--text); background-color: var(--panel-hover); }
+.tx-composer-accessory .model-pick-note { font-size: var(--fs-xs); margin-right: 4px; }
+.tx-composer-accessory:empty { display: none; }
+
+/* Round, like claude.ai's: quiet until there is something to send, then the
+   accent. White on --accent-btn is the primary button's pair (6.63 light,
+   5.29 dark). */
+.tx-composer-send {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: var(--accent-btn);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+.tx-composer-send:hover:not(:disabled) { background: var(--accent-btn-hover); }
 /* A lower tier, never `opacity` (CLAUDE.md, Contrast rule 2). */
-.tx-composer-send:disabled { color: var(--faint); background: transparent; border-color: var(--border); cursor: default; }
+.tx-composer-send:disabled { color: var(--faint); background: var(--panel-raised); cursor: default; }
 
 /* --- rows ----------------------------------------------------------------- */
 
@@ -1403,7 +1433,7 @@
 }
 
 /* The message box while files are dragged over the window. */
-.tx-composer[data-drop='true'] .tx-composer-input {
+.tx-composer[data-drop='true'] .tx-composer-box {
   border-color: var(--accent);
   border-style: dashed;
 }

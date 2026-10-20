@@ -1462,8 +1462,12 @@ export default function App() {
   // Only the editor's file needs saying here. The branch is in the task bar,
   // and the session id -- 36 characters nobody reads -- is the Transcript
   // tab's tooltip and "Copy Session ID" in the task's ⋯ menu.
-  /** The Files head's slot for the git ⋯ menu; whichever Files head is mounted. */
-  const [filesMenuSlot, setFilesMenuSlot] = useState<HTMLSpanElement | null>(null);
+  /**
+   * The Files heads' slots for the git ⋯ menu, one per Files list: the tab's
+   * list stays mounted while hidden, and a shared slot drew both menus.
+   */
+  const [tabFilesSlot, setTabFilesSlot] = useState<HTMLSpanElement | null>(null);
+  const [columnFilesSlot, setColumnFilesSlot] = useState<HTMLSpanElement | null>(null);
 
   const noteFor = (tab: RightTab): string => (tab === 'editor' ? (editorActivePath ?? '') : '');
 
@@ -1795,9 +1799,13 @@ export default function App() {
           <div className="panes" data-orientation={orientation} data-mode={mode} ref={panesRef}>
             {/* Kept mounted in every mode: unmounting it would kill live ptys. */}
             <section className="pane pane-pty" style={primaryStyle} hidden={!showPty}>
-              <div className="pane-head">
-                <span>Terminal</span>
-              </div>
+              {/* A name only when there is another pane to tell it from: in
+                  PTY mode the switch above already says "PTY". */}
+              {split && (
+                <div className="pane-head">
+                  <span>Terminal</span>
+                </div>
+              )}
               <div className="pane-body">
                 <div className="term-stack">
                   {openTasks.map((task) => (
@@ -1852,6 +1860,9 @@ export default function App() {
                 "everything you read", which is what the user is dragging. */}
             <div className="read-area" style={secondaryStyle} hidden={!showTranscript}>
             <section className="pane pane-transcript">
+              {/* Only when it tells panes or tabs apart: in Transcript mode with no
+                  other tab, "Transcript" just repeated the switch above. */}
+              {(split || readingTabs.length > 1) && (
               <div className="pane-head">
                 <div className="tabs" role="tablist" aria-label="Reading pane">
                   <button
@@ -1887,7 +1898,7 @@ export default function App() {
                 <span className="pane-head-note" title={noteFor(activeTab)}>
                   {noteFor(activeTab)}
                 </span>
-                {activeTab === 'files' && <span className="pane-head-slot" ref={setFilesMenuSlot} />}
+                {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
                     ✕
@@ -1915,6 +1926,7 @@ export default function App() {
                   </button>
                 )}
               </div>
+              )}
 
               {/* All three panels stay mounted so scroll position and editor
                   buffer survive a tab flip; only the task identity resets them. */}
@@ -1947,7 +1959,7 @@ export default function App() {
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
                   {selected ? (
                     <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
-                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={filesMenuSlot} />
+                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={tabFilesSlot} />
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
@@ -1988,7 +2000,7 @@ export default function App() {
                     <span>Files</span>
                     <span className="pane-head-note" />
                     {/* The git ⋯ menu lands here (GitBar portals into it). */}
-                    <span className="pane-head-slot" ref={setFilesMenuSlot} />
+                    <span className="pane-head-slot" ref={setColumnFilesSlot} />
                     <button
                       className="pane-head-pin"
                       data-on
@@ -2002,7 +2014,7 @@ export default function App() {
                   <div className="pane-body">
                     {selected ? (
                       <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
-                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={filesMenuSlot} />
+                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={columnFilesSlot} />
                       </PaneErrorBoundary>
                     ) : (
                       <div className="placeholder">
