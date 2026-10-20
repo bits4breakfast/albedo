@@ -1,0 +1,27 @@
+/* --------------------------------------------------------------------------
+   Status strip: subscription usage, the full width of the window, on the
+   chrome ground under the work card (src/ui/StatusBar.tsx). Quiet: a line
+   you glance at.
+   -------------------------------------------------------------------------- */
+.statusbar {
+  /* Right-aligned with the switch last, and tall enough that the card above
+     ends with room under it, the strip clearly below the content. */
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 16px;
+  background: var(--panel-chrome);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+}
+/* One plan window: label, the shared meter bar, percentage, reset. The bar and
+   its warn/high colours are .ctx's. Text cleared on --panel-chrome: --muted
+   6.50 / 7.31, --status-blocked 6.90 / 9.42, --danger 6.34 / 7.91. */
+.plan-meter { flex: none; gap: 6px; }
+.plan-meter .ctx-text { font-size: var(--fs-xs); }
+.plan-label { color: var(--muted); }
+.plan-reset { color: var(--muted); font-variant-numeric: tabular-nums; }

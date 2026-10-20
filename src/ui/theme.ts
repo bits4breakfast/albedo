@@ -25,10 +25,11 @@
  * styles cannot answer: before the stylesheet has parsed, and under jsdom.
  */
 
+import { KEYS, oneOfCodec, readPersisted, writePersisted } from './persisted';
+
 export type ThemeChoice = 'system' | 'light' | 'dark';
 export type ResolvedTheme = 'light' | 'dark';
 
-const STORAGE_KEY = 'albedo.shell.theme';
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
 function isChoice(v: unknown): v is ThemeChoice {
@@ -39,14 +40,11 @@ function isChoice(v: unknown): v is ThemeChoice {
 // Persisted choice
 // ---------------------------------------------------------------------------
 
+const choiceCodec = oneOfCodec<ThemeChoice>(['system', 'light', 'dark']);
+
+// Synchronous on purpose: applyStoredTheme runs before the first paint.
 function readStored(): ThemeChoice {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return isChoice(raw) ? raw : 'system';
-  } catch {
-    // Private mode, blocked storage: a theme preference is not worth throwing.
-    return 'system';
-  }
+  return readPersisted(KEYS.theme, choiceCodec, 'system');
 }
 
 let currentChoice: ThemeChoice = 'system';
@@ -77,11 +75,7 @@ export function setThemeChoice(choice: ThemeChoice): void {
   currentChoice = choice;
   choiceLoaded = true;
   writeAttribute(choice);
-  try {
-    window.localStorage.setItem(STORAGE_KEY, choice);
-  } catch {
-    /* preference is lost on restart, nothing else breaks */
-  }
+  writePersisted(KEYS.theme, choiceCodec, choice);
   notify();
 }
 

@@ -7,8 +7,9 @@
 #   ./build.sh --with-phpantom bundle PHPantom (~48 MB) for type-aware PHP navigation
 #
 # On Windows, run it inside WSL2 -- see docs/LINUX-WSL.md. Nothing here installs
-# system packages on its own: a missing prerequisite is reported with the exact
-# command to run, and the script stops.
+# system packages on its own: a missing build prerequisite is reported with the
+# exact command to run, and the script stops. Tools the app needs only at run
+# time (claude, gh) are warned about, since the build itself does not use them.
 
 set -euo pipefail
 
@@ -23,7 +24,7 @@ for arg in "$@"; do
     --install) install=1 ;;
     --with-phpantom) with_phpantom=1 ;;
     -h | --help)
-      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -38,6 +39,12 @@ fail() {
   printf '\nerror: %s\n' "$1" >&2
   [ $# -gt 1 ] && printf '%s\n' "${@:2}" >&2
   exit 1
+}
+warnings=()
+warn() {
+  printf 'warning: %s\n' "$1" >&2
+  [ $# -gt 1 ] && printf '  %s\n' "${@:2}" >&2
+  warnings+=("$1")
 }
 
 # --- platform ----------------------------------------------------------------
@@ -78,6 +85,36 @@ if [ "$os" = linux ]; then
   case "$PWD" in
     /mnt/*) echo "warning: this checkout is under $PWD. Clone it inside the WSL filesystem (e.g. ~/) instead -- see docs/LINUX-WSL.md." >&2 ;;
   esac
+fi
+
+if [ "$os" = macos ]; then
+  xcode-select -p >/dev/null 2>&1 || fail "Xcode Command Line Tools are missing (Rust needs their linker)." \
+    "Install them with: xcode-select --install"
+fi
+
+# git is needed by the tests as well as the app: worktrees, the Files panel,
+# Quick Open and Find in Files all run it.
+command -v git >/dev/null || fail "git is not installed." \
+  "Install it (macOS: xcode-select --install; Linux: sudo apt-get install -y git), then re-run."
+
+# --- what the app needs at run time --------------------------------------------
+# Not needed to build, so a warning rather than a stop: you may be building for
+# someone else's machine. Each is checked the way the app will look for it.
+
+# Albedo starts claude through the user's login shell (-l -i, as pty.rs does),
+# so that is where it has to be found -- not on this script's PATH.
+if ! "${SHELL:-/bin/sh}" -l -i -c 'command -v claude' >/dev/null 2>&1 </dev/null; then
+  warn "claude was not found by your login shell, so Albedo could not start any task." \
+    "Install Claude Code (https://claude.com/claude-code) and make sure the shell profile" \
+    "that sets your PATH (e.g. ~/.zprofile or ~/.zshrc) adds the folder it is installed in."
+fi
+
+if ! command -v gh >/dev/null; then
+  warn "The GitHub CLI (gh) is not installed: pull requests will show no status." \
+    "Install it from https://cli.github.com, then run: gh auth login"
+elif ! gh auth status >/dev/null 2>&1; then
+  warn "The GitHub CLI (gh) is not signed in: pull requests will show no status." \
+    "Run: gh auth login"
 fi
 
 echo "node $(node -v), $(cargo --version)"
@@ -142,4 +179,10 @@ if [ "$install" -eq 1 ]; then
     sudo apt-get install -y "./$deb"
     echo "Installed. If the window comes up blank under WSLg, see docs/LINUX-WSL.md."
   fi
+fi
+
+# Repeated at the end: the build output scrolls them out of sight.
+if [ ${#warnings[@]} -gt 0 ]; then
+  printf '\nBuilt, with %d warning(s) about this machine:\n' "${#warnings[@]}"
+  printf '  - %s\n' "${warnings[@]}"
 fi

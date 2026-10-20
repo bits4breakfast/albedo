@@ -268,7 +268,7 @@ export function compareTouched(a: TouchedFile, b: TouchedFile): number {
 // The one impure entry point
 // ---------------------------------------------------------------------------
 
-/** Frozen contract, docs/INTERFACES.md. */
+/** Shared contract: the shape is `TouchedFile` in src/types.ts. */
 export async function touchedFiles(taskId: number): Promise<TouchedFile[]> {
   return (await touchedFilesDetailed(taskId)).files;
 }

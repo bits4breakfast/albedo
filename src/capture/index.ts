@@ -1,8 +1,7 @@
 /**
  * src/capture/index.ts
  *
- * Public surface of the capture workstream, exactly as frozen in
- * docs/INTERFACES.md:
+ * Public surface of the capture module (see docs/ARCHITECTURE.md):
  *
  *   startCapture(): Promise<CaptureHandle>
  *   onCaptureUpdate(cb): () => void
@@ -37,7 +36,7 @@ export type { ContextUsage, ContextBands } from './context';
 export { windowUsage } from './usage';
 export type { WindowUsage } from './usage';
 
-// --- Additive to docs/INTERFACES.md, for the shell's startup indicator -----
+// --- For the shell's startup indicator ------------------------------------
 // What is waiting in Claude Code's input queue, per session (in memory).
 export { queuedFor, onQueueChange } from './queue';
 export type { QueuedEntry } from './queue';

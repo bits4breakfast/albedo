@@ -1,0 +1,269 @@
+/* Fills what the usage panel below it does not claim. `min-height: 0` is what
+   lets .tasklist-scroll actually scroll instead of pushing the panel off. */
+.tasklist { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; outline: none; }
+
+.tasklist-head {
+  /* Level with the task bar beside it: the same height (its 40px plus the
+     card's 1px edges) and centred, so New Task and the task title share one
+     centre line. Its left edge is the rows' highlight edge (8px). */
+  flex: 0 0 calc(var(--tab-h) + 2px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+/* Scope label AND the way to change scope. Quiet by default: this is an
+   identity label, not an alert — no motion, nothing that competes with the
+   blocked ping. It only has to be legible at a glance and silent otherwise. */
+.tasklist-scope {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  height: 28px;
+  padding: 0 6px;
+  margin-left: -2px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+/* Carrying a real name. A project name is the user's own text, not a
+   caption, so it is never upper-cased ("MyRepo" stays "MyRepo"). */
+.tasklist-scope[data-named='true'] { color: var(--text-strong); }
+
+.tasklist-scope:not([disabled]):hover { background: var(--panel-hover); }
+
+.tasklist-count {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+
+.tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 8px 8px; }
+
+/* A Title Case label over a status glyph: "Needs You 1", "Running 2", "Idle 3". */
+.group-label > .status-dot { margin: 0 3.5px; }
+.group-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Same left geometry as a row (10px padding, a 16px status column), so the
+     group's dot sits on the rows' dots and its name on their titles. */
+  padding: 14px 8px 6px 10px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--faint);
+}
+
+.group-label[data-tone='blocked'] { color: var(--status-blocked); }
+
+.group-count { font-variant-numeric: tabular-nums; }
+
+/* Task row ---------------------------------------------------------------- */
+
+.task-row {
+  display: grid;
+  /* status | title | context %, ⌘N | age -- one line. The second line held
+     the branch, which now lives only in the task bar. */
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  column-gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: var(--row-h);
+  margin-bottom: 1px;
+  padding: 6px 8px 6px 10px;
+  text-align: left;
+  border-radius: var(--radius);
+  /* The attention mark (below). Transparent at rest, so it costs no width. */
+  box-shadow: inset 2px 0 0 transparent;
+  overflow: hidden;
+}
+
+.task-row:hover { background: var(--panel-hover); }
+
+.task-row[data-status='blocked'] { background: var(--row-blocked); }
+.task-row[data-status='blocked']:hover { background: var(--row-blocked-hover); }
+
+/* After the blocked tint, so the selection always wins the ground. */
+.task-row[data-selected='true'] { background: var(--panel-raised); }
+
+.task-row[data-selected='true'] .task-title { color: var(--text-strong); }
+
+.task-row[data-status='archived'] .task-title,
+.task-row[data-status='archived'] .task-meta { color: var(--faint); }
+
+/*
+ * "This one needs you", for when the dock bounce is not available.
+ *
+ * macOS drops `requestUserAttention` for the app that is already active, so
+ * when Albedo has focus this IS the notification -- not a decoration on top of
+ * one. It marks the specific row, which the bounce cannot do.
+ *
+ * The animation runs on an inset edge only. Animating the row's background
+ * would fight the four grounds already stacked on it (hover, selected, the
+ * blocked tint, and the status groups), and each of those is a measured
+ * text-contrast decision; a pulse underneath the title would undo them on a
+ * timer, invisibly to any audit of the variables. The edge carries no text,
+ * so it can move freely.
+ */
+@keyframes task-attention {
+  50% { box-shadow: inset 2px 0 0 transparent; }
+}
+
+.task-row[data-attention] {
+  box-shadow: inset 2px 0 0 var(--warn);
+  animation: task-attention 1.4s steps(1, end) 6;
+}
+.task-row[data-attention='finished'] { box-shadow: inset 2px 0 0 var(--status-done); }
+/* Accent, like the merged chip and row mark it sits beside. */
+.task-row[data-attention='merged'] { box-shadow: inset 2px 0 0 var(--accent); }
+/* Accent too: the same colour as the row's "?" badge. */
+.task-row[data-attention='question'] { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* Selection is the stronger statement, and clearing the mark follows it. */
+.task-row[data-selected='true'][data-attention] {
+  box-shadow: inset 2px 0 0 transparent;
+  animation: none;
+}
+
+/*
+ * A pulse is motion for its own sake to anyone who has asked for less of it.
+ * The mark itself stays -- it is the information; only the blinking stops.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .task-row[data-attention] { animation: none; }
+}
+
+.task-dot-cell { grid-row: 1; justify-self: center; display: inline-flex; }
+
+.task-title {
+  grid-column: 2;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-age {
+  grid-column: 4;
+  grid-row: 1;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-meta {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Agents still working under the task: a count, quiet like the age. */
+.task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* A question for you: the accent pair the chosen rows use (5.32 light on
+   --accent-soft). A shape, a glyph and a colour, never colour alone. */
+.task-question {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--on-accent-soft);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+}
+
+.task-repo { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.task-sep { color: var(--faint); }
+.task-branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ⌘1-9. Hidden until hover or selection, by visibility -- never opacity. */
+/* ⌘N sits in the age's cell and swaps in on hover, so it costs no width.
+   Hidden by visibility, never opacity (CLAUDE.md, Contrast rule 2). */
+.task-index { grid-column: 4; grid-row: 1; justify-self: end; visibility: hidden; }
+.task-row:hover .task-index { visibility: visible; }
+.task-row:hover .task-age { visibility: hidden; }
+
+/* --------------------------------------------------------------------------
+   Task row actions (M4)
+   Destructive actions never sit inline with the selection target: they live
+   behind a hover control or a right-click, and open a confirmation dialog.
+   -------------------------------------------------------------------------- */
+
+.task-row { position: relative; }
+
+.task-more {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 22px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 1px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+}
+
+.task-row:hover .task-more,
+.task-row[data-menu-open='true'] .task-more { display: flex; }
+.task-more:hover { color: var(--text-strong); background: var(--panel-hover); }
+
+/* The age gets out of the way rather than the control overlapping it. */
+.task-row:hover .task-age,
+.task-row[data-menu-open='true'] .task-age { visibility: hidden; }
+
+.task-row[data-menu-open='true'] { background: var(--panel-raised); }
+
+/* --------------------------------------------------------------------------
+   Issue key (M4)
+
+   The key is the task's identity to the user, so it leads the title, set a
+   tier quieter than the sentence after it. Tabular so keys of different
+   lengths still line up. Plain text, no chip: the accent is kept for "live
+   or chosen", and a column of indigo chips was neither.
+   -------------------------------------------------------------------------- */
+
+.task-key {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.task-row[data-status='archived'] .task-key { color: var(--faint); }
+.task-rest { overflow: hidden; text-overflow: ellipsis; }

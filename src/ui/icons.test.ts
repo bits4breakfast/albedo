@@ -15,7 +15,7 @@ describe('branchRepeatsTitle', () => {
 
 describe('homeRelative', () => {
   it('shortens a home folder', () => {
-    expect(homeRelative('/Users/matteo/www/albedo')).toBe('~/www/albedo');
+    expect(homeRelative('/Users/dev/www/albedo')).toBe('~/www/albedo');
     expect(homeRelative('/home/m/src')).toBe('~/src');
     expect(homeRelative('/opt/x')).toBe('/opt/x');
   });

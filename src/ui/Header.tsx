@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { BUILD, buildLabel } from '../lib/build';
 import OverflowMenu from './OverflowMenu';
 import type { ThemeChoice } from './theme';
+import './header.css';
 
 /**
  * Title bar strip. Carries the macOS overlay drag region, the project tabs,

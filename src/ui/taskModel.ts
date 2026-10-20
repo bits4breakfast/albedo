@@ -9,24 +9,23 @@
  * models. Every access is wrapped: storage can throw in a locked-down WebView.
  */
 
-const key = (taskId: number) => `albedo.taskModel.${taskId}`;
+import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
+
+/** Blank is the default model: it is removed, never stored. */
+export const taskModelCodec: Codec<string | null> = {
+  decode: (raw) => (raw.trim().length > 0 ? raw : null),
+  encode: (model) => (model === null || model.trim() === '' ? null : model.trim()),
+};
 
 /** The task's model (a catalog id or an alias like `opus`), or null for the default. */
 export function getTaskModel(taskId: number): string | null {
-  try {
-    const v = localStorage.getItem(key(taskId));
-    return v && v.trim().length > 0 ? v : null;
-  } catch {
-    return null;
-  }
+  return readPersisted(KEYS.taskModel(taskId), taskModelCodec, null);
 }
 
-/** Set, or with null clear, the task's model. */
+/**
+ * Set, or with null clear, the task's model. Not remembered when storage
+ * throws: the session simply uses the default next time.
+ */
 export function setTaskModel(taskId: number, model: string | null): void {
-  try {
-    if (model === null || model.trim() === '') localStorage.removeItem(key(taskId));
-    else localStorage.setItem(key(taskId), model.trim());
-  } catch {
-    /* not remembered: the session simply uses the default next time */
-  }
+  writePersisted(KEYS.taskModel(taskId), taskModelCodec, model);
 }

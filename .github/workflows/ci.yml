@@ -6,14 +6,21 @@
 # (Actions > CI > Run workflow): it was most of each run's 6-9 minutes, and
 # nobody needed a Linux package per push.
 #
-# No `pull_request` trigger: for a branch in this repo it ran the same checks
-# a second time beside the push run, in a different concurrency group, so
-# neither cancelled the other. The push run's checks show on the PR anyway.
+# `pull_request` runs only for PRs from forks. For a branch in this repo it
+# would run the same checks a second time beside the push run, in a different
+# concurrency group, so neither cancelled the other; the push run's checks show
+# on the PR anyway. A fork's push runs in the fork, so its PR needs this one.
+# GitHub holds a first-time contributor's run until a maintainer approves it,
+# and the token is read-only either way.
 name: CI
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,6 +28,7 @@ concurrency:
 
 jobs:
   linux:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4

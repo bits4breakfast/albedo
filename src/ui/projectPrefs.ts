@@ -13,31 +13,19 @@
  * Owner: worktree workstream (M3).
  */
 
-const LAST_PROJECT_KEY = 'albedo.worktree.lastProjectId';
+import { idCodec, KEYS, numberListCodec, readPersisted, writePersisted } from './persisted';
 
 /**
- * The project to preselect, or null. Every access is wrapped: a locked-down
- * WebView throws on `localStorage` rather than returning null, and a remembered
- * preference is never worth failing a dialog over.
+ * The project to preselect, or null. Never throws (see persisted.ts): a
+ * remembered preference is never worth failing a dialog over.
  */
 export function readLastProjectId(): number | null {
-  try {
-    const raw = localStorage.getItem(LAST_PROJECT_KEY);
-    if (raw === null) return null;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
+  return readPersisted(KEYS.lastProjectId, idCodec, null);
 }
 
 /** Remember a project as the next default. Best effort, never throws. */
 export function writeLastProjectId(id: number): void {
-  try {
-    localStorage.setItem(LAST_PROJECT_KEY, String(id));
-  } catch {
-    // Remembering the last project is a nicety, not a requirement.
-  }
+  writePersisted(KEYS.lastProjectId, idCodec, id);
 }
 
 // ---------------------------------------------------------------------------
@@ -56,16 +44,8 @@ export function writeLastProjectId(id: number): void {
  * Hiding is view state only: nothing on disk moves, no status changes. Keep it
  * distinct from *archived* (out of the active list) and *deleted* (row gone).
  */
-const HIDDEN_PROJECTS_KEY = 'albedo.shell.hiddenProjects';
-
 export function readHiddenProjectIds(): number[] {
-  try {
-    const raw = localStorage.getItem(HIDDEN_PROJECTS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
-  } catch {
-    return [];
-  }
+  return readPersisted(KEYS.hiddenProjects, numberListCodec, []);
 }
 
 /**
@@ -78,10 +58,6 @@ export function readHiddenProjectIds(): number[] {
  */
 export function unhideProjectId(id: number): number[] {
   const next = readHiddenProjectIds().filter((v) => v !== id);
-  try {
-    localStorage.setItem(HIDDEN_PROJECTS_KEY, JSON.stringify(next));
-  } catch {
-    // View state; not worth failing the dialog over.
-  }
+  writePersisted(KEYS.hiddenProjects, numberListCodec, next);
   return next;
 }

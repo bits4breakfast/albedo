@@ -9,7 +9,7 @@ import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../ca
 import { noteQuestion, noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
-/** Shape of the `onCaptureUpdate` payload, per docs/INTERFACES.md. */
+/** Shape of the `onCaptureUpdate` payload. */
 interface CaptureUpdate {
   sessionId: string;
   cwd: string | null;
@@ -528,7 +528,7 @@ export function useTasks(): UseTasksResult {
 
   // Task rows mutated behind the shell's back -- the worktree module creating
   // or removing one, the capture watcher adopting a sessionId. Without this the
-  // list silently goes stale (INTERFACES.md, lead ruling 5).
+  // list silently goes stale.
   useEffect(() => {
     let off: (() => void) | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;

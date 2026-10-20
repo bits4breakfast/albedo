@@ -83,11 +83,6 @@
           "name": "gh-usr-bin",
           "cmd": "/usr/bin/gh",
           "args": true
-        },
-        {
-          "name": "phpstorm",
-          "cmd": "phpstorm",
-          "args": true
         }
       ]
     },

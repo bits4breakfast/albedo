@@ -1,10 +1,16 @@
 import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
+import { idCodec, KEYS, numberListCodec, readPersisted, writePersisted } from './ui/persisted';
 import { listen } from '@tauri-apps/api/event';
-import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { OpenFileRequest, Project, Task } from './types';
 import { useTheme } from './ui/theme';
 import useTasks from './ui/useTasks';
+import useLayout, { type RightTab } from './ui/app/useLayout';
+import useDialogs from './ui/app/useDialogs';
+import useLaunchNotices from './ui/app/useLaunchNotices';
+import useProjectTabs from './ui/app/useProjectTabs';
+import ProjectTabs from './ui/app/ProjectTabs';
+import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
 import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
@@ -13,13 +19,10 @@ import { sendPrompt } from './ui/sendPrompt';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
-import { detectPlatform } from './lib/platform';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
-import StatusDot from './ui/StatusDot';
-import ClosedProjectsMenu from './ui/ClosedProjectsMenu';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
 import { BranchIcon, FolderIcon, homeRelative } from './ui/icons';
@@ -40,11 +43,10 @@ import { ContextClear } from './ui/ClearContextButton';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
-import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/projects';
-import { deleteTask, listTasks, repairSelfBasedTasks } from './db';
+import { archiveProject } from './db/projects';
+import { deleteTask } from './db';
 import { endTaskEvents } from './capture/hookEvents';
-import type { BackfillResult } from './db/projects';
-import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor, unmergedCommits } from './git/worktree';
+import { composeWorktreePath, listBranches, listWorktrees, probePath, unmergedCommits } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import MoveTaskDialog from './ui/MoveTaskDialog';
 import MoreGlyph from './ui/MoreGlyph';
@@ -52,13 +54,11 @@ import { normalizePath } from './git/reconcile';
 import PanelToggle from './ui/PanelToggle';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
-import { grantProjectDirs } from './lib/fsGrants';
 import {
   buildFollowUp,
   followUpTaken,
   followUpTitle,
   freeFollowUpTitle,
-  type NewTaskPrefill,
 } from './ui/followUp';
 import { useMergeNotices } from './ui/mergeNotice';
 import { getPrStatus } from './gh/prStore';
@@ -79,253 +79,6 @@ import type { PrStatus } from './gh/prStatus';
  * 1440px, which is the width this app is actually used at.
  */
 
-type PaneMode = 'pty' | 'split' | 'transcript';
-type Orientation = 'row' | 'column';
-/** Tabs of the right-hand reading pane. `editor` appears on demand. */
-type RightTab = 'transcript' | 'files' | 'editor';
-
-const SIDEBAR_MIN = 200;
-const SIDEBAR_MAX = 480;
-const SIDEBAR_DEFAULT = 260;
-/**
- * The pinned files column. Narrow by nature — paths, counts, a status chip —
- * which is why it works where a fourth READING pane does not.
- */
-const FILES_MIN = 180;
-const FILES_MAX = 420;
-const FILES_DEFAULT = 240;
-/**
- * What the transcript or editor needs beside it to stay worth reading. Below
- * this the column is not viable and falls back to the tab. Measured: at 1440px
- * in split mode the read pane would be 284px, which is not a diff.
- */
-const READ_MIN = 420;
-
-const RATIO_MIN = 0.18;
-const RATIO_MAX = 0.86;
-
-const LS = {
-  sidebar: 'albedo.shell.sidebarWidth',
-  mode: 'albedo.shell.paneMode',
-  ratio: 'albedo.shell.splitRatio',
-  orientation: 'albedo.shell.orientation',
-  selected: 'albedo.shell.selectedTask',
-  project: 'albedo.shell.activeProject',
-  rightTab: 'albedo.shell.rightTab',
-  filesPinned: 'albedo.shell.filesPinned',
-  filesWidth: 'albedo.shell.filesWidth',
-  shellOpen: 'albedo.shell.shellDrawerOpen',
-  shellHeight: 'albedo.shell.shellDrawerHeight',
-} as const;
-
-const SHELL_MIN = 80;
-const SHELL_DEFAULT = 220;
-/** Room the panes above always keep, so the drawer can never swallow them. */
-const SHELL_PANES_MIN = 160;
-
-function readStored<T>(key: string, parse: (raw: string) => T | null, fallback: T): T {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (raw === null) return fallback;
-    const value = parse(raw);
-    return value === null ? fallback : value;
-  } catch {
-    return fallback;
-  }
-}
-
-function store(key: string, value: string): void {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* private mode / quota — layout preference is not worth an error */
-  }
-}
-
-const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
-
-const DISMISSED_KEY = 'albedo.shell.dismissedNotices';
-const HIDDEN_PROJECTS_KEY = 'albedo.shell.hiddenProjects';
-const PROJECT_ORDER_KEY = 'albedo.shell.projectOrder';
-
-function readHiddenProjects(): number[] {
-  try {
-    const raw = window.localStorage.getItem(HIDDEN_PROJECTS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeHiddenProjects(ids: number[]): void {
-  try {
-    window.localStorage.setItem(HIDDEN_PROJECTS_KEY, JSON.stringify(ids));
-  } catch {
-    /* a reappearing tab is not worth throwing over */
-  }
-}
-
-/** Tab order as the user dragged it. View state, like hiding: ids only. */
-function readProjectOrder(): number[] {
-  try {
-    const raw = window.localStorage.getItem(PROJECT_ORDER_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeProjectOrder(ids: number[]): void {
-  try {
-    window.localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(ids));
-  } catch {
-    /* tabs falling back to name order is not worth throwing over */
-  }
-}
-
-/**
- * Projects in the user's tab order. A project the order has never seen (just
- * added) keeps its place in `projects` relative to the others but lands after
- * every ordered one, so adding a project never reshuffles the bar.
- */
-function orderProjects(projects: Project[], order: number[]): Project[] {
-  const rank = new Map(order.map((id, i) => [id, i]));
-  return projects
-    .map((p, i) => ({ p, r: rank.get(p.id) ?? order.length + i }))
-    .sort((a, b) => a.r - b.r)
-    .map(({ p }) => p);
-}
-
-function readDismissed(): string[] {
-  try {
-    const raw = window.localStorage.getItem(DISMISSED_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeDismissed(keys: string[]): void {
-  try {
-    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify(keys));
-  } catch {
-    /* a dismissed notice reappearing is not worth throwing over */
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Error boundary
-//
-// The only class in the codebase. React has no hook equivalent, and a sibling
-// module that is still being written must not be able to white-screen the app:
-// a throw inside the transcript pane has to stay inside the transcript pane.
-// ---------------------------------------------------------------------------
-
-interface BoundaryProps {
-  label: string;
-  children: ReactNode;
-}
-interface BoundaryState {
-  error: Error | null;
-}
-
-class PaneErrorBoundary extends Component<BoundaryProps, BoundaryState> {
-  override state: BoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: Error): BoundaryState {
-    return { error };
-  }
-
-  override componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error(`[albedo] ${this.props.label} crashed`, error, info.componentStack);
-  }
-
-  override render(): ReactNode {
-    const { error } = this.state;
-    if (!error) return this.props.children;
-    return (
-      <div className="pane-error">
-        {this.props.label} failed to render.
-        <pre>{error.message}</pre>
-        <button className="btn" onClick={() => this.setState({ error: null })} style={{ marginTop: 12 }}>
-          Retry
-        </button>
-      </div>
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Project tabs
-//
-// Deliberately absent until they are needed. One project is the expected case,
-// and in that case this is a no-op: no bar, no chrome, no vertical space — the
-// app exactly as it was. The second project summons the bar, and that is the
-// entire interaction, plus drag-to-reorder (view state, like closing a tab).
-// No per-tab state beyond that: a rare case earns correctness, not a surface.
-//
-// The one thing the bar MUST do is keep the app's core promise working. Tabs
-// hide every task outside the active project, so a session that blocks in a
-// background project would go invisible — the app failing at its only job
-// exactly when several things are running. Each tab therefore carries its own
-// status in the same visual language as the rows: blocked pings, running
-// breathes, and those stay the only two moving things in the app.
-// ---------------------------------------------------------------------------
-
-interface ProjectTab {
-  key: string;
-  /** null = the "Other" tab: tasks belonging to no known project. */
-  project: Project | null;
-  label: string;
-  tasks: Task[];
-  blocked: number;
-  running: number;
-}
-
-function buildTabs(projects: Project[], tasks: Task[]): ProjectTab[] {
-  const byProject = new Map<number, Task[]>();
-  const orphans: Task[] = [];
-  for (const task of tasks) {
-    const id = task.projectId;
-    if (id === null || !projects.some((p) => p.id === id)) orphans.push(task);
-    else {
-      const bucket = byProject.get(id);
-      if (bucket) bucket.push(task);
-      else byProject.set(id, [task]);
-    }
-  }
-  const count = (list: Task[], status: Task['status']) =>
-    list.filter((t) => t.status === status).length;
-
-  const tabs: ProjectTab[] = projects.map((project) => {
-    const list = byProject.get(project.id) ?? [];
-    return {
-      key: `p${project.id}`,
-      project,
-      label: project.name,
-      tasks: list,
-      blocked: count(list, 'blocked'),
-      running: count(list, 'running'),
-    };
-  });
-  // Only when it has something in it. A task with no project means the backfill
-  // failed, and an invisible task is the one outcome worth a whole extra tab.
-  if (orphans.length > 0) {
-    tabs.push({
-      key: 'orphans',
-      project: null,
-      label: 'Other',
-      tasks: orphans,
-      blocked: count(orphans, 'blocked'),
-      running: count(orphans, 'running'),
-    });
-  }
-  return tabs;
-}
-
 /**
  * Build the initial prompt for a task's first session.
  *
@@ -343,168 +96,6 @@ function renderPromptTemplate(task: Task, project: Project | null): string | nul
   });
 }
 
-/** ` (⌥⌘2)` for the second tab; nothing past the ninth. See shortcuts.ts. */
-function projectKeyHint(index: number): string {
-  if (index < 0 || index > 8) return '';
-  return detectPlatform() === 'macos' ? ` (⌥⌘${index + 1})` : ` (Alt+${index + 1})`;
-}
-
-function ProjectTabs({
-  tabs,
-  activeKey,
-  onSelect,
-  onHide,
-  hidden,
-  onRestore,
-  onReorder,
-}: {
-  tabs: ProjectTab[];
-  activeKey: string;
-  onSelect: (key: string) => void;
-  onHide: (projectId: number) => void;
-  hidden: Project[];
-  onRestore: (projectId: number) => void;
-  /** The visible project tabs' ids in their new order. */
-  onReorder: (projectIds: number[]) => void;
-}) {
-  // Never offer to hide the last one: that would leave a bar with nothing in
-  // it but the restore chip.
-  const canHide = tabs.length > 1;
-
-  /*
-   * Pointer events, not HTML5 drag-and-drop: the Tauri window owns native
-   * drag-drop, and a tab is a click target first. The drag only begins past a
-   * small threshold, so a plain click still selects, and the click a drag ends
-   * on is swallowed. The bar previews the new order live and commits on
-   * release; "Other" never moves and is never a drop target.
-   */
-  const [preview, setPreview] = useState<string[] | null>(null);
-  const drag = useRef<{ key: string; x: number; active: boolean; pointer: number } | null>(null);
-  const swallowClick = useRef(false);
-  const tabEls = useRef(new Map<string, HTMLElement>());
-
-  const order = preview ?? tabs.map((t) => t.key);
-  const byKey = new Map(tabs.map((t) => [t.key, t]));
-  const shown = [
-    ...order.map((k) => byKey.get(k)).filter((t): t is ProjectTab => t !== undefined),
-    // A tab that appeared mid-drag still shows, after the previewed ones.
-    ...tabs.filter((t) => !order.includes(t.key)),
-  ];
-
-  const onPointerDown = (e: ReactPointerEvent, tab: ProjectTab) => {
-    if (e.button !== 0 || tab.project === null) return;
-    drag.current = { key: tab.key, x: e.clientX, active: false, pointer: e.pointerId };
-  };
-
-  const onPointerMove = (e: ReactPointerEvent) => {
-    const d = drag.current;
-    if (!d || d.pointer !== e.pointerId) return;
-    if (!d.active) {
-      if (Math.abs(e.clientX - d.x) < 4) return;
-      d.active = true;
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    }
-    const movable = (preview ?? tabs.map((t) => t.key)).filter((k) => k !== 'orphans');
-    const rest = movable.filter((k) => k !== d.key);
-    // Insert before the first tab whose midpoint is right of the pointer.
-    let at = rest.length;
-    for (let i = 0; i < rest.length; i++) {
-      const r = tabEls.current.get(rest[i]!)?.getBoundingClientRect();
-      if (r && e.clientX < r.left + r.width / 2) {
-        at = i;
-        break;
-      }
-    }
-    const next = [...rest.slice(0, at), d.key, ...rest.slice(at)];
-    if (tabs.some((t) => t.key === 'orphans')) next.push('orphans');
-    if (next.join() !== order.join()) setPreview(next);
-  };
-
-  const endDrag = (e: ReactPointerEvent, commit: boolean) => {
-    const d = drag.current;
-    if (!d || d.pointer !== e.pointerId) return;
-    drag.current = null;
-    if (!d.active) return;
-    swallowClick.current = true;
-    if (commit && preview) {
-      onReorder(
-        preview
-          .map((k) => byKey.get(k)?.project?.id)
-          .filter((id): id is number => id !== undefined),
-      );
-    }
-    setPreview(null);
-  };
-
-  return (
-    <div className="project-tabs" role="tablist" aria-label="Projects">
-      {shown.map((tab) => {
-        const status = tab.blocked > 0 ? 'blocked' : tab.running > 0 ? 'running' : null;
-        const badge =
-          tab.blocked > 0 ? tab.blocked : tab.running > 0 ? tab.running : tab.tasks.length;
-        return (
-          <button
-            key={tab.key}
-            role="tab"
-            aria-selected={tab.key === activeKey}
-            className="project-tab"
-            data-status={status ?? 'quiet'}
-            data-dragging={preview !== null && drag.current?.key === tab.key ? 'true' : undefined}
-            ref={(el) => {
-              if (el) tabEls.current.set(tab.key, el);
-              else tabEls.current.delete(tab.key);
-            }}
-            onPointerDown={(e) => onPointerDown(e, tab)}
-            onPointerMove={onPointerMove}
-            onPointerUp={(e) => endDrag(e, true)}
-            onPointerCancel={(e) => endDrag(e, false)}
-            onClick={() => {
-              if (swallowClick.current) {
-                swallowClick.current = false;
-                return;
-              }
-              onSelect(tab.key);
-            }}
-            title={
-              (tab.blocked > 0
-                ? `${tab.label}: ${tab.blocked} waiting on you`
-                : (tab.project?.repoPath ?? tab.label)) + projectKeyHint(tabs.findIndex((t) => t.key === tab.key))
-            }
-          >
-            {status && <StatusDot status={status} />}
-            <span className="project-tab-name">{tab.label}</span>
-            <span className="project-tab-count">{badge}</span>
-            {canHide && tab.project && (
-              <span
-                className="project-tab-close"
-                role="button"
-                aria-label={`Close ${tab.label}`}
-                title={`Close ${tab.label} — the project and its worktrees are untouched`}
-                onPointerDown={(e) => {
-                  // Beat the tab's own click so closing never also selects.
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (tab.project) onHide(tab.project.id);
-                }}
-              >
-                ✕
-              </span>
-            )}
-          </button>
-        );
-      })}
-
-      {/* Always reachable from where it was closed. Without this the bar can
-          become a one-way door -- close a tab, and with the bar gone there is
-          nowhere left that knows the project is merely hidden. */}
-      {hidden.length > 0 && <ClosedProjectsMenu hidden={hidden} onRestore={onRestore} />}
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 
 export default function App() {
@@ -512,244 +103,94 @@ export default function App() {
     useTasks();
 
   const [selectedId, setSelectedId] = useState<number | null>(() =>
-    readStored(LS.selected, (raw) => (Number.isFinite(Number(raw)) ? Number(raw) : null), null),
+    readPersisted(KEYS.selectedTask, idCodec, null),
   );
   /** Tasks whose terminal has been brought up. Kept alive until the task goes. */
   const [openIds, setOpenIds] = useState<number[]>([]);
 
-  const [sidebarWidth, setSidebarWidth] = useState(() =>
-    readStored(LS.sidebar, (raw) => clamp(Number(raw) || SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX), SIDEBAR_DEFAULT),
-  );
-  const [mode, setMode] = useState<PaneMode>(() =>
-    readStored(LS.mode, (raw) => (raw === 'pty' || raw === 'split' || raw === 'transcript' ? raw : null), 'split'),
-  );
-  const [orientation, setOrientation] = useState<Orientation>(() =>
-    readStored(LS.orientation, (raw) => (raw === 'row' || raw === 'column' ? raw : null), 'row'),
-  );
-  const [ratio, setRatio] = useState(() =>
-    readStored(LS.ratio, (raw) => clamp(Number(raw) || 0.55, RATIO_MIN, RATIO_MAX), 0.55),
-  );
+  const {
+    sidebarWidth,
+    mode,
+    setMode,
+    orientation,
+    setOrientation,
+    ratio,
+    rightTab,
+    setRightTab,
+    filesPinned,
+    setFilesPinned,
+    filesWidth,
+    filesColumnShown,
+    dragging,
+    shellOpen,
+    setShellOpen,
+    shellHeight,
+    mainRef,
+    panesRef,
+    startSidebarDrag,
+    startSplitDrag,
+    startFilesDrag,
+    startShellDrag,
+  } = useLayout();
+  const {
+    newTaskOpen,
+    setNewTaskOpen,
+    newTaskPrefill,
+    setNewTaskPrefill,
+    reconcileOpen,
+    setReconcileOpen,
+    projectsOpen,
+    setProjectsOpen,
+    shortcutsOpen,
+    setShortcutsOpen,
+    sessionsOpen,
+    setSessionsOpen,
+    importOpen,
+    setImportOpen,
+    archiveTarget,
+    setArchiveTarget,
+    moveTarget,
+    setMoveTarget,
+    endIntent,
+    setEndIntent,
+  } = useDialogs();
 
-  const [rightTab, setRightTab] = useState<RightTab>(() =>
-    readStored(
-      LS.rightTab,
-      (raw) => (raw === 'transcript' || raw === 'files' || raw === 'editor' ? raw : null),
-      'transcript',
-    ),
-  );
   /** Pending file-open, scoped to the task it was requested from. */
   const [openRequest, setOpenRequest] = useState<{ taskId: number; request: OpenFileRequest } | null>(
     null,
   );
-  /** Files promoted from a tab to a permanent column. Default off. */
-  const [filesPinned, setFilesPinned] = useState(() =>
-    readStored(LS.filesPinned, (raw) => (raw === '1' ? true : raw === '0' ? false : null), false),
-  );
-  const [filesWidth, setFilesWidth] = useState(() =>
-    readStored(LS.filesWidth, (raw) => clamp(Number(raw) || FILES_DEFAULT, FILES_MIN, FILES_MAX), FILES_DEFAULT),
-  );
-  /** Live width of the pane row, so viability is measured rather than guessed. */
-  const [panesWidth, setPanesWidth] = useState(0);
-
-  const [newTaskOpen, setNewTaskOpen] = useState(false);
-  /** Set while the new-task dialog is open as a follow-up; null otherwise. */
-  const [newTaskPrefill, setNewTaskPrefill] = useState<NewTaskPrefill | null>(null);
   /**
    * The prompt a follow-up was created with, for its first spawn. In memory
    * on purpose: the session starts the moment the task is created, and a
    * prompt for a session that has already started is never sent again.
    */
   const [promptOverrides, setPromptOverrides] = useState<Map<number, string>>(() => new Map());
-  const [reconcileOpen, setReconcileOpen] = useState(false);
-  const [projectsOpen, setProjectsOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
   const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
   /**
    * Resume argv for tasks created in THIS run. A fork lands under a new
    * session id that the task does not yet know, so the args cannot be derived
    * from the row until capture has adopted it.
    */
   const [pendingResume, setPendingResume] = useState<Map<number, string[]>>(() => new Map());
-  const [activeProjectTabKey, setActiveProjectTabKey] = useState<string>(() =>
-    readStored(LS.project, (raw) => raw || null, ''),
-  );
   const { choice: themeChoice, setChoice: setThemeChoice } = useTheme();
-  const [startupError, setStartupError] = useState<string | null>(null);
-  const [backfill, setBackfill] = useState<BackfillResult | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
-  /** Notices the user has waved away, so launch housekeeping cannot nag. */
-  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set(readDismissed()));
-  /**
-   * Closed project tabs. VIEW STATE, not a lifecycle change: the project, its
-   * tasks and its worktrees are untouched, exactly like closing a browser tab.
-   * Deliberately not conflated with archiving, which touches worktrees and asks
-   * for confirmation — this one is only "not right now".
-   */
-  const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<number>>(
-    () => new Set(readHiddenProjects()),
-  );
-  const [archiveTarget, setArchiveTarget] = useState<Task | null>(null);
-  const [moveTarget, setMoveTarget] = useState<Task | null>(null);
   /** Tasks whose terminal is down while they move: unmounting ends the session. */
   const [stopped, setStopped] = useState<ReadonlySet<number>>(() => new Set());
-  /** Which verb the end-task dialog was opened with. */
-  const [endIntent, setEndIntent] = useState<'archive' | 'delete'>('archive');
-  const [dragging, setDragging] = useState<null | 'sidebar' | 'split' | 'files' | 'shell'>(null);
-  /**
-   * The shell drawer: a plain login shell in the active project's main
-   * checkout, PhpStorm's Terminal tool window. One shell per project, spawned
-   * on first open and kept alive after -- closing the drawer hides it, the way
-   * the pty pane hides task terminals rather than killing them.
-   */
-  const [shellOpen, setShellOpen] = useState(() =>
-    readStored(LS.shellOpen, (raw) => (raw === '1' ? true : raw === '0' ? false : null), false),
-  );
-  const [shellHeight, setShellHeight] = useState(() =>
-    readStored(LS.shellHeight, (raw) => Math.max(SHELL_MIN, Number(raw) || SHELL_DEFAULT), SHELL_DEFAULT),
-  );
   const [shellProjectIds, setShellProjectIds] = useState<number[]>([]);
-  const mainRef = useRef<HTMLElement | null>(null);
 
-  const panesRef = useRef<HTMLDivElement | null>(null);
-  const selectTabRef = useRef<((key: string) => void) | null>(null);
-
-  useEffect(() => store(LS.sidebar, String(Math.round(sidebarWidth))), [sidebarWidth]);
-  useEffect(() => store(LS.mode, mode), [mode]);
-  useEffect(() => store(LS.orientation, orientation), [orientation]);
-  useEffect(() => store(LS.ratio, ratio.toFixed(3)), [ratio]);
-  useEffect(() => {
-    if (rightTab !== 'editor') store(LS.rightTab, rightTab);
-  }, [rightTab]);
-  useEffect(() => store(LS.filesPinned, filesPinned ? '1' : '0'), [filesPinned]);
-  useEffect(() => store(LS.filesWidth, String(Math.round(filesWidth))), [filesWidth]);
-  useEffect(() => store(LS.shellOpen, shellOpen ? '1' : '0'), [shellOpen]);
-  useEffect(() => store(LS.shellHeight, String(Math.round(shellHeight))), [shellHeight]);
-
-  // Measure the pane row, not the read pane: the read pane's width DEPENDS on
-  // whether the column is showing, so observing it would feed back on itself.
-  useEffect(() => {
-    const el = panesRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => setPanesWidth(el.clientWidth));
-    observer.observe(el);
-    setPanesWidth(el.clientWidth);
-    return () => observer.disconnect();
-  }, []);
-
-  const [projectOrder, setProjectOrder] = useState<number[]>(() => readProjectOrder());
-  const allTabs = useMemo(
-    () => buildTabs(orderProjects(projects, projectOrder), tasks),
-    [projects, projectOrder, tasks],
-  );
-
-  /**
-   * Hidden projects keep their slot: the dragged ids are the visible ones, so
-   * they are written back into the full order around the hidden ones rather
-   * than replacing it.
-   */
-  const reorderProjects = useCallback(
-    (visibleIds: number[]) => {
-      const full = orderProjects(projects, projectOrder).map((p) => p.id);
-      const moved = new Set(visibleIds);
-      const queue = [...visibleIds];
-      const next = full.map((id) => (moved.has(id) ? queue.shift()! : id));
-      setProjectOrder(next);
-      writeProjectOrder(next);
-    },
-    [projects, projectOrder],
-  );
-
-  /**
-   * A closed tab must never swallow the one signal this app exists to deliver.
-   *
-   * Chosen over refusing to close a blocked project: blocked is a state a task
-   * enters LATER, so a check at close time would not cover the case that
-   * matters — closing a quiet project that goes blocked an hour afterwards. It
-   * also makes the refusal explicable only at the moment it happens, whereas a
-   * tab reappearing with a pinging dot explains itself. The hide is dropped
-   * rather than merely overridden, so what is stored matches what is shown.
-   */
-  useEffect(() => {
-    if (hiddenProjectIds.size === 0) return;
-    const blocked = new Set(
-      tasks.filter((t) => t.status === 'blocked' && t.projectId !== null).map((t) => t.projectId),
-    );
-    const revive = [...hiddenProjectIds].filter((id) => blocked.has(id));
-    if (revive.length === 0) return;
-    setHiddenProjectIds((prev) => {
-      const next = new Set(prev);
-      for (const id of revive) next.delete(id);
-      writeHiddenProjects([...next]);
-      return next;
-    });
-  }, [tasks, hiddenProjectIds]);
-
-  const tabs = useMemo(
-    () => allTabs.filter((t) => t.project === null || !hiddenProjectIds.has(t.project.id)),
-    [allTabs, hiddenProjectIds],
-  );
-
-  const hiddenProjects = useMemo(
-    () => projects.filter((p) => hiddenProjectIds.has(p.id)),
-    [projects, hiddenProjectIds],
-  );
-
-  const hideProject = useCallback((projectId: number) => {
-    const key = `p${projectId}`;
-    // Closing the active tab lands on a neighbour, the way a browser does --
-    // next if there is one, otherwise previous. Falling back to "first tab"
-    // would jump the user across the bar for no reason.
-    if (activeProjectTabKey === key) {
-      const i = tabs.findIndex((t) => t.key === key);
-      const neighbour = tabs[i + 1] ?? tabs[i - 1] ?? null;
-      if (neighbour) selectTabRef.current?.(neighbour.key);
-    }
-    setHiddenProjectIds((prev) => {
-      const next = new Set(prev);
-      next.add(projectId);
-      writeHiddenProjects([...next]);
-      return next;
-    });
-  }, [tabs, activeProjectTabKey]);
-
-  const restoreProject = useCallback(
-    (projectId: number) => {
-      setHiddenProjectIds((prev) => {
-        const next = new Set(prev);
-        next.delete(projectId);
-        writeHiddenProjects([...next]);
-        return next;
-      });
-      selectTabRef.current?.(`p${projectId}`);
-    },
-    [],
-  );
-
-  /**
-   * One tab is not a tab bar. With a single project the app is exactly what it
-   * was before projects existed: no bar, nothing hidden, nothing to switch.
-   */
-  /**
-   * `|| hiddenProjects.length > 0` is what stops closing being a one-way door:
-   * hide one of two projects and the bar would otherwise vanish, taking the
-   * only route back with it.
-   */
-  const showTabs = tabs.length >= 2 || hiddenProjects.length > 0;
-
-  const activeProjectTab = useMemo(() => {
-    if (!showTabs) return null;
-    return tabs.find((t) => t.key === activeProjectTabKey) ?? tabs[0] ?? null;
-  }, [showTabs, tabs, activeProjectTabKey]);
-
-  const selectTab = useCallback((key: string) => {
-    setActiveProjectTabKey(key);
-    store(LS.project, key);
-  }, []);
-  // Restoring selects the restored tab; the ref avoids ordering the two
-  // callbacks against each other.
-  selectTabRef.current = selectTab;
+  const {
+    tabs,
+    hiddenProjectIds,
+    setHiddenProjectIds,
+    hiddenProjects,
+    hideProject,
+    restoreProject,
+    reorderProjects,
+    showTabs,
+    activeProjectTab,
+    selectTab,
+    selectTabRef,
+  } = useProjectTabs(projects, tasks);
 
   /**
    * Scoped only while the bar is showing. With the bar hidden nothing is
@@ -1003,7 +444,7 @@ export default function App() {
     const home = tabsRef.current.find((t) => t.tasks.some((task) => task.id === id));
     if (home) selectTabRef.current?.(home.key);
     setSelectedId(id);
-    store(LS.selected, String(id));
+    writePersisted(KEYS.selectedTask, idCodec, id);
     setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
     // Looking at it is what "seen" means; nothing else clears the mark.
     clearAttention(id);
@@ -1034,72 +475,7 @@ export default function App() {
   useEffect(() => watchFocus(), []);
   useMergeNotices(tasks);
 
-  /**
-   * Adopt pre-projects task rows on launch.
-   *
-   * Idempotent by design -- it only touches `project_id IS NULL` and reuses an
-   * existing project for a repo path -- so running it every start is intended.
-   * It ends with `emitTasksChanged()`, which the task list is already
-   * subscribed to, so the backfilled rows arrive without a second fetch here.
-   *
-   * A failure is caught but NOT swallowed: if this does not run, new tasks get
-   * created without a project, and the first symptom would be somewhere else
-   * entirely. It goes in the banner.
-   */
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        // The resolver is injected rather than imported by db/: resolving a
-        // repo root shells out to git, and the db layer has no business
-        // spawning subprocesses. It is required, not optional-with-a-fallback,
-        // because falling back to the raw path IS the bug it exists to fix.
-        const result = await backfillProjectsFromTasks(repoRootFor);
-        if (cancelled) return;
-        // Tasks History saved with their own branch as base (before the fix in
-        // SessionBrowser). Best-effort: a failure leaves them as they were.
-        await repairSelfBasedTasks(defaultBranchOf).catch((err) =>
-          console.warn('[startup] could not repair task bases', err),
-        );
-        if (cancelled) return;
-        setBackfill(result);
-        setStartupError(null);
-
-        // Grant the filesystem scope for every directory we may need to read.
-        // The static capability only covers ~/.claude/projects and ~/agents; a
-        // project pointed anywhere else -- which is the whole point of letting
-        // the user choose -- is outside it, and opening a file in it fails with
-        // "forbidden path". See src/lib/fsGrants.ts.
-        const projects = await listProjects({ includeArchived: true });
-        const tasks = await listTasks({ includeArchived: true });
-        if (cancelled) return;
-        const denied = await grantProjectDirs({
-          repoPaths: projects.map((p) => p.repoPath),
-          worktreeRoots: projects.map((p) => p.worktreeRoot),
-          worktreePaths: tasks.map((t) => t.worktreePath),
-        });
-        if (!cancelled && denied.length > 0) {
-          // Not fatal, but not silent: files in those projects will not open,
-          // and a quiet degradation of a core path has bitten this app before.
-          setStartupError(
-            `Could not grant file access to ${denied.length} project ` +
-              `director${denied.length === 1 ? 'y' : 'ies'}: ${denied[0]}. ` +
-              'Opening files in those projects will fail.',
-          );
-        }
-      } catch (err) {
-        if (cancelled) return;
-        const detail = err instanceof Error ? err.message : String(err);
-        setStartupError(
-          `Could not assign existing tasks to projects: ${detail}. ` +
-            'New tasks may be created without one.',
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
 
   // File-open entry point handed to every renderer via context. Reads the
   // selection through a ref so the context value stays referentially stable --
@@ -1149,7 +525,7 @@ export default function App() {
         setHiddenProjectIds((prev) => {
           const next = new Set(prev);
           next.delete(projectId);
-          writeHiddenProjects([...next]);
+          writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
           return next;
         });
       }
@@ -1231,23 +607,6 @@ export default function App() {
     return browseTask && openRequest.taskId === browseTask.id ? browseTask : null;
   }, [openRequest, selected, browseTask]);
 
-  /**
-   * Is there room for the column, right now?
-   *
-   * The preference is NOT changed by the answer. A pinned column that stops
-   * fitting falls back to the tab and comes back when the window allows, which
-   * is the difference between a layout that adapts and a preference that
-   * evaporates on resize and never returns.
-   */
-  const readAreaWidth =
-    mode === 'pty'
-      ? 0
-      : mode === 'split' && orientation === 'row'
-        ? panesWidth * (1 - ratio)
-        : panesWidth;
-  const filesColumnFits = readAreaWidth >= filesWidth + READ_MIN;
-  const filesColumnShown = filesPinned && mode !== 'pty' && filesColumnFits;
-
   // Derived rather than corrected in an effect: switching task while the editor
   // tab is showing falls straight back to the transcript, with no flash.
   // A pinned column also takes FILES out of the tab strip -- a tab that shows
@@ -1258,74 +617,6 @@ export default function App() {
       : rightTab === 'files' && filesColumnShown
         ? 'transcript'
         : rightTab;
-
-  // --- splitter drags ------------------------------------------------------
-
-  const startSidebarDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragging('sidebar');
-    const move = (ev: PointerEvent) => setSidebarWidth(clamp(ev.clientX, SIDEBAR_MIN, SIDEBAR_MAX));
-    const up = () => {
-      setDragging(null);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
-  const startSplitDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const rect = panesRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setDragging('split');
-    const move = (ev: PointerEvent) => {
-      const next =
-        orientation === 'row'
-          ? (ev.clientX - rect.left) / rect.width
-          : (ev.clientY - rect.top) / rect.height;
-      setRatio(clamp(next, RATIO_MIN, RATIO_MAX));
-    };
-    const up = () => {
-      setDragging(null);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
-  const startFilesDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const rect = panesRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setDragging('files');
-    const move = (ev: PointerEvent) =>
-      setFilesWidth(clamp(rect.right - ev.clientX, FILES_MIN, FILES_MAX));
-    const up = () => {
-      setDragging(null);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
-  const startShellDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const rect = mainRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setDragging('shell');
-    const move = (ev: PointerEvent) =>
-      setShellHeight(clamp(rect.bottom - ev.clientY, SHELL_MIN, Math.max(SHELL_MIN, rect.height - SHELL_PANES_MIN)));
-    const up = () => {
-      setDragging(null);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
 
   // --- shortcuts -----------------------------------------------------------
 
@@ -1516,27 +807,6 @@ export default function App() {
   const noteFor = (tab: RightTab): string => (tab === 'editor' ? (editorActivePath ?? '') : '');
 
   const banner = loadError ?? startupError ?? captureError;
-
-  /**
-   * Launch housekeeping, deliberately quiet.
-   *
-   * A user opening Albedo to get to work should not be interrupted by a modal
-   * about their database. These are one-line offers they can ignore forever,
-   * and dismissing one is remembered.
-   */
-  const unclaimed = (backfill?.unclaimed ?? []).filter((r) => !dismissed.has(`repo:${r.repoRoot}`));
-  const worktreeProjects = (backfill?.worktreeProjects ?? []).filter(
-    (f) => !dismissed.has(`wt:${f.project.id}`),
-  );
-
-  const dismiss = (key: string) => {
-    setDismissed((prev) => {
-      const next = new Set(prev);
-      next.add(key);
-      writeDismissed([...next]);
-      return next;
-    });
-  };
 
   return (
     <FileOpenContext.Provider value={openFile}>
@@ -2215,7 +1485,7 @@ export default function App() {
             setHiddenProjectIds((prev) => {
               const next = new Set(prev);
               next.delete(id);
-              writeHiddenProjects([...next]);
+              writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
               return next;
             })
           }

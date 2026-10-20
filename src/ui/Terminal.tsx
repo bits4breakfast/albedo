@@ -13,6 +13,7 @@ import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { terminalTakesKey } from './shortcuts';
+import './terminal.css';
 
 /**
  * The embedded pty.

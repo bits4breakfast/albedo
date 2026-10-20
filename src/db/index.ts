@@ -4,9 +4,9 @@
  * The SQLite access layer. Owns the snake_case <-> camelCase mapping in ONE
  * place, so a column rename is a single-file change.
  *
- * Public surface is frozen in docs/INTERFACES.md. The extra exports below it
- * (message insertion, transcript_files bookkeeping, task adoption) are
- * internal to the capture workstream, which owns this file.
+ * The task and message reads are the public surface (docs/ARCHITECTURE.md).
+ * The other exports (message insertion, transcript_files bookkeeping, task
+ * adoption) are for src/capture only.
  */
 
 import Database from '@tauri-apps/plugin-sql';
@@ -50,7 +50,7 @@ export function resetDb(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Task change notification (lead ruling #4)
+// Task change notification
 // ---------------------------------------------------------------------------
 
 const taskListeners = new Set<() => void>();

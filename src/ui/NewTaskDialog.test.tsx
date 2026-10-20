@@ -98,7 +98,7 @@ describe('NewTaskDialog default project', () => {
     const base = { worktreeRoot: '/w', defaultBaseBranch: 'main' };
     vi.mocked(listProjects).mockResolvedValueOnce([
       { ...base, id: 1, name: 'albedo', repoPath: '/Users/m/www/albedo', createdAt: 1 },
-      { ...base, id: 2, name: 'upsellguru', repoPath: '/Users/m/www/upsellguru', createdAt: 2 },
+      { ...base, id: 2, name: 'acme-store', repoPath: '/Users/m/www/acme-store', createdAt: 2 },
     ] as never);
     const prefs = await import('./projectPrefs');
     vi.mocked(prefs.readLastProjectId).mockReturnValueOnce(2);

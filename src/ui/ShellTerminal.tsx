@@ -6,6 +6,7 @@ import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
 import { cssVar, terminalTheme } from './Terminal';
 import { onThemeChange } from './theme';
 import { terminalTakesKey } from './shortcuts';
+import './terminal.css';
 
 /**
  * A plain login shell in a project's main checkout -- the shell drawer.

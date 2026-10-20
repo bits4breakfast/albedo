@@ -1,7 +1,7 @@
 # Albedo
 
 Personal desktop cockpit for running multiple Claude Code sessions. **Wraps**
-Claude Code, never replaces it. Spec: Notion "Albedo: MVP Spec".
+Claude Code, never replaces it.
 
 ## Two channels, strictly separated
 
@@ -138,7 +138,7 @@ src/git/       worktree create/remove/reconcile                    (M3)
 src/lsp/       PHPantom client: JSON-RPC framing and the server pool
 src/ui/        React shell, task list, xterm pane                  (M2)
 src/ui/transcript/  transcript renderer and diff component         (M4)
-src-tauri/     Tauri shell; src/pty.rs is the only Rust we write
+src-tauri/     Tauri shell; src/pty.rs plus small fs and scope helpers
 ```
 
 ## Commands

@@ -44,7 +44,7 @@ const ISSUE_KEY = /^([A-Z]{2,10})-([A-Z0-9]{1,20})/;
  *    a different issue, same folder. The user names tasks by key precisely so
  *    identity is unambiguous; silently truncating it is the worst failure here.
  *  - Under-matching costs a chip in the dialog and a placeholder in a prompt.
- *    The title still slugs into a perfectly good branch (`up-2398-v2`), which
+ *    The title still slugs into a perfectly good branch (`acme-2398-v2`), which
  *    is distinct from ACME-2398 and collides with nothing.
  *
  * `-` is included because `ACME-2398-followup` is a branch the user already has;
@@ -109,7 +109,7 @@ const LEADING_SEPARATORS = /^[\s\-:,\u2013\u2014]+/;
  *     passing is not the same as a task named after one.
  *  2. **The suffix must contain a digit.** `ABC-DEF` is a hyphenated phrase,
  *     not an issue. This is what keeps ordinary English out.
- *  3. **Uppercase only.** `up-2398` and `TODO-list` do not match.
+ *  3. **Uppercase only.** `acme-2398` and `TODO-list` do not match.
  *
  * The cost of being wrong is asymmetric but not destructive -- the new-task
  * dialog shows the detected key and the branch and path it produces before
@@ -141,12 +141,6 @@ export function parseIssueKey(title: string): IssueRef | null {
   if (next !== '' && !KEY_TERMINATORS.includes(next)) return null;
   const rest = trimmed.slice(key.length).replace(LEADING_SEPARATORS, '').trim();
   return { key, rest };
-}
-
-/** True when `title` is exactly a key and nothing else. */
-export function isBareIssueKey(title: string): boolean {
-  const ref = parseIssueKey(title);
-  return ref !== null && ref.rest.length === 0;
 }
 
 // ---------------------------------------------------------------------------

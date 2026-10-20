@@ -155,7 +155,7 @@ export function onCaptureUpdate(cb: (u: CaptureUpdate) => void): () => void {
   };
 }
 
-/** Startup-backfill progress. Additive to docs/INTERFACES.md. */
+/** Startup-backfill progress. */
 export function onCaptureProgress(cb: (p: CaptureProgress) => void): () => void {
   progressListeners.add(cb);
   return () => {

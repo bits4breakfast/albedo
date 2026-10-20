@@ -1,0 +1,10 @@
+/* "Context 72% · Compact · Clear" in the message box's controls row, past 70%
+   only (src/ui/ClearContextButton.tsx). --warn on --panel-inset. */
+.ctx-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+  font-size: var(--fs-xs);
+}
+.ctx-clear-reading { color: var(--warn); font-variant-numeric: tabular-nums; }
