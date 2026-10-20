@@ -5,7 +5,7 @@
  * comment shows as a card under its code.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Task } from '../../types';
 import type { ReviewComment } from '../../db/comments';
 
@@ -67,7 +67,11 @@ async function editorContent(): Promise<HTMLElement> {
   });
 }
 
-describe('FileEditor review comments', () => {
+// CodeMirror mounts slowly when the machine is busy (a full suite alongside a
+// build): the default 1s for findBy/waitFor failed this file intermittently.
+configure({ asyncUtilTimeout: 5_000 });
+
+describe('FileEditor review comments', { timeout: 15_000 }, () => {
   it('⇧⌘C opens a draft on the cursor line; ⌘↵ saves a multi-line comment with that line', async () => {
     const content = await editorContent();
     // jsdom is not a Mac, so CodeMirror's Mod is Ctrl here (⌘ in the app).
