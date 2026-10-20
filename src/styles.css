@@ -996,6 +996,22 @@ button.usage-waiting:hover { background: var(--panel-hover); }
    fact worth noticing, not a problem. */
 .main-ident-project[data-foreign='true'] { color: var(--text-strong); }
 
+/* The task's name as the trigger of its actions menu: reads as the title,
+   shows a quiet chevron, and takes the hover ground every control uses. */
+.main-ident-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -6px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.main-ident-menu .main-ident-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.main-ident-menu:hover,
+.main-ident-menu[aria-expanded='true'] { background: var(--panel-hover); }
+.main-ident-chevron { flex: none; width: 12px; height: 12px; color: var(--muted); }
+
 .main-ident-title {
   /* Gives way last: the branch and folder shrink four and eight times as
      fast. A min-width did this before and padded a short title with empty

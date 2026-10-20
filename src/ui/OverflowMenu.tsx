@@ -40,11 +40,17 @@ export interface OverflowMenuProps {
   title?: string;
   /** Optional heading line inside the menu. */
   heading?: string;
+  /**
+   * Draw the trigger as something other than ⋯ -- the task's name in the task
+   * bar. `className` replaces the icon button's; the menu then opens under
+   * the trigger's left edge instead of its right.
+   */
+  trigger?: { content: ReactNode; className: string };
 }
 
 const MENU_W = 260;
 
-export default function OverflowMenu({ label, items, title, heading }: OverflowMenuProps) {
+export default function OverflowMenu({ label, items, title, heading, trigger }: OverflowMenuProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -55,7 +61,8 @@ export default function OverflowMenu({ label, items, title, heading }: OverflowM
   const place = () => {
     const r = buttonRef.current?.getBoundingClientRect();
     if (!r) return;
-    const left = Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8));
+    const anchor = trigger ? r.left : r.right - MENU_W;
+    const left = Math.max(8, Math.min(anchor, window.innerWidth - MENU_W - 8));
     setPos({ top: r.bottom + 4, left });
   };
 
@@ -116,7 +123,7 @@ export default function OverflowMenu({ label, items, title, heading }: OverflowM
       <button
         ref={buttonRef}
         type="button"
-        className="icon-btn"
+        className={trigger?.className ?? 'icon-btn'}
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -126,7 +133,7 @@ export default function OverflowMenu({ label, items, title, heading }: OverflowM
           setOpen((o) => !o);
         }}
       >
-        <MoreGlyph />
+        {trigger ? trigger.content : <MoreGlyph />}
       </button>
       {open && (
         <div

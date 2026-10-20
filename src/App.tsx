@@ -1699,9 +1699,69 @@ export default function App() {
                       <span className="task-sep">/</span>
                     </>
                   )}
-                  <span className="main-ident-title" title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}`}>
-                    {selected.title}
-                  </span>
+                  {/* The task's name opens what acts on the task; ⋯ at the
+                      bar's end keeps what acts on the panes. */}
+                  <OverflowMenu
+                    label={`Actions for ${selected.title}`}
+                    title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nClick for task actions`}
+                    trigger={{
+                      className: 'main-ident-title main-ident-menu',
+                      content: (
+                        <>
+                          <span className="main-ident-text">{selected.title}</span>
+                          <svg className="main-ident-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 6l4 4 4-4" />
+                          </svg>
+                        </>
+                      ),
+                    }}
+                    items={[
+                        {
+                          id: 'copy-path',
+                          label: 'Copy Worktree Path',
+                          onSelect: () => {
+                            void navigator.clipboard?.writeText(selected.worktreePath).catch(() => {});
+                          },
+                        },
+                        {
+                          id: 'copy-session',
+                          label: 'Copy Session ID',
+                          disabled: selected.sessionId === null,
+                          title: selected.sessionId ?? 'No session yet',
+                          onSelect: () => {
+                            if (selected.sessionId) void navigator.clipboard?.writeText(selected.sessionId).catch(() => {});
+                          },
+                        },
+                        {
+                          id: 'move',
+                          label:
+                            normalizePath(selected.worktreePath) === normalizePath(selected.repoPath)
+                              ? 'Move to a Worktree…'
+                              : 'Move to Main Checkout…',
+                          title: 'Same branch, same conversation; uncommitted changes come along',
+                          onSelect: () => setMoveTarget(selected),
+                        },
+                        {
+                          id: 'archive',
+                          label: 'Archive Task…',
+                          title: 'Out of the active list (opens the archive dialog)',
+                          onSelect: () => {
+                            setEndIntent('archive');
+                            setArchiveTarget(selected);
+                          },
+                        },
+                        {
+                          id: 'delete',
+                          label: 'Delete Task…',
+                          tone: 'danger' as const,
+                          title: 'Worktree optional, conversation kept (opens the delete dialog)',
+                          onSelect: () => {
+                            setEndIntent('delete');
+                            setArchiveTarget(selected);
+                          },
+                        },
+                    ]}
+                  />
                   {/* The branch and folder live here and nowhere else on screen:
                       the sidebar row repeats the branch only when it adds to
                       the title, the Files bar not at all. Icons say which is
@@ -1762,8 +1822,8 @@ export default function App() {
                 switch only appears in split, as the inline button did; the
                 shell keeps ⌥F12 and its own hide button on the drawer. */}
             <OverflowMenu
-              label="Task actions"
-              title="Pane orientation, shell, task actions"
+              label="Pane actions"
+              title="Pane orientation and the shell. Task actions: click the task's name"
               items={[
                 ...(split
                   ? [
@@ -1790,55 +1850,6 @@ export default function App() {
                     : 'No project to open a shell in',
                   onSelect: () => setShellOpen((o) => !o),
                 },
-                ...(selected
-                  ? [
-                      {
-                        id: 'copy-path',
-                        label: 'Copy Worktree Path',
-                        group: true,
-                        onSelect: () => {
-                          void navigator.clipboard?.writeText(selected.worktreePath).catch(() => {});
-                        },
-                      },
-                      {
-                        id: 'copy-session',
-                        label: 'Copy Session ID',
-                        disabled: selected.sessionId === null,
-                        title: selected.sessionId ?? 'No session yet',
-                        onSelect: () => {
-                          if (selected.sessionId) void navigator.clipboard?.writeText(selected.sessionId).catch(() => {});
-                        },
-                      },
-                      {
-                        id: 'move',
-                        label:
-                          normalizePath(selected.worktreePath) === normalizePath(selected.repoPath)
-                            ? 'Move to a Worktree…'
-                            : 'Move to Main Checkout…',
-                        title: 'Same branch, same conversation; uncommitted changes come along',
-                        onSelect: () => setMoveTarget(selected),
-                      },
-                      {
-                        id: 'archive',
-                        label: 'Archive Task…',
-                        title: 'Out of the active list (opens the archive dialog)',
-                        onSelect: () => {
-                          setEndIntent('archive');
-                          setArchiveTarget(selected);
-                        },
-                      },
-                      {
-                        id: 'delete',
-                        label: 'Delete Task…',
-                        tone: 'danger' as const,
-                        title: 'Worktree optional, conversation kept (opens the delete dialog)',
-                        onSelect: () => {
-                          setEndIntent('delete');
-                          setArchiveTarget(selected);
-                        },
-                      },
-                    ]
-                  : []),
               ]}
             />
           </div>
