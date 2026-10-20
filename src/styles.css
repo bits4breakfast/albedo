@@ -569,6 +569,11 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .icon-btn[aria-expanded='true'] { background: var(--panel-hover); color: var(--text); }
 .icon-btn[disabled] { color: var(--faint); background: transparent; }
 
+/* The Files column toggle: the glyph's fill carries on/off, as the icon does
+   in every macOS sidebar toggle, so the colour need not. */
+.panel-toggle svg { display: block; width: 16px; height: 16px; }
+.panel-toggle[aria-pressed='true'] { color: var(--text); }
+
 /* A keyboard hint, shown inline where the binding is (⌘N, ⌘1). */
 .kbd {
   display: inline-flex;

@@ -44,6 +44,7 @@ import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
 import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
+import PanelToggle from './ui/PanelToggle';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
 import { grantProjectDirs } from './lib/fsGrants';
@@ -1238,15 +1239,6 @@ export default function App() {
         : panesWidth;
   const filesColumnFits = readAreaWidth >= filesWidth + READ_MIN;
   const filesColumnShown = filesPinned && mode !== 'pty' && filesColumnFits;
-  // The Files ⋯ menu's "Keep as Column", in both the tab and the column.
-  const filesColumn = useMemo(
-    () => ({
-      pinned: filesPinned,
-      fits: filesColumnFits,
-      onToggle: () => setFilesPinned((v) => !v),
-    }),
-    [filesPinned, filesColumnFits],
-  );
 
   // Derived rather than corrected in an effect: switching task while the editor
   // tab is showing falls straight back to the transcript, with no flash.
@@ -1912,10 +1904,15 @@ export default function App() {
                     ✕
                   </button>
                 )}
-                {/* Last, so it lines up with the ⋯ of the rows above.
-                    "Keep as Column" is in it: a layout preference, not an
-                    action, and accent text here read as a second Push. */}
                 {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
+                {/* Last: the corner. Moves to the column's head once shown. */}
+                {!filesColumnShown && (
+                  <PanelToggle
+                    on={filesPinned}
+                    waiting={filesPinned}
+                    onToggle={() => setFilesPinned((v) => !v)}
+                  />
+                )}
               </div>
               )}
 
@@ -1962,7 +1959,7 @@ export default function App() {
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
                   {selected ? (
                     <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
-                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={tabFilesSlot} column={filesColumn} />
+                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={tabFilesSlot} />
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
@@ -2002,14 +1999,14 @@ export default function App() {
                   <div className="pane-head">
                     <span>Files</span>
                     <span className="pane-head-note" />
-                    {/* The git ⋯ menu lands here (GitBar portals into it).
-                        "Keep as Column" is in it. */}
+                    {/* The git ⋯ menu lands here (GitBar portals into it). */}
                     <span className="pane-head-slot" ref={setColumnFilesSlot} />
+                    <PanelToggle on onToggle={() => setFilesPinned(false)} />
                   </div>
                   <div className="pane-body">
                     {selected ? (
                       <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
-                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={columnFilesSlot} column={filesColumn} />
+                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={columnFilesSlot} />
                       </PaneErrorBoundary>
                     ) : (
                       <div className="placeholder">

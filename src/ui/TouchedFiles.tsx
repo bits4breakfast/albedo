@@ -30,7 +30,7 @@ import {
 } from '../git/worktree';
 import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
-import GitBar, { type ColumnPin } from './GitBar';
+import GitBar from './GitBar';
 import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
@@ -70,11 +70,9 @@ export interface TouchedFilesProps {
   activePath?: string | null;
   /** The pane head's slot for the git ⋯ menu (see GitBar). */
   menuSlot?: HTMLElement | null;
-  /** The "Keep as Column" preference, offered in that menu. */
-  column?: ColumnPin | null;
 }
 
-export default function TouchedFiles({ task, activePath = null, menuSlot = null, column = null }: TouchedFilesProps): ReactNode {
+export default function TouchedFiles({ task, activePath = null, menuSlot = null }: TouchedFilesProps): ReactNode {
   const [files, setFiles] = useState<TouchedFile[]>([]);
   const [gitError, setGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -498,7 +496,6 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null,
           refreshing={loading}
           menuSlot={menuSlot}
           actionSlot={actionSlot}
-          column={column}
         />
       ) : null}
     </div>

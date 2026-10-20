@@ -51,16 +51,7 @@ export interface GitBarProps {
   menuSlot?: HTMLElement | null;
   /** Where the main action goes: the first section heading's right end. */
   actionSlot?: HTMLElement | null;
-  /** Files as a pinned column beside the transcript: a view option here. */
-  column?: ColumnPin | null;
   refreshing: boolean;
-}
-
-export interface ColumnPin {
-  pinned: boolean;
-  /** Whether the window is wide enough for the column right now. */
-  fits: boolean;
-  onToggle: () => void;
 }
 
 interface MenuItem {
@@ -70,8 +61,6 @@ interface MenuItem {
   run: () => void;
   /** Ticked: a view option that is in effect. */
   checked?: boolean;
-  /** An on/off option rather than one of a set: a checkbox, not a radio. */
-  toggle?: boolean;
   /** Starts a new group: a rule above it. */
   group?: boolean;
   disabled?: boolean;
@@ -90,7 +79,6 @@ export default function GitBar({
   refreshing,
   menuSlot = null,
   actionSlot = null,
-  column = null,
 }: GitBarProps): ReactNode {
   const pr = usePrStatus(task);
   // `undefined` is "not asked yet": no Create PR until gh has had its say,
@@ -153,21 +141,6 @@ export default function GitBar({
       disabled: refreshing,
     },
   );
-  if (column) {
-    items.push({
-      key: 'column',
-      label: 'Keep as Column',
-      hint: !column.pinned
-        ? 'Always visible beside the transcript, and kept across restarts'
-        : column.fits
-          ? 'Put Files back in the tab strip'
-          : 'Pinned, but there is no room at this width: a tab until there is',
-      run: column.onToggle,
-      checked: column.pinned,
-      toggle: true,
-      group: true,
-    });
-  }
 
   // The menu sits in the pane head; this bar appears only when there is an
   // action to take (Push, Create PR). A bar holding nothing but ⋯ was a whole
@@ -313,7 +286,7 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
                 key={item.key}
                 type="button"
                 className="row-menu-item"
-                role={item.checked === undefined ? 'menuitem' : item.toggle ? 'menuitemcheckbox' : 'menuitemradio'}
+                role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
                 aria-checked={item.checked}
                 data-group={item.group ? 'true' : undefined}
                 disabled={item.disabled}
