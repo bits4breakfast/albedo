@@ -203,13 +203,36 @@ From the composer you can also **Clear** or **Compact** the task's context.
   is now and this task's change to it. **⌘S** saves, and if Claude changed
   the file on disk since you opened it, Albedo refuses to overwrite it and
   says so.
-- Select lines and press **⇧⌘C** to leave a review comment. Comments collect
-  in the Files panel, and you send them to Claude in one go.
 - The button at the top of Files moves the branch along: **Push**, then
   **Create PR**, then the pull request with its checks. **⇧⌘P** pushes,
   committing first if needed. **Squash & Rebase…** is in the menu next to it.
 - When the pull request is merged, the task offers a follow-up task, archiving
   and deleting.
+
+### Review the change, then send all your comments at once
+
+Review a task's work the way you would review a pull request: leave comments
+on the code as you read, and hand them to Claude together when you are done.
+Nothing reaches Claude until you send it.
+
+1. **Comment as you read.** In the editor, select lines and press **⇧⌘C**. In
+   the diff view, press or drag the **+** next to the lines. Comments are
+   saved in Albedo's database, so they survive a restart.
+2. **Collect.** Every comment is listed in the **Comments** section at the top
+   of the Files panel. Click one to jump back to its lines.
+3. **Send in one go.** **Add N to Message** puts every comment that has not
+   been sent yet into the message box, each with its file, its lines, the
+   code it points at, and your note, under a short intro. Read it, edit it if you want, and send it like any other
+   message. **Intro…** changes the intro text, and Albedo remembers your
+   version.
+4. **Follow up.** A comment is marked **Sent** only once a message carrying it
+   has actually gone to Claude, not when it is merely in the message box.
+   Click **✓** to resolve a comment once it has been dealt with.
+
+Comments are anchored to the text of the lines, not to line numbers, so they
+stay on the right code while Claude edits the file around them. If the lines
+themselves change, the comment is listed as outdated instead of being pinned
+to the wrong code.
 
 ### Find your way around the code
 
@@ -295,7 +318,7 @@ you resume or import from History.
 | ⌘↓ | Jump to the latest message |
 | ⌘B or ⌘-click | Go to Declaration (in the editor) |
 | ⌥F7 | Find Usages (in the editor) |
-| ⇧⌘C | Comment on the selected lines (in the editor) |
+| ⇧⌘C | Comment on the selected lines (in the editor); send them all from the Files panel |
 | ⇧⌘D | File / this task's change (in the editor) |
 | ⌥F12 | Shell in the main checkout |
 | ⌘+ / ⌘− / ⌘0 | Bigger / smaller / actual-size text |
