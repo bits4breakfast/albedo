@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 import type { Task } from '../types';
 import { openExternal } from '../lib/openUrl';
-import { getPrStatus, usePrStatus } from '../gh/prStore';
+import { getPrStatus, usePrStatus, usePrStatusVersion } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
 import { commitsOnBranch } from '../git/worktree';
 import { prLabel, prTooltip, type PrStatus } from '../gh/prStatus';
@@ -41,7 +41,10 @@ export interface PrBadgeProps {
 export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
   const pr = usePrStatus(task);
   // `undefined` is "gh has not answered yet": no button that a PR already
-  // opened would make wrong.
+  // opened would make wrong. usePrStatus maps both to null, so its snapshot
+  // does not change when gh answers "none" -- the version does, and is what
+  // re-renders this when it does.
+  usePrStatusVersion();
   const answered = task ? getPrStatus(task.id) !== undefined : false;
   const askable = !!task && !!onCreatePr && answered && pr === null && prLookupBranch(task) !== null;
   const [own, setOwn] = useState<number | null>(null);

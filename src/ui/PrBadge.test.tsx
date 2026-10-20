@@ -12,6 +12,7 @@ const state = { answered: true, pr: null as unknown };
 vi.mock('../gh/prStore', () => ({
   getPrStatus: () => (state.answered ? state.pr : undefined),
   usePrStatus: () => state.pr,
+  usePrStatusVersion: () => 0,
 }));
 vi.mock('../git/worktree', () => ({ commitsOnBranch: vi.fn(async () => 3) }));
 
