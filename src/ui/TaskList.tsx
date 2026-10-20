@@ -415,6 +415,9 @@ export default function TaskList({
                     )}
                   </span>
                   <span className="task-age">{relativeTime(task.lastActivityAt, now)}</span>
+                  {/* Shares the age's spot and swaps in on hover: reserving
+                      its own width hid on every row cut titles short. */}
+                  {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
                   <span className="task-meta">
                     {/* When a project tab is active the repo is already the
                         tab; repeating it on every row is noise. On "All" it is
@@ -437,7 +440,6 @@ export default function TaskList({
                           {ctxText}
                         </span>
                       )}
-                      {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
                     </span>
                   </span>
                   <ContextMeter usage={ctx} variant="hairline" />

@@ -161,7 +161,7 @@
   --traffic-lights-w: 0px;
   --sidebar-min: 200px;
   --sidebar-max: 480px;
-  --row-h: 52px;
+  --row-h: 36px;              /* one line per task, as Linear lists issues */
   --tab-h: 40px;              /* the one chrome row per pane */
   --pane-head-h: 34px;
   --radius-sm: 5px;           /* buttons, chips, menu items */
@@ -440,6 +440,11 @@ button {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  /* The frame, as Linear draws it: the sidebar and the title bar are one
+     chrome ground, and the work sits on it as a single inset card. One
+     outline separates the two, so no two borders can meet at that edge. */
+  background: var(--panel-chrome);
+  padding: 0 8px 8px 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -457,7 +462,6 @@ button {
   padding-left: max(var(--traffic-lights-w), 16px);   /* clear of the stoplights, if any */
   padding-right: 10px;
   background: var(--panel-chrome);
-  border-bottom: 1px solid var(--border);
 }
 
 
@@ -574,7 +578,6 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   flex-direction: column;
   min-width: var(--sidebar-min);
   background: var(--panel-chrome);
-  border-right: 1px solid var(--border);
   overflow: hidden;
 }
 
@@ -665,15 +668,15 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 
 .task-row {
   display: grid;
-  grid-template-columns: 16px 1fr auto;
-  grid-template-rows: auto auto;
+  /* status | title | context %, ⌘N | age -- one line. The second line held
+     the branch, which now lives only in the task bar. */
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
   column-gap: 8px;
-  row-gap: 1px;
   align-items: center;
   width: 100%;
   min-height: var(--row-h);
   margin-bottom: 1px;
-  padding: 7px 8px 8px 10px;
+  padding: 6px 8px 6px 10px;
   text-align: left;
   border-radius: var(--radius);
   /* The attention mark (below). Transparent at rest, so it costs no width. */
@@ -747,7 +750,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 }
 
 .task-age {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1;
   font-size: var(--fs-xs);
   color: var(--faint);
@@ -755,8 +758,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 }
 
 .task-meta {
-  grid-column: 2 / span 2;
-  grid-row: 2;
+  grid-column: 3;
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -783,9 +786,11 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   white-space: nowrap;
 }
 /* ⌘1-9. Hidden until hover or selection, by visibility -- never opacity. */
-.task-index { margin-left: auto; flex: 0 0 auto; visibility: hidden; }
-.task-row:hover .task-index,
-.task-row[data-selected='true'] .task-index { visibility: visible; }
+/* ⌘N sits in the age's cell and swaps in on hover, so it costs no width.
+   Hidden by visibility, never opacity (CLAUDE.md, Contrast rule 2). */
+.task-index { grid-column: 4; grid-row: 1; justify-self: end; visibility: hidden; }
+.task-row:hover .task-index { visibility: visible; }
+.task-row:hover .task-age { visibility: hidden; }
 
 /* Status glyph ------------------------------------------------------------ */
 /*
@@ -889,6 +894,9 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   flex-direction: column;
   min-width: 0;
   background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
 /* The task bar: ONE chrome row. Identity on the left (project / title,
@@ -1374,7 +1382,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   gap: 6px;
 }
 
-.task-index { margin-left: 0; }
+
 
 .task-ctx-text {
   font-family: var(--font-mono);
