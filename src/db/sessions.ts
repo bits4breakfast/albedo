@@ -204,8 +204,10 @@ export async function listPastSessions(opts?: {
             MIN(m.ts)                   AS first_ts,
             MAX(m.ts)                   AS last_ts,
             COUNT(*)                    AS message_count,
-            MAX(m.task_id)              AS task_id
+            MAX(live.id)                AS task_id
        FROM messages m
+       -- An archived task is no task to open: its session resumes afresh.
+       LEFT JOIN tasks live ON live.id = m.task_id AND live.status != 'archived'
        LEFT JOIN (
          -- One row per session. A session id can appear in more than one
          -- transcript file (resume, compaction), and joining transcript_files
@@ -238,8 +240,8 @@ function toPastSession(r: SessionRow): PastSession {
     firstTs: r.first_ts,
     lastTs: r.last_ts,
     messageCount: r.message_count,
-    // MAX() skips NULLs, so this is "some row of this session was adopted",
-    // which is exactly the question the UI is asking.
+    // MAX() skips NULLs, so this is "some row of this session is held by a
+    // live task", which is exactly the question the UI is asking.
     taskId: r.task_id,
     cwdExists: null,
   };
