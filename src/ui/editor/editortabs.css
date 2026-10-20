@@ -1,0 +1,98 @@
+/* ==========================================================================
+   Editor tabs -- one per open file. Imported by EditorTabs.tsx.
+
+   Surfaces are shell tokens only. The strip is --panel, like the editor's
+   title bar under it; the active tab takes the editor's own ground
+   (--panel-inset) so it reads as joined to the file below. Text is --muted on
+   the strip (cleared against --panel-raised, a darker ground than --panel in
+   light and a lighter one in dark), --text on hover, --text-strong when
+   active. Never opacity.
+   ========================================================================== */
+
+.ed-tabs-root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ed-tabstrip {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.ed-tabstrip::-webkit-scrollbar { display: none; }
+
+.ed-tab {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 0 4px 0 12px;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ed-tab:hover { color: var(--text); background: var(--panel-hover); }
+.ed-tab[aria-selected='true'] {
+  color: var(--text-strong);
+  background: var(--panel-inset);
+  /* Covers the strip's hairline, so the tab opens into the file below. */
+  margin-bottom: -1px;
+}
+.ed-tab:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.ed-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Unsaved edits: the same quiet dot as the title bar's. */
+.ed-tab-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ed-tab-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;   /* WCAG 2.2 target size */
+  height: 24px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.ed-tab-close:hover { color: var(--text-strong); background: var(--panel-raised); }
+.ed-tab-close:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.ed-tabs-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ed-tab-panel {
+  position: absolute;
+  inset: 0;
+}
+.ed-tab-panel[hidden] { display: none; }

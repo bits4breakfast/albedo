@@ -1,0 +1,372 @@
+/* ==========================================================================
+   Editor pane — owner: editor workstream (M4).
+
+   Colour comes from the tokens in src/styles.css. The one exception is the
+   `--ed-*` block below, and it is deliberate -- see the note there. Class names
+   are `ed-` prefixed. Imported by FileEditor.tsx.
+
+   Same visual grammar as the rest of the cockpit: square, hairline borders,
+   dense, quiet. The editor is an overlay because opening a file is something
+   you do *from* the transcript and return out of, not a fourth pane.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Editor-local tokens.
+
+   Four CodeMirror surfaces are *overlays* rather than solid fills: they wash
+   over the code underneath instead of replacing it, so none of them can be a
+   shell surface token. A low-alpha white veil is the obvious way to write one
+   and it is exactly the trap the theme split exposes -- white on a light ground
+   reads as nothing at all, so the active line and the search hit silently stop
+   existing.
+
+   The search veil varies alpha off `--warn-rgb`, the channel token the shell
+   added for exactly this, so it tracks the warn hue per theme from a single
+   definition and cannot drift from the banner or the blocked row.
+
+   Only the two neutral veils need a per-theme value, in the three blocks
+   docs/ARCHITECTURE.md ("Theming") requires. Light is the base and dark overrides, so no
+   value is defined only inside a media or [data-theme] block. Everything is
+   scoped to `.ed-root` so nothing leaks into another pane.
+
+   Alphas are tuned against the *well* (`--panel-inset`), which is #ffffff in
+   light and #0c0d0f in dark -- not against the window ground.
+   -------------------------------------------------------------------------- */
+
+.ed-root {
+  /* Cursor line: a dark veil on light. #ffffff -> #f1f1f1. */
+  --ed-line-active: rgb(0 0 0 / 0.055);
+  /* Other occurrences of the selected word. #ffffff -> #e3e3e3. */
+  --ed-match: rgb(0 0 0 / 0.11);
+  /*
+     Search hits. One fill for every match; the current one is distinguished by
+     an outline, NOT by a heavier wash.
+
+     Measured: above roughly 0.20 alpha the wash drags github-light's palest
+     token (the comment grey #59636e) under 4.5:1, and the current match is
+     precisely the one you are trying to read. 0.18 leaves the palest token at
+     4.58:1 on light and 4.51:1 on dark (re-measured for the indigo palette's
+     --warn-rgb; there is no headroom left, so do not raise it), and the outline carries "this is the
+     one" without touching what is behind the glyphs.
+  */
+  --ed-search: rgb(var(--warn-rgb) / 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .ed-root {
+    /* #0c0d0f -> #141519 and #1d1e20. */
+    --ed-line-active: rgb(255 255 255 / 0.032);
+    --ed-match: rgb(255 255 255 / 0.07);
+  }
+}
+
+:root[data-theme='dark'] .ed-root {
+  --ed-line-active: rgb(255 255 255 / 0.032);
+  --ed-match: rgb(255 255 255 / 0.07);
+}
+
+.ed-root {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel-inset);
+  border-left: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+/* --- top bar ------------------------------------------------------------- */
+
+.ed-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: var(--row-h);
+  padding: 0 8px 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Filename, then its folder. The folder gives way first (shrink weight 1000 vs
+   1), so the filename clips only once the folder is gone entirely. */
+.ed-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  /* The shell turns selection off app-wide; a path is something you copy. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.ed-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+}
+.ed-folder {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.ed-copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;   /* WCAG 2.2 target size */
+  height: 24px;
+  padding: 0 4px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.ed-copy:hover { color: var(--text-strong); background: var(--panel-raised); }
+.ed-copy:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.ed-copy[data-state='copied'] { color: var(--add); }
+.ed-copy[data-state='failed'] { color: var(--del); }
+
+.ed-nav {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;     /* the first arrow's glyph, not its hit area, meets the gutter */
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.ed-nav-pos { padding: 0 4px; }
+.ed-nav-btn {
+  min-width: 24px;   /* WCAG 2.2 target size */
+  height: 24px;
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+.ed-nav-btn:hover:not(:disabled) { color: var(--text-strong); background: var(--panel-raised); }
+.ed-nav-btn:disabled { color: var(--muted); cursor: default; }
+.ed-nav-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+.ed-line {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.ed-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-raised);
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
+
+/* Unsaved-changes dot. Quiet: the Save button carries the real signal. */
+.ed-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ed-spacer { flex: 1 1 auto; }
+
+.ed-status {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  color: var(--muted);
+}
+.ed-status[data-tone='ok'] { color: var(--add); }
+.ed-status[data-tone='warn'] { color: var(--warn); }
+.ed-status[data-tone='error'] { color: var(--danger); }
+
+/* --- buttons ------------------------------------------------------------- */
+
+.ed-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.ed-btn:hover:not(:disabled) { color: var(--text-strong); border-color: var(--accent-line); }
+.ed-btn:active:not(:disabled) { background: var(--panel); }
+.ed-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.ed-btn:disabled { color: var(--faint); cursor: default; }
+
+.ed-btn.ed-danger { color: var(--danger); }
+.ed-btn.ed-danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+
+/* --- notices ------------------------------------------------------------- */
+
+.ed-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+}
+
+.ed-notice > span { flex: 1 1 auto; }
+.ed-notice[data-tone='warn'] { border-left: 2px solid var(--warn); color: var(--warn); }
+.ed-notice[data-tone='error'] { border-left: 2px solid var(--danger); color: var(--danger); }
+.ed-notice[data-tone='muted'] { border-left: 2px solid var(--faint); color: var(--muted); }
+
+/* --- body ---------------------------------------------------------------- */
+
+.ed-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ed-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --- image preview -------------------------------------------------------
+   The checkerboard is two surface tokens, so it follows the theme and no text
+   ever sits on it; the size line below sits on the pane's own ground. */
+.ed-image {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ed-image-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  padding: 24px;
+}
+
+.ed-image-stage img {
+  /* margin: auto centres it, and unlike justify/align-content it never clips
+     the top-left of a picture larger than the pane. */
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: zoom-in;
+  background-color: var(--panel-inset);
+  background-image: conic-gradient(var(--panel-hover) 25%, transparent 0 50%, var(--panel-hover) 0 75%, transparent 0);
+  background-size: 16px 16px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.ed-image-stage[data-actual='true'] img {
+  max-width: none;
+  max-height: none;
+  cursor: zoom-out;
+}
+
+.ed-image-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.ed-message {
+  padding: 24px;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.ed-message[data-tone='error'] { color: var(--danger); }
+
+.ed-message strong { color: var(--text-strong); font-weight: 500; }
+
+.ed-message-sub {
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.ed-message code {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+/* --- syntax colour -------------------------------------------------------
+
+   Shiki tokenises against both themes at once and every token carries
+   `--shiki-light` and `--shiki-dark` (src/lib/highlight.ts); this rule is what
+   picks one. Switching theme is then a pure repaint — no re-tokenising, no
+   flash, and the token cache stays theme-agnostic.
+
+   The sibling rule for the transcript pane is `.tx-tok` in transcript.css. The
+   selectors differ because each pane owns its own DOM; the mechanism, the
+   property names and the serialiser (`styleToCss`) are shared, which is what
+   keeps the two from drifting.
+
+   `inherit` as the fallback matters: a token with no colour for the active
+   theme, or an unhighlightable file, must read as body text rather than as
+   nothing.
+   ------------------------------------------------------------------------- */
+
+.ed-tok { color: var(--shiki-light, inherit); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .ed-tok { color: var(--shiki-dark, inherit); }
+}
+
+:root[data-theme='dark'] .ed-tok { color: var(--shiki-dark, inherit); }
+
+/* --- the "you asked for line N" flash ------------------------------------ */
+
+.cm-line.ed-flash {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+  transition: background 400ms ease-out, box-shadow 400ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-line.ed-flash { transition: none; }
+}

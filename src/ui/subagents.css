@@ -1,0 +1,203 @@
+/* --------------------------------------------------------------------------
+   Subagents running in parallel, and the inspector for one of them.
+
+   A strip, not a pane: present only while something is live, so a session that
+   never fans out pays no transcript height for it.
+
+   Rows, laid out like a macOS sidebar list: a status mark that is a dot AND a
+   word (colour is never the only signal), the label in --text at --fs-sm
+   wrapped to two lines, the elapsed time right-aligned in tabular figures so a
+   column of clocks does not jitter as they tick.
+
+   No ground is invented here. Every surface is a token:
+     strip / inspector header   --panel
+     row hover                  --panel-hover
+     row pressed                --panel-active
+     row being inspected        --panel-raised
+     inspector body             --bg (via .tx-pane)
+   Measured, worst case across those grounds (light / dark):
+     --text           11.42 / 10.72
+     --muted           5.77 /  6.42
+     --faint           4.71 /  4.64   (only on hints, never on the label)
+     --status-running  4.93 /  5.94
+     --status-blocked  4.98 /  7.69
+   -------------------------------------------------------------------------- */
+
+.sa-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 6px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: var(--fs-xs);
+}
+
+.sa-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+  padding: 0 6px;
+}
+
+.sa-lede {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.sa-toggle {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+.sa-toggle:hover { background: var(--panel-hover); }
+.sa-toggle:active { background: var(--panel-active); color: var(--text-strong); }
+
+.sa-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Expanded with many agents, the list scrolls rather than eating the pane. */
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A whole row is the click target (HIG: generous hit areas in lists). */
+.sa-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.sa-row:hover { background: var(--panel-hover); }
+.sa-row:active { background: var(--panel-active); }
+.sa-row[aria-current='true'] { background: var(--panel-raised); }
+
+.sa-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Line up with the label's first line, not the middle of a two-line one. */
+  min-height: calc(var(--fs-sm) * 1.35);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sa-status[data-status='running'] .sa-status-word,
+.sa-row[data-status='running'] .sa-status-word { color: var(--status-running); }
+.sa-status[data-status='blocked'] .sa-status-word,
+.sa-row[data-status='blocked'] .sa-status-word { color: var(--status-blocked); }
+.sa-status[data-status='idle'] .sa-status-word,
+.sa-row[data-status='idle'] .sa-status-word { color: var(--muted); }
+
+.sa-label {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.sa-elapsed {
+  flex: none;
+  min-height: calc(var(--fs-sm) * 1.35);
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   Inspector
+
+   Laid OVER the transcript pane, inside the same tab panel (which is the
+   positioned ancestor), so the parent's pane stays mounted underneath with its
+   scroll position, loaded history and composer draft intact for "back".
+   -------------------------------------------------------------------------- */
+
+.sa-inspector {
+  position: absolute;
+  inset: 0;
+  /* Above the parent pane and its floating "latest" button (z-index 1). */
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.sa-inspector-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.sa-back {
+  align-self: flex-start;
+  margin-left: -6px;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: var(--fs-sm);
+}
+.sa-back:hover { background: var(--panel-hover); }
+.sa-back:active { background: var(--panel-active); color: var(--text-strong); }
+
+.sa-inspector-title {
+  /* The full assignment, not a truncation: this is where you came to read it.
+     Clamped only so a pasted essay cannot push the transcript off screen. */
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+
+.sa-inspector-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.sa-readonly {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
+.tx-pane.sa-inspector-pane {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+}

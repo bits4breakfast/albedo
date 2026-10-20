@@ -1,0 +1,31 @@
+-- v4: resuming previously-captured Claude Code sessions.
+--
+-- Two additions, and the first is a safety constraint rather than a feature.
+--
+-- owns_worktree: Albedo creates worktrees for tasks it cuts, and `git worktree
+-- remove` on archive is safe because it created them. A RESUMED session runs in
+-- whatever cwd it originally used -- frequently the main repo checkout, e.g.
+-- ~/www/upsellguru. Offering to remove that on archive would be catastrophic and
+-- entirely plausible-looking, because the archive flow cannot otherwise tell the
+-- difference. Tasks must carry whether Albedo owns the directory.
+--
+-- DEFAULT 0, deliberately, and NOT because of the existing rows.
+--
+-- A column default does two jobs. It backfills existing rows -- and `tasks` has
+-- zero of them, so that job is worth nothing here. It ALSO fills future INSERTs
+-- that omit the column, which means any insert path that forgets owns_worktree
+-- silently declares "Albedo owns this directory": exactly the claim this column
+-- exists to stop anyone making by accident.
+--
+-- So the default points the safe way. Getting it wrong in the 0 direction gives
+-- an Albedo-cut worktree that is never offered for cleanup -- annoying, visible,
+-- and the reconcile view surfaces it anyway. Getting it wrong in the 1 direction
+-- offers `git worktree remove` on a directory the user made. Asymmetric, so take
+-- the safe side. createTask names the column explicitly regardless.
+ALTER TABLE tasks ADD COLUMN owns_worktree INTEGER NOT NULL DEFAULT 0;
+
+-- Claude Code writes an `ai-title` (and sometimes `custom-title`) line into the
+-- transcript. The adapter skips those as bookkeeping, which is right for the
+-- messages table -- but a session browser listing 115 past conversations needs
+-- something better than "the first 60 characters of the first prompt".
+ALTER TABLE transcript_files ADD COLUMN title TEXT;

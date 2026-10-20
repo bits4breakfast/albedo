@@ -1,0 +1,1527 @@
+/* ==========================================================================
+   Transcript pane (M4). Owned by the transcript workstream.
+
+   Uses only the design tokens defined in src/styles.css. All class names are
+   `tx-` prefixed. Calm, quiet, information first: the diff is the thing you
+   came to read, so everything around it stays out of the way. The pane sits
+   on --panel; chips and cards are hairline-edged with soft radii.
+   ========================================================================== */
+
+.tx-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--panel);
+  color: var(--text);
+  /* The shell disables selection app-wide; a read pane must allow copying. */
+  user-select: text;
+  cursor: auto;
+}
+
+/* Holds the scroller and the "latest" button, which is positioned against
+   this box: against the pane it landed on the composer and covered Send. */
+.tx-scroll-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tx-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 20px 28px 8px;
+  overscroll-behavior: contain;
+  /* No native scrollbar: a styled one takes 9px of layout, so full-width rows
+     stopped short of the edge. OverlayScrollbar draws the thumb on top. */
+  scrollbar-width: none;
+}
+.tx-scroll::-webkit-scrollbar { display: none; }
+
+/* The overlay rail: the right 10px of the pane, above the rows. */
+.tx-rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 2;
+}
+.tx-thumb {
+  position: absolute;
+  right: 2px;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--scrollbar);
+  cursor: default;
+}
+.tx-rail:hover .tx-thumb { width: 8px; right: 1px; border-radius: 4px; }
+.tx-thumb:hover,
+.tx-thumb[data-dragging] { background: var(--scrollbar-hover); }
+
+.tx-pane-empty {
+  padding: 24px 14px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.tx-error {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.tx-page-top {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 10px;
+}
+
+.tx-page-start {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
+.tx-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-mid);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+}
+.tx-btn:hover { background: var(--panel-hover); color: var(--text); }
+/* A lower tier, never `opacity` (CLAUDE.md, Contrast rule 2). */
+.tx-btn:disabled { color: var(--faint); background: transparent; border-color: var(--border); }
+
+.tx-jump {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  padding: 4px 11px;
+  border: 1px solid var(--border-mid);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  border-radius: 999px;
+  box-shadow: var(--shadow-menu);
+}
+.tx-jump:hover { border-color: var(--accent-line); color: var(--text-strong); }
+/* The shortcut, on the pill's own --panel-raised: --muted is cleared there. */
+.tx-jump-key {
+  margin-left: 4px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* --- something is happening ------------------------------------------------- */
+
+/* Your message, shown the moment it is sent, until the transcript has it. Its
+   text is --muted rather than faded: never `opacity` (Contrast rule 2). */
+.tx-row-echo .tx-echo-text {
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tx-row-working { margin: 6px 0 14px; }
+.tx-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.tx-working-time { font-variant-numeric: tabular-nums; }
+/* Three dots that swell in turn. Scale, not opacity, so the dots keep the
+   --muted they are drawn in. */
+.tx-working-dots { display: inline-flex; gap: 3px; }
+.tx-working-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: tx-working 1.2s ease-in-out infinite;
+}
+.tx-working-dots span:nth-child(2) { animation-delay: 0.15s; }
+.tx-working-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes tx-working {
+  0%, 60%, 100% { transform: scale(0.6); }
+  30% { transform: scale(1); }
+}
+
+/* The Send button while the paste goes in. */
+.tx-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tx-spin 0.8s linear infinite;
+}
+@keyframes tx-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tx-working-dots span,
+  .tx-spinner { animation: none; }
+}
+
+/* --- queued messages ------------------------------------------------------- */
+
+/* What Claude Code has not taken yet, between the transcript and the
+   composer. On --panel like the composer it introduces; the label is --muted
+   (cleared against the darker --panel-raised), the messages keep --text, and
+   a hairline marks each one as waiting rather than said. Never `opacity`. */
+.tx-queued {
+  flex: none;
+  max-height: 30vh;
+  overflow-y: auto;
+  padding: 6px 12px 4px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+}
+.tx-queued-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.tx-queued-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.tx-queued-hint { margin-left: auto; }
+.tx-queued-item {
+  margin: 0 0 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* Two lines each; the full text is in the tooltip. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- composer -------------------------------------------------------------- */
+
+/*
+   A foot, not a takeover: one line tall until there is something to say, and
+   not rendered at all without a task. The read surface keeps the pane.
+*/
+/* Drag handle on the composer's top edge. A hairline at rest, so it costs no
+   space and no contrast; the 6px hit area is what makes it findable. */
+.tx-grip {
+  flex: none;
+  height: 6px;
+  margin-bottom: -6px;
+  position: relative;
+  z-index: 1;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.tx-grip:hover { background: var(--border-strong); }
+
+.tx-composer {
+  flex: none;
+  padding: 8px 14px 12px;
+  background: var(--panel);
+}
+.tx-composer-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 2px;
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
+
+/*
+ * The way out of a hold. A permission prompt waits for a person, so there is
+ * no timeout to fall back on -- without this, a message held against a prompt
+ * nobody answers would freeze the composer indefinitely.
+ *
+ * `--warn` is the notice's own token (5.33 flat), inherited rather than
+ * re-picked, so the button introduces no new contrast decision.
+ */
+.tx-composer-undo {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.tx-composer-undo:hover { background: var(--panel-raised); }
+
+
+/* claude.ai's composer: one rounded box, the text on top, the controls in a
+   row inside it. The box carries the edge and the focus ring; the textarea
+   inside is bare. */
+.tx-composer-box {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-inset);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
+}
+.tx-composer-box:focus-within { border-color: var(--border-strong); }
+
+.tx-composer-input {
+  width: 100%;
+  min-height: 44px;
+  max-height: 240px;
+  padding: 12px 14px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  /* Prose you are writing to Claude, so the reading face, not the code one. */
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  resize: none;
+  overflow-y: auto;
+}
+.tx-composer-input:focus-visible { outline: none; }
+.tx-composer-input::placeholder { color: var(--faint); }
+/* Frozen while a send is pending -- readOnly keeps the caret, this shows why. */
+.tx-composer-input:read-only { color: var(--muted); }
+
+.tx-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 8px 8px 10px;
+}
+.tx-composer-accessory { display: flex; align-items: center; min-width: 0; }
+/* Attach: a "+" inside the box at its bottom left, as on claude.ai; the
+   controls that act on the message stay at the right, by Send. Quiet like
+   the model picker until hovered. */
+.tx-composer-attach {
+  flex: none;
+  margin-right: auto;
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.tx-composer-attach:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
+.tx-composer-attach:disabled { color: var(--faint); }
+/* The model reads as text with a chevron, as on claude.ai, not as a boxed
+   field: it is a setting of the message, not a form control beside it. */
+.tx-composer-accessory .model-pick-select {
+  height: 30px;
+  padding: 0 22px 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  background-position: right 7px center;
+  background-size: 10px 10px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.tx-composer-accessory .model-pick-select:hover:not(:disabled) { color: var(--text); background-color: var(--panel-hover); }
+.tx-composer-accessory .model-pick-note { font-size: var(--fs-xs); margin-right: 4px; }
+.tx-composer-accessory:empty { display: none; }
+
+/* Round, like claude.ai's: quiet until there is something to send, then the
+   accent. White on --accent-btn is the primary button's pair (6.63 light,
+   5.29 dark). */
+.tx-composer-send {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: var(--accent-btn);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+.tx-composer-send:hover:not(:disabled) { background: var(--accent-btn-hover); }
+/* A lower tier, never `opacity` (CLAUDE.md, Contrast rule 2). */
+.tx-composer-send:disabled { color: var(--faint); background: var(--panel-raised); cursor: default; }
+
+/* --- rows ----------------------------------------------------------------- */
+
+/* One content column for everything: prose, chips, collapsed lines and your
+   own messages all start at the same x. Rhythm comes from the row's padding
+   alone -- the blocks inside a row drop their outer margins (below) -- so the
+   gap between any two rows is the same 8px whatever they contain. */
+.tx-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  padding: 5px 0;
+  align-items: start;
+}
+
+.tx-gutter {
+  padding-top: 3px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.tx-content { min-width: 0; }
+.tx-content > :first-child { margin-top: 0; }
+.tx-content > :last-child { margin-bottom: 0; }
+
+/* Two sizes in the transcript: prose at --fs-lg, everything structural (chips,
+   collapsed lines, labels) at --fs-sm. Line height is set for reading, not
+   for the dense chrome around the pane. */
+.tx-md,
+.tx-user-text {
+  font-size: var(--fs-lg);
+  line-height: 1.6;
+}
+
+/* Your messages are the landmarks of a long transcript, so they get a box:
+   their own flat ground (--user-row, measured for every text tier in the
+   token block) from the pane's left edge to near its right, where one hairline
+   closes it with rounded corners. No opacity and no tint, so nothing here changes a ratio the
+   tokens guarantee. */
+/* The box is drawn behind the row, not as the row's own border and padding,
+   so your text sits on exactly the same column as everything else. It
+   reaches into the scroller's side padding (8px / 20px): flush with the left
+   edge, so no border or radius there, and 10px from the right, clear of the
+   overlay scrollbar's rail. */
+.tx-row-user {
+  position: relative;
+  isolation: isolate;
+  margin: 12px 0 8px;
+  padding: 10px 0;
+}
+.tx-row-user::before {
+  content: '';
+  position: absolute;
+  inset: 0 -10px 0 -8px;
+  z-index: -1;
+  background: var(--user-row);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+/* "you": a label in the gutter, on --user-row (--faint 5.37 / 5.55). */
+.tx-row-user .tx-gutter {
+  align-self: start;
+  margin-top: 2px;
+  font-weight: 500;
+}
+.tx-row-user .tx-content { color: var(--text-strong); }
+
+.tx-user-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+/* A machine-generated envelope in a user row: no "you said" framing. */
+.tx-row-machine { margin: 2px 0; padding: 0; }
+
+/* A slash command, shown as the command rather than as its XML. */
+.tx-cmd {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  border-radius: var(--radius);
+}
+.tx-cmd-name { color: var(--accent); }
+.tx-cmd-args { color: var(--muted); }
+
+/* `/clear`: a boundary across the row, not a chip. Above it is out of context. */
+.tx-cleared {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.tx-cleared::before,
+.tx-cleared::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.tx-collapsed { margin: 1px 0; }
+
+/* An action started from an Albedo button: the chip is the act, the prompt
+   folds under it. */
+.tx-action-head { cursor: pointer; }
+.tx-action-head:hover { border-color: var(--border-strong); background: var(--panel-hover); }
+
+/* `!` commands from Claude Code's shell mode. The command reads as the
+   user's; its output as the terminal's. */
+.tx-shell-cmd { color: var(--text-strong); white-space: pre-wrap; word-break: break-all; }
+.tx-shell-out { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.tx-shell-out .tx-pre { align-self: stretch; }
+.tx-stderr { color: var(--danger); }
+
+.tx-output {
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  color: var(--muted);
+  border-radius: var(--radius);
+}
+
+/* A subagent's handback is a document; give it room but bound it. */
+.tx-report {
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.tx-chip-summary-wide {
+  flex: 1;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+}
+
+.tx-system-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* --- thinking ------------------------------------------------------------- */
+
+.tx-think-head,
+.tx-sidechain-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  /* 1px chip border + 8px chip padding: the caret lands on the same column as
+     a tool chip's, so a run of chips and collapsed lines reads as one list. */
+  padding: 2px 0 2px 9px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-style: italic;
+}
+.tx-think-head:hover,
+.tx-sidechain-head:hover { color: var(--text); }
+
+.tx-think-body {
+  margin: 3px 0 0 9px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+/* --- sidechain ------------------------------------------------------------ */
+
+.tx-sidechain-head { font-style: normal; }
+
+.tx-sidechain-body {
+  margin: 4px 0 0 9px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+}
+
+/* --- markdown ------------------------------------------------------------- */
+
+.tx-md { overflow-wrap: anywhere; }
+
+.tx-md-p {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+}
+.tx-md > :last-child { margin-bottom: 0; }
+
+.tx-md-h {
+  margin: 14px 0 6px;
+  line-height: 1.35;
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.tx-md-h1 { font-size: var(--fs-title); }
+.tx-md-h2 { font-size: var(--fs-heading); }
+.tx-md-h3 { font-size: var(--fs-lg); }
+.tx-md-h4 { font-size: var(--fs-lg); color: var(--muted); }
+
+/* Tables: hairline grid, the header on --panel. Text keeps its own tokens,
+   which are cleared against --panel-raised -- a darker ground than --panel in
+   light and a lighter one in dark -- so the header row cannot cost contrast.
+   The wrapper scrolls sideways; the pane never grows to fit a wide table. */
+.tx-md-table-wrap {
+  margin: 0 0 10px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.tx-md-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
+}
+.tx-md-table th,
+.tx-md-table td {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.tx-md-table th {
+  background: var(--panel);
+  color: var(--text-strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tx-md-hr {
+  margin: 9px 0;
+  border-top: 1px solid var(--border);
+}
+
+.tx-md-list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.tx-md-list li { margin: 3px 0; }
+.tx-md-list li::marker { color: var(--muted); }
+
+.tx-md-quote {
+  margin: 0 0 7px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+/* A quiet ground and a hairline: wide identifiers read as words in a
+   sentence, not a row of buttons. --panel-chrome sits between --panel and
+   --panel-raised, so every text tier keeps the contrast it was cleared at. */
+.tx-md-code {
+  padding: 1px 5px;
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  border-radius: 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.tx-md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+}
+
+.tx-md-pre {
+  position: relative;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  border-radius: var(--radius);
+}
+
+.tx-md-pre-lang {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  user-select: none;
+}
+
+.tx-md-pre-line { min-height: 1.45em; }
+
+/* --- preformatted --------------------------------------------------------- */
+
+.tx-pre {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 340px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  tab-size: 2;
+}
+
+.tx-pre-code { max-height: 520px; }
+.tx-pre-error { color: var(--del); }
+
+/* --- tool chip ------------------------------------------------------------ */
+
+.tx-chip {
+  margin: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+.tx-chip-open { background: var(--panel-chrome); }
+
+.tx-chip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 10px 3px 8px;
+  font-size: var(--fs-sm);
+  text-align: left;
+  border-radius: calc(var(--radius) - 1px);
+  /* The whole row toggles; the path inside it opts out and opens the file. */
+  cursor: pointer;
+}
+.tx-chip-head:hover .tx-chip-name { color: var(--text-strong); }
+.tx-chip:not(.tx-chip-open) > .tx-chip-head:hover { background: var(--panel-hover); }
+
+/* Caret + name: the keyboard affordance for expanding the chip. */
+.tx-chip-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  text-align: left;
+}
+
+/*
+   The disclosure caret. See Disclosure in Diff.tsx.
+
+   It was --faint at --fs-xs: the dimmest tier at the smallest size, on the one
+   element whose entire job is to announce that there is more to see. Quiet
+   means subordinate, not invisible, and the line falls in a specific place --
+   de-emphasise the CONTENT a thing hides, never the control that reveals it.
+
+   24x24 is the WCAG 2.2 target-size minimum. The negative block margin keeps
+   that hit area from pushing the rows apart: visible size and clickable size
+   are allowed to differ, and in a dense list they should.
+*/
+.tx-disc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-block: -6px;
+  margin-inline: -5px;
+  color: var(--muted);
+  line-height: 1;
+  user-select: none;
+}
+/* 12px drawn triangle, about 7x9 of ink. It was U+25B8 at --fs-lg, which is
+   roughly 5x6 -- smaller than the 13px label beside it, when the comment above
+   asks for a size ABOVE it. The 24x24 box (the hit area) is unchanged. */
+.tx-disc svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+  transition: transform 0.12s ease;
+}
+.tx-disc-open svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .tx-disc svg { transition: none; }
+}
+
+/* Hovering anywhere on the control brings the caret up with it. */
+.tx-chip-head:hover .tx-disc,
+.tx-think-head:hover .tx-disc,
+.tx-sidechain-head:hover .tx-disc,
+.tx-d-gap:hover .tx-disc,
+.tx-chip-toggle:hover .tx-disc { color: var(--text); }
+
+.tx-chip-name {
+  flex: none;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.tx-chip-target {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-chip-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-chip-state {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+.tx-chip-ok .tx-chip-state { color: var(--add); }
+.tx-chip-error .tx-chip-state { color: var(--del); }
+.tx-chip-error { border-left: 2px solid var(--del); }
+.tx-chip-pending .tx-chip-state { color: var(--warn); }
+
+.tx-chip-body {
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.tx-chip-path {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.tx-chip-section { margin-top: 5px; }
+
+/* Per-tool input: a shell command reads as shell, not as a JSON string. */
+.tx-chip-desc {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.tx-chip-raw {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tx-chip-raw:hover { color: var(--text); border-color: var(--border-strong); }
+
+.tx-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1px 10px;
+  margin: 3px 0 0;
+  font-size: var(--fs-sm);
+}
+.tx-field { display: contents; }
+.tx-field-k {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  text-align: right;
+  white-space: nowrap;
+}
+.tx-field-v {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.tx-chip-label {
+  margin: 0 0 2px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+
+.tx-chip-empty {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-style: italic;
+}
+
+.tx-chip-body .tx-pre {
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  border-radius: var(--radius);
+}
+
+/* --- questions put to the user -------------------------------------------- */
+
+/*
+ * AskUserQuestion is the one tool whose *result* is the content: the options
+ * are context, the choice is the fact. So the chosen label rides on the
+ * collapsed chip, and the expanded view marks it in the list.
+ *
+ * No new ground is invented here. The picked row reuses the already-measured
+ * `--accent-soft` / `--on-accent-soft` pair (6.77), which is the only pair in
+ * the token block cleared against that tint -- inventing a local wash is the
+ * mistake the contrast rules were written after.
+ */
+.tx-chip-answer {
+  flex: none;
+  max-width: 45%;
+  padding: 0 6px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--on-accent-soft);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-questions { display: flex; flex-direction: column; gap: 8px; }
+.tx-question + .tx-question { border-top: 1px solid var(--border); padding-top: 7px; }
+
+.tx-question-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.tx-question-tag {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
+.tx-question-text {
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.tx-question-multi {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-style: italic;
+}
+
+.tx-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tx-option {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 5px;
+  padding: 3px 5px;
+  border-radius: var(--radius);
+}
+
+.tx-option-mark {
+  color: var(--on-accent-soft);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.tx-option-picked {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent-line);
+}
+
+.tx-option-body { min-width: 0; }
+
+.tx-option-label {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.tx-option-picked .tx-option-label { color: var(--on-accent-soft); }
+
+/*
+ * `--muted` has the headroom the tinted-ground rule asks for, so it survives
+ * the wash: measured over `--accent-soft` it is 5.86 at worst across both
+ * palettes and all three grounds (light, over `--bg`), 6.77 at best. The
+ * `--on-accent-soft` pair above bottoms out at 6.27 on the same grounds.
+ */
+.tx-option-desc {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.tx-option-preview {
+  margin-top: 4px;
+  max-height: 260px;
+}
+
+.tx-option-other { margin-top: 2px; }
+
+/* --- diff ----------------------------------------------------------------- */
+
+.tx-d {
+  margin: 3px 0 7px;
+  border: 1px solid var(--border);
+  background: var(--panel-inset);
+  border-radius: var(--radius);
+  /* `clip`, not `hidden`: see .tx-d-body. Clips to the radius all the same. */
+  overflow: clip;
+}
+
+.tx-d-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-chrome);
+  font-size: var(--fs-sm);
+}
+
+/* A transcript diff opens and closes from its header (CollapsibleDiff). */
+.tx-d-head-toggle {
+  align-items: center;
+  cursor: pointer;
+}
+.tx-d-head-toggle:hover { background: var(--panel-hover); }
+.tx-d-closed .tx-d-head { border-bottom: none; }
+.tx-d-toggle {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+.tx-d-head-toggle:hover .tx-disc { color: var(--text); }
+
+.tx-d-path {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx-d-dir { color: var(--faint); }
+.tx-d-base { color: var(--text-strong); }
+
+.tx-d-stat {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.tx-d-plus { color: var(--add); }
+.tx-d-minus { color: var(--del); }
+
+.tx-d-layout { margin-left: auto; }
+
+.tx-d-empty {
+  padding: 6px 8px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-style: italic;
+}
+
+.tx-d-body {
+  /*
+     `clip`, never `hidden`. `overflow-x: hidden` silently turns the other axis
+     from `visible` into `auto`, which made the whole diff body a vertical
+     scroll container with no height limit -- scrollable by a sub-pixel of
+     rounding at most. WebKit latches a wheel gesture to the scroller under
+     the pointer, so the first gesture over a diff landed here, rubber-banded
+     and moved nothing; only the next one reached the real scroller. `clip`
+     clips the same and never makes a scroll container.
+  */
+  overflow-x: clip;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.tx-d-hunk-head {
+  padding: 2px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-d-hunk:first-child .tx-d-hunk-head { border-top: none; }
+
+.tx-d-code {
+  min-width: 0;
+  padding-right: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Line numbers: present but never competing with the code. */
+.tx-d-n {
+  flex: none;
+  padding: 0 6px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  text-align: right;
+  user-select: none;
+}
+
+/* --- unified layout ------------------------------------------------------- */
+
+.tx-d-unified .tx-d-row {
+  display: grid;
+  grid-template-columns: 42px 42px 14px minmax(0, 1fr);
+  align-items: start;
+}
+
+.tx-d-mark {
+  color: var(--faint);
+  text-align: center;
+  user-select: none;
+}
+
+/* --- split layout --------------------------------------------------------- */
+
+.tx-d-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.tx-d-half {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+.tx-d-half:first-child { border-right: 1px solid var(--border); }
+/* --- review comments in a diff (the editor's Diff mode only) -------------- */
+
+/* The + to start a comment: on hover, over the +/- column in unified and just
+   after the line number in split. An edge, not a tint, marks the lines a drag
+   covers: the add/del tints underneath were measured on their own (CLAUDE.md,
+   contrast rules 4-6) and a second wash would undo that. */
+.tx-d-row,
+.tx-d-half { position: relative; }
+.tx-d-cmt-add {
+  position: absolute;
+  top: 0;
+  left: 82px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--panel-inset);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tx-d-half > .tx-d-cmt-add { left: 40px; }
+.tx-d-row:hover > .tx-d-cmt-add,
+.tx-d-half:hover > .tx-d-cmt-add { display: flex; }
+.tx-d-picking { box-shadow: inset 2px 0 0 var(--accent); }
+.tx-d-annot { padding: 2px 0 4px; font-size: var(--fs-sm); }
+
+/* A selection stays on the side it started on (set on mousedown in Diff.tsx). */
+.tx-d-split[data-select='old'] .tx-d-half:last-child,
+.tx-d-split[data-select='new'] .tx-d-half:first-child {
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* The empty half of a split pair: a faint recess, not a wash of white. */
+.tx-d-blank { background: var(--tx-blank); }
+
+/* --- change colouring ----------------------------------------------------- */
+
+/*
+   Two layers, composed rather than stacked: the row carries the soft add/del
+   background, and `tx-d-word` carries the stronger word-level highlight. The
+   syntax colour lives on the inline `color` of each span, which is why both
+   backgrounds can sit underneath it without washing it out.
+*/
+.tx-d-add { background: var(--add-soft); }
+.tx-d-del { background: var(--del-soft); }
+.tx-d-meta { color: var(--muted); font-style: italic; }
+
+/*
+   Changed-line gutter numbers read as secondary, not as a second colour signal:
+   the row tint and the +/- marker already carry add/del. --muted lands them at
+   6.42 / 6.26 (light, add/del) and 6.80 / 7.15 (dark) against their own tinted
+   row -- a touch brighter than the --faint context numbers (6.09 / 6.36 on
+   --panel-inset), which is the emphasis we actually want.
+
+   These previously used --add/--del at `opacity: 0.7`, which measured 4.17 and
+   3.40. Never dim text with `opacity` to make it subordinate: it composites
+   against the backdrop after the token has been chosen, so it silently undoes
+   whatever contrast the token guaranteed, and no audit of the tokens can see it.
+*/
+.tx-d-add .tx-d-n,
+.tx-d-del .tx-d-n { color: var(--muted); }
+.tx-d-add .tx-d-mark { color: var(--add); }
+.tx-d-del .tx-d-mark { color: var(--del); }
+
+/*
+   Word highlight: the same hue as the row, at double strength so the changed
+   words separate from the rest of the line. Mixed from the tokens rather than
+   hardcoded, so it tracks --add/--del instead of drifting away from them.
+*/
+.tx-d-word { border-radius: 2px; }
+/* The ground is NAMED (CLAUDE.md, Contrast rule 5): a p% mix with the row's
+   tint is arithmetically the alpha composite it replaces, but it stays the
+   same pair when the theme flips. */
+.tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) var(--tx-word-tint), var(--add-soft)); }
+.tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) var(--tx-word-tint), var(--del-soft)); }
+
+/* --- collapsed regions ---------------------------------------------------- */
+
+.tx-d-gap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 1px 8px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+/* One hairline where two edges meet, never two: a gap row touching the file
+   head, a hunk head, or the box's own bottom edge drew a 2px double line. */
+.tx-d-head + .tx-d-gap,
+.tx-d-head + * > .tx-d-gap:first-child { border-top: none; }
+.tx-d-gap + .tx-d-hunk-head,
+.tx-d-gap + * > .tx-d-hunk-head:first-child { border-top: none; }
+.tx-d-gap:last-child { border-bottom: none; }
+.tx-d-gap:hover { background: var(--panel-raised); color: var(--muted); }
+.tx-d-gap-static { cursor: default; }
+.tx-d-gap-static:hover { background: var(--panel); color: var(--faint); }
+
+/*
+ * The context expanders, above and below the diff.
+ *
+ * Same bar as a gap, and deliberately so: it occupies the same slot and means
+ * the same thing ("there is more, here"). The only difference is the arrow,
+ * which says WHICH WAY the file continues -- a caret would claim it opens a
+ * region we already hold, and these lines come from the file instead.
+ *
+ * `--faint` is the gap bar's own token, already cleared on `--panel` (6.01)
+ * and on `--panel-raised` (5.04) for the hover; nothing new is introduced.
+ */
+.tx-d-gap-context { cursor: pointer; }
+.tx-d-gap-context:disabled { cursor: progress; color: var(--faint); }
+
+/*
+ * Revealed context is unchanged code, so it must not read as part of the
+ * change. It gets the same ground as the gap lines and no add/del tint --
+ * the rows inside carry `kind: 'context'`, so they already render neutrally;
+ * this only marks the block's extent.
+ */
+.tx-d-context { background: var(--panel-inset); }
+
+.tx-d-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.tx-d-more-label {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+/* --- path links ----------------------------------------------------------- */
+
+/*
+   Links are spans, not anchors: nothing here navigates, it asks the app to open
+   a file. They stay inside the selectable text flow -- no `user-select: none`,
+   no layout of their own -- so dragging across one still selects text, and the
+   click guard in `useActivate` ignores a click that ended a drag.
+*/
+.tx-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 90ms linear;
+}
+.tx-link:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent-line);
+}
+.tx-link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The chip target is quiet until pointed at, then reads as the link it is. */
+.tx-chip-target.tx-link:hover { color: var(--accent); }
+
+.tx-chip-path .tx-link { color: var(--muted); }
+.tx-chip-path .tx-link:hover { color: var(--accent); }
+
+/* Diff header path: the dir stays faint, the basename leads. */
+.tx-d-path .tx-link:hover .tx-d-base,
+.tx-d-path .tx-link:hover .tx-d-dir { color: var(--accent); }
+
+/*
+   Line numbers are a secondary affordance -- discoverable on hover of the row,
+   never shouting. They are not in the tab order; the header link is.
+*/
+.tx-d-n-link { cursor: pointer; }
+.tx-d-row:hover .tx-d-n-link,
+.tx-d-half:hover .tx-d-n-link { color: var(--accent); }
+.tx-d-n-link:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent-line);
+}
+
+/* A path inside prose keeps the code-span box and gains link affordance. */
+.tx-md-code-link { color: var(--text); }
+.tx-md-code-link:hover { color: var(--accent); border-color: var(--accent-line); }
+
+/* ==========================================================================
+   Theming
+
+   Per docs/ARCHITECTURE.md: :root carries the LIGHT values, and the dark values
+   are stated twice -- once behind the media query (guarded so an explicit
+   light choice still wins) and once behind [data-theme='dark']. Nothing is
+   defined only inside a themed block.
+
+   Hues come from the shared --add/--del tokens, so they follow the shell's
+   per-theme palette for free. What is local here is the STRENGTH of each
+   tint, which cannot be shared: the same alpha that reads as a subtle wash
+   over a near-black ground reads as nearly nothing over white.
+   ========================================================================== */
+
+:root {
+  /*
+     Light. 40%, not the dark 26%: the alphas are not interchangeable because
+     the tokens they mix are not. Dark --add is a bright green over near-black;
+     light --add is a dark green over near-white, so the same alpha lands a much
+     weaker separation. 40% puts the word highlight 1.90/1.98 (add/del) away
+     from its own row, against dark's 1.83/1.69, and --text on it measures
+     7.82/7.34 (dark: 7.02/7.99) --
+     the whole sweep from 20% to 55% clears the 4.5 text bar, so separation is
+     what picks the value here, not legibility.
+  */
+  --tx-word-tint: 40%;
+  --tx-blank: rgb(0 0 0 / 3%);/* the unused half of a split pair: 1.07 vs ground */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --tx-word-tint: 26%;
+    --tx-blank: rgb(255 255 255 / 1.5%);
+  }
+}
+
+:root[data-theme='dark'] {
+  --tx-word-tint: 26%;
+  --tx-blank: rgb(255 255 255 / 1.5%);
+}
+
+/*
+   Syntax colour.
+
+   Every token span carries both themes as custom properties (see
+   src/lib/highlight.ts); these three rules are what choose between them. This
+   is the whole cost of theme switching for highlighted code -- no
+   re-tokenising, no re-render, no flash. The `inherit` fallback covers tokens
+   with no colour, which is what the plain-text fallback produces.
+*/
+.tx-tok { color: var(--shiki-light, inherit); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .tx-tok { color: var(--shiki-dark, inherit); }
+}
+
+:root[data-theme='dark'] .tx-tok { color: var(--shiki-dark, inherit); }
+
+/* Waiting prompt. Its own opaque tint, --prompt-bg, with its own measured
+   tiers (token block): --warn 7.24 / 9.21, --text 15.83 / 13.51, --muted
+   6.82 / 7.15, --faint 5.67 / 5.56 (light / dark). No alpha and no opacity, so
+   nothing composites against what happens to be behind it. */
+.tx-prompt {
+  flex: none;
+  margin: 8px 14px 0;
+  padding: 12px 16px;
+  background: var(--prompt-bg);
+  border: 1px solid var(--prompt-line);
+  border-radius: var(--radius-lg);
+  max-height: 40%;
+  overflow: auto;
+}
+.tx-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.tx-prompt-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--warn);
+}
+/* The tag's glyph is a label, not a row: it does not ping. */
+.tx-prompt-tag .status-dot { animation: none; }
+.tx-prompt-block { margin-top: 8px; }
+.tx-prompt-sub { font-size: var(--fs-xs); color: var(--muted); }
+.tx-prompt-q { margin-top: 4px; color: var(--text-strong); font-weight: 600; }
+.tx-prompt-opts { margin: 4px 0 0; padding-left: 20px; color: var(--text); }
+.tx-prompt-opt { color: var(--text-strong); }
+.tx-prompt-desc { color: var(--muted); }
+.tx-prompt-cmd { font-family: var(--font-mono); font-weight: 400; color: var(--text); word-break: break-all; }
+/* A permission's command, as its own block: what you are agreeing to run.
+   On --panel-inset, so --text-strong is 19.92 / 18.16. */
+.tx-prompt-q > .tx-prompt-cmd {
+  display: block;
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-strong);
+  background: var(--panel-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* Web links. Same accent token the markdown link already used, so contrast is
+   unchanged; the host hint is muted and only shown when the label hides it. */
+.tx-url {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.tx-url:hover { text-decoration-color: var(--accent); }
+.tx-url:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.tx-url-host { color: var(--muted); text-decoration: none; word-break: normal; }
+
+/* --- attached images ------------------------------------------------------ */
+
+/* A thumbnail inside your band. Bounded on both axes so a tall screenshot
+   cannot push the conversation off the screen; the full size is one click. */
+.tx-img-thumb {
+  display: block;
+  margin: 8px 0 4px;
+  padding: 0;
+  max-width: min(100%, 520px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.tx-img-thumb img {
+  display: block;
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+}
+.tx-img-thumb:hover { border-color: var(--border-strong); }
+.tx-img-thumb:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+/* The file name Claude Code noted for the image: a caption, not a message. */
+.tx-img-source {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-img-missing {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-style: italic;
+}
+
+/* Full size. A solid ground (no translucency: rule 5/6 in CLAUDE.md) so the
+   picture reads the same in either theme. */
+.tx-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--bg);
+  cursor: zoom-out;
+}
+.tx-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* The message box while files are dragged over the window. */
+.tx-composer[data-drop='true'] .tx-composer-box {
+  border-color: var(--accent);
+  border-style: dashed;
+}

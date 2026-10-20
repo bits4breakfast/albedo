@@ -1,0 +1,342 @@
+/**
+ * src/ui/gauges/gauges.test.tsx
+ *
+ * Two kinds of test:
+ *
+ *  1. The pure formatters, which every figure on a permanently-visible panel
+ *     goes through — including the degenerate inputs (NaN, negative, Infinity)
+ *     a half-built data call can hand us.
+ *  2. Rendered markup for the branches where the panel makes an HONESTY claim:
+ *     an inferred limit must never print a bare percentage, a known limit must
+ *     print one, and an empty usage window must never render as `00:00`.
+ *
+ * Rendering is done with react-dom/server, so these run in the existing
+ * `environment: 'node'` vitest setup with no jsdom.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { WindowUsage } from '../../capture';
+import WindowGauge from './WindowGauge';
+import {
+  abbreviateTokens,
+  bandPercents,
+  elapsedFraction,
+  exactTokens,
+  formatCountdown,
+  formatDuration,
+  formatPercent,
+  formatRate,
+  quantisePercent,
+  NO_VALUE,
+} from './format';
+
+describe('abbreviateTokens', () => {
+  it('keeps one decimal through the k range', () => {
+    expect(abbreviateTokens(186_919)).toBe('186.9k');
+    expect(abbreviateTokens(1_500)).toBe('1.5k');
+    expect(abbreviateTokens(999_949)).toBe('999.9k');
+  });
+
+  it('prints small counts exactly', () => {
+    expect(abbreviateTokens(0)).toBe('0');
+    expect(abbreviateTokens(999)).toBe('999');
+    expect(abbreviateTokens(999.4)).toBe('999');
+  });
+
+  it('switches to M with more precision while small', () => {
+    expect(abbreviateTokens(1_240_000)).toBe('1.24M');
+    expect(abbreviateTokens(12_400_000)).toBe('12.4M');
+  });
+
+  it('never invents a zero from a bad input', () => {
+    expect(abbreviateTokens(NaN)).toBe(NO_VALUE);
+    expect(abbreviateTokens(Infinity)).toBe(NO_VALUE);
+    expect(abbreviateTokens(-5)).toBe('0');
+  });
+});
+
+describe('exactTokens', () => {
+  it('groups thousands locale-independently', () => {
+    expect(exactTokens(186_919)).toBe('186,919');
+    expect(exactTokens(1_000)).toBe('1,000');
+    expect(exactTokens(999)).toBe('999');
+    expect(exactTokens(1_234_567)).toBe('1,234,567');
+  });
+
+  it('degrades rather than lying', () => {
+    expect(exactTokens(NaN)).toBe(NO_VALUE);
+  });
+});
+
+describe('formatCountdown', () => {
+  it('drops seconds past a day', () => {
+    expect(formatCountdown((3 * 86_400 + 14 * 3600 + 22 * 60 + 9) * 1000)).toBe('3d 14:22');
+  });
+
+  it('shows h:mm:ss inside a day', () => {
+    expect(formatCountdown((2 * 3600 + 47 * 60 + 13) * 1000)).toBe('2:47:13');
+  });
+
+  it('shows mm:ss under an hour', () => {
+    expect(formatCountdown(7 * 60_000 + 12_000)).toBe('07:12');
+    expect(formatCountdown(0)).toBe('00:00');
+  });
+
+  it('clamps negatives instead of printing a minus sign', () => {
+    expect(formatCountdown(-5_000)).toBe('00:00');
+    expect(formatCountdown(NaN)).toBe(NO_VALUE);
+  });
+});
+
+describe('formatDuration', () => {
+  it('scales the unit to the magnitude', () => {
+    expect(formatDuration(45 * 60_000)).toBe('45m');
+    expect(formatDuration((2 * 3600 + 5 * 60) * 1000)).toBe('2h 05m');
+    expect(formatDuration(2.5 * 86_400_000)).toBe('2d 12h');
+    expect(formatDuration(NaN)).toBe(NO_VALUE);
+  });
+});
+
+describe('formatRate', () => {
+  it('abbreviates and units the rate', () => {
+    expect(formatRate(31_400)).toBe('31.4k/h');
+    expect(formatRate(0)).toBe('0/h');
+  });
+
+  it('refuses a rate it cannot derive', () => {
+    expect(formatRate(NaN)).toBe(NO_VALUE);
+    expect(formatRate(-1)).toBe(NO_VALUE);
+  });
+});
+
+describe('formatPercent', () => {
+  it('rounds and clamps', () => {
+    expect(formatPercent(0.4321)).toBe('43%');
+    expect(formatPercent(0)).toBe('0%');
+    expect(formatPercent(1)).toBe('100%');
+    expect(formatPercent(1.4)).toBe('100%');
+  });
+
+  it('never rounds up into a bare 100%', () => {
+    // 99.6% is not full. Saying "100%" would tell the user to stop typing.
+    expect(formatPercent(0.996)).toBe('99%');
+  });
+
+  it('marks an approximation with a tilde', () => {
+    expect(formatPercent(0.4321, true)).toBe('~43%');
+    expect(formatPercent(NaN, true)).toBe(NO_VALUE);
+  });
+});
+
+describe('bandPercents', () => {
+  it('normalises to exactly 100', () => {
+    const b = bandPercents(10, 30, 60);
+    expect(b).toEqual({ overhead: 10, conversation: 30, free: 60 });
+    expect(b.overhead + b.conversation + b.free).toBe(100);
+  });
+
+  it('rescales when the inputs are raw token counts', () => {
+    const b = bandPercents(50_000, 50_000, 100_000);
+    expect(b.overhead + b.conversation + b.free).toBe(100);
+    expect(b.free).toBe(50);
+  });
+
+  it('floors junk rather than propagating it', () => {
+    expect(bandPercents(NaN, -3, 0)).toEqual({ overhead: 0, conversation: 0, free: 100 });
+    const b = bandPercents(-1, 25, 75);
+    expect(b.overhead).toBe(0);
+    expect(b.conversation + b.free).toBe(100);
+  });
+});
+
+describe('elapsedFraction / quantisePercent', () => {
+  it('clamps to 0..1', () => {
+    expect(elapsedFraction(0, 100, 50)).toBe(0.5);
+    expect(elapsedFraction(0, 100, -10)).toBe(0);
+    expect(elapsedFraction(0, 100, 500)).toBe(1);
+    expect(elapsedFraction(100, 100, 100)).toBe(0);
+    expect(elapsedFraction(NaN, 1, 1)).toBe(0);
+  });
+
+  it('quantises to half a percent so a 1s tick is not an animation', () => {
+    expect(quantisePercent(33.31)).toBe(33.5);
+    expect(quantisePercent(33.2)).toBe(33);
+    expect(quantisePercent(-4)).toBe(0);
+    expect(quantisePercent(180)).toBe(100);
+    expect(quantisePercent(NaN)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+function windowData(over: Partial<WindowUsage> = {}): WindowUsage {
+  const now = 1_700_000_000_000;
+  return {
+    windowStart: now - 5 * 3_600_000,
+    windowEnd: now + (2 * 3600 + 47 * 60 + 13) * 1000,
+    inputTokens: 1_420_000,
+    outputTokens: 44_800,
+    cacheReadTokens: 186_000,
+    resetsInMs: (2 * 3600 + 47 * 60 + 13) * 1000,
+    burnRate: 31_400,
+    ...over,
+  };
+}
+
+describe('WindowGauge', () => {
+  const now = 1_700_000_000_000;
+
+  it('counts down to the oldest turn ageing out, not to a quota reset', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    expect(html).toContain('2:47:13');
+    expect(html).toContain('Ages out in');
+    expect(html).not.toMatch(/resets? in/i);
+  });
+
+  it('shows in, out and rate with units', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    expect(html).toContain('1.42M');
+    expect(html).toContain('44.8k');
+    expect(html).toContain('31.4k/h');
+    expect(html).toContain('1,420,000');
+  });
+
+  it('names the rate as spend, not a bare "rate"', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    expect(html).toContain('>Spend<');
+    expect(html).not.toMatch(/>rate</);
+    expect(html).toContain('tokens spent per hour');
+    expect(html).toContain('Cached re-read is not counted');
+  });
+
+  it('never shows a percentage of a plan limit', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    expect(html).not.toMatch(/\d%/);
+  });
+
+  it('renders an empty window as "no usage", never as 00:00', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="7d"
+        data={windowData({ inputTokens: 0, outputTokens: 0, resetsInMs: 0, windowEnd: now })}
+        state="ready"
+        now={now}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).toContain('No usage in window');
+    expect(html).not.toContain('00:00');
+  });
+
+  it('ages resetsInMs against the fetch when windowEnd is unusable', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="5h"
+        data={windowData({ windowEnd: 0, resetsInMs: 3_600_000 })}
+        state="ready"
+        now={now + 60_000}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).toContain('59:00');
+  });
+
+  it('shows cached re-read as its own figure, never folded into the total', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    // Present, and labelled so it cannot be read as spend.
+    expect(html).toContain('186.0k');
+    expect(html).toContain('cached re-read, not spend');
+    // Never described as input -- that word is what made the old number look
+    // reasonable at 38x reality.
+    expect(html).not.toMatch(/cached[^<]*input/i);
+    // The rate tooltip's total is input + output ONLY (1,420,000 + 44,800).
+    expect(html).toContain('1,464,800');
+    // The poisoned sum (+ 186,000) must appear nowhere.
+    expect(html).not.toContain('1,650,800');
+    expect(html).not.toContain('1.65M');
+  });
+
+  it('does not describe input as including cache reads', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
+    );
+    expect(html).not.toMatch(/fresh \+ cache read/i);
+    expect(html).toContain('Excludes cached context re-read');
+  });
+
+  it('omits the cache line entirely rather than printing a zero', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="5h"
+        data={windowData({ cacheReadTokens: 0 })}
+        state="ready"
+        now={now}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).not.toContain('cached re-read');
+  });
+
+  it('survives a payload that predates the cacheReadTokens field', () => {
+    const stale = { ...windowData() } as Partial<WindowUsage>;
+    delete stale.cacheReadTokens;
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="5h"
+        data={stale as WindowUsage}
+        state="ready"
+        now={now}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).not.toContain('cached re-read');
+    expect(html).toContain('1.42M');   // spend still renders
+  });
+
+  it('reports the real-world magnitudes without inflating them', () => {
+    // The user's corrected 5h figures: 1.8k fresh + 4.89M cache writes spent
+    // on input, 1.01M output, against 186M of cached context re-read.
+    const html = renderToStaticMarkup(
+      <WindowGauge
+        label="5h"
+        data={windowData({
+          inputTokens: 4_891_800,
+          outputTokens: 1_013_345,
+          cacheReadTokens: 221_000_000,
+          burnRate: 1_181_029, // (input + output) / 5h, per capture's contract
+        })}
+        state="ready"
+        now={now}
+        fetchedAt={now}
+      />,
+    );
+    expect(html).toContain('4.89M');
+    expect(html).toContain('1.01M');
+    expect(html).toContain('5,905,145');      // spend total, the honest one
+    expect(html).not.toContain('226,905,145'); // spend + cache read, the old lie
+    expect(html).not.toContain('227.0M');
+    // Burn rate is spend/hour. If cache_read ever leaks back into it the
+    // figure jumps to ~45M/h, which this pins against.
+    expect(html).toContain('1.18M/h');
+    expect(html).not.toMatch(/4[0-9]\.\d+M\/h/);
+  });
+
+  it('renders unavailable rather than zeros when the call failed', () => {
+    const html = renderToStaticMarkup(
+      <WindowGauge label="5h" data={null} state="unavailable" now={now} fetchedAt={now} />,
+    );
+    expect(html).toContain('unavailable');
+    expect(html).not.toContain('0/h');
+  });
+});

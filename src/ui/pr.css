@@ -1,0 +1,82 @@
+/* ==========================================================================
+   Pull-request status — header badge and sidebar row mark. All class names
+   are `pr-` prefixed. Every colour is an existing token from src/styles.css;
+   no surface is invented here.
+
+   Contrast, measured (light / dark), worst ground first. The row mark DOES
+   sit on a tint: a blocked row is washed with --warn-rgb at 5% (9% hovered),
+   so it was cleared against that as well as the flat surfaces.
+     --add      4.84 / 6.86   worst: --panel-active (light), blocked 9% (dark)
+     --danger   4.62 / 5.19   same grounds
+     --warn     4.98 / 7.62
+     --accent   4.93 / 5.88
+     --muted    5.77 / 6.35
+   The merged chip is --on-accent-soft on --accent-soft over --panel: 6.77 /
+   10.43, and 5.96 / 8.88 on the hovered --accent-soft-strong.
+
+   Colour is never the only signal (HIG): every state carries a glyph and/or
+   a word as well.
+   ========================================================================== */
+
+.pr-badge-wrap {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: center;
+}
+
+.pr-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pr-badge:hover { background: var(--panel-hover); border-color: var(--border-strong); }
+.pr-badge:active { background: var(--panel-active); }
+.pr-badge:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+.pr-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.pr-badge[data-tone='pass'] { color: var(--add); }
+.pr-badge[data-tone='fail'] { color: var(--danger); }
+.pr-badge[data-tone='pending'] { color: var(--warn); }
+.pr-badge[data-tone='merged'] {
+  color: var(--on-accent-soft);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+.pr-badge[data-tone='merged'] .pr-num { color: var(--on-accent-soft); }
+.pr-badge[data-tone='merged']:hover { background: var(--accent-soft-strong); }
+
+/* The two follow-ups a merge invites. Quiet buttons, so the merged chip stays
+   the thing the eye lands on; both only OPEN the end-task dialog. */
+.pr-end {
+  height: 20px;
+  padding: 0 7px;
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  color: var(--text);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.pr-end:hover { background: var(--panel-hover); border-color: var(--border-strong); color: var(--text-strong); }
+.pr-end:active { background: var(--panel-active); color: var(--text-strong); }
+.pr-end:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.pr-end[data-tone='danger'] { color: var(--danger); }
+

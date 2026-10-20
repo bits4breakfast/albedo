@@ -1,0 +1,11 @@
+node_modules
+dist
+src-tauri/target
+.DS_Store
+*.log
+
+# Claude Code agent worktrees and local settings
+.claude/
+
+# PHPantom binaries fetched by build.sh --with-phpantom
+src-tauri/binaries/

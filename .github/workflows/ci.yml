@@ -1,0 +1,89 @@
+# Linux CI. The macOS build is still made by hand on the author's machine;
+# this proves the Linux one (used under WSL2 on Windows, see docs/LINUX-WSL.md)
+# and keeps the checks honest on a platform nobody here runs day to day.
+#
+# Every push runs the checks only. The .deb/.AppImage build is on demand
+# (Actions > CI > Run workflow): it was most of each run's 6-9 minutes, and
+# nobody needed a Linux package per push.
+#
+# `pull_request` runs only for PRs from forks. For a branch in this repo it
+# would run the same checks a second time beside the push run, in a different
+# concurrency group, so neither cancelled the other; the push run's checks show
+# on the PR anyway. A fork's push runs in the fork, so its PR needs this one.
+# GitHub holds a first-time contributor's run until a maintainer approves it,
+# and the token is read-only either way.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri 2's Linux prerequisites (WebKitGTK 4.1, not 4.0). libfuse2 lets
+      # the AppImage bundler run its own AppImage tooling.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file patchelf \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev libfuse2
+
+      # No engines field or .nvmrc; better-sqlite3 (a test dependency) needs
+      # Node 22 or newer.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+      - run: npm run typecheck
+      # The hook-script tests run the real HOOK_SCRIPT under /bin/sh, which is
+      # dash here, not the macOS sh -- that is half the point of running them.
+      - run: npx vitest run
+
+      - name: cargo fmt
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      # generate_context! wants frontendDist to exist; `tauri build` below
+      # creates the real one.
+      - name: cargo clippy
+        run: |
+          mkdir -p dist
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build .deb and .AppImage
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run tauri build -- --bundles deb,appimage
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: albedo-linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

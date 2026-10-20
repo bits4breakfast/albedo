@@ -1,0 +1,198 @@
+import { describe, expect, it } from 'vitest';
+import {
+  KEY_TERMINATORS,
+  fillPromptTemplate,
+  parseIssueKey,
+} from './issueKey';
+
+describe('parseIssueKey — the real keys on this machine', () => {
+  // Taken from the user's actual branches, not invented.
+  const real: Array<[string, string, string]> = [
+    ['ACME-2398', 'ACME-2398', ''],
+    ['ACME-2387', 'ACME-2387', ''],
+    ['ACME-2367', 'ACME-2367', ''],
+    ['ACME-2398-followup', 'ACME-2398', 'followup'],
+    ['PLATFORM-19T', 'PLATFORM-19T', ''],
+    ['HUB-429902396650', 'HUB-429902396650', ''],
+  ];
+
+  for (const [title, key, rest] of real) {
+    it(`parses ${title}`, () => {
+      expect(parseIssueKey(title)).toEqual({ key, rest });
+    });
+  }
+
+  it('handles a key followed by a description, however it is separated', () => {
+    for (const sep of [' ', ': ', ' - ', ' — ', ', ', '  ']) {
+      expect(parseIssueKey(`ACME-2398${sep}fix the login loop`), sep).toEqual({
+        key: 'ACME-2398',
+        rest: 'fix the login loop',
+      });
+    }
+  });
+
+  it('tolerates surrounding whitespace', () => {
+    expect(parseIssueKey('  ACME-2398  fix it  ')).toEqual({ key: 'ACME-2398', rest: 'fix it' });
+  });
+});
+
+describe('parseIssueKey — must not match', () => {
+  it('rejects ordinary titles', () => {
+    for (const t of [
+      'Fix the thing',
+      'Fix the login redirect loop',
+      'Add OAuth2 support',
+      'Refactor the parser',
+      '',
+      '   ',
+    ]) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('is anchored — a key mentioned in passing is not a key', () => {
+    // Naming a task after an issue and mentioning one are different acts.
+    for (const t of [
+      'Fix ACME-2398 later',
+      'see ACME-2398',
+      'revert the ACME-2398 change',
+      '(ACME-2398) fix',
+      '#ACME-2398 fix',
+    ]) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('requires uppercase', () => {
+    for (const t of ['acme-2398', 'Acme-2398', 'aCME-2398', 'acme-2398 fix']) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('requires a digit in the suffix — this is what keeps English out', () => {
+    for (const t of ['ABC-DEF', 'TODO-list', 'WONT-FIX something', 'PART-TWO']) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('requires a prefix of at least two letters', () => {
+    // "E-mail the team" must not produce the key E-mail.
+    for (const t of ['E-mail the team', 'A-1 priority', 'X-15 aircraft']) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('vetoes standards and formats that fit the shape', () => {
+    // Measured false positives: each would otherwise become a branch name.
+    for (const t of [
+      'UTF-8 encoding is broken',
+      'ISO-8601 dates',
+      'RFC-2119 keywords',
+      'MP4-1080 export',
+      'SHA-256 mismatch',
+      'IPV6-2 routing',
+      'COVID-19 dashboard',
+      'CSS-4 selectors',
+    ]) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('does not settle for a partial match and silently drop characters', () => {
+    // The dangerous failure: matching ACME-2398 inside ACME-2398a and renaming the
+    // branch to something the user never typed.
+    for (const t of ['ACME-2398a', 'ACME-2398a fix', 'HUB-42x9', 'ACME-2398x']) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('refuses a key that is only the start of a longer token', () => {
+    // The decisive case. `ACME-2398_v2` is NOT issue ACME-2398: the worktree
+    // directory is the bare key, so matching would put a different issue in
+    // the real ACME-2398 folder. Under-matching costs a chip; over-matching
+    // costs identity, which is the whole reason the user types keys.
+    for (const t of ['ACME-2398_v2', 'ACME-2398/retry', 'ACME-2398.1', 'ACME-2398;x', 'ACME-2398)']) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('has an explicit, exhaustively tested terminator set', () => {
+    // Every character allowed to end a key...
+    for (const term of KEY_TERMINATORS) {
+      expect(parseIssueKey(`ACME-2398${term}rest`), JSON.stringify(term)).toMatchObject({
+        key: 'ACME-2398',
+      });
+    }
+    // ...and a sample of those that are not.
+    for (const ch of ['_', '/', '.', ';', ')', '(', '#', '+', '=', 'a', '9', 'Z']) {
+      expect(parseIssueKey(`ACME-2398${ch}rest`), ch).toBeNull();
+    }
+    // End of string is always fine.
+    expect(parseIssueKey('ACME-2398')).toMatchObject({ key: 'ACME-2398', rest: '' });
+  });
+
+  it('rejects malformed keys', () => {
+    for (const t of ['UP-', 'UP -2398', 'UP- 2398', '-2398', 'UP--2398', 'UPPERCASELONG-1']) {
+      expect(parseIssueKey(t), t).toBeNull();
+    }
+  });
+
+  it('does not match a branch-style prefix', () => {
+    // `fix/HUB-...` is a branch the user made by hand, not a title they type.
+    // Anchoring means we leave it alone rather than guess.
+    expect(parseIssueKey('fix/HUB-429902396650-quick-action')).toBeNull();
+  });
+
+  it('survives hostile input without throwing', () => {
+    for (const t of [
+      'ACME-'.repeat(200),
+      'A'.repeat(5000),
+      'ACME-2398\0fix',
+      'ACME-2398\n\nfix',
+      '💥-2398',
+      'ÜP-2398',
+    ]) {
+      expect(() => parseIssueKey(t), t).not.toThrow();
+    }
+    // @ts-expect-error -- the UI can hand us undefined mid-typing.
+    expect(parseIssueKey(undefined)).toBeNull();
+  });
+});
+
+describe('fillPromptTemplate', () => {
+  const keyed = { title: 'ACME-2398 fix the login loop', branch: 'ACME-2398-fix-the-login-loop' };
+
+  it('expands all four placeholders', () => {
+    expect(
+      fillPromptTemplate('key={key} rest={rest} title={title} branch={branch}', keyed),
+    ).toBe(
+      'key=ACME-2398 rest=fix the login loop title=ACME-2398 fix the login loop ' +
+        'branch=ACME-2398-fix-the-login-loop',
+    );
+  });
+
+  it('repeats a placeholder wherever it appears', () => {
+    expect(fillPromptTemplate('{key} then {key}', keyed)).toBe('ACME-2398 then ACME-2398');
+  });
+
+  it('degrades sensibly when the title has no key', () => {
+    const plain = { title: 'Fix the login loop', branch: 'fix-the-login-loop' };
+    // {key} empties, {rest} falls back to the whole title -- so the sentence
+    // still reads rather than having a hole in it.
+    expect(fillPromptTemplate('Implement: {rest}', plain)).toBe('Implement: Fix the login loop');
+    expect(fillPromptTemplate('Pick up {key}.', plain)).toBe('Pick up .');
+  });
+
+  it('returns null for nothing to say, so the caller passes no argv at all', () => {
+    expect(fillPromptTemplate('', keyed)).toBeNull();
+    expect(fillPromptTemplate('   ', keyed)).toBeNull();
+    expect(fillPromptTemplate(null, keyed)).toBeNull();
+    expect(fillPromptTemplate(undefined, keyed)).toBeNull();
+    // A template that is nothing BUT an empty placeholder.
+    expect(fillPromptTemplate('{key}', { title: 'no key here', branch: 'b' })).toBeNull();
+  });
+
+  it('leaves unknown placeholders alone rather than guessing', () => {
+    expect(fillPromptTemplate('{key} {nope}', keyed)).toBe('ACME-2398 {nope}');
+  });
+});

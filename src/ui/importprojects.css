@@ -1,0 +1,65 @@
+.ip-dialog { width: min(760px, 100%); }
+
+.ip-lede {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+/*
+ * Deselected rows step DOWN A TOKEN; they are not dimmed.
+ *
+ * This was `opacity: 0.55` on the whole row, which is the exact failure rule 2
+ * in CLAUDE.md describes: it composites after the token is chosen, so it
+ * silently undid the contrast that token guaranteed, and no audit of the
+ * variables could see it. Measured on `--panel`: `--text` fell 14.58 -> 3.56,
+ * `--muted` 7.37 -> 2.57, `--faint` 6.01 -> 2.35. Three failures, on a row
+ * carrying two editable inputs.
+ *
+ * The checkbox is what says "not selected". Text only needs to recede, and
+ * `--faint` is the token that exists for that -- still 6.01 on this ground.
+ */
+.ip-row[data-selected='false'] .ip-meta,
+.ip-row[data-selected='false'] .ip-stats,
+.ip-row[data-selected='false'] .ip-dirs { color: var(--faint); }
+
+.ip-check { grid-row: 1 / span 2; display: flex; align-items: center; }
+.ip-check input { accent-color: var(--accent); }
+
+.ip-fields { grid-column: 2; display: flex; gap: 6px; }
+.ip-name { flex: 1 1 40%; height: 24px; }
+.ip-root { flex: 1 1 60%; height: 24px; font-family: var(--font-mono); font-size: var(--fs-sm); }
+
+.ip-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.ip-stats { color: var(--faint); }
+
+.ip-dirs {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

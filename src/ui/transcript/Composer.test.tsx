@@ -1,0 +1,602 @@
+/**
+ * @vitest-environment jsdom
+ *
+ * The transcript composer's send/retry wiring.
+ *
+ * This covers the one piece of control flow in the pane that cannot be
+ * verified by reading it: a send that fails, asks `startPty` for a session,
+ * and completes when `onPtyPresenceChange` reports one. Two of the three cases
+ * below are regressions for bugs that actually shipped and were found by
+ * tracing, not by reasoning forward:
+ *
+ *   (a) a task switch mid-await left the in-flight latch stuck true, so every
+ *       later send was silently ignored — the composer was wedged shut;
+ *   (b) `startPty` returns true for an ALREADY-LIVE pty, so no presence event
+ *       was ever coming and the message waited out the full 12s timeout.
+ *
+ * (c) guards exactly-once, which works today and would regress silently.
+ *
+ * The property that makes all of this safe to ship is that every failure path
+ * leaves the typed text where it is; the assertions below check that as much
+ * as they check the call counts.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+
+import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { Composer } from './TranscriptPane';
+
+// Replaces the real module, so xterm and the Tauri pty bridge never load.
+// The signatures are checked against the real exports by tsc: a mock that
+// drifts fails the build rather than the assertion.
+vi.mock('../Terminal', () => {
+  const listeners = new Set<(taskId: number, live: boolean) => void>();
+  return {
+    submitPty: vi.fn(async () => false),
+    startPty: vi.fn(() => false),
+    hasLivePty: vi.fn(() => false),
+    canResume: vi.fn(() => false),
+    onPtyPresenceChange: vi.fn((cb: (taskId: number, live: boolean) => void) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    }),
+    __emitPresence: (taskId: number, live: boolean) => {
+      for (const cb of [...listeners]) cb(taskId, live);
+    },
+  };
+});
+
+// Paste writes through these; nothing touches a real disk.
+vi.mock('@tauri-apps/api/path', () => ({ homeDir: vi.fn(async () => '/Users/me') }));
+vi.mock('@tauri-apps/plugin-fs', () => ({ mkdir: vi.fn(async () => {}), writeFile: vi.fn(async () => {}) }));
+
+const term = (await import('../Terminal')) as unknown as {
+  __emitPresence: (taskId: number, live: boolean) => void;
+};
+
+// Vitest globals are off, so RTL cannot register its own auto-cleanup.
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+const box = () => screen.getByRole('textbox') as HTMLTextAreaElement;
+const type = (value: string) => fireEvent.change(box(), { target: { value } });
+const pressEnter = () => fireEvent.keyDown(box(), { key: 'Enter' });
+
+/** No live pty: the first send fails and the composer must ask for a session. */
+function deadPty() {
+  vi.mocked(submitPty).mockResolvedValue(false);
+  vi.mocked(startPty).mockReturnValue(true);
+  vi.mocked(hasLivePty).mockReturnValue(false);
+}
+
+// ---------------------------------------------------------------------------
+// (a) task switch while a send is pending
+// ---------------------------------------------------------------------------
+
+describe('(a) a task switch mid-await does not wedge the composer', () => {
+  it('still sends for the new task after switching away from a pending send', async () => {
+    deadPty();
+    const onSent = vi.fn();
+    const { rerender } = render(<Composer taskId={1} onSent={onSent} />);
+
+    type('first message');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1)); // the failure
+
+    // The user switches task while that send is still waiting for a session.
+    rerender(<Composer taskId={2} onSent={onSent} />);
+
+    // A late presence event for the abandoned task must send nothing.
+    act(() => term.__emitPresence(1, true));
+    expect(submitPty).toHaveBeenCalledTimes(1);
+
+    // THE REGRESSION: the in-flight latch used to stay set across the switch,
+    // so this second send was dropped on the floor with no feedback at all.
+    vi.mocked(submitPty).mockResolvedValue(true);
+    type('second message');
+    pressEnter();
+
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(submitPty).mock.calls[1]).toEqual([2, 'second message']);
+  });
+
+  it('clears the draft on a task switch, and only then', async () => {
+    deadPty();
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+
+    type('half-written thought');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    // A failed send keeps the text. Losing it would be the unforgivable case.
+    expect(box().value).toBe('half-written thought');
+
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    expect(box().value).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (b) startPty reporting an already-live pty
+// ---------------------------------------------------------------------------
+
+describe('(b) startPty returning true for an already-live pty', () => {
+  it('sends immediately rather than waiting out the presence timeout', async () => {
+    // submitPty can fail against a LIVE pty (a write error). startPty then
+    // returns true because one is already up — and no presence event is ever
+    // coming, because nothing changed.
+    vi.mocked(submitPty).mockResolvedValueOnce(false).mockResolvedValue(true);
+    vi.mocked(startPty).mockReturnValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+
+    const onSent = vi.fn();
+    render(<Composer taskId={7} onSent={onSent} />);
+
+    type('retry me');
+    pressEnter();
+
+    // No timers advanced and no presence emitted: reaching the second call at
+    // all proves the immediate flush fired. Before the fix this sat for 12s
+    // and then told the user to try again.
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(submitPty).mock.calls[1]).toEqual([7, 'retry me']);
+
+    await waitFor(() => expect(box().value).toBe(''));
+    expect(onSent).toHaveBeenCalledTimes(1); // and the pane scrolled to the tail
+  });
+
+  it('keeps the text when the immediate retry also fails', async () => {
+    vi.mocked(submitPty).mockResolvedValue(false);
+    vi.mocked(startPty).mockReturnValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+
+    render(<Composer taskId={7} onSent={vi.fn()} />);
+    type('still mine');
+    pressEnter();
+
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+    expect(box().value).toBe('still mine');
+    // and the composer is usable again rather than stuck in the waiting state
+    await waitFor(() => expect(box().readOnly).toBe(false));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (c) exactly-once on a normal retry
+// ---------------------------------------------------------------------------
+
+describe('(c) exactly-once when presence brings the session up', () => {
+  it('sends once when presence arrives, and a second event finds nothing', async () => {
+    vi.mocked(submitPty).mockResolvedValueOnce(false).mockResolvedValue(true);
+    vi.mocked(startPty).mockReturnValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(false);
+
+    const onSent = vi.fn();
+    render(<Composer taskId={3} onSent={onSent} />);
+
+    type('hello there');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1)); // failed
+    expect(box().readOnly).toBe(true); // draft frozen while the send is pending
+
+    // Two presence events. The pending body is TAKEN, not read, so the second
+    // finds null — "sent twice" is structurally impossible, not merely unlikely.
+    act(() => term.__emitPresence(3, true));
+    act(() => term.__emitPresence(3, true));
+
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(submitPty).mock.calls[1]).toEqual([3, 'hello there']);
+
+    await waitFor(() => expect(box().value).toBe(''));
+    expect(onSent).toHaveBeenCalledTimes(1);
+
+    // A third event, well after the send completed, still sends nothing.
+    act(() => term.__emitPresence(3, true));
+    expect(submitPty).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores presence for a different task', async () => {
+    deadPty();
+    render(<Composer taskId={3} onSent={vi.fn()} />);
+
+    type('scoped');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+
+    act(() => term.__emitPresence(99, true));
+    expect(submitPty).toHaveBeenCalledTimes(1);
+    expect(box().value).toBe('scoped');
+  });
+
+  it('does not start a second send while one is pending', async () => {
+    deadPty();
+    render(<Composer taskId={3} onSent={vi.fn()} />);
+
+    type('once');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+
+    // Enter still reaches the handler (the field is readOnly, not disabled, so
+    // the caret is not lost); the in-flight latch is what stops it.
+    pressEnter();
+    pressEnter();
+    expect(submitPty).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports and keeps the draft when the task is not open', async () => {
+    vi.mocked(submitPty).mockResolvedValue(false);
+    vi.mocked(startPty).mockReturnValue(false); // nothing mounted: unfixable here
+    vi.mocked(hasLivePty).mockReturnValue(false);
+
+    render(<Composer taskId={4} onSent={vi.fn()} />);
+    type('nowhere to go');
+    pressEnter();
+
+    await waitFor(() => expect(screen.getByText(/nowhere to send this/i)).toBeDefined());
+    expect(box().value).toBe('nowhere to go');
+    expect(box().readOnly).toBe(false);
+  });
+
+  it('never sends an empty or whitespace-only message', () => {
+    deadPty();
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+
+    pressEnter();
+    type('   \n  ');
+    pressEnter();
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('subscribes on mount and stops listening on unmount', async () => {
+    deadPty();
+    const { unmount } = render(<Composer taskId={6} onSent={vi.fn()} />);
+    expect(onPtyPresenceChange).toHaveBeenCalledTimes(1);
+
+    type('pending when the pane closes');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+
+    unmount();
+    // A presence event after unmount must not resurrect the send, and must not
+    // warn about setting state on an unmounted tree.
+    act(() => term.__emitPresence(6, true));
+    expect(submitPty).toHaveBeenCalledTimes(1);
+  });
+
+  it('Shift+Enter does not send', () => {
+    deadPty();
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+
+    type('line one');
+    fireEvent.keyDown(box(), { key: 'Enter', shiftKey: true });
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (d) a session sitting on a permission prompt
+// ---------------------------------------------------------------------------
+
+/** A live pty whose writes succeed — the dangerous case, not a failing one. */
+function livePty() {
+  vi.mocked(submitPty).mockResolvedValue(true);
+  vi.mocked(startPty).mockReturnValue(true);
+  vi.mocked(hasLivePty).mockReturnValue(true);
+}
+
+describe('(d) blocked: the message is held instead of typed into the prompt', () => {
+  it('does not write to the pty while the task is blocked', async () => {
+    // The whole point. submitPty types into the pty, and a pty showing "1/2/3"
+    // reads a paragraph as an answer to that question.
+    livePty();
+    render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+
+    type('please also update the tests');
+    pressEnter();
+
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+    expect(submitPty).not.toHaveBeenCalled();
+    // Frozen where the user left it, not cleared and not hidden.
+    expect(box().value).toBe('please also update the tests');
+    expect(box().readOnly).toBe(true);
+  });
+
+  it('sends it by itself once the status clears', async () => {
+    livePty();
+    const onSent = vi.fn();
+    const { rerender } = render(<Composer taskId={5} status="blocked" onSent={onSent} />);
+
+    type('please also update the tests');
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+
+    await act(async () => {
+      rerender(<Composer taskId={5} status="running" onSent={onSent} />);
+    });
+
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    expect(submitPty).toHaveBeenCalledWith(5, 'please also update the tests');
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(box().value).toBe('');
+  });
+
+  it('releases exactly once even if the status flickers', async () => {
+    // deriveStatus runs on every capture tick; blocked -> running -> blocked
+    // -> running must not send the same body three times.
+    livePty();
+    const { rerender } = render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+    type('once please');
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+
+    for (const s of ['running', 'blocked', 'running', 'idle'] as const) {
+      await act(async () => {
+        rerender(<Composer taskId={5} status={s} onSent={vi.fn()} />);
+      });
+    }
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+  });
+
+  it('gives the message back when the hold is cancelled', async () => {
+    // A permission prompt waits for a person and has no timeout, so without
+    // this the composer would be frozen until someone answered it.
+    livePty();
+    render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+    type('never mind');
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(box().readOnly).toBe(false);
+    expect(box().value).toBe('never mind');
+    // ...and the cancelled body must not fire when the status later clears.
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('leaves a merely running task alone — Claude Code queues those itself', async () => {
+    livePty();
+    render(<Composer taskId={5} status="running" onSent={vi.fn()} />);
+    type('follow-up mid-turn');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('placeholder when no terminal is running', () => {
+  it('promises the conversation is picked up when the CLI can resume it', () => {
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    vi.mocked(canResume).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} status="idle" />);
+    expect(box().placeholder).toMatch(/pick this conversation back up/);
+  });
+
+  it('says a new session starts when it cannot, rather than over-promising', () => {
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    vi.mocked(canResume).mockReturnValue(false);
+    render(<Composer taskId={1} onSent={vi.fn()} status="idle" />);
+    expect(box().placeholder).toMatch(/new session/);
+  });
+});
+
+describe('Tab with nothing focused', () => {
+  const tab = (init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(window, { key: 'Tab', ...init });
+
+  it('focuses the composer when nothing holds focus', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    tab();
+
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('leaves Tab alone when something else has focus', () => {
+    render(
+      <>
+        <button>other</button>
+        <Composer taskId={1} onSent={() => {}} />
+      </>,
+    );
+    screen.getByText('other').focus();
+
+    tab();
+
+    expect(document.activeElement).toBe(screen.getByText('other'));
+  });
+
+  it('leaves Shift+Tab and modified Tab alone', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    tab({ shiftKey: true });
+    tab({ metaKey: true });
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('does not steal focus from behind an open dialog', () => {
+    render(
+      <>
+        <div aria-modal="true" role="dialog" />
+        <Composer taskId={1} onSent={() => {}} />
+      </>,
+    );
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    tab();
+
+    expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe('resizable composer', () => {
+  const grip = () => screen.getByRole('separator');
+
+  // This environment's localStorage is not a working Storage, so give the
+  // component a plain in-memory one.
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+  });
+
+  it('dragging the grip up sets the height, and it is remembered', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    fireEvent.pointerDown(grip(), { clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(grip(), { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(grip(), { clientY: 120, pointerId: 1 });
+
+    expect(box().style.height).toBe('80px');
+    expect(box().style.maxHeight).toBe('none');
+    expect(window.localStorage.getItem('albedo.composerPx')).toBe('80');
+  });
+
+  it('double-click resets to auto-grow and forgets the height', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    fireEvent.pointerDown(grip(), { clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(grip(), { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(grip(), { clientY: 120, pointerId: 1 });
+
+    fireEvent.doubleClick(grip());
+
+    expect(box().style.maxHeight).toBe('');
+    expect(window.localStorage.getItem('albedo.composerPx')).toBeNull();
+  });
+
+  it('starts at a remembered height', () => {
+    window.localStorage.setItem('albedo.composerPx', '96');
+    render(<Composer taskId={1} onSent={() => {}} />);
+    expect(box().style.height).toBe('96px');
+  });
+});
+
+describe('pasting a screenshot', () => {
+  const imageItem = (bytes: number[]) => ({
+    kind: 'file',
+    type: 'image/png',
+    getAsFile: () => ({ type: 'image/png', arrayBuffer: async () => new Uint8Array(bytes).buffer }) as unknown as File,
+  });
+  const textItem = { kind: 'string', type: 'text/plain', getAsFile: () => null };
+
+  it('writes the image under ~/.albedo/paste and inserts its path like a drop', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('see');
+    const notPrevented = fireEvent.paste(box(), { clipboardData: { items: [textItem, imageItem([1, 2, 3])] } });
+    expect(notPrevented).toBe(false);
+    await waitFor(() => expect(box().value).toMatch(/^see \/Users\/me\/\.albedo\/paste\/\d{8}-\d{6}-\d{3}\.png $/));
+    expect(fs.mkdir).toHaveBeenCalledWith('/Users/me/.albedo/paste', { recursive: true });
+    const [path, data] = vi.mocked(fs.writeFile).mock.calls[0]!;
+    expect(box().value).toBe(`see ${path} `);
+    expect([...(data as Uint8Array)]).toEqual([1, 2, 3]);
+  });
+
+  it('leaves a text paste to the browser, exactly as before', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: { items: [textItem] } });
+    expect(notPrevented).toBe(true);
+    expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('says so, and keeps the draft, when the write fails', async () => {
+    const fs = await import('@tauri-apps/plugin-fs');
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('forbidden path'));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('draft');
+    fireEvent.paste(box(), { clipboardData: { items: [imageItem([9])] } });
+    await waitFor(() => expect(screen.getByText(/Could not save the pasted image: forbidden path/)).toBeTruthy());
+    expect(box().value).toBe('draft');
+  });
+});
+
+describe('shellEscapePath', () => {
+  it('escapes spaces and shell characters the way a terminal does on drop', async () => {
+    const { shellEscapePath } = await import('./TranscriptPane');
+    expect(shellEscapePath('/T/Screenshot 2026-10-17 at 00.36.49.png')).toBe('/T/Screenshot\\ 2026-10-17\\ at\\ 00.36.49.png');
+    expect(shellEscapePath("/a/it's (1).png")).toBe("/a/it\\'s\\ \\(1\\).png");
+    expect(shellEscapePath('/plain/path.png')).toBe('/plain/path.png');
+  });
+});
+
+describe('collapsing a large text paste', () => {
+  const clip = (text: string) => ({
+    items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }],
+    getData: (t: string) => (t === 'text/plain' ? text : ''),
+  });
+  const log = 'Error: boom\n  at a (x.ts:1)\n  at b (y.ts:2)\n  at c (z.ts:3)';
+
+  it('shows a placeholder in the box and sends the real text', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('why does this fail? ');
+    box().setSelectionRange(box().value.length, box().value.length);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip(log) });
+    expect(notPrevented).toBe(false);
+    expect(box().value).toBe('why does this fail? [Pasted text #1 +4 lines]');
+
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `why does this fail? ${log}`));
+  });
+
+  it('leaves a short paste to the browser', () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip('two\nlines') });
+    expect(notPrevented).toBe(true);
+    expect(box().value).toBe('');
+  });
+
+  it('drops the text when its placeholder was deleted', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    type('never mind');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, 'never mind'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (z) text handed in from elsewhere (review comments)
+// ---------------------------------------------------------------------------
+
+describe('(z) text handed to the composer through the bridge', () => {
+  it("goes into its own task's box only, after any draft, and reports what was sent", async () => {
+    const { insertIntoComposer } = await import('./composerBridge');
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+
+    let other = true;
+    act(() => {
+      other = insertIntoComposer({ taskId: 6, text: 'not mine' });
+    });
+    expect(other).toBe(false);
+    expect(box().value).toBe('');
+
+    type('my draft');
+    const onSent = vi.fn(() => true);
+    let taken = false;
+    act(() => {
+      taken = insertIntoComposer({ taskId: 5, text: 'comments\nsecond line', onSent });
+    });
+    expect(taken).toBe(true);
+    expect(box().value).toBe('my draft\n\ncomments\nsecond line');
+    expect(onSent).not.toHaveBeenCalled(); // in the box is not sent
+
+    pressEnter();
+    await waitFor(() => expect(onSent).toHaveBeenCalledWith('my draft\n\ncomments\nsecond line'));
+  });
+});

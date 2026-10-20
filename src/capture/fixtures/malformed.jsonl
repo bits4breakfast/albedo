@@ -1,0 +1,12 @@
+{"parentUuid": null, "isSidechain": false, "userType": "external", "cwd": "/Users/example/agents/demo/add-retry", "sessionId": "11111111-2222-3333-4444-555555555555", "version": "2.1.272", "gitBranch": "feat/add-retry", "type": "user", "uuid": "m-1", "timestamp": "2026-09-15T11:00:00.000Z", "message": {"role": "user", "content": "first good line"}}
+
+{not json at all
+"a bare json string"
+[1,2,3]
+{"type": "totally-new-line-type", "payload": 1}
+{"uuid": "no-type"}
+{"parentUuid": null, "isSidechain": false, "userType": "external", "cwd": "/Users/example/agents/demo/add-retry", "sessionId": "11111111-2222-3333-4444-555555555555", "version": "2.1.272", "gitBranch": "feat/add-retry", "type": "assistant", "uuid": "m-2", "timestamp": "not-a-timestamp", "message": {"role": "assistant", "content": 12345}}
+{"parentUuid": null, "isSidechain": false, "userType": "external", "cwd": "/Users/example/agents/demo/add-retry", "sessionId": "11111111-2222-3333-4444-555555555555", "version": "2.1.272", "gitBranch": "feat/add-retry", "type": "assistant", "uuid": "m-3", "timestamp": "2026-09-15T11:00:10.000Z"}
+{"parentUuid": null, "isSidechain": false, "userType": "external", "cwd": "/Users/example/agents/demo/add-retry", "sessionId": "11111111-2222-3333-4444-555555555555", "version": "2.1.272", "gitBranch": "feat/add-retry", "type": "assistant", "uuid": "m-4", "timestamp": "2026-09-15T11:00:11.000Z", "message": {"role": "assistant", "content": []}}
+{"parentUuid": null, "isSidechain": false, "userType": "external", "cwd": "/Users/example/agents/demo/add-retry", "sessionId": "11111111-2222-3333-4444-555555555555", "version": "2.1.272", "gitBranch": "feat/add-retry", "type": "assistant", "uuid": "m-5", "timestamp": "2026-09-15T11:00:12.000Z", "message": {"role": "assistant", "content": [{"type": "wormhole", "payload": {"x": 1}}, "a bare string block"]}}
+{"type":"assistant","uuid":"m-6","timestamp":"2026-09-15T11:00:13.000Z","mess

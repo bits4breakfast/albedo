@@ -1,0 +1,55 @@
+/* --------------------------------------------------------------------------
+   Header — macOS overlay title bar lives here.
+   The whole strip is a drag region; interactive children opt out by simply
+   not carrying data-tauri-drag-region (Tauri tests the event target).
+   -------------------------------------------------------------------------- */
+
+.header {
+  flex: 0 0 var(--titlebar-h);
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  /* Clear of the stoplights, if any. Without them (full screen) 8px: the
+     first project tab then starts on the sidebar's edge, New Task and the
+     rows' highlight, all at 8px. */
+  padding-left: max(var(--traffic-lights-w), 8px);
+  /* The card's inset, its border and the task bar's own padding, so this
+     row's ⋯ ends on the same line as the task bar's and the pane heads'. */
+  padding-right: calc(8px + 1px + 8px);
+  background: var(--panel-chrome);
+}
+
+
+
+.header-spacer { flex: 1 1 auto; height: 100%; }
+
+/* Hairline between the header's groups (waiting / burn / actions). */
+.header-sep { flex: 0 0 1px; width: 1px; height: 20px; background: var(--border); }
+
+.header-actions { display: flex; align-items: center; gap: 4px; }
+
+/* Usage meter ------------------------------------------------------------- */
+
+.usage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+
+.usage-figure { color: var(--text); font-weight: 500; }
+
+/* The "N waiting" pill: the one header item that is about you. */
+.usage-waiting .usage-figure { color: var(--text-strong); }
+/* A button since it jumps to the waiting task; hovers like the ghost buttons. */
+button.usage-waiting {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+}
+button.usage-waiting:hover { background: var(--panel-hover); }

@@ -1,0 +1,112 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Albedo main window capabilities",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:webview:allow-set-webview-zoom",
+    "core:window:allow-start-dragging",
+
+    "sql:default",
+    "sql:allow-load",
+    "sql:allow-execute",
+    "sql:allow-select",
+    "sql:allow-close",
+
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-read-file",
+    "fs:allow-read-dir",
+    "fs:allow-stat",
+    "fs:allow-open",
+    "fs:allow-read",
+    "fs:allow-seek",
+    "fs:allow-write-text-file",
+    "fs:allow-write-file",
+    "fs:allow-rename",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    "fs:allow-watch",
+    "fs:allow-unwatch",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$HOME/.claude/projects",
+        "$HOME/.claude/projects/**",
+        "$HOME/.claude/settings.json",
+        "$HOME/.claude/cache/model-catalog",
+        "$HOME/.claude/cache/model-catalog/*",
+        "$HOME/.albedo",
+        "$HOME/.albedo/**",
+        "$HOME/agents",
+        "$HOME/agents/**"
+      ]
+    },
+
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "git",
+          "cmd": "git",
+          "args": true
+        },
+        {
+          "name": "open",
+          "cmd": "open",
+          "args": true
+        },
+        {
+          "name": "xdg-open",
+          "cmd": "xdg-open",
+          "args": true
+        },
+        {
+          "name": "gh",
+          "cmd": "gh",
+          "args": true
+        },
+        {
+          "name": "gh-homebrew",
+          "cmd": "/opt/homebrew/bin/gh",
+          "args": true
+        },
+        {
+          "name": "gh-usr-local",
+          "cmd": "/usr/local/bin/gh",
+          "args": true
+        },
+        {
+          "name": "gh-usr-bin",
+          "cmd": "/usr/bin/gh",
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/phpantom_lsp",
+          "sidecar": true,
+          "args": ["--stdio"]
+        },
+        {
+          "name": "phpantom",
+          "cmd": "$HOME/.albedo/bin/phpantom_lsp",
+          "args": ["--stdio"]
+        }
+      ]
+    },
+    "shell:allow-stdin-write",
+    "shell:allow-kill",
+
+    "dialog:default",
+    "dialog:allow-open",
+
+    "notification:default"
+  ]
+}

@@ -1,0 +1,578 @@
+/* ==========================================================================
+   Touched files (M4) — the change-set view. Owned by the touched-files
+   workstream. All class names are `tf-` prefixed; every colour comes from the
+   tokens in src/styles.css, which belongs to the shell and is not edited here.
+
+   Density matches the task list and the transcript: hairline rows, mono for
+   anything a human compares character by character (paths, status codes,
+   counts). Rows show what git says; how a file was changed is not shown.
+   ========================================================================== */
+
+.tf-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--panel);
+  color: var(--text);
+
+  /* The pane is a query container: it is mounted both as a full-width tab and
+     as a pinned column the user can drag down to 180px, so the rows have to
+     respond to the PANE's width, not the window's. (Container queries need
+     WKWebView 16.0; the file already requires 16.4 for color-mix, so this
+     adds no floor.)
+
+     `width: 100%` is NOT decoration here. inline-size containment means the
+     pane's own width is computed WITHOUT looking at its contents, so as an
+     auto-width flex item it collapses to 0 and every query matches the
+     narrowest branch at every real width. Measured: without this line the
+     rows render in narrow mode even in a 420px column. */
+  container-type: inline-size;
+  container-name: tf;
+  width: 100%;
+  min-width: 0;
+
+  /* ------------------------------------------------------------------ *
+     The amber family — the local palette for "git changed this file, the
+     transcript never mentioned it". Derived from tokens with color-mix()
+     (baseline for this repo, see "Theming" in docs/ARCHITECTURE.md), so
+     a per-theme --warn flows through without a second definition here.
+
+     Per docs/ARCHITECTURE.md the base block carries the LIGHT values and the
+     two blocks below override for dark; nothing is defined only in a dark
+     block. The ALPHAS are per-theme because they are not transferable: an
+     overlay on near-black raises the ground's luminance, an overlay on
+     near-white lowers it, so the constraint inverts.
+
+       --tf-wash    badge ground (rows are no longer washed; the ceilings
+                    below were set when they were, and still bound the badge)
+       --tf-tint    notice ground
+       --tf-rule    notice edge                        (UI, needs 3.0)
+       --tf-hairline 1px badge edge                    (UI, needs 3.0)
+       --tf-ink     amber TEXT: badge label, notice detail
+       --tf-notice-ink / --tf-hand-ink   notice body, hand badge
+
+     LIGHT ceiling is 8% and it is set by OTHER PEOPLE'S TOKENS, not by
+     --faint: the wash darkens the row ground, and the shell's --add / --del
+     / --accent were measured against --bg and --panel-hover, not against a
+     ground this file invents. At 9% a dark light-theme --warn costs --add its
+     AA (4.15). Light therefore leans on the rule and the badge (5.3-9.9 and
+     6.5-10.1) and keeps the wash to a hint.
+
+     --tf-rule and --tf-ink mix toward --text-strong in light because raw
+     --warn is an amber tuned for a dark ground: as TEXT or a UI edge on white
+     it measures 1.9-3.7 and fails. In dark they stay exactly var(--warn), so
+     the dark numbers below are unchanged from the previous pass. */
+  /* Every mix NAMES its ground (--panel, the pane's own), never
+     `transparent` (CLAUDE.md, Contrast rule 5): the badge and notice are
+     then opaque pairs that hold on a hovered or selected row too. */
+  --tf-wash: color-mix(in srgb, var(--warn) 8%, var(--panel));
+  --tf-tint: color-mix(in srgb, var(--warn) 5%, var(--panel));
+  --tf-rule: color-mix(in srgb, var(--warn) 55%, var(--text-strong));
+  --tf-hairline: color-mix(in srgb, var(--tf-rule) 80%, var(--panel));
+  --tf-ink: color-mix(in srgb, var(--warn) 45%, var(--text-strong));
+  /* Both themes: mixing toward --text-strong flips with the theme on its own,
+     which is what replaced the two hardcoded light-on-dark hexes here. */
+  --tf-notice-ink: color-mix(in srgb, var(--warn) 45%, var(--text-strong));
+  --tf-hand-ink: color-mix(in srgb, var(--accent) 40%, var(--text-strong));
+}
+
+/* DARK overrides. Both blocks carry the same values; the :not() guard is what
+   lets an explicit data-theme='light' win over the OS preference.
+
+   DARK ceiling is 12% and it is set by --faint, the dimmest text tier, which
+   sits at 4.68 on the washed row; 14% drops it to 4.49 and fails AA. That is
+   the opposite constraint to light, on the same overlay. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .tf-pane {
+    --tf-wash: color-mix(in srgb, var(--warn) 12%, var(--panel));
+    --tf-tint: color-mix(in srgb, var(--warn) 8%, var(--panel));
+    --tf-rule: var(--warn);
+    --tf-hairline: color-mix(in srgb, var(--warn) 55%, var(--panel));
+    --tf-ink: var(--warn);
+  }
+}
+:root[data-theme='dark'] .tf-pane {
+  --tf-wash: color-mix(in srgb, var(--warn) 12%, var(--panel));
+  --tf-tint: color-mix(in srgb, var(--warn) 8%, var(--panel));
+  --tf-rule: var(--warn);
+  --tf-hairline: color-mix(in srgb, var(--warn) 55%, var(--panel));
+  --tf-ink: var(--warn);
+}
+
+/* --------------------------------------------------------------------------
+   Buttons
+   -------------------------------------------------------------------------- */
+
+.tf-btn {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+/* --panel-hover landed in styles.css, so the hover ground is a token the
+   shell can audit against the text tiers rather than a hex typed in here. */
+.tf-btn:hover { background: var(--panel-hover); color: var(--text); border-color: var(--border-strong); }
+.tf-btn:disabled { color: var(--faint); background: transparent; }
+
+/* --------------------------------------------------------------------------
+   Notices — an empty list must never be able to mean two different things
+   -------------------------------------------------------------------------- */
+
+.tf-error {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--danger);
+  background: var(--panel);
+  font-size: var(--fs-sm);
+  user-select: text;
+  cursor: auto;
+}
+
+.tf-error-label { color: var(--danger); }
+
+.tf-error-detail {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.tf-warn {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--tf-rule);  /* UI edge: 8.66 dark / 11.84 light */
+  background: var(--tf-tint);
+  color: var(--tf-notice-ink);            /* 11.68 dark / 13.04 light */
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* Raw --warn as text is a dark-theme-only colour: on a light ground it
+   measures 3.7. --tf-ink is --warn in dark and a darkened amber in light. */
+.tf-warn-detail { font-family: var(--font-mono); color: var(--tf-ink); }
+
+/* --------------------------------------------------------------------------
+   Rows
+   -------------------------------------------------------------------------- */
+
+.tf-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 8px 12px;
+}
+
+.tf-row {
+  display: grid;
+  grid-template-columns: 2.2em minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  column-gap: 8px;
+  width: 100%;
+  padding: 4px 12px;
+  text-align: left;
+  font-size: var(--fs-sm);
+}
+
+.tf-row:hover { background: var(--panel-hover); }
+/* The file in the editor's active tab. --panel-raised is the selected-row
+   ground every text tier here is cleared against; the accent edge says it
+   without colour alone. Inset, so the row does not shift. */
+.tf-row[aria-current='true'] {
+  background: var(--panel-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tf-row[aria-current='true'] .tf-name { color: var(--text-strong); }
+.tf-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* The path can be selected and copied (the row is a div for exactly this).
+   Everything else in the row is left out of a selection, so a copy yields the
+   path and nothing but the path. */
+.tf-row { cursor: pointer; user-select: none; }
+.tf-path { user-select: text; cursor: text; }
+.tf-badge { user-select: none; }
+.tf-row:hover .tf-name { color: var(--text-strong); }
+
+/* Hover lifts the dimmest tier to --muted, a normal hover affordance. --muted
+   is nearer the text end of the tier stack in each theme, so the lift never
+   reduces contrast. */
+.tf-row:hover .tf-dir,
+.tf-row:hover .tf-when,
+.tf-row:hover .tf-sep { color: var(--muted); }
+
+/* No row is washed or ruled: every row is what git says, the status letter
+   carries what changed. Row grounds are left to hover and focus. */
+
+.tf-status {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  white-space: pre;
+  letter-spacing: 0.06em;
+}
+.tf-status[data-tone='add'] { color: var(--add); }
+.tf-status[data-tone='del'] { color: var(--del); }
+.tf-status[data-tone='mod'] { color: var(--accent); }
+
+.tf-path {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  /* No gap: the directory, the separator and the basename are ONE path and
+     must read as one. Badges space themselves with a margin. */
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Shrink order inside a row, and it is deliberate: the directory gives way
+   first (it is context), then the basename ellipsises, and the badges never
+   shrink at all. Before this, .tf-name was `flex: 0 0 auto` and the badges sat
+   after it, so a long basename pushed the badge out of an
+   overflow: hidden box — the marker vanished with nothing to show it had. */
+.tf-dir {
+  flex: 0 1000 auto;       /* give way first */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;          /* clip the FRONT of a deep path, not the end */
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.tf-sep {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.tf-name {
+  flex: 0 1 auto;          /* then ellipsise, never disappear */
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.tf-badge {
+  flex: 0 0 auto;          /* the word is the point; it is never squeezed out */
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--tf-ink);                 /* 7.98 dark / 12.48 light */
+  background: var(--tf-wash);
+  border: 1px solid var(--tf-hairline);  /* 3.18 dark / 5.67 light, worst row ground */
+  border-radius: var(--radius-sm);
+}
+
+/* The blue counterpart. Was a hardcoded #bcd9ff, which is light-on-dark by
+   construction and would have been near-invisible on a light ground; mixing
+   --accent toward --text-strong flips with the theme by itself.
+   9.87 dark / 11.07 light on the accent wash (worst: --accent-soft-strong). */
+.tf-badge-hand {
+  color: var(--tf-hand-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.tf-lines {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+/* --add / --del are the diff tokens, cleared at 5+ on the flat panel; these
+   rows sit on --panel and --panel-raised (hover), never on a diff tint. */
+.tf-add { color: var(--add); }
+.tf-del { color: var(--del); }
+.tf-bin { color: var(--muted); }
+
+
+.tf-when {
+  min-width: 2.6em;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* --------------------------------------------------------------------------
+   Empty / loading
+   -------------------------------------------------------------------------- */
+
+.tf-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.tf-empty-hint {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+.tf-mono { font-family: var(--font-mono); }
+
+/* --------------------------------------------------------------------------
+   Narrow column
+   --------------------------------------------------------------------------
+   The pane is also mounted as a pinned column, resizable 180-420px (default
+   240). A row carries five things — status code, path, badges, edit count,
+   relative time — and below roughly 260px they stop fitting. So the row sheds
+   them in order of how much they identify the file, and everything it sheds
+   stays in the row's tooltip (see rowTitle() in TouchedFiles.tsx).
+
+   What NEVER goes, at any width: the basename, the status letter and the
+   badges. A badge says its fact in words and is the one thing that would
+   otherwise be squeezed out, so it is the last thing in the row allowed to
+   shrink (it cannot).
+   -------------------------------------------------------------------------- */
+
+/* ~260px and below: the path WRAPS instead of losing its directory.
+   Dropping the directory was the obvious move and it is wrong at the default
+   240px width: `index.ts` exists in three directories in a typical repo, and
+   a change-set view that cannot tell them apart has stopped doing its job.
+   Vertical space is the cheap axis in a narrow column and a change set is
+   tens of rows, not thousands.
+
+   Flex `order` does the reflow with no change to the DOM: the basename and
+   the badges stay on line 1, the directory is re-ordered after them and given
+   a full-width basis so it wraps onto line 2, still front-clipped. */
+@container tf (max-width: 260px) {
+  .tf-row {
+    column-gap: 6px;
+    padding-inline: 6px;
+  }
+  .tf-path { flex-wrap: wrap; }
+  /* flex-basis 0 so the basename never CAUSES a wrap (line-breaking looks at
+     base sizes, not shrink factors): without it a long name pushes the badges
+     onto a third line. It grows into line 1 instead and ellipsises, which puts
+     the badges at the right edge of the same line. */
+  .tf-name { flex: 1 1 0; }
+  .tf-name,
+  .tf-badge { order: 0; }
+  .tf-sep { display: none; }
+  .tf-dir {
+    order: 1;
+    flex: 0 0 100%;
+    max-width: 100%;
+    line-height: 1.35;
+  }
+}
+
+/* ~210px and below: the relative time goes. It is the least identifying
+   column and the most redundant one — rows are sorted most recently touched
+   first, so the order already says what the column said, and the tooltip has
+   the exact value. The +/- count stays: it is the per-file fact this view
+   exists to show. (The edit-call count is tooltip-only.) */
+@container tf (max-width: 210px) {
+  .tf-row {
+    column-gap: 5px;
+    grid-template-columns: 2ch minmax(0, 1fr) auto;
+  }
+  .tf-when { display: none; }
+  .tf-status { letter-spacing: 0; }
+  .tf-badge { margin-left: 4px; padding: 0 3px; }
+}
+
+/* --- sections -------------------------------------------------------------- */
+
+/* Each section is a card of its own on the pane: rows need no rules between
+   them, and the gap between cards does what a section rule did. */
+.tf-section {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  background: var(--subcard);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.tf-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px 6px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: left;
+}
+button.tf-section-head { cursor: pointer; }
+button.tf-section-head:hover { color: var(--text); }
+.tf-section-caret { width: 1em; color: var(--muted); }
+.tf-section-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* --- review comments ------------------------------------------------------ */
+
+.tf-comments-head { align-items: center; }
+.tf-comments-actions { margin-left: auto; display: inline-flex; gap: 4px; }
+/* The one action this section exists for: text in --text-strong on the
+   button's own --panel-raised, with the accent edge to mark it. */
+.tf-btn-primary { color: var(--text-strong); border-color: var(--accent-line); }
+
+.tf-comments-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 8px 8px;
+}
+.tf-comments-intro-label { color: var(--muted); font-size: var(--fs-xs); }
+.tf-comments-intro-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 6px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-sm);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.tf-comments-intro-input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tf-comments-notice { padding: 0 8px 6px; color: var(--warn); font-size: var(--fs-xs); }
+
+.tf-comment {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.tf-comment-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px 4px 11px;
+  text-align: left;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.tf-comment-open:hover { background: var(--panel-hover); }
+.tf-comment-open:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tf-comment-where { flex: none; font-family: var(--font-mono); color: var(--muted); }
+.tf-comment-where .tf-name { color: var(--text); }
+.tf-comment-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.tf-comment-sent { flex: none; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
+.tf-comment-sent::before { content: '✓ '; }
+.tf-comment-resolve {
+  flex: none;
+  width: 28px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tf-comment-resolve:hover { color: var(--add); background: var(--panel-hover); }
+.tf-comment-resolve:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* --- view switch and commit groups ---------------------------------------- */
+
+
+/* A commit: its subject reads first, as written; sha and age trail. */
+.tf-commit-head { font-weight: 500; }
+.tf-commit-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tf-commit-meta {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+
+/* --------------------------------------------------------------------------
+   Git bar (GitBar.tsx) — under the list: branch and where it stands, then
+   the one action it needs next and ⋯. One line, because every row it takes
+   is a file the list cannot show.
+   -------------------------------------------------------------------------- */
+
+.tf-git {
+  /* No rule above it, like the rest of the pane; its one action sits at the
+     right, as a panel's footer button does. */
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 8px 8px;
+  background: var(--panel);
+}
+
+/* Branch first, then the state. When it does not fit on one line it wraps
+   between items rather than clipping: clipped, a narrow pane showed "po…"
+   and half of "unpushed" under the Push button, which said nothing. */
+.tf-git-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tf-git-id > span { flex: 0 0 auto; }
+.tf-git-id > span + span::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--faint);
+}
+.tf-git-id > span[data-tone='warn'] { color: var(--warn); }
+
+.tf-git-branch {
+  flex: 0 1 auto !important;
+  min-width: 3ch;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+}
+
+.tf-git-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
