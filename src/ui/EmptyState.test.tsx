@@ -93,3 +93,14 @@ describe('EmptyState — rendered in a real DOM', () => {
     expect(el?.getAttribute('data-variant')).toBe('pane');
   });
 });
+
+describe('EmptyState — brief', () => {
+  it('keeps the headline and drops the body and the button', () => {
+    // The sidebar's copy while the main area shows the full state: a second
+    // New Task button under the ⌘N one said the same thing twice.
+    render(<EmptyState projectCount={1} activeProject={project} onNewTask={vi.fn()} brief />);
+    expect(screen.getByText(/No tasks in/)).toBeTruthy();
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByText(/cuts a worktree/)).toBeNull();
+  });
+});

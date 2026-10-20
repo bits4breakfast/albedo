@@ -139,13 +139,18 @@ export interface GitResult {
  * Swappable runner. Production uses the Tauri shell plugin; tests can inject a
  * fake without mocking module internals.
  */
-export type GitRunner = (args: string[], cwd?: string) => Promise<GitResult>;
+export type GitRunner = (
+  args: string[],
+  cwd?: string,
+  env?: Record<string, string>,
+) => Promise<GitResult>;
 
-let runner: GitRunner = async (args, cwd) => {
+let runner: GitRunner = async (args, cwd, env) => {
   // Lazy import: keeps `@tauri-apps/plugin-shell` out of the module graph for
   // the pure-parser unit tests, which run in plain node.
   const { Command } = await import('@tauri-apps/plugin-shell');
-  const child = await Command.create('git', args, cwd ? { cwd } : undefined).execute();
+  const opts = cwd || env ? { ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) } : undefined;
+  const child = await Command.create('git', args, opts).execute();
   return { code: child.code, stdout: child.stdout, stderr: child.stderr };
 };
 
@@ -177,9 +182,13 @@ export function setPathExistsProbe(next: PathExistsProbe): PathExistsProbe {
 }
 
 /** Run git and return the raw result without throwing. */
-export async function git(args: string[], cwd?: string): Promise<GitResult> {
+export async function git(
+  args: string[],
+  cwd?: string,
+  env?: Record<string, string>,
+): Promise<GitResult> {
   assertSafeArgv(args);
-  return runner(args, cwd);
+  return runner(args, cwd, env);
 }
 
 /** Run git, throw {@link GitError} on a non-zero exit, return trimmed stdout. */
@@ -759,6 +768,12 @@ export interface CreateWorktreeOptions {
    * check out the existing branch (`git worktree add <path> <branch>`).
    */
   useExistingBranch?: boolean;
+  /**
+   * What `-b` cuts from, when not `baseBranch` itself: its upstream
+   * (`origin/main`) when the local branch is behind -- see {@link cutPoint}.
+   * The task still records `baseBranch`; only the starting commit differs.
+   */
+  startPoint?: string;
 }
 
 /**
@@ -773,6 +788,7 @@ export async function createWorktree(o: CreateWorktreeOptions): Promise<void> {
   assertNotOptionLike(o.path, 'worktree path');
   if (!o.useExistingBranch) {
     assertValidRefName(o.baseBranch, 'base branch');
+    if (o.startPoint) assertValidRefName(o.startPoint, 'start point');
   }
 
   // Refuse an existing path rather than writing into it. git only objects when
@@ -799,7 +815,9 @@ export async function createWorktree(o: CreateWorktreeOptions): Promise<void> {
 
   const args = o.useExistingBranch
     ? ['worktree', 'add', '--', o.path, o.branch]
-    : ['worktree', 'add', '-b', o.branch, '--', o.path, o.baseBranch];
+    : // --no-track: cut from `origin/main`, git would otherwise make that the
+      // new branch's upstream, and a later push would aim at main.
+      ['worktree', 'add', '--no-track', '-b', o.branch, '--', o.path, o.startPoint ?? o.baseBranch];
 
   const r = await git(args, o.repoPath);
   if (r.code !== 0) {
@@ -1295,3 +1313,78 @@ export type { OrphanInfo } from './reconcile';
 
 /** Re-exported for callers that want to validate a hand-typed base branch. */
 export { isValidRefName };
+
+// ---------------------------------------------------------------------------
+// Is the base up to date?
+// ---------------------------------------------------------------------------
+
+/**
+ * How a local base branch stands against its upstream, after a fetch.
+ *
+ * A task cut from a stale local `main` starts behind, and its PR opens with
+ * conflicts already in it. Local `main` usually cannot be fast-forwarded from
+ * here -- it is checked out in the main checkout, which is the user's -- so
+ * the fix is to cut from the upstream instead ({@link cutPoint}).
+ */
+export interface BaseFreshness {
+  /** `origin/main`; null when the base tracks nothing. */
+  upstream: string | null;
+  /** Commits on the local base the upstream lacks: unpushed work. */
+  ahead: number;
+  /** Commits on the upstream the local base lacks. */
+  behind: number;
+  /** False when the fetch failed or timed out: the counts are as of the last fetch. */
+  fetched: boolean;
+}
+
+/** `git rev-list --left-right --count base...upstream` → ahead, behind. */
+export function parseAheadBehind(stdout: string): { ahead: number; behind: number } | null {
+  const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(stdout);
+  return m ? { ahead: Number(m[1]), behind: Number(m[2]) } : null;
+}
+
+/**
+ * Where a new task should start. The upstream only when the local base is
+ * strictly behind it: with unpushed commits on the local base, cutting from
+ * the upstream would silently leave them out.
+ */
+export function cutPoint(baseBranch: string, f: BaseFreshness | null): string {
+  return f?.upstream && f.behind > 0 && f.ahead === 0 ? f.upstream : baseBranch;
+}
+
+/** Long enough for a slow remote, short enough that New Task never feels stuck. */
+const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Fetch `baseBranch`'s upstream and compare. Null when the base tracks nothing
+ * or git cannot say. Never prompts: no terminal is attached, so a credential
+ * prompt would hang until the timeout.
+ */
+export async function baseFreshness(
+  repoPath: string,
+  baseBranch: string,
+): Promise<BaseFreshness | null> {
+  assertValidRefName(baseBranch, 'base branch');
+  const config = async (key: string) => {
+    const r = await git(['config', '--get', `branch.${baseBranch}.${key}`], repoPath);
+    return r.code === 0 ? r.stdout.trim() : '';
+  };
+  const [remote, merge] = await Promise.all([config('remote'), config('merge')]);
+  // `.` is a local upstream: nothing to fetch, and nothing to be behind.
+  if (!remote || !merge || remote === '.') return null;
+
+  // Naming the branch without a destination still updates `origin/main`
+  // (git's opportunistic remote-tracking update), and fetches nothing else.
+  const fetch = git(['fetch', '--quiet', '--no-tags', '--', remote, merge], repoPath, {
+    GIT_TERMINAL_PROMPT: '0',
+  }).then((r) => r.code === 0, () => false);
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), FETCH_TIMEOUT_MS));
+  const fetched = await Promise.race([fetch, timeout]);
+
+  const up = await git(['rev-parse', '--abbrev-ref', `${baseBranch}@{upstream}`], repoPath);
+  const upstream = up.code === 0 ? up.stdout.trim() : '';
+  if (!upstream) return null;
+  const counts = await git(['rev-list', '--left-right', '--count', `${baseBranch}...${upstream}`], repoPath);
+  const ab = counts.code === 0 ? parseAheadBehind(counts.stdout) : null;
+  return ab ? { upstream, ...ab, fetched } : null;
+}

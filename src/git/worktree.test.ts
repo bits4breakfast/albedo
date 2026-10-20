@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  baseFreshness,
+  cutPoint,
+  parseAheadBehind,
   probeWorkAtRisk,
   parseCommitFileTimes,
   parseCommitLog,
@@ -669,7 +672,7 @@ describe('classifyGitError', () => {
 // ---------------------------------------------------------------------------
 
 describe('createWorktree', () => {
-  it('issues `worktree add -b <branch> -- <path> <base>`', async () => {
+  it('issues `worktree add --no-track -b <branch> -- <path> <base>`', async () => {
     const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
     await createWorktree({
       repoPath: '/repo',
@@ -679,10 +682,24 @@ describe('createWorktree', () => {
     });
     expect(calls).toEqual([
       {
-        args: ['worktree', 'add', '-b', 'fix-login', '--', '/Users/m/agents/repo/fix-login', 'main'],
+        args: ['worktree', 'add', '--no-track', '-b', 'fix-login', '--', '/Users/m/agents/repo/fix-login', 'main'],
         cwd: '/repo',
       },
     ]);
+  });
+
+  it('cuts from the start point, untracked, while recording nothing about it', async () => {
+    // --no-track matters here: from `origin/main` git would make that the new
+    // branch's upstream, and a later push would aim at main.
+    const calls = install(() => ({ code: 0, stdout: '', stderr: '' }));
+    await createWorktree({
+      repoPath: '/repo',
+      baseBranch: 'main',
+      startPoint: 'origin/main',
+      branch: 'fix-login',
+      path: '/wt',
+    });
+    expect(calls[0]?.args).toEqual(['worktree', 'add', '--no-track', '-b', 'fix-login', '--', '/wt', 'origin/main']);
   });
 
   it('issues `worktree add -- <path> <branch>` when reusing an existing branch', async () => {
@@ -1221,5 +1238,62 @@ describe('parseCommitLog', () => {
     expect(commits[0]?.files.get('src/a.ts')).toEqual({ added: 3, deleted: 1 });
     expect(commits[0]?.files.get('img.png')).toEqual({ added: null, deleted: null });
     expect(commits[1]?.files.size).toBe(1);
+  });
+});
+
+describe('base freshness', () => {
+  const up = { upstream: 'origin/main', fetched: true };
+
+  it('parses rev-list --left-right --count', () => {
+    expect(parseAheadBehind('0\t3\n')).toEqual({ ahead: 0, behind: 3 });
+    expect(parseAheadBehind('')).toBeNull();
+  });
+
+  it('starts from the upstream only when the local base is strictly behind', () => {
+    expect(cutPoint('main', { ...up, ahead: 0, behind: 3 })).toBe('origin/main');
+    expect(cutPoint('main', { ...up, ahead: 0, behind: 0 })).toBe('main');
+    // Unpushed commits on local main would silently be left out.
+    expect(cutPoint('main', { ...up, ahead: 1, behind: 0 })).toBe('main');
+    expect(cutPoint('main', { ...up, ahead: 1, behind: 3 })).toBe('main');
+    expect(cutPoint('main', null)).toBe('main');
+  });
+
+  it('fetches the upstream branch alone, without prompting, then counts', async () => {
+    const envs: (Record<string, string> | undefined)[] = [];
+    const calls: string[][] = [];
+    const prev = setGitRunner(async (args, _cwd, env) => {
+      calls.push(args);
+      envs.push(env);
+      const reply = (stdout: string) => ({ code: 0, stdout, stderr: '' });
+      if (args[2] === 'branch.main.remote') return reply('origin\n');
+      if (args[2] === 'branch.main.merge') return reply('refs/heads/main\n');
+      if (args[0] === 'rev-parse') return reply('origin/main\n');
+      if (args[0] === 'rev-list') return reply('0\t2\n');
+      return reply('');
+    });
+    restoreRunner = () => setGitRunner(prev);
+
+    expect(await baseFreshness('/repo', 'main')).toEqual({ upstream: 'origin/main', ahead: 0, behind: 2, fetched: true });
+    const i = calls.findIndex((a) => a[0] === 'fetch');
+    expect(calls[i]).toEqual(['fetch', '--quiet', '--no-tags', '--', 'origin', 'refs/heads/main']);
+    expect(envs[i]).toEqual({ GIT_TERMINAL_PROMPT: '0' });
+  });
+
+  it('says nothing for a base that tracks nothing', async () => {
+    install(() => ({ code: 1, stdout: '', stderr: '' }));
+    expect(await baseFreshness('/repo', 'main')).toBeNull();
+  });
+
+  it('still counts against the last fetch when the remote fails', async () => {
+    install(({ args }) => {
+      const ok = (stdout: string) => ({ code: 0, stdout, stderr: '' });
+      if (args[2] === 'branch.main.remote') return ok('origin');
+      if (args[2] === 'branch.main.merge') return ok('refs/heads/main');
+      if (args[0] === 'fetch') return { code: 128, stdout: '', stderr: 'Could not resolve host' };
+      if (args[0] === 'rev-parse') return ok('origin/main');
+      if (args[0] === 'rev-list') return ok('0\t1');
+      return undefined;
+    });
+    expect(await baseFreshness('/repo', 'main')).toMatchObject({ behind: 1, fetched: false });
   });
 });

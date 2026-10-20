@@ -1619,6 +1619,7 @@ export default function App() {
             projects={projects}
             activeProject={activeProject}
             nameProject={!showTabs}
+            emptyBrief={!selected}
           />
         </aside>
 
@@ -1690,9 +1691,7 @@ export default function App() {
                     </span>
                   )}
                 </>
-              ) : (
-                <span className="main-ident-path">No task selected</span>
-              )}
+              ) : null}
             </div>
 
             {/* The picker lives beside Send in the composer; only with the
@@ -1792,8 +1791,35 @@ export default function App() {
           </div>
 
           <div className="panes" data-orientation={orientation} data-mode={mode} ref={panesRef}>
+            {/* No task: one message for the whole area, in every mode. Each
+                pane used to say it separately -- the terminal, the transcript
+                ("select a task" with none to select) and the files column, at
+                three different heights -- and Transcript mode hid the only
+                one that offered a next step. */}
+            {!selected && (
+              <div className="placeholder">
+                {loading ? (
+                  <p>Loading tasks…</p>
+                ) : visibleTasks.length === 0 ? (
+                  /* Same decision as the sidebar, from the same module.
+                     This site previously keyed off tasks.length with no
+                     reference to projects at all, which is how it kept
+                     offering "Add a project" to someone who had one. */
+                  <EmptyState
+                    projectCount={projects.length}
+                    activeProject={activeProject}
+                    onAddProject={() => setProjectsOpen(true)}
+                    onNewTask={() => setNewTaskOpen(true)}
+                    variant="pane"
+                  />
+                ) : (
+                  <p>Pick a task from the list.</p>
+                )}
+              </div>
+            )}
+
             {/* Kept mounted in every mode: unmounting it would kill live ptys. */}
-            <section className="pane pane-pty" style={primaryStyle} hidden={!showPty}>
+            <section className="pane pane-pty" style={primaryStyle} hidden={!showPty || !selected}>
               {/* A name only when there is another pane to tell it from: in
                   PTY mode the switch above already says "PTY". */}
               {split && (
@@ -1815,31 +1841,10 @@ export default function App() {
                     />
                   ))}
                 </div>
-                {openTasks.length === 0 && (
-                  <div className="placeholder">
-                    {loading ? (
-                      <p>Loading tasks…</p>
-                    ) : visibleTasks.length === 0 ? (
-                      /* Same decision as the sidebar, from the same module.
-                         This site previously keyed off tasks.length with no
-                         reference to projects at all, which is how it kept
-                         offering "Add a project" to someone who had one. */
-                      <EmptyState
-                        projectCount={projects.length}
-                        activeProject={activeProject}
-                        onAddProject={() => setProjectsOpen(true)}
-                        onNewTask={() => setNewTaskOpen(true)}
-                        variant="pane"
-                      />
-                    ) : (
-                      <p>Pick a task to attach a terminal.</p>
-                    )}
-                  </div>
-                )}
               </div>
             </section>
 
-            {split && (
+            {split && selected && (
               <div
                 className={`splitter ${orientation === 'row' ? 'splitter-v' : 'splitter-h'}`}
                 data-dragging={dragging === 'split'}
@@ -1853,7 +1858,7 @@ export default function App() {
                 column, so the column sits beside them rather than inside the
                 tabbed body — and so the split ratio still divides pty from
                 "everything you read", which is what the user is dragging. */}
-            <div className="read-area" style={secondaryStyle} hidden={!showTranscript}>
+            <div className="read-area" style={secondaryStyle} hidden={!showTranscript || !selected}>
             <section className="pane pane-transcript">
               {/* Only when it tells panes or tabs apart: in Transcript mode with no
                   other tab, "Transcript" just repeated the switch above. */}
