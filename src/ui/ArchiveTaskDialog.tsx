@@ -123,6 +123,20 @@ function fromWorkProbe(p: WorkProbe, createdBranch: boolean): Probe {
   };
 }
 
+/**
+ * Whether deleting the task's branch may be offered.
+ *
+ * A branch this task's `worktree add -b` cut, always (the tick covers any loss).
+ * Any other branch only when deleting it loses nothing: no commits outside the
+ * base and no uncommitted files. Who created it does not matter then, and
+ * `git branch -d` itself refuses if that changes. The remote branch is never
+ * touched either way.
+ */
+export function branchDeletable(p: Pick<Probe, 'createdBranch' | 'ahead' | 'files' | 'done'>): boolean {
+  if (!p.done) return false;
+  return p.createdBranch || (p.ahead === 0 && p.files !== null && p.files.length === 0);
+}
+
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -187,9 +201,14 @@ export function ArchiveTaskDialog({
         const work = await probeWorkAtRisk(worktreePath, baseBranch || null);
         const created = await mayDeleteTaskBranch({ repoPath, branch, createdAt, createdBranch });
         if (cancelled) return;
-        setProbe(fromWorkProbe(work, created));
+        const next = fromWorkProbe(work, created);
+        setProbe(next);
+        const nothingAtRisk = next.ahead === 0 && next.files !== null && next.files.length === 0;
+        // Deleting a task whose work is all merged: delete means delete, so
+        // the branch goes too unless the user picks otherwise.
+        if (deleting && nothingAtRisk && branchDeletable(next)) setMode('remove-delete-branch');
         // Never leave a selection on an option that is no longer offered.
-        if (!created) setMode((m) => (m === 'remove-delete-branch' ? 'remove-keep-branch' : m));
+        else if (!branchDeletable(next)) setMode((m) => (m === 'remove-delete-branch' ? 'remove-keep-branch' : m));
       } catch (e) {
         // Both calls promise not to throw. If one does anyway, finish the probe
         // as "unknown" rather than leave the dialog on "checking…" with its
@@ -203,7 +222,7 @@ export function ArchiveTaskDialog({
     return () => {
       cancelled = true;
     };
-  }, [taskId, worktreePath, baseBranch, repoPath, branch, createdAt, createdBranch, owned]);
+  }, [taskId, worktreePath, baseBranch, repoPath, branch, createdAt, createdBranch, owned, deleting]);
 
   // Changing the plan changes what is destroyed, so a stale tick must not
   // carry over from a more dangerous option to a safer one and back.
@@ -246,7 +265,7 @@ export function ArchiveTaskDialog({
           force: ack,
           // Re-checked here as well as in the render, like `owned`: a branch
           // the task did not create is never deleted.
-          deleteBranch: mode === 'remove-delete-branch' && probe.createdBranch,
+          deleteBranch: mode === 'remove-delete-branch' && branchDeletable(probe),
           // What the tick was given for. removeWorktree probes again and
           // refuses if Claude has added to it since the dialog opened.
           acknowledged: {
@@ -286,7 +305,8 @@ export function ArchiveTaskDialog({
   // Not owned means there is nothing to remove, so nothing is offered and the
   // dialog is a different act with a different name. See the render below.
   const removing = owned && mode !== 'keep-worktree';
-  const deleteBranch = mode === 'remove-delete-branch' && probe.createdBranch;
+  const canDeleteBranch = branchDeletable(probe);
+  const deleteBranch = mode === 'remove-delete-branch' && canDeleteBranch;
   const loss = assessLoss(risk, { deleteBranch });
   const needsAck = removing && loss.needsAck;
   const hasUnmerged = probe.ahead !== null && probe.ahead > 0;
@@ -397,22 +417,28 @@ export function ArchiveTaskDialog({
               </>,
             )}
 
-            {/* Offered only for a branch this task's `worktree add -b` cut. A
-                branch checked out because it already existed is the user's,
-                and "could not tell" is treated the same way. */}
-            {probe.done && !probe.createdBranch && (
+            {/* A branch this task's `worktree add -b` cut, or any branch whose
+                deletion loses nothing (see branchDeletable). Otherwise it may
+                be the user's own, and "could not tell" is treated the same. */}
+            {probe.done && !canDeleteBranch && (
               <div className="wt-hint">
                 Deleting <span className="wt-mono">{task.branch}</span> is not offered: Albedo
                 cannot show that this task created it, so it may be a branch you already had.
               </div>
             )}
 
-            {probe.createdBranch && option(
+            {canDeleteBranch && option(
               'remove-delete-branch',
               'Remove the Worktree and Delete the Branch',
               <>
                 Also runs <span className="wt-mono">git branch -d</span>
-                {hasUnmerged ? (
+                {!probe.createdBranch ? (
+                  <>
+                    . Nothing on <span className="wt-mono">{task.branch}</span> is outside{' '}
+                    <span className="wt-mono">{probe.aheadBase ?? task.baseBranch}</span>, so nothing is
+                    lost, and git refuses if that changes. The remote branch is not touched.
+                  </>
+                ) : hasUnmerged ? (
                   <>
                     {' '}
                     — but <span className="wt-mono">{task.branch}</span> has {probe.ahead} commit(s)
@@ -554,14 +580,18 @@ export function ArchiveTaskDialog({
                   : needsAck
                     ? 'Delete Task and Discard Work'
                     : removing
-                      ? 'Delete Task and Remove Worktree'
+                      ? deleteBranch
+                        ? 'Delete Task, Worktree and Branch'
+                        : 'Delete Task and Remove Worktree'
                       : 'Delete Task Only'
                 : !owned
                   ? 'Remove from List'
                   : needsAck
                     ? 'Archive and Discard Work'
                     : removing
-                      ? 'Archive and Remove Worktree'
+                      ? deleteBranch
+                        ? 'Archive, Remove Worktree and Branch'
+                        : 'Archive and Remove Worktree'
                       : 'Archive Only'}
           </button>
         </div>
