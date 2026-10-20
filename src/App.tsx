@@ -1898,7 +1898,6 @@ export default function App() {
                 <span className="pane-head-note" title={noteFor(activeTab)}>
                   {noteFor(activeTab)}
                 </span>
-                {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
                     ✕
@@ -1925,6 +1924,8 @@ export default function App() {
                     ⇥ Column
                   </button>
                 )}
+                {/* Last, so it lines up with the ⋯ of the rows above. */}
+                {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
               </div>
               )}
 
@@ -2011,8 +2012,6 @@ export default function App() {
                   <div className="pane-head">
                     <span>Files</span>
                     <span className="pane-head-note" />
-                    {/* The git ⋯ menu lands here (GitBar portals into it). */}
-                    <span className="pane-head-slot" ref={setColumnFilesSlot} />
                     <button
                       className="pane-head-pin"
                       data-on
@@ -2022,6 +2021,9 @@ export default function App() {
                     >
                       ⇥ Column
                     </button>
+                    {/* The git ⋯ menu lands here (GitBar portals into it).
+                        Last, so it lines up with the ⋯ of the rows above. */}
+                    <span className="pane-head-slot" ref={setColumnFilesSlot} />
                   </div>
                   <div className="pane-body">
                     {selected ? (

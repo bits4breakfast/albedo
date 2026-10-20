@@ -262,7 +262,7 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
       <button
         ref={buttonRef}
         type="button"
-        className="tf-btn tf-git-more"
+        className="icon-btn"
         onClick={toggle}
         aria-haspopup="menu"
         aria-expanded={open}

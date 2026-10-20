@@ -473,7 +473,9 @@ button {
      first project tab then starts on the sidebar's edge, New Task and the
      rows' highlight, all at 8px. */
   padding-left: max(var(--traffic-lights-w), 8px);
-  padding-right: 10px;
+  /* The card's inset, its border and the task bar's own padding, so this
+     row's ⋯ ends on the same line as the task bar's and the pane heads'. */
+  padding-right: calc(8px + 1px + 8px);
   background: var(--panel-chrome);
 }
 
@@ -1102,7 +1104,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 6px 0 14px;
+  /* 8px on the right, as .main-bar: a trailing ⋯ lines up with the one above. */
+  padding: 0 8px 0 14px;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text);
