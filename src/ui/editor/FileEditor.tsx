@@ -21,6 +21,8 @@
 import { copyText } from '../../lib/clipboard';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
 import { useOpenFile } from './openFile';
+import { formatBytes, imageTypeForPath } from './preview';
+import { looksBinary } from '../../git/fileDiff';
 import FileDiffView from './FileDiffView';
 import SymbolResults, { type SymbolResultsState } from './SymbolResults';
 import { navigate, type NavAction } from './symbolNav';
@@ -364,7 +366,10 @@ type Phase =
   | { kind: 'loading' }
   | { kind: 'outside'; path: string }
   | { kind: 'error'; message: string }
-  | { kind: 'ready' };
+  | { kind: 'ready' }
+  /** Not text: shown as a picture or described, never put in the editor. */
+  | { kind: 'image'; url: string; bytes: number }
+  | { kind: 'binary'; bytes: number | null };
 
 type SaveState =
   | { kind: 'idle' }
@@ -501,6 +506,8 @@ export default function FileEditor({
     }
 
     let cancelled = false;
+    /** The picture's object URL, released when this file is left. */
+    let imageUrl: string | null = null;
     setPhase({ kind: 'loading' });
 
     void (async () => {
@@ -515,6 +522,20 @@ export default function FileEditor({
       resolvedRef.current = target;
       setResolved(target);
       setHandEdited(isHandEdited(task.id, target.relative));
+
+      const imageType = imageTypeForPath(target.relative);
+      if (imageType) {
+        try {
+          const { readFile } = await import('@tauri-apps/plugin-fs');
+          const bytes = await readFile(target.absolute);
+          if (cancelled) return;
+          imageUrl = URL.createObjectURL(new Blob([bytes], { type: imageType }));
+          setPhase({ kind: 'image', url: imageUrl, bytes: bytes.length });
+        } catch (err) {
+          if (!cancelled) setPhase({ kind: 'error', message: message(err) });
+        }
+        return;
+      }
 
       const { readTextFile } = await import('@tauri-apps/plugin-fs');
       let text: string;
@@ -535,6 +556,14 @@ export default function FileEditor({
         existedRef.current = false;
       }
       if (cancelled) return;
+      // git's test: a NUL near the start. Decoded as UTF-8 it is noise, and
+      // saving that noise back would destroy the file.
+      if (looksBinary(text)) {
+        const { stat } = await import('@tauri-apps/plugin-fs');
+        const size = await stat(target.absolute).then((s) => s.size, () => null);
+        if (!cancelled) setPhase({ kind: 'binary', bytes: size });
+        return;
+      }
       baselineRef.current = text;
       setDoc({ text, key: Date.now() });
       setPhase({ kind: 'ready' });
@@ -542,6 +571,7 @@ export default function FileEditor({
 
     return () => {
       cancelled = true;
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
     };
   }, [task.id, task.worktreePath, requestPath]);
 
@@ -1289,12 +1319,71 @@ export default function FileEditor({
             <div className="ed-message-sub">{phase.message}</div>
           </div>
         )}
+        {phase.kind === 'image' && <ImagePreview url={phase.url} bytes={phase.bytes} name={fileName} />}
+        {phase.kind === 'binary' && (
+          <div className="ed-message">
+            <strong>{fileName}</strong> is a binary file{phase.bytes !== null && ` · ${formatBytes(phase.bytes)}`}.
+            <div className="ed-message-sub">It is not text, so it is not shown here and cannot be edited.</div>
+          </div>
+        )}
         {mode === 'diff' && resolved !== null && phase.kind === 'ready' ? (
           <FileDiffView task={task} target={resolved} reloadKey={savedKey} unsaved={dirty} />
         ) : null}
         <div className="ed-surface" ref={hostRef} hidden={phase.kind !== 'ready' || mode === 'diff'} />
       </div>
       <SymbolResults state={nav} onClose={closeNav} onOpen={(m) => jump(m.path, m.line)} />
+    </div>
+  );
+}
+
+/**
+ * A picture, fitted to the pane; a click shows it at its own size (and back),
+ * as Preview and PhpStorm's image viewer do. The checkerboard is there so
+ * transparency reads as transparency, not as the pane's colour.
+ */
+function ImagePreview({ url, bytes, name }: { url: string; bytes: number; name: string }) {
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const [actual, setActual] = useState(false);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setSize(null);
+    setActual(false);
+    setBroken(false);
+  }, [url]);
+
+  if (broken) {
+    return (
+      <div className="ed-message">
+        <strong>{name}</strong> could not be shown · {formatBytes(bytes)}.
+        <div className="ed-message-sub">The file is not an image this app can render, or it is damaged.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ed-image">
+      <div className="ed-image-stage" data-actual={actual}>
+        <img
+          src={url}
+          alt={name}
+          onLoad={(e) => setSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          onError={() => setBroken(true)}
+          onClick={() => setActual((a) => !a)}
+          title={actual ? 'Fit to the pane' : 'Show at actual size'}
+        />
+      </div>
+      <div className="ed-image-meta">
+        {size && (
+          <span>
+            {size.w} × {size.h}
+          </span>
+        )}
+        <span>{formatBytes(bytes)}</span>
+        <span className="ed-spacer" />
+        <button type="button" className="ed-btn" onClick={() => setActual((a) => !a)}>
+          {actual ? 'Fit' : 'Actual Size'}
+        </button>
+      </div>
     </div>
   );
 }

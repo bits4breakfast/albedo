@@ -43,4 +43,11 @@ describe('GitBar head controls', () => {
     render(bar({ commits: 2, remote: { ahead: 0, upstream: 'origin/feat', detached: false } }));
     expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
   });
+
+  it('offers Create PR in ⋯ for a branch with only uncommitted changes', () => {
+    render(bar({ dirty: 4, remote: { ahead: 0, upstream: null, detached: false } }));
+    expect(screen.getByRole('button', { name: /Push/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByText('Create PR')).toBeTruthy();
+  });
 });
