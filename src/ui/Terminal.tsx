@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
 import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
+import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
 import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
 import { getTaskModel } from './taskModel';
 import { isResumePlan, planSpawn } from './sessionSpawn';
@@ -417,6 +418,13 @@ export default function Terminal({
   taskRef.current = task;
 
   const [phase, setPhase] = useState<Phase>('starting');
+  const [trustWaiting, setTrustWaitingState] = useState(() => isTrustWaiting(task.id));
+  useEffect(() => {
+    setTrustWaitingState(isTrustWaiting(task.id));
+    return onTrustWaiting((id, waiting) => {
+      if (id === task.id) setTrustWaitingState(waiting);
+    });
+  }, [task.id]);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -596,6 +604,14 @@ export default function Terminal({
         console.warn('[terminal] hooks unavailable, starting without them', err);
       }
 
+      // A folder Claude Code has never trusted opens on its trust dialog, before
+      // any hook runs and before there is a transcript, so neither channel can
+      // say the task is waiting. Asked beforehand of Claude Code's own record
+      // instead (capture/workspaceTrust.ts); unknown counts as trusted.
+      const untrusted = (await folderTrusted(live.worktreePath)) === false;
+      if (disposed) return;
+      setTrustWaiting(task.id, untrusted);
+
       // Assigned the moment spawnPty resolves. The bridge never calls a
       // handler before then, so both handlers below always see it set.
       let id = '';
@@ -626,6 +642,7 @@ export default function Terminal({
         unregisterPty(task.id, id);
         // Whatever it was waiting on died with it (no SessionEnd on a crash).
         void endTaskEvents(task.id);
+        setTrustWaiting(task.id, false);
         setExitCode(code);
         setPhase('exited');
         // Leave the scrollback intact and readable.
@@ -660,6 +677,9 @@ export default function Terminal({
         for (const chunk of queued) void writePty(id, chunk).catch(() => {});
 
         applyFit();
+        // The dialog is answered here and nowhere else: give it the keyboard,
+        // if this terminal is on screen.
+        if (untrusted && host.offsetWidth > 0) term.focus();
       } catch (err) {
         if (disposed) return;
         const msg = message(err);
@@ -713,6 +733,8 @@ export default function Terminal({
     // session; the SessionStart hook says which, and the task follows it.
     unsubs.push(
       onSessionStart((taskId, sessionId, source) => {
+        // Hooks run only in a trusted folder: a session starting is the answer.
+        if (taskId === task.id) setTrustWaiting(task.id, false);
         if (taskId !== task.id || sessionId === taskRef.current.sessionId) return;
         void linkTaskSession(task.id, sessionId, `hook:${source}`).catch((err) =>
           console.warn('[terminal] could not follow the session', err),
@@ -729,6 +751,7 @@ export default function Terminal({
       observer.disconnect();
       window.removeEventListener('resize', scheduleFit);
       restartRef.current = null;
+      setTrustWaiting(task.id, false);
       spawningRef.current = false;
       starters.delete(task.id);
       focusers.delete(task.id);
@@ -800,6 +823,13 @@ export default function Terminal({
 
   return (
     <div className="term" hidden={!active} aria-hidden={!active}>
+      {/* Above the terminal, not over it: the dialog it explains stays whole. */}
+      {trustWaiting && phase === 'live' ? (
+        <div className="term-trust" role="status">
+          Claude Code is asking whether to trust this folder. To go on, choose <b>Yes, I trust this folder</b> below
+          (↓, then Enter): Enter alone picks the highlighted <b>No, exit</b>.
+        </div>
+      ) : null}
       <div className="term-surface" ref={hostRef} />
       {phase === 'starting' && <div className="term-starting">Starting claude in {task.worktreePath}…</div>}
 

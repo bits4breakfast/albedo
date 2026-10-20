@@ -31,6 +31,7 @@ import {
   type QuestionPick,
   type SuggestedRule,
 } from '../../capture/hookEvents';
+import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import './promptCard.css';
 
 type SendState = 'idle' | 'sending' | 'sent' | 'refused' | 'unacknowledged';
@@ -75,7 +76,17 @@ export function PromptCard({
     });
   }, [taskId]);
 
-  if (prompt === null) return null;
+  // Claude Code's trust dialog comes before any hook, so it is never a
+  // `prompt`; it has its own source (capture/workspaceTrust.ts).
+  const [trust, setTrust] = useState(() => isTrustWaiting(taskId));
+  useEffect(() => {
+    setTrust(isTrustWaiting(taskId));
+    return onTrustWaiting((id, waiting) => {
+      if (id === taskId) setTrust(waiting);
+    });
+  }, [taskId]);
+
+  if (prompt === null) return trust ? <TrustCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null;
   // Keyed by prompt: picks and the sent state belong to one prompt only, and
   // must not survive into the next one -- which may look identical.
   return <PromptBody key={promptKey(prompt)} taskId={taskId} prompt={prompt} onAnswerInTerminal={onAnswerInTerminal} />;
@@ -145,6 +156,39 @@ function PromptBody({
       )}
 
       <SendNote state={send} />
+    </div>
+  );
+}
+
+/**
+ * Claude Code wants to know whether to trust the folder before it starts. Only
+ * the terminal can answer: no hook is running yet to take a decision file.
+ */
+function TrustCard({
+  taskId,
+  onAnswerInTerminal,
+}: {
+  taskId: number;
+  onAnswerInTerminal: ((taskId: number) => void) | undefined;
+}): ReactNode {
+  return (
+    <div className="tx-prompt" role="status" aria-label="Waiting on You">
+      <div className="tx-prompt-head">
+        <span className="tx-prompt-tag">
+          <span className="status-dot" data-status="blocked" aria-hidden="true" />
+          Waiting on You
+        </span>
+        {onAnswerInTerminal ? (
+          <button type="button" className="btn btn-primary" onClick={() => onAnswerInTerminal(taskId)}>
+            Answer in Terminal
+          </button>
+        ) : null}
+      </div>
+      <div className="tx-prompt-q">Claude Code is asking whether to trust this folder.</div>
+      <div className="pc-note">
+        It can only be answered in the terminal. Choose “Yes, I trust this folder” there (↓, then Enter): Enter alone
+        picks the highlighted “No, exit”.
+      </div>
     </div>
   );
 }

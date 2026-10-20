@@ -29,6 +29,21 @@
 .term-status[data-tone='error'] { color: var(--danger); }
 .term-status[data-tone='exited'] { color: var(--warn); }
 
+/* Claude Code's trust dialog is waiting (capture/workspaceTrust.ts). In the
+   flow, above the surface, so it never covers the dialog it explains. --text
+   on --panel is the body tier every pane is cleared against. */
+.term-trust {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+.term-trust b { color: var(--text-strong); font-weight: 600; }
+
 .term-starting {
   position: absolute;
   inset: 0;

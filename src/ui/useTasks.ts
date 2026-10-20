@@ -6,6 +6,7 @@ import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, context
 import { pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt } from '../capture/status';
 import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
+import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { noteQuestion, noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
@@ -385,7 +386,7 @@ export function useTasks(): UseTasksResult {
         for (const m of messages) if (m.ts > newestTs) newestTs = m.ts;
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
-        if (pendingPrompt(taskId) !== null) status = 'blocked';
+        if (pendingPrompt(taskId) !== null || isTrustWaiting(taskId)) status = 'blocked';
         asked = status !== 'blocked' ? pendingQuestion(messages) : null;
         // Background agents report back to the session when they finish, and
         // it carries on by itself: a turn handed back while they work is not
@@ -631,6 +632,23 @@ export function useTasks(): UseTasksResult {
       const task = tasksRef.current.find((t) => t.id === taskId);
       if (!task || task.status === 'archived') return;
       if (prompt !== null) {
+        if (task.status === 'blocked') return;
+        applyTask(taskId, { status: 'blocked' });
+        noteStatusChange(taskId, task.status, 'blocked', task.title);
+        void persist(taskId, { status: 'blocked' });
+      } else if (task.sessionId) {
+        void refreshStatus(task.sessionId);
+      }
+    });
+  }, [applyTask, persist, refreshStatus]);
+
+  // Claude Code's trust dialog, the same way: no hook and no transcript line
+  // says it is up (capture/workspaceTrust.ts).
+  useEffect(() => {
+    return onTrustWaiting((taskId, waiting) => {
+      const task = tasksRef.current.find((t) => t.id === taskId);
+      if (!task || task.status === 'archived') return;
+      if (waiting) {
         if (task.status === 'blocked') return;
         applyTask(taskId, { status: 'blocked' });
         noteStatusChange(taskId, task.status, 'blocked', task.title);
