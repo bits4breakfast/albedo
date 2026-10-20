@@ -25,7 +25,6 @@ import type { Task } from '../types';
 import type { UnmergedCommits } from '../git/worktree';
 import { getPrStatus, usePrStatus } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
-import { menuPosition } from './ClosedProjectsMenu';
 import MoreGlyph from './MoreGlyph';
 import { canSquashRebase, createPrPrompt, nextStep, pushPrompt } from './gitPrompts';
 import './pr.css';
@@ -198,9 +197,12 @@ export default function GitBar({
   );
 }
 
+/** Gap kept between the menu and the window edge. */
+const MENU_EDGE = 8;
+
 /** The `⋯` button and its menu. Same mechanics as the closed-projects menu. */
 function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): ReactNode {
-  const [at, setAt] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const [at, setAt] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const open = at !== null;
@@ -213,9 +215,12 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
     }
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const { left, top } = menuPosition(rect, window.innerWidth);
+    // Right edges aligned, whatever the menu's width: the ⋯ ends its row, so
+    // the menu opens back toward the pane. Placing it by its LEFT edge
+    // assumed the minimum width, and a wider menu ran off the window.
+    const right = Math.max(MENU_EDGE, window.innerWidth - rect.right);
     // Upward from the bar at the foot of the pane; downward from the head.
-    setAt(drop === 'up' ? { left, bottom: window.innerHeight - rect.top + 2 } : { left, top });
+    setAt(drop === 'up' ? { right, bottom: window.innerHeight - rect.top + 2 } : { right, top: rect.bottom + 2 });
   };
 
   useEffect(() => {
@@ -280,7 +285,7 @@ function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): 
             className="row-menu"
             role="menu"
             aria-label="Git actions"
-            style={{ left: at.left, top: at.top, bottom: at.bottom }}
+            style={{ right: at.right, top: at.top, bottom: at.bottom }}
             onKeyDown={onMenuKey}
           >
             {items.map((item) => (
