@@ -209,7 +209,6 @@ describe('ContextGauge — inferred limit', () => {
   it('never prints a bare percentage', () => {
     expect(html).toContain('~93%');
     expect(html).not.toMatch(/>93%</);
-    expect(html).toContain('Approx');
   });
 
   it('marks the bar as inferred so the fill is not read as measured', () => {
@@ -221,7 +220,8 @@ describe('ContextGauge — inferred limit', () => {
     // capture returns freeEst === null for an inferred limit; we do not
     // recompute limit - used behind its back.
     expect(html).not.toContain('13.1k');
-    expect(html).toContain(NO_VALUE);
+    // No "Free —" row either: the hatched end of the bar carries that.
+    expect(html).not.toContain('>Free<');
   });
 
   it('explains the inference in a tooltip', () => {
@@ -230,6 +230,16 @@ describe('ContextGauge — inferred limit', () => {
 
   it('warns near the ceiling without claiming precision', () => {
     expect(html).toContain('Near the inferred ceiling');
+  });
+});
+
+describe('ContextGauge — no overhead estimate', () => {
+  it('hides an overhead row that would read 0', () => {
+    const html = renderToStaticMarkup(
+      <ContextGauge usage={usage()} bands={bands({ overheadEst: 0 })} state="ready" />,
+    );
+    expect(html).not.toContain('Overhead');
+    expect(html).toContain('Conversation');
   });
 });
 
@@ -255,8 +265,9 @@ describe('ContextGauge — known limit', () => {
     expect(html).toContain('data-basis="known"');
   });
 
-  it('still marks the two estimated bands', () => {
-    expect(html).toContain('Approx');
+  it('still marks the two estimated bands, with a tilde on each value', () => {
+    expect(html).toContain('~120.0k');
+    expect(html).toContain('~300.0k');
     expect(html).toContain('Overhead');
     expect(html).toContain('Conversation');
   });
@@ -313,7 +324,7 @@ describe('WindowGauge', () => {
       <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
     );
     expect(html).toContain('2:47:13');
-    expect(html).toContain('Ages Out In');
+    expect(html).toContain('Ages out in');
     expect(html).not.toMatch(/resets? in/i);
   });
 
@@ -331,7 +342,7 @@ describe('WindowGauge', () => {
     const html = renderToStaticMarkup(
       <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
     );
-    expect(html).toContain('Spend/h');
+    expect(html).toContain('>Spend<');
     expect(html).not.toMatch(/>rate</);
     expect(html).toContain('tokens spent per hour');
     expect(html).toContain('Cached re-read is not counted');
@@ -377,8 +388,7 @@ describe('WindowGauge', () => {
     );
     // Present, and labelled so it cannot be read as spend.
     expect(html).toContain('186.0k');
-    expect(html).toContain('Cached Re-read');
-    expect(html).toContain('Not Spend');
+    expect(html).toContain('cached re-read, not spend');
     // Never described as input -- that word is what made the old number look
     // reasonable at 38x reality.
     expect(html).not.toMatch(/cached[^<]*input/i);

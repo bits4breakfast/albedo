@@ -148,7 +148,7 @@ export default function WindowGauge({ label, data, state, now, fetchedAt, hideLa
                 : `Nothing is due to age out yet.\n\n${ROLLING_NOTE}`
             }
           >
-            <span className="gz-ages-key">Ages Out In</span>
+            <span className="gz-ages-key">Ages out in</span>
             <span className="gz-countdown">
               {haveCountdown && remaining !== null ? formatCountdown(remaining) : NO_VALUE}
             </span>
@@ -165,7 +165,7 @@ export default function WindowGauge({ label, data, state, now, fetchedAt, hideLa
              what? -- and that is the distinction this panel spent a round
              getting right. The value keeps its own /h so it still reads
              correctly quoted on its own. */
-          label="Spend/h"
+          label="Spend"
           title={`${exactTokens(data.burnRate)} tokens spent per hour across all sessions (input + output).\nTotal spent in window: ${exactTokens(total)} tokens. Cached re-read is not counted.`}
         />
         <Stat
@@ -189,7 +189,7 @@ export default function WindowGauge({ label, data, state, now, fetchedAt, hideLa
           }
         >
           <span className="gz-cache-val">{abbreviateTokens(cacheRead)}</span>{' '}
-          <span className="gz-cache-key">Cached Re-read &middot; Not Spend</span>
+          <span className="gz-cache-key">cached re-read, not spend</span>
         </p>
       )}
     </div>

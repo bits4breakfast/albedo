@@ -184,7 +184,7 @@
 .gz-bar {
   display: flex;
   width: 100%;
-  height: 8px;
+  height: 6px;
   /* The shell's own meter track, consumed as a token so this gauge and the
      task-row meter cannot drift. Deliberately NOT adjusted for contrast in
      either theme: moving the track toward the bands lowers every band
@@ -195,7 +195,7 @@
      and 1.24 (light); without the ring you cannot see where the bar ends. */
   background: var(--track);
   border: 1px solid var(--border-strong);   /* 3.90 dark / 4.01 light on --panel */
-  border-radius: 2px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
@@ -242,13 +242,10 @@
 /* Approximated bands are hatched, exactly as the task-row meters hatch an
    inferred fill. Two of the three bands are always hatched, which is the
    honest picture: only the total is measured. */
-.gz-seg[data-est='true'] {
-  background-image: repeating-linear-gradient(
-    115deg,
-    var(--panel) 0 2px,
-    rgba(0, 0, 0, 0) 2px 4px
-  );
-}
+/* The used bands are always split by estimate; hatching them said so on
+   every reading and made the bar busy. The tilde on the legend values says
+   it now. Only the free band keeps its hatch, and only when the limit is
+   inferred: there the bar's very end is the guess. */
 
 /* The free band has no fill to hatch, so it gets stripes of its own. When the
    limit is inferred this is the visible statement that the right-hand end of
@@ -272,6 +269,7 @@
 }
 
 .gz-key {
+  font-family: var(--font-ui);
   display: flex;
   align-items: baseline;
   gap: 5px;
@@ -481,7 +479,10 @@
   margin-left: 8px;
   align-self: center;
 }
-.gz-clear { height: 22px; font-size: var(--fs-xs); }
+/* Quiet text until armed: an action beside a reading, not a second headline. */
+.gz-clear { height: 22px; padding: 0 6px; font-size: var(--fs-xs); }
+.gz-clear:not(.gz-clear-armed) { border-color: transparent; background: transparent; color: var(--muted); }
+.gz-clear:not(.gz-clear-armed):hover:not(:disabled) { background: var(--panel-hover); color: var(--text); }
 .gz-action-note {
   font-size: var(--fs-xs);
   color: var(--danger);

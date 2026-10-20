@@ -98,10 +98,11 @@ function KeyRow({ band, label, value, estimated, title }: KeyRowProps) {
       <span className="gz-key" title={title}>
         <span className="gz-swatch" data-band={band} aria-hidden="true" />
         <span className="gz-key-label">{label}</span>
-        {estimated && <span className="gz-approx">Approx</span>}
       </span>
-      <span className="gz-val" title={value === null ? title : `${exactTokens(value)} tokens`}>
-        {value === null ? NO_VALUE : abbreviateTokens(value)}
+      {/* An estimate carries its tilde on the number, as the percentage does,
+          rather than an "Approx" word repeated on every row. */}
+      <span className="gz-val" title={value === null ? title : `${exactTokens(value)} tokens${estimated ? ' (estimated)' : ''}`}>
+        {value === null ? NO_VALUE : `${estimated ? '~' : ''}${abbreviateTokens(value)}`}
       </span>
     </>
   );
@@ -157,7 +158,6 @@ function ContextGaugeInner({ usage, bands, state, action }: ContextGaugeProps) {
           title={title}
         >
           {formatPercent(usage.fraction, inferred)}
-          {inferred && <span className="gz-approx">Approx</span>}
         </span>
         {action}
       </div>
@@ -183,13 +183,17 @@ function ContextGaugeInner({ usage, bands, state, action }: ContextGaugeProps) {
       <div className="gz-legend">
         {split ? (
           <>
-            <KeyRow
-              band="overhead"
-              label="Overhead"
-              value={bands!.overheadEst}
-              estimated
-              title={`System prompt, tools, MCP servers and memory files.\n\n${SPLIT_CAVEAT}`}
-            />
+            {/* An estimate of 0 is no estimate (nothing to split it from):
+                a row reading "Overhead 0" only raised the question. */}
+            {bands!.overheadEst > 0 && (
+              <KeyRow
+                band="overhead"
+                label="Overhead"
+                value={bands!.overheadEst}
+                estimated
+                title={`System prompt, tools, MCP servers and memory files.\n\n${SPLIT_CAVEAT}`}
+              />
+            )}
             <KeyRow
               band="conversation"
               label="Conversation"
@@ -207,17 +211,18 @@ function ContextGaugeInner({ usage, bands, state, action }: ContextGaugeProps) {
             title="Exact, from the most recent turn’s usage record."
           />
         )}
-        <KeyRow
-          band="free"
-          label="Free"
-          value={freeValue}
-          estimated={inferred}
-          title={
-            freeValue === null
-              ? `Not shown: headroom is limit minus used, and the limit here is inferred.\n\n${LIMIT_CAVEAT}`
-              : `Headroom against a known ${abbreviateTokens(usage.limit)} window.`
-          }
-        />
+        {/* No row when there is no honest figure: "Free —" said only that we
+            do not know, which the hatched end of the bar already shows (and
+            the percentage's tooltip explains). */}
+        {freeValue !== null && (
+          <KeyRow
+            band="free"
+            label="Free"
+            value={freeValue}
+            estimated={inferred}
+            title={`Headroom against a known ${abbreviateTokens(usage.limit)} window.`}
+          />
+        )}
       </div>
 
       {nearCeiling && (
