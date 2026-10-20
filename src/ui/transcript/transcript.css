@@ -340,14 +340,15 @@
   line-height: 1.6;
 }
 
-/* Your messages are the landmarks of a long transcript, so they are a band:
+/* Your messages are the landmarks of a long transcript, so they get a box:
    their own flat ground (--user-row, measured for every text tier in the
-   token block) running the full width of the pane between two hairlines.
-   No opacity and no tint, so nothing here changes a ratio the tokens
-   guarantee. */
-/* The band is drawn behind the row, not as the row's own border and padding,
+   token block) nearly the full width of the pane, closed by one hairline with
+   rounded ends. No opacity and no tint, so nothing here changes a ratio the
+   tokens guarantee. */
+/* The box is drawn behind the row, not as the row's own border and padding,
    so your text sits on exactly the same column as everything else. It
-   bleeds into the scroller's side padding (8px / 20px) to reach both edges. */
+   reaches into the scroller's side padding (8px / 20px) to 4px from the left
+   edge and 10px from the right, clear of the overlay scrollbar's rail. */
 .tx-row-user {
   position: relative;
   isolation: isolate;
@@ -357,11 +358,11 @@
 .tx-row-user::before {
   content: '';
   position: absolute;
-  inset: 0 -20px 0 -8px;
+  inset: 0 -10px 0 -4px;
   z-index: -1;
   background: var(--user-row);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 /* "you": a label in the gutter, on --user-row (--faint 5.37 / 5.55). */
 .tx-row-user .tx-gutter {
