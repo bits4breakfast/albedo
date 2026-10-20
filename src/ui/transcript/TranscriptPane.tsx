@@ -449,15 +449,20 @@ export function WorkingLine({ since, sending }: { since: number; sending: boolea
   }, []);
   const s = Math.max(0, Math.round((now - since) / 1000));
   const elapsed = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  // A row like every other, so it starts in the text column, not the gutter.
   return (
-    <div className="tx-working" role="status">
-      <span className="tx-working-dots" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </span>
-      {sending ? 'Sending' : 'Working'}
-      {since > 0 ? <span className="tx-working-time"> · {elapsed}</span> : null}
+    <div className="tx-row tx-row-working">
+      <div className="tx-gutter" />
+      <div className="tx-content tx-working" role="status">
+        <span className="tx-working-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+        {sending ? 'Sending' : 'Working'}
+        {/* Read aloud as two words; between flex items it draws nothing. */}{' '}
+        {since > 0 ? <span className="tx-working-time">· {elapsed}</span> : null}
+      </div>
     </div>
   );
 }

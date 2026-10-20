@@ -143,12 +143,11 @@
   overflow: hidden;
 }
 
+.tx-row-working { margin: 6px 0 14px; }
 .tx-working {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 6px 0 14px;
-  padding-left: 10px;
   font-size: var(--fs-sm);
   color: var(--muted);
 }
