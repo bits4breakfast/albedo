@@ -2,6 +2,8 @@ mod fsscope;
 mod fsx;
 mod pty;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use tauri::menu::{Menu, MenuItem, MenuItemKind, WINDOW_SUBMENU_ID};
 use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
@@ -10,7 +12,45 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 const CLOSE_TAB_EVENT: &str = "albedo://close-tab";
 const CLOSE_TAB_ID: &str = "close-tab";
 
-/// The default menu, with every "Close Window" (Cmd+W) swapped for "Close Tab".
+/// Asks the webview to confirm quitting while tasks are busy.
+const QUIT_REQUESTED_EVENT: &str = "albedo://quit-requested";
+const QUIT_ID: &str = "albedo-quit";
+
+/// How many tasks are mid-turn or waiting on the user, as the webview last
+/// reported (`set_busy_tasks`). Quitting kills their `claude` processes, so
+/// while this is non-zero a quit or a window close asks first.
+#[derive(Default)]
+struct QuitGuard {
+    busy: AtomicUsize,
+}
+
+#[tauri::command]
+fn set_busy_tasks(guard: tauri::State<'_, QuitGuard>, count: usize) {
+    guard.busy.store(count, Ordering::Relaxed);
+}
+
+/// The webview's "Quit" after the user confirmed. Exits without asking again.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+/// Quit now, or hand the decision to the webview when tasks are busy.
+fn request_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let busy = app.state::<QuitGuard>().busy.load(Ordering::Relaxed);
+    if busy == 0 || app.emit(QUIT_REQUESTED_EVENT, busy).is_err() {
+        app.exit(0);
+    }
+}
+
+/// The default menu, with every "Close Window" (Cmd+W) swapped for "Close Tab"
+/// and the stock "Quit" swapped for one Albedo handles.
+///
+/// The stock Quit sends AppKit's `terminate:`, which tao cannot cancel, so
+/// Cmd+Q would kill every running session without the confirmation the window's
+/// close button gives. The replacement goes through `request_quit`. (The Dock's
+/// Quit still sends `terminate:`; nothing short of an app delegate catches it.)
+///
 ///
 /// Albedo has one window, so the stock Cmd+W quit the whole app -- including
 /// every live terminal -- when the user only meant to dismiss an open file.
@@ -26,9 +66,17 @@ fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
         let MenuItemKind::Submenu(sub) = top else {
             continue;
         };
-        for item in sub.items()? {
+        for (index, item) in sub.items()?.into_iter().enumerate() {
             if let MenuItemKind::Predefined(p) = &item {
-                if p.text()?.contains("Close") {
+                let text = p.text()?;
+                if text.starts_with("Quit") {
+                    sub.remove(p)?;
+                    let quit =
+                        MenuItem::with_id(handle, QUIT_ID, &text, true, Some("CmdOrCtrl+Q"))?;
+                    sub.insert(&quit, index)?;
+                    continue;
+                }
+                if text.contains("Close") {
                     sub.remove(p)?;
                     // The first submenu that had one is where the new item goes.
                     if home.is_none() {
@@ -119,6 +167,8 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id().as_ref() == CLOSE_TAB_ID {
                 let _ = app.emit(CLOSE_TAB_EVENT, ());
+            } else if event.id().as_ref() == QUIT_ID {
+                request_quit(app);
             }
         })
         // Every shortcut is a keydown listener in the page, so it only fires
@@ -127,12 +177,21 @@ pub fn run() {
         // dialog) can leave it not first responder: the key then reaches no
         // one, matches no menu item, and AppKit beeps. Hand it back on every
         // activation.
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Focused(true) = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(true) => {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
                     let _ = webview.as_ref().set_focus();
                 }
             }
+            // The only window: closing it quits, so it asks the same question.
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                let app = window.app_handle();
+                if app.state::<QuitGuard>().busy.load(Ordering::Relaxed) > 0 {
+                    api.prevent_close();
+                    request_quit(app);
+                }
+            }
+            _ => {}
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -144,6 +203,7 @@ pub fn run() {
                 .build(),
         )
         .manage(pty::PtyRegistry::default())
+        .manage(QuitGuard::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -152,6 +212,8 @@ pub fn run() {
             pty::pty_kill_stale,
             fsx::canonicalize_path,
             fsscope::allow_project_dir,
+            set_busy_tasks,
+            quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running albedo");

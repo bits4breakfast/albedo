@@ -16,6 +16,7 @@ import {
   answerText,
   DENY_MESSAGE,
   derivePending,
+  latestSessionStart,
   HOOK_SCRIPT,
   hookSettingsArg,
   isAnswerable,
@@ -36,6 +37,8 @@ const ev = (event: string, extra: Partial<HookEvent> = {}, at = 1): HookEvent =>
     notificationType: null,
     requestId: null,
     suggestions: null,
+    sessionId: null,
+    source: null,
     at,
     ...extra,
   }) as HookEvent;
@@ -150,6 +153,19 @@ describe('HOOK_SCRIPT, run for real', () => {
     const [e] = run(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'tu9', tool_input: { questions: [{ question: 'Q?', options: [{ label: 'A' }] }] } }, null, 2));
     expect(e).toMatchObject({ event: 'PreToolUse', toolUseId: 'tu9' });
     expect(derivePending([e as HookEvent])?.kind).toBe('question');
+  });
+
+  it('keeps the session id and source of a SessionStart, and nothing else', () => {
+    const sid = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+    const [e] = run(
+      JSON.stringify({ session_id: sid, transcript_path: '/p/x.jsonl', cwd: '/w', hook_event_name: 'SessionStart', source: 'clear' }),
+    );
+    expect(e).toMatchObject({ event: 'SessionStart', sessionId: sid, source: 'clear' });
+  });
+
+  it('drops a session id that is not a UUID', () => {
+    const [e] = run(JSON.stringify({ session_id: '../../etc"x', hook_event_name: 'SessionStart', source: 'startup' }));
+    expect(e).toMatchObject({ event: 'SessionStart', sessionId: null });
   });
 
   it('reduces a huge PostToolUse to its name and id', () => {
@@ -587,5 +603,23 @@ describe('HOOK_SCRIPT: safety, run for real', () => {
     const text = readFileSync(file, 'utf8');
     expect(text.split('\n').filter(Boolean)).toHaveLength(N);
     expect(parseHookLines(text)).toHaveLength(N);
+  });
+});
+
+describe('latestSessionStart', () => {
+  const a = '11111111-1111-4111-8111-111111111111';
+  const b = '22222222-2222-4222-8222-222222222222';
+  it('takes the last SessionStart that names a session', () => {
+    expect(
+      latestSessionStart([
+        ev('SessionStart', { sessionId: a, source: 'startup' }),
+        ev('Stop'),
+        ev('SessionStart', { sessionId: b, source: 'clear' }),
+        ev('SessionStart', { sessionId: null, source: 'clear' }),
+      ]),
+    ).toEqual({ sessionId: b, source: 'clear' });
+  });
+  it('is null without one', () => {
+    expect(latestSessionStart([ev('Stop'), ev('PostToolUse')])).toBeNull();
   });
 });

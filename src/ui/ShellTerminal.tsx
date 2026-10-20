@@ -210,11 +210,11 @@ export default function ShellTerminal({ cwd, active }: { cwd: string; active: bo
         <div className="term-status" data-tone={phase === 'failed' ? 'error' : 'exited'}>
           <span className="term-status-text">
             {phase === 'failed'
-              ? `could not start a shell: ${failure ?? 'unknown error'}`
-              : `shell exited${exitCode === null ? '' : ` (exit ${exitCode})`} — scrollback kept`}
+              ? `Could not start a shell: ${failure ?? 'unknown error'}`
+              : `Shell exited${exitCode === null ? '' : ` (exit ${exitCode})`} — scrollback kept`}
           </span>
           <button className="btn" onClick={() => restartRef.current?.()}>
-            New shell
+            New Shell
           </button>
         </div>
       )}

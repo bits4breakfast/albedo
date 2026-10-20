@@ -348,7 +348,7 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     pressEnter();
     await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
 
-    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(box().readOnly).toBe(false);
     expect(box().value).toBe('never mind');

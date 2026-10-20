@@ -140,11 +140,11 @@ export default function ImportProjects({ open, repos, onClose, onImported }: Imp
         className="sb-dialog ip-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="Import projects from history"
+        aria-label="Import Projects from History"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="sb-head">
-          <span className="sb-title">Import from history</span>
+          <span className="sb-title">Import from History</span>
           <span className="ip-lede">
             Repositories you have worked in that no project claims. Nothing is created until you
             import.
@@ -217,7 +217,7 @@ export default function ImportProjects({ open, repos, onClose, onImported }: Imp
               a worktree folder.
             </span>
             <button className="btn" onClick={onClose} disabled={busy}>
-              Not now
+              Not Now
             </button>
             <button
               className="btn btn-primary"

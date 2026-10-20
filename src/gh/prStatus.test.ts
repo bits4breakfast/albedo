@@ -49,7 +49,7 @@ describe('parsePrView', () => {
       checks: { kind: 'none' },
       url: 'https://github.com/bits4breakfast/albedo/pull/6',
     });
-    expect(prLabel(pr!)).toEqual({ glyph: '', text: 'open', tone: 'quiet' });
+    expect(prLabel(pr!)).toEqual({ glyph: '', text: 'Open', tone: 'quiet' });
   });
 
   it('maps the four states, draft and merged included', () => {
@@ -150,22 +150,22 @@ describe('labels', () => {
   it('says the badge words the task asks for', () => {
     expect(prLabel(parsed({ statusCheckRollup: [run('a', 'COMPLETED', 'SUCCESS')] }))).toEqual({
       glyph: '✓',
-      text: 'checks',
+      text: 'Checks',
       tone: 'pass',
     });
     expect(
       prLabel(
         parsed({ statusCheckRollup: [run('a', 'COMPLETED', 'FAILURE'), ctx('b', 'FAILURE')] }),
       ),
-    ).toEqual({ glyph: '✗', text: '2 failing', tone: 'fail' });
+    ).toEqual({ glyph: '✗', text: '2 Failing', tone: 'fail' });
     expect(prLabel(parsed({ statusCheckRollup: [run('a', 'IN_PROGRESS', '')] })).tone).toBe('pending');
     expect(prLabel(parsed({ state: 'MERGED', statusCheckRollup: [run('a', 'COMPLETED', 'FAILURE')] }))).toEqual({
       glyph: '',
-      text: 'merged',
+      text: 'Merged',
       tone: 'merged',
     });
     expect(prLabel(parsed({ isDraft: true, statusCheckRollup: [run('a', 'COMPLETED', 'SUCCESS')] })).text).toBe(
-      'draft · checks',
+      'Draft · Checks',
     );
   });
 

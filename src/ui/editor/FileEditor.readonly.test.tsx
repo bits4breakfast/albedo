@@ -50,14 +50,14 @@ function open(readOnly: boolean) {
 describe('FileEditor, read-only', () => {
   it('says it is the main checkout, and offers neither Save nor Diff', async () => {
     open(true);
-    await screen.findByText(/read-only · main checkout/);
+    await screen.findByText(/Read-Only · Main Checkout/);
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Diff' })).toBeNull();
   });
 
   it('is not editable, and Cmd+S never writes', async () => {
     open(true);
-    await screen.findByText(/read-only · main checkout/);
+    await screen.findByText(/Read-Only · Main Checkout/);
     const content = await waitFor(() => {
       const el = document.querySelector('.cm-content');
       if (!el) throw new Error('editor not mounted yet');
@@ -74,6 +74,6 @@ describe('FileEditor, read-only', () => {
     open(false);
     await screen.findByRole('button', { name: 'Save' });
     expect(screen.getByRole('button', { name: 'Diff' })).toBeTruthy();
-    expect(screen.queryByText(/read-only · main checkout/)).toBeNull();
+    expect(screen.queryByText(/Read-Only · Main Checkout/)).toBeNull();
   });
 });

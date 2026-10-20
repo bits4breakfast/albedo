@@ -60,7 +60,7 @@ export function PrBadge({ task, onEnd, onFollowUp }: PrBadgeProps) {
           title="Merged — start a new task for a bug in what shipped (opens the new-task dialog)"
           onClick={() => onFollowUp(pr)}
         >
-          Follow-up…
+          Follow-Up…
         </button>
       )}
       {pr.state === 'merged' && onEnd && (
@@ -100,7 +100,7 @@ export function PrRowMark({ pr }: { pr: PrStatus | null | undefined }) {
   const label = prLabel(pr);
   const short =
     pr.state === 'merged'
-      ? 'merged'
+      ? 'Merged'
       : pr.checks.kind === 'failing'
         ? `✗${pr.checks.failing}`
         : label.glyph;

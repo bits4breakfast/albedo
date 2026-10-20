@@ -34,6 +34,7 @@
  */
 
 import { memo } from 'react';
+import type { ReactNode } from 'react';
 import type { ContextBands, ContextUsage } from '../../capture';
 import { contextLevel } from '../StatusDot';
 import { abbreviateTokens, bandPercents, exactTokens, formatPercent, NO_VALUE } from './format';
@@ -53,6 +54,11 @@ export interface ContextGaugeProps {
   usage: ContextUsage | null;
   bands: ContextBands | null;
   state: GaugeState;
+  /**
+   * Drawn right after the percentage it acts on (the panel's Clear). Pass a
+   * stable element: this component is memoised against the 1s tick.
+   */
+  action?: ReactNode;
 }
 
 const LIMIT_CAVEAT =
@@ -92,7 +98,7 @@ function KeyRow({ band, label, value, estimated, title }: KeyRowProps) {
       <span className="gz-key" title={title}>
         <span className="gz-swatch" data-band={band} aria-hidden="true" />
         <span className="gz-key-label">{label}</span>
-        {estimated && <span className="gz-approx">approx</span>}
+        {estimated && <span className="gz-approx">Approx</span>}
       </span>
       <span className="gz-val" title={value === null ? title : `${exactTokens(value)} tokens`}>
         {value === null ? NO_VALUE : abbreviateTokens(value)}
@@ -101,20 +107,20 @@ function KeyRow({ band, label, value, estimated, title }: KeyRowProps) {
   );
 }
 
-function ContextGaugeInner({ usage, bands, state }: ContextGaugeProps) {
+function ContextGaugeInner({ usage, bands, state, action }: ContextGaugeProps) {
   if (state === 'no-session') {
-    return <p className="gz-unavailable">no session yet</p>;
+    return <p className="gz-unavailable">No session yet</p>;
   }
   if (state === 'loading') {
-    return <p className="gz-unavailable">reading…</p>;
+    return <p className="gz-unavailable">Reading…</p>;
   }
   if (state === 'unavailable') {
-    return <p className="gz-unavailable">context unavailable</p>;
+    return <p className="gz-unavailable">Context unavailable</p>;
   }
   if (!usage || !Number.isFinite(usage.used)) {
     // A session that has only a typed prompt so far genuinely has no reading.
     // Drawing 0% here would claim an empty window for a session mid-turn.
-    return <p className="gz-unavailable">no context reading yet</p>;
+    return <p className="gz-unavailable">No context reading yet</p>;
   }
 
   const inferred = usage.limitBasis !== 'known';
@@ -151,8 +157,9 @@ function ContextGaugeInner({ usage, bands, state }: ContextGaugeProps) {
           title={title}
         >
           {formatPercent(usage.fraction, inferred)}
-          {inferred && <span className="gz-approx">approx</span>}
+          {inferred && <span className="gz-approx">Approx</span>}
         </span>
+        {action}
       </div>
 
       <div className="gz-bar" data-level={level} data-basis={usage.limitBasis} title={title} role="img"
@@ -178,14 +185,14 @@ function ContextGaugeInner({ usage, bands, state }: ContextGaugeProps) {
           <>
             <KeyRow
               band="overhead"
-              label="overhead"
+              label="Overhead"
               value={bands!.overheadEst}
               estimated
               title={`System prompt, tools, MCP servers and memory files.\n\n${SPLIT_CAVEAT}`}
             />
             <KeyRow
               band="conversation"
-              label="conversation"
+              label="Conversation"
               value={bands!.conversationEst}
               estimated
               title={`Messages exchanged in this session.\n\n${SPLIT_CAVEAT}`}
@@ -194,7 +201,7 @@ function ContextGaugeInner({ usage, bands, state }: ContextGaugeProps) {
         ) : (
           <KeyRow
             band="used"
-            label="used"
+            label="Used"
             value={usage.used}
             estimated={false}
             title="Exact, from the most recent turn’s usage record."
@@ -202,7 +209,7 @@ function ContextGaugeInner({ usage, bands, state }: ContextGaugeProps) {
         )}
         <KeyRow
           band="free"
-          label="free"
+          label="Free"
           value={freeValue}
           estimated={inferred}
           title={
@@ -216,8 +223,8 @@ function ContextGaugeInner({ usage, bands, state }: ContextGaugeProps) {
       {nearCeiling && (
         <p className="gz-note" data-tone={tone}>
           {inferred
-            ? `near the inferred ceiling — compaction likely soon (limit not measured)`
-            : `near the ceiling — compaction likely soon`}
+            ? `Near the inferred ceiling — compaction likely soon (limit not measured)`
+            : `Near the ceiling — compaction likely soon`}
         </p>
       )}
     </>

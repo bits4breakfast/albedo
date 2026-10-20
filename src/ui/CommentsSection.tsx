@@ -109,7 +109,7 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
             disabled={unsent.length === 0}
             title={unsent.length === 0 ? 'Every open comment has been sent' : 'Put the unsent comments in the message box, to read and send'}
           >
-            Add {unsent.length > 0 ? unsent.length : ''} to message
+            Add {unsent.length > 0 ? unsent.length : ''} to Message
           </button>
         </span>
       </div>
@@ -117,7 +117,7 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
       {editingIntro && (
         <div className="tf-comments-intro">
           <label className="tf-comments-intro-label" htmlFor={`tf-intro-${task.id}`}>
-            The message starts with
+            The Message Starts With
           </label>
           <textarea
             id={`tf-intro-${task.id}`}
@@ -158,7 +158,7 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
               {c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
             </span>
             <span className="tf-comment-body">{c.body.split('\n')[0]}</span>
-            {c.sentAt !== null && <span className="tf-comment-sent">sent</span>}
+            {c.sentAt !== null && <span className="tf-comment-sent">Sent</span>}
           </button>
           <button
             type="button"

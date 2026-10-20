@@ -40,7 +40,7 @@
  * wrong answer this panel must never give.
  */
 
-import { Component, useCallback, useEffect, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { contextBands, contextUsage, onCaptureUpdate, windowUsage } from '../../capture';
 import type { ContextBands, ContextUsage, WindowUsage } from '../../capture';
@@ -63,6 +63,26 @@ const WINDOW_MIN_INTERVAL_MS = 15_000;
 const FALLBACK_MS = 30_000;
 /** Countdown tick. Local only — never a database round-trip. */
 const TICK_MS = 1_000;
+
+/** Which rolling window the panel shows. One at a time; the choice is remembered. */
+type WindowChoice = '5h' | '7d';
+const WINDOW_KEY = 'albedo.usage.window';
+
+function readWindowChoice(): WindowChoice {
+  try {
+    return localStorage.getItem(WINDOW_KEY) === '7d' ? '7d' : '5h';
+  } catch {
+    return '5h';
+  }
+}
+
+function storeWindowChoice(v: WindowChoice): void {
+  try {
+    localStorage.setItem(WINDOW_KEY, v);
+  } catch {
+    /* not remembered: 5H next launch */
+  }
+}
 
 export interface UsagePanelProps {
   task: Task | null;
@@ -118,11 +138,6 @@ function asWindowUsage(v: unknown): WindowUsage | null {
   return w as WindowUsage;
 }
 
-/** `claude-opus-5[1m]` -> `opus-5[1m]`. Full id stays in the tooltip. */
-function shortModel(model: string | null): string | null {
-  if (!model) return null;
-  return model.replace(/^claude-/, '');
-}
 
 // ---------------------------------------------------------------------------
 // Clear
@@ -197,8 +212,8 @@ function ClearButton({ task }: { task: Task }) {
   };
 
   return (
-    <div className="gz-actions">
-      {failed && <span className="gz-action-note">could not send</span>}
+    <span className="gz-actions">
+      {failed && <span className="gz-action-note">Could not send</span>}
       <button
         type="button"
         className={arming ? 'btn gz-clear gz-clear-armed' : 'btn btn-ghost gz-clear'}
@@ -206,9 +221,9 @@ function ClearButton({ task }: { task: Task }) {
         title={why}
         onClick={() => void onClick()}
       >
-        {arming ? 'clear context?' : 'clear'}
+        {arming ? 'Clear Context?' : 'Clear'}
       </button>
-    </div>
+    </span>
   );
 }
 
@@ -231,7 +246,7 @@ class GaugeBoundary extends Component<{ children: ReactNode }, { failed: boolean
   }
 
   override render(): ReactNode {
-    if (this.state.failed) return <p className="gz-unavailable">usage unavailable</p>;
+    if (this.state.failed) return <p className="gz-unavailable">Usage unavailable</p>;
     return this.props.children;
   }
 }
@@ -250,6 +265,11 @@ export default function UsagePanel({ task }: UsagePanelProps) {
     fetchedAt: Date.now(),
   });
   const [now, setNow] = useState(() => Date.now());
+  const [windowChoice, setWindowChoice] = useState<WindowChoice>(readWindowChoice);
+  const chooseWindow = (v: WindowChoice) => {
+    setWindowChoice(v);
+    storeWindowChoice(v);
+  };
 
   const aliveRef = useRef(true);
   const ctxGenRef = useRef(0);
@@ -361,27 +381,24 @@ export default function UsagePanel({ task }: UsagePanelProps) {
     return () => clearInterval(id);
   }, []);
 
-  const model = shortModel(ctx.usage?.model ?? null);
+  // Stable across the 1s tick, so the memoised gauge is not repainted by it.
+  const clear = useMemo(() => (task ? <ClearButton task={task} /> : null), [task]);
 
   return (
     <section className="gz-panel" aria-label="Context and subscription usage">
       <GaugeBoundary>
         <div className="gz-section">
           <div className="gz-head">
-            <span className="gz-title">context</span>
-            {model && (
-              <span className="gz-head-note" title={ctx.usage?.model ?? undefined}>
-                {model}
-              </span>
-            )}
+            <span className="gz-title">Context</span>
+            {/* No model here: the task bar's picker shows it, and two places
+                naming the same model was repetition, not information. */}
           </div>
-          <ContextGauge usage={ctx.usage} bands={ctx.bands} state={ctx.state} />
-          {task && <ClearButton task={task} />}
+          <ContextGauge usage={ctx.usage} bands={ctx.bands} state={ctx.state} action={clear} />
         </div>
 
         <div className="gz-section">
           <div className="gz-head">
-            <span className="gz-title">usage</span>
+            <span className="gz-title">Usage</span>
             <span
               className="gz-head-note"
               title={
@@ -391,24 +408,42 @@ export default function UsagePanel({ task }: UsagePanelProps) {
                 'would be against a denominator we made up.'
               }
             >
-              all sessions
+              All Sessions
             </span>
+            <div className="seg-sm gz-window-switch" role="group" aria-label="Usage window">
+              {(['5h', '7d'] as const).map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  aria-pressed={windowChoice === w}
+                  onClick={() => chooseWindow(w)}
+                  title={w === '5h' ? 'Rolling 5-hour window' : 'Rolling 7-day window'}
+                >
+                  {w.toUpperCase()}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="gz-windows">
-            <WindowGauge
-              label="5h"
-              data={win.five}
-              state={win.fiveState}
-              now={now}
-              fetchedAt={win.fetchedAt}
-            />
-            <WindowGauge
-              label="7d"
-              data={win.week}
-              state={win.weekState}
-              now={now}
-              fetchedAt={win.fetchedAt}
-            />
+            {windowChoice === '5h' ? (
+              <WindowGauge
+                label="5h"
+                data={win.five}
+                state={win.fiveState}
+                now={now}
+                fetchedAt={win.fetchedAt}
+                hideLabel
+              />
+            ) : (
+              <WindowGauge
+                label="7d"
+                data={win.week}
+                state={win.weekState}
+                now={now}
+                fetchedAt={win.fetchedAt}
+                hideLabel
+              />
+            )}
           </div>
         </div>
       </GaugeBoundary>

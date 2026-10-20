@@ -118,12 +118,15 @@ function PromptBody({
   };
 
   return (
-    <div className="tx-prompt" role="status" aria-label="Waiting on you">
+    <div className="tx-prompt" role="status" aria-label="Waiting on You">
       <div className="tx-prompt-head">
-        <span className="tx-prompt-tag">waiting on you</span>
+        <span className="tx-prompt-tag">
+          <span className="status-dot" data-status="blocked" aria-hidden="true" />
+          Waiting on You
+        </span>
         {onAnswerInTerminal ? (
           <button type="button" className="btn btn-ghost" onClick={() => onAnswerInTerminal(taskId)}>
-            Answer in terminal
+            Answer in Terminal
           </button>
         ) : null}
       </div>
@@ -133,7 +136,7 @@ function PromptBody({
       ) : prompt.kind === 'permission' ? (
         <>
           <div className="tx-prompt-q">
-            Needs permission: <span className="tx-prompt-cmd">{prompt.summary}</span>
+            Needs Permission: <span className="tx-prompt-cmd">{prompt.summary}</span>
           </div>
           {answerable ? <PermissionButtons prompt={prompt} locked={locked} onChoose={(c) => submit(permissionDecision(prompt, c))} /> : null}
         </>
@@ -186,7 +189,7 @@ function PermissionButtons({
           title={alwaysTitle(prompt.alwaysAllow)}
           onClick={() => onChoose('allow-always')}
         >
-          Allow, don’t ask again
+          Allow, Don’t Ask Again
         </button>
       ) : null}
       <button
@@ -202,7 +205,7 @@ function PermissionButtons({
         // The rule in plain sight, not only in a tooltip: it is written to a
         // settings file, and may be narrower than what the terminal offers.
         <div className="pc-rule">
-          “Don’t ask again” adds{' '}
+          “Don’t Ask Again” adds{' '}
           {prompt.alwaysAllow.map((r, i) => (
             <span key={i}>
               {i > 0 ? '; ' : null}
@@ -264,7 +267,7 @@ function QuestionBody({
       {answerable && !oneClick ? (
         <div className="pc-actions">
           <button type="button" className="btn btn-primary" disabled={locked || decision === null} onClick={() => onSubmit(decision)}>
-            Submit {prompt.questions.length > 1 ? 'answers' : 'answer'}
+            Submit {prompt.questions.length > 1 ? 'Answers' : 'Answer'}
           </button>
           {decision === null && !locked ? <span className="pc-hint">Answer every question to submit.</span> : null}
         </div>

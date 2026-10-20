@@ -309,7 +309,7 @@ export default function FindInFiles({ open: openProp, worktreePath, scopeLabel =
           <span className="qo-status" role="status" aria-live="polite">
             {status}
           </span>
-          <span className="qo-hint">↑↓ move · ↵ open · ⌥C case · ⌥X regex · esc close</span>
+          <span className="qo-hint">↑↓ Move · ↵ Open · ⌥C Case · ⌥X Regex · Esc Close</span>
         </div>
       </div>
     </div>

@@ -183,12 +183,22 @@ export function ArchiveTaskDialog({
     let cancelled = false;
     setProbe(EMPTY_PROBE);
     void (async () => {
-      const work = await probeWorkAtRisk(worktreePath, baseBranch || null);
-      const created = await mayDeleteTaskBranch({ repoPath, branch, createdAt, createdBranch });
-      if (cancelled) return;
-      setProbe(fromWorkProbe(work, created));
-      // Never leave a selection on an option that is no longer offered.
-      if (!created) setMode((m) => (m === 'remove-delete-branch' ? 'remove-keep-branch' : m));
+      try {
+        const work = await probeWorkAtRisk(worktreePath, baseBranch || null);
+        const created = await mayDeleteTaskBranch({ repoPath, branch, createdAt, createdBranch });
+        if (cancelled) return;
+        setProbe(fromWorkProbe(work, created));
+        // Never leave a selection on an option that is no longer offered.
+        if (!created) setMode((m) => (m === 'remove-delete-branch' ? 'remove-keep-branch' : m));
+      } catch (e) {
+        // Both calls promise not to throw. If one does anyway, finish the probe
+        // as "unknown" rather than leave the dialog on "checking…" with its
+        // button disabled for good.
+        if (cancelled) return;
+        const msg = messageOf(e);
+        setProbe({ ...EMPTY_PROBE, filesError: msg, aheadError: msg, done: true });
+        setMode((m) => (m === 'remove-delete-branch' ? 'remove-keep-branch' : m));
+      }
     })();
     return () => {
       cancelled = true;
@@ -316,7 +326,7 @@ export function ArchiveTaskDialog({
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title" id="wt-archive-title">
-            {deleting ? 'Delete task' : owned ? 'Archive task' : 'Remove from list'}
+            {deleting ? 'Delete Task' : owned ? 'Archive Task' : 'Remove from List'}
           </h2>
           <span className="wt-modal-sub">{task.title}</span>
         </div>
@@ -375,11 +385,11 @@ export function ArchiveTaskDialog({
           {/* --- the choice ------------------------------------------------ */}
           {owned && (
           <div className="wt-field" style={{ marginTop: 14 }}>
-            <span className="wt-label">What happens to the worktree</span>
+            <span className="wt-label">What Happens to the Worktree</span>
 
             {option(
               'remove-keep-branch',
-              'Remove the worktree, keep the branch',
+              'Remove the Worktree, Keep the Branch',
               <>
                 <span className="wt-mono">git worktree remove</span> then{' '}
                 <span className="wt-mono">git worktree prune</span>. Committed work stays reachable
@@ -399,7 +409,7 @@ export function ArchiveTaskDialog({
 
             {probe.createdBranch && option(
               'remove-delete-branch',
-              'Remove the worktree and delete the branch',
+              'Remove the Worktree and Delete the Branch',
               <>
                 Also runs <span className="wt-mono">git branch -d</span>
                 {hasUnmerged ? (
@@ -418,8 +428,8 @@ export function ArchiveTaskDialog({
             {option(
               'keep-worktree',
               deleting
-                ? 'Delete the task only, leave the worktree on disk'
-                : 'Archive only, leave the worktree on disk',
+                ? 'Delete the Task Only, Leave the Worktree on Disk'
+                : 'Archive Only, Leave the Worktree on Disk',
               <>
                 No git commands run. <strong>The worktree stays at</strong>{' '}
                 <span className="wt-mono">{task.worktreePath}</span> and will be listed under
@@ -506,7 +516,7 @@ export function ArchiveTaskDialog({
               <pre className="wt-error-body">{error}</pre>
               <div className="wt-error-actions">
                 <span className="wt-modal-sub">
-                  Nothing was archived, so you can fix this and try again, or choose “Archive only”.
+                  Nothing was archived, so you can fix this and try again, or choose “Archive Only”.
                 </span>
               </div>
             </div>
@@ -528,7 +538,8 @@ export function ArchiveTaskDialog({
           <button
             type="button"
             className={needsAck || deleting ? 'btn wt-btn-danger' : 'btn btn-primary'}
-            disabled={busy || !probe.done || (needsAck && !ack)}
+            // Archive only runs no git, so it does not wait for the probe.
+            disabled={busy || (removing && !probe.done) || (needsAck && !ack)}
             onClick={() => void confirm()}
           >
             {busy
@@ -539,19 +550,19 @@ export function ArchiveTaskDialog({
                   : 'Removing…'
               : deleting
                 ? !owned
-                  ? 'Delete task'
+                  ? 'Delete Task'
                   : needsAck
-                    ? 'Delete task and discard work'
+                    ? 'Delete Task and Discard Work'
                     : removing
-                      ? 'Delete task and remove worktree'
-                      : 'Delete task only'
+                      ? 'Delete Task and Remove Worktree'
+                      : 'Delete Task Only'
                 : !owned
-                  ? 'Remove from list'
+                  ? 'Remove from List'
                   : needsAck
-                    ? 'Archive and discard work'
+                    ? 'Archive and Discard Work'
                     : removing
-                      ? 'Archive and remove worktree'
-                      : 'Archive only'}
+                      ? 'Archive and Remove Worktree'
+                      : 'Archive Only'}
           </button>
         </div>
       </div>

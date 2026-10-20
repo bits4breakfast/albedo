@@ -197,7 +197,7 @@ export function ProjectsDialog({
       const picked = await openFileDialog({
         directory: true,
         multiple: false,
-        title: 'Choose the project repository',
+        title: 'Choose the Project Repository',
       });
       // Cancelling the picker must not also clear the confirmation of what the
       // user just did -- that would look like the app forgetting.
@@ -259,7 +259,7 @@ export function ProjectsDialog({
       const picked = await openFileDialog({
         directory: true,
         multiple: false,
-        title: 'Choose where this project’s worktrees go',
+        title: 'Choose Where This Project’s Worktrees Go',
       });
       if (typeof picked === 'string') {
         setDraft({ ...draft, worktreeRoot: picked, rootTouched: true });
@@ -441,7 +441,7 @@ export function ProjectsDialog({
 
               <div className="wt-field">
                 <label className="wt-label" htmlFor="wt-proj-root">
-                  Worktree root
+                  Worktree Root
                 </label>
                 <div className="wt-row">
                   <input
@@ -484,7 +484,7 @@ export function ProjectsDialog({
 
               <div className="wt-field">
                 <label className="wt-label" htmlFor="wt-proj-prompt">
-                  Initial prompt <span className="wt-label-optional">optional</span>
+                  Initial Prompt <span className="wt-label-optional">Optional</span>
                 </label>
                 <textarea
                   id="wt-proj-prompt"
@@ -524,7 +524,7 @@ export function ProjectsDialog({
                       disabled={busy}
                       onClick={() => setDraft({ ...draft, taskPromptTemplate: SUGGESTED_PROMPT })}
                     >
-                      Use the suggested prompt
+                      Use the Suggested Prompt
                     </button>
                     <span className="wt-modal-sub wt-mono">{SUGGESTED_PROMPT}</span>
                   </div>
@@ -533,7 +533,7 @@ export function ProjectsDialog({
 
               <div className="wt-field">
                 <label className="wt-label" htmlFor="wt-proj-base">
-                  Default base branch
+                  Default Base Branch
                 </label>
                 <select
                   id="wt-proj-base"
@@ -542,7 +542,7 @@ export function ProjectsDialog({
                   disabled={busy}
                   onChange={(e) => setDraft({ ...draft, defaultBaseBranch: e.target.value })}
                 >
-                  <option value="">Use the repository&rsquo;s current branch</option>
+                  <option value="">Use the Repository&rsquo;s Current Branch</option>
                   {branches.map((b) => (
                     <option key={b} value={b}>
                       {b}
@@ -613,7 +613,7 @@ export function ProjectsDialog({
                         else onClose();
                       }}
                     >
-                      Create a task in {justCreated.name}
+                      Create a Task in {justCreated.name}
                     </button>
                     <button
                       type="button"
@@ -621,7 +621,7 @@ export function ProjectsDialog({
                       disabled={busy}
                       onClick={() => void startAdd()}
                     >
-                      Add another project
+                      Add Another Project
                     </button>
                   </div>
                 </div>
@@ -648,7 +648,7 @@ export function ProjectsDialog({
                       disabled={busy}
                       onClick={() => void startAdd()}
                     >
-                      Choose a repository…
+                      Choose a Repository…
                     </button>
                   </div>
                 </div>
@@ -681,10 +681,10 @@ export function ProjectsDialog({
                     <span className="wt-item-path" title={p.repoPath}>
                       {p.name}
                     </span>
-                    {justCreated?.id === p.id && <span className="wt-chip" data-tone="new">new</span>}
+                    {justCreated?.id === p.id && <span className="wt-chip" data-tone="new">New</span>}
                     {hiddenIds.includes(p.id) && (
                       <span className="wt-chip" title="Its tab is closed. Nothing on disk changed.">
-                        hidden
+                        Hidden
                       </span>
                     )}
                     {hiddenIds.includes(p.id) && (
@@ -697,7 +697,7 @@ export function ProjectsDialog({
                           onUnhideProject?.(p.id);
                         }}
                       >
-                        Show tab
+                        Show Tab
                       </button>
                     )}
                     <button
@@ -723,9 +723,9 @@ export function ProjectsDialog({
                     <span className="wt-chip">{p.repoPath}</span>
                   </div>
                   <div className="wt-item-meta">
-                    <span className="wt-chip">worktrees: {p.worktreeRoot}</span>
+                    <span className="wt-chip">Worktrees: {p.worktreeRoot}</span>
                     {p.defaultBaseBranch && (
-                      <span className="wt-chip">base: {p.defaultBaseBranch}</span>
+                      <span className="wt-chip">Base: {p.defaultBaseBranch}</span>
                     )}
                   </div>
 
@@ -745,7 +745,7 @@ export function ProjectsDialog({
                           disabled={busy}
                           onClick={() => void doArchive(p.id)}
                         >
-                          Archive project
+                          Archive Project
                         </button>
                         <button
                           type="button"
@@ -787,13 +787,13 @@ export function ProjectsDialog({
                 disabled={busy || !draft.name.trim() || liveCheck?.ok === false}
                 onClick={() => void save()}
               >
-                {busy ? 'Saving…' : draft.id === null ? 'Add project' : 'Save'}
+                {busy ? 'Saving…' : draft.id === null ? 'Add Project' : 'Save'}
               </button>
             </>
           ) : (
             <>
               <button type="button" className="btn" disabled={busy} onClick={() => void startAdd()}>
-                Add project…
+                Add Project…
               </button>
               <button type="button" className="btn btn-primary" onClick={onClose}>
                 Done

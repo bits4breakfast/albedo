@@ -335,29 +335,12 @@ export function useTasks(): UseTasksResult {
 
   /** Re-derive one session's status from persisted rows. */
   const refreshStatus = useCallback(
-    async (sessionId: string, cwd: string | null) => {
-      const current = tasksRef.current;
-      let task = current.find((t) => t.sessionId === sessionId) ?? null;
-
-      // A session started in a worktree we own but not yet linked to the task:
-      // adopt it by cwd. This is how a task picks up its sessionId.
-      if (!task && cwd) {
-        const candidate = current.find(
-          (t) => t.status !== 'archived' && t.sessionId === null && t.worktreePath === cwd,
-        );
-        if (candidate) {
-          task = { ...candidate, sessionId };
-          applyTask(candidate.id, { sessionId });
-          // Undone on failure, so the next capture update adopts it again
-          // rather than the task showing a session the database never got.
-          void persist(candidate.id, { sessionId }, {
-            rollback: () => {
-              const live = tasksRef.current.find((t) => t.id === candidate.id);
-              if (live?.sessionId === sessionId) applyTask(candidate.id, { sessionId: null });
-            },
-          });
-        }
-      }
+    async (sessionId: string) => {
+      // By session id only. A task is on its session before `claude` starts
+      // (capture/sessionLink.ts); this used to adopt sessions by folder too,
+      // which in a shared folder put whichever session wrote first onto the
+      // task.
+      const task = tasksRef.current.find((t) => t.sessionId === sessionId) ?? null;
       if (!task) return; // transcript for a session Albedo does not own — fine.
       const taskId = task.id;
       const gen = (statusGenRef.current.get(taskId) ?? 0) + 1;
@@ -400,7 +383,7 @@ export function useTasks(): UseTasksResult {
           setTimeout(() => {
             expiryRef.current.delete(taskId);
             const live = tasksRef.current.find((t) => t.id === taskId);
-            if (live?.sessionId) void refreshStatus(live.sessionId, null);
+            if (live?.sessionId) void refreshStatus(live.sessionId);
           }, delay),
         );
       }
@@ -465,7 +448,7 @@ export function useTasks(): UseTasksResult {
     void refresh().then(() => {
       if (!aliveRef.current) return;
       for (const t of tasksRef.current) {
-        if (t.status !== 'archived' && t.sessionId) void refreshStatus(t.sessionId, null);
+        if (t.status !== 'archived' && t.sessionId) void refreshStatus(t.sessionId);
       }
     });
     void refreshProjects();
@@ -525,7 +508,7 @@ export function useTasks(): UseTasksResult {
           u.sessionId,
           setTimeout(() => {
             timers.delete(u.sessionId);
-            void refreshStatus(u.sessionId, u.cwd ?? null);
+            void refreshStatus(u.sessionId);
           }, COALESCE_MS),
         );
 
@@ -590,7 +573,7 @@ export function useTasks(): UseTasksResult {
         noteStatusChange(taskId, task.status, 'blocked', task.title);
         void persist(taskId, { status: 'blocked' });
       } else if (task.sessionId) {
-        void refreshStatus(task.sessionId, null);
+        void refreshStatus(task.sessionId);
       }
     });
   }, [applyTask, persist, refreshStatus]);

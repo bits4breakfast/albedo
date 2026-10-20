@@ -238,7 +238,7 @@ export default function SubagentInspector({
   );
 
   const label = agentLabel(run);
-  const parent = taskTitle && taskTitle.trim().length > 0 ? taskTitle : 'task';
+  const parent = taskTitle && taskTitle.trim().length > 0 ? taskTitle : 'Task';
 
   return (
     <div className="sa-inspector" ref={rootRef} role="region" aria-label={`Subagent: ${label}`}>
@@ -270,11 +270,11 @@ export default function SubagentInspector({
           {hasMore ? (
             <div className="tx-page-top">
               <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
-                {loading ? 'loading…' : 'Load earlier messages'}
+                {loading ? 'Loading…' : 'Load Earlier Messages'}
               </button>
             </div>
           ) : messages.length > 0 ? (
-            <div className="tx-page-top tx-page-start">start of this agent’s run</div>
+            <div className="tx-page-top tx-page-start">Start of This Agent’s Run</div>
           ) : null}
 
           {error ? <div className="tx-error">Could not read this agent’s transcript: {error}</div> : null}
@@ -288,7 +288,7 @@ export default function SubagentInspector({
 
         {!following ? (
           <button type="button" className="tx-jump" onClick={jumpToEnd}>
-            ↓ latest
+            ↓ Latest
           </button>
         ) : null}
       </div>

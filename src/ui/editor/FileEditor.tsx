@@ -913,7 +913,7 @@ export default function FileEditor({
   const jump = useCallback(
     (path: string, line: number) => {
       if (dirty && path !== current) {
-        setNav({ kind: 'message', title: 'Unsaved edits', message: 'Save or discard your edits first' });
+        setNav({ kind: 'message', title: 'Unsaved Edits', message: 'Save or discard your edits first' });
         return false;
       }
       setNav(null);
@@ -1113,7 +1113,7 @@ export default function FileEditor({
         <CopyPathButton path={title} absolute={resolved?.absolute ?? null} active={active} />
         {handEdited && (
           <span className="ed-badge" title="You saved this file by hand in this session">
-            hand-edited
+            Hand-Edited
           </span>
         )}
         {dirty && <span className="ed-dot" title="Unsaved changes" />}
@@ -1122,7 +1122,7 @@ export default function FileEditor({
 
         {readOnly ? (
           <span className="ed-badge" title="Opened with no task selected: this is the project's own folder, so it is shown and never saved">
-            read-only · main checkout
+            Read-Only · Main Checkout
           </span>
         ) : (
           <>
@@ -1185,7 +1185,7 @@ export default function FileEditor({
             onClick={() => void reloadFromDisk()}
             title="Throw away your edits and load what is on disk"
           >
-            Reload from disk
+            Reload from Disk
           </button>
           <button
             type="button"
@@ -1196,7 +1196,7 @@ export default function FileEditor({
             }}
             title="Write your version over the one on disk"
           >
-            Overwrite anyway
+            Overwrite Anyway
           </button>
         </div>
       )}
@@ -1217,7 +1217,7 @@ export default function FileEditor({
         <div className="ed-notice" data-tone="warn">
           <span>Unsaved changes.</span>
           <button type="button" className="ed-btn" onClick={() => setConfirmClose(false)}>
-            Keep editing
+            Keep Editing
           </button>
           <button
             type="button"
@@ -1255,7 +1255,7 @@ export default function FileEditor({
           {outdated.map((c) => (
             <span key={c.id} className="ed-cmt-outdated-item" title={c.anchorText}>
               <span className="ed-cmt-outdated-body">
-                lines {c.lineStart}–{c.lineEnd}: {c.body.split('\n')[0]}
+                Lines {c.lineStart}–{c.lineEnd}: {c.body.split('\n')[0]}
               </span>
               <button type="button" className="ed-btn" onClick={() => reportFailure(resolveComment(task.id, c.id), 'resolve the comment')}>
                 Resolve
@@ -1273,7 +1273,7 @@ export default function FileEditor({
       )}
 
       <div className="ed-body">
-        {phase.kind === 'loading' && <div className="ed-message">opening {request.path}…</div>}
+        {phase.kind === 'loading' && <div className="ed-message">Opening {request.path}…</div>}
         {phase.kind === 'outside' && (
           <div className="ed-message">
             <strong>{phase.path}</strong> is outside this worktree.
@@ -1302,17 +1302,17 @@ export default function FileEditor({
 function SaveIndicator({ state }: { state: SaveState }) {
   switch (state.kind) {
     case 'saving':
-      return <span className="ed-status" data-tone="muted">saving…</span>;
+      return <span className="ed-status" data-tone="muted">Saving…</span>;
     case 'saved':
       return (
         <span className="ed-status" data-tone="ok">
-          {state.noted ? 'saved · note in terminal' : 'saved'}
+          {state.noted ? 'Saved · Note in Terminal' : 'Saved'}
         </span>
       );
     case 'failed':
-      return <span className="ed-status" data-tone="error">not saved</span>;
+      return <span className="ed-status" data-tone="error">Not Saved</span>;
     case 'conflict':
-      return <span className="ed-status" data-tone="warn">changed on disk</span>;
+      return <span className="ed-status" data-tone="warn">Changed on Disk</span>;
     default:
       return null;
   }
@@ -1365,7 +1365,7 @@ function CopyPathButton({ path, absolute, active }: { path: string; absolute: st
       aria-label="Copy path"
       aria-keyshortcuts="Alt+Meta+C"
     >
-      {state === 'copied' ? 'copied' : state === 'failed' ? 'copy failed' : (
+      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy Failed' : (
         <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
           <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
           <path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" strokeWidth="1.3" />

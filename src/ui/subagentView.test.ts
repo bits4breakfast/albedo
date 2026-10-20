@@ -54,17 +54,17 @@ describe('collapse', () => {
   });
 
   it('summarises, calling out only what needs you', () => {
-    expect(stripSummary([{ status: 'running' }])).toBe('1 agent running');
-    expect(stripSummary([{ status: 'running' }, { status: 'running' }])).toBe('2 agents running');
-    expect(stripSummary([{ status: 'running' }, { status: 'blocked' }])).toBe('2 agents running · 1 needs you');
-    expect(stripSummary([{ status: 'blocked' }, { status: 'blocked' }])).toBe('2 agents running · 2 need you');
+    expect(stripSummary([{ status: 'running' }])).toBe('1 Agent Running');
+    expect(stripSummary([{ status: 'running' }, { status: 'running' }])).toBe('2 Agents Running');
+    expect(stripSummary([{ status: 'running' }, { status: 'blocked' }])).toBe('2 Agents Running · 1 Needs You');
+    expect(stripSummary([{ status: 'blocked' }, { status: 'blocked' }])).toBe('2 Agents Running · 2 Need You');
   });
 });
 
 describe('labels', () => {
   it('says "Running", not "waiting", for a running agent', () => {
     expect(agentStatusWord('running')).toBe('Running');
-    expect(agentStatusWord('blocked')).toBe('Needs you');
+    expect(agentStatusWord('blocked')).toBe('Needs You');
     expect(agentStatusWord('idle')).toBe('Finished');
   });
 

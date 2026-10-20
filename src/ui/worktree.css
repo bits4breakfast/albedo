@@ -5,8 +5,8 @@
    colours come from the tokens in src/styles.css, which is owned by the shell
    workstream and must not be edited from here.
 
-   Design intent follows the shell: dark, dense, hairline borders, square-ish
-   corners. Two things are allowed to shout — git's stderr, and the fact that a
+   Design intent follows the shell: calm layered greys, hairline borders,
+   soft radii (--radius-lg on the modal, --radius on cards). Two things are allowed to shout — git's stderr, and the fact that a
    worktree you are about to delete has uncommitted work in it.
    ========================================================================== */
 
@@ -34,7 +34,7 @@
    Measured ratios, worst ground in each theme (dark / light):
      dirty chip text on its surface      10.31 / 6.27   (need 4.5)
      dirty chip border                    4.63 / 3.43   (need 3.0)
-     warn text on the worst app ground   10.02 / 6.26   (need 4.5)
+     warn text on the worst app ground    9.60 / 6.01   (need 4.5)
      unmerged notice text                 8.91 / 7.14   (need 4.5)
      unmerged notice rule                 4.52 / 4.92   (need 3.0)
      force-ack label, worst ground        8.94 / 6.74   (need 4.5)
@@ -50,8 +50,8 @@
 :root {
   /* Modal scrim and lift. Both were a dark-ground assumption: 62% near-black
      over a white page is a blackout, and a 55%-black shadow is a smudge. */
-  --wt-scrim: rgba(24, 28, 36, 0.32);
-  --wt-modal-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+  --wt-scrim: rgba(80, 84, 96, 0.28);
+  --wt-modal-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 16px 40px -8px rgba(20, 22, 40, 0.2);
 
   /* Amber: uncommitted changes. Lost whenever the worktree is removed. */
   --wt-warn-surface: #fbe9c8;
@@ -87,8 +87,8 @@
    system preference for dark. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --wt-scrim: rgba(5, 7, 9, 0.62);
-    --wt-modal-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+    --wt-scrim: rgba(0, 0, 0, 0.5);
+    --wt-modal-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 16px 40px -8px rgba(0, 0, 0, 0.6);
 
     --wt-warn-surface: #251d13;
     --wt-warn-line: #ad7f2e;
@@ -115,8 +115,8 @@
 
 /* Same values again for the explicit choice. */
 :root[data-theme='dark'] {
-  --wt-scrim: rgba(5, 7, 9, 0.62);
-  --wt-modal-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --wt-scrim: rgba(0, 0, 0, 0.5);
+  --wt-modal-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 16px 40px -8px rgba(0, 0, 0, 0.6);
 
   --wt-warn-surface: #251d13;
   --wt-warn-line: #ad7f2e;
@@ -162,8 +162,8 @@
   max-width: 620px;
   max-height: 100%;
   background: var(--panel);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
   box-shadow: var(--wt-modal-shadow);
   overflow: hidden;
 }
@@ -176,7 +176,7 @@
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 12px 16px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -184,6 +184,7 @@
   margin: 0;
   font-size: var(--fs-lg);
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text-strong);
 }
 
@@ -195,14 +196,14 @@
 .wt-modal-body {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: 16px 18px;
 }
 
 .wt-modal-foot {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
+  padding: 12px 18px;
   border-top: 1px solid var(--border);
   background: var(--panel);
 }
@@ -221,11 +222,10 @@
 
 .wt-label {
   display: block;
-  margin-bottom: 4px;
-  font-size: var(--fs-xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
+  margin-bottom: 6px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
 }
 
 /* Prompt preview. Information-carrying: it is the only place the user sees
@@ -263,8 +263,6 @@
 
 .wt-label-optional {
   margin-left: 6px;
-  letter-spacing: 0;
-  text-transform: none;
   color: var(--faint);
 }
 
@@ -278,19 +276,19 @@
 .wt-input,
 .wt-select {
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 10px;
   color: var(--text);
   font: inherit;
   font-size: var(--fs-md);
   background: var(--panel-inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-mid);
   border-radius: var(--radius);
   user-select: text;
 }
 
 .wt-input:focus,
 .wt-select:focus {
-  border-color: var(--border-strong);
+  border-color: var(--accent);
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
@@ -388,8 +386,6 @@
 
 .wt-derived-key {
   font-size: var(--fs-xs);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -506,8 +502,6 @@
   gap: 8px;
   margin: 14px 0 6px;
   font-size: var(--fs-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -598,13 +592,13 @@
 }
 
 .wt-chip {
-  padding: 1px 5px;
+  padding: 1px 7px;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--muted);
   background: var(--panel-raised);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
 }
 
 .wt-chip[data-tone='dirty'] {
@@ -733,9 +727,9 @@
 .wt-option {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-mid);
   border-radius: var(--radius);
   background: var(--panel-inset);
   cursor: default;
@@ -745,8 +739,12 @@
   margin-top: 6px;
 }
 
+.wt-option + .wt-option { margin-top: 4px; }
+
+/* Chosen: the accent edge and the radio carry it; the ground is the measured
+   --accent-soft (--text-strong 16.72 / 14.88, --muted 6.15 / 6.70). */
 .wt-option[data-selected='true'] {
-  border-color: var(--accent-line);
+  border-color: var(--accent);
   background: var(--accent-soft);
 }
 
@@ -758,6 +756,7 @@
 .wt-option-label {
   display: block;
   font-size: var(--fs-md);
+  font-weight: 500;
   color: var(--text-strong);
 }
 
@@ -843,10 +842,24 @@
 }
 
 /* Shortcuts help: text on --panel, the same ground as the rest of the modal. */
-.shortcuts-list { margin: 0; display: grid; gap: 6px; }
-.shortcuts-row { display: grid; grid-template-columns: 7ch 1fr; gap: 12px; align-items: baseline; }
+.shortcuts-list { margin: 0; display: grid; gap: 8px; }
+.shortcuts-row { display: grid; grid-template-columns: 9ch 1fr; gap: 12px; align-items: center; }
 .shortcuts-row dt, .shortcuts-row dd { margin: 0; }
-.shortcuts-row kbd { font-family: var(--mono, ui-monospace, monospace); color: var(--text); }
+/* The shell's .kbd chip, on --panel-chrome: --text 15.09 / 13.81. */
+.shortcuts-row kbd {
+  display: inline-flex;
+  align-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text);
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
 .shortcuts-row dd { color: var(--text); }
 
 /* --- squash & rebase ------------------------------------------------------ */

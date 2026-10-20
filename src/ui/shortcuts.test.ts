@@ -27,6 +27,27 @@ describe('comboOf', () => {
     expect(comboOf(ev({ key: '[', metaKey: true, altKey: true }))).toBeNull();
   });
 
+  it('jumps projects with ⌥⌘digit on macOS, read from the physical key', () => {
+    // Option rewrites `key` (⌥1 is ¡), so the code is what counts.
+    expect(comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')).toEqual({
+      combo: 'mod+alt+digit',
+      digit: 1,
+    });
+    // A bare ⌥digit composes a character on macOS and must reach the terminal.
+    expect(comboOf(ev({ key: '¡', code: 'Digit1', altKey: true }), 'macos')).toBeNull();
+    expect(comboOf(ev({ key: '0', code: 'Digit0', metaKey: true, altKey: true }), 'macos')).toBeNull();
+  });
+
+  it('jumps projects with Alt+digit off a Mac, never Ctrl+Alt (that is AltGr)', () => {
+    expect(comboOf(ev({ key: '3', code: 'Digit3', altKey: true }), 'linux')).toEqual({
+      combo: 'mod+alt+digit',
+      digit: 3,
+    });
+    expect(comboOf(ev({ key: '{', code: 'Digit7', altKey: true, ctrlKey: true }), 'other')).toBeNull();
+    // ⌘digit stays the task jump everywhere.
+    expect(comboOf(ev({ key: '2', code: 'Digit2', metaKey: true }), 'macos')?.combo).toBe('mod+digit');
+  });
+
   it('reads the digit out of a number jump', () => {
     expect(comboOf(ev({ key: '3', metaKey: true }))).toEqual({ combo: 'mod+digit', digit: 3 });
     expect(comboOf(ev({ key: '9', metaKey: true }))).toEqual({ combo: 'mod+digit', digit: 9 });
@@ -70,6 +91,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true }))?.combo,
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
+      comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
     // The one gesture is reachable through its own detector.
     const shift = createDoubleShift();

@@ -44,15 +44,15 @@ const MODES: readonly { mode: QuickOpenMode; label: string; keys: string; placeh
 ];
 
 const KIND_LABEL: Record<QuickOpenItem['kind'], string> = {
-  file: 'file',
-  class: 'class',
-  interface: 'interface',
-  trait: 'trait',
-  enum: 'enum',
-  type: 'type',
-  function: 'function',
-  method: 'method',
-  const: 'const',
+  file: 'File',
+  class: 'Class',
+  interface: 'Interface',
+  trait: 'Trait',
+  enum: 'Enum',
+  type: 'Type',
+  function: 'Function',
+  method: 'Method',
+  const: 'Const',
 };
 
 /** Split `text` into runs, marking the characters at `hits`. */
@@ -285,7 +285,7 @@ export default function QuickOpen({ mode, worktreePath, scopeLabel = null, curre
               <span className="qo-where">
                 <bdi>
                   {item.current ? (
-                    'this file'
+                    'This File'
                   ) : (
                     <Highlighted text={item.path} hits={item.pathHits} />
                   )}
@@ -300,7 +300,7 @@ export default function QuickOpen({ mode, worktreePath, scopeLabel = null, curre
           <span className="qo-status" role="status" aria-live="polite">
             {status}
           </span>
-          <span className="qo-hint">↑↓ move · ↵ open · ⇥ scope · esc close</span>
+          <span className="qo-hint">↑↓ Move · ↵ Open · ⇥ Scope · Esc Close</span>
         </div>
       </div>
     </div>

@@ -105,6 +105,6 @@ describe('FileEditor review comments', () => {
     });
     await editorContent();
     expect(await screen.findByText('Why beta?')).toBeTruthy();
-    expect(screen.getByText('line 2')).toBeTruthy(); // moved from 1 to where "beta" is
+    expect(screen.getByText('Line 2')).toBeTruthy(); // moved from 1 to where "beta" is
   });
 });

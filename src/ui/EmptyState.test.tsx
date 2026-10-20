@@ -63,7 +63,7 @@ describe('EmptyState — rendered in a real DOM', () => {
       <EmptyState projectCount={0} activeProject={null} onAddProject={onAddProject} onNewTask={onNewTask} />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add a Project' }));
     expect(onAddProject).toHaveBeenCalledTimes(1);
     expect(onNewTask).not.toHaveBeenCalled();
   });
@@ -75,7 +75,7 @@ describe('EmptyState — rendered in a real DOM', () => {
       <EmptyState projectCount={1} activeProject={project} onAddProject={onAddProject} onNewTask={onNewTask} />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'New task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New Task' }));
     expect(onNewTask).toHaveBeenCalledTimes(1);
     expect(onAddProject).not.toHaveBeenCalled();
   });

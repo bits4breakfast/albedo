@@ -397,15 +397,23 @@ export async function compactHistory(): Promise<void> {
   }
 }
 
-/** Capture-side: adopt a transcript whose cwd is a task's worktree. */
+/**
+ * The task running in this folder.
+ *
+ * `ownedOnly` restricts it to worktrees Albedo cut for one task. Capture uses
+ * only that form: a folder Albedo did not create -- above all the main
+ * checkout -- is shared by every session anyone starts there, so it
+ * identifies no task. See {@link findTaskBySessionId} for the exact link.
+ */
 export async function findTaskByWorktreePath(
   worktreePath: string,
-  { liveOnly = false }: { liveOnly?: boolean } = {},
+  { liveOnly = false, ownedOnly = false }: { liveOnly?: boolean; ownedOnly?: boolean } = {},
 ): Promise<Task | null> {
   const db = await getDb();
   const live = liveOnly ? ` AND status != 'archived'` : '';
+  const owned = ownedOnly ? ` AND owns_worktree != 0` : '';
   const rows = await db.select<TaskRow[]>(
-    `SELECT ${TASK_SELECT} FROM tasks WHERE worktree_path = $1${live} ORDER BY id DESC LIMIT 1`,
+    `SELECT ${TASK_SELECT} FROM tasks WHERE worktree_path = $1${live}${owned} ORDER BY id DESC LIMIT 1`,
     [worktreePath],
   );
   const row = rows[0];
@@ -413,27 +421,58 @@ export async function findTaskByWorktreePath(
 }
 
 /**
+ * The task whose session this is. Exact: Albedo chooses the id when it spawns
+ * (`--session-id`), resumes it by that id, and follows `/clear` and `/resume`
+ * through the SessionStart hook -- so this, not the folder, is how a
+ * transcript finds its task.
+ */
+export async function findTaskBySessionId(
+  sessionId: string,
+  { liveOnly = false }: { liveOnly?: boolean } = {},
+): Promise<Task | null> {
+  if (!sessionId) return null;
+  const db = await getDb();
+  const live = liveOnly ? ` AND status != 'archived'` : '';
+  const rows = await db.select<TaskRow[]>(
+    `SELECT ${TASK_SELECT} FROM tasks WHERE session_id = $1${live} ORDER BY id DESC LIMIT 1`,
+    [sessionId],
+  );
+  const row = rows[0];
+  return row ? toTask(row) : null;
+}
+
+/** Whether Albedo holds a transcript file for this session. */
+export async function hasTranscriptForSession(sessionId: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db.select<{ n: number }[]>(
+    `SELECT COUNT(*) AS n FROM transcript_files WHERE session_id = $1`,
+    [sessionId],
+  );
+  return (rows[0]?.n ?? 0) > 0;
+}
+
+/**
  * Record that a task's session produced activity. `last_activity_at` only ever
  * moves forward, so replaying an old file during backfill cannot rewrite a
  * live task's recency.
+ *
+ * It never changes which session the task is on. It used to, and that was the
+ * restart bug: every session ingested from a shared folder overwrote the
+ * task's id, so a restart resumed whichever file happened to be read last.
+ * The session changes only through `linkTaskSession` (capture/sessionLink.ts).
  *
  * Listeners hear about it only when the row actually changed: every ingest
  * chunk lands here, and a no-op touch used to cost every subscriber a full
  * task reload. Returns whether it changed.
  */
-export async function touchTaskActivity(
-  taskId: number,
-  sessionId: string,
-  ts: number,
-): Promise<boolean> {
+export async function touchTaskActivity(taskId: number, ts: number): Promise<boolean> {
   const db = await getDb();
   const res = await db.execute(
     `UPDATE tasks
-        SET session_id = $1,
-            last_activity_at = MAX(COALESCE(last_activity_at, 0), $2)
-      WHERE id = $3
-        AND (session_id IS NOT $1 OR COALESCE(last_activity_at, 0) < $2)`,
-    [sessionId, ts, taskId],
+        SET last_activity_at = $1
+      WHERE id = $2
+        AND COALESCE(last_activity_at, 0) < $1`,
+    [ts, taskId],
   );
   // A driver that does not report a count is treated as "changed": a missed
   // notification is a stale list, an extra one is only a reload.

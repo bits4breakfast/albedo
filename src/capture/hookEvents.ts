@@ -151,6 +151,13 @@ export interface HookEvent {
   requestId: string | null;
   /** `PermissionRequest` only: Claude Code's `permission_suggestions`. */
   suggestions: unknown[] | null;
+  /**
+   * `SessionStart` only: the session the terminal is on now, and why
+   * (`startup`, `resume`, `clear`, `compact`). The one fact this channel
+   * carries besides "waiting on you" -- see CLAUDE.md and sessionLink.ts.
+   */
+  sessionId: string | null;
+  source: string | null;
   at: number;
 }
 
@@ -181,6 +188,8 @@ export function parseHookLines(text: string, fallbackAt = Date.now()): HookEvent
         // Stamped by HOOK_SCRIPT. Checked here because it becomes a file name.
         requestId: REQUEST_ID.test(str(d['albedo_req']) ?? '') ? (d['albedo_req'] as string) : null,
         suggestions: Array.isArray(d['permission_suggestions']) ? (d['permission_suggestions'] as unknown[]) : null,
+        sessionId: event === 'SessionStart' && SESSION_ID.test(str(d['session_id']) ?? '') ? (d['session_id'] as string) : null,
+        source: event === 'SessionStart' ? str(d['source']) : null,
         // Hook payloads carry no timestamp; the script stamps one (`albedo_at`).
         at: typeof d['albedo_at'] === 'number' ? (d['albedo_at'] as number) : fallbackAt,
       });
@@ -199,6 +208,9 @@ const ASK_TOOL = 'AskUserQuestion';
  * is dropped rather than trusted.
  */
 const REQUEST_ID = /^\d{1,10}-\d{10,16}$/;
+
+/** A Claude Code session id. Anything else in `session_id` is not trusted. */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function rawQuestionsOf(input: Record<string, unknown> | null): unknown[] {
   const raw = input?.['questions'];
@@ -643,6 +655,12 @@ case "$ev" in
     done ;;
   PreToolUse|Notification)
     emit "\${body%\\}},\\"albedo_at\\":$now}" ev ;;
+  SessionStart)
+    # Which session this terminal is on now: /clear and /resume change it.
+    # Only a UUID and a lowercase word get through.
+    sid=$(printf '%s' "$payload" | sed -n 's/.*"session_id" *: *"\\([0-9a-fA-F-]*\\)".*/\\1/p' | head -n 1)
+    src=$(printf '%s' "$payload" | sed -n 's/.*"source" *: *"\\([a-z_]*\\)".*/\\1/p' | head -n 1)
+    emit "{\\"hook_event_name\\":\\"SessionStart\\",\\"session_id\\":\\"$sid\\",\\"source\\":\\"$src\\",\\"albedo_at\\":$now}" ev ;;
   *)
     id=$(printf '%s' "$payload" | sed -n 's/.*"tool_use_id" *: *"\\([^"\\\\]*\\)".*/\\1/p')
     emit "{\\"hook_event_name\\":\\"$ev\\",\\"tool_use_id\\":\\"$id\\",\\"albedo_at\\":$now}" ev ;;
@@ -798,19 +816,21 @@ async function readFrom(path: string, offset: number, length: number): Promise<U
   }
 }
 
-/** Apply the complete lines of `path` past `tail.offset`. */
-async function consume(path: string, tail: Tail): Promise<void> {
+/** Apply the complete lines of `path` past `tail.offset`; returns them. */
+async function consume(path: string, tail: Tail): Promise<HookEvent[]> {
   const size = (await stat(path)).size;
   if (size < tail.offset) {
     // Shorter than what was read: emptied under us. Start over with it.
     tail.offset = 0;
     tail.state = emptyPending();
   }
-  if (size === tail.offset) return;
+  if (size === tail.offset) return [];
   const { text, consumed } = completeLines(await readFrom(path, tail.offset, size - tail.offset));
-  if (consumed === 0) return;
-  applyHookEvents(tail.state, parseHookLines(text));
+  if (consumed === 0) return [];
+  const events = parseHookLines(text);
+  applyHookEvents(tail.state, events);
   tail.offset += consumed;
+  return events;
 }
 
 /**
@@ -822,15 +842,16 @@ async function consume(path: string, tail: Tail): Promise<void> {
  * hook caught between its open(2) and its write(2) at that instant could be
  * lost -- one `cat`, microseconds.
  */
-async function compact(path: string, tail: Tail): Promise<void> {
+async function compact(path: string, tail: Tail): Promise<HookEvent[]> {
   const aside = `${path}.old`;
   try {
     await rename(path, aside);
   } catch {
-    return; // nothing to compact, or not now; the next quiet read retries
+    return []; // nothing to compact, or not now; the next quiet read retries
   }
+  let events: HookEvent[] = [];
   try {
-    await consume(aside, tail);
+    events = await consume(aside, tail);
   } catch {
     /* read what we could */
   }
@@ -840,6 +861,7 @@ async function compact(path: string, tail: Tail): Promise<void> {
   } catch {
     /* a stale copy costs disk, never correctness */
   }
+  return events;
 }
 
 /** Per-task queue: two reads of one file at once would apply its lines twice. */
@@ -861,20 +883,63 @@ async function eventsPath(taskId: number): Promise<string> {
 function refreshTask(taskId: number): Promise<void> {
   return serial(taskId, async () => {
     if (!live.has(taskId)) return;
+    const events: HookEvent[] = [];
     let tail = tails.get(taskId);
     if (!tail) tails.set(taskId, (tail = { offset: 0, state: emptyPending() }));
     try {
       const path = await eventsPath(taskId);
       // Missing is normal right after a compaction: nothing new, state stands.
       if (await exists(path)) {
-        await consume(path, tail);
-        if (isQuiet(tail.state) && tail.offset >= COMPACT_AT_BYTES) await compact(path, tail);
+        events.push(...(await consume(path, tail)));
+        if (isQuiet(tail.state) && tail.offset >= COMPACT_AT_BYTES) events.push(...(await compact(path, tail)));
       }
     } catch {
       /* unreadable this tick; the next one retries from the same offset */
     }
-    if (live.has(taskId)) publish(taskId, currentPrompt(tail.state, answered));
+    if (!live.has(taskId)) return;
+    publish(taskId, currentPrompt(tail.state, answered));
+    const start = latestSessionStart(events);
+    if (start) publishSession(taskId, start.sessionId, start.source ?? 'unknown');
   });
+}
+
+// ---------------------------------------------------------------------------
+// Which session the terminal is on
+// ---------------------------------------------------------------------------
+
+type SessionListener = (taskId: number, sessionId: string, source: string) => void;
+const sessionListeners = new Set<SessionListener>();
+
+/** The last SessionStart in `events` that names a session, or null. */
+export function latestSessionStart(events: readonly HookEvent[]): { sessionId: string; source: string | null } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.event === 'SessionStart' && e.sessionId) return { sessionId: e.sessionId, source: e.source };
+  }
+  return null;
+}
+
+/**
+ * Called when a task's terminal reports the session it is on: at startup,
+ * after `/clear`, after `/resume` inside Claude Code. The id may be the one
+ * the task already has; deciding whether that changes anything is the
+ * subscriber's job (sessionLink.ts).
+ */
+export function onSessionStart(cb: SessionListener): () => void {
+  sessionListeners.add(cb);
+  return () => {
+    sessionListeners.delete(cb);
+  };
+}
+
+function publishSession(taskId: number, sessionId: string, source: string): void {
+  for (const cb of [...sessionListeners]) {
+    try {
+      cb(taskId, sessionId, source);
+    } catch {
+      /* a broken subscriber must not stall the others */
+    }
+  }
 }
 
 const TASK_FILE = /task-(\d+)\.jsonl$/;

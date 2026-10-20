@@ -409,7 +409,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
                     title={`${c.sha}\n${c.subject}`}
                   >
                     <span className="tf-section-caret">{open ? '▾' : '▸'}</span>
-                    <span className="tf-commit-subject">{c.subject || '(no message)'}</span>
+                    <span className="tf-commit-subject">{c.subject || '(No Message)'}</span>
                     <span className="tf-commit-meta">
                       {c.sha.slice(0, 7)} · {relativeTime(c.at, now)}
                     </span>
@@ -437,7 +437,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
         {mode === 'commit' ? null : (
           [
             ['Uncommitted', view.uncommitted],
-            ['Committed on this branch', view.committed],
+            ['Committed on This Branch', view.committed],
           ] as const
         ).map(([label, rows]) =>
           rows.length === 0 ? null : (
@@ -470,7 +470,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
           </div>
         ) : null}
 
-        {!loaded && loading ? <div className="tf-empty">reading the change set…</div> : null}
+        {!loaded && loading ? <div className="tf-empty">Reading the change set…</div> : null}
       </div>
       {loaded ? (
         <GitBar
@@ -576,14 +576,14 @@ function FileRow({
         <span className="tf-name">{name}</span>
         {file.handEdited ? (
           <span className="tf-badge tf-badge-hand" title="You saved this file by hand in the editor">
-            hand
+            Hand
           </span>
         ) : null}
       </span>
 
       <span className="tf-lines" title={linesTitle(change)}>
         {change === null ? null : change.added === null ? (
-          <span className="tf-bin">bin</span>
+          <span className="tf-bin">Bin</span>
         ) : (
           <>
             <span className="tf-add">+{change.added}</span> <span className="tf-del">−{change.deleted}</span>

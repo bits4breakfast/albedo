@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { usageSummary } from '../capture';
+import OverflowMenu from './OverflowMenu';
+import type { ThemeChoice } from './theme';
 
 /**
  * Title bar strip. Carries the macOS overlay drag region, the count of
@@ -37,7 +40,27 @@ export interface HeaderProps {
   /** Opens the keyboard shortcuts list. */
   onShortcuts: () => void;
   blockedCount: number;
+  /**
+   * The appearance choice. A per-viewer preference set once, so it lives in
+   * ⋯ rather than taking permanent room in the sidebar.
+   */
+  theme: ThemeChoice;
+  onThemeChange: (next: ThemeChoice) => void;
+  /**
+   * The project tabs, when there are two or more projects. They take the
+   * brand's place: the window is already called Albedo, and the tabs are the
+   * level above everything below the bar, so this is where they belong.
+   */
+  tabs?: ReactNode;
+  /** Select a task that is waiting on you (the next one, on repeat clicks). */
+  onWaitingClick?: () => void;
 }
+
+const THEME_ITEMS: { choice: ThemeChoice; label: string; title: string }[] = [
+  { choice: 'system', label: 'Theme: Auto', title: 'Follow the system appearance' },
+  { choice: 'light', label: 'Theme: Light', title: 'Always light' },
+  { choice: 'dark', label: 'Theme: Dark', title: 'Always dark' },
+];
 
 interface Usage {
   inputTokens: number;
@@ -57,6 +80,10 @@ export default function Header({
   onProjects,
   onSessions,
   onShortcuts,
+  theme,
+  onThemeChange,
+  tabs,
+  onWaitingClick,
   blockedCount,
 }: HeaderProps) {
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -107,17 +134,37 @@ export default function Header({
 
   return (
     <header className="header" data-tauri-drag-region>
-      <span className="header-brand" data-tauri-drag-region>
-        Albedo
-      </span>
+      {/* The app's own icon stands for the name: the window is already called
+          Albedo, so the room goes to the project tabs after it. Served from
+          public/, a copy of src-tauri/icons/64x64.png. */}
+      <img
+        className="header-icon"
+        src="/app-icon-64.png"
+        alt="Albedo"
+        width={22}
+        height={22}
+        draggable={false}
+        data-tauri-drag-region
+      />
+      {tabs}
 
       <span className="header-spacer" data-tauri-drag-region />
 
       {blockedCount > 0 && (
-        <span className="usage" title={`${blockedCount} session(s) waiting on you`}>
-          <span className="status-dot" data-status="blocked" aria-hidden="true" />
-          <span className="usage-figure">{blockedCount} waiting</span>
-        </span>
+        <>
+          {/* A button: the count is only useful as a way to get there. With
+              several waiting, each click moves to the next. */}
+          <button
+            type="button"
+            className="usage usage-waiting"
+            onClick={onWaitingClick}
+            title={`${blockedCount} session(s) waiting on you. Click to go to ${blockedCount === 1 ? 'it' : 'the next one'}.`}
+          >
+            <span className="status-dot" data-status="blocked" aria-hidden="true" />
+            <span className="usage-figure">{blockedCount} Waiting</span>
+          </button>
+          <span className="header-sep" aria-hidden="true" />
+        </>
       )}
 
       <div
@@ -127,9 +174,9 @@ export default function Header({
           'The sidebar panel has the totals and countdowns.'
         }
       >
-        <span className="usage-label">burn</span>
-        {error && <span className="usage-error">unavailable</span>}
-        {!error && !usage && <span className="usage-stale">reading…</span>}
+        <span className="usage-label">Burn</span>
+        {error && <span className="usage-error">Unavailable</span>}
+        {!error && !usage && <span className="usage-stale">Reading…</span>}
         {!error && usage && burn !== null && (
           <span className="usage-figure">
             {formatTokens(burn)}
@@ -139,6 +186,11 @@ export default function Header({
         {!error && usage && burn === null && <span className="usage-stale">—</span>}
       </div>
 
+      <span className="header-sep" aria-hidden="true" />
+
+      {/* One visible action; the rest sit behind ⋯ (pane vertical space: one
+          row, one main action). ⌘/ still opens the shortcuts from anywhere,
+          and the sidebar's project name still opens Projects. */}
       <div className="header-actions">
         <button
           className="btn btn-ghost"
@@ -147,15 +199,31 @@ export default function Header({
         >
           History
         </button>
-        <button className="btn btn-ghost" onClick={onProjects} title="Manage projects">
-          Projects
-        </button>
-        <button className="btn btn-ghost" onClick={onReconcile} title="Reconcile git worktrees">
-          Worktrees
-        </button>
-        <button className="btn btn-ghost" onClick={onShortcuts} title="Keyboard shortcuts (⌘/)" aria-label="Keyboard shortcuts">
-          ⌘/
-        </button>
+        <OverflowMenu
+          label="More"
+          title="Projects, worktrees, theme, keyboard shortcuts"
+          items={[
+            { id: 'projects', label: 'Projects…', onSelect: onProjects, title: 'Manage projects' },
+            { id: 'worktrees', label: 'Worktrees…', onSelect: onReconcile, title: 'Reconcile git worktrees' },
+            ...THEME_ITEMS.map((t, i) => ({
+              id: `theme-${t.choice}`,
+              label: t.label,
+              title: t.title,
+              checked: theme === t.choice,
+              radio: true,
+              group: i === 0,
+              onSelect: () => onThemeChange(t.choice),
+            })),
+            {
+              id: 'shortcuts',
+              label: 'Keyboard Shortcuts',
+              aside: '⌘/',
+              onSelect: onShortcuts,
+              title: 'Keyboard shortcuts (⌘/)',
+              group: true,
+            },
+          ]}
+        />
       </div>
     </header>
   );

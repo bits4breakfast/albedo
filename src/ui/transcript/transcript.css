@@ -2,8 +2,9 @@
    Transcript pane (M4). Owned by the transcript workstream.
 
    Uses only the design tokens defined in src/styles.css. All class names are
-   `tx-` prefixed. Dense, quiet, information first: the diff is the thing you
-   came to read, so everything around it stays out of the way.
+   `tx-` prefixed. Calm, quiet, information first: the diff is the thing you
+   came to read, so everything around it stays out of the way. The pane sits
+   on --panel; chips and cards are hairline-edged with soft radii.
    ========================================================================== */
 
 .tx-pane {
@@ -12,7 +13,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  background: var(--panel);
   color: var(--text);
   /* The shell disables selection app-wide; a read pane must allow copying. */
   user-select: text;
@@ -34,9 +35,34 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 12px 28px;
+  padding: 10px 20px 28px 8px;
   overscroll-behavior: contain;
+  /* No native scrollbar: a styled one takes 9px of layout, so full-width rows
+     stopped short of the edge. OverlayScrollbar draws the thumb on top. */
+  scrollbar-width: none;
 }
+.tx-scroll::-webkit-scrollbar { display: none; }
+
+/* The overlay rail: the right 10px of the pane, above the rows. */
+.tx-rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 2;
+}
+.tx-thumb {
+  position: absolute;
+  right: 2px;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--scrollbar);
+  cursor: default;
+}
+.tx-rail:hover .tx-thumb { width: 8px; right: 1px; border-radius: 4px; }
+.tx-thumb:hover,
+.tx-thumb[data-dragging] { background: var(--scrollbar-hover); }
 
 .tx-pane-empty {
   padding: 24px 14px;
@@ -47,9 +73,10 @@
 
 .tx-error {
   margin: 6px 0;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-left: 2px solid var(--danger);
+  border-radius: var(--radius);
   background: var(--panel);
   color: var(--text);
   font-size: var(--fs-sm);
@@ -64,32 +91,34 @@
 .tx-page-start {
   color: var(--faint);
   font-size: var(--fs-xs);
-  letter-spacing: 0.04em;
-  text-transform: lowercase;
 }
 
 .tx-btn {
-  padding: 2px 8px;
-  border: 1px solid var(--border);
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-mid);
   background: var(--panel);
   color: var(--muted);
   font-size: var(--fs-xs);
-  border-radius: var(--radius);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
 }
-.tx-btn:hover { background: var(--panel-raised); color: var(--text); }
-.tx-btn:disabled { opacity: 0.5; }
+.tx-btn:hover { background: var(--panel-hover); color: var(--text); }
+/* A lower tier, never `opacity` (CLAUDE.md, Contrast rule 2). */
+.tx-btn:disabled { color: var(--faint); background: transparent; border-color: var(--border); }
 
 .tx-jump {
   position: absolute;
   right: 16px;
   bottom: 14px;
-  padding: 3px 9px;
-  border: 1px solid var(--border-strong);
+  padding: 4px 11px;
+  border: 1px solid var(--border-mid);
   background: var(--panel-raised);
   color: var(--text);
   font-size: var(--fs-xs);
+  font-weight: 500;
   border-radius: 999px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-menu);
 }
 .tx-jump:hover { border-color: var(--accent-line); color: var(--text-strong); }
 /* The shortcut, on the pill's own --panel-raised: --muted is cleared there. */
@@ -165,9 +194,9 @@
   flex: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  gap: 8px;
   align-items: end;
-  padding: 6px 10px;
+  padding: 10px 14px 12px;
   border-top: 1px solid var(--border);
   background: var(--panel);
 }
@@ -193,9 +222,9 @@
  */
 .tx-composer-undo {
   flex: none;
-  padding: 0 4px;
+  padding: 0 6px;
   border: 1px solid currentColor;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   color: inherit;
   font-size: var(--fs-xs);
   cursor: pointer;
@@ -204,14 +233,15 @@
 
 .tx-composer-input {
   width: 100%;
-  min-height: 22px;
+  min-height: 34px;
   max-height: 140px;
-  padding: 3px 6px;
-  border: 1px solid var(--border);
+  padding: 6px 10px;
+  border: 1px solid var(--border-mid);
   background: var(--panel-inset);
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
+  /* Prose you are writing to Claude, so the reading face, not the code one. */
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
   line-height: 1.5;
   border-radius: var(--radius);
   resize: none;
@@ -226,16 +256,19 @@
 .tx-composer-input:read-only { color: var(--muted); border-style: dashed; }
 
 .tx-composer-send {
-  padding: 3px 10px;
-  border: 1px solid var(--border);
-  background: var(--panel-raised);
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  border-radius: var(--radius);
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border-mid);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.tx-composer-send:hover:not(:disabled) { color: var(--text-strong); border-color: var(--border-strong); }
-.tx-composer-send:disabled { opacity: 0.5; cursor: default; }
+.tx-composer-send:hover:not(:disabled) { color: var(--text-strong); background: var(--panel-hover); }
+/* A lower tier, never `opacity` (CLAUDE.md, Contrast rule 2). */
+.tx-composer-send:disabled { color: var(--faint); background: transparent; border-color: var(--border); cursor: default; }
 
 /* --- rows ----------------------------------------------------------------- */
 
@@ -245,17 +278,17 @@
    gap between any two rows is the same 8px whatever they contain. */
 .tx-row {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 10px;
-  padding: 4px 0;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  padding: 5px 0;
   align-items: start;
 }
 
 .tx-gutter {
-  padding-top: 2px;
+  padding-top: 3px;
   color: var(--faint);
-  font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
   text-align: right;
   user-select: none;
 }
@@ -275,39 +308,32 @@
 
 /* Your messages are the landmarks of a long transcript, so they are a band:
    their own flat ground (--user-row, measured for every text tier in the
-   token block), a solid accent edge, and the "you" tag filled. No opacity and
-   no tint, so nothing here changes a ratio the tokens guarantee. */
+   token block) running the full width of the pane between two hairlines.
+   No opacity and no tint, so nothing here changes a ratio the tokens
+   guarantee. */
 /* The band is drawn behind the row, not as the row's own border and padding,
-   so your text sits on exactly the same column as everything else. */
+   so your text sits on exactly the same column as everything else. It
+   bleeds into the scroller's side padding (8px / 20px) to reach both edges. */
 .tx-row-user {
   position: relative;
   isolation: isolate;
-  margin: 14px 0 8px;
-  padding: 10px 14px 10px 0;
+  margin: 12px 0 8px;
+  padding: 10px 0;
 }
 .tx-row-user::before {
   content: '';
   position: absolute;
-  inset: 0;
+  inset: 0 -20px 0 -8px;
   z-index: -1;
   background: var(--user-row);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
+/* "you": a label in the gutter, on --user-row (--faint 5.37 / 5.55). */
 .tx-row-user .tx-gutter {
   align-self: start;
-  justify-self: end;
-  /* Centred on the first line of 14px/1.6 text (22.4px). */
-  margin-top: 3px;
-  padding: 1px 6px;
-  line-height: 1.4;
-  border-radius: var(--radius);
-  /* --panel-inset is white in light (6.75 on --accent) and near-black in dark
-     (7.24 on --accent): the readable side of the accent in each theme. */
-  background: var(--accent);
-  color: var(--panel-inset);
-  font-weight: 600;
+  margin-top: 2px;
+  font-weight: 500;
 }
 .tx-row-user .tx-content { color: var(--text-strong); }
 
@@ -404,12 +430,12 @@
   /* 1px chip border + 8px chip padding: the caret lands on the same column as
      a tool chip's, so a run of chips and collapsed lines reads as one list. */
   padding: 2px 0 2px 9px;
-  color: var(--faint);
+  color: var(--muted);
   font-size: var(--fs-sm);
   font-style: italic;
 }
 .tx-think-head:hover,
-.tx-sidechain-head:hover { color: var(--muted); }
+.tx-sidechain-head:hover { color: var(--text); }
 
 .tx-think-body {
   margin: 3px 0 0 9px;
@@ -503,15 +529,16 @@
   white-space: pre-wrap;
 }
 
-/* A quiet ground, no box: wide identifiers read as words in a sentence, not
-   a row of buttons. --panel-raised is the ground every text tier is measured
-   against (CLAUDE.md), so the text keeps its contrast. */
+/* A quiet ground and a hairline: wide identifiers read as words in a
+   sentence, not a row of buttons. --panel-chrome sits between --panel and
+   --panel-raised, so every text tier keeps the contrast it was cleared at. */
 .tx-md-code {
-  padding: 1px 4px;
-  background: var(--panel-raised);
+  padding: 1px 5px;
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 0.86em;
-  border-radius: var(--radius);
+  font-size: 0.84em;
+  border-radius: 4px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -569,21 +596,23 @@
   background: var(--panel);
   border-radius: var(--radius);
 }
-.tx-chip-open { background: var(--panel-raised); }
+.tx-chip-open { background: var(--panel-chrome); }
 
 .tx-chip-head {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 28px;
-  padding: 3px 8px;
+  min-height: 30px;
+  padding: 3px 10px 3px 8px;
   font-size: var(--fs-sm);
   text-align: left;
+  border-radius: calc(var(--radius) - 1px);
   /* The whole row toggles; the path inside it opts out and opens the file. */
   cursor: pointer;
 }
 .tx-chip-head:hover .tx-chip-name { color: var(--text-strong); }
+.tx-chip:not(.tx-chip-open) > .tx-chip-head:hover { background: var(--panel-hover); }
 
 /* Caret + name: the keyboard affordance for expanding the chip. */
 .tx-chip-toggle {
@@ -616,9 +645,21 @@
   margin-block: -6px;
   margin-inline: -5px;
   color: var(--muted);
-  font-size: var(--fs-lg);
   line-height: 1;
   user-select: none;
+}
+/* 12px drawn triangle, about 7x9 of ink. It was U+25B8 at --fs-lg, which is
+   roughly 5x6 -- smaller than the 13px label beside it, when the comment above
+   asks for a size ABOVE it. The 24x24 box (the hit area) is unchanged. */
+.tx-disc svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+  transition: transform 0.12s ease;
+}
+.tx-disc-open svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .tx-disc svg { transition: none; }
 }
 
 /* Hovering anywhere on the control brings the caret up with it. */
@@ -631,7 +672,6 @@
 .tx-chip-name {
   flex: none;
   color: var(--text);
-  font-family: var(--font-mono);
   font-size: var(--fs-sm);
   font-weight: 600;
 }
@@ -640,8 +680,9 @@
   flex: none;
   max-width: 40%;
   overflow: hidden;
-  color: var(--accent);
+  color: var(--muted);
   font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -697,8 +738,6 @@
   border: 1px solid var(--border);
   color: var(--faint);
   font-size: var(--fs-xs);
-  letter-spacing: 0;
-  text-transform: none;
   border-radius: var(--radius);
   cursor: pointer;
 }
@@ -730,8 +769,6 @@
   color: var(--faint);
   font-size: var(--fs-xs);
   font-weight: 400;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .tx-chip-empty {
@@ -761,9 +798,9 @@
 .tx-chip-answer {
   flex: none;
   max-width: 45%;
-  padding: 0 5px;
+  padding: 0 6px;
   overflow: hidden;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: var(--accent-soft);
   color: var(--on-accent-soft);
   font-family: var(--font-ui);
@@ -790,8 +827,6 @@
   border-radius: var(--radius);
   color: var(--faint);
   font-size: var(--fs-xs);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .tx-question-text {
@@ -876,10 +911,10 @@
 .tx-d-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 3px 8px;
+  gap: 10px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--panel-chrome);
   font-size: var(--fs-sm);
 }
 
@@ -1043,8 +1078,9 @@
 /*
    Changed-line gutter numbers read as secondary, not as a second colour signal:
    the row tint and the +/- marker already carry add/del. --muted lands them at
-   6.55 / 6.82 against their own tinted row -- a touch brighter than the --faint
-   context numbers (5.67), which is the emphasis we actually want.
+   6.42 / 6.26 (light, add/del) and 6.80 / 7.15 (dark) against their own tinted
+   row -- a touch brighter than the --faint context numbers (6.09 / 6.36 on
+   --panel-inset), which is the emphasis we actually want.
 
    These previously used --add/--del at `opacity: 0.7`, which measured 4.17 and
    3.40. Never dim text with `opacity` to make it subordinate: it composites
@@ -1062,8 +1098,11 @@
    hardcoded, so it tracks --add/--del instead of drifting away from them.
 */
 .tx-d-word { border-radius: 2px; }
-.tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) var(--tx-word-tint), transparent); }
-.tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) var(--tx-word-tint), transparent); }
+/* The ground is NAMED (CLAUDE.md, Contrast rule 5): a p% mix with the row's
+   tint is arithmetically the alpha composite it replaces, but it stays the
+   same pair when the theme flips. */
+.tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) var(--tx-word-tint), var(--add-soft)); }
+.tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) var(--tx-word-tint), var(--del-soft)); }
 
 /* --- collapsed regions ---------------------------------------------------- */
 
@@ -1146,8 +1185,8 @@
   outline-offset: 1px;
 }
 
-/* The chip target is already accent-coloured; hovering firms up the underline. */
-.tx-chip-target.tx-link:hover { color: var(--text-strong); }
+/* The chip target is quiet until pointed at, then reads as the link it is. */
+.tx-chip-target.tx-link:hover { color: var(--accent); }
 
 .tx-chip-path .tx-link { color: var(--muted); }
 .tx-chip-path .tx-link:hover { color: var(--accent); }
@@ -1191,8 +1230,9 @@
      Light. 40%, not the dark 26%: the alphas are not interchangeable because
      the tokens they mix are not. Dark --add is a bright green over near-black;
      light --add is a dark green over near-white, so the same alpha lands a much
-     weaker separation. 40% puts the word highlight 1.69/1.85 away from its own
-     row, matching dark's 1.66/1.51, and text on it still measures 7.84/6.94 --
+     weaker separation. 40% puts the word highlight 1.90/1.98 (add/del) away
+     from its own row, against dark's 1.83/1.69, and --text on it measures
+     7.82/7.34 (dark: 7.02/7.99) --
      the whole sweep from 20% to 55% clears the 4.5 text bar, so separation is
      what picks the value here, not legibility.
   */
@@ -1229,35 +1269,52 @@
 
 :root[data-theme='dark'] .tx-tok { color: var(--shiki-dark, inherit); }
 
-/* Waiting prompt. Flat --panel-raised ground, no tint and no opacity, so the
-   text tokens keep the contrast they were chosen for: --warn clears 5.6 (light)
-   and 8.4 (dark) on it, --text and --muted are the usual body tiers. */
+/* Waiting prompt. Its own opaque tint, --prompt-bg, with its own measured
+   tiers (token block): --warn 7.24 / 9.21, --text 15.83 / 13.51, --muted
+   6.82 / 7.15, --faint 5.67 / 5.56 (light / dark). No alpha and no opacity, so
+   nothing composites against what happens to be behind it. */
 .tx-prompt {
   flex: none;
-  margin: 6px 12px 0;
-  padding: 8px 10px;
-  background: var(--panel-raised);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--warn);
-  border-radius: var(--radius);
+  margin: 8px 14px 0;
+  padding: 12px 16px;
+  background: var(--prompt-bg);
+  border: 1px solid var(--prompt-line);
+  border-radius: var(--radius-lg);
   max-height: 40%;
   overflow: auto;
 }
-.tx-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tx-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .tx-prompt-tag {
-  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: var(--fs-xs);
+  font-weight: 600;
   color: var(--warn);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
-.tx-prompt-block { margin-top: 6px; }
+/* The tag's glyph is a label, not a row: it does not ping. */
+.tx-prompt-tag .status-dot { animation: none; }
+.tx-prompt-block { margin-top: 8px; }
 .tx-prompt-sub { font-size: var(--fs-xs); color: var(--muted); }
 .tx-prompt-q { margin-top: 4px; color: var(--text-strong); font-weight: 600; }
 .tx-prompt-opts { margin: 4px 0 0; padding-left: 20px; color: var(--text); }
 .tx-prompt-opt { color: var(--text-strong); }
 .tx-prompt-desc { color: var(--muted); }
 .tx-prompt-cmd { font-family: var(--font-mono); font-weight: 400; color: var(--text); word-break: break-all; }
+/* A permission's command, as its own block: what you are agreeing to run.
+   On --panel-inset, so --text-strong is 19.92 / 18.16. */
+.tx-prompt-q > .tx-prompt-cmd {
+  display: block;
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-strong);
+  background: var(--panel-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
 
 /* Web links. Same accent token the markdown link already used, so contrast is
    unchanged; the host hint is muted and only shown when the label hides it. */

@@ -114,17 +114,21 @@ export default function ModelPicker({ task }: { task: Task }) {
     } else setFailed(true);
   };
 
-  const label = model ? model.replace(/^claude-/, '') : 'model unknown';
-  const title = !idle
-    ? 'Switching models is only offered while the task is idle'
-    : 'Sends /model to this session';
+  const label = model ? model.replace(/^claude-/, '') : 'Model Unknown';
+  const title =
+    (model ? `${model}. ` : '') +
+    (!idle ? 'Switching models is only offered while the task is idle' : 'Sends /model to this session');
   const nameOf = (id: string) => choices.find((c) => c.id === id)?.name ?? id;
 
   return (
     <span className="model-pick">
-      <span className="model-pick-name" title={model ?? undefined}>
-        {label}
-      </span>
+      {/* Only when the menu cannot name it: otherwise the select already
+          shows the current model and this said the same thing twice. */}
+      {current === null && pending === null ? (
+        <span className="model-pick-name" title={model ?? undefined}>
+          {label}
+        </span>
+      ) : null}
       <select
         className="model-pick-select"
         aria-label="Change model"
@@ -135,7 +139,7 @@ export default function ModelPicker({ task }: { task: Task }) {
       >
         {current === null && pending === null ? (
           <option value="" disabled>
-            change…
+            Change…
           </option>
         ) : null}
         {choices.map((c) => (
@@ -145,7 +149,7 @@ export default function ModelPicker({ task }: { task: Task }) {
         ))}
       </select>
       {pending ? <span className="model-pick-note">→ {nameOf(pending)} on next reply</span> : null}
-      {failed ? <span className="model-pick-note">no live terminal for this task</span> : null}
+      {failed ? <span className="model-pick-note">No live terminal for this task</span> : null}
     </span>
   );
 }

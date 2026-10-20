@@ -51,7 +51,7 @@ async function submitWithTitle(title: string) {
   const onCreated = vi.fn();
   render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
   fireEvent.change(screen.getByLabelText('Title'), { target: { value: title } });
-  const create = screen.getByRole('button', { name: 'Create worktree' });
+  const create = screen.getByRole('button', { name: 'Create Worktree' });
   await waitFor(() => expect(create).not.toHaveProperty('disabled', true));
   fireEvent.click(create);
   return onCreated;

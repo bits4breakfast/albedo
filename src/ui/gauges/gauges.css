@@ -4,7 +4,7 @@
 
    Uses the tokens from src/styles.css and nothing else: no new colours, no
    second visual language. Same dark, dense, square-cornered, hairline chrome
-   as the rest of the cockpit.
+   as the rest of the cockpit (now the calm palette: same rules, new values).
 
    MOTION BUDGET. The shell's rule is that `running` breathes and `blocked`
    pings so a blocked session is the one thing that pulls the eye. A panel that
@@ -25,17 +25,17 @@
    1.4.11 non-text); text tiers come from the tokens and clear 4.5.
 
                             dark    light
-     overhead band  /track  3.32    3.42
-     overhead band  /panel  3.75    4.04
-     conversation   /track  6.01    5.33
-     warn overhead  /track  5.45    3.66
-     high overhead  /track  3.84    3.72
-     bar ring       /panel  3.96    4.28
-     bar ring       /track  3.51    3.62
-     inferred hatch /track  4.69    4.00
-     estimate hatch /band   3.75..8.79   4.04..6.35  (weakest = overhead)
-     band divider   /band   3.75, 6.78   4.04, 6.29
-     legend swatch  /panel  3.75    4.04
+     overhead band  /track  3.38    3.43
+     overhead band  /panel  4.11    4.24
+     conversation   /track  6.47    5.23
+     warn overhead  /track  5.78    4.03
+     high overhead  /track  4.91    4.13
+     bar ring       /panel  3.90    4.01
+     bar ring       /track  3.20    3.24
+     inferred hatch /track  4.61    3.78
+     estimate hatch /band   4.11..9.98   4.24..7.59  (weakest = overhead)
+     band divider   /band   4.11, 7.88   4.24, 6.46
+     legend swatch  /panel  4.11    4.24
 
    THERE IS NO LIGHT/DARK BLOCK IN THIS FILE, and that is the point. Every
    value is a token or a color-mix OF tokens against a NAMED ground, so it
@@ -57,7 +57,7 @@
    55% white on light -- and measures 2.18..2.89 (dark) / 2.45..3.26 (light)
    against the fills it sits on. That is under the floor on the one mark that
    carries the honesty rule. An opaque var(--panel) stripe says the same
-   thing at 3.75..8.79 / 4.04..6.35, so this file uses that. Flagged to the
+   thing at 4.11..9.98 / 4.24..7.59, so this file uses that. Flagged to the
    shell for .ctx-fill and .task-ctx-fill, which have the same shortfall.
 
    Must stay legible at the 200px sidebar minimum: every text run either
@@ -83,7 +83,7 @@
      in styles.css, which is on screen at the same time a few inches away.
      A matched literal cannot survive two themes, so this consumes the
      shell's token and is in lockstep by construction in both:
-     #667186 dark (3.32 on --track), #727a87 light (3.42). Aliased once here
+     #74777f dark (3.38 on --track), #767983 light (3.43). Aliased once here
      because two rules below need it. */
   --gz-meter-fill: var(--ctx-quiet-bar);
 
@@ -110,8 +110,6 @@
 .gz-title {
   flex: 0 0 auto;
   font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
   color: var(--faint);
 }
 
@@ -193,10 +191,10 @@
      against it AND makes an empty window read as partly full. The bar's
      extent is carried by the ring instead, which is the boundary WCAG
      actually asks to be legible -- and the free band IS the bare track, so
-     that extent is the headroom reading. Track/panel is only 1.13 (dark)
-     and 1.18 (light); without the ring you cannot see where the bar ends. */
+     that extent is the headroom reading. Track/panel is only 1.22 (dark)
+     and 1.24 (light); without the ring you cannot see where the bar ends. */
   background: var(--track);
-  border: 1px solid var(--border-strong);   /* 3.96 dark / 4.28 light on --panel */
+  border: 1px solid var(--border-strong);   /* 3.90 dark / 4.01 light on --panel */
   border-radius: 2px;
   overflow: hidden;
 }
@@ -207,17 +205,17 @@
   transition: width 320ms ease;
 }
 
-/* Overhead and conversation clear the track comfortably, but sit only 1.63
-   (dark) / 1.56 (light) against EACH OTHER -- they are separated by hue, not luminance, which
+/* Overhead and conversation clear the track comfortably, but sit only 1.92
+   (dark) / 1.53 (light) against EACH OTHER -- they are separated by hue, not luminance, which
    is no separation at all in monochrome or at low vision. A hairline in the
-   panel ground splits them structurally (3.75 and 6.78 dark, 4.04 and 6.29
+   panel ground splits them structurally (4.11 and 7.88 dark, 4.24 and 6.46
    light, against the two bands it divides -- a ground-coloured hairline on a
    band is contrastful in both themes by construction, since the bands exist
    to contrast with the ground). box-shadow rather than a border so a zero-width band does not
    render a stray pixel. */
 .gz-seg + .gz-seg { box-shadow: inset 1px 0 0 var(--panel); }
 
-.gz-seg[data-band='overhead'] { background: var(--gz-meter-fill); }  /* 3.32 dark / 3.42 light */
+.gz-seg[data-band='overhead'] { background: var(--gz-meter-fill); }  /* 3.38 dark / 3.43 light */
 .gz-seg[data-band='conversation'],
 .gz-seg[data-band='used'] { background: var(--accent); }
 .gz-seg[data-band='free'] { background: transparent; }
@@ -235,10 +233,10 @@
    relationship in both. (Identical arithmetic on dark, so no regression:
    a p% mix with a ground is exactly a p% alpha composite over it.) */
 .gz-bar[data-level='warn'] .gz-seg[data-band='overhead'] {
-  background: color-mix(in srgb, var(--warn) 80%, var(--track));   /* 5.45 dark / 3.66 light */
+  background: color-mix(in srgb, var(--warn) 80%, var(--track));   /* 5.78 dark / 4.03 light */
 }
 .gz-bar[data-level='high'] .gz-seg[data-band='overhead'] {
-  background: color-mix(in srgb, var(--danger) 80%, var(--track)); /* 3.84 dark / 3.72 light */
+  background: color-mix(in srgb, var(--danger) 80%, var(--track)); /* 4.91 dark / 4.13 light */
 }
 
 /* Approximated bands are hatched, exactly as the task-row meters hatch an
@@ -294,7 +292,7 @@
   width: 6px;
   height: 6px;
   border-radius: 1px;
-  background: var(--gz-meter-fill);   /* 3.75 dark / 4.04 light, on --panel */
+  background: var(--gz-meter-fill);   /* 4.11 dark / 4.24 light, on --panel */
 }
 .gz-swatch[data-band='conversation'],
 .gz-swatch[data-band='used'] { background: var(--accent); }
@@ -364,8 +362,6 @@
   flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -422,8 +418,15 @@
 
 .gz-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(0, 1fr));
   column-gap: 5px;
+  align-items: end;
+}
+/* The lead figure. Same colour token as the total above, one size up. */
+.gz-stat[data-primary] .gz-stat-val {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-strong);
 }
 
 .gz-stat {
@@ -465,17 +468,20 @@
   .gz-seg { transition: none !important; }
 }
 
-/* `/clear`, under the context reading it resets. Armed reads as an ordinary
+/* `/clear`, right after the percentage it resets. Armed reads as an ordinary
    raised button with the label asking the question; no new colour. */
 .gz-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 6px;
+  gap: 6px;
+  margin-left: 8px;
+  align-self: center;
 }
 .gz-clear { height: 22px; font-size: var(--fs-xs); }
 .gz-action-note {
   font-size: var(--fs-xs);
   color: var(--danger);
 }
+
+/* The 5H / 7D switch sits at the end of the Usage head, after its note. */
+.gz-window-switch { margin-left: 8px; flex: 0 0 auto; align-self: center; }

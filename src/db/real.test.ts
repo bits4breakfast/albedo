@@ -28,7 +28,9 @@ import {
   compactHistory,
   createTask,
   deleteTask,
+  findTaskBySessionId,
   findTaskByWorktreePath,
+  hasTranscriptForSession,
   getMessages,
   insertMessages,
   listTranscriptFiles,
@@ -40,6 +42,7 @@ import {
   searchMessages,
   setTranscriptTitle,
   touchTaskActivity,
+  updateTask,
 } from './index';
 import { listPastSessions } from './sessions';
 import { deriveStatus } from '../capture/status';
@@ -1185,17 +1188,17 @@ describe('touchTaskActivity — notifies only when the row moved', () => {
     const cb = vi.fn();
     const off = onTasksChanged(cb);
     try {
-      expect(await touchTaskActivity(task.id, 'sess-t', 5_000)).toBe(true);
+      expect(await touchTaskActivity(task.id, 5_000)).toBe(true);
       expect(cb).toHaveBeenCalledTimes(1);
-      expect(await touchTaskActivity(task.id, 'sess-t', 5_000)).toBe(false);
-      expect(await touchTaskActivity(task.id, 'sess-t', 4_000)).toBe(false);
+      expect(await touchTaskActivity(task.id, 5_000)).toBe(false);
+      expect(await touchTaskActivity(task.id, 4_000)).toBe(false);
       expect(cb).toHaveBeenCalledTimes(1);
-      expect(await touchTaskActivity(task.id, 'sess-t', 6_000)).toBe(true);
-      expect(await touchTaskActivity(task.id, 'sess-u', 6_000)).toBe(true); // a resumed session id
-      expect(cb).toHaveBeenCalledTimes(3);
+      expect(await touchTaskActivity(task.id, 6_000)).toBe(true);
+      expect(cb).toHaveBeenCalledTimes(2);
       const row = await getTask(task.id);
-      expect(row?.sessionId).toBe('sess-u');
       expect(row?.lastActivityAt).toBe(6_000);
+      // Activity never moves the task to another session (the restart bug).
+      expect(row?.sessionId).toBeNull();
     } finally {
       off();
     }
@@ -1226,5 +1229,50 @@ describe('created_branch (v6)', () => {
       .run();
     const [old] = (await listTasks()).filter((t) => t.title === 'old');
     expect(old?.createdBranch).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('which task a transcript belongs to — session first, never a shared folder', () => {
+  const base = { projectId: null, repoPath: '/repo', baseBranch: 'main', createdBranch: false };
+
+  it('finds a task by its session id, and not once it is archived when asked for live ones', async () => {
+    const t = await createTask({ ...base, title: 'a', branch: 'a', worktreePath: '/wt/a', ownsWorktree: true });
+    await updateTask(t.id, { sessionId: 'sess-a' });
+    expect((await findTaskBySessionId('sess-a'))?.id).toBe(t.id);
+    expect(await findTaskBySessionId('sess-other')).toBeNull();
+    expect(await findTaskBySessionId('')).toBeNull();
+    await archiveTask(t.id);
+    expect(await findTaskBySessionId('sess-a', { liveOnly: true })).toBeNull();
+  });
+
+  it('matches a folder only for a worktree Albedo cut, when ownedOnly', async () => {
+    // A task resumed in the main checkout: the folder is everyone's.
+    const shared = await createTask({ ...base, title: 'main', branch: 'polishing', worktreePath: '/repo', ownsWorktree: false });
+    const owned = await createTask({ ...base, title: 'wt', branch: 'x', worktreePath: '/wt/x', ownsWorktree: true });
+    expect((await findTaskByWorktreePath('/repo'))?.id).toBe(shared.id);
+    expect(await findTaskByWorktreePath('/repo', { ownedOnly: true })).toBeNull();
+    expect((await findTaskByWorktreePath('/wt/x', { ownedOnly: true }))?.id).toBe(owned.id);
+  });
+
+  it('knows whether a transcript is held for a session', async () => {
+    seedTranscriptFile(db, { path: '/p/held.jsonl', sessionId: 'held', cwd: '/repo', title: null });
+    expect(await hasTranscriptForSession('held')).toBe(true);
+    expect(await hasTranscriptForSession('never-written')).toBe(false);
+  });
+
+  it('the restart bug: replaying other sessions in the shared folder leaves the task on its own', async () => {
+    const t = await createTask({ ...base, title: 'main', branch: 'polishing', worktreePath: '/repo', ownsWorktree: false });
+    await updateTask(t.id, { sessionId: 'mine' });
+    // Startup re-reads older and newer files from the same folder.
+    await touchTaskActivity(t.id, 9_000);
+    await touchTaskActivity(t.id, 1_000);
+    const row = await getTask(t.id);
+    expect(row?.sessionId).toBe('mine');
+    expect(row?.lastActivityAt).toBe(9_000);
+    // And nothing finds this task for a stranger's session in its folder.
+    expect(await findTaskBySessionId('stranger')).toBeNull();
+    expect(await findTaskByWorktreePath('/repo', { ownedOnly: true })).toBeNull();
   });
 });

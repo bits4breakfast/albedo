@@ -359,7 +359,7 @@ export function NewTaskDialog({
         >
           <div className="wt-modal-head">
             <h2 className="wt-modal-title" id="wt-newtask-title">
-              {prefill ? 'New follow-up task' : 'New task'}
+              {prefill ? 'New Follow-Up Task' : 'New Task'}
             </h2>
             <span className="wt-modal-sub">
               {project ? `a worktree under ${project.worktreeRoot}` : 'in a project'}
@@ -386,7 +386,7 @@ export function NewTaskDialog({
                     className="btn btn-primary"
                     onClick={() => setProjectsOpen(true)}
                   >
-                    Add a project…
+                    Add a Project…
                   </button>
                 </div>
               </div>
@@ -456,7 +456,7 @@ export function NewTaskDialog({
 
                 <div className="wt-field">
                   <label className="wt-label" htmlFor="wt-base">
-                    Base branch
+                    Base Branch
                   </label>
                   <select
                     id="wt-base"
@@ -517,7 +517,7 @@ export function NewTaskDialog({
                 {prefill && (
                   <div className="wt-field">
                     <label className="wt-label" htmlFor="wt-prompt">
-                      Initial prompt
+                      Initial Prompt
                     </label>
                     <textarea
                       id="wt-prompt"
@@ -596,7 +596,7 @@ export function NewTaskDialog({
                           disabled={busy}
                           onClick={() => void submit(true)}
                         >
-                          Check out the existing branch
+                          Check Out the Existing Branch
                         </button>
                         <span className="wt-modal-sub">
                           runs{' '}
@@ -627,7 +627,7 @@ export function NewTaskDialog({
               disabled={!canSubmit}
               onClick={() => void submit(false)}
             >
-              {busy ? 'Creating…' : 'Create worktree'}
+              {busy ? 'Creating…' : 'Create Worktree'}
             </button>
           </div>
         </div>

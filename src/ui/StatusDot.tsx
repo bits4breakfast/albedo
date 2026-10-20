@@ -3,7 +3,7 @@ import type { TaskStatus } from '../types';
 const LABEL: Record<TaskStatus, string> = {
   idle: 'Idle',
   running: 'Running',
-  blocked: 'Needs you',
+  blocked: 'Needs You',
   done: 'Done',
   archived: 'Archived',
 };

@@ -30,7 +30,7 @@
    scoped to `.ed-root` so nothing leaks into another workstream's pane.
 
    Alphas are tuned against the *well* (`--panel-inset`), which is #ffffff in
-   light and #090b0e in dark -- not against the window ground.
+   light and #0c0d0f in dark -- not against the window ground.
    -------------------------------------------------------------------------- */
 
 .ed-root {
@@ -45,7 +45,8 @@
      Measured: above roughly 0.20 alpha the wash drags github-light's palest
      token (the comment grey #59636e) under 4.5:1, and the current match is
      precisely the one you are trying to read. 0.18 leaves the palest token at
-     4.67:1 on light and 4.78:1 on dark, and the outline carries "this is the
+     4.58:1 on light and 4.51:1 on dark (re-measured for the indigo palette's
+     --warn-rgb; there is no headroom left, so do not raise it), and the outline carries "this is the
      one" without touching what is behind the glyphs.
   */
   --ed-search: rgb(var(--warn-rgb) / 0.18);
@@ -53,7 +54,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .ed-root {
-    /* #090b0e -> #17181b and #212225. */
+    /* #0c0d0f -> #141519 and #1d1e20. */
     --ed-line-active: rgb(255 255 255 / 0.032);
     --ed-match: rgb(255 255 255 / 0.07);
   }
@@ -181,8 +182,6 @@
   background: var(--panel-raised);
   color: var(--warn);
   font-size: var(--fs-xs);
-  letter-spacing: 0.02em;
-  text-transform: lowercase;
 }
 
 /* Unsaved-changes dot. Quiet: the Save button carries the real signal. */

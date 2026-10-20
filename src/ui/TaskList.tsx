@@ -12,6 +12,7 @@ import { PrRowMark } from './PrBadge';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { useBranchSync } from '../git/branchSync';
+import { BranchIcon, branchRepeatsTitle } from './icons';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -90,8 +91,16 @@ type GroupKey = 'blocked' | 'active' | 'quiet' | 'archived';
 
 const GROUP_ORDER: GroupKey[] = ['blocked', 'active', 'quiet', 'archived'];
 
+/** The glyph a group label leads with: the same shape its rows carry. */
+const GROUP_GLYPH: Record<GroupKey, TaskStatus> = {
+  blocked: 'blocked',
+  active: 'running',
+  quiet: 'idle',
+  archived: 'archived',
+};
+
 const GROUP_TITLE: Record<GroupKey, string> = {
-  blocked: 'Needs you',
+  blocked: 'Needs You',
   active: 'Running',
   quiet: 'Idle',
   archived: 'Archived',
@@ -307,11 +316,14 @@ export default function TaskList({
 
   return (
     <div className="tasklist" tabIndex={0} onKeyDown={onKeyDown} role="listbox" aria-label="Tasks">
-      <div className="tasklist-head">
+      <div className="tasklist-head" data-bare={!nameProject || undefined}>
         {/* Identity lives here because this strip is always visible, never
             scrolls, and is already the scope label for the list beneath it.
             It is a control, not a caption: someone asking "which project am I
-            in" is usually one keystroke from "and how do I change it". */}
+            in" is usually one keystroke from "and how do I change it".
+            With project tabs in the title bar, the tab is the scope label and
+            already carries the count, so this strip keeps only New Task. */}
+        {nameProject && (
         <button
           className="tasklist-scope"
           data-named={nameProject && !!activeProject}
@@ -325,11 +337,17 @@ export default function TaskList({
         >
           {nameProject && activeProject ? activeProject.name : 'Tasks'}
         </button>
-        <span className="tasklist-count" title={`${blockedCount} blocked of ${liveCount}`}>
-          {blockedCount > 0 ? `${blockedCount}/${liveCount}` : liveCount}
-        </span>
-        <button className="btn btn-primary" onClick={onNew} title="New task (⌘N)">
-          New
+        )}
+        {nameProject && (
+          <span className="tasklist-count" title={`${blockedCount} blocked of ${liveCount}`}>
+            {blockedCount > 0 ? `${blockedCount}/${liveCount}` : liveCount}
+          </span>
+        )}
+        <button className="btn" onClick={onNew} title="New task (⌘N)">
+          New Task
+          <span className="kbd" aria-hidden="true">
+            ⌘N
+          </span>
         </button>
       </div>
 
@@ -347,9 +365,9 @@ export default function TaskList({
         {sections.map((group) => (
           <div key={group.key}>
             <div className="group-label" data-tone={group.key}>
+              <span className="status-dot" data-status={GROUP_GLYPH[group.key]} aria-hidden="true" />
               <span>{GROUP_TITLE[group.key]}</span>
-              <span className="group-rule" />
-              <span>{group.tasks.length}</span>
+              <span className="group-count">{group.tasks.length}</span>
             </div>
             {group.tasks.map((task) => {
               const index = ordered.indexOf(task);
@@ -412,7 +430,15 @@ export default function TaskList({
                         <span className="task-sep">/</span>
                       </>
                     )}
-                    <span className="task-branch">{task.branch}</span>
+                    {/* Only when it adds to the title: the task bar is the
+                        branch's home, and "polishing" under "polishing" read
+                        as a stutter rather than a fact. */}
+                    {!branchRepeatsTitle(task.title, task.branch) && (
+                      <span className="task-branch">
+                        <BranchIcon size={12} />
+                        {task.branch}
+                      </span>
+                    )}
                     <span className="task-meta-tail">
                       {task.status !== 'archived' && <PrRowMark pr={getPrStatus(task.id)} />}
                       {ctx && ctxText && (
@@ -420,7 +446,7 @@ export default function TaskList({
                           {ctxText}
                         </span>
                       )}
-                      {index < 9 && <span className="task-index">⌘{index + 1}</span>}
+                      {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
                     </span>
                   </span>
                   <ContextMeter usage={ctx} variant="hairline" />
@@ -459,7 +485,7 @@ export default function TaskList({
               void navigator.clipboard?.writeText(path).catch(() => {});
             }}
           >
-            Copy worktree path
+            Copy Worktree Path
           </button>
           {onFollowUp && canFollowUp(menu.task, getPrStatus(menu.task.id)) && (
             <button
@@ -471,7 +497,7 @@ export default function TaskList({
                 onFollowUp(task);
               }}
             >
-              Follow-up…
+              Follow-Up…
               <span className="row-menu-hint">new task from the base</span>
             </button>
           )}
@@ -498,7 +524,7 @@ export default function TaskList({
                 onArchive(task);
               }}
             >
-              Archive task…
+              Archive Task…
               <span className="row-menu-hint">out of the active list</span>
             </button>
           )}
@@ -513,7 +539,7 @@ export default function TaskList({
                 onDelete(task);
               }}
             >
-              Delete task…
+              Delete Task…
               <span className="row-menu-hint">worktree optional · conversation kept</span>
             </button>
           )}

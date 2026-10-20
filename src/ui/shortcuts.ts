@@ -44,11 +44,21 @@
  * `⇧⌘F` (Find in Files) follows the same two rules for the same reasons, and
  * `⌥F12` (the shell drawer, PhpStorm's Terminal) is read from `code` too.
  *
+ * ## Project tabs: ⌥⌘1–9, and Alt+1–9 off a Mac
+ *
+ * The task jump is ⌘1–9, so the project jump adds Option, as browsers do for
+ * a level above tabs. Read from `code` (`⌥1` is `¡` on macOS). Off a Mac the
+ * obvious Ctrl+Alt+1–9 is AltGr on most European layouts on Windows, where it
+ * types characters (`{`, `²`, `@`), so there it is Alt+1–9 -- what Firefox
+ * and many Linux apps use for tab N. On macOS a bare ⌥digit is left alone: it
+ * composes a character the terminal may want.
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
 
 import { useEffect, useRef } from 'react';
+import { detectPlatform, type Platform } from '../lib/platform';
 
 /** A combo, in the syntax `mod+<key>`; `mod+digit` matches 1 through 9. */
 export type Combo =
@@ -63,6 +73,7 @@ export type Combo =
   | 'mod+-'
   | 'mod+0'
   | 'mod+digit'
+  | 'mod+alt+digit'
   | 'mod+o'
   | 'mod+shift+o'
   | 'mod+alt+o'
@@ -92,27 +103,28 @@ export interface ShortcutDoc {
  * the only list, and a shortcut missing from it is a shortcut nobody can find.
  */
 export const SHORTCUTS: readonly ShortcutDoc[] = [
-  { combo: 'mod+n', keys: '⌘N', description: 'New task' },
-  { combo: 'mod+digit', keys: '⌘1…9', description: 'Jump to the nth task' },
-  { combo: 'mod+[', keys: '⌘[', description: 'Previous task' },
-  { combo: 'mod+]', keys: '⌘]', description: 'Next task' },
-  { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous reading tab' },
-  { combo: 'mod+arrowright', keys: '⌘→', description: 'Next reading tab' },
-  { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle terminal / split / transcript' },
-  { combo: 'mod+shift+o', keys: '⇧⌘O', description: 'Go to file' },
-  { combo: 'mod+o', keys: '⌘O', description: 'Go to class' },
-  { combo: 'mod+alt+o', keys: '⌥⌘O', description: 'Go to symbol' },
-  { combo: 'shift shift', keys: '⇧⇧', description: 'Search everywhere' },
-  { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in files' },
-  { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the editor: go to declaration (on one: its usages)' },
-  { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the editor: find usages' },
-  { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the editor: comment on the selected lines' },
-  { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: jump to the latest message (not while typing)' },
-  { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the main checkout' },
-  { combo: 'mod+=', keys: '⌘+', description: 'Bigger text' },
-  { combo: 'mod+-', keys: '⌘−', description: 'Smaller text' },
-  { combo: 'mod+0', keys: '⌘0', description: 'Actual size' },
-  { combo: 'mod+/', keys: '⌘/', description: 'Show this list' },
+  { combo: 'mod+n', keys: '⌘N', description: 'New Task' },
+  { combo: 'mod+digit', keys: '⌘1…9', description: 'Jump to the Nth Task' },
+  { combo: 'mod+alt+digit', keys: '⌥⌘1…9', description: 'Jump to the Nth Project (Alt+1…9 on Windows and Linux)' },
+  { combo: 'mod+[', keys: '⌘[', description: 'Previous Task' },
+  { combo: 'mod+]', keys: '⌘]', description: 'Next Task' },
+  { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous Reading Tab' },
+  { combo: 'mod+arrowright', keys: '⌘→', description: 'Next Reading Tab' },
+  { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle PTY / Split / Transcript' },
+  { combo: 'mod+shift+o', keys: '⇧⌘O', description: 'Go to File' },
+  { combo: 'mod+o', keys: '⌘O', description: 'Go to Class' },
+  { combo: 'mod+alt+o', keys: '⌥⌘O', description: 'Go to Symbol' },
+  { combo: 'shift shift', keys: '⇧⇧', description: 'Search Everywhere' },
+  { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
+  { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
+  { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
+  { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Comment on the Selected Lines' },
+  { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
+  { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
+  { combo: 'mod+=', keys: '⌘+', description: 'Bigger Text' },
+  { combo: 'mod+-', keys: '⌘−', description: 'Smaller Text' },
+  { combo: 'mod+0', keys: '⌘0', description: 'Actual Size' },
+  { combo: 'mod+/', keys: '⌘/', description: 'Show This List' },
 ] as const;
 
 export interface Handler {
@@ -135,7 +147,15 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /** The combo a keyboard event represents, or null when it is not one of ours. */
-export function comboOf(e: KeyboardEvent): { combo: Combo; digit: number | null } | null {
+export function comboOf(
+  e: KeyboardEvent,
+  platform: Platform = detectPlatform(),
+): { combo: Combo; digit: number | null } | null {
+  // Project jump. Before the Alt check; see the module comment.
+  const projectDigit = /^Digit([1-9])$/.exec(e.code ?? '');
+  if (projectDigit && e.altKey && !e.shiftKey && !e.ctrlKey && e.metaKey === (platform === 'macos')) {
+    return { combo: 'mod+alt+digit', digit: Number(projectDigit[1]) };
+  }
   // Before the Alt check, which would otherwise reject ⌥⌘O. See the module
   // comment for why this family is Command-only and keyed on `code`.
   if (e.code === 'KeyO' && e.metaKey && !e.ctrlKey) {

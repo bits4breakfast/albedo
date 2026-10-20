@@ -28,7 +28,7 @@ function mount(onRestore = vi.fn()) {
 describe('ClosedProjectsMenu', () => {
   it('renders the menu outside the clipping strip', () => {
     mount();
-    fireEvent.click(screen.getByRole('button', { name: '+2 closed' }));
+    fireEvent.click(screen.getByRole('button', { name: '+2 Closed' }));
     const menu = screen.getByRole('menu');
     expect(screen.getByTestId('strip').contains(menu)).toBe(false);
     expect(menu.parentElement).toBe(document.body);
@@ -36,7 +36,7 @@ describe('ClosedProjectsMenu', () => {
 
   it('restores the chosen project and closes', () => {
     const onRestore = mount();
-    fireEvent.click(screen.getByRole('button', { name: '+2 closed' }));
+    fireEvent.click(screen.getByRole('button', { name: '+2 Closed' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'guru' }));
     expect(onRestore).toHaveBeenCalledWith(2);
     expect(screen.queryByRole('menu')).toBeNull();
@@ -44,7 +44,7 @@ describe('ClosedProjectsMenu', () => {
 
   it('closes on Esc and returns focus to the chip', () => {
     mount();
-    const chip = screen.getByRole('button', { name: '+2 closed' });
+    const chip = screen.getByRole('button', { name: '+2 Closed' });
     fireEvent.click(chip);
     expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'albedo' }));
     fireEvent.keyDown(window, { key: 'Escape' });
@@ -54,7 +54,7 @@ describe('ClosedProjectsMenu', () => {
 
   it('closes on a press outside, but not on a press inside', () => {
     mount();
-    fireEvent.click(screen.getByRole('button', { name: '+2 closed' }));
+    fireEvent.click(screen.getByRole('button', { name: '+2 Closed' }));
     fireEvent.pointerDown(screen.getByRole('menuitem', { name: 'albedo' }));
     expect(screen.getByRole('menu')).toBeTruthy();
     fireEvent.pointerDown(document.body);
@@ -63,7 +63,7 @@ describe('ClosedProjectsMenu', () => {
 
   it('toggles from the chip without the outside-press handler reopening it', () => {
     mount();
-    const chip = screen.getByRole('button', { name: '+2 closed' });
+    const chip = screen.getByRole('button', { name: '+2 Closed' });
     fireEvent.click(chip);
     fireEvent.pointerDown(chip);
     fireEvent.click(chip);
@@ -72,7 +72,7 @@ describe('ClosedProjectsMenu', () => {
 
   it('moves between items with the arrow keys, wrapping', () => {
     mount();
-    fireEvent.click(screen.getByRole('button', { name: '+2 closed' }));
+    fireEvent.click(screen.getByRole('button', { name: '+2 Closed' }));
     const menu = screen.getByRole('menu');
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'guru' }));

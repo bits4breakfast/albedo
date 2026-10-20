@@ -913,7 +913,7 @@ export interface WorkProbe {
  * Probe everything {@link assessLoss} needs, in one place, so the dialogs'
  * first look and {@link removeWorktree}'s last look cannot ask different
  * questions. `baseBranch` null means there is nothing to compare against, which
- * is an unknown, never a zero.
+ * is an unknown, never a zero. Never throws: what cannot be read is reported.
  */
 export async function probeWorkAtRisk(
   worktreePath: string,
@@ -938,9 +938,15 @@ export async function probeWorkAtRisk(
       aheadError = e instanceof Error ? e.message : String(e);
     }
   }
-  const h = await git(['rev-parse', '--verify', '--quiet', 'HEAD'], worktreePath);
-  const head = h.code === 0 ? h.stdout.trim() : '';
-  risk.head = /^[0-9a-f]{40,64}$/.test(head) ? head : null;
+  // Caught like the two above: a worktree folder deleted behind Albedo's back
+  // makes the spawn itself reject (no such cwd), and an unknown HEAD is null.
+  try {
+    const h = await git(['rev-parse', '--verify', '--quiet', 'HEAD'], worktreePath);
+    const head = h.code === 0 ? h.stdout.trim() : '';
+    risk.head = /^[0-9a-f]{40,64}$/.test(head) ? head : null;
+  } catch {
+    risk.head = null;
+  }
   return { risk, filesError, aheadError };
 }
 

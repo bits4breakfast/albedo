@@ -106,7 +106,7 @@ export default function GitBar({
   if (canSquashRebase(task) && commits > 0) {
     items.push({
       key: 'squash',
-      label: 'Squash & rebase…',
+      label: 'Squash & Rebase…',
       hint: `One commit, on the latest ${task.baseBranch}`,
       run: onSquash,
     });
@@ -114,7 +114,7 @@ export default function GitBar({
   items.push(
     {
       key: 'by-branch',
-      label: 'Group by branch',
+      label: 'Group by Branch',
       hint: 'Every changed file once, by where it stands',
       run: () => onMode('branch'),
       checked: mode === 'branch',
@@ -122,7 +122,7 @@ export default function GitBar({
     },
     {
       key: 'by-commit',
-      label: 'Group by commit',
+      label: 'Group by Commit',
       hint: 'Each commit with the files it changed',
       run: () => onMode('commit'),
       checked: mode === 'commit',
@@ -139,22 +139,23 @@ export default function GitBar({
 
   return (
     <div className="tf-git">
+      {/* Only what is said nowhere else: whether the work is on the remote.
+          The branch is in the task bar, and the commit and uncommitted counts
+          head their own sections above -- here they made the bar too crowded
+          to read ("po… · 38 commits · 39 uncommitted · 38 unp"). */}
       <div className="tf-git-id">
-        <span className="tf-git-branch" title={`${task.branch}, off ${task.baseBranch}`}>
-          {task.branch}
-        </span>
-        <span>{commits === 0 ? 'no commits' : `${commits} commit${commits === 1 ? '' : 's'}`}</span>
-        {dirty > 0 ? <span>{dirty} uncommitted</span> : null}
-        {remote === null || commits === 0 ? null : remote.upstream === null ? (
-          <span data-tone="warn" title="This branch has no upstream: nothing on it is on the remote">
-            not on remote
+        {commits === 0 ? (
+          <span title={`Nothing committed on ${task.branch} yet`}>No Commits</span>
+        ) : remote === null ? null : remote.upstream === null ? (
+          <span data-tone="warn" title={`${task.branch} has no upstream: nothing on it is on the remote`}>
+            ⚠ Not on Remote
           </span>
         ) : remote.ahead > 0 ? (
-          <span data-tone="warn" title={`Ahead of ${remote.upstream}`}>
-            {remote.ahead} unpushed
+          <span data-tone="warn" title={`${task.branch} is ahead of ${remote.upstream}`}>
+            ↑ {remote.ahead} Unpushed
           </span>
         ) : (
-          <span title={`Up to date with ${remote.upstream}`}>pushed</span>
+          <span title={`${task.branch} is up to date with ${remote.upstream}`}>✓ Pushed</span>
         )}
       </div>
 

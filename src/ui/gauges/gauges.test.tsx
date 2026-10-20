@@ -209,7 +209,7 @@ describe('ContextGauge — inferred limit', () => {
   it('never prints a bare percentage', () => {
     expect(html).toContain('~93%');
     expect(html).not.toMatch(/>93%</);
-    expect(html).toContain('approx');
+    expect(html).toContain('Approx');
   });
 
   it('marks the bar as inferred so the fill is not read as measured', () => {
@@ -229,7 +229,7 @@ describe('ContextGauge — inferred limit', () => {
   });
 
   it('warns near the ceiling without claiming precision', () => {
-    expect(html).toContain('near the inferred ceiling');
+    expect(html).toContain('Near the inferred ceiling');
   });
 });
 
@@ -256,9 +256,9 @@ describe('ContextGauge — known limit', () => {
   });
 
   it('still marks the two estimated bands', () => {
-    expect(html).toContain('approx');
-    expect(html).toContain('overhead');
-    expect(html).toContain('conversation');
+    expect(html).toContain('Approx');
+    expect(html).toContain('Overhead');
+    expect(html).toContain('Conversation');
   });
 
   it('does not cry wolf below the ceiling', () => {
@@ -285,7 +285,7 @@ describe('ContextGauge — degraded states', () => {
 
   it('says nothing at all when the session has no reading yet', () => {
     const html = renderToStaticMarkup(<ContextGauge usage={null} bands={null} state="ready" />);
-    expect(html).toContain('no context reading yet');
+    expect(html).toContain('No context reading yet');
   });
 });
 
@@ -313,7 +313,7 @@ describe('WindowGauge', () => {
       <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
     );
     expect(html).toContain('2:47:13');
-    expect(html).toContain('ages out in');
+    expect(html).toContain('Ages Out In');
     expect(html).not.toMatch(/resets? in/i);
   });
 
@@ -331,7 +331,7 @@ describe('WindowGauge', () => {
     const html = renderToStaticMarkup(
       <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
     );
-    expect(html).toContain('spend/h');
+    expect(html).toContain('Spend/h');
     expect(html).not.toMatch(/>rate</);
     expect(html).toContain('tokens spent per hour');
     expect(html).toContain('Cached re-read is not counted');
@@ -354,7 +354,7 @@ describe('WindowGauge', () => {
         fetchedAt={now}
       />,
     );
-    expect(html).toContain('no usage in window');
+    expect(html).toContain('No usage in window');
     expect(html).not.toContain('00:00');
   });
 
@@ -377,8 +377,8 @@ describe('WindowGauge', () => {
     );
     // Present, and labelled so it cannot be read as spend.
     expect(html).toContain('186.0k');
-    expect(html).toContain('cached re-read');
-    expect(html).toContain('not spend');
+    expect(html).toContain('Cached Re-read');
+    expect(html).toContain('Not Spend');
     // Never described as input -- that word is what made the old number look
     // reasonable at 38x reality.
     expect(html).not.toMatch(/cached[^<]*input/i);

@@ -4,13 +4,14 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState } from 're
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import type { OpenFileRequest, Project, Task } from './types';
 import { useTheme } from './ui/theme';
-import type { ThemeChoice } from './ui/theme';
 import useTasks from './ui/useTasks';
+import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
+import { detectPlatform } from './lib/platform';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import FindInFiles from './ui/FindInFiles';
@@ -19,6 +20,8 @@ import StatusDot from './ui/StatusDot';
 import ClosedProjectsMenu from './ui/ClosedProjectsMenu';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
+import { BranchIcon, FolderIcon, homeRelative } from './ui/icons';
+import OverflowMenu from './ui/OverflowMenu';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
 import WorktreeReconcile from './ui/WorktreeReconcile';
@@ -206,41 +209,6 @@ function writeDismissed(keys: string[]): void {
   }
 }
 
-const THEME_LABEL: Record<ThemeChoice, string> = {
-  system: 'auto',
-  light: 'light',
-  dark: 'dark',
-};
-
-const THEME_TITLE: Record<ThemeChoice, string> = {
-  system: 'Follow the system appearance',
-  light: 'Always light',
-  dark: 'Always dark',
-};
-
-function ThemeToggle({
-  value,
-  onChange,
-}: {
-  value: ThemeChoice;
-  onChange: (next: ThemeChoice) => void;
-}) {
-  return (
-    <div className="theme-toggle" role="group" aria-label="Theme">
-      {(['system', 'light', 'dark'] as const).map((choice) => (
-        <button
-          key={choice}
-          aria-pressed={value === choice}
-          onClick={() => onChange(choice)}
-          title={THEME_TITLE[choice]}
-        >
-          {THEME_LABEL[choice]}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Error boundary
 //
@@ -368,6 +336,12 @@ function renderPromptTemplate(task: Task, project: Project | null): string | nul
   });
 }
 
+/** ` (⌥⌘2)` for the second tab; nothing past the ninth. See shortcuts.ts. */
+function projectKeyHint(index: number): string {
+  if (index < 0 || index > 8) return '';
+  return detectPlatform() === 'macos' ? ` (⌥⌘${index + 1})` : ` (Alt+${index + 1})`;
+}
+
 function ProjectTabs({
   tabs,
   activeKey,
@@ -485,9 +459,9 @@ function ProjectTabs({
               onSelect(tab.key);
             }}
             title={
-              tab.blocked > 0
+              (tab.blocked > 0
                 ? `${tab.label}: ${tab.blocked} waiting on you`
-                : (tab.project?.repoPath ?? tab.label)
+                : (tab.project?.repoPath ?? tab.label)) + projectKeyHint(tabs.findIndex((t) => t.key === tab.key))
             }
           >
             {status && <StatusDot status={status} />}
@@ -861,14 +835,12 @@ export default function App() {
    * `--resume` can legitimately fail (a pruned transcript), which the exit code
    * reports without anything reading the stream. Terminal handles that by
    * offering a fresh session rather than leaving a dead pane.
+   *
+   * Terminal decides the resume itself, from the task's LIVE session id
+   * (ui/sessionSpawn.ts): only History's one-off args are passed down here.
    */
   const spawnArgsFor = useCallback(
-    (task: Task): string[] | undefined => {
-      const pending = pendingResume.get(task.id);
-      if (pending) return pending;
-      if (task.sessionId !== null) return ['--resume', task.sessionId];
-      return undefined;
-    },
+    (task: Task): string[] | undefined => pendingResume.get(task.id),
     [pendingResume],
   );
 
@@ -1356,6 +1328,9 @@ export default function App() {
     [filesColumnShown, editorTask],
   );
 
+  // ⌘Q and the window's close button ask first while tasks are busy.
+  useQuitGuard(tasks);
+
   // ⌘W. The native menu owns the shortcut (see src-tauri/src/lib.rs) and tells
   // us rather than closing the window, which would quit the app and every live
   // terminal in it. It closes an open file, and otherwise does nothing.
@@ -1446,6 +1421,11 @@ export default function App() {
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
     'mod+0': () => zoomTo(1),
     'mod+/': () => setShortcutsOpen((o) => !o),
+    // The nth project tab, as shown in the bar. Nothing to do without one.
+    'mod+alt+digit': (_e, digit) => {
+      const tab = showTabs && digit !== null ? tabs[digit - 1] : undefined;
+      if (tab) selectTab(tab.key);
+    },
     'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),
     // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
     // field, and this app has a composer, a title input and a code editor.
@@ -1473,11 +1453,10 @@ export default function App() {
   const selectedProjectIsForeign =
     showTabs && selectedProject !== null && selectedProject.id !== activeProject?.id;
 
-  const noteFor = (tab: RightTab): string => {
-    if (tab === 'files') return selected ? selected.branch : 'no task';
-    if (tab === 'editor') return editorActivePath ?? '';
-    return selected?.sessionId ?? 'no session yet';
-  };
+  // Only the editor's file needs saying here. The branch is in the task bar,
+  // and the session id -- 36 characters nobody reads -- is the Transcript
+  // tab's tooltip and "Copy Session ID" in the task's ⋯ menu.
+  const noteFor = (tab: RightTab): string => (tab === 'editor' ? (editorActivePath ?? '') : '');
 
   const banner = loadError ?? startupError ?? captureError;
 
@@ -1512,6 +1491,33 @@ export default function App() {
         onSessions={() => setSessionsOpen(true)}
         onShortcuts={() => setShortcutsOpen(true)}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
+        theme={themeChoice}
+        onThemeChange={setThemeChoice}
+        onWaitingClick={() => {
+          // Most recently active first; from a waiting task, on to the next.
+          const waiting = tasks
+            .filter((t) => t.status === 'blocked')
+            .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
+          if (waiting.length === 0) return;
+          const at = waiting.findIndex((t) => t.id === selectedId);
+          select(waiting[(at + 1) % waiting.length]!.id);
+        }}
+        tabs={
+          /* Not gated on activeProjectTab: hide EVERY project and there is no
+             active tab, and gating here would remove the restore chip along
+             with the tabs — the one-way door this feature must not become. */
+          showTabs ? (
+            <ProjectTabs
+              tabs={tabs}
+              activeKey={activeProjectTab?.key ?? ''}
+              onSelect={selectTab}
+              onHide={hideProject}
+              hidden={hiddenProjects}
+              onRestore={restoreProject}
+              onReorder={reorderProjects}
+            />
+          ) : undefined
+        }
       />
 
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -1551,7 +1557,7 @@ export default function App() {
                 .catch(() => {});
             }}
           >
-            Archive it
+            Archive It
           </button>
           <button className="btn btn-ghost" onClick={() => dismiss(`wt:${finding.project.id}`)}>
             Dismiss
@@ -1579,20 +1585,6 @@ export default function App() {
 
       <div className="app-body">
         <aside className="sidebar" style={{ width: sidebarWidth, flexBasis: sidebarWidth }}>
-          {/* Not gated on activeProjectTab: hide EVERY project and there is no
-              active tab, and gating here would remove the restore chip along
-              with the tabs — the one-way door this feature must not become. */}
-          {showTabs && (
-            <ProjectTabs
-              tabs={tabs}
-              activeKey={activeProjectTab?.key ?? ''}
-              onSelect={selectTab}
-              onHide={hideProject}
-              hidden={hiddenProjects}
-              onRestore={restoreProject}
-              onReorder={reorderProjects}
-            />
-          )}
           <TaskList
             tasks={visibleTasks}
             selectedId={selectedId}
@@ -1620,10 +1612,6 @@ export default function App() {
           <PaneErrorBoundary label="Usage panel">
             <UsagePanel task={selected} />
           </PaneErrorBoundary>
-          <div className="sidebar-foot">
-            <span className="sidebar-foot-label">theme</span>
-            <ThemeToggle value={themeChoice} onChange={setThemeChoice} />
-          </div>
         </aside>
 
         <div
@@ -1662,73 +1650,137 @@ export default function App() {
                   <span className="main-ident-title" title={wrapForTooltip(selected.title)}>
                     {selected.title}
                   </span>
-                  <ModelPicker task={selected} />
-                  <PrBadge
-                    task={selected}
-                    onEnd={(intent) => {
-                      setEndIntent(intent);
-                      setArchiveTarget(selected);
-                    }}
-                    onFollowUp={(pr) => void openFollowUp(selected, pr)}
-                  />
-                  <span className="main-ident-path">{selected.worktreePath}</span>
+                  {/* The branch and folder live here and nowhere else on screen:
+                      the sidebar row repeats the branch only when it adds to
+                      the title, the Files bar not at all. Icons say which is
+                      which, so a branch named like its task reads as a fact. */}
+                  {selected.branch && (
+                    <span className="main-ident-branch" title={`Branch ${selected.branch}, off ${selected.baseBranch}`}>
+                      <BranchIcon />
+                      <span className="main-ident-text">{selected.branch}</span>
+                    </span>
+                  )}
+                  <span className="main-ident-path" title={selected.worktreePath}>
+                    <FolderIcon />
+                    <span className="main-ident-text">{homeRelative(selected.worktreePath)}</span>
+                  </span>
                 </>
               ) : (
-                <span className="main-ident-path">no task selected</span>
+                <span className="main-ident-path">No task selected</span>
               )}
             </div>
 
+            {selected && <ModelPicker task={selected} />}
+
             <div className="seg" role="group" aria-label="Pane layout">
               <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} title="Terminal only (⌘\)">
-                pty
+                PTY
               </button>
               <button aria-pressed={mode === 'split'} onClick={() => setMode('split')} title="Split (⌘\)">
-                split
+                Split
               </button>
               <button
                 aria-pressed={mode === 'transcript'}
                 onClick={() => setMode('transcript')}
                 title="Transcript only (⌘\)"
               >
-                transcript
+                Transcript
               </button>
             </div>
 
-            <button
-              className="btn btn-ghost"
-              onClick={() => setOrientation((o) => (o === 'row' ? 'column' : 'row'))}
-              title="Split direction"
-              disabled={!split}
-            >
-              {orientation === 'row' ? '↔' : '↕'}
-            </button>
+            {/* The one contextual main action: the PR, once there is one. */}
+            {selected && (
+              <PrBadge
+                task={selected}
+                onEnd={(intent) => {
+                  setEndIntent(intent);
+                  setArchiveTarget(selected);
+                }}
+                onFollowUp={(pr) => void openFollowUp(selected, pr)}
+              />
+            )}
 
-            <button
-              className="btn btn-ghost"
-              aria-pressed={shellOpen && shellProject !== null}
-              onClick={() => setShellOpen((o) => !o)}
-              disabled={!shellProject}
-              title={
-                shellProject
-                  ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
-                  : 'No project to open a shell in'
-              }
-            >
-              $_
-            </button>
+            {/* Everything else on this row lives behind ⋯. The orientation
+                switch only appears in split, as the inline button did; the
+                shell keeps ⌥F12 and its own hide button on the drawer. */}
+            <OverflowMenu
+              label="Task actions"
+              title="Pane orientation, shell, task actions"
+              items={[
+                ...(split
+                  ? [
+                      {
+                        id: 'orientation',
+                        label: orientation === 'row' ? 'Stack Panes' : 'Panes Side by Side',
+                        aside: orientation === 'row' ? '↕' : '↔',
+                        title:
+                          orientation === 'row'
+                            ? 'Panes side by side — click to stack them'
+                            : 'Panes stacked — click to put them side by side',
+                        onSelect: () => setOrientation((o) => (o === 'row' ? 'column' : 'row')),
+                      },
+                    ]
+                  : []),
+                {
+                  id: 'shell',
+                  label: shellProject ? `Shell in ${shellProject.name}'s Main Checkout` : 'Shell',
+                  aside: '⌥F12',
+                  checked: shellOpen && shellProject !== null,
+                  disabled: !shellProject,
+                  title: shellProject
+                    ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
+                    : 'No project to open a shell in',
+                  onSelect: () => setShellOpen((o) => !o),
+                },
+                ...(selected
+                  ? [
+                      {
+                        id: 'copy-path',
+                        label: 'Copy Worktree Path',
+                        group: true,
+                        onSelect: () => {
+                          void navigator.clipboard?.writeText(selected.worktreePath).catch(() => {});
+                        },
+                      },
+                      {
+                        id: 'copy-session',
+                        label: 'Copy Session ID',
+                        disabled: selected.sessionId === null,
+                        title: selected.sessionId ?? 'No session yet',
+                        onSelect: () => {
+                          if (selected.sessionId) void navigator.clipboard?.writeText(selected.sessionId).catch(() => {});
+                        },
+                      },
+                      {
+                        id: 'archive',
+                        label: 'Archive Task…',
+                        title: 'Out of the active list (opens the archive dialog)',
+                        onSelect: () => {
+                          setEndIntent('archive');
+                          setArchiveTarget(selected);
+                        },
+                      },
+                      {
+                        id: 'delete',
+                        label: 'Delete Task…',
+                        tone: 'danger' as const,
+                        title: 'Worktree optional, conversation kept (opens the delete dialog)',
+                        onSelect: () => {
+                          setEndIntent('delete');
+                          setArchiveTarget(selected);
+                        },
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           </div>
 
           <div className="panes" data-orientation={orientation} ref={panesRef}>
             {/* Kept mounted in every mode: unmounting it would kill live ptys. */}
             <section className="pane pane-pty" style={primaryStyle} hidden={!showPty}>
               <div className="pane-head">
-                <span>pty</span>
-                <span className="pane-head-note">
-                  {/* Processes, not conversations. "session" was doing both
-                      jobs across the app, which is how "no live session" came
-                      to read as "your conversation is gone". */}
-                  {openTasks.length} terminal{openTasks.length === 1 ? '' : 's'} alive
-                </span>
+                <span>Terminal</span>
               </div>
               <div className="pane-body">
                 <div className="term-stack">
@@ -1747,7 +1799,7 @@ export default function App() {
                 {openTasks.length === 0 && (
                   <div className="placeholder">
                     {loading ? (
-                      <p>loading tasks…</p>
+                      <p>Loading tasks…</p>
                     ) : visibleTasks.length === 0 ? (
                       /* Same decision as the sidebar, from the same module.
                          This site previously keyed off tasks.length with no
@@ -1790,8 +1842,9 @@ export default function App() {
                     role="tab"
                     aria-selected={activeTab === 'transcript'}
                     onClick={() => setRightTab('transcript')}
+                    title={selected?.sessionId ? `Session ${selected.sessionId}` : 'No session yet'}
                   >
-                    transcript
+                    Transcript
                   </button>
                   {!filesColumnShown && (
                     <button
@@ -1799,7 +1852,7 @@ export default function App() {
                       aria-selected={activeTab === 'files'}
                       onClick={() => setRightTab('files')}
                     >
-                      files
+                      Files
                       {/* Pinned but not fitting: say so rather than letting the
                           preference look like it did nothing. */}
                       {filesPinned && <span className="tab-pin-hint" title="Pinned as a column — not enough room at this width, so it is a tab for now">·</span>}
@@ -1811,7 +1864,7 @@ export default function App() {
                       aria-selected={activeTab === 'editor'}
                       onClick={() => setRightTab('editor')}
                     >
-                      editor
+                      Editor
                     </button>
                   )}
                 </div>
@@ -1819,7 +1872,7 @@ export default function App() {
                   {noteFor(activeTab)}
                 </span>
                 {activeTab === 'editor' && (
-                  <button className="pane-head-close" onClick={closeEditor} title="Close editor">
+                  <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
                     ✕
                   </button>
                 )}
@@ -1841,7 +1894,7 @@ export default function App() {
                     }
                     aria-pressed={filesPinned}
                   >
-                    ⇥ column
+                    ⇥ Column
                   </button>
                 )}
               </div>
@@ -1915,7 +1968,7 @@ export default function App() {
                 >
                   <div className="pane-head">
                     {/* The branch is in the git row at the foot of the pane, beside its actions. */}
-                    <span>files</span>
+                    <span>Files</span>
                     <span className="pane-head-note" />
                     <button
                       className="pane-head-pin"
@@ -1924,7 +1977,7 @@ export default function App() {
                       title="Unpin — put files back in the tab strip"
                       aria-pressed
                     >
-                      ⇥ column
+                      ⇥ Column
                     </button>
                   </div>
                   <div className="pane-body">
@@ -1961,14 +2014,14 @@ export default function App() {
               hidden={!shellOpen || !shellProject}
             >
               <div className="pane-head">
-                <span>shell</span>
+                <span>Shell</span>
                 {shellProject && (
                   <span className="pane-head-note" title={shellProject.repoPath}>
-                    {shellProject.name} · main checkout
+                    {shellProject.name} · Main Checkout
                   </span>
                 )}
                 <button
-                  className="btn btn-ghost shell-drawer-close"
+                  className="icon-btn shell-drawer-close"
                   onClick={() => setShellOpen(false)}
                   title="Hide the shell (⌥F12) — it keeps running"
                   aria-label="Hide the shell"

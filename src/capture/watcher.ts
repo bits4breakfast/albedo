@@ -30,6 +30,7 @@ import { countLines, cwdOf, lastTitleIn, parseTranscript, queueOperationsIn, SEQ
 import { recordQueueOperations, seedQueue } from './queue';
 import {
   adoptSessionIntoTask,
+  findTaskBySessionId,
   findTaskByWorktreePath,
   getTranscriptFile,
   listTranscriptFiles,
@@ -264,6 +265,15 @@ export function sessionIdFromPath(path: string): string {
   return base.endsWith(TRANSCRIPT_EXT) ? base.slice(0, -TRANSCRIPT_EXT.length) : base;
 }
 
+/**
+ * The session a transcript file belongs to: its own name, or for a subagent
+ * file (`<session-uuid>/subagents/<agent>.jsonl`) the parent session's.
+ */
+export function owningSessionOfPath(path: string): string {
+  const m = /\/([^/]+)\/subagents\/[^/]+$/.exec(path);
+  return m ? m[1]! : sessionIdFromPath(path);
+}
+
 export function isTranscriptPath(path: string): boolean {
   return path.endsWith(TRANSCRIPT_EXT);
 }
@@ -324,11 +334,17 @@ class Capture implements CaptureHandle {
   /**
    * Should a transcript with no `transcript_files` row be captured?
    *
-   * Yes only when its cwd is a task's worktree. Decided from the first
-   * file's head (see {@link headCwd}), which is where `cwd` appears, so an
-   * unrelated multi-megabyte session costs one small read rather than a parse.
+   * Yes when it is a live task's session -- known from the file name, with no
+   * read at all. Otherwise only when its cwd is a worktree Albedo cut for one
+   * task (a session someone started there by hand), decided from the file's
+   * head (see {@link headCwd}), so an unrelated multi-megabyte session costs
+   * one small read rather than a parse. A shared folder such as the main
+   * checkout never qualifies: every session started there would be captured
+   * and filed under whichever task sits in it.
+   *
    * `null` means "cannot tell yet" (no complete line with a cwd) and is NOT
-   * cached, so it is asked again when the file grows.
+   * cached, so it is asked again when the file grows. A `false` is cached, and
+   * {@link reconsider} undoes it when a task is linked to the session later.
    */
   private async wants(path: string): Promise<boolean | null> {
     let size: number;
@@ -338,10 +354,25 @@ class Capture implements CaptureHandle {
       return null;
     }
     if (size === 0) return null;
-    const cwd = await headCwd(path, size);
     // Live tasks only: an archived task's history was purged on archive, and
-    // re-holding its cwd would capture the whole session again from byte 0.
-    return cwd === null ? null : (await findTaskByWorktreePath(cwd, { liveOnly: true })) !== null;
+    // re-holding it would capture the whole session again from byte 0.
+    if ((await findTaskBySessionId(owningSessionOfPath(path), { liveOnly: true })) !== null) return true;
+    const cwd = await headCwd(path, size);
+    if (cwd === null) return null;
+    return (await findTaskByWorktreePath(cwd, { liveOnly: true, ownedOnly: true })) !== null;
+  }
+
+  /**
+   * A task was just linked to `sessionId`: read its files even if they were
+   * passed over. A `/clear` writes its new file a moment before the hook event
+   * naming it is read, and {@link wants} said no in between.
+   */
+  async reconsider(sessionId: string): Promise<void> {
+    for (const path of [...this.ignored]) {
+      if (owningSessionOfPath(path) !== sessionId) continue;
+      this.ignored.delete(path);
+      await this.enqueue(path, projectDirOf(this.root, path));
+    }
   }
 
   /** Hold a transcript from byte 0 and read it now. See {@link importTranscripts}. */
@@ -730,21 +761,28 @@ class Capture implements CaptureHandle {
         }
       }
 
-      // cwd is fixed for the life of a session, so read it once and cache it.
-      // Re-deriving it per row would JSON.parse every raw line a second time,
-      // which on a first-import backfill is tens of thousands of wasted parses.
+      // cwd is NOT fixed for the life of a session: `claude --resume` from
+      // another folder carries on in the same file with the new cwd (a deleted
+      // worktree resumed in the main checkout). The LAST row with a cwd wins,
+      // like sessionId above -- scanning backwards, so a chunk usually costs
+      // one extra parse, not one per row. It is what History shows as the
+      // session's folder; it no longer decides the task (see below).
       let cwd = knownCwd;
-      if (cwd === null) {
-        for (const row of rows) {
-          const rowCwd = cwdOf(row.rawJson);
-          if (rowCwd !== null) {
-            cwd = rowCwd;
-            break;
-          }
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const rowCwd = cwdOf(rows[i]!.rawJson);
+        if (rowCwd !== null) {
+          cwd = rowCwd;
+          break;
         }
       }
 
-      const task = cwd === null ? null : await findTaskByWorktreePath(cwd);
+      // Which task: the one on this session, exactly (sessionLink.ts keeps
+      // that true). Failing that, a worktree Albedo cut for a single task --
+      // a session started there by hand is that task's work too. Never a
+      // shared folder, and never by changing the task's session: that was the
+      // restart bug, where the main checkout's newest file became the task's.
+      let task = await findTaskBySessionId(sessionId);
+      if (task === null && cwd !== null) task = await findTaskByWorktreePath(cwd, { ownedOnly: true });
       const taskId = task?.id ?? null;
 
       const insertable: InsertableMessage[] = rows.map((row) => ({
@@ -790,7 +828,7 @@ class Capture implements CaptureHandle {
         for (const row of insertable) if (row.ts > latestTs) latestTs = row.ts;
         // touchTaskActivity fires onTasksChanged itself, so the shell sees the
         // session adoption and the recency bump without a second refresh.
-        await touchTaskActivity(task.id, sessionId, latestTs);
+        await touchTaskActivity(task.id, latestTs);
       }
 
       for (const [sid, maxSeq] of maxSeqPerSession(insertable)) {
@@ -921,6 +959,11 @@ export async function listDiskSessions(): Promise<DiskSession[]> {
  *
  * Resolves once the rows are written. Throws if capture is not running.
  */
+/** See {@link Capture.reconsider}. A no-op while capture is not running. */
+export async function reconsiderSession(sessionId: string): Promise<void> {
+  await active?.reconsider(sessionId);
+}
+
 export async function importTranscripts(sessionFilePath: string): Promise<number> {
   if (active === null) throw new Error('Capture is not running, so nothing can be imported.');
   const paths = [sessionFilePath];
