@@ -37,7 +37,11 @@ vi.mock('../git/worktree', async (orig) => ({
   listBranches: vi.fn(async () => ({
     current: 'ACME-2398-fix',
     all: ['main', 'ACME-2398-fix'],
+    locals: ['main', 'ACME-2398-fix'],
+    remoteRefs: [],
+    remotes: [],
   })),
+  probeMainCheckout: vi.fn(async () => null),
   undoCreateWorktree: vi.fn(async () => null),
 }));
 

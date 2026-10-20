@@ -15,7 +15,10 @@ vi.mock('../capture/modelCatalog', () => ({
   loadModelChoices: async () => [],
   loadDefaultModel: async () => null,
 }));
-vi.mock('../db', () => ({ createTask: vi.fn(async () => { throw new Error('database is locked'); }) }));
+vi.mock('../db', () => ({
+  createTask: vi.fn(async () => { throw new Error('database is locked'); }),
+  findTaskByWorktreePath: vi.fn(async () => null),
+}));
 vi.mock('../db/projects', () => ({
   listProjects: vi.fn(async () => [
     {
@@ -35,11 +38,21 @@ vi.mock('./projectPrefs', () => ({
 vi.mock('../git/worktree', async (orig) => ({
   ...(await orig<typeof import('../git/worktree')>()),
   createWorktree: vi.fn(async () => undefined),
-  listBranches: vi.fn(async () => ({ current: 'main', all: ['main'] })),
+  listBranches: vi.fn(async () => ({
+    current: 'main',
+    all: ['main', 'origin/main', 'origin/anna/fix-tz'],
+    locals: ['main'],
+    remoteRefs: ['origin/main', 'origin/anna/fix-tz'],
+    remotes: ['origin'],
+  })),
+  fetchAll: vi.fn(async () => undefined),
+  probeMainCheckout: vi.fn(async () => ({ path: '/Users/m/www/albedo', current: 'main', dirty: 0 })),
+  switchCleanCheckout: vi.fn(async () => undefined),
   undoCreateWorktree: vi.fn(async () => null),
 }));
 
 const wt = await import('../git/worktree');
+const db = await import('../db');
 const { NewTaskDialog } = await import('./NewTaskDialog');
 
 afterEach(() => {
@@ -91,5 +104,75 @@ describe('NewTaskDialog default project', () => {
     await waitFor(() =>
       expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('1'),
     );
+  });
+});
+
+describe('NewTaskDialog existing branch and main checkout', () => {
+  function created() {
+    vi.mocked(db.createTask).mockImplementationOnce(async (t) => ({ ...t, id: 9 }) as never);
+  }
+
+  it('checks out a colleague\'s remote branch in a worktree, tracking it', async () => {
+    created();
+    const onCreated = vi.fn();
+    render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
+    fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    await waitFor(() => expect(wt.fetchAll).toHaveBeenCalledWith('/Users/m/www/albedo'));
+    fireEvent.change(screen.getByLabelText('Branch to Check Out'), {
+      target: { value: 'origin/anna/fix-tz' },
+    });
+    const create = screen.getByRole('button', { name: 'Create Worktree' });
+    await waitFor(() => expect(create).not.toHaveProperty('disabled', true));
+    fireEvent.click(create);
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(vi.mocked(wt.createWorktree).mock.calls[0]?.[0]).toMatchObject({
+      branch: 'anna/fix-tz',
+      baseBranch: 'origin/anna/fix-tz',
+      track: true,
+      useExistingBranch: false,
+    });
+    // Their branch, measured against the project's base; never Albedo's to delete.
+    expect(vi.mocked(db.createTask).mock.calls[0]?.[0]).toMatchObject({
+      title: 'anna/fix-tz',
+      branch: 'anna/fix-tz',
+      baseBranch: 'main',
+      ownsWorktree: true,
+      createdBranch: false,
+    });
+  });
+
+  it('cuts a new branch in the main checkout instead of a worktree', async () => {
+    created();
+    const onCreated = vi.fn();
+    render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
+    const main = await screen.findByRole('radio', { name: 'Main Checkout' });
+    await waitFor(() => expect(main).not.toHaveProperty('disabled', true));
+    fireEvent.click(main);
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Fix login' } });
+    const go = screen.getByRole('button', { name: 'Switch Main Checkout' });
+    await waitFor(() => expect(go).not.toHaveProperty('disabled', true));
+    fireEvent.click(go);
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(wt.createWorktree).not.toHaveBeenCalled();
+    expect(vi.mocked(wt.switchCleanCheckout).mock.calls[0]?.[0]).toEqual({
+      path: '/Users/m/www/albedo',
+      branch: 'fix-login',
+      from: 'main',
+      track: false,
+    });
+    expect(vi.mocked(db.createTask).mock.calls[0]?.[0]).toMatchObject({
+      worktreePath: '/Users/m/www/albedo',
+      ownsWorktree: false,
+      createdBranch: true,
+    });
+  });
+
+  it('does not offer a main checkout with uncommitted changes', async () => {
+    vi.mocked(wt.probeMainCheckout).mockResolvedValueOnce({
+      path: '/Users/m/www/albedo', current: 'main', dirty: 3,
+    });
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    await screen.findByText(/has 3 uncommitted change/);
+    expect(screen.getByRole('radio', { name: 'Main Checkout' })).toHaveProperty('disabled', true);
   });
 });

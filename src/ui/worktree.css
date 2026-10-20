@@ -305,6 +305,49 @@
   color: var(--faint);
 }
 
+/* Segmented choice (New / Existing, New Worktree / Main Checkout). Selected
+   is carried by ground, edge and weight together, not by colour alone, and
+   its text stays --text-strong on --panel-raised, the audited pairing. */
+.wt-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--panel-inset);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius);
+}
+
+.wt-seg-option {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.wt-seg-option:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+
+.wt-seg-option[aria-checked='true'] {
+  color: var(--text-strong);
+  font-weight: 700;
+  background: var(--panel-raised);
+  border-color: var(--accent);
+}
+
+/* Disabled is the --faint token, never opacity (CLAUDE.md, Contrast 2). */
+.wt-seg-option:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.wt-seg-follow {
+  margin-top: 8px;
+}
+
 .wt-row {
   display: flex;
   gap: 8px;

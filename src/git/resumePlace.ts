@@ -24,12 +24,12 @@ import type { Project } from '../types';
 import { findTaskByWorktreePath } from '../db';
 import { listProjects } from '../db/projects';
 import {
-  GitError,
   createWorktree,
   defaultBranchOf,
   git,
   gitOk,
   listWorktreesDetailed,
+  switchCleanCheckout,
   uncommittedChanges,
   type ParsedWorktree,
 } from './worktree';
@@ -166,24 +166,10 @@ export async function recreateWorktree(plan: ResumePlacePlan, cwd: string): Prom
   });
 }
 
-/**
- * `git switch <branch>` in the main working tree. Refuses unless it is clean
- * *now*: the dialog's count is from when it opened, and this folder is the
- * user's own, so nothing in it may be carried onto another branch unasked.
- */
+/** `git switch <branch>` in the main working tree. See {@link switchCleanCheckout}. */
 export async function switchMainCheckout(plan: ResumePlacePlan): Promise<string> {
   const main = plan.main;
   if (!main) throw new Error('This repository has no main checkout to switch.');
-  const changes = await uncommittedChanges(main.path);
-  if (changes.files.length > 0) {
-    throw new GitError({
-      args: ['switch', plan.branch],
-      cwd: main.path,
-      code: null,
-      stdout: '',
-      stderr: `${main.path} now has ${changes.files.length} uncommitted change(s). Commit or stash them first; nothing was switched.`,
-    });
-  }
-  await gitOk(['switch', plan.branch], main.path);
+  await switchCleanCheckout({ path: main.path, branch: plan.branch });
   return main.path;
 }
