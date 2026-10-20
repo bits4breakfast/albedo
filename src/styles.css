@@ -960,7 +960,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   flex: 0 1 auto;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -971,7 +971,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   flex: 1 1 0;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -988,6 +988,20 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 }
 .main-ident-branch { max-width: 28ch; flex-shrink: 4; }
 .main-ident-path { flex-shrink: 8; }
+
+/* Two groups, not five loose items: "project / title", then the git unit
+   (branch with its PR), then where it runs. 8px inside a group, 20px
+   between groups; the same type size and centre line for everything after
+   the title, so nothing reads as dropped in at its own height. */
+.main-ident > .main-ident-branch,
+.main-ident > .main-ident-path { margin-left: 12px; }
+.main-ident .pr-badge-wrap { margin-left: -2px; }
+.main-ident .pr-badge {
+  height: 22px;
+  align-items: center;
+  font-size: var(--fs-sm);
+  line-height: 1;
+}
 .main-ident-text {
   min-width: 0;
   overflow: hidden;
