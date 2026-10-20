@@ -481,10 +481,8 @@ button {
   white-space: nowrap;
 }
 
-.usage-label { font-size: var(--fs-sm); color: var(--muted); }
 
 .usage-figure { color: var(--text); font-weight: 500; }
-.usage-figure em { font-style: normal; font-weight: 400; color: var(--muted); }
 
 /* The "N waiting" pill: the one header item that is about you. */
 .usage-waiting .usage-figure { color: var(--text-strong); }
@@ -496,8 +494,6 @@ button.usage-waiting {
 }
 button.usage-waiting:hover { background: var(--panel-hover); }
 
-.usage-stale { color: var(--faint); font-style: italic; }
-.usage-error { color: var(--warn); }
 
 /* Buttons ------------------------------------------------------------------ */
 

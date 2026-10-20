@@ -1,28 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { usageSummary } from '../capture';
 import OverflowMenu from './OverflowMenu';
 import type { ThemeChoice } from './theme';
 
 /**
- * Title bar strip. Carries the macOS overlay drag region, the count of
- * sessions waiting on the user, and one usage figure.
+ * Title bar strip. Carries the macOS overlay drag region, the project tabs,
+ * the count of sessions waiting on the user, History and ⋯.
  *
- * Deliberately only one. The gauges panel at the foot of the sidebar is
- * permanently on screen and owns the breakdown — 5h and weekly totals,
- * countdowns, context for the selected task. Repeating any of that up here
- * would be the same numbers twice on one screen. What survives is the rate:
- * several parallel sessions share one quota and burn it several times faster
- * than a single terminal does, and tokens-per-hour is the figure that says
- * whether the current fleet is sustainable — the one thing the panel's
- * point-in-time totals do not tell you.
- *
- * This component must never take the app down. `usageSummary()` may not exist
- * yet, may throw, or may return zeros; all three render as quiet placeholders.
+ * No usage figure. A "Burn" rate used to sit here, the same quantity as the
+ * Usage panel's Spend/h but divided by a flat 5h instead of the time actually
+ * worked, so the two disagreed (936k/h beside 2.52M/h). The panel, with its
+ * breakdown and window switch, is where usage lives.
  */
-
-const WINDOW_MS = 5 * 60 * 60 * 1000;
-const POLL_MS = 30_000;
 
 /*
  * No "New task" here on purpose. The sidebar carries it, beside the list it
@@ -61,19 +49,6 @@ const THEME_ITEMS: { choice: ThemeChoice; label: string; title: string }[] = [
   { choice: 'dark', label: 'Theme: Dark', title: 'Always dark' },
 ];
 
-interface Usage {
-  inputTokens: number;
-  outputTokens: number;
-  sinceTs: number;
-}
-
-function formatTokens(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '0';
-  if (n < 1000) return String(Math.round(n));
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1)}M`;
-}
-
 export default function Header({
   onReconcile,
   onProjects,
@@ -85,52 +60,6 @@ export default function Header({
   onWaitingClick,
   blockedCount,
 }: HeaderProps) {
-  const [usage, setUsage] = useState<Usage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const aliveRef = useRef(true);
-
-  const poll = useCallback(async () => {
-    try {
-      const u = await usageSummary();
-      if (!aliveRef.current) return;
-      if (!u || typeof u !== 'object') {
-        setUsage(null);
-        setError(null);
-        return;
-      }
-      setUsage({
-        inputTokens: Number(u.inputTokens) || 0,
-        outputTokens: Number(u.outputTokens) || 0,
-        sinceTs: Number(u.sinceTs) || 0,
-      });
-      setError(null);
-    } catch (err) {
-      if (!aliveRef.current) return;
-      setUsage(null);
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    void poll();
-    const pollId = setInterval(() => void poll(), POLL_MS);
-    const tickId = setInterval(() => setNow(Date.now()), 30_000);
-    return () => {
-      aliveRef.current = false;
-      clearInterval(pollId);
-      clearInterval(tickId);
-    };
-  }, [poll]);
-
-  const total = usage ? usage.inputTokens + usage.outputTokens : 0;
-  const hasWindow = !!usage && usage.sinceTs > 0;
-  const elapsed = hasWindow ? Math.max(0, Math.min(WINDOW_MS, now - usage.sinceTs)) : 0;
-  const hours = elapsed / 3_600_000;
-  // Below a few minutes of window the rate is noise, not a reading.
-  const burn = hasWindow && hours > 0.05 ? total / hours : null;
-
   return (
     <header className="header" data-tauri-drag-region>
       {/* No icon and no name: the window is already Albedo. The bar starts
@@ -155,27 +84,6 @@ export default function Header({
           <span className="header-sep" aria-hidden="true" />
         </>
       )}
-
-      <div
-        className="usage"
-        title={
-          'Tokens per hour across all sessions in the rolling 5h window. ' +
-          'The sidebar panel has the totals and countdowns.'
-        }
-      >
-        <span className="usage-label">Burn</span>
-        {error && <span className="usage-error">Unavailable</span>}
-        {!error && !usage && <span className="usage-stale">Reading…</span>}
-        {!error && usage && burn !== null && (
-          <span className="usage-figure">
-            {formatTokens(burn)}
-            <em>/h</em>
-          </span>
-        )}
-        {!error && usage && burn === null && <span className="usage-stale">—</span>}
-      </div>
-
-      <span className="header-sep" aria-hidden="true" />
 
       {/* One visible action; the rest sit behind ⋯ (pane vertical space: one
           row, one main action). ⌘/ still opens the shortcuts from anywhere,
