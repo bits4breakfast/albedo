@@ -942,7 +942,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 
 .main-ident-title {
   flex: 0 1 auto;
-  min-width: 4ch;
+  /* Gives way last: the branch and folder truncate before the title does. */
+  min-width: min(16ch, 40%);
   font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-strong);
@@ -981,6 +982,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   align-items: center;
   gap: 4px;
 }
+.main-ident-branch { max-width: 28ch; }
 .main-ident-text {
   min-width: 0;
   overflow: hidden;

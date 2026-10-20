@@ -8,11 +8,9 @@ import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
 import type { AttentionKind } from './attention';
 import { useShortcuts } from './shortcuts';
-import { PrRowMark } from './PrBadge';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { useBranchSync } from '../git/branchSync';
-import { BranchIcon, branchRepeatsTitle } from './icons';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -430,17 +428,10 @@ export default function TaskList({
                         <span className="task-sep">/</span>
                       </>
                     )}
-                    {/* Only when it adds to the title: the task bar is the
-                        branch's home, and "polishing" under "polishing" read
-                        as a stutter rather than a fact. */}
-                    {!branchRepeatsTitle(task.title, task.branch) && (
-                      <span className="task-branch">
-                        <BranchIcon size={12} />
-                        {task.branch}
-                      </span>
-                    )}
+                    {/* No branch and no PR mark here: the task bar is the one
+                        place git and GitHub state is shown, for the selected
+                        task. Rows identify the task; the title does that. */}
                     <span className="task-meta-tail">
-                      {task.status !== 'archived' && <PrRowMark pr={getPrStatus(task.id)} />}
                       {ctx && ctxText && (
                         <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
                           {ctxText}

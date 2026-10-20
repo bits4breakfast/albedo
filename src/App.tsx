@@ -1653,7 +1653,7 @@ export default function App() {
                       <span className="task-sep">/</span>
                     </>
                   )}
-                  <span className="main-ident-title" title={wrapForTooltip(selected.title)}>
+                  <span className="main-ident-title" title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}`}>
                     {selected.title}
                   </span>
                   {/* The branch and folder live here and nowhere else on screen:
@@ -1666,10 +1666,27 @@ export default function App() {
                       <span className="main-ident-text">{selected.branch}</span>
                     </span>
                   )}
-                  <span className="main-ident-path" title={selected.worktreePath}>
-                    <FolderIcon />
-                    <span className="main-ident-text">{homeRelative(selected.worktreePath)}</span>
-                  </span>
+                  {/* The PR, beside the branch it belongs to: with the branch,
+                      the one place git and GitHub state shows. It never
+                      shrinks; the title and the folder give way first. */}
+                  <PrBadge
+                    task={selected}
+                    onEnd={(intent) => {
+                      setEndIntent(intent);
+                      setArchiveTarget(selected);
+                    }}
+                    onFollowUp={(pr) => void openFollowUp(selected, pr)}
+                  />
+                  {/* The folder only where it says something: a worktree Albedo
+                      cut is always <root>/<branch>, so naming it cost the room
+                      the title and branch needed. A task running anywhere else
+                      -- above all the main checkout -- shows where. */}
+                  {!selected.ownsWorktree && (
+                    <span className="main-ident-path" title={selected.worktreePath}>
+                      <FolderIcon />
+                      <span className="main-ident-text">{homeRelative(selected.worktreePath)}</span>
+                    </span>
+                  )}
                 </>
               ) : (
                 <span className="main-ident-path">No task selected</span>
@@ -1693,18 +1710,6 @@ export default function App() {
                 Transcript
               </button>
             </div>
-
-            {/* The one contextual main action: the PR, once there is one. */}
-            {selected && (
-              <PrBadge
-                task={selected}
-                onEnd={(intent) => {
-                  setEndIntent(intent);
-                  setArchiveTarget(selected);
-                }}
-                onFollowUp={(pr) => void openFollowUp(selected, pr)}
-              />
-            )}
 
             {/* Everything else on this row lives behind ⋯. The orientation
                 switch only appears in split, as the inline button did; the

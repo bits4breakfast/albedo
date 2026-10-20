@@ -23,9 +23,7 @@ import { createPortal } from 'react-dom';
 import type { Task } from '../types';
 import type { UnmergedCommits } from '../git/worktree';
 import { getPrStatus, usePrStatus } from '../gh/prStore';
-import { prLabel, prTooltip } from '../gh/prStatus';
 import { prLookupBranch } from '../gh/gh';
-import { openExternal } from '../lib/openUrl';
 import { menuPosition } from './ClosedProjectsMenu';
 import { canSquashRebase, createPrPrompt, nextStep, pushPrompt } from './gitPrompts';
 import './pr.css';
@@ -85,13 +83,13 @@ export default function GitBar({
    */
   const unpushed = remote === null || remote.upstream === null ? commits : remote.ahead;
   const step = nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
-  const main = step === 'create-pr' && !prKnown ? 'none' : step;
+  // An existing PR is not this bar's to show: the task bar carries the branch
+  // and its PR badge, the one place git and GitHub state appears. This bar
+  // keeps only the actions that act on the files above it.
+  const main = (step === 'create-pr' && !prKnown) || step === 'open-pr' ? 'none' : step;
 
   const push = () => onAsk(pushPrompt(task));
   const createPr = () => onAsk(createPrPrompt(task));
-  const openPr = () => {
-    if (pr) void openExternal(pr.url);
-  };
 
   const items: MenuItem[] = [];
   if (main !== 'push' && (dirty > 0 || unpushed > 0)) {
@@ -99,9 +97,6 @@ export default function GitBar({
   }
   if (main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
     items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
-  }
-  if (main !== 'open-pr' && pr) {
-    items.push({ key: 'open', label: `Open #${pr.number} on GitHub`, hint: pr.title, run: openPr });
   }
   if (canSquashRebase(task) && commits > 0) {
     items.push({
@@ -139,35 +134,20 @@ export default function GitBar({
 
   return (
     <div className="tf-git">
-      {/* Only what is said nowhere else: whether the work is on the remote.
-          The branch is in the task bar, and the commit and uncommitted counts
-          head their own sections above -- here they made the bar too crowded
-          to read ("po… · 38 commits · 39 uncommitted · 38 unp"). */}
-      <div className="tf-git-id">
-        {commits === 0 ? (
-          <span title={`Nothing committed on ${task.branch} yet`}>No Commits</span>
-        ) : remote === null ? null : remote.upstream === null ? (
-          <span data-tone="warn" title={`${task.branch} has no upstream: nothing on it is on the remote`}>
-            ⚠ Not on Remote
-          </span>
-        ) : remote.ahead > 0 ? (
-          <span data-tone="warn" title={`${task.branch} is ahead of ${remote.upstream}`}>
-            ↑ {remote.ahead} Unpushed
-          </span>
-        ) : (
-          <span title={`${task.branch} is up to date with ${remote.upstream}`}>✓ Pushed</span>
-        )}
-      </div>
-
       <div className="tf-git-actions">
         {main === 'push' ? (
           <button
             type="button"
             className="tf-btn tf-btn-primary"
             onClick={push}
-            title="Ask Claude to commit what is outstanding and push. Sent at once when the session is idle; otherwise it waits in the message box."
+            title={
+              (unpushed > 0 ? `${unpushed} commit(s) not on the remote. ` : '') +
+              'Ask Claude to commit what is outstanding and push. Sent at once when the session is idle; otherwise it waits in the message box.'
+            }
           >
-            Push
+            {/* The count rides on the action: how much is waiting is the
+                reason to press it, and it needs no line of its own. */}
+            Push{unpushed > 0 ? ` ↑${unpushed}` : ''}
           </button>
         ) : main === 'create-pr' ? (
           <button
@@ -178,34 +158,10 @@ export default function GitBar({
           >
             Create PR
           </button>
-        ) : main === 'open-pr' && pr ? (
-          <PrButton pr={pr} onOpen={openPr} />
         ) : null}
         <MoreMenu items={items} />
       </div>
     </div>
-  );
-}
-
-function PrButton({ pr, onOpen }: { pr: NonNullable<ReturnType<typeof usePrStatus>>; onOpen: () => void }): ReactNode {
-  const label = prLabel(pr);
-  return (
-    <button
-      type="button"
-      className="pr-badge"
-      data-tone={label.tone}
-      title={prTooltip(pr, { clickable: true })}
-      aria-label={`Pull request ${pr.number}, ${label.text}. Open on GitHub`}
-      onClick={onOpen}
-    >
-      <span className="pr-num">#{pr.number}</span>
-      {label.glyph && (
-        <span className="pr-glyph" aria-hidden="true">
-          {label.glyph}
-        </span>
-      )}
-      <span>{label.text}</span>
-    </button>
   );
 }
 
