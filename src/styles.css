@@ -163,7 +163,7 @@
   --traffic-lights-w: 0px;
   --sidebar-min: 200px;
   --sidebar-max: 480px;
-  --row-h: 36px;              /* one line per task, as Linear lists issues */
+  --row-h: 36px;              /* one line per task */
   --tab-h: 40px;              /* the one chrome row per pane */
   --pane-head-h: 34px;
   --radius-sm: 6px;           /* buttons, chips, menu items */
@@ -447,7 +447,7 @@ button {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
-  /* The frame, as Linear draws it: the sidebar and the title bar are one
+  /* The frame: the sidebar and the title bar are one
      chrome ground, and the work sits on it as a single inset card. One
      outline separates the two, so no two borders can meet at that edge. */
   background: var(--panel-chrome);
@@ -1100,7 +1100,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   color: var(--text);
   background: var(--panel);
   /* No line under a pane head: inside the card the only separator is the
-     task bar's, as Linear keeps one line under its page header. */
+     task bar's: one line under the page header. */
 }
 
 .pane-head-note {
@@ -2043,13 +2043,16 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 /* --------------------------------------------------------------------------
    Status strip: subscription usage, the full width of the window, on the
    chrome ground under the work card (src/ui/StatusBar.tsx). Quiet: a line
-   you glance at, like Linear's global strip.
+   you glance at.
    -------------------------------------------------------------------------- */
 .statusbar {
-  flex: 0 0 30px;
+  /* Right-aligned with the switch last, and tall enough that the card above
+     ends with room under it, the strip clearly below the content. */
+  flex: 0 0 36px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 14px;
   min-width: 0;
   padding: 0 16px;
   background: var(--panel-chrome);
@@ -2057,7 +2060,6 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   color: var(--muted);
   overflow: hidden;
 }
-.statusbar-label { flex: none; color: var(--faint); }
 .statusbar-switch { margin-left: 0; flex: none; }
 .statusbar-switch button { height: 18px; padding: 0 7px; }
 

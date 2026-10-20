@@ -6,8 +6,7 @@
  * the foot of the sidebar, beside a context gauge for the selected task. The
  * context reading now lives on each task row (the hairline, and the row's
  * tooltip) and Clear in the message box near the limit, which left usage
- * here, on the chrome ground under everything, as Linear keeps its own
- * global strip.
+ * here, on the chrome ground under everything.
  *
  * Same data and refresh strategy as before: rows landing (`onCaptureUpdate`)
  * trigger a rescan at most every {@link WINDOW_MIN_INTERVAL_MS}, a fallback
@@ -130,18 +129,27 @@ export default function StatusBar() {
   };
 
   return (
-    <footer className="statusbar" aria-label="Subscription usage">
-      <span
-        className="statusbar-label"
-        title={
-          'Token counts across all sessions, from transcript usage records.\n\n' +
-          'No percentage of a plan limit is shown: the allowance and its reset ' +
-          'anchor are not recorded anywhere on disk, so any percentage here ' +
-          'would be against a denominator we made up.'
-        }
-      >
-        Usage
-      </span>
+    // Right-aligned, controls last, no leading label. What the figures are
+    // is the strip's tooltip.
+    <footer
+      className="statusbar"
+      aria-label="Subscription usage"
+      title={
+        'Subscription usage: token counts across all sessions, from transcript usage records.\n\n' +
+        'No percentage of a plan limit is shown: the allowance and its reset ' +
+        'anchor are not recorded anywhere on disk, so any percentage here ' +
+        'would be against a denominator we made up.'
+      }
+    >
+      <WindowGauge
+        label={choice}
+        data={choice === '5h' ? win.five : win.week}
+        state={choice === '5h' ? win.fiveState : win.weekState}
+        now={now}
+        fetchedAt={win.fetchedAt}
+        hideLabel
+        variant="inline"
+      />
       <div className="seg-sm statusbar-switch" role="group" aria-label="Usage window">
         {(['5h', '7d'] as const).map((w) => (
           <button
@@ -155,15 +163,6 @@ export default function StatusBar() {
           </button>
         ))}
       </div>
-      <WindowGauge
-        label={choice}
-        data={choice === '5h' ? win.five : win.week}
-        state={choice === '5h' ? win.fiveState : win.weekState}
-        now={now}
-        fetchedAt={win.fetchedAt}
-        hideLabel
-        variant="inline"
-      />
     </footer>
   );
 }
