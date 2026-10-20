@@ -1,8 +1,8 @@
 /**
  * @vitest-environment jsdom
  *
- * TODO §9a: the menu opened inside `.project-tabs`, whose `overflow-y: hidden`
- * clipped it to nothing. jsdom cannot see clipping, so what is pinned here is
+ * The bug pinned here: the menu opened inside `.project-tabs`, whose
+ * `overflow-y: hidden` clipped it to nothing. jsdom cannot see clipping, so what is pinned here is
  * the structural fix -- the menu is NOT a descendant of the strip -- plus the
  * dismissal model that has to come with leaving the tree.
  */

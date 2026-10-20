@@ -4,7 +4,7 @@
  * Pure. It only builds what the new-task dialog is prefilled with; the user
  * edits all of it and creates the task themselves. Nothing here creates
  * anything, and nothing records which task a follow-up came from -- that would
- * need a `followup_of` column (docs/TODO.md).
+ * need a `followup_of` column (#35).
  *
  * The prompt points Claude at what shipped rather than restating it: the PR
  * when one is known, otherwise the branch and git. Claude Code reads both

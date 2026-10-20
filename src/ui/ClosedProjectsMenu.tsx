@@ -27,10 +27,10 @@ export function menuPosition(
  * The menu is PORTALLED to `document.body`. It used to be an absolutely
  * positioned child of `.project-tabs`, which scrolls sideways and therefore
  * hides vertical overflow -- so the menu dropped into the clipped axis and
- * opened invisibly, leaving a closed project unrecoverable (TODO §9a). Moving
- * the chip out of the strip would also have worked, but only until the next
- * ancestor grew an `overflow` or a `transform`; outside the tree, nothing
- * above it can clip it again.
+ * opened invisibly, leaving a closed project unrecoverable. Moving the chip
+ * out of the strip would also have worked, but only until the next ancestor
+ * grew an `overflow` or a `transform`; outside the tree, nothing above it can
+ * clip it again.
  *
  * Dismissal follows the task-row menu: any press outside, Esc, blur, resize, or
  * the strip scrolling out from under it. Keyboard per the HIG's menus: focus

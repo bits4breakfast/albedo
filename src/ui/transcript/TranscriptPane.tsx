@@ -868,7 +868,8 @@ export function Composer({
   /*
      ⌘V with image data -- a screenshot copied with ⌃⇧⌘4, an image copied in a
      browser -- carries bytes, not a path, so it is written to
-     ~/.albedo/paste/ first and then inserted exactly as a drop is (TODO §8).
+     ~/.albedo/paste/ first and then inserted exactly as a drop is (see
+     docs/ARCHITECTURE.md, "Images go in as paths").
      Anything without an image file item returns before preventDefault: a text
      paste is the browser's, untouched.
   */

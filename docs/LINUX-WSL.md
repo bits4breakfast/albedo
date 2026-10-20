@@ -1,9 +1,10 @@
 # Running Albedo on Windows, under WSL2
 
 Albedo has no native Windows build. Its pty bridge spawns a POSIX login shell
-and its path checks assume POSIX paths (see `docs/TODO.md` §2b), so on Windows
-it runs as a **Linux app inside WSL2**, next to the Claude Code you already run
-there. WSLg puts its window on the Windows desktop.
+and its path checks assume POSIX paths (see "Platforms" in
+[ARCHITECTURE.md](ARCHITECTURE.md)), so on Windows it runs as a **Linux app
+inside WSL2**, next to the Claude Code you already run there. WSLg puts its
+window on the Windows desktop.
 
 Everything below happens inside the WSL shell (Ubuntu 22.04 or newer), not in
 PowerShell.
@@ -14,9 +15,9 @@ PowerShell.
 `/home/<you>/...`), never on `/mnt/c/...`.
 
 Albedo learns about new transcript lines from filesystem change events, and
-the Windows drives mounted through 9P do not reliably deliver them. Since TODO
-§1 the watcher falls back to polling every 30 s and a banner says so -- so it
-no longer fails silently -- but status, the waiting-on-you card and the
+the Windows drives mounted through 9P do not reliably deliver them. The
+watcher falls back to polling every 30 s and a banner says so -- so it no
+longer fails silently -- but status, the waiting-on-you card and the
 transcript then lag by up to that much, and git on `/mnt/c` is slow besides.
 Clone into `~`, and run `claude` from there, so `~/.claude` is the WSL one.
 

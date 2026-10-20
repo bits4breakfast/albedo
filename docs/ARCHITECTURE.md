@@ -21,7 +21,10 @@ per event to `~/.claude/projects/<dir>/<session>.jsonl`, with subagent runs in
 byte offset (`transcript_files.bytes_ingested`), parses only complete lines
 through `src/capture/adapter.ts`, and inserts `Message` rows into SQLite. A
 30-second poll compares disk with what was ingested, because a filesystem watch
-can succeed and never fire (network mounts, WSL's `/mnt/c`). Only sessions
+can succeed and never fire (network mounts, WSL's `/mnt/c`). Growth older than
+five seconds that no ingest picked up means the watcher missed it: capture
+switches to the poll and a banner says live updates are being polled. A
+`watch()` that fails to start lands in the same mode. Only sessions
 Albedo has a reason to hold are captured: those belonging to a task, and those
 imported from History. Everything else stays on disk for Claude Code to own.
 
@@ -354,6 +357,38 @@ CLAUDE.md.
 `safari15` and esbuild passes `color-mix` through untouched, so the real floor
 is the system webview.
 
+### Syntax highlighting
+
+One Shiki highlighter (`src/lib/highlight.ts`) colours both the transcript
+diffs and the editor. Each of its 39 grammars is its own `import()`, so it is a
+separate chunk rather than part of the main bundle, and `langForPath`
+(`src/lib/diff.ts`) maps extensions and aliases to them. An unknown language
+degrades to plain text. CodeMirror's own PHP and JavaScript modes handle only
+editing behaviour. Shiki ships no Smarty grammar, so `.tpl` is plain text
+(#34).
+
+### Images go in as paths
+
+Claude Code takes an image as a file path in the prompt, and the pty is a byte
+stream that is never read, so Albedo never handles an image as such: it gets
+one onto disk and inserts its path in the message box (`src/lib/pasteImage.ts`).
+
+- A file dropped on the window arrives as a path through the webview's
+  `onDragDropEvent` and is inserted as is. A drop from a temporary location (a
+  screenshot thumbnail, deleted moments later) is copied first.
+- A paste carries bytes, not a path, so they are written to
+  `~/.albedo/paste/<timestamp>.<ext>`. Not the worktree: the file would show
+  up in `git status` as a change the agent made. Not a temp directory: it is
+  cleaned while a resumed session still names the path.
+- An image path outside the worktree is not clickable in the transcript. That
+  is `resolveInWorktree` working, not a bug.
+- Image blocks render from the base64 kept in `raw_json` (`imageAt`).
+
+Two things fail silently if undone. Writing bytes needs `fs:allow-write-file`,
+not only `fs:allow-write-text-file`, plus an `fs:scope` entry covering the
+destination. And with `dragDropEnabled` left at its default, Tauri's native
+handler takes every drop, so an HTML5 `ondrop` in the webview never fires.
+
 ### Honesty rules the UI follows
 
 Do not "fix" these:
@@ -388,15 +423,82 @@ So:
 - Count: parse the real files with the adapter, compare with the table.
 - A fixture that never reproduces the real shape proves nothing.
 
+## Configuration
+
+There is no settings UI. Configuration lives in two stores:
+
+| tier | where | holds |
+| --- | --- | --- |
+| per project | SQLite `projects` | `worktree_root`, `default_base_branch`, `task_prompt_template` |
+| per task | SQLite `tasks` | branch, base, `owns_worktree` |
+| view state | localStorage, every key in `src/ui/persisted.ts` | widths, pane mode, active tab, theme |
+| app-wide | none yet | |
+
+Where app-wide settings go is an open decision, tracked in #13. The principle
+it starts from: view state belongs to the device and stays in localStorage;
+real configuration belongs in SQLite beside what it qualifies, where
+migrations exist and `sqlite3` can inspect it. The alternative is a
+hand-editable `config.json`, which can be repaired in an editor when a bad
+value breaks startup. Decide this before adding a dialog, or the dialog ends
+up writing to three stores.
+
+**Not configurable:** the module constants (`RUNNING_WINDOW_MS`,
+`DEBOUNCE_MS`, `COALESCE_MS`, `PAGE`, `TAIL_LIMIT`, `BODY_MAX_CHARS` and the
+like). They are engineering constants, several of them load-bearing in ways a
+user cannot be expected to reason about: `RUNNING_WINDOW_MS` is why a finished
+task does not read as running for 90 seconds. They stay in code, next to the
+comments that explain them.
+
+## Platforms
+
+**macOS and Linux build from one configuration.** `bundle.targets` lists
+`app`, `dmg`, `deb` and `appimage`; the bundler builds the ones that belong to
+the host. What differs at runtime is chosen by `detectPlatform()`
+(`src/lib/platform.ts`, from the webview's user agent):
+
+- URLs open with `open` on macOS and `xdg-open` elsewhere; both are in
+  `shell:allow-execute`.
+- `gh` is tried at four locations, `/usr/bin/gh` for apt and dnf among them,
+  and a test checks every one is in the capability.
+- `--traffic-lights-w` is 0 unless `data-platform="macos"` is on the root.
+  `titleBarStyle` and `hiddenTitle` are macOS keys that Linux ignores, drawing
+  its own title bar.
+- `src/git/reconcile.ts` applies the `/tmp`, `/var`, `/etc` to `/private/...`
+  firmlinks and case-insensitive `pathKey` only off Linux, so a Linux path is
+  compared case-sensitively and never rewritten.
+- `pty.rs` falls back to `/bin/zsh` on macOS and `/bin/sh` elsewhere when
+  `$SHELL` is unset; its process groups and `poll` are plain POSIX.
+
+CI (`.github/workflows/ci.yml`, ubuntu-22.04) runs the checks on every push,
+with the hook-script tests under dash, and builds the `.deb` and `.AppImage`
+on demand.
+
+**Windows runs the Linux build under WSL2** ([LINUX-WSL.md](LINUX-WSL.md)).
+A native build would be a port of two things. `pty.rs` spawns
+`$SHELL -l -i -c <script>`, with POSIX quoting, an in-shell `unset` of
+`ANTHROPIC_API_KEY` and a fish variant. `src/lib/paths.ts` assumes POSIX
+absolute paths, and as the containment boundary it fails closed on `C:\...`:
+nothing would open. Under WSL2 both are already true. Repositories and
+`~/.claude/projects` must be on the WSL filesystem, not `/mnt/c`, where change
+events are unreliable and capture degrades to the poll.
+
+**Builds are unsigned.** A `.app` built on one Mac is refused by Gatekeeper on
+another. Distributing one would need a Developer ID certificate, codesigning
+with the hardened runtime, and notarization; without notarization Gatekeeper
+calls the app "damaged" rather than unsigned. Builds also target only the
+host architecture, and no updater is configured.
+
 ## Known gaps
 
-- **No reprocessor.** A fully ingested file is never re-read, so an adapter
-  improvement applies only to new lines. `raw_json` is kept so this is
+The backlog is in [GitHub issues](https://github.com/bits4breakfast/albedo/issues).
+These are the gaps in the design described above.
+
+- **No reprocessor** (#23). A fully ingested file is never re-read, so an
+  adapter improvement applies only to new lines. `raw_json` is kept so this is
   fixable; nothing is built yet.
-- **Forks have no ancestry link.** A forked task's transcript begins at the
-  fork with nothing pointing at the source.
-- **An import cycle** between `src/git/worktree.ts` and `reconcile.ts`. Safe
-  while neither touches the other at module evaluation; a top-level constant
-  initialised across it would break it. The fix is to move the path
+- **Forks have no ancestry link** (#38). A forked task's transcript begins at
+  the fork with nothing pointing at the source.
+- **An import cycle** between `src/git/worktree.ts` and `reconcile.ts` (#39).
+  Safe while neither touches the other at module evaluation; a top-level
+  constant initialised across it would break it. The fix is to move the path
   primitives into one module.
-- The backlog, with reasons, is in [TODO.md](TODO.md).

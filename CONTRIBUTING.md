@@ -46,6 +46,14 @@ an issue first, because each one touches a boundary that has to stay clean:
   (`src/capture/adapter.ts`), and a second agent needs its own adapter
   producing the same `Message` rows. The terminal output stays unparsed.
 
+## What to work on
+
+The backlog is in [GitHub issues](https://github.com/bits4breakfast/albedo/issues).
+If you are new to the code, start with one labelled "good first issue".
+
+Not planned: a file tree, search across tasks, a ripgrep sidecar, and
+per-task usage or auth mode. Open an issue before starting on any of them.
+
 ## A good pull request
 
 - One change, with a description of what it does for someone using the app
@@ -93,7 +101,6 @@ run the app and try the change.
   flow, and the design decisions behind them.
 - [docs/TRANSCRIPT-FORMAT.md](docs/TRANSCRIPT-FORMAT.md): the transcript
   format, which only `src/capture/adapter.ts` may know.
-- [docs/TODO.md](docs/TODO.md): what comes next.
 - [docs/LINUX-WSL.md](docs/LINUX-WSL.md): running and testing on Linux and
   under WSL2.
 

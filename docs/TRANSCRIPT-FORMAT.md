@@ -68,6 +68,13 @@ the transcript pane collapses sidechain rows by default.
 
 `tool_result.content` is a string **or** an array of `{type:"text",text}` blocks.
 
+**`thinking` is empty on disk.** Claude Code persists the block's `signature`
+and not the reasoning, so every observed block is
+`{ type: "thinking", thinking: "", signature: "..." }`. Reading another field
+will not recover it. Keep the rows anyway: the row marks where the model
+reasoned, `raw_json` keeps the signature, and if the text is ever persisted the
+rows are already in place.
+
 ### `usage`
 
 `input_tokens`, `output_tokens`, `cache_creation_input_tokens`,

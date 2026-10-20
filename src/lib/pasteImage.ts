@@ -3,9 +3,10 @@
  *
  * Claude Code takes images as file paths in the prompt, so a paste that
  * carries image bytes is written to `~/.albedo/paste/` and its path inserted,
- * exactly as a Finder drop inserts one (TODO §8). Not the worktree -- it would
- * show up in `git status` as a change the agent made -- and not temp, which is
- * cleaned while a resumed session still references the path.
+ * exactly as a Finder drop inserts one (docs/ARCHITECTURE.md, "Images go in
+ * as paths"). Not the worktree -- it would show up in `git status` as a change
+ * the agent made -- and not temp, which is cleaned while a resumed session
+ * still references the path.
  *
  * Nothing here touches the pty or looks at what it prints.
  */

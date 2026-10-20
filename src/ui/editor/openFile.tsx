@@ -63,8 +63,8 @@ export function useReadFile(): (path: string) => Promise<string | null> {
 // property of the app, and a VS Code or Zed user could not use it at all.
 //
 // Deliberately NOT replaced with a configurable version in the same change.
-// See docs/TODO.md -- an external-editor command template belongs with the
-// rest of the configuration work, and shipping a second hardcoded editor while
+// See #16 -- an external-editor command template belongs with the rest of
+// the configuration work (#13), and shipping a second hardcoded editor while
 // waiting for that would be the same mistake with a different name.
 //
 // Its `phpstorm` entry in src-tauri/capabilities/default.json is gone too: a
