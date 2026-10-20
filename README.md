@@ -1,54 +1,162 @@
 # Albedo
 
-Personal desktop cockpit for running multiple Claude Code sessions.
+A desktop cockpit for running several Claude Code sessions at once.
 
-Named after Edoardo and Alberto (ALB + EDO). Albedo is the fraction of incident
-light a surface reflects rather than absorbs. The app does not generate
-anything; it reflects a Claude Code session back in a readable form.
+Each piece of work is a **task**: its own branch, its own git worktree, and its
+own Claude Code session. Albedo keeps them side by side, tells you which one is
+waiting on you, and gives you a readable view of what each has done.
 
-## What it solves
+Albedo wraps Claude Code and never replaces it. Every task runs the real
+`claude` in an embedded terminal, exactly as it would in your shell, so your
+settings, hooks, skills and subscription all apply unchanged.
 
-1. Conversation history is not searchable or easy to revisit
-2. Parallel sessions are hard to track — which one is blocked, which is done
-3. Worktrees are created manually and land in folders that are painful to clean up
-4. Reading diffs in flat terminal output is tiring
+![Albedo's main window: tasks grouped by state on the left, the selected task's transcript in the middle, and the files it changed on the right](docs/screenshots/main-window.png)
 
-PHPStorm stays the editor. This is a cockpit, not an IDE.
+## What it does
 
-## Architecture in one line
+### See every session at a glance
 
-**Wrap Claude Code, do not replace it.** It runs in an embedded pty exactly as
-it does in a terminal; the app reads structure from the transcript JSONL on
-disk and never parses terminal output.
+The task list groups tasks by what they need from you: **Needs You**,
+**Running** and **Idle**. A task that ends its turn on a question gets a **?**
+mark, so you can tell it is waiting for a decision rather than finished.
 
-See `CLAUDE.md` for the rules, `docs/INTERFACES.md` for the module contracts,
-and `docs/TRANSCRIPT-FORMAT.md` for the transcript format the adapter isolates.
+- **N Waiting** in the title bar jumps to the next task that needs you.
+- A dock bounce and a pulse on the row tell you when a task gets blocked or
+  finishes while you are looking elsewhere.
+- Every repository gets a **project tab** in the title bar, and **⌥1–9**
+  switches between them.
+- The status strip shows your plan's **Session** (five-hour) and **Week**
+  limits, with the time each one resets.
 
-## Setup
+### Answer permission prompts without hunting for the terminal
 
-Requires Node 22+ and a Rust toolchain (`rustup`, installed at `~/.cargo`).
+When Claude Code asks for permission, the question appears as a card under the
+transcript. **Allow**, **Deny**, or **Allow, Don't Ask Again**, which adds the
+rule Claude Code suggests and shows you exactly which rule that is. Questions
+Claude asks with options are offered as buttons too, plus a field for your own
+answer.
+
+The terminal prompt stays live the whole time. Answer in whichever place is
+closer, and **Answer in Terminal** takes you there.
+
+![A task waiting on a permission prompt: the card offers Allow, Allow Don't Ask Again, and Deny for a test command](docs/screenshots/waiting-on-you.png)
+
+### Read the session instead of scrolling a terminal
+
+The **Transcript** view renders the conversation from Claude Code's own session
+files, without parsing terminal output. Tool calls are compact rows,
+thinking folds away, and edits open into diffs with word-level highlighting.
+Click any file path to open it.
+
+- Switch between **PTY**, **Split** and **Transcript** with **⌘\\**. Split shows
+  the terminal and the transcript side by side or stacked.
+- Write to Claude from the composer under the transcript: **Enter** sends,
+  **⌘U** attaches files, and images arrive as pictures.
+- Change a task's model, or clear or compact its context, from the composer.
+- When Claude starts subagents, a strip shows them, and clicking one opens that
+  agent's own transcript.
+
+![The transcript in dark theme: a task that finished its turn by asking which behaviour to pick](docs/screenshots/dark-question.png)
+
+### Worktrees without the cleanup
+
+**New Task** (**⌘N**) cuts a fresh branch into its own worktree, or works on an
+existing branch, or uses the main checkout. Tasks can move between a worktree
+and the main checkout, uncommitted changes included. Archiving or deleting a
+task asks what should happen to its worktree and branch.
+**More › Worktrees…** finds worktrees that were left behind.
+
+### Review what changed
+
+The **Files** panel lists every file the task touched, split into uncommitted
+changes and commits on the branch, with line counts. Pin it as a column next to
+the transcript, or keep it as a tab.
+
+- The **Editor** opens any file in tabs, either as it is now or as this task's
+  diff (**⇧⌘D**).
+- Select lines and press **⇧⌘C** to leave a review comment, then send your
+  comments to Claude in one go.
+- One button at the top of Files moves the branch along: **Push**, then
+  **Create PR**, then the pull request itself with its check status. Squash &
+  Rebase is in the menu next to it.
+- When a PR is merged, the task offers a follow-up task and a cleanup.
+
+### Find your way around the code
+
+- **⇧⇧** Search Everywhere, **⇧⌘O** Go to File, **⌘O** Go to Class,
+  **⌥⌘O** Go to Symbol.
+- **⇧⌘F** Find in Files, with match-case and regex.
+- **⌘B** or **⌘-click** Go to Declaration, **⌥F7** Find Usages. For PHP these
+  use the optional PHPantom language server when it is installed, and git grep
+  otherwise.
+- **⌥F12** opens a shell drawer in the main checkout.
+
+### Get back to old conversations
+
+**History** searches the full text of every session Albedo has captured, plus
+Claude Code sessions it has not imported yet. Resume or fork any of them into
+a task. If the session's worktree is gone, Albedo can recreate it or resume in
+another folder.
+
+## Keyboard shortcuts
+
+**⌘/** shows this list inside the app. On Windows and Linux, ⌘ is Ctrl.
+
+| Keys | Action |
+| --- | --- |
+| ⌘N | New Task |
+| ⌘1…9 | Jump to the Nth task |
+| ⌥1…9 | Jump to the Nth project |
+| ⌘[ / ⌘] | Previous / next task |
+| ⌘\\ | Cycle PTY / Split / Transcript |
+| ⇧⇧ | Search Everywhere |
+| ⇧⌘O / ⌘O / ⌥⌘O | Go to File / Class / Symbol |
+| ⇧⌘F | Find in Files |
+| ⇧⌘P | Push the selected task (commits first) |
+| ⌘U | Attach files to the message |
+| ⌘B, ⌥F7 | Go to Declaration, Find Usages (in the editor) |
+| ⇧⌘C | Comment on the selected lines (in the editor) |
+| ⌘↓ | Jump to the latest message |
+| ⌥F12 | Shell in the main checkout |
+| ⌘+ / ⌘− / ⌘0 | Bigger / smaller / actual-size text |
+
+## Install
+
+Albedo runs on macOS and Linux, and on Windows as a Linux app under WSL2 (see
+[docs/LINUX-WSL.md](docs/LINUX-WSL.md)). You need Claude Code installed and
+signed in, Node 22+, and a Rust toolchain.
+
+```sh
+./build.sh --install
+```
+
+This checks the prerequisites, runs the tests, builds the app (`.app`/`.dmg` on
+macOS, `.deb`/`.AppImage` on Linux) and installs it. `./build.sh --help` lists
+the options, including `--with-phpantom` to bundle the PHP language server.
+
+Then add a project (a git repository) and create your first task with **⌘N**.
+
+Albedo removes `ANTHROPIC_API_KEY` from every session it starts, so Claude Code
+always runs on your subscription and never silently on API billing.
+
+## Development
 
 ```sh
 npm install
-npm run tauri dev
+npm run tauri dev   # run the app
+npm test            # vitest
+npm run typecheck   # tsc --noEmit
 ```
 
-To build an installable app instead, run `./build.sh`. It checks the
-prerequisites, runs typecheck and tests, and builds the `.app`/`.dmg` on macOS
-or the `.deb`/`.AppImage` on Linux. `--install` also installs it, and
-`--skip-checks` builds only. See `./build.sh --help`.
+Start with [CLAUDE.md](CLAUDE.md) for the architecture rules,
+[docs/INTERFACES.md](docs/INTERFACES.md) for the module contracts, and
+[docs/TRANSCRIPT-FORMAT.md](docs/TRANSCRIPT-FORMAT.md) for the transcript format.
 
-Builds on macOS and Linux. On Windows it runs as a Linux app under WSL2 --
-see `docs/LINUX-WSL.md`. CI (`.github/workflows/ci.yml`) runs the checks on
-every push, and builds the Linux `.deb` and `.AppImage` on demand.
+The screenshots above come from a sandboxed copy of the app with made-up
+projects and conversations.
 
-```sh
-npm test          # vitest
-npm run typecheck # tsc --noEmit
-```
+## The name
 
-## Status
-
-MVP milestones M1–M4: transcript capture, shell + session list, worktrees,
-transcript pane. M5 (cross-task search UI, inline CodeMirror edits, per-task
-usage accounting, per-task auth mode) is out of scope for now.
+Named after Edoardo and Alberto (ALB + EDO). Albedo is the fraction of
+incident light a surface reflects rather than absorbs. The app generates
+nothing: it reflects a Claude Code session back in a readable form.
