@@ -21,6 +21,7 @@
 
 import type { ReactNode } from 'react';
 import type { Project } from '../types';
+import { homeRelative } from './icons';
 
 export interface EmptyStateProps {
   /** How many projects exist AT ALL — not how many tasks, not how many rows. */
@@ -31,6 +32,11 @@ export interface EmptyStateProps {
   onNewTask?: () => void;
   /** `pane` centres in a large area; `list` reads as a paragraph in a column. */
   variant?: 'pane' | 'list';
+  /**
+   * Headline only. For a second site showing the same state as a full one
+   * nearby: the explanation and the button belong to one place, not two.
+   */
+  brief?: boolean;
 }
 
 interface Content {
@@ -73,7 +79,7 @@ export function emptyStateContent(
         <>
           <span className="placeholder-key">⌘N</span> cuts a worktree in {activeProject.name} and
           starts a session in it, under{' '}
-          <span className="placeholder-key">{activeProject.worktreeRoot}</span>.
+          <span className="placeholder-key">{homeRelative(activeProject.worktreeRoot)}</span>.
         </>
       ),
       action: 'new-task',
@@ -98,6 +104,7 @@ export default function EmptyState({
   onAddProject,
   onNewTask,
   variant = 'list',
+  brief = false,
 }: EmptyStateProps) {
   const content = emptyStateContent(projectCount, activeProject);
   const handler = content.action === 'add-project' ? onAddProject : onNewTask;
@@ -106,8 +113,8 @@ export default function EmptyState({
   return (
     <div className="empty-state" data-variant={variant} data-state={content.key}>
       <p className="empty-state-headline">{content.headline}</p>
-      <p className="empty-state-body">{content.body}</p>
-      {handler && (
+      {!brief && <p className="empty-state-body">{content.body}</p>}
+      {!brief && handler && (
         <button
           className={content.action === 'new-task' ? 'btn btn-primary' : 'btn'}
           onClick={handler}

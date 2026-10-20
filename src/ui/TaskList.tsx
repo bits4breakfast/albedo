@@ -71,6 +71,12 @@ export interface TaskListProps {
    * thing is how a scope label stops being read.
    */
   nameProject?: boolean;
+  /**
+   * The main area is showing the full empty state (no task selected), so the
+   * list only needs its headline: a second explanation and a second New Task
+   * button right under the ⌘N one said the same thing twice.
+   */
+  emptyBrief?: boolean;
 }
 
 /** Row context menu. Destructive actions live here, never on the row itself. */
@@ -150,6 +156,7 @@ export default function TaskList({
   projects,
   activeProject = null,
   nameProject = false,
+  emptyBrief = false,
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
@@ -357,6 +364,7 @@ export default function TaskList({
             onAddProject={onManageProjects}
             onNewTask={onNew}
             variant="list"
+            brief={emptyBrief}
           />
         )}
 
