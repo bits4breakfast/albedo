@@ -52,6 +52,11 @@ export interface TranscriptPaneProps {
    * Absent: the card still shows what is being asked, without the button.
    */
   onAnswerInTerminal?: (taskId: number) => void;
+  /**
+   * Drawn beside Send: the model picker. The model applies to the next
+   * message, so it belongs with the message, not up in the task bar.
+   */
+  composerAccessory?: ReactNode;
 }
 
 export function TranscriptPane({
@@ -59,6 +64,7 @@ export function TranscriptPane({
   sessionId,
   status = null,
   onAnswerInTerminal,
+  composerAccessory,
 }: TranscriptPaneProps): ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
   const [limit, setLimit] = useState(PAGE);
@@ -382,7 +388,7 @@ export function TranscriptPane({
 
       <QueuedStrip sessionId={sessionId} status={status} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
-      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}
+      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} accessory={composerAccessory} /> : null}
     </div>
   );
 }
@@ -528,10 +534,13 @@ export function Composer({
   taskId,
   onSent,
   status = null,
+  accessory,
 }: {
   taskId: number;
   onSent: () => void;
   status?: TaskStatus | null;
+  /** Beside Send (the model picker). */
+  accessory?: ReactNode;
 }): ReactNode {
   const [text, setText] = useState('');
   /** Large text pastes kept aside; the draft holds their placeholders. */
@@ -970,6 +979,7 @@ export function Composer({
           }
         }}
       />
+      <div className="tx-composer-accessory">{accessory}</div>
       <button
         type="button"
         className="tx-composer-send"

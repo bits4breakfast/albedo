@@ -68,9 +68,11 @@ export interface TouchedFilesProps {
   task: Task;
   /** The file in the editor's active tab, worktree-relative: its row is marked. */
   activePath?: string | null;
+  /** The pane head's slot for the git ⋯ menu (see GitBar). */
+  menuSlot?: HTMLElement | null;
 }
 
-export default function TouchedFiles({ task, activePath = null }: TouchedFilesProps): ReactNode {
+export default function TouchedFiles({ task, activePath = null, menuSlot = null }: TouchedFilesProps): ReactNode {
   const [files, setFiles] = useState<TouchedFile[]>([]);
   const [gitError, setGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -484,6 +486,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
           onMode={(m) => setMode(writeMode(m))}
           onRefresh={() => setReloadKey((k) => k + 1)}
           refreshing={loading}
+          menuSlot={menuSlot}
         />
       ) : null}
     </div>

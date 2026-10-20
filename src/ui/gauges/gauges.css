@@ -374,6 +374,10 @@
   flex: 0 1 auto;
   overflow: hidden;
 }
+/* With the window named by the switch above, the countdown leads its line
+   instead of floating at the far end of an otherwise empty one. */
+.gz-window-head > .gz-ages:first-child,
+.gz-window-head > .gz-unavailable:first-child { margin-left: 0; }
 
 .gz-ages-key {
   flex: 0 1 auto;
@@ -484,4 +488,4 @@
 }
 
 /* The 5H / 7D switch sits at the end of the Usage head, after its note. */
-.gz-window-switch { margin-left: 8px; flex: 0 0 auto; align-self: center; }
+.gz-window-switch { margin-left: auto; flex: 0 0 auto; align-self: center; }

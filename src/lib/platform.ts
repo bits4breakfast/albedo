@@ -30,3 +30,24 @@ export function urlOpener(p: Platform = detectPlatform()): 'open' | 'xdg-open' {
 export function applyPlatform(root: HTMLElement = document.documentElement): void {
   root.dataset.platform = detectPlatform();
 }
+
+/**
+ * Stamp `data-fullscreen` on the root element and keep it current, so CSS can
+ * drop the stoplight gutter in full screen: macOS hides the window buttons
+ * there, and the 88px reserved for them left the icon and tabs adrift.
+ * Best-effort: outside Tauri (tests, a browser preview) nothing happens.
+ */
+export async function watchFullscreen(root: HTMLElement = document.documentElement): Promise<void> {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const win = getCurrentWindow();
+    const apply = async () => {
+      root.dataset.fullscreen = String(await win.isFullscreen());
+    };
+    await apply();
+    // Entering or leaving full screen always resizes the window.
+    await win.onResized(() => void apply());
+  } catch {
+    /* no Tauri window: keep the gutter */
+  }
+}

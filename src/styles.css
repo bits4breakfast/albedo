@@ -367,6 +367,8 @@
    apart and 9pt up inside their container, so y 24 centres them at 22pt in
    the 44pt bar. They end at 15 + 2*23 + 14 = 75pt; 88px leaves a 13px gap. */
 :root[data-platform='macos'] { --traffic-lights-w: 88px; }
+/* Full screen hides the stoplights: the icon goes to the far left. */
+:root[data-platform='macos'][data-fullscreen='true'] { --traffic-lights-w: 0px; }
 
 /* --------------------------------------------------------------------------
    Reset
@@ -941,9 +943,11 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .main-ident-project[data-foreign='true'] { color: var(--text-strong); }
 
 .main-ident-title {
+  /* Gives way last: the branch and folder shrink four and eight times as
+     fast. A min-width did this before and padded a short title with empty
+     space, which read as a gap in the bar. */
   flex: 0 1 auto;
-  /* Gives way last: the branch and folder truncate before the title does. */
-  min-width: min(16ch, 40%);
+  min-width: 4ch;
   font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-strong);
@@ -982,13 +986,18 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   align-items: center;
   gap: 4px;
 }
-.main-ident-branch { max-width: 28ch; }
+.main-ident-branch { max-width: 28ch; flex-shrink: 4; }
+.main-ident-path { flex-shrink: 8; }
 .main-ident-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .glyph { flex: none; }
+
+/* A pane's own ⋯ (the Files git menu), portalled in from the pane body. */
+.pane-head-slot { display: inline-flex; align-items: center; flex: none; }
+.pane-head-slot:empty { display: none; }
 
 .model-pick {
   display: inline-flex;

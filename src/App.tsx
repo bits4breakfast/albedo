@@ -1462,6 +1462,9 @@ export default function App() {
   // Only the editor's file needs saying here. The branch is in the task bar,
   // and the session id -- 36 characters nobody reads -- is the Transcript
   // tab's tooltip and "Copy Session ID" in the task's ⋯ menu.
+  /** The Files head's slot for the git ⋯ menu; whichever Files head is mounted. */
+  const [filesMenuSlot, setFilesMenuSlot] = useState<HTMLSpanElement | null>(null);
+
   const noteFor = (tab: RightTab): string => (tab === 'editor' ? (editorActivePath ?? '') : '');
 
   const banner = loadError ?? startupError ?? captureError;
@@ -1693,7 +1696,9 @@ export default function App() {
               )}
             </div>
 
-            {selected && <ModelPicker task={selected} />}
+            {/* The picker lives beside Send in the composer; only with the
+                transcript hidden (terminal only) does it fall back to here. */}
+            {selected && !showTranscript && <ModelPicker task={selected} />}
 
             <div className="seg" role="group" aria-label="Pane layout">
               <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} title="Terminal only (⌘\)">
@@ -1882,6 +1887,7 @@ export default function App() {
                 <span className="pane-head-note" title={noteFor(activeTab)}>
                   {noteFor(activeTab)}
                 </span>
+                {activeTab === 'files' && <span className="pane-head-slot" ref={setFilesMenuSlot} />}
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
                     ✕
@@ -1929,6 +1935,7 @@ export default function App() {
                       status={selected?.status ?? null}
                       /* The prompt is answered in the terminal; make sure it
                          is on screen, then give it the keyboard. */
+                      composerAccessory={selected ? <ModelPicker task={selected} /> : null}
                       onAnswerInTerminal={(id) => {
                         setMode((m) => (m === 'transcript' ? 'split' : m));
                         window.requestAnimationFrame(() => focusPty(id));
@@ -1940,7 +1947,7 @@ export default function App() {
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
                   {selected ? (
                     <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
-                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} />
+                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={filesMenuSlot} />
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
@@ -1978,9 +1985,10 @@ export default function App() {
                   style={{ flex: `0 0 ${Math.round(filesWidth)}px` }}
                 >
                   <div className="pane-head">
-                    {/* The branch is in the git row at the foot of the pane, beside its actions. */}
                     <span>Files</span>
                     <span className="pane-head-note" />
+                    {/* The git ⋯ menu lands here (GitBar portals into it). */}
+                    <span className="pane-head-slot" ref={setFilesMenuSlot} />
                     <button
                       className="pane-head-pin"
                       data-on
@@ -1994,7 +2002,7 @@ export default function App() {
                   <div className="pane-body">
                     {selected ? (
                       <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
-                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} />
+                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={filesMenuSlot} />
                       </PaneErrorBoundary>
                     ) : (
                       <div className="placeholder">

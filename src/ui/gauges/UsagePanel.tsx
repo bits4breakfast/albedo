@@ -398,9 +398,11 @@ export default function UsagePanel({ task }: UsagePanelProps) {
 
         <div className="gz-section">
           <div className="gz-head">
-            <span className="gz-title">Usage</span>
+            {/* Title left, switch right, as in the Context head. "All
+                sessions" was a third word floating between them; it is what
+                the title means, so it is the title's tooltip. */}
             <span
-              className="gz-head-note"
+              className="gz-title"
               title={
                 'Token counts across all sessions, from transcript usage records.\n\n' +
                 'No percentage of a plan limit is shown: the allowance and its reset ' +
@@ -408,7 +410,7 @@ export default function UsagePanel({ task }: UsagePanelProps) {
                 'would be against a denominator we made up.'
               }
             >
-              All Sessions
+              Usage
             </span>
             <div className="seg-sm gz-window-switch" role="group" aria-label="Usage window">
               {(['5h', '7d'] as const).map((w) => (

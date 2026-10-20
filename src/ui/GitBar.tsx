@@ -43,6 +43,11 @@ export interface GitBarProps {
   mode: 'branch' | 'commit';
   onMode: (mode: 'branch' | 'commit') => void;
   onRefresh: () => void;
+  /**
+   * Where the ⋯ menu goes: the Files pane's head row, beside its other
+   * controls. Without one (not mounted yet) it stays in the bar.
+   */
+  menuSlot?: HTMLElement | null;
   refreshing: boolean;
 }
 
@@ -69,6 +74,7 @@ export default function GitBar({
   onMode,
   onRefresh,
   refreshing,
+  menuSlot = null,
 }: GitBarProps): ReactNode {
   const pr = usePrStatus(task);
   // `undefined` is "not asked yet": no Create PR until gh has had its say,
@@ -132,7 +138,16 @@ export default function GitBar({
     },
   );
 
+  // The menu sits in the pane head; this bar appears only when there is an
+  // action to take (Push, Create PR). A bar holding nothing but ⋯ was a whole
+  // row of chrome for one button.
+  const menu = <MoreMenu items={items} drop={menuSlot ? 'down' : 'up'} />;
+  const placed = menuSlot ? createPortal(menu, menuSlot) : null;
+  if (main !== 'push' && main !== 'create-pr' && menuSlot) return placed;
+
   return (
+    <>
+    {placed}
     <div className="tf-git">
       <div className="tf-git-actions">
         {main === 'push' ? (
@@ -159,15 +174,16 @@ export default function GitBar({
             Create PR
           </button>
         ) : null}
-        <MoreMenu items={items} />
+        {menuSlot ? null : menu}
       </div>
     </div>
+    </>
   );
 }
 
 /** The `⋯` button and its menu. Same mechanics as the closed-projects menu. */
-function MoreMenu({ items }: { items: MenuItem[] }): ReactNode {
-  const [at, setAt] = useState<{ left: number; bottom: number } | null>(null);
+function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): ReactNode {
+  const [at, setAt] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const open = at !== null;
@@ -178,8 +194,10 @@ function MoreMenu({ items }: { items: MenuItem[] }): ReactNode {
       return;
     }
     const rect = buttonRef.current?.getBoundingClientRect();
-    // Upward: the bar is at the bottom of the pane, often of the window.
-    if (rect) setAt({ left: menuPosition(rect, window.innerWidth).left, bottom: window.innerHeight - rect.top + 2 });
+    if (!rect) return;
+    const { left, top } = menuPosition(rect, window.innerWidth);
+    // Upward from the bar at the foot of the pane; downward from the head.
+    setAt(drop === 'up' ? { left, bottom: window.innerHeight - rect.top + 2 } : { left, top });
   };
 
   useEffect(() => {
@@ -244,7 +262,7 @@ function MoreMenu({ items }: { items: MenuItem[] }): ReactNode {
             className="row-menu"
             role="menu"
             aria-label="Git actions"
-            style={{ left: at.left, bottom: at.bottom }}
+            style={{ left: at.left, top: at.top, bottom: at.bottom }}
             onKeyDown={onMenuKey}
           >
             {items.map((item) => (
