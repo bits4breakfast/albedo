@@ -41,6 +41,8 @@ export const KEYS = {
   /** The new-task dialog's default project. */
   lastProjectId: 'albedo.worktree.lastProjectId',
   touchedMode: 'albedo.touched.mode',
+  /** The Files pane: the change set, or the whole worktree as a tree. */
+  touchedView: 'albedo.touched.view',
   composerPx: 'albedo.composerPx',
   /** Absent means on. */
   notifications: 'albedo.notifications',
