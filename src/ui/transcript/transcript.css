@@ -342,13 +342,14 @@
 
 /* Your messages are the landmarks of a long transcript, so they get a box:
    their own flat ground (--user-row, measured for every text tier in the
-   token block) nearly the full width of the pane, closed by one hairline with
-   rounded ends. No opacity and no tint, so nothing here changes a ratio the
+   token block) from the pane's left edge to near its right, where one hairline
+   closes it with rounded corners. No opacity and no tint, so nothing here changes a ratio the
    tokens guarantee. */
 /* The box is drawn behind the row, not as the row's own border and padding,
    so your text sits on exactly the same column as everything else. It
-   reaches into the scroller's side padding (8px / 20px) to 4px from the left
-   edge and 10px from the right, clear of the overlay scrollbar's rail. */
+   reaches into the scroller's side padding (8px / 20px): flush with the left
+   edge, so no border or radius there, and 10px from the right, clear of the
+   overlay scrollbar's rail. */
 .tx-row-user {
   position: relative;
   isolation: isolate;
@@ -358,11 +359,12 @@
 .tx-row-user::before {
   content: '';
   position: absolute;
-  inset: 0 -10px 0 -4px;
+  inset: 0 -10px 0 -8px;
   z-index: -1;
   background: var(--user-row);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 /* "you": a label in the gutter, on --user-row (--faint 5.37 / 5.55). */
 .tx-row-user .tx-gutter {
