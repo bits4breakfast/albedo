@@ -672,7 +672,7 @@ describe('albedoOwnsWorktree', () => {
 });
 
 describe('worktreeSharedWithLiveTask', () => {
-  const t = (id: number, status: string, worktreePath = '/Users/m/agents/albedo/up-2398') => ({ id, status, worktreePath });
+  const t = (id: number, status: string, worktreePath = '/Users/m/agents/albedo/acme-2398') => ({ id, status, worktreePath });
 
   it('is true when another live task runs in the same directory', () => {
     expect(worktreeSharedWithLiveTask(t(1, 'idle'), [t(1, 'idle'), t(2, 'running')])).toBe(true);

@@ -294,7 +294,9 @@ PHPantom is not installed, so navigation uses git grep. Rebuild with
 
 ---
 
-Want to work on Albedo itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
+Want to work on Albedo itself? Pull requests from forks are welcome: see
+[CONTRIBUTING.md](CONTRIBUTING.md) for what to expect. Albedo is released
+under the [MIT license](LICENSE).
 
 The screenshots come from a sandboxed copy of the app with made-up projects
 and conversations.
