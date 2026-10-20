@@ -65,6 +65,8 @@
   --panel-active: #dfdfe4; /* press; carries --text-strong only (15.00) */
   --track: #e4e4e8;        /* meter/gauge track, shared with the gauges panel */
   --border: #e4e4e8;       /* decorative hairlines */
+  --card-edge: #ebebef;    /* the content card's outline: one step softer than --border (decorative) */
+  --card-shadow: 0 1px 2px rgb(20 22 40 / 0.05), 0 0 1px rgb(20 22 40 / 0.04);
   --border-mid: #c9c9d0;   /* button, card and dialog edges (decorative: the label identifies the control) */
   --border-strong: #7a7d87;/* load-bearing edges: inputs, menus      3.30 on --panel-raised */
 
@@ -164,9 +166,10 @@
   --row-h: 36px;              /* one line per task, as Linear lists issues */
   --tab-h: 40px;              /* the one chrome row per pane */
   --pane-head-h: 34px;
-  --radius-sm: 5px;           /* buttons, chips, menu items */
-  --radius: 7px;              /* rows, cards, inputs */
+  --radius-sm: 6px;           /* buttons, chips, menu items */
+  --radius: 8px;              /* rows, cards, inputs */
   --radius-lg: 10px;          /* dialogs, menus, the waiting card */
+  --radius-card: 12px;        /* the content card on the chrome ground */
 
   /* --- fonts ------------------------------------------------------------- */
   /* Inter first when it is installed; nothing is fetched. Without it the
@@ -221,6 +224,8 @@
     --panel-active: #17181c; /* press; carries --text-strong (16.57) */
     --track: #24262c;
     --border: #24262c;
+    --card-edge: #202227;
+    --card-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
     --border-mid: #34363e;
     --border-strong: #70737e;/* 3.27 on --panel-raised, 3.20 on --track */
 
@@ -302,6 +307,8 @@
   --panel-active: #17181c; /* press; carries --text-strong (16.57) */
   --track: #24262c;
   --border: #24262c;
+  --card-edge: #202227;
+  --card-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
   --border-mid: #34363e;
   --border-strong: #70737e;/* 3.27 on --panel-raised, 3.20 on --track */
 
@@ -894,8 +901,9 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   flex-direction: column;
   min-width: 0;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
 }
 
@@ -1085,7 +1093,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   font-weight: 600;
   color: var(--text);
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  /* No line under a pane head: inside the card the only separator is the
+     task bar's, as Linear keeps one line under its page header. */
 }
 
 .pane-head-note {
@@ -1102,8 +1111,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 
 .pane-body { flex: 1 1 auto; position: relative; min-height: 0; min-width: 0; overflow: hidden; }
 
-.read-area { border-left: 1px solid var(--border); }
-.panes[data-orientation='column'] .read-area { border-left: none; border-top: 1px solid var(--border); }
+.read-area { border-left: 1px solid var(--card-edge); }
+.panes[data-orientation='column'] .read-area { border-left: none; border-top: 1px solid var(--card-edge); }
 /* The reading area's edge separates it from the terminal. With the terminal
    hidden it sat 1px from the sidebar's own border: two hairlines. */
 .panes[data-mode='transcript'] .read-area { border-left: none; border-top: none; }
@@ -1984,7 +1993,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .read-area > .pane-transcript { flex: 1 1 0; min-width: 0; }
 
 .pane-files {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--card-edge);
   background: var(--panel);
 }
 
