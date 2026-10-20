@@ -34,7 +34,7 @@ import {
 export type OrphanClassification = 'orphan' | 'unknown';
 
 /**
- * Structurally a {@link WorktreeInfo} (so the frozen `findOrphans` signature
+ * Structurally a {@link WorktreeInfo} (so the `findOrphans` signature
  * holds) plus the provenance the UI needs to decide what it is allowed to do.
  */
 export interface OrphanInfo extends WorktreeInfo {

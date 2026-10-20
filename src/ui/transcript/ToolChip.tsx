@@ -3,18 +3,20 @@
  *
  * The chip carries the four things you scan for -- tool, target, outcome, and a
  * one-glance summary of what it did -- and hides the rest behind a click. This
- * module also owns the `rawJson` narrowing helpers, because every renderer in
- * the pane needs them and they must stay in one place.
- *
- * `rawJson` is the verbatim JSONL object for the row. The adapter may hand us
- * either the whole transcript line or the individual content block, so every
- * accessor below tries both shapes and returns a safe empty value rather than
- * assuming a key exists.
+ * module also names the tool-row accessors every renderer in the pane uses;
+ * what they read out of `rawJson` lives in src/capture/adapter.ts.
  */
 
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
+import {
+  isSidechainOf,
+  toolInputOf,
+  toolResultIsErrorOf,
+  toolResultTextOf,
+  toolUseIdOf,
+} from '../../capture/adapter';
 import { CodeLines, Disclosure, LinkifiedText, PathLink, useActivate } from './Diff';
 import {
   inputViewFor,
@@ -27,6 +29,9 @@ import {
 // ---------------------------------------------------------------------------
 // rawJson narrowing
 // ---------------------------------------------------------------------------
+//
+// What a tool row's raw JSON means is the adapter's knowledge (CLAUDE.md, hard
+// rule 1); these are the names the renderers use for it.
 
 type Obj = Record<string, unknown>;
 
@@ -34,126 +39,23 @@ export function isObj(v: unknown): v is Obj {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-export function parseRaw(raw: string | null | undefined): Obj | null {
-  if (typeof raw !== 'string' || raw.length === 0) return null;
-  try {
-    const v: unknown = JSON.parse(raw);
-    return isObj(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Content blocks of a transcript line, if `raw` is a whole line. */
-function contentBlocks(raw: Obj | null): unknown[] {
-  if (!raw) return [];
-  const msg = raw.message;
-  if (isObj(msg) && Array.isArray(msg.content)) return msg.content;
-  if (Array.isArray(raw.content)) return raw.content;
-  return [];
-}
-
-/**
- * `seq` is `lineIndex * 100 + blockIndex` (see docs/TRANSCRIPT-FORMAT.md), so
- * the low two digits identify which block of the line this row came from. That
- * is the only way to disambiguate a line carrying two calls to the same tool.
- */
-function blockFor(message: Message, type: 'tool_use' | 'tool_result'): Obj | null {
-  const raw = parseRaw(message.rawJson);
-  if (!raw) return null;
-  if (raw.type === type) return raw;
-
-  const blocks = contentBlocks(raw);
-  const idx = message.seq % 100;
-  const byIndex = blocks[idx];
-  if (isObj(byIndex) && byIndex.type === type) {
-    if (type === 'tool_result' || message.toolName === null || byIndex.name === message.toolName) return byIndex;
-  }
-  const matching = blocks.filter((b): b is Obj => isObj(b) && b.type === type);
-  const byName = message.toolName ? matching.find((b) => b.name === message.toolName) : undefined;
-  return byName ?? matching[0] ?? null;
-}
-
-/** Input object of a `tool_use` row. Always an object, possibly empty. */
-export function toolInput(message: Message): Obj {
-  const block = blockFor(message, 'tool_use');
-  if (block && isObj(block.input)) return block.input;
-  const raw = parseRaw(message.rawJson);
-  if (raw && isObj(raw.input)) return raw.input;
-  return {};
-}
-
 export function str(v: unknown): string | null {
   return typeof v === 'string' ? v : null;
 }
 
-function flattenContent(v: unknown): string {
-  if (typeof v === 'string') return v;
-  if (Array.isArray(v)) {
-    return v
-      .map((b) => (isObj(b) ? (str(b.text) ?? str(b.content) ?? '') : typeof b === 'string' ? b : ''))
-      .filter((s) => s.length > 0)
-      .join('\n');
-  }
-  if (isObj(v)) {
-    const stdout = str(v.stdout);
-    const stderr = str(v.stderr);
-    if (stdout !== null || stderr !== null) return [stdout, stderr].filter((s) => s && s.length > 0).join('\n');
-    try {
-      return JSON.stringify(v, null, 2);
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
+/** Input object of a `tool_use` row. Always an object, possibly empty. */
+export const toolInput = (message: Message): Obj => toolInputOf(message);
 
 /** Best-effort plain text of a `tool_result` row. */
-export function toolResultText(message: Message | null | undefined): string {
-  if (!message) return '';
-  const block = blockFor(message, 'tool_result');
-  if (block) {
-    const text = flattenContent(block.content);
-    if (text.length > 0) return text;
-  }
-  const raw = parseRaw(message.rawJson);
-  if (raw) {
-    const text = flattenContent(raw.toolUseResult);
-    if (text.length > 0) return text;
-  }
-  return message.body ?? '';
-}
+export const toolResultText = (message: Message | null | undefined): string => toolResultTextOf(message);
 
 /** True when the result reported failure. */
-export function toolResultIsError(message: Message | null | undefined): boolean {
-  if (!message) return false;
-  const block = blockFor(message, 'tool_result');
-  if (block && block.is_error === true) return true;
-  const raw = parseRaw(message.rawJson);
-  if (raw) {
-    if (raw.is_error === true) return true;
-    if (raw.toolDenialKind !== undefined && raw.toolDenialKind !== null) return true;
-    const tur = raw.toolUseResult;
-    if (isObj(tur) && tur.interrupted === true) return true;
-  }
-  return false;
-}
+export const toolResultIsError = (message: Message | null | undefined): boolean => toolResultIsErrorOf(message);
 
 /** `tool_use_id` linking a result row back to its call, from either shape. */
-export function toolUseId(message: Message): string | null {
-  const raw = parseRaw(message.rawJson);
-  if (!raw) return null;
-  if (message.role === 'tool_use') {
-    const block = blockFor(message, 'tool_use');
-    return str(block?.id) ?? str(raw.id);
-  }
-  const block = blockFor(message, 'tool_result');
-  return str(block?.tool_use_id) ?? str(raw.tool_use_id);
-}
+export const toolUseId = (message: Message): string | null => toolUseIdOf(message);
 
-export function isSidechain(message: Message): boolean {
-  return parseRaw(message.rawJson)?.isSidechain === true;
-}
+export const isSidechain = (message: Message): boolean => isSidechainOf(message.rawJson);
 
 // ---------------------------------------------------------------------------
 // Chip summary

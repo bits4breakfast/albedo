@@ -453,12 +453,6 @@ export function warmPhpantom(root: string): void {
   void phpantomFor(root);
 }
 
-/** The running server for a worktree, if any, without starting one. */
-export async function runningPhpantom(root: string): Promise<PhpServer | null> {
-  const s = await servers.get(root);
-  return s && !s.stopped ? s : null;
-}
-
 /** Stop a worktree's server: on archive, or when the worktree goes away. */
 export async function stopPhpantom(root: string): Promise<void> {
   const s = await servers.get(root);

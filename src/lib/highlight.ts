@@ -87,11 +87,6 @@ const LANGS: Record<string, () => Promise<unknown>> = {
   powershell: () => import('shiki/langs/powershell.mjs'),
 };
 
-/** True when `lang` has a grammar we can load. */
-export function isSupportedLang(lang: string): boolean {
-  return Object.prototype.hasOwnProperty.call(LANGS, lang);
-}
-
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 const loaded = new Set<string>();
 const loading = new Map<string, Promise<boolean>>();

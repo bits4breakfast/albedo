@@ -17,12 +17,11 @@
  *    then `git worktree prune`. There is no `rm -rf` anywhere in this module.
  */
 
-import type { Project } from '../types';
 import { assertValidRefName, isValidRefName } from './slug';
 import { expandTilde, normalizePath } from './reconcile';
 
 // ---------------------------------------------------------------------------
-// Frozen contract (docs/INTERFACES.md)
+// Public surface (docs/ARCHITECTURE.md)
 // ---------------------------------------------------------------------------
 
 export interface WorktreeInfo {
@@ -897,16 +896,6 @@ export async function switchCleanCheckout(o: SwitchCheckoutOptions): Promise<voi
   await gitOk(args, o.path);
 }
 
-/**
- * `<project.worktreeRoot>/<slug>`, with a leading `~` resolved through the
- * Tauri path API.
- */
-export async function worktreePathFor(project: Project, slug: string): Promise<string> {
-  const { homeDir } = await import('@tauri-apps/api/path');
-  const home = await homeDir();
-  return composeWorktreePath(project.worktreeRoot, slug, home);
-}
-
 export interface CreateWorktreeOptions {
   repoPath: string;
   baseBranch: string;
@@ -1477,7 +1466,7 @@ export async function mayDeleteTaskBranch(task: {
   return taskCreatedBranch(task.repoPath, task.branch, task.createdAt);
 }
 
-/** Re-exported from ./reconcile so the frozen module surface stays in one file. */
+/** Re-exported from ./reconcile so the module surface stays in one file. */
 export { findOrphans } from './reconcile';
 export type { OrphanInfo } from './reconcile';
 

@@ -1343,7 +1343,7 @@
 /* ==========================================================================
    Theming
 
-   Per docs/INTERFACES.md: :root carries the LIGHT values, and the dark values
+   Per docs/ARCHITECTURE.md: :root carries the LIGHT values, and the dark values
    are stated twice -- once behind the media query (guarded so an explicit
    light choice still wins) and once behind [data-theme='dark']. Nothing is
    defined only inside a themed block.

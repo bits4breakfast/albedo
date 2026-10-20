@@ -130,8 +130,8 @@ export function projectNameFor(repoPath: string): string {
  *
  * `worktreeRoot` reproduces the pre-projects layout, `~/agents/<repo>`, so
  * that worktrees created before projects existed stay exactly where they are
- * and stay reachable. A leading `~` is expanded by the worktree workstream at
- * use time, per docs/INTERFACES.md.
+ * and stay reachable. A leading `~` is expanded by src/git/worktree.ts at use
+ * time.
  */
 export function deriveProjectDefaults(repoPath: string): {
   name: string;

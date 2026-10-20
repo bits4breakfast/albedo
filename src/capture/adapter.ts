@@ -18,7 +18,7 @@
  *    into several rows without renumbering anything that came before.
  */
 
-import type { MessageRole, ParsedMessage } from '../types';
+import type { Message, MessageRole, ParsedMessage } from '../types';
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -97,7 +97,7 @@ const PRIMARY_INPUT_KEYS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
-// Public API (frozen in docs/INTERFACES.md for the two parse functions)
+// Public API
 // ---------------------------------------------------------------------------
 
 /**
@@ -148,7 +148,7 @@ export function countLines(text: string): number {
 
 /**
  * Format-aware accessors used by status.ts / usage.ts so that THEY never have
- * to touch the JSONL shape. Additive to docs/INTERFACES.md; not part of the
+ * to touch the JSONL shape. Not part of the
  * public capture surface re-exported by src/capture/index.ts.
  */
 
@@ -574,6 +574,118 @@ export function cwdOf(rawJson: string): string | null {
   if (!line) return null;
   const cwd = line['cwd'];
   return typeof cwd === 'string' && cwd.length > 0 ? cwd : null;
+}
+
+// ---------------------------------------------------------------------------
+// Tool rows, for the transcript renderer
+// ---------------------------------------------------------------------------
+//
+// A row's `rawJson` is either the whole transcript line or the individual
+// content block, so every accessor tries both shapes and returns a safe empty
+// value rather than assuming a key exists.
+
+type ToolRow = Pick<Message, 'rawJson' | 'seq' | 'toolName'>;
+
+/** Content blocks of a transcript line, or of a bare `{content}` object. */
+function blocksOfRow(raw: Record<string, unknown>): unknown[] {
+  if (Array.isArray(raw['content'])) return raw['content'];
+  return contentBlocksOf(raw) ?? [];
+}
+
+/**
+ * The block this row came from. `seq % SEQ_STRIDE` is its index in the line,
+ * the only way to disambiguate a line carrying two calls to the same tool.
+ */
+function blockFor(message: ToolRow, type: 'tool_use' | 'tool_result'): Record<string, unknown> | null {
+  const raw = safeParse(message.rawJson);
+  if (!raw) return null;
+  if (raw['type'] === type) return raw;
+
+  const blocks = blocksOfRow(raw);
+  const byIndex = blocks[message.seq % SEQ_STRIDE];
+  if (isRecord(byIndex) && byIndex['type'] === type) {
+    if (type === 'tool_result' || message.toolName === null || byIndex['name'] === message.toolName) return byIndex;
+  }
+  const matching = blocks.filter((b): b is Record<string, unknown> => isRecord(b) && b['type'] === type);
+  const byName = message.toolName ? matching.find((b) => b['name'] === message.toolName) : undefined;
+  return byName ?? matching[0] ?? null;
+}
+
+/** Input object of a `tool_use` row. Always an object, possibly empty. */
+export function toolInputOf(message: ToolRow): Record<string, unknown> {
+  const block = blockFor(message, 'tool_use');
+  if (block && isRecord(block['input'])) return block['input'];
+  const raw = safeParse(message.rawJson);
+  if (raw && isRecord(raw['input'])) return raw['input'];
+  return {};
+}
+
+function textOf(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
+}
+
+function flattenContent(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) {
+    return v
+      .map((b) => (isRecord(b) ? (textOf(b['text']) ?? textOf(b['content']) ?? '') : typeof b === 'string' ? b : ''))
+      .filter((s) => s.length > 0)
+      .join('\n');
+  }
+  if (isRecord(v)) {
+    const stdout = textOf(v['stdout']);
+    const stderr = textOf(v['stderr']);
+    if (stdout !== null || stderr !== null) return [stdout, stderr].filter((s) => s && s.length > 0).join('\n');
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+/** Best-effort plain text of a `tool_result` row. */
+export function toolResultTextOf(message: (ToolRow & Pick<Message, 'body'>) | null | undefined): string {
+  if (!message) return '';
+  const block = blockFor(message, 'tool_result');
+  if (block) {
+    const text = flattenContent(block['content']);
+    if (text.length > 0) return text;
+  }
+  const raw = safeParse(message.rawJson);
+  if (raw) {
+    const text = flattenContent(raw['toolUseResult']);
+    if (text.length > 0) return text;
+  }
+  return message.body ?? '';
+}
+
+/** True when the result reported failure: an error, a denial, or an interrupt. */
+export function toolResultIsErrorOf(message: ToolRow | null | undefined): boolean {
+  if (!message) return false;
+  const block = blockFor(message, 'tool_result');
+  if (block && block['is_error'] === true) return true;
+  const raw = safeParse(message.rawJson);
+  if (raw) {
+    if (raw['is_error'] === true) return true;
+    if (raw['toolDenialKind'] !== undefined && raw['toolDenialKind'] !== null) return true;
+    const tur = raw['toolUseResult'];
+    if (isRecord(tur) && tur['interrupted'] === true) return true;
+  }
+  return false;
+}
+
+/** `tool_use_id` linking a result row back to its call, from either shape. */
+export function toolUseIdOf(message: ToolRow & Pick<Message, 'role'>): string | null {
+  const raw = safeParse(message.rawJson);
+  if (!raw) return null;
+  if (message.role === 'tool_use') {
+    const block = blockFor(message, 'tool_use');
+    return textOf(block?.['id']) ?? textOf(raw['id']);
+  }
+  const block = blockFor(message, 'tool_result');
+  return textOf(block?.['tool_use_id']) ?? textOf(raw['tool_use_id']);
 }
 
 // ---------------------------------------------------------------------------

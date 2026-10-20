@@ -25,9 +25,9 @@
    definition and cannot drift from the banner or the blocked row.
 
    Only the two neutral veils need a per-theme value, in the three blocks
-   docs/INTERFACES.md requires. Light is the base and dark overrides, so no
+   docs/ARCHITECTURE.md ("Theming") requires. Light is the base and dark overrides, so no
    value is defined only inside a media or [data-theme] block. Everything is
-   scoped to `.ed-root` so nothing leaks into another workstream's pane.
+   scoped to `.ed-root` so nothing leaks into another pane.
 
    Alphas are tuned against the *well* (`--panel-inset`), which is #ffffff in
    light and #0c0d0f in dark -- not against the window ground.

@@ -46,11 +46,6 @@ export function lastSegment(name: string): string {
   return i === -1 ? name : name.slice(i + 1);
 }
 
-export function namespaceOf(fqcn: string): string {
-  const i = fqcn.lastIndexOf('\\');
-  return i === -1 ? '' : fqcn.slice(0, i);
-}
-
 /**
  * The imports one `use` line declares, as [alias, fqcn] pairs. Handles
  * `use A\B;`, `use A\B as C;`, `use A\B, C\D;` and a one-line group

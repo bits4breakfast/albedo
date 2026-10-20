@@ -143,12 +143,6 @@ export function parseIssueKey(title: string): IssueRef | null {
   return { key, rest };
 }
 
-/** True when `title` is exactly a key and nothing else. */
-export function isBareIssueKey(title: string): boolean {
-  const ref = parseIssueKey(title);
-  return ref !== null && ref.rest.length === 0;
-}
-
 // ---------------------------------------------------------------------------
 // Prompt templates
 // ---------------------------------------------------------------------------
