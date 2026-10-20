@@ -7,10 +7,11 @@
  * itself -- and everything else waits in the `⋯` menu. A row of four equal
  * buttons asked the reader to work out which one applied; this works it out.
  *
- * It sits under the list, the way a commit window does -- read the change set,
- * then act on it -- and it is one line, because every row it takes is a file
- * the list cannot show: the list's view switch and refresh live in the `⋯`
- * menu too, and the section headers carry the file counts.
+ * It sits on the right of the list's first section heading ("Uncommitted"),
+ * beside the files it acts on, so it costs no row of its own. Only when no
+ * plain heading exists -- commit view with nothing uncommitted, where every
+ * heading is a fold button -- does it fall back to a line under the list. The
+ * view switch and refresh live in the `⋯` menu in the pane head.
  *
  * Nothing here runs git or gh. Push and Create PR send Claude a prompt (see
  * gitPrompts.ts and sendPrompt.ts) and so carry no ellipsis: the click is the
@@ -48,6 +49,8 @@ export interface GitBarProps {
    * controls. Without one (not mounted yet) it stays in the bar.
    */
   menuSlot?: HTMLElement | null;
+  /** Where the main action goes: the first section heading's right end. */
+  actionSlot?: HTMLElement | null;
   refreshing: boolean;
 }
 
@@ -75,6 +78,7 @@ export default function GitBar({
   onRefresh,
   refreshing,
   menuSlot = null,
+  actionSlot = null,
 }: GitBarProps): ReactNode {
   const pr = usePrStatus(task);
   // `undefined` is "not asked yet": no Create PR until gh has had its say,
@@ -145,12 +149,8 @@ export default function GitBar({
   const placed = menuSlot ? createPortal(menu, menuSlot) : null;
   if (main !== 'push' && main !== 'create-pr' && menuSlot) return placed;
 
-  return (
-    <>
-    {placed}
-    <div className="tf-git">
-      <div className="tf-git-actions">
-        {main === 'push' ? (
+  const action =
+        main === 'push' ? (
           <button
             type="button"
             className="tf-btn tf-btn-primary"
@@ -173,7 +173,23 @@ export default function GitBar({
           >
             Create PR
           </button>
-        ) : null}
+        ) : null;
+
+  if (actionSlot && menuSlot) {
+    return (
+      <>
+        {placed}
+        {createPortal(action, actionSlot)}
+      </>
+    );
+  }
+
+  return (
+    <>
+    {placed}
+    <div className="tf-git">
+      <div className="tf-git-actions">
+        {action}
         {menuSlot ? null : menu}
       </div>
     </div>

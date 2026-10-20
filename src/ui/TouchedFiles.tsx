@@ -77,6 +77,8 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   const [gitError, setGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // The first section heading's right end, where GitBar puts Push / Create PR.
+  const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [reloadKey, setReloadKey] = useState(0);
@@ -379,6 +381,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
               <section className="tf-section">
                 <div className="tf-section-head">
                   Uncommitted<span className="tf-section-count">{view.uncommitted.length}</span>
+                  <span className="tf-section-action" ref={setActionSlot} />
                 </div>
                 {view.uncommitted.map((f) => (
                   <FileRow
@@ -447,6 +450,11 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
               <div className="tf-section-head">
                 {label}
                 <span className="tf-section-count">{rows.length}</span>
+                {/* The branch's next step (Push, Create PR) on the first
+                    heading, beside the files it acts on. */}
+                {label === 'Uncommitted' || view.uncommitted.length === 0 ? (
+                  <span className="tf-section-action" ref={setActionSlot} />
+                ) : null}
               </div>
               {rows.map((f) => (
                 <FileRow
@@ -487,6 +495,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           onRefresh={() => setReloadKey((k) => k + 1)}
           refreshing={loading}
           menuSlot={menuSlot}
+          actionSlot={actionSlot}
         />
       ) : null}
     </div>
