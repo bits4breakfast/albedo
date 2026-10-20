@@ -1018,6 +1018,12 @@ export interface UnmergedCommits {
   ahead: number;
   /** The configured upstream, or null when the branch has none. */
   upstream: string | null;
+  /**
+   * HEAD is on no branch. There is nothing to push then, and `ahead` --
+   * counted against the base -- is not "unpushed": after a rebase it is the
+   * old copies of commits the remote already has in their new form.
+   */
+  detached: boolean;
 }
 
 /**
@@ -1043,6 +1049,9 @@ export async function unmergedCommits(
     worktreePath,
   );
   const upstream = up.code === 0 ? parseUpstream(up.stdout) : null;
+  // git's wording, pinned like classifyGitError's: asked for the upstream of
+  // a detached HEAD, it says so instead of "no upstream configured".
+  const detached = up.code !== 0 && /does not point to a branch/i.test(up.stderr);
 
   const base = upstream ?? baseBranch;
   const args = ['rev-list', '--count', revRange(base), '--'];
@@ -1056,7 +1065,7 @@ export async function unmergedCommits(
       stdout: r.stdout,
     });
   }
-  return { ahead: parseCommitCount(r.stdout), upstream };
+  return { ahead: parseCommitCount(r.stdout), upstream, detached };
 }
 
 // ---------------------------------------------------------------------------

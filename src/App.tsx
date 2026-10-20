@@ -44,7 +44,7 @@ import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/pr
 import { deleteTask, listTasks, repairSelfBasedTasks } from './db';
 import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
-import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor } from './git/worktree';
+import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor, unmergedCommits } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import PanelToggle from './ui/PanelToggle';
 import { displayName, wrapForTooltip } from './ui/text';
@@ -1428,6 +1428,13 @@ export default function App() {
   const pushSelected = async () => {
     const task = selected;
     if (!task || task.status === 'archived') return;
+    // As the Files pane: on no branch there is nothing to push, and pushing a
+    // stale detached copy could overwrite the branch with old commits.
+    const remote = await unmergedCommits(task.worktreePath, task.baseBranch).catch(() => null);
+    if (remote?.detached) {
+      console.warn('[push] HEAD is detached in', task.worktreePath, '- nothing to push');
+      return;
+    }
     const text = pushPrompt(task);
     if ((await sendPrompt(task, text)) !== 'failed') return;
     setMode((m) => (m === 'pty' ? 'split' : m));

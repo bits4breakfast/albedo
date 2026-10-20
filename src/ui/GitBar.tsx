@@ -92,7 +92,10 @@ export default function GitBar({
    * withheld when there was something.
    */
   const unpushed = remote === null || remote.upstream === null ? commits : remote.ahead;
-  const step = nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
+  // On no branch there is nothing to push or open a PR from -- and "Push
+  // branch X" from a stale detached copy could overwrite X with old commits.
+  const detached = remote?.detached === true;
+  const step = detached ? 'none' : nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
   // An existing PR is not this bar's to show: the task bar carries the branch
   // and its PR badge, the one place git and GitHub state appears. This bar
   // keeps only the actions that act on the files above it.
@@ -102,13 +105,13 @@ export default function GitBar({
   const createPr = () => onAsk(createPrPrompt(task));
 
   const items: MenuItem[] = [];
-  if (main !== 'push' && (dirty > 0 || unpushed > 0)) {
+  if (!detached && main !== 'push' && (dirty > 0 || unpushed > 0)) {
     items.push({ key: 'push', label: 'Push', hint: 'Commit what is outstanding and push', run: push });
   }
-  if (main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
+  if (!detached && main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
     items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
   }
-  if (canSquashRebase(task) && commits > 0) {
+  if (!detached && canSquashRebase(task) && commits > 0) {
     items.push({
       key: 'squash',
       label: 'Squash & Rebase…',

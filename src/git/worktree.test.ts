@@ -298,7 +298,7 @@ describe('unmergedCommits', () => {
       if (args[0] === 'rev-list') return { code: 0, stdout: '2\n', stderr: '' };
       return undefined;
     });
-    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 2, upstream: 'origin/main' });
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 2, upstream: 'origin/main', detached: false });
     expect(calls.map((c) => c.args)).toEqual([
       upstreamArgs,
       ['rev-list', '--count', 'origin/main..HEAD', '--'],
@@ -314,8 +314,17 @@ describe('unmergedCommits', () => {
       if (args[0] === 'rev-list') return { code: 0, stdout: '3\n', stderr: '' };
       return undefined;
     });
-    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 3, upstream: null });
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 3, upstream: null, detached: false });
     expect(calls[1]?.args).toEqual(['rev-list', '--count', 'main..HEAD', '--']);
+  });
+
+  it('says when HEAD is on no branch, so nothing reads as unpushed', async () => {
+    install(({ args }) =>
+      args[0] === 'rev-parse'
+        ? { code: 128, stdout: '', stderr: 'fatal: HEAD does not point to a branch' }
+        : { code: 0, stdout: '7\n', stderr: '' },
+    );
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 7, upstream: null, detached: true });
   });
 
   it('reports 0 for a fully merged branch', async () => {
@@ -324,7 +333,7 @@ describe('unmergedCommits', () => {
         ? { code: 128, stdout: '', stderr: 'fatal: no upstream' }
         : { code: 0, stdout: '0\n', stderr: '' },
     );
-    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 0, upstream: null });
+    expect(await unmergedCommits('/wt', 'main')).toEqual({ ahead: 0, upstream: null, detached: false });
   });
 
   it('surfaces git stderr instead of reporting 0 when the base is unknown', async () => {
