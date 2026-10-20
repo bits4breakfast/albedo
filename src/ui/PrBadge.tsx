@@ -6,10 +6,10 @@
  * a task without a PR is the normal case for most of its life.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../types';
 import { openExternal } from '../lib/openUrl';
-import { getPrStatus, usePrStatus, usePrStatusVersion } from '../gh/prStore';
+import { getPrStatus, refreshPrStatus, usePrStatus, usePrStatusVersion } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
 import { commitsOnBranch } from '../git/worktree';
 import { prLabel, prTooltip, type PrStatus } from '../gh/prStatus';
@@ -45,6 +45,16 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
   // does not change when gh answers "none" -- the version does, and is what
   // re-renders this when it does.
   usePrStatusVersion();
+
+  // A turn that just ended is when a Create PR or a Push has just finished:
+  // ask GitHub then, rather than at the next minute's poll.
+  const lastStatus = useRef(task?.status ?? null);
+  useEffect(() => {
+    const was = lastStatus.current;
+    lastStatus.current = task?.status ?? null;
+    if (task && was === 'running' && task.status === 'idle') void refreshPrStatus(task, { force: true });
+  }, [task?.id, task?.status]);
+
   const answered = task ? getPrStatus(task.id) !== undefined : false;
   const askable = !!task && !!onCreatePr && answered && pr === null && prLookupBranch(task) !== null;
   const [own, setOwn] = useState<number | null>(null);

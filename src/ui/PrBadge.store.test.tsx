@@ -33,3 +33,17 @@ describe('PrBadge with the real store', () => {
     expect(await screen.findByRole('button', { name: 'Create PR' })).toBeTruthy();
   });
 });
+
+describe('PrBadge after a turn ends', () => {
+  it('asks GitHub again when the task goes from running to idle', async () => {
+    const fetcher = vi.fn(async () => null);
+    setPrFetcherForTests(fetcher);
+    const running = { ...task, id: 42, status: 'running' } as Task;
+    const { rerender } = render(<PrBadge task={running} onCreatePr={() => {}} />);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let that fetch settle
+    rerender(<PrBadge task={{ ...running, status: 'idle' } as Task} onCreatePr={() => {}} />);
+    // Forced past the 15 s reuse window: the turn may have just opened the PR.
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  });
+});
