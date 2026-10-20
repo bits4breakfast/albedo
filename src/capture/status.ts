@@ -15,6 +15,8 @@
  *      whatever stop_reason says.
  *   2. the tail is an assistant row whose line ended the turn
  *      (stop_reason 'end_turn' / 'stop_sequence')            -> 'idle'
+ *  2b. the tail (isMeta lines aside) closes a local command
+ *      such as `/clear` or `/model`                           -> 'idle'
  *   3. activity newer than RUNNING_WINDOW_MS                 -> 'running'
  *   4. tail is an assistant row (turn ended, just too old)   -> 'idle'
  *   5. no rows at all                                        -> 'idle'
@@ -30,7 +32,13 @@
  */
 
 import type { Message, TaskStatus } from '../types';
-import { stopReasonOf, toolCallIdOf, TURN_ENDING_STOP_REASONS } from './adapter';
+import {
+  endsLocalCommand,
+  isMetaLine,
+  stopReasonOf,
+  toolCallIdOf,
+  TURN_ENDING_STOP_REASONS,
+} from './adapter';
 
 /** How recent transcript activity must be for a session to read as running. */
 export const RUNNING_WINDOW_MS = 90_000;
@@ -102,6 +110,11 @@ export function deriveStatus(
   // rather than reporting `running` for another RUNNING_WINDOW_MS.
   if (handedControlBack(last)) return 'idle';
 
+  // rule 2b — a local command (`/clear`, `/model`) finished. Its envelope is a
+  // `user` row, so without this the task read `running` for the whole window
+  // and the composer's controls stayed disabled after a /clear.
+  if (endsLocalCommand(lastNonMeta(rows).rawJson)) return 'idle';
+
   // rule 3 — fallback for lines with no usable stop_reason.
   if (ACTIVITY_ROLES.has(last.role) && now - last.ts <= RUNNING_WINDOW_MS) {
     return 'running';
@@ -136,6 +149,15 @@ export function statusExpiresAt(
     if (edge > now && deriveStatus(messages, edge, opts) !== current) return edge;
   }
   return null;
+}
+
+/** The newest row that is not an `isMeta` line Claude Code added on its own. */
+function lastNonMeta(rows: StatusInput[]): StatusInput {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i] as StatusInput;
+    if (!isMetaLine(r.rawJson)) return r;
+  }
+  return rows[rows.length - 1] as StatusInput;
 }
 
 /**

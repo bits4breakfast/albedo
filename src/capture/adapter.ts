@@ -351,6 +351,35 @@ export const TURN_ENDING_STOP_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * True for the line that closes a slash command Claude Code ran itself, with
+ * no model turn -- `/clear`, `/model`. Without it the command's envelope, a
+ * `user` row, reads as a prompt in flight and the task as `running` for the
+ * whole recency window.
+ *
+ * Two shapes, both written by Claude Code 2.1.302: a `system` line with
+ * subtype 'local_command' (`/clear`), and a `user` line whose content opens
+ * with `<local-command-stdout>` (`/model`).
+ */
+export function endsLocalCommand(rawJson: string): boolean {
+  const line = safeParse(rawJson);
+  if (!line) return false;
+  if (line['type'] === 'system') return line['subtype'] === 'local_command';
+  if (line['type'] !== 'user') return false;
+  const message = line['message'];
+  if (!isRecord(message)) return false;
+  const content = message['content'];
+  return typeof content === 'string' && content.trimStart().startsWith('<local-command-stdout>');
+}
+
+/**
+ * `isMeta` -- a line Claude Code adds beside a command or a prompt (the
+ * "run directly in Claude Code" caveat), never something anyone typed.
+ */
+export function isMetaLine(rawJson: string): boolean {
+  return safeParse(rawJson)?.['isMeta'] === true;
+}
+
+/**
  * Session-title line types, mapped to the key each carries the title in.
  *
  * These stay OUT of `messages` -- they are bookkeeping, not conversation, and
