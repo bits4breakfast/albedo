@@ -1238,6 +1238,15 @@ export default function App() {
         : panesWidth;
   const filesColumnFits = readAreaWidth >= filesWidth + READ_MIN;
   const filesColumnShown = filesPinned && mode !== 'pty' && filesColumnFits;
+  // The Files ⋯ menu's "Keep as Column", in both the tab and the column.
+  const filesColumn = useMemo(
+    () => ({
+      pinned: filesPinned,
+      fits: filesColumnFits,
+      onToggle: () => setFilesPinned((v) => !v),
+    }),
+    [filesPinned, filesColumnFits],
+  );
 
   // Derived rather than corrected in an effect: switching task while the editor
   // tab is showing falls straight back to the transcript, with no flash.
@@ -1903,28 +1912,9 @@ export default function App() {
                     ✕
                   </button>
                 )}
-                {/* Labelled, not a bare ⇥. This is a preference that changes
-                    the whole reading layout and persists across restarts, and
-                    as a lone glyph behind a native tooltip nobody found it --
-                    it was asked for as a missing feature while already built.
-                    `aria-pressed` carries the state; the word carries what it
-                    does. */}
-                {!filesColumnShown && (
-                  <button
-                    className="pane-head-pin"
-                    data-on={filesPinned}
-                    onClick={() => setFilesPinned((v) => !v)}
-                    title={
-                      filesPinned
-                        ? 'Files are pinned as a column; unpin to keep them as a tab'
-                        : 'Keep files always visible as a column beside the transcript'
-                    }
-                    aria-pressed={filesPinned}
-                  >
-                    ⇥ Column
-                  </button>
-                )}
-                {/* Last, so it lines up with the ⋯ of the rows above. */}
+                {/* Last, so it lines up with the ⋯ of the rows above.
+                    "Keep as Column" is in it: a layout preference, not an
+                    action, and accent text here read as a second Push. */}
                 {activeTab === 'files' && <span className="pane-head-slot" ref={setTabFilesSlot} />}
               </div>
               )}
@@ -1972,7 +1962,7 @@ export default function App() {
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
                   {selected ? (
                     <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
-                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={tabFilesSlot} />
+                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={tabFilesSlot} column={filesColumn} />
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
@@ -2012,23 +2002,14 @@ export default function App() {
                   <div className="pane-head">
                     <span>Files</span>
                     <span className="pane-head-note" />
-                    <button
-                      className="pane-head-pin"
-                      data-on
-                      onClick={() => setFilesPinned(false)}
-                      title="Unpin — put files back in the tab strip"
-                      aria-pressed
-                    >
-                      ⇥ Column
-                    </button>
                     {/* The git ⋯ menu lands here (GitBar portals into it).
-                        Last, so it lines up with the ⋯ of the rows above. */}
+                        "Keep as Column" is in it. */}
                     <span className="pane-head-slot" ref={setColumnFilesSlot} />
                   </div>
                   <div className="pane-body">
                     {selected ? (
                       <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
-                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={columnFilesSlot} />
+                        <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={columnFilesSlot} column={filesColumn} />
                       </PaneErrorBoundary>
                     ) : (
                       <div className="placeholder">
