@@ -96,7 +96,8 @@ export type Gesture =
   | 'editor mod+b'
   | 'editor alt+f7'
   | 'editor mod+shift+c'
-  | 'transcript mod+arrowdown';
+  | 'transcript mod+arrowdown'
+  | 'new-task mod+enter';
 
 export interface ShortcutDoc {
   combo: Combo | Gesture;
@@ -129,6 +130,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
   { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Comment on the Selected Lines' },
   { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
+  { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger Text' },
   { combo: 'mod+-', keys: '⌘−', description: 'Smaller Text' },

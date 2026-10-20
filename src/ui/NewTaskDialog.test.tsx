@@ -199,3 +199,16 @@ describe('NewTaskDialog existing branch and main checkout', () => {
     expect(screen.getByRole('radio', { name: 'Main Checkout' })).toHaveProperty('disabled', true);
   });
 });
+
+describe('NewTaskDialog ⌘↩', () => {
+  it('creates from any field, the prompt box included', async () => {
+    vi.mocked(db.createTask).mockImplementationOnce(async (t) => ({ ...t, id: 9 }) as never);
+    const onCreated = vi.fn();
+    render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
+    const title = screen.getByLabelText('Title');
+    fireEvent.change(title, { target: { value: 'Fix login' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create Worktree' })).not.toHaveProperty('disabled', true));
+    fireEvent.keyDown(screen.getByLabelText('Model'), { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+  });
+});

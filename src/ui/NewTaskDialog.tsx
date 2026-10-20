@@ -640,6 +640,14 @@ export function NewTaskDialog({
           aria-modal="true"
           aria-labelledby="wt-newtask-title"
           onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            // ⌘↩ creates from any field -- the prompt box included, where a
+            // plain Enter is a newline. Not while an IME is composing.
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              if (canSubmit) void submit(false);
+            }
+          }}
         >
           <div className="wt-modal-head">
             <h2 className="wt-modal-title" id="wt-newtask-title">
@@ -1052,6 +1060,7 @@ export function NewTaskDialog({
               className="btn btn-primary"
               disabled={!canSubmit}
               onClick={() => void submit(false)}
+              title="⌘↩"
             >
               {busy
                 ? 'Creating…'
