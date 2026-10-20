@@ -562,6 +562,22 @@ export function revRange(base: string, head = 'HEAD'): string {
   return `${base}..${head}`;
 }
 
+/**
+ * Commits on the checked-out branch that its base lacks: what a PR from it
+ * would hold. Null on a detached HEAD (no branch to open a PR from) or when
+ * git cannot say. Never throws.
+ */
+export async function commitsOnBranch(worktreePath: string, baseBranch: string): Promise<number | null> {
+  try {
+    const head = await git(['symbolic-ref', '--quiet', 'HEAD'], worktreePath);
+    if (head.code !== 0) return null;
+    const r = await git(['rev-list', '--count', revRange(baseBranch), '--'], worktreePath);
+    return r.code === 0 ? parseCommitCount(r.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Parse the newline-separated output of `git for-each-ref --format=...`. */
 export function parseRefList(stdout: string): string[] {
   return (stdout ?? '')

@@ -8,7 +8,7 @@ import useTasks from './ui/useTasks';
 import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
-import { pushPrompt } from './ui/gitPrompts';
+import { createPrPrompt, pushPrompt } from './ui/gitPrompts';
 import { sendPrompt } from './ui/sendPrompt';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
@@ -1722,6 +1722,7 @@ export default function App() {
                       setArchiveTarget(selected);
                     }}
                     onFollowUp={(pr) => void openFollowUp(selected, pr)}
+                    onCreatePr={() => void sendPrompt(selected, createPrPrompt(selected))}
                   />
                   {/* The folder only where it says something: a worktree Albedo
                       cut is always <root>/<branch>, so naming it cost the room

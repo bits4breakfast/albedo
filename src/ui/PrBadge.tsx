@@ -6,9 +6,12 @@
  * a task without a PR is the normal case for most of its life.
  */
 
+import { useEffect, useState } from 'react';
 import type { Task } from '../types';
 import { openExternal } from '../lib/openUrl';
-import { usePrStatus } from '../gh/prStore';
+import { getPrStatus, usePrStatus } from '../gh/prStore';
+import { prLookupBranch } from '../gh/gh';
+import { commitsOnBranch } from '../git/worktree';
 import { prLabel, prTooltip, type PrStatus } from '../gh/prStatus';
 import './pr.css';
 
@@ -26,11 +29,48 @@ export interface PrBadgeProps {
    * discipline as `onEnd`: offered once merged, and it only opens a dialog.
    */
   onFollowUp?: (pr: PrStatus) => void;
+  /**
+   * Asks Claude to open the PR, as the Files pane's Create PR does. Offered in
+   * the badge's place once gh has answered that there is none and the branch
+   * has commits of its own; never on a detached HEAD.
+   */
+  onCreatePr?: () => void;
 }
 
 /** Header badge: "#6 ✓ checks", "#6 ✗ 2 failing", "#6 merged  Archive… Delete…". */
-export function PrBadge({ task, onEnd, onFollowUp }: PrBadgeProps) {
+export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
   const pr = usePrStatus(task);
+  // `undefined` is "gh has not answered yet": no button that a PR already
+  // opened would make wrong.
+  const answered = task ? getPrStatus(task.id) !== undefined : false;
+  const askable = !!task && !!onCreatePr && answered && pr === null && prLookupBranch(task) !== null;
+  const [own, setOwn] = useState<number | null>(null);
+  useEffect(() => {
+    setOwn(null);
+    if (!askable || !task) return;
+    let live = true;
+    void commitsOnBranch(task.worktreePath, task.baseBranch).then((n) => {
+      if (live) setOwn(n);
+    });
+    return () => {
+      live = false;
+    };
+  }, [askable, task?.id, task?.worktreePath, task?.baseBranch, task?.lastActivityAt]);
+
+  if (task && !pr && askable && own !== null && own > 0) {
+    return (
+      <span className="pr-badge-wrap">
+        <button
+          type="button"
+          className="pr-badge"
+          title={`No pull request yet. Ask Claude to open one into ${task.baseBranch} (${own} commit${own === 1 ? '' : 's'}). Sent at once when the session is idle; otherwise it waits in the message box.`}
+          onClick={onCreatePr}
+        >
+          Create PR
+        </button>
+      </span>
+    );
+  }
   if (!task || !pr) return null;
   const label = prLabel(pr);
   return (
