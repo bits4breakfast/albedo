@@ -441,6 +441,34 @@ export async function findTaskBySessionId(
   return row ? toTask(row) : null;
 }
 
+/**
+ * Repair tasks whose base is their own branch -- what a task resumed from
+ * History recorded until 2026-10-20. With base === branch every "what did
+ * this task do" question answers "nothing" (an empty Files pane once the
+ * branch is pushed) and the PR is never looked up. Each gets the repo's
+ * default branch instead; a task genuinely on the default branch is left as
+ * it is. The resolver is injected, as for backfillProjectsFromTasks: the db
+ * layer does not spawn git. Returns how many rows changed.
+ */
+export async function repairSelfBasedTasks(
+  defaultBranchOf: (repoPath: string) => Promise<string | null>,
+): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select<{ id: number; repo_path: string; branch: string }[]>(
+    `SELECT id, repo_path, branch FROM tasks
+      WHERE status != 'archived' AND branch != '' AND base_branch = branch`,
+  );
+  let changed = 0;
+  for (const r of rows) {
+    const base = await defaultBranchOf(r.repo_path).catch(() => null);
+    if (!base || base === r.branch) continue;
+    await db.execute(`UPDATE tasks SET base_branch = $1 WHERE id = $2 AND base_branch = branch`, [base, r.id]);
+    changed += 1;
+  }
+  if (changed > 0) emitTasksChanged();
+  return changed;
+}
+
 /** Whether Albedo holds a transcript file for this session. */
 export async function hasTranscriptForSession(sessionId: string): Promise<boolean> {
   const db = await getDb();

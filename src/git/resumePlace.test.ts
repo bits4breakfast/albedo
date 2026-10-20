@@ -107,8 +107,9 @@ describe('planResumePlace', () => {
     expect(planResumePlace({ ...base, branch: null, worktrees: [] })).toBeNull();
   });
 
-  it('falls back to the branch itself as the base when none is known', () => {
-    expect(planResumePlace({ ...base, baseBranch: null, worktrees: [] })?.baseBranch).toBe('polishing');
+  it('never records the branch itself as its base: that hides its commits and its PR', () => {
+    expect(planResumePlace({ ...base, baseBranch: null, worktrees: [] })?.baseBranch).toBeNull();
+    expect(planResumePlace({ ...base, baseBranch: 'polishing', worktrees: [] })?.baseBranch).toBeNull();
   });
 });
 

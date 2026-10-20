@@ -28,7 +28,7 @@ import { importTranscripts, listDiskSessions, type DiskSession } from '../captur
 import { adoptSessionIntoTask, createTask } from '../db';
 import { linkTaskSession, newSessionId } from '../capture/sessionLink';
 import { findProjectByRepo } from '../db/projects';
-import { listBranches, repoRootFor } from '../git/worktree';
+import { defaultBranchOf, listBranches, repoRootFor } from '../git/worktree';
 import {
   probeResumePlace,
   recreateWorktree,
@@ -129,6 +129,23 @@ function modalCwd(sessions: PastSession[]): string | null {
   }
   // Only worth suppressing if it really is the background case.
   return bestN >= Math.max(3, sessions.length * 0.25) ? best : null;
+}
+
+/** The base a resumed task records. See the call site. */
+async function resumeBase(
+  planned: string | null,
+  project: Project | null,
+  repo: string,
+  branch: string,
+): Promise<string> {
+  const pick = (b: string | null | undefined) => (b && b !== branch ? b : null);
+  return (
+    pick(planned) ??
+    pick(project?.defaultBaseBranch) ??
+    pick(await defaultBranchOf(repo).catch(() => null)) ??
+    // A session on the default branch itself: there is nothing else to name.
+    branch
+  );
 }
 
 export default function SessionBrowser({
@@ -417,7 +434,10 @@ export default function SessionBrowser({
           // The ORIGIN repo, per the Task contract. Only the association uses
           // the resolved root; the session still runs where it ran.
           repoPath: repoRoot ?? cwd,
-          baseBranch: act && place ? place.baseBranch : branch,
+          // What the task's work is measured against: never its own branch,
+          // which made the Files pane empty and hid the PR (prLookupBranch
+          // skips branch === base). The project's default, else the repo's.
+          baseBranch: await resumeBase(act && place ? place.baseBranch : null, project, repoRoot ?? cwd, branch),
           branch,
           // The session's own directory, NOT a worktree Albedo cut, and NOT
           // the resolved repo root -- resuming in the wrong folder would be a

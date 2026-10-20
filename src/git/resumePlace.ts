@@ -26,6 +26,7 @@ import { listProjects } from '../db/projects';
 import {
   GitError,
   createWorktree,
+  defaultBranchOf,
   git,
   gitOk,
   listWorktreesDetailed,
@@ -56,8 +57,11 @@ export interface ResumePlacePlan {
    * are pruned ("is already used by worktree at ...").
    */
   needsPrune: boolean;
-  /** Base branch to record on the task, so its unmerged count means something. */
-  baseBranch: string;
+  /**
+   * Base branch to record on the task, so its unmerged count means something.
+   * Null when none is known; never the task's own branch (see defaultBranchOf).
+   */
+  baseBranch: string | null;
 }
 
 /** Decide what to offer. `worktrees` is `git worktree list` for the repo. */
@@ -90,7 +94,7 @@ export function planResumePlace(o: {
     elsewhere: live?.path ?? null,
     main,
     needsPrune: o.worktrees.some((w) => w.prunable && (here(w) || w.branch === branch)),
-    baseBranch: o.baseBranch || branch,
+    baseBranch: o.baseBranch && o.baseBranch !== branch ? o.baseBranch : null,
   };
 }
 
@@ -123,6 +127,7 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
       baseBranch = project?.defaultBaseBranch ?? null;
     }
     if (!repoPath || !branch || !isValidRefName(branch)) return null;
+    if (!baseBranch || baseBranch === branch) baseBranch = await defaultBranchOf(repoPath);
     const exists = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoPath);
     const worktrees = await listWorktreesDetailed(repoPath);
     const first = worktrees[0];
@@ -154,7 +159,8 @@ export async function recreateWorktree(plan: ResumePlacePlan, cwd: string): Prom
   await createWorktree({
     repoPath: plan.repoPath,
     branch: plan.branch,
-    baseBranch: plan.baseBranch,
+    // Unused with useExistingBranch, but the option is required.
+    baseBranch: plan.baseBranch ?? plan.branch,
     path: cwd,
     useExistingBranch: true,
   });

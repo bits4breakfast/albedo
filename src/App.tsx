@@ -38,10 +38,10 @@ import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
 import { archiveProject, backfillProjectsFromTasks, listProjects } from './db/projects';
-import { deleteTask, listTasks } from './db';
+import { deleteTask, listTasks, repairSelfBasedTasks } from './db';
 import { endTaskEvents } from './capture/hookEvents';
 import type { BackfillResult } from './db/projects';
-import { composeWorktreePath, listBranches, listWorktrees, probePath, repoRootFor } from './git/worktree';
+import { composeWorktreePath, defaultBranchOf, listBranches, listWorktrees, probePath, repoRootFor } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
@@ -1045,6 +1045,12 @@ export default function App() {
         // spawning subprocesses. It is required, not optional-with-a-fallback,
         // because falling back to the raw path IS the bug it exists to fix.
         const result = await backfillProjectsFromTasks(repoRootFor);
+        if (cancelled) return;
+        // Tasks History saved with their own branch as base (before the fix in
+        // SessionBrowser). Best-effort: a failure leaves them as they were.
+        await repairSelfBasedTasks(defaultBranchOf).catch((err) =>
+          console.warn('[startup] could not repair task bases', err),
+        );
         if (cancelled) return;
         setBackfill(result);
         setStartupError(null);

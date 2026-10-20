@@ -31,6 +31,7 @@ import {
   findTaskBySessionId,
   findTaskByWorktreePath,
   hasTranscriptForSession,
+  repairSelfBasedTasks,
   getMessages,
   insertMessages,
   listTranscriptFiles,
@@ -1274,5 +1275,26 @@ describe('which task a transcript belongs to — session first, never a shared f
     // And nothing finds this task for a stranger's session in its folder.
     expect(await findTaskBySessionId('stranger')).toBeNull();
     expect(await findTaskByWorktreePath('/repo', { ownedOnly: true })).toBeNull();
+  });
+});
+
+describe('repairSelfBasedTasks — a base equal to the branch measures nothing', () => {
+  const base = { projectId: null, ownsWorktree: false, createdBranch: false };
+
+  it('gives a self-based task the repo default, and leaves real bases and default-branch tasks alone', async () => {
+    const broken = await createTask({ ...base, title: 'p', repoPath: '/repo', baseBranch: 'polishing', branch: 'polishing', worktreePath: '/repo' });
+    const fine = await createTask({ ...base, title: 'f', repoPath: '/repo', baseBranch: 'main', branch: 'feat', worktreePath: '/wt/f' });
+    const onMain = await createTask({ ...base, title: 'm', repoPath: '/repo', baseBranch: 'main', branch: 'main', worktreePath: '/repo' });
+
+    expect(await repairSelfBasedTasks(async () => 'main')).toBe(1);
+    expect((await getTask(broken.id))?.baseBranch).toBe('main');
+    expect((await getTask(fine.id))?.baseBranch).toBe('main');
+    expect((await getTask(onMain.id))?.baseBranch).toBe('main');
+  });
+
+  it('changes nothing when the default cannot be found', async () => {
+    const t = await createTask({ ...base, title: 'p', repoPath: '/gone', baseBranch: 'x', branch: 'x', worktreePath: '/gone' });
+    expect(await repairSelfBasedTasks(async () => { throw new Error('no repo'); })).toBe(0);
+    expect((await getTask(t.id))?.baseBranch).toBe('x');
   });
 });

@@ -680,6 +680,27 @@ export function basename(p: string): string {
 }
 
 /**
+ * The repo's default branch, as a local name (`main`), or null.
+ *
+ * What a task should be compared against when nobody chose a base: the
+ * branch `origin/HEAD` points at, else a local `main` or `master`. Never the
+ * task's own branch -- a base equal to the branch makes every "what did this
+ * task do" question answer "nothing" (and hides its PR), which is what a task
+ * resumed from History used to record.
+ */
+export async function defaultBranchOf(repoPath: string): Promise<string | null> {
+  const head = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], repoPath).catch(() => null);
+  const remote = head?.code === 0 ? head.stdout.trim() : '';
+  const fromRemote = remote.includes('/') ? remote.slice(remote.indexOf('/') + 1) : '';
+  if (fromRemote && isValidRefName(fromRemote)) return fromRemote;
+  for (const name of ['main', 'master']) {
+    const r = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${name}`], repoPath).catch(() => null);
+    if (r?.code === 0) return name;
+  }
+  return null;
+}
+
+/**
  * Local branches plus remote-tracking branches (so a task can be based off
  * `origin/main` without fetching first), and the currently checked-out branch.
  *
