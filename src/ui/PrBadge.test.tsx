@@ -39,20 +39,20 @@ describe('PrBadge without a PR', () => {
     expect(onCreatePr).toHaveBeenCalledTimes(1);
   });
 
-  it('offers nothing before gh has answered, on a detached HEAD, or with no commits', async () => {
+  it('offers nothing before gh has answered, for a branch git does not know, or with no commits', async () => {
     state.answered = false;
     const { rerender } = render(<PrBadge task={task} onCreatePr={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
 
     state.answered = true;
     vi.mocked(wt.commitsOnBranch).mockResolvedValueOnce(null);
-    rerender(<PrBadge task={{ ...task, worktreePath: '/detached' }} onCreatePr={() => {}} />);
+    rerender(<PrBadge task={{ ...task, branch: 'gone' }} onCreatePr={() => {}} />);
     await waitFor(() => expect(wt.commitsOnBranch).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
 
     vi.mocked(wt.commitsOnBranch).mockResolvedValueOnce(0);
-    rerender(<PrBadge task={{ ...task, worktreePath: '/empty' }} onCreatePr={() => {}} />);
-    await waitFor(() => expect(wt.commitsOnBranch).toHaveBeenCalledWith('/empty', 'main'));
+    rerender(<PrBadge task={{ ...task, branch: 'empty' }} onCreatePr={() => {}} />);
+    await waitFor(() => expect(wt.commitsOnBranch).toHaveBeenCalledWith('/r', 'main', 'empty'));
     expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
   });
 });

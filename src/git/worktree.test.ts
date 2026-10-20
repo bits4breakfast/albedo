@@ -40,6 +40,7 @@ import {
   setGitRunner,
   setPathExistsProbe,
   shortenRef,
+  commitsOnBranch,
   fetchAll,
   guessBaseBranch,
   localCheckoutFor,
@@ -1429,5 +1430,22 @@ describe('guessBaseBranch', () => {
   it('is null when nothing can be compared', async () => {
     install(() => ({ code: 128, stdout: '', stderr: 'bad' }));
     expect(await guessBaseBranch('/repo', 'x', ['main'])).toBeNull();
+  });
+});
+
+describe('commitsOnBranch', () => {
+  it('counts the branch against its base in the repository, wherever it is checked out', async () => {
+    const calls = install(({ args }) => (args[0] === 'rev-list' ? { code: 0, stdout: '18\n', stderr: '' } : undefined));
+    expect(await commitsOnBranch('/repo', 'main', 'fix-import')).toBe(18);
+    expect(calls.map((c) => c.args)).toEqual([
+      ['rev-parse', '--verify', '--quiet', 'refs/heads/fix-import'],
+      ['rev-list', '--count', 'main..refs/heads/fix-import', '--'],
+    ]);
+    expect(calls.every((c) => c.cwd === '/repo')).toBe(true);
+  });
+
+  it('is null for a branch git does not have', async () => {
+    install(({ args }) => (args[0] === 'rev-parse' ? { code: 1, stdout: '', stderr: '' } : undefined));
+    expect(await commitsOnBranch('/repo', 'main', 'gone')).toBeNull();
   });
 });

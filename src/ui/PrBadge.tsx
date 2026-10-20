@@ -32,7 +32,7 @@ export interface PrBadgeProps {
   /**
    * Asks Claude to open the PR, as the Files pane's Create PR does. Offered in
    * the badge's place once gh has answered that there is none and the branch
-   * has commits of its own; never on a detached HEAD.
+   * has commits of its own -- counted on the branch, wherever it is checked out.
    */
   onCreatePr?: () => void;
 }
@@ -52,13 +52,13 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
     setOwn(null);
     if (!askable || !task) return;
     let live = true;
-    void commitsOnBranch(task.worktreePath, task.baseBranch).then((n) => {
+    void commitsOnBranch(task.repoPath, task.baseBranch, task.branch).then((n) => {
       if (live) setOwn(n);
     });
     return () => {
       live = false;
     };
-  }, [askable, task?.id, task?.worktreePath, task?.baseBranch, task?.lastActivityAt]);
+  }, [askable, task?.id, task?.repoPath, task?.baseBranch, task?.branch, task?.lastActivityAt]);
 
   if (task && !pr && askable && own !== null && own > 0) {
     return (

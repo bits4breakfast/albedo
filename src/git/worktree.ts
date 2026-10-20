@@ -563,15 +563,17 @@ export function revRange(base: string, head = 'HEAD'): string {
 }
 
 /**
- * Commits on the checked-out branch that its base lacks: what a PR from it
- * would hold. Null on a detached HEAD (no branch to open a PR from) or when
- * git cannot say. Never throws.
+ * Commits on `branch` that its base lacks: what a PR from it would hold.
+ * Asked of the repository, not of a folder: a PR comes from the branch,
+ * wherever it is checked out -- the task's worktree, the main checkout, or
+ * nowhere. Null when the branch does not exist or git cannot say. Never throws.
  */
-export async function commitsOnBranch(worktreePath: string, baseBranch: string): Promise<number | null> {
+export async function commitsOnBranch(repoPath: string, baseBranch: string, branch: string): Promise<number | null> {
   try {
-    const head = await git(['symbolic-ref', '--quiet', 'HEAD'], worktreePath);
-    if (head.code !== 0) return null;
-    const r = await git(['rev-list', '--count', revRange(baseBranch), '--'], worktreePath);
+    assertValidRefName(branch, 'branch');
+    const ref = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoPath);
+    if (ref.code !== 0) return null;
+    const r = await git(['rev-list', '--count', revRange(baseBranch, `refs/heads/${branch}`), '--'], repoPath);
     return r.code === 0 ? parseCommitCount(r.stdout) : null;
   } catch {
     return null;

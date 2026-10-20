@@ -61,7 +61,7 @@ export function createPrPrompt(task: GitTask): string {
     '- If there are uncommitted changes, ask me whether they belong in it before you commit anything.',
     '- Push the branch first if the remote does not have all of it (set the upstream if it has none).',
     `- Write the title and description from every commit on the branch and the diff against \`${task.baseBranch}\`, not just the latest commit: what changed and why, and how it was checked. Follow the repository's PR template if it has one.`,
-    `- Create it with \`gh pr create --base ${task.baseBranch}\`, and give me the URL.`,
+    `- Create it with \`gh pr create --base ${task.baseBranch} --head ${task.branch}\`, and give me the URL.`,
   ].join('\n'));
 }
 
