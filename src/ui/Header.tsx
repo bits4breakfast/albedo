@@ -47,9 +47,8 @@ export interface HeaderProps {
   theme: ThemeChoice;
   onThemeChange: (next: ThemeChoice) => void;
   /**
-   * The project tabs, when there are two or more projects. They take the
-   * brand's place: the window is already called Albedo, and the tabs are the
-   * level above everything below the bar, so this is where they belong.
+   * The project tabs, when there are two or more projects. They lead the
+   * bar: the tabs are the level above everything below it.
    */
   tabs?: ReactNode;
   /** Select a task that is waiting on you (the next one, on repeat clicks). */
@@ -134,18 +133,8 @@ export default function Header({
 
   return (
     <header className="header" data-tauri-drag-region>
-      {/* The app's own icon stands for the name: the window is already called
-          Albedo, so the room goes to the project tabs after it. Served from
-          public/, a copy of src-tauri/icons/64x64.png. */}
-      <img
-        className="header-icon"
-        src="/app-icon-64.png"
-        alt="Albedo"
-        width={22}
-        height={22}
-        draggable={false}
-        data-tauri-drag-region
-      />
+      {/* No icon and no name: the window is already Albedo. The bar starts
+          with the project tabs (absent with a single project). */}
       {tabs}
 
       <span className="header-spacer" data-tauri-drag-region />

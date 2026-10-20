@@ -460,14 +460,7 @@ button {
   border-bottom: 1px solid var(--border);
 }
 
-/* The app icon, in place of the name. Part of the drag region. */
-.header-icon {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  user-select: none;
-}
+
 
 .header-spacer { flex: 1 1 auto; height: 100%; }
 
