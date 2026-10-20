@@ -343,6 +343,38 @@ export function TranscriptPane({
 
   const items = useMemo(() => groupRows(messages), [messages]);
 
+  /*
+     Between Send and anything on screen there is a gap: Claude Code writes
+     your message to the transcript a moment after it takes it, and its reply
+     only once the reply is complete. Two cues fill it, both from Albedo's own
+     state and the transcript, never from the terminal: your message shown at
+     once, marked as sending, until the transcript has it; and a "Working"
+     line while the task runs, timed from the latest activity.
+  */
+  const [echo, setEcho] = useState<{ text: string; at: number } | null>(null);
+  useEffect(() => setEcho(null), [taskId]);
+  useEffect(() => {
+    if (!echo) return;
+    // Clock skew between this machine's two clocks is nil, but a second of
+    // slack keeps a row written in the same instant from being missed.
+    if (messages.some((m) => m.role === 'user' && m.agentId === null && m.ts >= echo.at - 1000)) setEcho(null);
+  }, [messages, echo]);
+  useEffect(() => {
+    if (!echo) return;
+    const t = window.setTimeout(() => setEcho(null), ECHO_MAX_MS);
+    return () => window.clearTimeout(t);
+  }, [echo]);
+  const working = status === 'running' || echo !== null;
+  const lastTs = messages.length > 0 ? (messages[messages.length - 1] as Message).ts : 0;
+  const since = Math.max(lastTs, echo?.at ?? 0);
+  const onSent = useCallback(
+    (body: string) => {
+      setEcho({ text: body, at: Date.now() });
+      jumpToEnd();
+    },
+    [jumpToEnd],
+  );
+
   if (inactive) {
     return <div className="tx-pane tx-pane-empty">Select a task to read its transcript</div>;
   }
@@ -377,6 +409,16 @@ export function TranscriptPane({
               <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
             ),
           )}
+
+          {echo ? (
+            <div className="tx-row tx-row-user tx-row-echo" aria-live="polite">
+              <div className="tx-gutter">You</div>
+              <div className="tx-content">
+                <div className="tx-echo-text">{echo.text}</div>
+              </div>
+            </div>
+          ) : null}
+          {working ? <WorkingLine since={since} sending={echo !== null} /> : null}
         </div>
 
         {!following ? (
@@ -388,12 +430,37 @@ export function TranscriptPane({
 
       <QueuedStrip sessionId={sessionId} status={status} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
-      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} accessory={composerAccessory} /> : null}
+      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={onSent} accessory={composerAccessory} /> : null}
     </div>
   );
 }
 
 export default TranscriptPane;
+
+/** How long a sent message waits to appear in the transcript before its echo goes. */
+const ECHO_MAX_MS = 30_000;
+
+/** "Working · 14s", ticking: the session is busy and has not written yet. */
+export function WorkingLine({ since, sending }: { since: number; sending: boolean }): ReactNode {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const s = Math.max(0, Math.round((now - since) / 1000));
+  const elapsed = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  return (
+    <div className="tx-working" role="status">
+      <span className="tx-working-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      {sending ? 'Sending' : 'Working'}
+      {since > 0 ? <span className="tx-working-time"> · {elapsed}</span> : null}
+    </div>
+  );
+}
 
 /**
  * Whether a key can be taken without stealing it from something focused:
@@ -537,7 +604,8 @@ export function Composer({
   accessory,
 }: {
   taskId: number;
-  onSent: () => void;
+  /** Called with what Claude Code was sent. */
+  onSent: (body: string) => void;
   status?: TaskStatus | null;
   /** Beside Send (the model picker). */
   accessory?: ReactNode;
@@ -624,7 +692,7 @@ export function Composer({
       requestAnimationFrame(grow);
       // A watcher that recognises its text in what was sent is done.
       insertWatchersRef.current = insertWatchersRef.current.filter((w) => !w(body));
-      onSent();
+      onSent(body);
     },
     [grow, onSent],
   );
@@ -1034,6 +1102,8 @@ export function Composer({
         >
           {awaiting || held ? (
             '…'
+          ) : busy ? (
+            <span className="tx-spinner" role="img" aria-label="Sending" />
           ) : (
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
