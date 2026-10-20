@@ -593,11 +593,14 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .tasklist { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; outline: none; }
 
 .tasklist-head {
-  flex: 0 0 auto;
+  /* Level with the task bar beside it: the same height (its 40px plus the
+     card's 1px edges) and centred, so New Task and the task title share one
+     centre line. Its left edge is the rows' highlight edge (8px). */
+  flex: 0 0 calc(var(--tab-h) + 2px);
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 10px 4px 12px;
+  padding: 0 8px;
 }
 
 /* Scope label AND the way to change scope. Quiet by default: this is an
@@ -655,11 +658,14 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .placeholder p { margin: 0; max-width: 42ch; }
 
 /* A Title Case label over a status glyph: "Needs You 1", "Running 2", "Idle 3". */
+.group-label > .status-dot { margin: 0 3.5px; }
 .group-label {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 8px 6px;
+  /* Same left geometry as a row (10px padding, a 16px status column), so the
+     group's dot sits on the rows' dots and its name on their titles. */
+  padding: 14px 8px 6px 10px;
   font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--faint);
