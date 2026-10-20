@@ -12,6 +12,7 @@ settings, hooks, skills, MCP servers and subscription all apply unchanged.
 
 ![Albedo's main window: tasks grouped by state on the left, the selected task's transcript in the middle, and the files it changed on the right](docs/screenshots/main-window.png)
 
+- [Opinionated by design](#opinionated-by-design)
 - [Requirements](#requirements)
 - [Install](#install)
 - [Getting started](#getting-started)
@@ -20,6 +21,34 @@ settings, hooks, skills, MCP servers and subscription all apply unchanged.
 - [Good to know](#good-to-know)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Troubleshooting](#troubleshooting)
+
+## Opinionated by design
+
+Albedo is built around one way of working, and it does not try to support
+every other one. Know these choices before you adopt it.
+
+- **Claude Code only.** Albedo runs the `claude` CLI and reads its session
+  files. It does not run other coding agents, and it does not call the
+  Anthropic API on its own.
+- **One task, one git worktree.** Parallel tasks stay out of each other's way
+  because each has its own branch and folder. Albedo creates, moves and
+  cleans up those worktrees for you. Repositories that are not in git cannot
+  be used.
+- **GitHub for pull requests.** The PR badge, its checks and the merged
+  follow-up read from GitHub through `gh`. Albedo works with other git hosts,
+  but without any pull request status.
+- **PHP for code intelligence.** Go to Declaration and Find Usages are
+  type-aware only for PHP, through PHPantom. Every other language gets the
+  same commands through text search (git grep), and there is no completion
+  or diagnostics for any language.
+- **A cockpit, not an IDE.** Albedo has an editor for reading changes and
+  making small fixes. Your own editor stays where real editing happens.
+- **macOS first.** It is used daily on macOS. Linux builds and is tested in
+  CI, and Windows runs it as a Linux app under WSL2.
+
+These describe what Albedo does today, not a policy. Support for other agents,
+hosts or languages is welcome as a contribution; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Requirements
 

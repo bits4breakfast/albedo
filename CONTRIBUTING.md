@@ -28,6 +28,24 @@ please read this before you start.
 By contributing, you agree that your contribution is licensed under the
 [MIT license](LICENSE).
 
+## Beyond Albedo's current choices
+
+Albedo today runs Claude Code, works on GitHub, and gives type-aware
+navigation only for PHP (see "Opinionated by design" in the
+[README](README.md)). Those are where it started, not where it has to stay.
+Proposals for other languages, git hosts or coding agents are welcome. Open
+an issue first, because each one touches a boundary that has to stay clean:
+
+- **Another language's navigation** fits beside `src/lsp/phpantom.ts`: a
+  language server that answers Go to Declaration and Find Usages, optional,
+  with git grep (`src/git/phpRefs.ts`) as the fallback.
+- **Another git host** fits beside `src/gh/`: pull request status read
+  through that host's CLI, degrading to "no badge" when it is missing.
+- **Another coding agent** is the largest change. Everything structured comes
+  from Claude Code's transcript files through one adapter
+  (`src/capture/adapter.ts`), and a second agent needs its own adapter
+  producing the same `Message` rows. The terminal output stays unparsed.
+
 ## A good pull request
 
 - One change, with a description of what it does for someone using the app
@@ -71,11 +89,11 @@ run the app and try the change.
 - [CLAUDE.md](CLAUDE.md): the architecture rules and why they exist. The one
   that matters most: the terminal is execution only and its output is never
   parsed. Structured data comes from the transcript files on disk.
-- [docs/INTERFACES.md](docs/INTERFACES.md): the module contracts.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the module map, the data
+  flow, and the design decisions behind them.
 - [docs/TRANSCRIPT-FORMAT.md](docs/TRANSCRIPT-FORMAT.md): the transcript
   format, which only `src/capture/adapter.ts` may know.
-- [docs/STATUS.md](docs/STATUS.md) and [docs/TODO.md](docs/TODO.md): where
-  the work is, and what comes next.
+- [docs/TODO.md](docs/TODO.md): what comes next.
 - [docs/LINUX-WSL.md](docs/LINUX-WSL.md): running and testing on Linux and
   under WSL2.
 
