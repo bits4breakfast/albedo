@@ -66,6 +66,7 @@
   --track: #e4e4e8;        /* meter/gauge track, shared with the gauges panel */
   --border: #e4e4e8;       /* decorative hairlines */
   --card-edge: #ebebef;    /* the content card's outline: one step softer than --border (decorative) */
+  --subcard: #ffffff;      /* a card inside the card (Files sections): every text tier clears more on it than on --panel-raised */
   --card-shadow: 0 1px 2px rgb(20 22 40 / 0.05), 0 0 1px rgb(20 22 40 / 0.04);
   --border-mid: #c9c9d0;   /* button, card and dialog edges (decorative: the label identifies the control) */
   --border-strong: #7a7d87;/* load-bearing edges: inputs, menus      3.30 on --panel-raised */
@@ -225,6 +226,7 @@
     --track: #24262c;
     --border: #24262c;
     --card-edge: #202227;
+    --subcard: #17181c;      /* one step above --panel; still darker than --panel-raised, so text clears more */
     --card-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
     --border-mid: #34363e;
     --border-strong: #70737e;/* 3.27 on --panel-raised, 3.20 on --track */
@@ -308,6 +310,7 @@
   --track: #24262c;
   --border: #24262c;
   --card-edge: #202227;
+  --subcard: #17181c;      /* one step above --panel; still darker than --panel-raised, so text clears more */
   --card-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
   --border-mid: #34363e;
   --border-strong: #70737e;/* 3.27 on --panel-raised, 3.20 on --track */
@@ -1999,7 +2002,8 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .read-area > .pane-transcript { flex: 1 1 0; min-width: 0; }
 
 .pane-files {
-  border-left: 1px solid var(--card-edge);
+  /* No divider: the Files sections are cards of their own (touched.css),
+     and their spacing separates the column from the transcript. */
   background: var(--panel);
 }
 

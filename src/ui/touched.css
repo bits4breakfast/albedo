@@ -167,7 +167,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-bottom: 18px;
+  padding: 2px 8px 12px;
 }
 
 .tf-row {
@@ -176,9 +176,8 @@
   align-items: baseline;
   column-gap: 8px;
   width: 100%;
-  padding: 3px 8px 3px 11px;
+  padding: 4px 12px;
   text-align: left;
-  border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
 
@@ -396,14 +395,24 @@
 
 /* --- sections -------------------------------------------------------------- */
 
+/* Each section is a card of its own on the pane: rows need no rules between
+   them, and the gap between cards does what a section rule did. */
+.tf-section {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  background: var(--subcard);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
 .tf-section-head {
   display: flex;
   align-items: baseline;
   gap: 6px;
   width: 100%;
-  padding: 8px 8px 4px;
-  color: var(--muted);
-  font-size: var(--fs-xs);
+  padding: 10px 12px 6px;
+  color: var(--text);
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-align: left;
 }
@@ -415,7 +424,7 @@ button.tf-section-head:hover { color: var(--text); }
   font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
-.tf-section + .tf-section { border-top: 1px solid var(--border); }
+
 
 /* --- review comments ------------------------------------------------------ */
 
@@ -516,13 +525,15 @@ button.tf-section-head:hover { color: var(--text); }
    -------------------------------------------------------------------------- */
 
 .tf-git {
+  /* No rule above it, like the rest of the pane; its one action sits at the
+     right, as a panel's footer button does. */
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 0 8px 8px;
   background: var(--panel);
-  border-top: 1px solid var(--border);
 }
 
 /* Branch first, then the state. When it does not fit on one line it wraps
