@@ -41,8 +41,9 @@
  *    live key in the terminal -- Claude Code's own transcript toggle -- and
  *    stealing it would break the thing this app wraps.
  *
- * `⇧⌘F` (Find in Files) and `⇧⌘P` (Push) follow the same two rules for the
- * same reasons -- Ctrl+P is the terminal's previous-command key -- and `⌥F12`
+ * `⇧⌘F` (Find in Files), `⇧⌘P` (Push) and `⌘U` (Attach) follow the same two
+ * rules for the same reasons -- Ctrl+P and Ctrl+U are the terminal's
+ * previous-command and kill-line keys -- and `⌥F12`
  * (the shell drawer, PhpStorm's Terminal) is read from `code` too.
  *
  * ## Project tabs: ⌥1–9 (⌥⌘1–9 too), and Alt+1–9 off a Mac
@@ -83,6 +84,7 @@ export type Combo =
   | 'mod+alt+o'
   | 'mod+shift+f'
   | 'mod+shift+p'
+  | 'mod+u'
   | 'alt+f12';
 
 /**
@@ -122,6 +124,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'shift shift', keys: '⇧⇧', description: 'Search Everywhere' },
   { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
+  { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
   { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Comment on the Selected Lines' },
@@ -180,6 +183,10 @@ export function comboOf(
   // push, and Command only, because Ctrl+P belongs to the terminal.
   if (e.code === 'KeyP' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+p', digit: null };
+  }
+  // Attach files. Command only: Ctrl+U is the terminal's kill-line.
+  if (e.code === 'KeyU' && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+u', digit: null };
   }
   // PhpStorm's Terminal tool window. Option with a function key composes
   // nothing, so the Alt rule has no reason to apply; matched on `code` like

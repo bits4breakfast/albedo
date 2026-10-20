@@ -9,7 +9,7 @@
  */
 
 import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
-import { onComposerInsert } from './composerBridge';
+import { onComposerInsert, onAttachRequest } from './composerBridge';
 import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
@@ -20,7 +20,7 @@ import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
 import { onCaptureUpdate, onQueueChange, queuedFor, type QueuedEntry } from '../../capture';
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
-import { imageFromClipboard, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
+import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import PromptCard from './PromptCard';
@@ -775,7 +775,8 @@ export function Composer({
         else if (p.type === 'leave') setDropping(false);
         else if (p.type === 'drop') {
           setDropping(false);
-          insertPaths(p.paths);
+          // A screenshot thumbnail's file is deleted moments after the drop.
+          void Promise.all(p.paths.map((path) => keepDroppedFile(path))).then(insertPaths);
         }
       })
       .then((un) => {
@@ -835,6 +836,32 @@ export function Composer({
         });
     },
     [insertPaths, grow],
+  );
+
+  /**
+   * Attach files from a picker -- the button, or ⌘U. They go in as paths, as
+   * a drop does; the picker puts the chosen files in the fs scope.
+   */
+  const attachFiles = useCallback(async () => {
+    if (inFlightRef.current) return;
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const picked = await open({ multiple: true, directory: false, title: 'Attach Files' });
+      const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
+      insertPaths(paths);
+    } catch (err) {
+      setNotice(`Could not open the file picker: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [insertPaths]);
+
+  useEffect(
+    () =>
+      onAttachRequest((id) => {
+        if (id !== taskId) return false;
+        void attachFiles();
+        return true;
+      }),
+    [taskId, attachFiles],
   );
 
   /** Take the held message back, so a prompt nobody answers is not a trap. */
@@ -984,6 +1011,18 @@ export function Composer({
         }}
       />
       <div className="tx-composer-foot">
+        <button
+          type="button"
+          className="tx-composer-attach"
+          onClick={() => void attachFiles()}
+          disabled={awaiting || held}
+          title="Attach Files (⌘U). Images reach Claude as pictures"
+          aria-label="Attach files"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" />
+          </svg>
+        </button>
         <div className="tx-composer-accessory">{accessory}</div>
         <button
           type="button"

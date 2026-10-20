@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { imageFromClipboard, pastedImageName, pastedImagePath, withInsertedPath } from './pasteImage';
+import { imageFromClipboard, pastedImageName, pastedImagePath, withInsertedPath, isEphemeralPath } from './pasteImage';
 
 const item = (kind: string, type: string, file: File | null = null) => ({ kind, type, getAsFile: () => file });
 
@@ -55,5 +55,13 @@ describe('withInsertedPath', () => {
     expect(withInsertedPath('', '/a.png')).toBe('/a.png ');
     expect(withInsertedPath('look at', '/a.png')).toBe('look at /a.png ');
     expect(withInsertedPath('look at ', '/a.png')).toBe('look at /a.png ');
+  });
+});
+
+describe('isEphemeralPath', () => {
+  it('knows the screenshot thumbnail\'s drag source is about to vanish', () => {
+    expect(isEphemeralPath('/var/folders/ld/982h/T/TemporaryItems/NSIRD_screencaptureui_x/Screenshot 1.png')).toBe(true);
+    expect(isEphemeralPath('/private/var/folders/ld/T/a.png')).toBe(true);
+    expect(isEphemeralPath('/Users/m/Desktop/Screenshot 1.png')).toBe(false);
   });
 });

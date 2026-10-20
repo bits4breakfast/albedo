@@ -91,6 +91,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true }))?.combo,
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'P', code: 'KeyP', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'u', code: 'KeyU', metaKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);

@@ -266,6 +266,21 @@
   padding: 4px 8px 8px 10px;
 }
 .tx-composer-accessory { display: flex; align-items: center; min-width: 0; }
+/* Attach: a "+" inside the box at its bottom left, as on claude.ai; the
+   controls that act on the message stay at the right, by Send. Quiet like
+   the model picker until hovered. */
+.tx-composer-attach {
+  flex: none;
+  margin-right: auto;
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.tx-composer-attach:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
+.tx-composer-attach:disabled { color: var(--faint); }
 /* The model reads as text with a chevron, as on claude.ai, not as a boxed
    field: it is a setting of the message, not a form control beside it. */
 .tx-composer-accessory .model-pick-select {

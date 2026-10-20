@@ -32,7 +32,7 @@ import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
-import { onComposerInsert } from './ui/transcript/composerBridge';
+import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
@@ -1457,6 +1457,14 @@ export default function App() {
     'mod+alt+o': () => toggleQuickOpen('symbol'),
     'mod+shift+f': toggleFind,
     'mod+shift+p': () => void pushSelected(),
+    // The message box is in the transcript: show it, then ask it to attach.
+    'mod+u': () => {
+      if (!selected) return;
+      const id = selected.id;
+      setRightTab('transcript');
+      setMode((m) => (m === 'pty' ? 'split' : m));
+      if (!requestAttach(id)) window.setTimeout(() => requestAttach(id), 150);
+    },
     'alt+f12': () => setShellOpen((o) => !o),
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),

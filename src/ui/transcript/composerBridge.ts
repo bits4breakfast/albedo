@@ -38,3 +38,27 @@ export function onComposerInsert(cb: Listener): () => void {
     listeners.delete(cb);
   };
 }
+
+/** "Attach files" asked of a task's composer (⌘U). */
+type AttachListener = (taskId: number) => boolean | void;
+const attachListeners = new Set<AttachListener>();
+
+/** Ask the task's composer to open its file picker. False when none is mounted. */
+export function requestAttach(taskId: number): boolean {
+  let taken = false;
+  for (const cb of [...attachListeners]) {
+    try {
+      if (cb(taskId) === true) taken = true;
+    } catch {
+      /* as above */
+    }
+  }
+  return taken;
+}
+
+export function onAttachRequest(cb: AttachListener): () => void {
+  attachListeners.add(cb);
+  return () => {
+    attachListeners.delete(cb);
+  };
+}
