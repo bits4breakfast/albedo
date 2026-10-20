@@ -1096,6 +1096,9 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 
 .read-area { border-left: 1px solid var(--border); }
 .panes[data-orientation='column'] .read-area { border-left: none; border-top: 1px solid var(--border); }
+/* The reading area's edge separates it from the terminal. With the terminal
+   hidden it sat 1px from the sidebar's own border: two hairlines. */
+.panes[data-mode='transcript'] .read-area { border-left: none; border-top: none; }
 
 /* --------------------------------------------------------------------------
    Terminal

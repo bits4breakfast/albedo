@@ -1792,7 +1792,7 @@ export default function App() {
             />
           </div>
 
-          <div className="panes" data-orientation={orientation} ref={panesRef}>
+          <div className="panes" data-orientation={orientation} data-mode={mode} ref={panesRef}>
             {/* Kept mounted in every mode: unmounting it would kill live ptys. */}
             <section className="pane pane-pty" style={primaryStyle} hidden={!showPty}>
               <div className="pane-head">

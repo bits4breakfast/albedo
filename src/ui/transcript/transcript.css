@@ -1124,6 +1124,13 @@
   font-size: var(--fs-xs);
   text-align: left;
 }
+/* One hairline where two edges meet, never two: a gap row touching the file
+   head, a hunk head, or the box's own bottom edge drew a 2px double line. */
+.tx-d-head + .tx-d-gap,
+.tx-d-head + * > .tx-d-gap:first-child { border-top: none; }
+.tx-d-gap + .tx-d-hunk-head,
+.tx-d-gap + * > .tx-d-hunk-head:first-child { border-top: none; }
+.tx-d-gap:last-child { border-bottom: none; }
 .tx-d-gap:hover { background: var(--panel-raised); color: var(--muted); }
 .tx-d-gap-static { cursor: default; }
 .tx-d-gap-static:hover { background: var(--panel); color: var(--faint); }
