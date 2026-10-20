@@ -20,6 +20,7 @@ import { onCaptureUpdate, windowUsage } from '../capture';
 import type { WindowUsage } from '../capture';
 import { onStatusSnapshot, planUsage, type PlanWindow } from '../capture/hookEvents';
 import { exactTokens } from './gauges/format';
+import './statusbar.css';
 
 /** The token counts are tooltip detail: re-read at most this often. */
 const TOKENS_MIN_INTERVAL_MS = 15_000;

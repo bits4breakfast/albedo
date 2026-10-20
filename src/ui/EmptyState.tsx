@@ -22,6 +22,7 @@
 import type { ReactNode } from 'react';
 import type { Project } from '../types';
 import { homeRelative } from './icons';
+import './emptystate.css';
 
 export interface EmptyStateProps {
   /** How many projects exist AT ALL — not how many tasks, not how many rows. */

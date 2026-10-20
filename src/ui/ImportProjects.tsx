@@ -28,6 +28,9 @@ import type { Project } from '../types';
 import type { UnclaimedRepo } from '../db/projects';
 import { createProject, deriveProjectDefaults } from '../db/projects';
 import { relativeTime } from './TaskList';
+import { homeRelative } from './icons';
+import './sessionbrowser.css';
+import './importprojects.css';
 
 export interface ImportProjectsProps {
   open: boolean;
@@ -44,10 +47,6 @@ interface Draft {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function homeRelative(path: string): string {
-  return path.replace(/^\/Users\/[^/]+/, '~');
 }
 
 export default function ImportProjects({ open, repos, onClose, onImported }: ImportProjectsProps) {

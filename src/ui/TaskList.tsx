@@ -13,6 +13,7 @@ import { useShortcuts } from './shortcuts';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { useBranchSync } from '../git/branchSync';
+import './tasklist.css';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -26,7 +27,7 @@ export interface TaskListProps {
   onSelect: (id: number) => void;
   onNew: () => void;
   /**
-   * Opens the archive confirmation for a task. Optional so the frozen
+   * Opens the archive confirmation for a task. Optional so the
    * four-prop signature still type-checks; when absent the affordance is
    * simply not rendered.
    */

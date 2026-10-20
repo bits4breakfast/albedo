@@ -1,0 +1,258 @@
+/* --------------------------------------------------------------------------
+   Session browser (M4)
+
+   A corpus, not a dropdown: 115 conversations over 41 days, searched across
+   message bodies. Sized to show many rows at once, because the task is
+   recognising the right conversation rather than picking from a short list.
+   -------------------------------------------------------------------------- */
+
+.sb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  background: var(--overlay);
+}
+
+.sb-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(880px, 100%);
+  max-height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+  overflow: hidden;
+}
+
+.sb-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sb-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.sb-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text);
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  user-select: text;
+}
+.sb-search:focus { border-color: var(--accent); outline: none; background: var(--panel-inset); }
+.sb-search::placeholder { color: var(--faint); }
+
+.sb-banner { border-bottom: 1px solid var(--banner-border); }
+
+.sb-list { flex: 1 1 auto; overflow-y: auto; min-height: 120px; padding: 6px; }
+
+.sb-empty { padding: 28px 14px; text-align: center; color: var(--faint); font-size: var(--fs-sm); }
+
+.sb-disk-head {
+  margin-top: 6px;
+  padding: 12px 12px 6px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+.sb-disk-note { color: var(--faint); font-weight: 400; }
+.sb-disk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+}
+.sb-disk-row:hover { background: var(--panel-hover); }
+.sb-disk-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-disk-meta {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-disk-row .btn { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+
+.sb-row {
+  display: grid;
+  grid-template-columns: minmax(0, 170px) minmax(0, 1fr) auto;
+  gap: 2px 14px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border-radius: var(--radius);
+}
+
+/* Leads the row: 87 distinct branches across 115 sessions, against 13 cwds. */
+.sb-row-branch {
+  grid-column: 1;
+  grid-row: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.75;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* master / HEAD identify nothing, so they stop looking like an identifier and
+   let the eye fall through to the prompt and the files. */
+.sb-row-branch[data-weak='true'] { color: var(--faint); }
+.sb-row:hover { background: var(--panel-hover); }
+.sb-row[data-selected='true'] { background: var(--panel-raised); }
+
+.sb-row-title {
+  grid-column: 2;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-row[data-selected='true'] .sb-row-title { color: var(--text-strong); }
+
+.sb-row-age {
+  grid-column: 3;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-row-sub {
+  grid-column: 2 / span 2;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-row-files {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.sb-row-meta {
+  grid-column: 2 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+
+.sb-row-cwd {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-row-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
+/* A pill. Neutral by default (a hairline, the row's own ground). */
+.sb-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  border: 1px solid var(--border-mid);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.sb-chip[data-tone='warn'] { color: var(--banner-text); background: var(--banner-bg); border-color: transparent; }
+
+.sb-detail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--panel-chrome);
+  border-top: 1px solid var(--border);
+}
+
+.sb-detail-path {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.sb-warn {
+  font-size: var(--fs-sm);
+  color: var(--banner-text);
+  background: var(--banner-bg);
+  border: 1px solid var(--banner-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.sb-actions { display: flex; align-items: center; gap: 8px; }
+
+.sb-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Key hints along the foot. Only what the dialog actually binds. */
+.sb-foot {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 16px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.sb-foot > span { display: inline-flex; gap: 6px; align-items: center; }

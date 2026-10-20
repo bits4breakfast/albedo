@@ -1,0 +1,46 @@
+.term {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-inset);
+}
+
+.term[hidden] { display: none; }
+
+.term-surface { flex: 1 1 auto; min-height: 0; padding: 4px 2px 0 6px; overflow: hidden; }
+
+/* xterm's own sizing: let it fill the surface. */
+.term-surface .xterm { height: 100%; }
+.term-surface .xterm-viewport { background: transparent !important; }
+
+.term-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--muted);
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+.term-status[data-tone='error'] { color: var(--danger); }
+.term-status[data-tone='exited'] { color: var(--warn); }
+
+.term-starting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  pointer-events: none;
+}
+
+/* Terminated-pane status strip: text on the left, the way back on the right. */
+.term-status-text { flex: 1 1 auto; min-width: 0; }
+.term-status-calm { color: var(--muted); }
+.term-status .btn { flex: 0 0 auto; height: 24px; }

@@ -1,0 +1,18 @@
+/* One component, two shapes. The copy and the CTA come from EmptyState.tsx;
+   this only decides how much room they get. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
+.empty-state[data-variant='list'] { padding: 18px 8px; align-items: flex-start; }
+.empty-state[data-variant='pane'] { padding: 24px; align-items: center; text-align: center; }
+
+.empty-state-headline { margin: 0; color: var(--muted); font-size: var(--fs-md); }
+.empty-state-body { margin: 0; max-width: 46ch; }
+.empty-state strong { color: var(--text); font-weight: 600; }
+.empty-state .btn { margin-top: 8px; }

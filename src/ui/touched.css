@@ -35,10 +35,10 @@
   /* ------------------------------------------------------------------ *
      The amber family — the local palette for "git changed this file, the
      transcript never mentioned it". Derived from tokens with color-mix()
-     (baseline for this repo, see the CSS baseline note in INTERFACES.md), so
+     (baseline for this repo, see "Theming" in docs/ARCHITECTURE.md), so
      a per-theme --warn flows through without a second definition here.
 
-     Per docs/INTERFACES.md the base block carries the LIGHT values and the
+     Per docs/ARCHITECTURE.md the base block carries the LIGHT values and the
      two blocks below override for dark; nothing is defined only in a dark
      block. The ALPHAS are per-theme because they are not transferable: an
      overlay on near-black raises the ground's luminance, an overlay on

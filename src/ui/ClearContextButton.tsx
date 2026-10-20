@@ -14,6 +14,7 @@ import type { Task } from '../types';
 import { hasLivePty, onPtyPresenceChange, submitPty } from './Terminal';
 import { contextReadout, contextTitle } from './StatusDot';
 import './gauges/gauges.css';
+import './clearcontext.css';
 
 /**
  * Past this share of the window, Compact and Clear are offered beside the

@@ -38,6 +38,8 @@ import {
 import { relativeTime } from './TaskList';
 import { displayName, wrapForTooltip } from './text';
 import './worktree.css';
+import { homeRelative } from './icons';
+import './sessionbrowser.css';
 
 /** Typing in the search box should not fire a query per keystroke. */
 const SEARCH_DEBOUNCE_MS = 220;
@@ -75,10 +77,6 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function homeRelative(path: string): string {
-  return path.replace(/^\/Users\/[^/]+/, '~');
 }
 
 /**
