@@ -1812,40 +1812,44 @@ export default function App() {
               </button>
             </div>
 
-            {/* Everything else on this row lives behind ⋯. The orientation
-                switch only appears in split, as the inline button did; the
-                shell keeps ⌥F12 and its own hide button on the drawer. */}
-            <OverflowMenu
-              label="Pane actions"
-              title="Pane orientation and the shell"
-              items={[
-                ...(split
-                  ? [
-                      {
-                        id: 'orientation',
-                        label: orientation === 'row' ? 'Stack Panes' : 'Panes Side by Side',
-                        aside: orientation === 'row' ? '↕' : '↔',
-                        title:
-                          orientation === 'row'
-                            ? 'Panes side by side — click to stack them'
-                            : 'Panes stacked — click to put them side by side',
-                        onSelect: () => setOrientation((o) => (o === 'row' ? 'column' : 'row')),
-                      },
-                    ]
-                  : []),
-                {
-                  id: 'shell',
-                  label: shellProject ? `Shell in ${shellProject.name}'s Main Checkout` : 'Shell',
-                  aside: '⌥F12',
-                  checked: shellOpen && shellProject !== null,
-                  disabled: !shellProject,
-                  title: shellProject
-                    ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
-                    : 'No project to open a shell in',
-                  onSelect: () => setShellOpen((o) => !o),
-                },
-              ]}
-            />
+            {/* Two icons where a ⋯ held two items: the orientation only
+                means something in Split, and the shell keeps ⌥F12. */}
+            {split && (
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label={orientation === 'row' ? 'Stack Panes' : 'Panes Side by Side'}
+                title={
+                  orientation === 'row'
+                    ? 'Terminal and reading pane side by side. Click to stack them'
+                    : 'Terminal and reading pane stacked. Click to put them side by side'
+                }
+                onClick={() => setOrientation((o) => (o === 'row' ? 'column' : 'row'))}
+              >
+                <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
+                  {orientation === 'row' ? <path d="M8 3v10" /> : <path d="M2 8h12" />}
+                </svg>
+              </button>
+            )}
+            <button
+              type="button"
+              className="icon-btn icon-btn-on"
+              aria-pressed={shellOpen && shellProject !== null}
+              aria-label="Shell"
+              disabled={!shellProject}
+              title={
+                shellProject
+                  ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
+                  : 'No project to open a shell in'
+              }
+              onClick={() => setShellOpen((o) => !o)}
+            >
+              <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
+                <path d="M4.5 6.5 6.5 8l-2 1.5M8 10h3.5" />
+              </svg>
+            </button>
           </div>
 
           <div className="panes" data-orientation={orientation} data-mode={mode} ref={panesRef}>

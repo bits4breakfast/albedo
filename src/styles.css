@@ -573,6 +573,9 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .icon-btn:hover,
 .icon-btn[aria-expanded='true'] { background: var(--panel-hover); color: var(--text); }
 .icon-btn[disabled] { color: var(--faint); background: transparent; }
+/* A toggle whose glyph does not change (the shell): on is a ground and ink,
+   as a pressed .seg segment, never colour alone. */
+.icon-btn-on[aria-pressed='true'] { color: var(--text-strong); background: var(--panel-raised); }
 
 /* Drawn glyphs in icon buttons. The Files column toggle's fill carries
    on/off, as in every macOS sidebar toggle, so it keeps the ⋯'s grey. */
