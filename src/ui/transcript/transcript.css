@@ -955,6 +955,20 @@
   font-size: var(--fs-sm);
 }
 
+/* A transcript diff opens and closes from its header (CollapsibleDiff). */
+.tx-d-head-toggle {
+  align-items: center;
+  cursor: pointer;
+}
+.tx-d-head-toggle:hover { background: var(--panel-hover); }
+.tx-d-closed .tx-d-head { border-bottom: none; }
+.tx-d-toggle {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+.tx-d-head-toggle:hover .tx-disc { color: var(--text); }
+
 .tx-d-path {
   min-width: 0;
   overflow: hidden;

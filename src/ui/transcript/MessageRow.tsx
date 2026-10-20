@@ -15,7 +15,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import Diff, { Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
@@ -430,7 +430,7 @@ function ToolUseRow({ message, result }: { message: Message; result: Message | n
         <div className="tx-content">
           <ToolChip message={message} result={result} />
           {rendered.diffs.map((d, i) => (
-            <Diff key={i} diff={d} expand={rendered.expand[i] ?? null} absoluteLines={rendered.absoluteLines} />
+            <CollapsibleDiff key={i} diff={d} expand={rendered.expand[i] ?? null} absoluteLines={rendered.absoluteLines} />
           ))}
         </div>
       </div>
