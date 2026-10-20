@@ -37,6 +37,15 @@ A second, equally narrow widening, by the owner's decision (2026-10-20): the
 payload. It exists so a task follows `/clear` and `/resume` typed inside Claude
 Code. That is the whole of it.
 
+A third, by the owner's decision (2026-10-20): the `--settings` block also sets
+Claude Code's `statusLine` to the same script in `status` mode. It keeps the
+plan's five-hour and seven-day used percentage and reset time, the context used
+percentage and window size, and the session id -- nothing else -- in one
+`status-<id>.json` replaced on each refresh, and prints nothing (Albedo's
+terminals have no status line). It feeds the status strip's plan meters and
+the context window size; `hookEvents.ts` (STATUS_SNAPSHOT) is still the only
+file that knows the shape.
+
 ## Which session a task is on
 
 A restart resumes `tasks.session_id`, so that value is a fact, never a guess.

@@ -1541,14 +1541,14 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   background: var(--panel-raised);
 }
 
-.project-tab-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
 /* The dot centred in a 16px column after the tab's 10px padding: the rows'
    status column (row padding 10, column 16). With the 6px gap the name then
    starts where a row's title does. */
 .project-tab > .status-dot { margin: 0 5.5px 0 3.5px; }
 
+.project-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
 }
 
@@ -2072,8 +2072,13 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   color: var(--muted);
   overflow: hidden;
 }
-.statusbar-switch { margin-left: 0; flex: none; }
-.statusbar-switch button { height: 18px; padding: 0 7px; }
+/* One plan window: label, the shared meter bar, percentage, reset. The bar and
+   its warn/high colours are .ctx's. Text cleared on --panel-chrome: --muted
+   6.50 / 7.31, --status-blocked 6.90 / 9.42, --danger 6.34 / 7.91. */
+.plan-meter { flex: none; gap: 6px; }
+.plan-meter .ctx-text { font-size: var(--fs-xs); }
+.plan-label { color: var(--muted); }
+.plan-reset { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* "Context 72% · Compact · Clear" in the message box's controls row, past 70%
    only (src/ui/ClearContextButton.tsx). --warn on --panel-inset. */

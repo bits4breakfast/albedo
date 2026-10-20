@@ -1,56 +1,42 @@
 /**
- * The window's status strip: subscription usage, across the full width.
+ * The window's status strip: how much of the plan is used, across the full
+ * width.
  *
- * Usage is global -- every session draws on one quota -- so it is not the
- * sidebar's or a task's to show. It used to be the lower half of a panel at
- * the foot of the sidebar, beside a context gauge for the selected task. The
- * context reading now lives on each task row (the hairline, and the row's
- * tooltip) and Clear in the message box near the limit, which left usage
- * here, on the chrome ground under everything.
+ * Usage is global -- every session draws on one plan -- so it is not the
+ * sidebar's or a task's to show. The context reading lives on each task row
+ * (the hairline, and the row's tooltip) and Compact/Clear in the message box,
+ * which leaves the plan here, on the chrome ground under everything.
  *
- * Same data and refresh strategy as before: rows landing (`onCaptureUpdate`)
- * trigger a rescan at most every {@link WINDOW_MIN_INTERVAL_MS}, a fallback
- * interval covers a stalled watcher, and a 1s local clock moves only the
- * countdown. The figures are WindowGauge's, in its inline layout, so the
- * rules about what counts as spend stay in one place.
+ * The percentages and reset times are Claude Code's own, the figures `/usage`
+ * shows, as its status line last reported them for any Albedo session
+ * (hookEvents.ts, STATUS_SNAPSHOT). A window whose reset time has passed since
+ * that report reads as unknown rather than as its old figure. Token counts from
+ * the transcripts are kept for the tooltip: they are what this machine spent,
+ * not how much of the plan that is.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { onCaptureUpdate, windowUsage } from '../capture';
 import type { WindowUsage } from '../capture';
-import WindowGauge, { type GaugeState } from './gauges/WindowGauge';
-import './gauges/gauges.css';
+import { onStatusSnapshot, planUsage, type PlanWindow } from '../capture/hookEvents';
+import { exactTokens } from './gauges/format';
 
-const DEBOUNCE_MS = 500;
-/** The windows sum every session's rows; a figure read in minutes. */
-const WINDOW_MIN_INTERVAL_MS = 15_000;
+/** The token counts are tooltip detail: re-read at most this often. */
+const TOKENS_MIN_INTERVAL_MS = 15_000;
 const FALLBACK_MS = 30_000;
-const TICK_MS = 1_000;
+/** Moves only the "has this window reset since" check. */
+const TICK_MS = 30_000;
 
-type WindowChoice = '5h' | '7d';
-const WINDOW_KEY = 'albedo.usage.window';
+const WARN_AT = 75;
+const HIGH_AT = 90;
 
-function readWindowChoice(): WindowChoice {
-  try {
-    return localStorage.getItem(WINDOW_KEY) === '7d' ? '7d' : '5h';
-  } catch {
-    return '5h';
-  }
-}
-
-function storeWindowChoice(v: WindowChoice): void {
-  try {
-    localStorage.setItem(WINDOW_KEY, v);
-  } catch {
-    /* not remembered: 5H next launch */
-  }
-}
+type Plan = ReturnType<typeof planUsage>;
 
 function finite(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
-/** A half-written payload renders as "unavailable", never as a zero. */
+/** A half-written payload is left out of the tooltip, never shown as a zero. */
 function asWindowUsage(v: unknown): WindowUsage | null {
   if (!v || typeof v !== 'object') return null;
   const w = v as Partial<WindowUsage>;
@@ -58,111 +44,139 @@ function asWindowUsage(v: unknown): WindowUsage | null {
   return w as WindowUsage;
 }
 
-interface WindowState {
-  five: WindowUsage | null;
-  week: WindowUsage | null;
-  fiveState: GaugeState;
-  weekState: GaugeState;
-  fetchedAt: number;
+const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/** "14:59" today, "Oct 25" otherwise: the strip's short form. */
+function shortReset(at: number, now: number): string {
+  const d = new Date(at);
+  if (d.toDateString() === new Date(now).toDateString()) return time(at);
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function longReset(at: number): string {
+  return new Date(at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function tokenLines(label: string, w: WindowUsage | null): string {
+  if (!w) return '';
+  return (
+    `\n\n${label} on this machine, from the transcripts:\n` +
+    `${exactTokens(w.inputTokens + w.outputTokens)} tokens spent ` +
+    `(${exactTokens(w.inputTokens)} in, ${exactTokens(w.outputTokens)} out), ` +
+    `${exactTokens(w.cacheReadTokens)} re-read from cache.`
+  );
+}
+
+interface MeterProps {
+  label: string;
+  /** What the window is, for the tooltip. */
+  name: string;
+  win: PlanWindow | null;
+  reportedAt: number | null;
+  tokens: WindowUsage | null;
+  tokensLabel: string;
+  now: number;
+}
+
+function PlanMeter({ label, name, win, reportedAt, tokens, tokensLabel, now }: MeterProps) {
+  // Past its reset the old figure describes a window that is over.
+  const stale = win !== null && win.resetsAt !== null && win.resetsAt <= now;
+  const pct = win && !stale ? Math.round(win.usedPct) : null;
+  const level = pct === null ? 'ok' : pct >= HIGH_AT ? 'high' : pct >= WARN_AT ? 'warn' : 'ok';
+  const title =
+    (pct === null
+      ? stale
+        ? `${name}: reset at ${longReset(win!.resetsAt!)}. The new figure arrives with the next reply in any session.`
+        : `${name}: no figure yet. Claude Code reports it to Albedo's sessions with their replies.`
+      : `${name}: ${pct}% used` +
+        (win!.resetsAt !== null ? `, resets ${longReset(win!.resetsAt)}` : '') +
+        (reportedAt !== null ? `.\nAs Claude Code reported it at ${time(reportedAt)}.` : '.')) +
+    tokenLines(tokensLabel, tokens);
+
+  return (
+    <span className="ctx plan-meter" data-level={level} title={title}>
+      <span className="plan-label">{label}</span>
+      <span className="ctx-bar" aria-hidden="true">
+        <span className="ctx-fill" style={{ width: `${pct ?? 0}%` }} />
+      </span>
+      <span className="ctx-text">{pct === null ? '—' : `${pct}%`}</span>
+      {pct !== null && win!.resetsAt !== null ? (
+        <span className="plan-reset">resets {shortReset(win!.resetsAt, now)}</span>
+      ) : null}
+    </span>
+  );
 }
 
 export default function StatusBar() {
-  const [win, setWin] = useState<WindowState>({
-    five: null,
-    week: null,
-    fiveState: 'loading',
-    weekState: 'loading',
-    fetchedAt: Date.now(),
-  });
+  const [plan, setPlan] = useState<Plan>(() => planUsage());
+  const [tokens, setTokens] = useState<{ five: WindowUsage | null; week: WindowUsage | null }>({ five: null, week: null });
   const [now, setNow] = useState(() => Date.now());
-  const [choice, setChoice] = useState<WindowChoice>(readWindowChoice);
   const aliveRef = useRef(true);
-  const genRef = useRef(0);
   const loadedAtRef = useRef(0);
 
-  const load = useCallback(async () => {
-    const gen = ++genRef.current;
+  const loadTokens = useCallback(async () => {
     loadedAtRef.current = Date.now();
     const [rFive, rWeek] = await Promise.allSettled([windowUsage('5h'), windowUsage('week')]);
-    if (!aliveRef.current || genRef.current !== gen) return;
-    setWin({
+    if (!aliveRef.current) return;
+    setTokens({
       five: rFive.status === 'fulfilled' ? asWindowUsage(rFive.value) : null,
       week: rWeek.status === 'fulfilled' ? asWindowUsage(rWeek.value) : null,
-      fiveState: rFive.status === 'fulfilled' ? 'ready' : 'unavailable',
-      weekState: rWeek.status === 'fulfilled' ? 'ready' : 'unavailable',
-      fetchedAt: Date.now(),
     });
   }, []);
 
   useEffect(() => {
     aliveRef.current = true;
-    void load();
+    void loadTokens();
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let unsubscribe: () => void = () => {};
+    let offCapture: () => void = () => {};
     try {
       const off = onCaptureUpdate(() => {
         if (timer !== null) return;
-        const due = loadedAtRef.current + WINDOW_MIN_INTERVAL_MS - Date.now();
+        const due = loadedAtRef.current + TOKENS_MIN_INTERVAL_MS - Date.now();
         timer = setTimeout(() => {
           timer = null;
-          void load();
-        }, Math.max(DEBOUNCE_MS, due));
+          void loadTokens();
+        }, Math.max(0, due));
       });
-      if (typeof off === 'function') unsubscribe = off;
+      if (typeof off === 'function') offCapture = off;
     } catch (err) {
       console.warn('[status] capture updates unavailable', err);
     }
-    const fallback = setInterval(() => void load(), FALLBACK_MS);
+    const offSnapshot = onStatusSnapshot(() => setPlan(planUsage()));
+    // A snapshot read before this mounted has no event to announce it.
+    setPlan(planUsage());
+    const fallback = setInterval(() => void loadTokens(), FALLBACK_MS);
     const tick = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => {
       aliveRef.current = false;
-      unsubscribe();
+      offCapture();
+      offSnapshot();
       clearInterval(fallback);
       clearInterval(tick);
       if (timer !== null) clearTimeout(timer);
     };
-  }, [load]);
-
-  const choose = (v: WindowChoice) => {
-    setChoice(v);
-    storeWindowChoice(v);
-  };
+  }, [loadTokens]);
 
   return (
-    // Right-aligned, controls last, no leading label. What the figures are
-    // is the strip's tooltip.
-    <footer
-      className="statusbar"
-      aria-label="Subscription usage"
-      title={
-        'Subscription usage: token counts across all sessions, from transcript usage records.\n\n' +
-        'No percentage of a plan limit is shown: the allowance and its reset ' +
-        'anchor are not recorded anywhere on disk, so any percentage here ' +
-        'would be against a denominator we made up.'
-      }
-    >
-      <WindowGauge
-        label={choice}
-        data={choice === '5h' ? win.five : win.week}
-        state={choice === '5h' ? win.fiveState : win.weekState}
+    <footer className="statusbar" aria-label="Plan usage">
+      <PlanMeter
+        label="Session"
+        name="Current session (5-hour limit)"
+        win={plan?.fiveHour ?? null}
+        reportedAt={plan?.at ?? null}
+        tokens={tokens.five}
+        tokensLabel="Last 5 hours"
         now={now}
-        fetchedAt={win.fetchedAt}
-        hideLabel
-        variant="inline"
       />
-      <div className="seg-sm statusbar-switch" role="group" aria-label="Usage window">
-        {(['5h', '7d'] as const).map((w) => (
-          <button
-            key={w}
-            type="button"
-            aria-pressed={choice === w}
-            onClick={() => choose(w)}
-            title={w === '5h' ? 'Rolling 5-hour window' : 'Rolling 7-day window'}
-          >
-            {w.toUpperCase()}
-          </button>
-        ))}
-      </div>
+      <PlanMeter
+        label="Week"
+        name="Current week (7-day limit)"
+        win={plan?.sevenDay ?? null}
+        reportedAt={plan?.at ?? null}
+        tokens={tokens.week}
+        tokensLabel="Last 7 days"
+        now={now}
+      />
     </footer>
   );
 }

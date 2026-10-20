@@ -44,6 +44,7 @@ vi.mock('../capture', async () => ({
 vi.mock('../capture/hookEvents', () => ({
   hasHooks: () => false,
   onPromptChange: () => () => {},
+  onStatusSnapshot: () => () => {},
   pendingPrompt: () => null,
 }));
 vi.mock('./attention', () => ({ noteStatusChange: vi.fn() }));

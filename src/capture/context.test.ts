@@ -37,6 +37,7 @@ import {
   deriveContextUsage,
   aggregateUsageRows,
   pickWindowTier,
+  withReportedWindow,
   type ContextUsage,
 } from './context';
 import {
@@ -645,5 +646,26 @@ describe('deriveContextUsage / model catalog', () => {
     const u = deriveContextUsage(input, new Map([['claude-other', 1_000_000]]));
     expect(u?.limit).toBe(200_000);
     expect(u?.limitBasis).toBe('inferred');
+  });
+});
+
+describe('withReportedWindow — the status line knows the window', () => {
+  const snap = (over: object = {}) => ({
+    sessionId: 's', fiveHour: null, sevenDay: null, contextPct: 20, contextSize: 1_000_000, at: 5, ...over,
+  });
+  const inferred: ContextUsage = { used: 180_000, limit: 200_000, fraction: 0.9, limitBasis: 'inferred', model: 'm', at: 1 };
+
+  it('replaces an inferred 200k with the reported 1M, keeping the exact count', () => {
+    expect(withReportedWindow(inferred, snap())).toEqual({ ...inferred, limit: 1_000_000, fraction: 0.18, limitBasis: 'known' });
+  });
+
+  it('stands in with the reported percentage before any transcript reading', () => {
+    expect(withReportedWindow(null, snap())).toMatchObject({ used: 200_000, fraction: 0.2, limitBasis: 'known' });
+    expect(withReportedWindow(null, snap({ contextPct: null }))).toBeNull();
+  });
+
+  it('changes nothing without a reported size', () => {
+    expect(withReportedWindow(inferred, null)).toBe(inferred);
+    expect(withReportedWindow(inferred, snap({ contextSize: null }))).toBe(inferred);
   });
 });

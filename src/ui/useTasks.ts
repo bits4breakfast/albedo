@@ -4,7 +4,7 @@ import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged, compac
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
 import { statusExpiresAt } from '../capture/status';
-import { hasHooks, onPromptChange, pendingPrompt } from '../capture/hookEvents';
+import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { noteStatusChange } from './attention';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
@@ -560,6 +560,13 @@ export function useTasks(): UseTasksResult {
       void handle?.stop().catch(() => {});
     };
   }, [refreshStatus, refreshContext]);
+
+  // The status line reports a session's real window size: re-read its context.
+  useEffect(() => {
+    return onStatusSnapshot((_taskId, snap) => {
+      if (snap.sessionId) void refreshContext([snap.sessionId]);
+    });
+  }, [refreshContext]);
 
   // A prompt appearing or being answered is a status change on its own: the
   // transcript has nothing to say about either until the turn ends.
