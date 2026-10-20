@@ -305,15 +305,15 @@
   color: var(--faint);
 }
 
-/* Segmented choice (New / Existing, New Worktree / Main Checkout). Selected
-   is carried by ground, edge and weight together, not by colour alone, and
-   its text stays --text-strong on --panel-raised, the audited pairing. */
+/* Segmented choice (New / Existing, New Worktree / Main Checkout). Drawn as
+   the shell's .seg in styles.css: one edge, the track's; the selected segment
+   lifted by --seg-on and the card shadow, never a ring. */
 .wt-seg {
   display: inline-flex;
   padding: 2px;
   gap: 2px;
-  background: var(--panel-inset);
-  border: 1px solid var(--border-mid);
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 
@@ -321,21 +321,20 @@
   padding: 5px 12px;
   font: inherit;
   font-size: var(--fs-sm);
-  color: var(--text);
+  font-weight: 500;
+  color: var(--muted);
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: calc(var(--radius) - 2px);
+  border-radius: var(--radius-sm);
 }
 
 .wt-seg-option:hover:not(:disabled) {
-  background: var(--panel-hover);
+  color: var(--text);
 }
 
 .wt-seg-option[aria-checked='true'] {
   color: var(--text-strong);
-  font-weight: 700;
-  background: var(--panel-raised);
-  border-color: var(--accent);
+  background: var(--seg-on);
+  box-shadow: var(--card-shadow);
 }
 
 /* Disabled is the --faint token, never opacity (CLAUDE.md, Contrast 2). */
@@ -344,8 +343,11 @@
   cursor: default;
 }
 
-.wt-seg-follow {
-  margin-top: 8px;
+/* Two fields on one line, each its own column. */
+.wt-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
 }
 
 .wt-row {

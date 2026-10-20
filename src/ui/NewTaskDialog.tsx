@@ -719,105 +719,111 @@ export function NewTaskDialog({
                   )}
                 </div>
 
-                <div className="wt-field">
-                  <span className="wt-label">Branch</span>
-                  <Segmented<Source>
-                    label="Branch"
-                    value={source}
-                    disabled={busy}
-                    options={[
-                      { value: 'new', label: 'New' },
-                      { value: 'existing', label: 'Existing' },
-                    ]}
-                    onChange={(v) => {
-                      setSource(v);
-                      setError(null);
-                    }}
-                  />
-                  {source === 'existing' && (
-                    <>
-                      <div className="wt-row wt-seg-follow">
-                        <input
-                          className="wt-input"
-                          aria-label="Branch to Check Out"
-                          list="wt-existing-list"
-                          value={existingRef}
-                          placeholder={fetching ? 'Fetching…' : 'origin/their-branch'}
-                          spellCheck={false}
-                          disabled={busy}
-                          onChange={(e) => {
-                            setExistingRef(e.target.value.trim());
-                            setError(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && canSubmit) void submit(false);
-                          }}
-                        />
-                        <datalist id="wt-existing-list">
-                          {pickable.map((b) => (
-                            <option key={b} value={b} />
-                          ))}
-                        </datalist>
-                        <button
-                          type="button"
-                          className="btn"
-                          disabled={busy || fetching || !project}
-                          onClick={() => void fetchBranches()}
-                          title="git fetch --all --prune"
-                        >
-                          {fetching ? 'Fetching…' : 'Fetch'}
-                        </button>
-                      </div>
-                      <div className="wt-hint">
-                        {checkout
-                          ? checkout.track
-                            ? `A new local ${checkout.branch}, tracking ${checkout.track}.`
-                            : `Your local ${checkout.branch}, as it is.`
-                          : existingRef
-                            ? 'Not a branch git knows: pick one from the list, or fetch.'
-                            : `${pickable.length} branches, remote ones included.`}
-                      </div>
-                      {fetchError && (
-                        <div className="wt-error">
-                          <div className="wt-error-head">git fetch failed</div>
-                          <pre className="wt-error-body">{fetchError}</pre>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                <div className="wt-field">
-                  <span className="wt-label">Location</span>
-                  <Segmented<Place>
-                    label="Location"
-                    value={place}
-                    disabled={busy}
-                    options={[
-                      { value: 'worktree', label: 'New Worktree' },
-                      {
-                        value: 'main',
-                        label: 'Main Checkout',
-                        disabled: !mainUsable,
-                        title: mainUsable ? undefined : mainNote,
-                      },
-                    ]}
-                    onChange={(v) => {
-                      setPlace(v);
-                      setError(null);
-                    }}
-                  />
-                  <div className="wt-hint">
-                    {onMain || !mainUsable
-                      ? mainNote
-                      : `Its own folder; ${project?.name ?? 'the repo'}'s main checkout stays as it is.`}
+                {/* Two independent choices, side by side: what to work on, and
+                    where. The branch picker, when needed, gets the full width. */}
+                <div className="wt-pair">
+                  <div className="wt-field">
+                    <span className="wt-label">Branch</span>
+                    <Segmented<Source>
+                      label="Branch"
+                      value={source}
+                      disabled={busy}
+                      options={[
+                        { value: 'new', label: 'New' },
+                        { value: 'existing', label: 'Existing' },
+                      ]}
+                      onChange={(v) => {
+                        setSource(v);
+                        setError(null);
+                      }}
+                    />
                   </div>
-                  {onMain && !alreadyThere && mainTask && (
+                  <div className="wt-field">
+                    <span className="wt-label">Location</span>
+                    <Segmented<Place>
+                      label="Location"
+                      value={place}
+                      disabled={busy}
+                      options={[
+                        { value: 'worktree', label: 'New Worktree' },
+                        {
+                          value: 'main',
+                          label: 'Main Checkout',
+                          disabled: !mainUsable,
+                          title: mainUsable ? undefined : mainNote,
+                        },
+                      ]}
+                      onChange={(v) => {
+                        setPlace(v);
+                        setError(null);
+                      }}
+                    />
                     <div className="wt-hint">
-                      &ldquo;{mainTask}&rdquo; also runs there, and moves to {branch || 'this branch'} with it.
+                      {onMain || !mainUsable
+                        ? mainNote
+                        : `Its own folder; ${project?.name ?? 'the repo'}'s main checkout stays as it is.`}
                     </div>
-                  )}
+                    {onMain && !alreadyThere && mainTask && (
+                      <div className="wt-hint">
+                        &ldquo;{mainTask}&rdquo; also runs there, and moves to {branch || 'this branch'} with it.
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {source === 'existing' && (
+                  <div className="wt-field">
+                    <label className="wt-label" htmlFor="wt-existing">
+                      Branch to Check Out
+                    </label>
+                    <div className="wt-row">
+                      <input
+                        id="wt-existing"
+                        className="wt-input"
+                        list="wt-existing-list"
+                        value={existingRef}
+                        placeholder={fetching ? 'Fetching…' : 'origin/their-branch'}
+                        spellCheck={false}
+                        disabled={busy}
+                        onChange={(e) => {
+                          setExistingRef(e.target.value.trim());
+                          setError(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && canSubmit) void submit(false);
+                        }}
+                      />
+                      <datalist id="wt-existing-list">
+                        {pickable.map((b) => (
+                          <option key={b} value={b} />
+                        ))}
+                      </datalist>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy || fetching || !project}
+                        onClick={() => void fetchBranches()}
+                        title="git fetch --all --prune"
+                      >
+                        {fetching ? 'Fetching…' : 'Fetch'}
+                      </button>
+                    </div>
+                    <div className="wt-hint">
+                      {checkout
+                        ? checkout.track
+                          ? `A new local ${checkout.branch}, tracking ${checkout.track}.`
+                          : `Your local ${checkout.branch}, as it is.`
+                        : existingRef
+                          ? 'Not a branch git knows: pick one from the list, or fetch.'
+                          : `${pickable.length} branches, remote ones included.`}
+                    </div>
+                    {fetchError && (
+                      <div className="wt-error">
+                        <div className="wt-error-head">git fetch failed</div>
+                        <pre className="wt-error-body">{fetchError}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="wt-field">
                   <label className="wt-label" htmlFor="wt-title">
