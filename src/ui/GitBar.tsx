@@ -157,7 +157,7 @@ export default function GitBar({
             onClick={push}
             title={
               (unpushed > 0 ? `${unpushed} commit(s) not on the remote. ` : '') +
-              'Ask Claude to commit what is outstanding and push. Sent at once when the session is idle; otherwise it waits in the message box.'
+              'Ask Claude to commit what is outstanding and push (⇧⌘P). Sent at once when the session is idle; otherwise it waits in the message box.'
             }
           >
             {/* The count rides on the action: how much is waiting is the

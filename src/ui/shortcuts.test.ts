@@ -90,6 +90,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'O', code: 'KeyO', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true }))?.combo,
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'P', code: 'KeyP', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
@@ -158,6 +159,18 @@ describe('find in files', () => {
     expect(comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, ctrlKey: true, shiftKey: true }))).toBeNull();
     expect(comboOf(ev({ key: 'Ï', code: 'KeyF', metaKey: true, altKey: true, shiftKey: true }))).toBeNull();
     expect(comboOf(ev({ key: 'f', code: 'KeyF', metaKey: true }))).toBeNull();
+  });
+});
+
+describe('push', () => {
+  it('maps ⇧⌘P by physical key', () => {
+    expect(comboOf(ev({ key: 'P', code: 'KeyP', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+p');
+  });
+
+  it('leaves Ctrl+P to the terminal, and ⌘P unbound', () => {
+    expect(comboOf(ev({ key: 'P', code: 'KeyP', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'p', code: 'KeyP', ctrlKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'p', code: 'KeyP', metaKey: true }))).toBeNull();
   });
 });
 

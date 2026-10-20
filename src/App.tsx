@@ -8,6 +8,8 @@ import useTasks from './ui/useTasks';
 import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
+import { pushPrompt } from './ui/gitPrompts';
+import { sendPrompt } from './ui/sendPrompt';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
@@ -1417,6 +1419,24 @@ export default function App() {
     [editorTask, editorActivePath],
   );
 
+  /**
+   * ⇧⌘P: what the Files pane's Push does, for the selected task -- the same
+   * prompt, through the same path (submitted on an idle session, otherwise
+   * left in the message box). The message box lives in the transcript, so in
+   * terminal-only mode a busy task gets the split view and a second try.
+   */
+  const pushSelected = async () => {
+    const task = selected;
+    if (!task || task.status === 'archived') return;
+    const text = pushPrompt(task);
+    if ((await sendPrompt(task, text)) !== 'failed') return;
+    setMode((m) => (m === 'pty' ? 'split' : m));
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    if ((await sendPrompt(task, text)) === 'failed') {
+      console.warn('[push] no live session or message box for task', task.id);
+    }
+  };
+
   useShortcuts({
     // PhpStorm's keymap. Live while typing: nothing in a text field, the
     // terminal included, binds ⌘O (Ctrl+O is left alone -- see shortcuts.ts).
@@ -1424,6 +1444,7 @@ export default function App() {
     'mod+o': () => toggleQuickOpen('class'),
     'mod+alt+o': () => toggleQuickOpen('symbol'),
     'mod+shift+f': toggleFind,
+    'mod+shift+p': () => void pushSelected(),
     'alt+f12': () => setShellOpen((o) => !o),
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
