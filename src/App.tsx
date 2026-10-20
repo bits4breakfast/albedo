@@ -503,7 +503,7 @@ function ProjectTabs({
 // ---------------------------------------------------------------------------
 
 export default function App() {
-  const { tasks, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive } =
+  const { tasks, signals, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive } =
     useTasks();
 
   const [selectedId, setSelectedId] = useState<number | null>(() =>
@@ -1616,6 +1616,7 @@ export default function App() {
             onFollowUp={(task) => void openFollowUp(task)}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
+            signals={signals}
             attention={attention}
             projects={projects}
             activeProject={activeProject}

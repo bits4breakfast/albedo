@@ -7,7 +7,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { deriveStatus, RUNNING_WINDOW_MS, statusExpiresAt, UNANSWERED_RUNNING_WINDOW_MS } from './status';
+import {
+  asksAQuestion,
+  deriveStatus,
+  endsOnQuestion,
+  RUNNING_WINDOW_MS,
+  statusExpiresAt,
+  UNANSWERED_RUNNING_WINDOW_MS,
+} from './status';
 import { parseTranscript } from './adapter';
 import type { Message, MessageRole } from '../types';
 
@@ -545,5 +552,27 @@ describe('statusExpiresAt — when the clock alone changes the answer', () => {
     expect(statusExpiresAt([row('tool_use', { ageMs: 1_000, toolId: 'a' })], NOW)).toBeNull();
     reset();
     expect(statusExpiresAt([row('user', { ageMs: RUNNING_WINDOW_MS + 5, text: 'x' })], NOW)).toBeNull();
+  });
+});
+
+describe('endsOnQuestion — a turn handed back with a question for you', () => {
+  it('marks a finished turn that asks something, even with sources after the ask', () => {
+    reset();
+    const text = 'Done with the scans.\n\nDo you want these folded into the report, or done now?\n\nSources:\n- [npm](https://x)';
+    expect(endsOnQuestion([row('user', { ageMs: 9_000, text: 'go' }), row('assistant', { text })])).toBe(true);
+  });
+
+  it('is cleared by your reply, and never set mid-turn', () => {
+    reset();
+    const asked = row('assistant', { ageMs: 5_000, text: 'Shall I push?' });
+    expect(endsOnQuestion([asked, row('user', { text: 'yes' })])).toBe(false);
+    expect(endsOnQuestion([row('assistant', { text: 'Shall I push?', stopReason: 'tool_use' })])).toBe(false);
+  });
+
+  it('ignores question marks in code and quotes, and looks through trailing emphasis', () => {
+    expect(asksAQuestion('```ts\nconst a = b ?\n```\nDone.')).toBe(false);
+    expect(asksAQuestion('> why?\nFixed.')).toBe(false);
+    expect(asksAQuestion('**Want me to open the PR?**')).toBe(true);
+    expect(asksAQuestion('All done.')).toBe(false);
   });
 });

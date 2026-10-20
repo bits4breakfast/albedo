@@ -7,6 +7,7 @@ import EmptyState from './EmptyState';
 import MoreGlyph from './MoreGlyph';
 import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
+import type { TaskSignals } from './useTasks';
 import type { AttentionKind } from './attention';
 import { useShortcuts } from './shortcuts';
 import { canFollowUp } from './followUp';
@@ -42,6 +43,8 @@ export interface TaskListProps {
    */
   onFollowUp?: (task: Task) => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
+  /** Running agents and a pending question, per task (useTasks). */
+  signals?: Map<number, TaskSignals>;
   contextBySession?: Map<string, ContextUsage>;
   /**
    * Tasks asking for attention, from `ui/attention`. Optional, so the list
@@ -153,6 +156,7 @@ export default function TaskList({
   onDelete,
   onFollowUp,
   contextBySession,
+  signals,
   onManageProjects,
   projects,
   activeProject = null,
@@ -384,6 +388,7 @@ export default function TaskList({
               // Quiet sessions say nothing. The number appears only once it is
               // worth reading, which is what keeps it unobtrusive.
               const ctxText = ctx && ctxLevel !== 'quiet' ? contextReadout(ctx) : null;
+              const sig = signals?.get(task.id);
               return (
                 <div
                   key={task.id}
@@ -446,6 +451,24 @@ export default function TaskList({
                         place git and GitHub state is shown, for the selected
                         task. Rows identify the task; the title does that. */}
                     <span className="task-meta-tail">
+                      {sig && sig.agents > 0 && (
+                        <span
+                          className="task-agents"
+                          title={`${sig.agents} agent${sig.agents === 1 ? '' : 's'} running`}
+                        >
+                          ·{sig.agents}
+                        </span>
+                      )}
+                      {sig?.question && (
+                        <span
+                          className="task-question"
+                          role="img"
+                          aria-label="Asks you a question"
+                          title="Its last turn ends on a question for you"
+                        >
+                          ?
+                        </span>
+                      )}
                       {ctx && ctxText && (
                         <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
                           {ctxText}
