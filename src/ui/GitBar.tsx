@@ -136,7 +136,7 @@ export default function GitBar({
             onClick={push}
             title={
               (unpushed > 0 ? `${unpushed} commit(s) not on the remote. ` : '') +
-              'Ask Claude to commit what is outstanding and push (⇧⌘P). Sent at once when the session is idle; otherwise it waits in the message box.'
+              'Ask Claude to commit what is outstanding and push (⇧⌘P). Sent at once (queued if Claude is working); while it waits on a permission prompt, it waits in the message box.'
             }
           >
             {/* The count rides on the action: how much is waiting is the
@@ -148,7 +148,7 @@ export default function GitBar({
             type="button"
             className="tf-btn tf-btn-primary"
             onClick={createPr}
-            title={`Ask Claude to open a pull request into ${task.baseBranch}. Sent at once when the session is idle; otherwise it waits in the message box.`}
+            title={`Ask Claude to open a pull request into ${task.baseBranch}. Sent at once (queued if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
           >
             Create PR
           </button>

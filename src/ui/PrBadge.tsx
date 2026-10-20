@@ -66,7 +66,7 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
         <button
           type="button"
           className="pr-badge"
-          title={`No pull request yet. Ask Claude to open one into ${task.baseBranch} (${own} commit${own === 1 ? '' : 's'}). Sent at once when the session is idle; otherwise it waits in the message box.`}
+          title={`No pull request yet. Ask Claude to open one into ${task.baseBranch} (${own} commit${own === 1 ? '' : 's'}). Sent at once (queued if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
           onClick={onCreatePr}
         >
           Create PR
