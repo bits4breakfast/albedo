@@ -105,7 +105,10 @@ export default function GitBar({
   if (!detached && main !== 'push' && (dirty > 0 || unpushed > 0)) {
     items.push({ key: 'push', label: 'Push', hint: 'Commit what is outstanding and push', run: push });
   }
-  if (!detached && main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
+  // Uncommitted work is enough: the prompt asks whether it belongs in the PR,
+  // then commits and pushes. Waiting for a commit hid it on a branch Claude
+  // had only edited -- which is most of them.
+  if (!detached && main !== 'create-pr' && prKnown && pr === null && prable && (commits > 0 || dirty > 0)) {
     items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
   }
   if (!detached && canSquashRebase(task) && commits > 0) {
