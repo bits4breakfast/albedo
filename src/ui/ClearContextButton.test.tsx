@@ -28,9 +28,10 @@ describe('ContextClear', () => {
     expect(renderToStaticMarkup(<ContextClear task={task} usage={null} />)).toBe('');
   });
 
-  it('offers Clear beside the message once the window is nearly full', () => {
+  it('offers Compact and Clear beside the message once the window is filling up', () => {
     const html = renderToStaticMarkup(<ContextClear task={task} usage={usage(CLEAR_OFFER_AT + 0.02)} />);
-    expect(html).toContain('Context 87%');
+    expect(html).toContain('Context 72%');
+    expect(html).toContain('>Compact<');
     expect(html).toContain('>Clear<');
   });
 

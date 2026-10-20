@@ -2067,7 +2067,7 @@ button.usage-waiting:hover { background: var(--panel-hover); }
 .statusbar-switch { margin-left: 0; flex: none; }
 .statusbar-switch button { height: 18px; padding: 0 7px; }
 
-/* "Context 87% · Clear" in the message box's controls row, near the limit
+/* "Context 72% · Compact · Clear" in the message box's controls row, past 70%
    only (src/ui/ClearContextButton.tsx). --warn on --panel-inset. */
 .ctx-clear {
   display: inline-flex;

@@ -1945,7 +1945,7 @@ export default function App() {
                       composerAccessory={
                         selected ? (
                           <>
-                            {/* Clear, only once the session is near the top of
+                            {/* Compact and Clear, only once the session is past 70% of
                                 its window; the row's hairline shows the rest. */}
                             <ContextClear
                               task={selected}
