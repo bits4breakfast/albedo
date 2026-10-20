@@ -39,7 +39,7 @@ export default function ShortcutsHelp({ open, onClose }: ShortcutsHelpProps) {
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title" id="shortcuts-title">
-            Keyboard shortcuts
+            Keyboard Shortcuts
           </h2>
         </div>
         <div className="wt-modal-body">

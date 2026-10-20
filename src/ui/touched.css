@@ -13,7 +13,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  background: var(--panel);
   color: var(--text);
 
   /* The pane is a query container: it is mounted both as a full-width tab and
@@ -63,10 +63,13 @@
      --warn is an amber tuned for a dark ground: as TEXT or a UI edge on white
      it measures 1.9-3.7 and fails. In dark they stay exactly var(--warn), so
      the dark numbers below are unchanged from the previous pass. */
-  --tf-wash: color-mix(in srgb, var(--warn) 8%, transparent);
-  --tf-tint: color-mix(in srgb, var(--warn) 5%, transparent);
+  /* Every mix NAMES its ground (--panel, the pane's own), never
+     `transparent` (CLAUDE.md, Contrast rule 5): the badge and notice are
+     then opaque pairs that hold on a hovered or selected row too. */
+  --tf-wash: color-mix(in srgb, var(--warn) 8%, var(--panel));
+  --tf-tint: color-mix(in srgb, var(--warn) 5%, var(--panel));
   --tf-rule: color-mix(in srgb, var(--warn) 55%, var(--text-strong));
-  --tf-hairline: color-mix(in srgb, var(--tf-rule) 80%, transparent);
+  --tf-hairline: color-mix(in srgb, var(--tf-rule) 80%, var(--panel));
   --tf-ink: color-mix(in srgb, var(--warn) 45%, var(--text-strong));
   /* Both themes: mixing toward --text-strong flips with the theme on its own,
      which is what replaced the two hardcoded light-on-dark hexes here. */
@@ -82,18 +85,18 @@
    the opposite constraint to light, on the same overlay. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .tf-pane {
-    --tf-wash: color-mix(in srgb, var(--warn) 12%, transparent);
-    --tf-tint: color-mix(in srgb, var(--warn) 8%, transparent);
+    --tf-wash: color-mix(in srgb, var(--warn) 12%, var(--panel));
+    --tf-tint: color-mix(in srgb, var(--warn) 8%, var(--panel));
     --tf-rule: var(--warn);
-    --tf-hairline: color-mix(in srgb, var(--warn) 55%, transparent);
+    --tf-hairline: color-mix(in srgb, var(--warn) 55%, var(--panel));
     --tf-ink: var(--warn);
   }
 }
 :root[data-theme='dark'] .tf-pane {
-  --tf-wash: color-mix(in srgb, var(--warn) 12%, transparent);
-  --tf-tint: color-mix(in srgb, var(--warn) 8%, transparent);
+  --tf-wash: color-mix(in srgb, var(--warn) 12%, var(--panel));
+  --tf-tint: color-mix(in srgb, var(--warn) 8%, var(--panel));
   --tf-rule: var(--warn);
-  --tf-hairline: color-mix(in srgb, var(--warn) 55%, transparent);
+  --tf-hairline: color-mix(in srgb, var(--warn) 55%, var(--panel));
   --tf-ink: var(--warn);
 }
 
@@ -144,9 +147,9 @@
   flex: 0 0 auto;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
-  border-left: 2px solid var(--tf-rule);  /* UI edge: 8.32 dark / 5.4-10.3 light */
+  border-left: 2px solid var(--tf-rule);  /* UI edge: 8.66 dark / 11.84 light */
   background: var(--tf-tint);
-  color: var(--tf-notice-ink);            /* 11.8 dark / 6.8-11.1 light */
+  color: var(--tf-notice-ink);            /* 11.68 dark / 13.04 light */
   font-size: var(--fs-xs);
   line-height: 1.5;
 }
@@ -164,7 +167,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-bottom: 18px;
+  padding: 2px 8px 12px;
 }
 
 .tf-row {
@@ -173,9 +176,8 @@
   align-items: baseline;
   column-gap: 8px;
   width: 100%;
-  padding: 3px 8px 3px 11px;
+  padding: 4px 12px;
   text-align: left;
-  border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
 
@@ -268,16 +270,16 @@
   padding: 0 4px;
   font-size: var(--fs-xs);
   line-height: 1.5;
-  color: var(--tf-ink);                 /* 6.15 dark / 6.5-10.1 light */
+  color: var(--tf-ink);                 /* 7.98 dark / 12.48 light */
   background: var(--tf-wash);
-  border: 1px solid var(--tf-hairline);  /* 3.32 dark / 3.6-5.7 light */
-  border-radius: var(--radius);
+  border: 1px solid var(--tf-hairline);  /* 3.18 dark / 5.67 light, worst row ground */
+  border-radius: var(--radius-sm);
 }
 
 /* The blue counterpart. Was a hardcoded #bcd9ff, which is light-on-dark by
    construction and would have been near-invisible on a light ground; mixing
    --accent toward --text-strong flips with the theme by itself.
-   8.42 dark / 9.6-10.1 light on the accent wash. */
+   9.87 dark / 11.07 light on the accent wash (worst: --accent-soft-strong). */
 .tf-badge-hand {
   color: var(--tf-hand-ink);
   background: var(--accent-soft);
@@ -393,17 +395,25 @@
 
 /* --- sections -------------------------------------------------------------- */
 
+/* Each section is a card of its own on the pane: rows need no rules between
+   them, and the gap between cards does what a section rule did. */
+.tf-section {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  background: var(--subcard);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
 .tf-section-head {
   display: flex;
   align-items: baseline;
   gap: 6px;
   width: 100%;
-  padding: 8px 8px 4px;
-  color: var(--muted);
-  font-size: var(--fs-xs);
+  padding: 10px 12px 6px;
+  color: var(--text);
+  font-size: var(--fs-sm);
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   text-align: left;
 }
 button.tf-section-head { cursor: pointer; }
@@ -414,7 +424,7 @@ button.tf-section-head:hover { color: var(--text); }
   font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
-.tf-section + .tf-section { border-top: 1px solid var(--border); }
+
 
 /* --- review comments ------------------------------------------------------ */
 
@@ -490,8 +500,8 @@ button.tf-section-head:hover { color: var(--text); }
 /* --- view switch and commit groups ---------------------------------------- */
 
 
-/* A commit: its subject reads first, normal case; sha and age trail. */
-.tf-commit-head { text-transform: none; letter-spacing: 0; font-weight: 500; }
+/* A commit: its subject reads first, as written; sha and age trail. */
+.tf-commit-head { font-weight: 500; }
 .tf-commit-subject {
   flex: 1 1 auto;
   min-width: 0;
@@ -515,24 +525,27 @@ button.tf-section-head:hover { color: var(--text); }
    -------------------------------------------------------------------------- */
 
 .tf-git {
+  /* No rule above it, like the rest of the pane; its one action sits at the
+     right, as a panel's footer button does. */
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 0 8px 8px;
   background: var(--panel);
-  border-top: 1px solid var(--border);
 }
 
-/* Branch first, then the state, all on one line. When it does not fit, the
-   state is clipped before the branch is: the branch says which one this is. */
+/* Branch first, then the state. When it does not fit on one line it wraps
+   between items rather than clipping: clipped, a narrow pane showed "po…"
+   and half of "unpushed" under the Push button, which said nothing. */
 .tf-git-id {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
-  overflow: hidden;
+  gap: 2px 6px;
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -550,6 +563,7 @@ button.tf-section-head:hover { color: var(--text); }
 .tf-git-branch {
   flex: 0 1 auto !important;
   min-width: 3ch;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: var(--fs-sm);

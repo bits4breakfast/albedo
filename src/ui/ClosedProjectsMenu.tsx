@@ -121,7 +121,7 @@ export default function ClosedProjectsMenu({
         aria-expanded={open}
         title="Closed projects"
       >
-        +{hidden.length} closed
+        +{hidden.length} Closed
       </button>
       {open &&
         createPortal(

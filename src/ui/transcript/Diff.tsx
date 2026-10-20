@@ -408,8 +408,12 @@ export function Code({ pieces }: { pieces: Piece[] }): ReactNode {
  */
 export function Disclosure({ open }: { open: boolean }): ReactNode {
   return (
-    <span className="tx-disc" aria-hidden="true">
-      {open ? '▾' : '▸'}
+    <span className={open ? 'tx-disc tx-disc-open' : 'tx-disc'} aria-hidden="true">
+      {/* Drawn, not typed: U+25B8 is a SMALL triangle by definition, so at any
+          font size it renders as a ~5px speck. One shape, rotated when open. */}
+      <svg viewBox="0 0 12 12" focusable="false">
+        <path d="M3.5 1.5 10 6l-6.5 4.5z" fill="currentColor" />
+      </svg>
     </span>
   );
 }
@@ -898,12 +902,12 @@ export function Diff({
       </div>
       {hidden > 0 ? (
         <div className="tx-d-more">
-          <span className="tx-d-more-label">{hidden.toLocaleString()} more lines</span>
+          <span className="tx-d-more-label">{hidden.toLocaleString()} More Lines</span>
           <button type="button" className="tx-btn" onClick={() => setBudget((b) => b + BUDGET_STEP)}>
-            Show {Math.min(BUDGET_STEP, hidden).toLocaleString()} more
+            Show {Math.min(BUDGET_STEP, hidden).toLocaleString()} More
           </button>
           <button type="button" className="tx-btn" onClick={() => setBudget(model.total)}>
-            Show all
+            Show All
           </button>
         </div>
       ) : null}
@@ -953,7 +957,7 @@ function DiffHeader({
       </span>
       {onToggle ? (
         <button type="button" className="tx-btn tx-d-layout" onClick={onToggle}>
-          {resolved === 'split' ? 'unified' : 'split'}
+          {resolved === 'split' ? 'Unified' : 'Split'}
         </button>
       ) : null}
     </div>
@@ -1170,7 +1174,7 @@ function GapBar({
   expandable: boolean;
   onClick: () => void;
 }): ReactNode {
-  const label = `${gap.count.toLocaleString()} unchanged line${gap.count === 1 ? '' : 's'}`;
+  const label = `${gap.count.toLocaleString()} Unchanged Line${gap.count === 1 ? '' : 's'}`;
   /*
      Two different glyphs, on purpose. A caret means "you can open this", so the
      expandable bar uses the pane's one disclosure vocabulary. The static bar is
@@ -1253,10 +1257,10 @@ function ContextRegion({
       >
         {side === 'lead' ? '↑' : '↓'}{' '}
         {loading
-          ? 'reading file…'
+          ? 'Reading File…'
           : remaining === null
-            ? 'more context'
-            : `${Math.min(CONTEXT_STEP, remaining)} more line${Math.min(CONTEXT_STEP, remaining) === 1 ? '' : 's'} (${remaining.toLocaleString()} left)`}
+            ? 'More Context'
+            : `${Math.min(CONTEXT_STEP, remaining)} More Line${Math.min(CONTEXT_STEP, remaining) === 1 ? '' : 's'} (${remaining.toLocaleString()} Left)`}
       </button>
     );
 
@@ -1280,13 +1284,13 @@ function ContextRegion({
 function contextFailureText(failure: AnchorFailure | 'unreadable'): string {
   switch (failure) {
     case 'unreadable':
-      return '⋯ the file could not be read from this worktree';
+      return '⋯ The file could not be read from this worktree';
     case 'not-found':
-      return '⋯ this file has changed since — no surrounding context can be shown';
+      return '⋯ This file has changed since — no surrounding context can be shown';
     case 'ambiguous':
-      return '⋯ these lines appear more than once in the file — context would be a guess';
+      return '⋯ These lines appear more than once in the file — context would be a guess';
     default:
-      return '⋯ no surrounding context available';
+      return '⋯ No surrounding context available';
   }
 }
 

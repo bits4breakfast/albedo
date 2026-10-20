@@ -12,14 +12,20 @@
  *
  * The transcript only learns of the switch on the next assistant reply, so
  * after choosing, the picker says so until the model it reads back matches.
+ *
+ * A session with no reply yet -- just after `/clear`, or a new task -- has no
+ * model to read. The process has one all the same, so the picker shows the
+ * best-known stand-in, marked as assumed until a reply confirms it: the model
+ * this task's previous session last replied with (`/clear` keeps it), else
+ * the one Albedo spawned the task with, else the user's Claude Code default.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Task } from '../types';
 import { contextUsage, onCaptureUpdate } from '../capture';
 import { submitPty } from './Terminal';
-import { loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
-import { setTaskModel } from './taskModel';
+import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
+import { getTaskModel, setTaskModel } from './taskModel';
 
 /** Used only when Claude Code's model catalog cannot be read. */
 const FALLBACK_CHOICES: ModelChoice[] = [
@@ -40,7 +46,11 @@ function choiceFor(model: string | null, choices: readonly ModelChoice[]): strin
 
 export default function ModelPicker({ task }: { task: Task }) {
   const sessionId = task.sessionId;
+  const taskId = task.id;
   const [model, setModel] = useState<string | null>(null);
+  const [assumed, setAssumed] = useState<string | null>(null);
+  // The last model read for this task, which outlives a session change.
+  const lastSeenRef = useRef<{ taskId: number; model: string } | null>(null);
   const [choices, setChoices] = useState<ModelChoice[]>(FALLBACK_CHOICES);
   const [pending, setPending] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -53,17 +63,25 @@ export default function ModelPicker({ task }: { task: Task }) {
   }, []);
 
   const load = useCallback(async () => {
-    if (!sessionId) {
-      setModel(null);
+    let read: string | null = null;
+    if (sessionId) {
+      try {
+        read = (await contextUsage(sessionId))?.model ?? null;
+      } catch {
+        /* the gauge panel already reports unavailable usage */
+      }
+    }
+    if (!aliveRef.current) return;
+    setModel(read);
+    if (read) {
+      lastSeenRef.current = { taskId, model: read };
+      setAssumed(null);
       return;
     }
-    try {
-      const u = await contextUsage(sessionId);
-      if (aliveRef.current) setModel(u?.model ?? null);
-    } catch {
-      /* the gauge panel already reports unavailable usage */
-    }
-  }, [sessionId]);
+    const carried = lastSeenRef.current?.taskId === taskId ? lastSeenRef.current.model : null;
+    const stand = carried ?? getTaskModel(taskId) ?? (await loadDefaultModel());
+    if (aliveRef.current) setAssumed(stand);
+  }, [sessionId, taskId]);
 
   const loadRef = useRef(load);
   useEffect(() => {
@@ -95,11 +113,12 @@ export default function ModelPicker({ task }: { task: Task }) {
     };
   }, []);
 
-  const current = choiceFor(model, choices);
+  const shown = model ?? assumed;
+  const current = choiceFor(shown, choices);
   // Once the transcript reports the requested model the switch has landed.
   useEffect(() => {
-    if (pending && current === pending) setPending(null);
-  }, [pending, current]);
+    if (pending && choiceFor(model, choices) === pending) setPending(null);
+  }, [pending, model, choices]);
 
   const idle = task.status === 'idle';
   const choose = async (choice: string) => {
@@ -108,23 +127,30 @@ export default function ModelPicker({ task }: { task: Task }) {
     const ok = await submitPty(task.id, `/model ${choice}`);
     if (ok) {
       setPending(choice);
+      // The process is on it from now, reply or not: a /clear before the
+      // first reply should still show it.
+      lastSeenRef.current = { taskId: task.id, model: choice };
       // Remembered for this task, so a restart resumes on it rather than on
       // the user's default.
       setTaskModel(task.id, choice);
     } else setFailed(true);
   };
 
-  const label = model ? model.replace(/^claude-/, '') : 'model unknown';
-  const title = !idle
-    ? 'Switching models is only offered while the task is idle'
-    : 'Sends /model to this session';
+  const label = shown ? shown.replace(/^claude-/, '') : 'Model Unknown';
+  const title =
+    (model ? `${model}. ` : assumed ? `Probably ${assumed}: confirmed on the first reply. ` : '') +
+    (!idle ? 'Switching models is only offered while the task is idle' : 'Sends /model to this session');
   const nameOf = (id: string) => choices.find((c) => c.id === id)?.name ?? id;
 
   return (
     <span className="model-pick">
-      <span className="model-pick-name" title={model ?? undefined}>
-        {label}
-      </span>
+      {/* Only when the menu cannot name it: otherwise the select already
+          shows the current model and this said the same thing twice. */}
+      {current === null && pending === null ? (
+        <span className="model-pick-name" title={shown ?? undefined}>
+          {label}
+        </span>
+      ) : null}
       <select
         className="model-pick-select"
         aria-label="Change model"
@@ -135,7 +161,7 @@ export default function ModelPicker({ task }: { task: Task }) {
       >
         {current === null && pending === null ? (
           <option value="" disabled>
-            change…
+            Change…
           </option>
         ) : null}
         {choices.map((c) => (
@@ -145,7 +171,7 @@ export default function ModelPicker({ task }: { task: Task }) {
         ))}
       </select>
       {pending ? <span className="model-pick-note">→ {nameOf(pending)} on next reply</span> : null}
-      {failed ? <span className="model-pick-note">no live terminal for this task</span> : null}
+      {failed ? <span className="model-pick-note">No live terminal for this task</span> : null}
     </span>
   );
 }

@@ -25,11 +25,19 @@ import type { Project, Task } from '../types';
 import type { PastSession } from '../db/sessions';
 import { listPastSessions } from '../db/sessions';
 import { importTranscripts, listDiskSessions, type DiskSession } from '../capture';
-import { adoptSessionIntoTask, createTask, updateTask } from '../db';
+import { adoptSessionIntoTask, createTask } from '../db';
+import { linkTaskSession, newSessionId } from '../capture/sessionLink';
 import { findProjectByRepo } from '../db/projects';
-import { listBranches, repoRootFor } from '../git/worktree';
+import { defaultBranchOf, listBranches, repoRootFor } from '../git/worktree';
+import {
+  probeResumePlace,
+  recreateWorktree,
+  switchMainCheckout,
+  type ResumePlacePlan,
+} from '../git/resumePlace';
 import { relativeTime } from './TaskList';
 import { displayName, wrapForTooltip } from './text';
+import './worktree.css';
 
 /** Typing in the search box should not fire a query per keystroke. */
 const SEARCH_DEBOUNCE_MS = 220;
@@ -123,6 +131,23 @@ function modalCwd(sessions: PastSession[]): string | null {
   return bestN >= Math.max(3, sessions.length * 0.25) ? best : null;
 }
 
+/** The base a resumed task records. See the call site. */
+async function resumeBase(
+  planned: string | null,
+  project: Project | null,
+  repo: string,
+  branch: string,
+): Promise<string> {
+  const pick = (b: string | null | undefined) => (b && b !== branch ? b : null);
+  return (
+    pick(planned) ??
+    pick(project?.defaultBaseBranch) ??
+    pick(await defaultBranchOf(repo).catch(() => null)) ??
+    // A session on the default branch itself: there is nothing else to name.
+    branch
+  );
+}
+
 export default function SessionBrowser({
   open,
   onClose,
@@ -135,8 +160,16 @@ export default function SessionBrowser({
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  /** Overrides a recorded cwd that no longer exists. */
+  /** A folder to resume in instead of the recorded cwd. */
   const [cwdOverride, setCwdOverride] = useState<string | null>(null);
+  /** What a gone folder could be replaced with; null while unknown or nothing. */
+  const [place, setPlace] = useState<ResumePlacePlan | null>(null);
+  /**
+   * Git work to do before resuming, in place of a folder: recreate the gone
+   * worktree at its old path, or switch the main checkout to its branch.
+   * Ignored while `cwdOverride` is set -- a chosen folder wins.
+   */
+  const [action, setAction] = useState<'recreate' | 'switch' | null>(null);
   const [now, setNow] = useState(() => Date.now());
   /** Claude Code session files Albedo is not holding. Read from disk, not the db. */
   const [disk, setDisk] = useState<DiskSession[]>([]);
@@ -148,7 +181,7 @@ export default function SessionBrowser({
 
   const aliveRef = useRef(true);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const pickFolderRef = useRef<HTMLButtonElement | null>(null);
+  const pickFolderRef = useRef<HTMLButtonElement | HTMLInputElement | null>(null);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -288,10 +321,10 @@ export default function SessionBrowser({
   }, [disk, sessions, query]);
 
   const resumeBlocker = useCallback(
-    (session: PastSession, override: string | null): 'no-cwd' | 'cwd-missing' | null => {
+    (session: PastSession, override: string | null, recreating = false): 'no-cwd' | 'cwd-missing' | null => {
       const cwd = override ?? session.cwd;
       if (!cwd) return 'no-cwd';
-      if (!override && cwdOk(session) === false) return 'cwd-missing';
+      if (!override && !recreating && cwdOk(session) === false) return 'cwd-missing';
       return null;
     },
     [cwdOk],
@@ -304,12 +337,41 @@ export default function SessionBrowser({
 
   const effectiveCwd = cwdOverride ?? selected?.cwd ?? null;
   // `cwdExists` is null when capture did not check; only false is a real problem.
-  const cwdMissing = !cwdOverride && selected !== null && cwdOk(selected) === false;
+  const folderGone = selected !== null && cwdOk(selected) === false;
+  const pending = cwdOverride ? null : action;
+  const cwdMissing = folderGone && !cwdOverride && !pending;
+
+  /**
+   * A gone folder: find out whether its branch can be put back where it was,
+   * or is checked out somewhere else, and preselect the better of the two.
+   * Recreating is preferred because only it makes the conversation's paths
+   * true again.
+   */
+  const goneCwd = folderGone ? selected.cwd : null;
+  const goneBranch = folderGone ? selected.branch : null;
+  useEffect(() => {
+    setPlace(null);
+    setAction(null);
+    if (!goneCwd) return;
+    let cancelled = false;
+    void probeResumePlace(goneCwd, goneBranch).then((plan) => {
+      if (cancelled || !aliveRef.current || !plan) return;
+      setPlace(plan);
+      if (plan.recreate) setAction('recreate');
+      else if (plan.elsewhere) setCwdOverride((o) => o ?? plan.elsewhere);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, goneCwd, goneBranch]);
 
   const pickFolder = useCallback(async () => {
     try {
       const picked = await openFolderDialog({ directory: true, multiple: false });
-      if (typeof picked === 'string') setCwdOverride(picked);
+      if (typeof picked === 'string') {
+        setCwdOverride(picked);
+        setAction(null);
+      }
     } catch (err) {
       setError(messageOf(err));
     }
@@ -317,7 +379,9 @@ export default function SessionBrowser({
 
   const resume = useCallback(
     async (session: PastSession, mode: ResumeMode) => {
-      const cwd = cwdOverride ?? session.cwd;
+      // A chosen folder wins over any git action.
+      const act = !cwdOverride && place !== null ? action : null;
+      const cwd = act === 'switch' ? (place?.main?.path ?? null) : (cwdOverride ?? session.cwd);
       if (!cwd) {
         setError('This session has no recorded folder. Choose one to resume in.');
         return;
@@ -325,6 +389,10 @@ export default function SessionBrowser({
       setBusy(true);
       setError(null);
       try {
+        // First, before any row exists: if git refuses, nothing was created.
+        if (act === 'recreate' && place) await recreateWorktree(place, cwd);
+        if (act === 'switch' && place) await switchMainCheckout(place);
+
         // Best-effort: a resumed session need not be in a git repo at all.
         let branch = '';
         try {
@@ -366,33 +434,43 @@ export default function SessionBrowser({
           // The ORIGIN repo, per the Task contract. Only the association uses
           // the resolved root; the session still runs where it ran.
           repoPath: repoRoot ?? cwd,
-          baseBranch: branch,
+          // What the task's work is measured against: never its own branch,
+          // which made the Files pane empty and hid the PR (prLookupBranch
+          // skips branch === base). The project's default, else the repo's.
+          baseBranch: await resumeBase(act && place ? place.baseBranch : null, project, repoRoot ?? cwd, branch),
           branch,
           // The session's own directory, NOT a worktree Albedo cut, and NOT
           // the resolved repo root -- resuming in the wrong folder would be a
           // far worse bug than a mis-grouped tab. Paired with ownsWorktree:
           // false so archive can never offer to remove it; resolving which
           // project a directory belongs to says nothing about who created it.
+          // The one exception is a worktree recreated just now: Albedo made
+          // that folder, so archive may offer to remove it again. A switched
+          // main checkout is still the user's own and stays false.
           worktreePath: cwd,
-          ownsWorktree: false,
+          ownsWorktree: act === 'recreate',
           // The session's branch was the user's before Albedo saw it.
           createdBranch: false,
         });
 
         const args = ['--resume', session.sessionId];
         if (mode === 'fork') {
-          // A fork lands under a NEW session id, so the task must not claim the
-          // source id — capture will adopt whatever the fork writes.
+          // A fork lands under a NEW session id, chosen here so the task is on
+          // it from the start -- capture used to find the fork by folder, and a
+          // folder identifies no session (sessionLink.ts).
           //
           // And deliberately NO adoption here, despite the continue path below
           // doing it: the source conversation's history belongs to the source
           // session, not to the fork's task. Adopting would move 200 messages
           // the fork did not produce onto it, and take them off the original.
-          args.push('--fork-session');
+          const forkId = newSessionId();
+          args.push('--fork-session', '--session-id', forkId);
+          await linkTaskSession(task.id, forkId, 'browser');
+          task.sessionId = forkId;
         } else {
           // Continuing keeps the id, and setting it now is what suppresses the
           // project's initial-prompt template (the gate is sessionId === null).
-          await updateTask(task.id, { sessionId: session.sessionId });
+          await linkTaskSession(task.id, session.sessionId, 'browser');
           task.sessionId = session.sessionId;
 
           /*
@@ -424,7 +502,7 @@ export default function SessionBrowser({
         if (aliveRef.current) setBusy(false);
       }
     },
-    [cwdOverride, onResumed, onClose],
+    [cwdOverride, action, place, onResumed, onClose],
   );
 
   /**
@@ -445,7 +523,9 @@ export default function SessionBrowser({
         return;
       }
       const override = session.sessionId === selectedId ? cwdOverride : null;
-      if (resumeBlocker(session, override) !== null) {
+      // A gone folder always stops here, even with a folder already filled in:
+      // that one may be Albedo's suggestion rather than the user's choice.
+      if (cwdOk(session) === false || resumeBlocker(session, override) !== null) {
         setSelectedId(session.sessionId);
         if (session.sessionId !== selectedId) setCwdOverride(null);
         window.requestAnimationFrame(() => pickFolderRef.current?.focus());
@@ -453,7 +533,7 @@ export default function SessionBrowser({
       }
       await resume(session, 'continue');
     },
-    [busy, selectedId, cwdOverride, resumeBlocker, resume, onOpenTask, onClose],
+    [busy, selectedId, cwdOverride, cwdOk, resumeBlocker, resume, onOpenTask, onClose],
   );
 
   if (!open) return null;
@@ -464,11 +544,11 @@ export default function SessionBrowser({
         className="sb-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="Past sessions"
+        aria-label="Past Sessions"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="sb-head">
-          <span className="sb-title">Past sessions</span>
+          <span className="sb-title">Past Sessions</span>
           <input
             ref={searchRef}
             className="sb-search"
@@ -478,7 +558,7 @@ export default function SessionBrowser({
             onChange={(e) => setQuery(e.target.value)}
             spellCheck={false}
           />
-          <button className="btn btn-ghost" onClick={onClose} title="Close">
+          <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close">
             ✕
           </button>
         </div>
@@ -486,7 +566,7 @@ export default function SessionBrowser({
         {error && <div className="banner sb-banner">{error}</div>}
 
         <div className="sb-list">
-          {loading && sessions.length === 0 && <div className="sb-empty">reading…</div>}
+          {loading && sessions.length === 0 && <div className="sb-empty">Reading…</div>}
           {!loading && sessions.length === 0 && (
             <div className="sb-empty">
               {query.trim() ? `Nothing matches “${query.trim()}”.` : 'No sessions captured yet.'}
@@ -544,10 +624,10 @@ export default function SessionBrowser({
                 {session.cwd && session.cwd !== commonCwd && (
                   <span className="sb-row-cwd">{homeRelative(session.cwd)}</span>
                 )}
-                {session.taskId !== null && <span className="sb-chip">open</span>}
+                {session.taskId !== null && <span className="sb-chip">Open</span>}
                 {cwdOk(session) === false && (
                   <span className="sb-chip" data-tone="warn">
-                    folder gone
+                    Folder Gone
                   </span>
                 )}
               </span>
@@ -562,7 +642,7 @@ export default function SessionBrowser({
           {diskShown.length > 0 && (
             <div className="sb-disk" aria-label="Sessions in Claude Code not imported">
               <div className="sb-disk-head">
-                In Claude Code, not imported
+                In Claude Code, Not Imported
                 <span className="sb-disk-note"> — import to search or resume with history</span>
               </div>
               {diskShown.map((d) => (
@@ -577,38 +657,153 @@ export default function SessionBrowser({
                     disabled={importing !== null}
                     onClick={() => void importSession(d)}
                   >
-                    {importing === d.sessionId ? 'importing…' : 'Import'}
+                    {importing === d.sessionId ? 'Importing…' : 'Import'}
                   </button>
                 </div>
               ))}
             </div>
           )}
-          {diskLoading && diskShown.length === 0 && <div className="sb-empty">reading Claude Code sessions…</div>}
+          {diskLoading && diskShown.length === 0 && <div className="sb-empty">Reading Claude Code sessions…</div>}
         </div>
 
         {selected && (
           <div className="sb-detail">
             <div className="sb-detail-path" title={effectiveCwd ?? undefined}>
-              {effectiveCwd ? homeRelative(effectiveCwd) : 'no folder recorded'}
-              {cwdOverride && <span className="sb-chip">using this instead</span>}
+              {effectiveCwd ? homeRelative(effectiveCwd) : 'No folder recorded'}
+              {cwdOverride && <span className="sb-chip">Using This Instead</span>}
             </div>
 
-            {cwdMissing && (
+            {folderGone && (
               <div className="sb-warn">
-                That folder no longer exists. The conversation's file paths point at it, so
-                resuming elsewhere will not line up perfectly — pick the closest equivalent.
+                That folder no longer exists.{' '}
+                {place
+                  ? <>Its branch <span className="wt-mono">{place.branch}</span> still does.</>
+                  : <>The conversation's file paths point at it, so resuming elsewhere will not
+                    line up perfectly — pick the closest equivalent.</>}
+              </div>
+            )}
+
+            {folderGone && place && selected.cwd && (
+              <div className="wt-field sb-places" role="radiogroup" aria-label="Where to resume">
+                {place.recreate && (
+                  <label className="wt-option" data-selected={pending === 'recreate'}>
+                    <input
+                      ref={(el) => {
+                        pickFolderRef.current = el;
+                      }}
+                      type="radio"
+                      name="sb-place"
+                      checked={pending === 'recreate'}
+                      disabled={busy}
+                      onChange={() => {
+                        setAction('recreate');
+                        setCwdOverride(null);
+                      }}
+                    />
+                    <span>
+                      <span className="wt-option-label">Recreate the Worktree Here</span>
+                      <span className="wt-option-detail">
+                        <span className="wt-mono">git worktree add</span> at{' '}
+                        <span className="wt-mono">{homeRelative(selected.cwd)}</span> on{' '}
+                        <span className="wt-mono">{place.branch}</span>. The conversation's file
+                        paths line up exactly.
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {place.elsewhere && (
+                  <label className="wt-option" data-selected={cwdOverride === place.elsewhere}>
+                    <input
+                      ref={(el) => {
+                        if (!place.recreate) pickFolderRef.current = el;
+                      }}
+                      type="radio"
+                      name="sb-place"
+                      checked={cwdOverride === place.elsewhere}
+                      disabled={busy}
+                      onChange={() => {
+                        setAction(null);
+                        setCwdOverride(place.elsewhere);
+                      }}
+                    />
+                    <span>
+                      <span className="wt-option-label">Use {homeRelative(place.elsewhere)}</span>
+                      <span className="wt-option-detail">
+                        Where <span className="wt-mono">{place.branch}</span> is checked out now,
+                        which is also why it cannot be recreated at the old path.
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {place.main && (
+                  <label
+                    className="wt-option"
+                    data-selected={pending === 'switch'}
+                  >
+                    <input
+                      type="radio"
+                      name="sb-place"
+                      checked={pending === 'switch'}
+                      disabled={busy || place.main.dirty !== 0}
+                      onChange={() => {
+                        setAction('switch');
+                        setCwdOverride(null);
+                      }}
+                    />
+                    <span>
+                      <span className="wt-option-label">
+                        Switch {homeRelative(place.main.path)} to {place.branch}
+                      </span>
+                      <span className="wt-option-detail">
+                        The main checkout, currently on{' '}
+                        <span className="wt-mono">{place.main.current ?? 'a detached HEAD'}</span>.{' '}
+                        {place.main.dirty === 0 ? (
+                          <>
+                            Runs <span className="wt-mono">git switch {place.branch}</span> there; no
+                            worktree is made.
+                          </>
+                        ) : place.main.dirty === null ? (
+                          'Its uncommitted changes could not be read, so switching is not offered.'
+                        ) : (
+                          `It has ${place.main.dirty} uncommitted change(s). Commit or stash them to switch.`
+                        )}
+                      </span>
+                    </span>
+                  </label>
+                )}
+                <label
+                  className="wt-option"
+                  data-selected={cwdOverride !== null && cwdOverride !== place.elsewhere}
+                >
+                  <input
+                    type="radio"
+                    name="sb-place"
+                    checked={cwdOverride !== null && cwdOverride !== place.elsewhere}
+                    disabled={busy}
+                    onChange={() => void pickFolder()}
+                  />
+                  <span>
+                    <span className="wt-option-label">Choose Another Folder…</span>
+                    {cwdOverride !== null && cwdOverride !== place.elsewhere && (
+                      <span className="wt-option-detail wt-mono">{homeRelative(cwdOverride)}</span>
+                    )}
+                  </span>
+                </label>
               </div>
             )}
 
             <div className="sb-actions">
-              {(cwdMissing || !effectiveCwd) && (
+              {(!place || !folderGone) && (cwdMissing || !effectiveCwd || selected.taskId === null) && (
                 <button
-                  ref={pickFolderRef}
-                  className="btn"
+                  ref={(el) => {
+                    if (!place || !folderGone) pickFolderRef.current = el;
+                  }}
+                  className={cwdMissing || !effectiveCwd ? 'btn' : 'btn btn-ghost'}
                   onClick={() => void pickFolder()}
                   disabled={busy}
+                  title="Resume this conversation in a folder other than the one it ran in"
                 >
-                  Choose folder…
+                  {cwdMissing || !effectiveCwd ? 'Choose Folder…' : 'Other Folder…'}
                 </button>
               )}
 
@@ -622,7 +817,7 @@ export default function SessionBrowser({
                       onClose();
                     }}
                   >
-                    Open task
+                    Open Task
                   </button>
                 </>
               ) : (
@@ -633,23 +828,35 @@ export default function SessionBrowser({
                   </span>
                   <button
                     className="btn"
-                    disabled={busy || resumeBlocker(selected, cwdOverride) !== null}
+                    disabled={busy || resumeBlocker(selected, cwdOverride, pending !== null) !== null}
                     onClick={() => void resume(selected, 'fork')}
                   >
-                    Branch from it
+                    Branch from It
                   </button>
                   <button
                     className="btn btn-primary"
-                    disabled={busy || resumeBlocker(selected, cwdOverride) !== null}
+                    disabled={busy || resumeBlocker(selected, cwdOverride, pending !== null) !== null}
                     onClick={() => void resume(selected, 'continue')}
                   >
-                    Continue this session
+                    {pending === 'recreate'
+                      ? 'Recreate and Continue'
+                      : pending === 'switch'
+                        ? 'Switch and Continue'
+                        : 'Continue This Session'}
                   </button>
                 </>
               )}
             </div>
           </div>
         )}
+
+        {/* The bindings this dialog actually has: no more, no fewer. */}
+        <div className="sb-foot" aria-hidden="true">
+          <span>Double-click a row to continue it, or open its task</span>
+          <span>
+            <span className="kbd">Esc</span> Close
+          </span>
+        </div>
       </div>
     </div>
   );

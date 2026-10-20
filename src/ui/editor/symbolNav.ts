@@ -188,7 +188,7 @@ export async function navigate(ctx: NavContext, action: NavAction): Promise<NavO
   if (action === 'usages' || onDeclaration) {
     const result = await findWord(ctx.root, word);
     if (result.count === 0) return { kind: 'none', message: `No text matches for ${word}` };
-    return { kind: 'list', title: `Text matches for ${word} · not resolved, by name only`, result };
+    return { kind: 'list', title: `Text Matches for ${word} · Not Resolved, by Name Only`, result };
   }
   return pick(named, `Symbols named ${word} · by name only`, `No declaration of ${word} in this worktree`);
 }

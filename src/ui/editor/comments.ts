@@ -100,7 +100,7 @@ function button(label: string, onClick: () => void, cls = 'ed-cmt-btn'): HTMLBut
 function rangeLabel(view: EditorView, from: number, to: number): string {
   const a = view.state.doc.lineAt(from).number;
   const b = view.state.doc.lineAt(to).number;
-  return a === b ? `line ${a}` : `lines ${a}–${b}`;
+  return a === b ? `Line ${a}` : `Lines ${a}–${b}`;
 }
 
 class CommentCard extends WidgetType {
@@ -120,7 +120,7 @@ class CommentCard extends WidgetType {
     const card = el('div', 'ed-cmt');
     const head = el('div', 'ed-cmt-head');
     head.append(el('span', 'ed-cmt-where', rangeLabel(view, this.placed.from, this.placed.to)));
-    head.append(el('span', c.sentAt ? 'ed-cmt-state ed-cmt-sent' : 'ed-cmt-state', c.sentAt ? 'sent to Claude' : 'not sent'));
+    head.append(el('span', c.sentAt ? 'ed-cmt-state ed-cmt-sent' : 'ed-cmt-state', c.sentAt ? 'Sent to Claude' : 'Not Sent'));
     const actions = el('span', 'ed-cmt-actions');
     actions.append(
       button('Edit', () => this.actions.edit(c)),

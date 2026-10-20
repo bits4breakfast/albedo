@@ -28,6 +28,10 @@ vi.mock('../db/projects', () => ({
     },
   ]),
 }));
+vi.mock('./projectPrefs', () => ({
+  readLastProjectId: vi.fn(() => null),
+  writeLastProjectId: vi.fn(),
+}));
 vi.mock('../git/worktree', async (orig) => ({
   ...(await orig<typeof import('../git/worktree')>()),
   createWorktree: vi.fn(async () => undefined),
@@ -47,7 +51,7 @@ async function submitWithTitle(title: string) {
   const onCreated = vi.fn();
   render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
   fireEvent.change(screen.getByLabelText('Title'), { target: { value: title } });
-  const create = screen.getByRole('button', { name: 'Create worktree' });
+  const create = screen.getByRole('button', { name: 'Create Worktree' });
   await waitFor(() => expect(create).not.toHaveProperty('disabled', true));
   fireEvent.click(create);
   return onCreated;
@@ -70,5 +74,22 @@ describe('NewTaskDialog partial create', () => {
     vi.mocked(wt.undoCreateWorktree).mockResolvedValueOnce('The worktree at /x was left on disk.');
     await submitWithTitle('Fix login');
     await screen.findByText(/was left on disk/);
+  });
+});
+
+describe('NewTaskDialog default project', () => {
+  it('starts on the project tab the list is showing, not the last one used', async () => {
+    const { listProjects } = await import('../db/projects');
+    const base = { worktreeRoot: '/w', defaultBaseBranch: 'main' };
+    vi.mocked(listProjects).mockResolvedValueOnce([
+      { ...base, id: 1, name: 'albedo', repoPath: '/Users/m/www/albedo', createdAt: 1 },
+      { ...base, id: 2, name: 'upsellguru', repoPath: '/Users/m/www/upsellguru', createdAt: 2 },
+    ] as never);
+    const prefs = await import('./projectPrefs');
+    vi.mocked(prefs.readLastProjectId).mockReturnValueOnce(2);
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} defaultProjectId={1} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('1'),
+    );
   });
 });

@@ -60,6 +60,8 @@ function ask(questions: unknown[], requestId: string | null = '7-1700000000000')
       notificationType: null,
       requestId,
       suggestions: null,
+      sessionId: null,
+      source: null,
       at: NOW,
     },
   ]);
@@ -90,21 +92,21 @@ describe('PromptCard: permission', () => {
 
   it('"don\'t ask again" appears only with a plain rule suggestion, and names the rule', () => {
     show(perm());
-    expect(screen.queryByRole('button', { name: /don’t ask again/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Don’t Ask Again/ })).toBeNull();
     cleanup();
     const rules = alwaysAllowRules([
       { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'curl -s https://example.com' }], behavior: 'allow', destination: 'localSettings' },
     ]);
     show(perm({ alwaysAllow: rules }));
     screen.getByText('Bash(curl -s https://example.com)');
-    fireEvent.click(screen.getByRole('button', { name: /don’t ask again/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Don’t Ask Again/ }));
     expect(decisionOf(0)).toMatchObject({ behavior: 'allow', updatedPermissions: [{ type: 'addRules' }] });
   });
 
   it('no hook waiting: no buttons, only the way to the terminal', () => {
     show(perm({ requestId: null }));
     expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull();
-    screen.getByRole('button', { name: 'Answer in terminal' });
+    screen.getByRole('button', { name: 'Answer in Terminal' });
   });
 
   it('says so when the answer was refused as stale', async () => {
@@ -145,7 +147,7 @@ describe('PromptCard: AskUserQuestion', () => {
 
   it('several questions: Submit waits for every answer; multi-select toggles', async () => {
     show(ask([colour, fruit]));
-    const submit = () => screen.getByRole('button', { name: 'Submit answers' }) as HTMLButtonElement;
+    const submit = () => screen.getByRole('button', { name: 'Submit Answers' }) as HTMLButtonElement;
     expect(submit().disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /Red/ }));
     expect(answer).not.toHaveBeenCalled(); // not one-click: there is more to answer

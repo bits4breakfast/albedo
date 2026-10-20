@@ -8,7 +8,6 @@ import { wrapForTooltip } from './text';
 import type { ContextUsage } from '../capture';
 import type { AttentionKind } from './attention';
 import { useShortcuts } from './shortcuts';
-import { PrRowMark } from './PrBadge';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { useBranchSync } from '../git/branchSync';
@@ -90,8 +89,16 @@ type GroupKey = 'blocked' | 'active' | 'quiet' | 'archived';
 
 const GROUP_ORDER: GroupKey[] = ['blocked', 'active', 'quiet', 'archived'];
 
+/** The glyph a group label leads with: the same shape its rows carry. */
+const GROUP_GLYPH: Record<GroupKey, TaskStatus> = {
+  blocked: 'blocked',
+  active: 'running',
+  quiet: 'idle',
+  archived: 'archived',
+};
+
 const GROUP_TITLE: Record<GroupKey, string> = {
-  blocked: 'Needs you',
+  blocked: 'Needs You',
   active: 'Running',
   quiet: 'Idle',
   archived: 'Archived',
@@ -307,11 +314,14 @@ export default function TaskList({
 
   return (
     <div className="tasklist" tabIndex={0} onKeyDown={onKeyDown} role="listbox" aria-label="Tasks">
-      <div className="tasklist-head">
+      <div className="tasklist-head" data-bare={!nameProject || undefined}>
         {/* Identity lives here because this strip is always visible, never
             scrolls, and is already the scope label for the list beneath it.
             It is a control, not a caption: someone asking "which project am I
-            in" is usually one keystroke from "and how do I change it". */}
+            in" is usually one keystroke from "and how do I change it".
+            With project tabs in the title bar, the tab is the scope label and
+            already carries the count, so this strip keeps only New Task. */}
+        {nameProject && (
         <button
           className="tasklist-scope"
           data-named={nameProject && !!activeProject}
@@ -325,11 +335,17 @@ export default function TaskList({
         >
           {nameProject && activeProject ? activeProject.name : 'Tasks'}
         </button>
-        <span className="tasklist-count" title={`${blockedCount} blocked of ${liveCount}`}>
-          {blockedCount > 0 ? `${blockedCount}/${liveCount}` : liveCount}
-        </span>
-        <button className="btn btn-primary" onClick={onNew} title="New task (⌘N)">
-          New
+        )}
+        {nameProject && (
+          <span className="tasklist-count" title={`${blockedCount} blocked of ${liveCount}`}>
+            {blockedCount > 0 ? `${blockedCount}/${liveCount}` : liveCount}
+          </span>
+        )}
+        <button className="btn" onClick={onNew} title="New task (⌘N)">
+          New Task
+          <span className="kbd" aria-hidden="true">
+            ⌘N
+          </span>
         </button>
       </div>
 
@@ -347,9 +363,9 @@ export default function TaskList({
         {sections.map((group) => (
           <div key={group.key}>
             <div className="group-label" data-tone={group.key}>
+              <span className="status-dot" data-status={GROUP_GLYPH[group.key]} aria-hidden="true" />
               <span>{GROUP_TITLE[group.key]}</span>
-              <span className="group-rule" />
-              <span>{group.tasks.length}</span>
+              <span className="group-count">{group.tasks.length}</span>
             </div>
             {group.tasks.map((task) => {
               const index = ordered.indexOf(task);
@@ -379,7 +395,9 @@ export default function TaskList({
                      itself, so a paragraph-length task title renders as one
                      window-wide strip that covers whatever it was describing
                      — including the row's own context menu. */
-                  title={`${wrapForTooltip(task.title)}\n${task.repoPath}\n${task.branch}`}
+                  /* The row's details on hover: the context reading the
+                     hairline draws, in words, now that no panel shows it. */
+                  title={`${wrapForTooltip(task.title)}\n${task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
                 >
                   <span className="task-dot-cell">
                     <StatusDot status={task.status} />
@@ -399,6 +417,9 @@ export default function TaskList({
                     )}
                   </span>
                   <span className="task-age">{relativeTime(task.lastActivityAt, now)}</span>
+                  {/* Shares the age's spot and swaps in on hover: reserving
+                      its own width hid on every row cut titles short. */}
+                  {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
                   <span className="task-meta">
                     {/* When a project tab is active the repo is already the
                         tab; repeating it on every row is noise. On "All" it is
@@ -412,15 +433,15 @@ export default function TaskList({
                         <span className="task-sep">/</span>
                       </>
                     )}
-                    <span className="task-branch">{task.branch}</span>
+                    {/* No branch and no PR mark here: the task bar is the one
+                        place git and GitHub state is shown, for the selected
+                        task. Rows identify the task; the title does that. */}
                     <span className="task-meta-tail">
-                      {task.status !== 'archived' && <PrRowMark pr={getPrStatus(task.id)} />}
                       {ctx && ctxText && (
                         <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
                           {ctxText}
                         </span>
                       )}
-                      {index < 9 && <span className="task-index">⌘{index + 1}</span>}
                     </span>
                   </span>
                   <ContextMeter usage={ctx} variant="hairline" />
@@ -459,7 +480,7 @@ export default function TaskList({
               void navigator.clipboard?.writeText(path).catch(() => {});
             }}
           >
-            Copy worktree path
+            Copy Worktree Path
           </button>
           {onFollowUp && canFollowUp(menu.task, getPrStatus(menu.task.id)) && (
             <button
@@ -471,7 +492,7 @@ export default function TaskList({
                 onFollowUp(task);
               }}
             >
-              Follow-up…
+              Follow-Up…
               <span className="row-menu-hint">new task from the base</span>
             </button>
           )}
@@ -498,7 +519,7 @@ export default function TaskList({
                 onArchive(task);
               }}
             >
-              Archive task…
+              Archive Task…
               <span className="row-menu-hint">out of the active list</span>
             </button>
           )}
@@ -513,7 +534,7 @@ export default function TaskList({
                 onDelete(task);
               }}
             >
-              Delete task…
+              Delete Task…
               <span className="row-menu-hint">worktree optional · conversation kept</span>
             </button>
           )}

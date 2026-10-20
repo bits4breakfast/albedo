@@ -10,6 +10,7 @@
 
 import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
 import { onComposerInsert } from './composerBridge';
+import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
@@ -51,6 +52,11 @@ export interface TranscriptPaneProps {
    * Absent: the card still shows what is being asked, without the button.
    */
   onAnswerInTerminal?: (taskId: number) => void;
+  /**
+   * Drawn beside Send: the model picker. The model applies to the next
+   * message, so it belongs with the message, not up in the task bar.
+   */
+  composerAccessory?: ReactNode;
 }
 
 export function TranscriptPane({
@@ -58,6 +64,7 @@ export function TranscriptPane({
   sessionId,
   status = null,
   onAnswerInTerminal,
+  composerAccessory,
 }: TranscriptPaneProps): ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
   const [limit, setLimit] = useState(PAGE);
@@ -345,15 +352,16 @@ export function TranscriptPane({
       {/* The jump button is positioned against this wrapper, not the pane, so
           it sits at the foot of the transcript and never over the composer. */}
       <div className="tx-scroll-wrap">
+        <OverlayScrollbar target={scrollRef} />
         <div className="tx-scroll" ref={scrollRef} onScroll={onScroll}>
           {hasMore ? (
             <div className="tx-page-top">
               <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
-                {loading ? 'loading…' : 'Load earlier messages'}
+                {loading ? 'Loading…' : 'Load Earlier Messages'}
               </button>
             </div>
           ) : messages.length > 0 ? (
-            <div className="tx-page-top tx-page-start">start of conversation</div>
+            <div className="tx-page-top tx-page-start">Start of Conversation</div>
           ) : null}
 
           {error ? <div className="tx-error">Could not read the transcript: {error}</div> : null}
@@ -373,14 +381,14 @@ export function TranscriptPane({
 
         {!following ? (
           <button type="button" className="tx-jump" onClick={jumpToEnd} title="Jump to the latest message (⌘↓)">
-            ↓ latest <kbd className="tx-jump-key">⌘↓</kbd>
+            ↓ Latest <kbd className="tx-jump-key">⌘↓</kbd>
           </button>
         ) : null}
       </div>
 
       <QueuedStrip sessionId={sessionId} status={status} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
-      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} /> : null}
+      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={jumpToEnd} accessory={composerAccessory} /> : null}
     </div>
   );
 }
@@ -526,10 +534,13 @@ export function Composer({
   taskId,
   onSent,
   status = null,
+  accessory,
 }: {
   taskId: number;
   onSent: () => void;
   status?: TaskStatus | null;
+  /** Beside Send (the model picker). */
+  accessory?: ReactNode;
 }): ReactNode {
   const [text, setText] = useState('');
   /** Large text pastes kept aside; the draft holds their placeholders. */
@@ -661,9 +672,9 @@ export function Composer({
     timerRef.current = 0;
     try {
       if (await submitPty(taskId, body)) succeeded(body);
-      else setNotice('Could not deliver your message. It is still here — press send to retry.');
+      else setNotice('Could not deliver your message. It is still here — press Send to retry.');
     } catch {
-      setNotice('Could not send your message. It is still here — press send to retry.');
+      setNotice('Could not send your message. It is still here — press Send to retry.');
     } finally {
       setAwaiting(false);
       setHeld(false);
@@ -874,7 +885,7 @@ export function Composer({
           pendingRef.current = null;
           setAwaiting(false);
           inFlightRef.current = false;
-          setNotice('The session did not start. Your message is still here — press send to try again.');
+          setNotice('The session did not start. Your message is still here — press Send to try again.');
         }, START_TIMEOUT_MS);
         // `startPty` also returns true when a pty is ALREADY live -- submitPty
         // can fail on a write error alone. No presence event is coming in that
@@ -882,10 +893,10 @@ export function Composer({
         if (hasLivePty(taskId)) void flushRef.current();
         return; // otherwise inFlightRef stays set until the retry or the timeout
       }
-      setNotice('This task\u2019s session isn\u2019t running, so there is nowhere to send this. Select the task in the list to start it, then press send. Your message is still here.');
+      setNotice('This task\u2019s session isn\u2019t running, so there is nowhere to send this. Select the task in the list to start it, then press Send. Your message is still here.');
       inFlightRef.current = false;
     } catch {
-      setNotice('Could not send your message. It is still here — press send to retry.');
+      setNotice('Could not send your message. It is still here — press Send to retry.');
       inFlightRef.current = false;
     } finally {
       setBusy(false);
@@ -934,11 +945,15 @@ export function Composer({
           <span>{notice}</span>
           {held ? (
             <button type="button" className="tx-composer-undo" onClick={cancelHold}>
-              cancel
+              Cancel
             </button>
           ) : null}
         </div>
       ) : null}
+      {/* claude.ai's shape: one rounded box holding the text and, under it,
+          the controls -- the model and Send at the bottom right. Beside a
+          tall box they floated at its foot; inside it they move with it. */}
+      <div className="tx-composer-box">
       <textarea
         ref={ref}
         className="tx-composer-input"
@@ -968,15 +983,26 @@ export function Composer({
           }
         }}
       />
-      <button
-        type="button"
-        className="tx-composer-send"
-        onClick={() => void send()}
-        disabled={busy || awaiting || held || text.trim().length === 0}
-        title="Enter to send, Shift+Enter for a newline"
-      >
-        {awaiting || held ? '…' : 'send'}
-      </button>
+      <div className="tx-composer-foot">
+        <div className="tx-composer-accessory">{accessory}</div>
+        <button
+          type="button"
+          className="tx-composer-send"
+          onClick={() => void send()}
+          disabled={busy || awaiting || held || text.trim().length === 0}
+          title="Send (Enter). Shift+Enter for a newline"
+          aria-label="Send"
+        >
+          {awaiting || held ? (
+            '…'
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+            </svg>
+          )}
+        </button>
+      </div>
+      </div>
     </div>
     </>
   );
@@ -1095,8 +1121,8 @@ function SidechainGroup({
       <div className="tx-gutter" />
       <div className="tx-content">
         <button type="button" className="tx-sidechain-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <Disclosure open={open} /> subagent · {rows.length} row{rows.length === 1 ? '' : 's'}
-          {tools > 0 ? ` · ${tools} tool call${tools === 1 ? '' : 's'}` : ''}
+          <Disclosure open={open} /> Subagent · {rows.length} Row{rows.length === 1 ? '' : 's'}
+          {tools > 0 ? ` · ${tools} Tool Call${tools === 1 ? '' : 's'}` : ''}
         </button>
         {open ? (
           <div className="tx-sidechain-body">

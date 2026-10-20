@@ -10,7 +10,7 @@ import type { ReactNode } from 'react';
 import type { ReviewComment } from '../../db/comments';
 
 function where(from: number, to: number): string {
-  return from === to ? `line ${from}` : `lines ${from}–${to}`;
+  return from === to ? `Line ${from}` : `Lines ${from}–${to}`;
 }
 
 export function CommentCardView({
@@ -29,7 +29,7 @@ export function CommentCardView({
       <div className="ed-cmt-head">
         <span className="ed-cmt-where">{where(comment.lineStart, comment.lineEnd)}</span>
         <span className={comment.sentAt ? 'ed-cmt-state ed-cmt-sent' : 'ed-cmt-state'}>
-          {comment.sentAt ? 'sent to Claude' : 'not sent'}
+          {comment.sentAt ? 'Sent to Claude' : 'Not Sent'}
         </span>
         <span className="ed-cmt-actions">
           <button type="button" className="ed-cmt-btn" onClick={onEdit}>

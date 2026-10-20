@@ -96,8 +96,8 @@ describe('inputViewFor', () => {
   it('surfaces Bash timeout and background as quiet fields', () => {
     const v = view(inputViewFor('Bash', { command: 'sleep 1', timeout: 5000, run_in_background: true }), 'shell');
     expect(v.fields).toEqual([
-      { label: 'timeout', value: '5000 ms' },
-      { label: 'background', value: 'yes' },
+      { label: 'Timeout', value: '5000 ms' },
+      { label: 'Background', value: 'yes' },
     ]);
   });
 
@@ -108,8 +108,8 @@ describe('inputViewFor', () => {
   it('renders Read as file plus a human line range', () => {
     const v = view(inputViewFor('Read', { file_path: '/a/b.ts', offset: 120, limit: 40 }), 'fields');
     expect(v.fields).toEqual([
-      { label: 'file', value: '/a/b.ts', path: true },
-      { label: 'lines', value: '120–160' },
+      { label: 'File', value: '/a/b.ts', path: true },
+      { label: 'Lines', value: '120–160' },
     ]);
   });
 
@@ -125,17 +125,17 @@ describe('inputViewFor', () => {
       'fields',
     );
     expect(v.fields).toEqual([
-      { label: 'pattern', value: 'retry' },
-      { label: 'in', value: 'src', path: true },
-      { label: 'files', value: '*.ts' },
-      { label: 'mode', value: 'content' },
-      { label: 'ignore case', value: 'yes' },
+      { label: 'Pattern', value: 'retry' },
+      { label: 'In', value: 'src', path: true },
+      { label: 'Files', value: '*.ts' },
+      { label: 'Mode', value: 'content' },
+      { label: 'Ignore Case', value: 'yes' },
     ]);
   });
 
   it('renders Glob, and omits an absent path', () => {
     const v = view(inputViewFor('Glob', { pattern: '**/*.rs' }), 'fields');
-    expect(v.fields).toEqual([{ label: 'pattern', value: '**/*.rs' }]);
+    expect(v.fields).toEqual([{ label: 'Pattern', value: '**/*.rs' }]);
   });
 
   it('renders Write as the file content in the file grammar', () => {

@@ -361,32 +361,32 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
         </div>
 
         <div className="wt-item-meta">
-          <span className="wt-chip">{row.branch ?? (row.detached ? 'detached' : 'no branch')}</span>
+          <span className="wt-chip">{row.branch ?? (row.detached ? 'Detached' : 'No Branch')}</span>
           <span className="wt-chip">{shortHead(row.head)}</span>
-          {row.locked && <span className="wt-chip" data-tone="locked">locked</span>}
-          {row.dirty === null && !row.dirtyError && <span className="wt-chip">checking…</span>}
+          {row.locked && <span className="wt-chip" data-tone="locked">Locked</span>}
+          {row.dirty === null && !row.dirtyError && <span className="wt-chip">Checking…</span>}
           {row.dirty === false && (
             <span className="wt-chip" data-tone="clean">
-              clean
+              Clean
             </span>
           )}
           {dirty && (
             <span className="wt-chip" data-tone="dirty">
-              {row.files.length} uncommitted
+              {row.files.length} Uncommitted
             </span>
           )}
-          {row.dirtyError && <span className="wt-chip">status unreadable</span>}
+          {row.dirtyError && <span className="wt-chip">Status Unreadable</span>}
           {hasUnmerged && (
             <span className="wt-chip" data-tone="dirty">
-              {row.ahead} unmerged
+              {row.ahead} Unmerged
             </span>
           )}
           {row.ahead === 0 && (
             <span className="wt-chip" data-tone="clean">
-              merged
+              Merged
             </span>
           )}
-          {row.aheadError && <span className="wt-chip">unmerged commits unknown</span>}
+          {row.aheadError && <span className="wt-chip">Unmerged Commits Unknown</span>}
         </div>
 
         <div className="wt-item-reason">{row.reason}</div>
@@ -524,7 +524,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
                 {confirm.busy
                   ? 'Removing…'
                   : loss.needsAck
-                    ? 'Remove and discard work'
+                    ? 'Remove and Discard Work'
                     : 'Remove'}
               </button>
               <button
@@ -560,11 +560,11 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title" id="wt-reconcile-title">
-            Reconcile worktrees
+            Reconcile Worktrees
           </h2>
           <span className="wt-modal-sub">
             {loading
-              ? 'scanning…'
+              ? 'Scanning…'
               : `${orphans.length} orphaned, ${unknowns.length} not tracked by a task`}
           </span>
         </div>
@@ -598,7 +598,7 @@ export function WorktreeReconcile({ open, onClose }: WorktreeReconcileProps) {
           {unknowns.length > 0 && (
             <>
               <div className="wt-group-label">
-                <span>Not tracked by a task — informational</span>
+                <span>Not Tracked by a Task — Informational</span>
                 <span className="wt-group-rule" />
                 <span>{unknowns.length}</span>
               </div>

@@ -12,6 +12,7 @@ import {
   isTranscriptPath,
   lastNewlineIndex,
   lineIndexAfter,
+  owningSessionOfPath,
   sessionIdFromPath,
   watermarkFor,
 } from './watcher';
@@ -147,6 +148,11 @@ describe('path helpers', () => {
   it('falls back to the filename for a session id', () => {
     expect(sessionIdFromPath('/p/-Users-x-proj/abc-123.jsonl')).toBe('abc-123');
     expect(sessionIdFromPath('abc-123.jsonl')).toBe('abc-123');
+  });
+
+  it('files a subagent transcript under its parent session', () => {
+    expect(owningSessionOfPath('/p/-Users-x-proj/abc-123.jsonl')).toBe('abc-123');
+    expect(owningSessionOfPath('/p/-Users-x-proj/abc-123/subagents/agent-a36a.jsonl')).toBe('abc-123');
   });
 });
 

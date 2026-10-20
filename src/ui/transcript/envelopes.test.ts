@@ -424,7 +424,7 @@ describe('Albedo actions', () => {
 
   it('labels a queued action by what it is', () => {
     expect(actionLabelOf(`<pasted_content id="bc88">\n${wrapAction('squash-rebase', 'x')}\n</pasted_content id="bc88">`)).toBe(
-      'Squash & rebase',
+      'Squash & Rebase',
     );
     expect(actionLabelOf('just typing')).toBeNull();
   });

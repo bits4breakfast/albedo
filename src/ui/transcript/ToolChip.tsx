@@ -252,7 +252,7 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
   const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
 
-  const name = message.toolName ?? 'tool';
+  const name = message.toolName ?? 'Tool';
   const target = targetOf(message);
   const summary = summaryOf(message);
   const error = toolResultIsError(result);
@@ -318,10 +318,10 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
           {Object.keys(input).length > 0 ? (
             <section className="tx-chip-section">
               <h4 className="tx-chip-label">
-                input
+                Input
                 {inputView.kind !== 'json' ? (
                   <button type="button" className="tx-chip-raw" onClick={() => setRaw((v) => !v)}>
-                    {raw ? 'formatted' : 'raw'}
+                    {raw ? 'Formatted' : 'Raw'}
                   </button>
                 ) : null}
               </h4>
@@ -338,11 +338,11 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
             </section>
           ) : null}
           <section className="tx-chip-section">
-            <h4 className="tx-chip-label">{error ? 'error' : 'result'}</h4>
+            <h4 className="tx-chip-label">{error ? 'Error' : 'Result'}</h4>
             {pending ? (
-              <div className="tx-chip-empty">no result yet</div>
+              <div className="tx-chip-empty">No result yet</div>
             ) : resultText.length === 0 ? (
-              <div className="tx-chip-empty">empty</div>
+              <div className="tx-chip-empty">Empty</div>
             ) : (
               // Stack traces and compiler errors live here; this is where a
               // clickable path pays off most.
@@ -411,7 +411,7 @@ function QuestionList({
             <div className="tx-question-head">
               {q.header ? <span className="tx-question-tag">{q.header}</span> : null}
               <span className="tx-question-text">{q.question}</span>
-              {q.multiSelect ? <span className="tx-question-multi">pick any</span> : null}
+              {q.multiSelect ? <span className="tx-question-multi">Pick Any</span> : null}
             </div>
             <ul className="tx-options">
               {q.options.map((o, oi) => {
@@ -443,7 +443,7 @@ function QuestionList({
                 </span>
                 <div className="tx-option-body">
                   <div className="tx-option-label">{answer}</div>
-                  <div className="tx-option-desc">typed, not one of the offered options</div>
+                  <div className="tx-option-desc">Typed, not one of the offered options</div>
                 </div>
               </div>
             ) : null}

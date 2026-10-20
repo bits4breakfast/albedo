@@ -68,13 +68,17 @@ export interface TouchedFilesProps {
   task: Task;
   /** The file in the editor's active tab, worktree-relative: its row is marked. */
   activePath?: string | null;
+  /** The pane head's slot for the git ⋯ menu (see GitBar). */
+  menuSlot?: HTMLElement | null;
 }
 
-export default function TouchedFiles({ task, activePath = null }: TouchedFilesProps): ReactNode {
+export default function TouchedFiles({ task, activePath = null, menuSlot = null }: TouchedFilesProps): ReactNode {
   const [files, setFiles] = useState<TouchedFile[]>([]);
   const [gitError, setGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // The first section heading's right end, where GitBar puts Push / Create PR.
+  const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [reloadKey, setReloadKey] = useState(0);
@@ -377,6 +381,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
               <section className="tf-section">
                 <div className="tf-section-head">
                   Uncommitted<span className="tf-section-count">{view.uncommitted.length}</span>
+                  <span className="tf-section-action" ref={setActionSlot} />
                 </div>
                 {view.uncommitted.map((f) => (
                   <FileRow
@@ -409,7 +414,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
                     title={`${c.sha}\n${c.subject}`}
                   >
                     <span className="tf-section-caret">{open ? '▾' : '▸'}</span>
-                    <span className="tf-commit-subject">{c.subject || '(no message)'}</span>
+                    <span className="tf-commit-subject">{c.subject || '(No Message)'}</span>
                     <span className="tf-commit-meta">
                       {c.sha.slice(0, 7)} · {relativeTime(c.at, now)}
                     </span>
@@ -437,7 +442,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
         {mode === 'commit' ? null : (
           [
             ['Uncommitted', view.uncommitted],
-            ['Committed on this branch', view.committed],
+            ['Committed on This Branch', view.committed],
           ] as const
         ).map(([label, rows]) =>
           rows.length === 0 ? null : (
@@ -445,6 +450,11 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
               <div className="tf-section-head">
                 {label}
                 <span className="tf-section-count">{rows.length}</span>
+                {/* The branch's next step (Push, Create PR) on the first
+                    heading, beside the files it acts on. */}
+                {label === 'Uncommitted' || view.uncommitted.length === 0 ? (
+                  <span className="tf-section-action" ref={setActionSlot} />
+                ) : null}
               </div>
               {rows.map((f) => (
                 <FileRow
@@ -470,7 +480,7 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
           </div>
         ) : null}
 
-        {!loaded && loading ? <div className="tf-empty">reading the change set…</div> : null}
+        {!loaded && loading ? <div className="tf-empty">Reading the change set…</div> : null}
       </div>
       {loaded ? (
         <GitBar
@@ -484,6 +494,8 @@ export default function TouchedFiles({ task, activePath = null }: TouchedFilesPr
           onMode={(m) => setMode(writeMode(m))}
           onRefresh={() => setReloadKey((k) => k + 1)}
           refreshing={loading}
+          menuSlot={menuSlot}
+          actionSlot={actionSlot}
         />
       ) : null}
     </div>
@@ -576,14 +588,14 @@ function FileRow({
         <span className="tf-name">{name}</span>
         {file.handEdited ? (
           <span className="tf-badge tf-badge-hand" title="You saved this file by hand in the editor">
-            hand
+            Hand
           </span>
         ) : null}
       </span>
 
       <span className="tf-lines" title={linesTitle(change)}>
         {change === null ? null : change.added === null ? (
-          <span className="tf-bin">bin</span>
+          <span className="tf-bin">Bin</span>
         ) : (
           <>
             <span className="tf-add">+{change.added}</span> <span className="tf-del">−{change.deleted}</span>

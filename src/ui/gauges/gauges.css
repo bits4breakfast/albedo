@@ -4,7 +4,7 @@
 
    Uses the tokens from src/styles.css and nothing else: no new colours, no
    second visual language. Same dark, dense, square-cornered, hairline chrome
-   as the rest of the cockpit.
+   as the rest of the cockpit (now the calm palette: same rules, new values).
 
    MOTION BUDGET. The shell's rule is that `running` breathes and `blocked`
    pings so a blocked session is the one thing that pulls the eye. A panel that
@@ -25,17 +25,17 @@
    1.4.11 non-text); text tiers come from the tokens and clear 4.5.
 
                             dark    light
-     overhead band  /track  3.32    3.42
-     overhead band  /panel  3.75    4.04
-     conversation   /track  6.01    5.33
-     warn overhead  /track  5.45    3.66
-     high overhead  /track  3.84    3.72
-     bar ring       /panel  3.96    4.28
-     bar ring       /track  3.51    3.62
-     inferred hatch /track  4.69    4.00
-     estimate hatch /band   3.75..8.79   4.04..6.35  (weakest = overhead)
-     band divider   /band   3.75, 6.78   4.04, 6.29
-     legend swatch  /panel  3.75    4.04
+     overhead band  /track  3.38    3.43
+     overhead band  /panel  4.11    4.24
+     conversation   /track  6.47    5.23
+     warn overhead  /track  5.78    4.03
+     high overhead  /track  4.91    4.13
+     bar ring       /panel  3.90    4.01
+     bar ring       /track  3.20    3.24
+     inferred hatch /track  4.61    3.78
+     estimate hatch /band   4.11..9.98   4.24..7.59  (weakest = overhead)
+     band divider   /band   4.11, 7.88   4.24, 6.46
+     legend swatch  /panel  4.11    4.24
 
    THERE IS NO LIGHT/DARK BLOCK IN THIS FILE, and that is the point. Every
    value is a token or a color-mix OF tokens against a NAMED ground, so it
@@ -57,7 +57,7 @@
    55% white on light -- and measures 2.18..2.89 (dark) / 2.45..3.26 (light)
    against the fills it sits on. That is under the floor on the one mark that
    carries the honesty rule. An opaque var(--panel) stripe says the same
-   thing at 3.75..8.79 / 4.04..6.35, so this file uses that. Flagged to the
+   thing at 4.11..9.98 / 4.24..7.59, so this file uses that. Flagged to the
    shell for .ctx-fill and .task-ctx-fill, which have the same shortfall.
 
    Must stay legible at the 200px sidebar minimum: every text run either
@@ -68,14 +68,20 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 8px 9px;
+  gap: 14px;
+  /* The same card as the work area beside it: inset 8px on the chrome
+     ground, the soft card edge and shadow, its foot level with the main
+     card's (both 8px off the window's bottom). It used to be a white slab
+     glued to the sidebar's sides and bottom with a line on top. */
+  margin: 0 8px 8px;
+  padding: 12px 12px 12px;
   background: var(--panel);
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
   font-size: var(--fs-xs);
   color: var(--muted);
   min-width: 0;
-  width: 100%;
   align-self: stretch;
   overflow: hidden;
   /* --- surface shared with the shell's task-row meter ---------------------
@@ -83,7 +89,7 @@
      in styles.css, which is on screen at the same time a few inches away.
      A matched literal cannot survive two themes, so this consumes the
      shell's token and is in lockstep by construction in both:
-     #667186 dark (3.32 on --track), #727a87 light (3.42). Aliased once here
+     #74777f dark (3.38 on --track), #767983 light (3.43). Aliased once here
      because two rules below need it. */
   --gz-meter-fill: var(--ctx-quiet-bar);
 
@@ -96,7 +102,7 @@
 .gz-section {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -110,8 +116,6 @@
 .gz-title {
   flex: 0 0 auto;
   font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
   color: var(--faint);
 }
 
@@ -186,18 +190,18 @@
 .gz-bar {
   display: flex;
   width: 100%;
-  height: 8px;
+  height: 6px;
   /* The shell's own meter track, consumed as a token so this gauge and the
      task-row meter cannot drift. Deliberately NOT adjusted for contrast in
      either theme: moving the track toward the bands lowers every band
      against it AND makes an empty window read as partly full. The bar's
      extent is carried by the ring instead, which is the boundary WCAG
      actually asks to be legible -- and the free band IS the bare track, so
-     that extent is the headroom reading. Track/panel is only 1.13 (dark)
-     and 1.18 (light); without the ring you cannot see where the bar ends. */
+     that extent is the headroom reading. Track/panel is only 1.22 (dark)
+     and 1.24 (light); without the ring you cannot see where the bar ends. */
   background: var(--track);
-  border: 1px solid var(--border-strong);   /* 3.96 dark / 4.28 light on --panel */
-  border-radius: 2px;
+  border: 1px solid var(--border-strong);   /* 3.90 dark / 4.01 light on --panel */
+  border-radius: 4px;
   overflow: hidden;
 }
 
@@ -207,17 +211,17 @@
   transition: width 320ms ease;
 }
 
-/* Overhead and conversation clear the track comfortably, but sit only 1.63
-   (dark) / 1.56 (light) against EACH OTHER -- they are separated by hue, not luminance, which
+/* Overhead and conversation clear the track comfortably, but sit only 1.92
+   (dark) / 1.53 (light) against EACH OTHER -- they are separated by hue, not luminance, which
    is no separation at all in monochrome or at low vision. A hairline in the
-   panel ground splits them structurally (3.75 and 6.78 dark, 4.04 and 6.29
+   panel ground splits them structurally (4.11 and 7.88 dark, 4.24 and 6.46
    light, against the two bands it divides -- a ground-coloured hairline on a
    band is contrastful in both themes by construction, since the bands exist
    to contrast with the ground). box-shadow rather than a border so a zero-width band does not
    render a stray pixel. */
 .gz-seg + .gz-seg { box-shadow: inset 1px 0 0 var(--panel); }
 
-.gz-seg[data-band='overhead'] { background: var(--gz-meter-fill); }  /* 3.32 dark / 3.42 light */
+.gz-seg[data-band='overhead'] { background: var(--gz-meter-fill); }  /* 3.38 dark / 3.43 light */
 .gz-seg[data-band='conversation'],
 .gz-seg[data-band='used'] { background: var(--accent); }
 .gz-seg[data-band='free'] { background: transparent; }
@@ -235,22 +239,19 @@
    relationship in both. (Identical arithmetic on dark, so no regression:
    a p% mix with a ground is exactly a p% alpha composite over it.) */
 .gz-bar[data-level='warn'] .gz-seg[data-band='overhead'] {
-  background: color-mix(in srgb, var(--warn) 80%, var(--track));   /* 5.45 dark / 3.66 light */
+  background: color-mix(in srgb, var(--warn) 80%, var(--track));   /* 5.78 dark / 4.03 light */
 }
 .gz-bar[data-level='high'] .gz-seg[data-band='overhead'] {
-  background: color-mix(in srgb, var(--danger) 80%, var(--track)); /* 3.84 dark / 3.72 light */
+  background: color-mix(in srgb, var(--danger) 80%, var(--track)); /* 4.91 dark / 4.13 light */
 }
 
 /* Approximated bands are hatched, exactly as the task-row meters hatch an
    inferred fill. Two of the three bands are always hatched, which is the
    honest picture: only the total is measured. */
-.gz-seg[data-est='true'] {
-  background-image: repeating-linear-gradient(
-    115deg,
-    var(--panel) 0 2px,
-    rgba(0, 0, 0, 0) 2px 4px
-  );
-}
+/* The used bands are always split by estimate; hatching them said so on
+   every reading and made the bar busy. The tilde on the legend values says
+   it now. Only the free band keeps its hatch, and only when the limit is
+   inferred: there the bar's very end is the guess. */
 
 /* The free band has no fill to hatch, so it gets stripes of its own. When the
    limit is inferred this is the visible statement that the right-hand end of
@@ -274,6 +275,7 @@
 }
 
 .gz-key {
+  font-family: var(--font-ui);
   display: flex;
   align-items: baseline;
   gap: 5px;
@@ -294,7 +296,7 @@
   width: 6px;
   height: 6px;
   border-radius: 1px;
-  background: var(--gz-meter-fill);   /* 3.75 dark / 4.04 light, on --panel */
+  background: var(--gz-meter-fill);   /* 4.11 dark / 4.24 light, on --panel */
 }
 .gz-swatch[data-band='conversation'],
 .gz-swatch[data-band='used'] { background: var(--accent); }
@@ -364,8 +366,6 @@
   flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -378,6 +378,10 @@
   flex: 0 1 auto;
   overflow: hidden;
 }
+/* With the window named by the switch above, the countdown leads its line
+   instead of floating at the far end of an otherwise empty one. */
+.gz-window-head > .gz-ages:first-child,
+.gz-window-head > .gz-unavailable:first-child { margin-left: 0; }
 
 .gz-ages-key {
   flex: 0 1 auto;
@@ -422,8 +426,15 @@
 
 .gz-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(0, 1fr));
   column-gap: 5px;
+  align-items: end;
+}
+/* The lead figure. Same colour token as the total above, one size up. */
+.gz-stat[data-primary] .gz-stat-val {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-strong);
 }
 
 .gz-stat {
@@ -454,9 +465,12 @@
 /* --------------------------------------------------------------------------
    Narrow sidebar. At the 200px minimum the "ages out in" key is the first
    thing to go: the countdown and its tooltip still say everything needed.
+   160px is the panel's content width there, now that it is an inset card
+   (8px margins, 12px padding); 224px was the old flush slab's, and hid the
+   key at ordinary widths once the card took its insets.
    -------------------------------------------------------------------------- */
 
-@container (max-width: 224px) {
+@container (max-width: 160px) {
   .gz-ages-key { display: none; }
   .gz-stats { column-gap: 3px; }
 }
@@ -465,17 +479,62 @@
   .gz-seg { transition: none !important; }
 }
 
-/* `/clear`, under the context reading it resets. Armed reads as an ordinary
+/* `/clear`, right after the percentage it resets. Armed reads as an ordinary
    raised button with the label asking the question; no new colour. */
 .gz-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 6px;
+  gap: 6px;
+  margin-left: 8px;
+  align-self: center;
 }
-.gz-clear { height: 22px; font-size: var(--fs-xs); }
+/* Quiet text until armed: an action beside a reading, not a second headline. */
+.gz-clear { height: 22px; padding: 0 6px; font-size: var(--fs-xs); }
+.gz-clear:not(.gz-clear-armed) { border-color: transparent; background: transparent; color: var(--muted); }
+.gz-clear:not(.gz-clear-armed):hover:not(:disabled) { background: var(--panel-hover); color: var(--text); }
 .gz-action-note {
   font-size: var(--fs-xs);
   color: var(--danger);
+}
+
+/* The 5H / 7D switch sits at the end of the Usage head, after its note. */
+.gz-window-switch { margin-left: auto; flex: 0 0 auto; align-self: center; }
+
+/* --------------------------------------------------------------------------
+   Inline layout: the same figures on one line, for the status strip.
+   Each stat reads "Spend 1.95M/h" -- label first, as prose does -- and
+   nothing wraps: the strip is one row.
+   -------------------------------------------------------------------------- */
+.gz-window[data-variant='inline'] {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 16px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.gz-window[data-variant='inline'] .gz-window-head { flex: none; }
+.gz-window[data-variant='inline'] .gz-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.gz-window[data-variant='inline'] .gz-stat {
+  flex-direction: row-reverse;
+  align-items: baseline;
+  gap: 5px;
+}
+.gz-window[data-variant='inline'] .gz-stat-val,
+.gz-window[data-variant='inline'] .gz-stat[data-primary] .gz-stat-val {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text);
+}
+.gz-window[data-variant='inline'] .gz-stat-key { letter-spacing: 0; }
+.gz-window[data-variant='inline'] .gz-countdown { font-size: var(--fs-xs); }
+.gz-window[data-variant='inline'] .gz-cache {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

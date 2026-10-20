@@ -104,7 +104,7 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
       : null;
   const comments = useDiffComments(task.id, target.relative, currentText, unsaved);
 
-  if (load.kind === 'loading') return <div className="ed-message">reading the change…</div>;
+  if (load.kind === 'loading') return <div className="ed-message">Reading the change…</div>;
   if (load.kind === 'error') {
     return (
       <div className="ed-message" data-tone="error">
@@ -125,9 +125,9 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
       <div className="ed-diff-meta">
         {'change' in result ? <span className="ed-diff-change" data-change={result.change}>{CHANGE_LABEL[result.change]}</span> : null}
         <span className="ed-diff-against" title={fromMergeBase ? base : 'No merge base with the base branch; uncommitted changes only'}>
-          against {against}
+          Against {against}
         </span>
-        {unsaved ? <span className="ed-diff-unsaved">unsaved edits are not included</span> : null}
+        {unsaved ? <span className="ed-diff-unsaved">Unsaved edits are not included</span> : null}
         <button
           type="button"
           className="ed-btn ed-diff-refresh"
@@ -136,7 +136,7 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
           title="Re-read the file and git"
           aria-live="polite"
         >
-          {outcome === 'refreshing' ? 'refreshing…' : outcome === 'refreshed' ? 'refreshed' : 'refresh'}
+          {outcome === 'refreshing' ? 'Refreshing…' : outcome === 'refreshed' ? 'Refreshed' : 'Refresh'}
         </button>
       </div>
       {comments.notice ? (
@@ -157,11 +157,11 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
 }
 
 const CHANGE_LABEL: Record<ChangeKind, string> = {
-  added: 'new on this branch',
-  deleted: 'deleted',
-  modified: 'modified',
-  renamed: 'renamed',
-  unchanged: 'no net change',
+  added: 'New on This Branch',
+  deleted: 'Deleted',
+  modified: 'Modified',
+  renamed: 'Renamed',
+  unchanged: 'No Net Change',
 };
 
 function DiffBody({ data }: { data: TaskFileDiff }): ReactNode {

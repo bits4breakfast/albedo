@@ -1,13 +1,13 @@
 /* The answerable parts of the "waiting on you" card (PromptCard.tsx). The card
-   itself (.tx-prompt*) is styled in transcript.css on a flat --panel-raised.
+   itself (.tx-prompt*) is styled in transcript.css on its own --prompt-bg tint.
 
    Every pair below was measured, light / dark (WCAG 2.x):
-     option  --panel-inset ground:  --text-strong 19.22 / 17.87, --muted 7.90 / 7.83,
-                                    --accent mark 6.75 / 7.24, --faint placeholder 6.44 / 5.67
-     option  --panel-hover ground:  --text-strong 15.03 / 14.65, --muted 6.17 / 6.42,
-                                    --accent mark 5.28 / 5.94
-     card    --panel-raised ground: --warn 5.65 / 8.23, --muted 6.55 / 6.87, --faint 5.34 / 4.97
-   Edges: --border-strong is 3.80 / 3.71 against --panel-raised (non-text, 3:1).
+     option  --panel-inset ground:  --text-strong 19.92 / 18.16, --muted 7.33 / 8.17,
+                                    --accent mark 6.63 / 8.32, --faint placeholder 6.09 / 6.36
+     option  --panel-hover ground:  --text-strong 16.89 / 15.36, --muted 6.22 / 6.91,
+                                    --accent mark 5.62 / 7.04
+     card    --prompt-bg ground:    --warn 7.24 / 9.21, --muted 6.82 / 7.15, --faint 5.67 / 5.56
+   Edges: --border-strong is 3.82 / 3.60 against --prompt-bg (non-text, 3:1).
 
    No tint, no alpha, no opacity anywhere: a selected option is told apart by
    its accent edge and its mark (● ☑), not by a wash, so no text in it changes
@@ -26,7 +26,7 @@
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 8px 10px;
   text-align: left;
   font: inherit;
   font-size: var(--fs-md);
@@ -73,7 +73,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 12px;
 }
 .pc-hint { font-size: var(--fs-sm); color: var(--faint); }
 

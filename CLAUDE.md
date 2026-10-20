@@ -32,6 +32,33 @@ there first kills the waiting hook (so a late card answer can never apply), and
 a hook that times out decides nothing. Nothing writes an answer on its own, and
 keystrokes are not used: the pty stays input-only and unread.
 
+A second, equally narrow widening, by the owner's decision (2026-10-20): the
+`SessionStart` line keeps `session_id` and `source`, and nothing else from that
+payload. It exists so a task follows `/clear` and `/resume` typed inside Claude
+Code. That is the whole of it.
+
+A third, by the owner's decision (2026-10-20): the `--settings` block also sets
+Claude Code's `statusLine` to the same script in `status` mode. It keeps the
+plan's five-hour and seven-day used percentage and reset time, the context used
+percentage and window size, and the session id -- nothing else -- in one
+`status-<id>.json` replaced on each refresh, and prints nothing (Albedo's
+terminals have no status line). It feeds the status strip's plan meters and
+the context window size; `hookEvents.ts` (STATUS_SNAPSHOT) is still the only
+file that knows the shape.
+
+## Which session a task is on
+
+A restart resumes `tasks.session_id`, so that value is a fact, never a guess.
+Albedo chooses it before `claude` runs (`--session-id` for a new session, the
+id it resumes or forks to otherwise; `src/ui/sessionSpawn.ts`), and the
+SessionStart hook corrects it when the terminal moves to another session.
+`src/capture/sessionLink.ts` is the only code that changes it, and it logs
+every change to `~/.albedo/logs/sessions.jsonl`. Capture finds a transcript's
+task by session id. A folder decides only for a worktree Albedo cut for one
+task, and never for a shared folder such as the main checkout. Matching by
+folder was the restart bug: every session started in the main checkout
+overwrote the task's id.
+
 Violating this separation is the one architectural mistake that matters.
 If you find yourself regexing terminal bytes, stop — the answer is in SQLite.
 

@@ -80,18 +80,3 @@
 .pr-end:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .pr-end[data-tone='danger'] { color: var(--danger); }
 
-/* Row mark: sized and set like .task-ctx-text, which it sits beside. */
-.pr-mark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.pr-mark[data-tone='pass'] .pr-mark-state { color: var(--add); }
-.pr-mark[data-tone='fail'] .pr-mark-state { color: var(--danger); }
-.pr-mark[data-tone='pending'] .pr-mark-state { color: var(--warn); }
-.pr-mark[data-tone='merged'] .pr-mark-state { color: var(--accent); }

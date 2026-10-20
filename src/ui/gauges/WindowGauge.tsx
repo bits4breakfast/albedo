@@ -55,7 +55,8 @@
 
 import type { WindowUsage } from '../../capture';
 import { abbreviateTokens, exactTokens, formatCountdown, formatRate, NO_VALUE } from './format';
-import type { GaugeState } from './ContextGauge';
+/** What a gauge has to show. `no-session` is kept for callers that pass it. */
+export type GaugeState = 'loading' | 'ready' | 'unavailable' | 'no-session';
 
 export interface WindowGaugeProps {
   /** Short label, e.g. `5h` or `7d`. */
@@ -66,6 +67,14 @@ export interface WindowGaugeProps {
   now: number;
   /** When `data` was fetched — used only if `windowEnd` is unusable. */
   fetchedAt: number;
+  /** Omit the label: a switch above already names the window. */
+  hideLabel?: boolean;
+  /**
+   * `inline` lays the same figures out on one line, for the window's status
+   * strip: same markup and numbers, so the rules about what counts as spend
+   * are kept in one place.
+   */
+  variant?: 'block' | 'inline';
 }
 
 const ROLLING_NOTE =
@@ -77,30 +86,41 @@ interface StatProps {
   value: string;
   label: string;
   title: string;
+  /** The lead figure: drawn larger, so five numbers read as one answer and two details. */
+  primary?: boolean;
 }
 
-function Stat({ value, label, title }: StatProps) {
+function Stat({ value, label, title, primary }: StatProps) {
   return (
-    <span className="gz-stat" title={title}>
+    <span className="gz-stat" data-primary={primary || undefined} title={title}>
       <span className="gz-stat-val">{value}</span>
       <span className="gz-stat-key">{label}</span>
     </span>
   );
 }
 
-export default function WindowGauge({ label, data, state, now, fetchedAt }: WindowGaugeProps) {
-  const head = (
+export default function WindowGauge({
+  label,
+  data,
+  state,
+  now,
+  fetchedAt,
+  hideLabel = false,
+  variant = 'block',
+}: WindowGaugeProps) {
+  // Hidden when a switch above already names the window.
+  const head = hideLabel ? null : (
     <span className="gz-window-label" title={`Rolling ${label} window, across all sessions`}>
-      {label}
+      {label.toUpperCase()}
     </span>
   );
 
   if (state !== 'ready' || !data) {
     return (
-      <div className="gz-window">
+      <div className="gz-window" data-variant={variant}>
         <div className="gz-window-head">
           {head}
-          <span className="gz-unavailable">{state === 'loading' ? 'reading…' : 'unavailable'}</span>
+          <span className="gz-unavailable">{state === 'loading' ? 'Reading…' : 'Unavailable'}</span>
         </div>
       </div>
     );
@@ -127,12 +147,12 @@ export default function WindowGauge({ label, data, state, now, fetchedAt }: Wind
   const haveCountdown = !empty && remaining !== null && remaining > 0;
 
   return (
-    <div className="gz-window">
+    <div className="gz-window" data-variant={variant}>
       <div className="gz-window-head">
         {head}
         {empty ? (
           <span className="gz-unavailable" title={`Nothing counted in the last ${label}.`}>
-            no usage in window
+            No usage in window
           </span>
         ) : (
           <span
@@ -143,29 +163,32 @@ export default function WindowGauge({ label, data, state, now, fetchedAt }: Wind
                 : `Nothing is due to age out yet.\n\n${ROLLING_NOTE}`
             }
           >
-            <span className="gz-ages-key">ages out in</span>
+            <span className="gz-ages-key">Ages out in</span>
             <span className="gz-countdown">
               {haveCountdown && remaining !== null ? formatCountdown(remaining) : NO_VALUE}
             </span>
           </span>
         )}
       </div>
+      {/* Spend rate first and large: it is the question this panel answers
+          ("how fast am I going"). Input and output are its breakdown. */}
       <div className="gz-stats">
         <Stat
-          value={abbreviateTokens(input)}
-          label="input"
-          title={`${exactTokens(input)} input tokens spent: fresh prompt + cache writes.\nExcludes cached context re-read, which is shown separately.`}
-        />
-        <Stat value={abbreviateTokens(output)} label="output" title={`${exactTokens(output)} output tokens`} />
-        <Stat
+          primary
           value={formatRate(data.burnRate)}
           /* Not "rate". A bare "rate" invites exactly one question -- rate of
              what? -- and that is the distinction this panel spent a round
              getting right. The value keeps its own /h so it still reads
              correctly quoted on its own. */
-          label="spend/h"
+          label="Spend"
           title={`${exactTokens(data.burnRate)} tokens spent per hour across all sessions (input + output).\nTotal spent in window: ${exactTokens(total)} tokens. Cached re-read is not counted.`}
         />
+        <Stat
+          value={abbreviateTokens(input)}
+          label="Input"
+          title={`${exactTokens(input)} input tokens spent: fresh prompt + cache writes.\nExcludes cached context re-read, which is shown separately.`}
+        />
+        <Stat value={abbreviateTokens(output)} label="Output" title={`${exactTokens(output)} output tokens`} />
       </div>
       {Number.isFinite(cacheRead) && cacheRead > 0 && (
         <p
@@ -181,7 +204,7 @@ export default function WindowGauge({ label, data, state, now, fetchedAt }: Wind
           }
         >
           <span className="gz-cache-val">{abbreviateTokens(cacheRead)}</span>{' '}
-          <span className="gz-cache-key">cached re-read &middot; not spend</span>
+          <span className="gz-cache-key">cached re-read, not spend</span>
         </p>
       )}
     </div>

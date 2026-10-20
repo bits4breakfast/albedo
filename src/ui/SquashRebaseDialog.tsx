@@ -104,7 +104,7 @@ export default function SquashRebaseDialog({ task, commits, uncommitted, onClose
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title" id="sq-title">
-            Squash &amp; rebase
+            Squash &amp; Rebase
           </h2>
           <span className="wt-modal-sub">{task.title}</span>
         </div>
@@ -141,19 +141,19 @@ export default function SquashRebaseDialog({ task, commits, uncommitted, onClose
           {dirty && (
             <div className="wt-field" style={{ marginTop: 14 }}>
               <span className="wt-label">
-                {uncommitted.length} uncommitted file{uncommitted.length === 1 ? '' : 's'}
+                {uncommitted.length} Uncommitted File{uncommitted.length === 1 ? '' : 's'}
               </span>
               <label className="wt-option" data-selected={!includeUncommitted}>
                 <input type="radio" name="sq-dirty" checked={!includeUncommitted} onChange={() => setIncludeUncommitted(false)} />
                 <span>
-                  <span className="wt-option-label">Leave them out</span>
+                  <span className="wt-option-label">Leave Them Out</span>
                   <span className="wt-option-detail">Stashed before the rebase and restored after it.</span>
                 </span>
               </label>
               <label className="wt-option" data-selected={includeUncommitted}>
                 <input type="radio" name="sq-dirty" checked={includeUncommitted} onChange={() => setIncludeUncommitted(true)} />
                 <span>
-                  <span className="wt-option-label">Include them</span>
+                  <span className="wt-option-label">Include Them</span>
                   <span className="wt-option-detail">Folded into the squashed commit.</span>
                 </span>
               </label>
@@ -185,7 +185,7 @@ export default function SquashRebaseDialog({ task, commits, uncommitted, onClose
             Cancel
           </button>
           <button type="button" className="btn btn-primary" disabled={busy || n === 0} onClick={() => void confirm()}>
-            {busy ? 'Sending…' : direct ? 'Ask Claude to squash & rebase' : 'Put in message box'}
+            {busy ? 'Sending…' : direct ? 'Ask Claude to Squash & Rebase' : 'Put in Message Box'}
           </button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS } from './shortcuts';
+import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS, terminalTakesKey } from './shortcuts';
 
 const ev = (init: Partial<KeyboardEvent> & { key: string }) =>
   ({ altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, code: '', ...init }) as KeyboardEvent;
@@ -25,6 +25,27 @@ describe('comboOf', () => {
     // On macOS Alt composes characters: ⌥[ is a real keystroke that has to
     // reach the terminal rather than being eaten as a task jump.
     expect(comboOf(ev({ key: '[', metaKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('jumps projects with ⌥digit (and ⌥⌘digit) on macOS, read from the physical key', () => {
+    // Option rewrites `key` (⌥1 is ¡), so the code is what counts.
+    const hit = { combo: 'mod+alt+digit', digit: 1 };
+    expect(comboOf(ev({ key: '¡', code: 'Digit1', altKey: true }), 'macos')).toEqual(hit);
+    expect(comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')).toEqual(hit);
+    // Shift and Control stay out: ⇧⌥digit and ⌃⌥digit are left alone.
+    expect(comboOf(ev({ key: '⁄', code: 'Digit1', altKey: true, shiftKey: true }), 'macos')).toBeNull();
+    expect(comboOf(ev({ key: '1', code: 'Digit1', altKey: true, ctrlKey: true }), 'macos')).toBeNull();
+    expect(comboOf(ev({ key: '0', code: 'Digit0', metaKey: true, altKey: true }), 'macos')).toBeNull();
+  });
+
+  it('jumps projects with Alt+digit off a Mac, never Ctrl+Alt (that is AltGr)', () => {
+    expect(comboOf(ev({ key: '3', code: 'Digit3', altKey: true }), 'linux')).toEqual({
+      combo: 'mod+alt+digit',
+      digit: 3,
+    });
+    expect(comboOf(ev({ key: '{', code: 'Digit7', altKey: true, ctrlKey: true }), 'other')).toBeNull();
+    // ⌘digit stays the task jump everywhere.
+    expect(comboOf(ev({ key: '2', code: 'Digit2', metaKey: true }), 'macos')?.combo).toBe('mod+digit');
   });
 
   it('reads the digit out of a number jump', () => {
@@ -69,6 +90,8 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'O', code: 'KeyO', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true }))?.combo,
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
+      comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
     // The one gesture is reachable through its own detector.
     const shift = createDoubleShift();
@@ -80,6 +103,14 @@ describe('SHORTCUTS', () => {
       if (s.combo.startsWith('editor ') || s.combo.startsWith('transcript ')) continue;
       expect(reachable).toContain(s.combo);
     }
+  });
+});
+
+describe('shell drawer key', () => {
+  it('is Option-F12 alone, read from code', () => {
+    expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo).toBe('alt+f12');
+    expect(comboOf(ev({ key: 'F12', code: 'F12' }))).toBeNull();
+    expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true, metaKey: true }))).toBeNull();
   });
 });
 
@@ -171,5 +202,13 @@ describe('createDoubleShift', () => {
     d(sh(0));
     expect(d(sh(100))).toBe(true);
     expect(d(sh(200))).toBe(false);
+  });
+});
+
+describe('terminalTakesKey', () => {
+  it('keeps the project jump from the terminal, and leaves everything else to it', () => {
+    expect(terminalTakesKey(ev({ key: '¡', code: 'Digit1', altKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: 'b', code: 'KeyB', altKey: true }))).toBe(true);
+    expect(terminalTakesKey(ev({ key: '1', code: 'Digit1', metaKey: true }))).toBe(true);
   });
 });

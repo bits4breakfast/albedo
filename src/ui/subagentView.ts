@@ -34,7 +34,7 @@ export function agentStatusWord(status: TaskStatus): string {
     case 'running':
       return 'Running';
     case 'blocked':
-      return 'Needs you';
+      return 'Needs You';
     case 'idle':
     case 'done':
       return 'Finished';
@@ -81,15 +81,15 @@ export function spokenElapsed(ms: number): string {
 }
 
 /**
- * The strip's one-line summary: "5 agents · 1 needs you". Blocked is the only
+ * The strip's one-line summary: "5 Agents Running · 1 Needs You". Blocked is the only
  * count worth calling out separately -- it is the one that will sit there
  * until you act.
  */
 export function stripSummary(live: readonly Pick<SubagentRun, 'status'>[]): string {
   const n = live.length;
   const blocked = live.filter((r) => r.status === 'blocked').length;
-  const head = `${n} agent${n === 1 ? '' : 's'} running`;
-  return blocked > 0 ? `${head} · ${blocked} need${blocked === 1 ? 's' : ''} you` : head;
+  const head = `${n} Agent${n === 1 ? '' : 's'} Running`;
+  return blocked > 0 ? `${head} · ${blocked} Need${blocked === 1 ? 's' : ''} You` : head;
 }
 
 /** What a row is called when the agent has not said anything yet. */

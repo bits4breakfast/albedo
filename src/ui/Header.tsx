@@ -1,25 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { usageSummary } from '../capture';
+import type { ReactNode } from 'react';
+import OverflowMenu from './OverflowMenu';
+import type { ThemeChoice } from './theme';
 
 /**
- * Title bar strip. Carries the macOS overlay drag region, the count of
- * sessions waiting on the user, and one usage figure.
+ * Title bar strip. Carries the macOS overlay drag region, the project tabs,
+ * the count of sessions waiting on the user, History and ⋯.
  *
- * Deliberately only one. The gauges panel at the foot of the sidebar is
- * permanently on screen and owns the breakdown — 5h and weekly totals,
- * countdowns, context for the selected task. Repeating any of that up here
- * would be the same numbers twice on one screen. What survives is the rate:
- * several parallel sessions share one quota and burn it several times faster
- * than a single terminal does, and tokens-per-hour is the figure that says
- * whether the current fleet is sustainable — the one thing the panel's
- * point-in-time totals do not tell you.
- *
- * This component must never take the app down. `usageSummary()` may not exist
- * yet, may throw, or may return zeros; all three render as quiet placeholders.
+ * No usage figure. A "Burn" rate used to sit here, the same quantity as the
+ * Usage panel's Spend/h but divided by a flat 5h instead of the time actually
+ * worked, so the two disagreed (936k/h beside 2.52M/h). The panel, with its
+ * breakdown and window switch, is where usage lives.
  */
-
-const WINDOW_MS = 5 * 60 * 60 * 1000;
-const POLL_MS = 30_000;
 
 /*
  * No "New task" here on purpose. The sidebar carries it, beside the list it
@@ -37,108 +28,66 @@ export interface HeaderProps {
   /** Opens the keyboard shortcuts list. */
   onShortcuts: () => void;
   blockedCount: number;
+  /**
+   * The appearance choice. A per-viewer preference set once, so it lives in
+   * ⋯ rather than taking permanent room in the sidebar.
+   */
+  theme: ThemeChoice;
+  onThemeChange: (next: ThemeChoice) => void;
+  /**
+   * The project tabs, when there are two or more projects. They lead the
+   * bar: the tabs are the level above everything below it.
+   */
+  tabs?: ReactNode;
+  /** Select a task that is waiting on you (the next one, on repeat clicks). */
+  onWaitingClick?: () => void;
 }
 
-interface Usage {
-  inputTokens: number;
-  outputTokens: number;
-  sinceTs: number;
-}
-
-function formatTokens(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '0';
-  if (n < 1000) return String(Math.round(n));
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1)}M`;
-}
+const THEME_ITEMS: { choice: ThemeChoice; label: string; title: string }[] = [
+  { choice: 'system', label: 'Theme: Auto', title: 'Follow the system appearance' },
+  { choice: 'light', label: 'Theme: Light', title: 'Always light' },
+  { choice: 'dark', label: 'Theme: Dark', title: 'Always dark' },
+];
 
 export default function Header({
   onReconcile,
   onProjects,
   onSessions,
   onShortcuts,
+  theme,
+  onThemeChange,
+  tabs,
+  onWaitingClick,
   blockedCount,
 }: HeaderProps) {
-  const [usage, setUsage] = useState<Usage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const aliveRef = useRef(true);
-
-  const poll = useCallback(async () => {
-    try {
-      const u = await usageSummary();
-      if (!aliveRef.current) return;
-      if (!u || typeof u !== 'object') {
-        setUsage(null);
-        setError(null);
-        return;
-      }
-      setUsage({
-        inputTokens: Number(u.inputTokens) || 0,
-        outputTokens: Number(u.outputTokens) || 0,
-        sinceTs: Number(u.sinceTs) || 0,
-      });
-      setError(null);
-    } catch (err) {
-      if (!aliveRef.current) return;
-      setUsage(null);
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    void poll();
-    const pollId = setInterval(() => void poll(), POLL_MS);
-    const tickId = setInterval(() => setNow(Date.now()), 30_000);
-    return () => {
-      aliveRef.current = false;
-      clearInterval(pollId);
-      clearInterval(tickId);
-    };
-  }, [poll]);
-
-  const total = usage ? usage.inputTokens + usage.outputTokens : 0;
-  const hasWindow = !!usage && usage.sinceTs > 0;
-  const elapsed = hasWindow ? Math.max(0, Math.min(WINDOW_MS, now - usage.sinceTs)) : 0;
-  const hours = elapsed / 3_600_000;
-  // Below a few minutes of window the rate is noise, not a reading.
-  const burn = hasWindow && hours > 0.05 ? total / hours : null;
-
   return (
     <header className="header" data-tauri-drag-region>
-      <span className="header-brand" data-tauri-drag-region>
-        Albedo
-      </span>
+      {/* No icon and no name: the window is already Albedo. The bar starts
+          with the project tabs (absent with a single project). */}
+      {tabs}
 
       <span className="header-spacer" data-tauri-drag-region />
 
       {blockedCount > 0 && (
-        <span className="usage" title={`${blockedCount} session(s) waiting on you`}>
-          <span className="status-dot" data-status="blocked" aria-hidden="true" />
-          <span className="usage-figure">{blockedCount} waiting</span>
-        </span>
+        <>
+          {/* A button: the count is only useful as a way to get there. With
+              several waiting, each click moves to the next. */}
+          <button
+            type="button"
+            className="usage usage-waiting"
+            onClick={onWaitingClick}
+            title={`${blockedCount} session(s) waiting on you. Click to go to ${blockedCount === 1 ? 'it' : 'the next one'}.`}
+          >
+            <span className="status-dot" data-status="blocked" aria-hidden="true" />
+            <span className="usage-figure">{blockedCount} Waiting</span>
+          </button>
+          <span className="header-sep" aria-hidden="true" />
+        </>
       )}
 
-      <div
-        className="usage"
-        title={
-          'Tokens per hour across all sessions in the rolling 5h window. ' +
-          'The sidebar panel has the totals and countdowns.'
-        }
-      >
-        <span className="usage-label">burn</span>
-        {error && <span className="usage-error">unavailable</span>}
-        {!error && !usage && <span className="usage-stale">reading…</span>}
-        {!error && usage && burn !== null && (
-          <span className="usage-figure">
-            {formatTokens(burn)}
-            <em>/h</em>
-          </span>
-        )}
-        {!error && usage && burn === null && <span className="usage-stale">—</span>}
-      </div>
-
+      {/* One visible action; the rest sit behind ⋯ (pane vertical space: one
+          row, one main action). ⌘/ still opens the shortcuts from anywhere,
+          and the sidebar's project name still opens Projects. */}
       <div className="header-actions">
         <button
           className="btn btn-ghost"
@@ -147,15 +96,31 @@ export default function Header({
         >
           History
         </button>
-        <button className="btn btn-ghost" onClick={onProjects} title="Manage projects">
-          Projects
-        </button>
-        <button className="btn btn-ghost" onClick={onReconcile} title="Reconcile git worktrees">
-          Worktrees
-        </button>
-        <button className="btn btn-ghost" onClick={onShortcuts} title="Keyboard shortcuts (⌘/)" aria-label="Keyboard shortcuts">
-          ⌘/
-        </button>
+        <OverflowMenu
+          label="More"
+          title="Projects, worktrees, theme, keyboard shortcuts"
+          items={[
+            { id: 'projects', label: 'Projects…', onSelect: onProjects, title: 'Manage projects' },
+            { id: 'worktrees', label: 'Worktrees…', onSelect: onReconcile, title: 'Reconcile git worktrees' },
+            ...THEME_ITEMS.map((t, i) => ({
+              id: `theme-${t.choice}`,
+              label: t.label,
+              title: t.title,
+              checked: theme === t.choice,
+              radio: true,
+              group: i === 0,
+              onSelect: () => onThemeChange(t.choice),
+            })),
+            {
+              id: 'shortcuts',
+              label: 'Keyboard Shortcuts',
+              aside: '⌘/',
+              onSelect: onShortcuts,
+              title: 'Keyboard shortcuts (⌘/)',
+              group: true,
+            },
+          ]}
+        />
       </div>
     </header>
   );

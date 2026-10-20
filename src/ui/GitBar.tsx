@@ -7,10 +7,11 @@
  * itself -- and everything else waits in the `⋯` menu. A row of four equal
  * buttons asked the reader to work out which one applied; this works it out.
  *
- * It sits under the list, the way a commit window does -- read the change set,
- * then act on it -- and it is one line, because every row it takes is a file
- * the list cannot show: the list's view switch and refresh live in the `⋯`
- * menu too, and the section headers carry the file counts.
+ * It sits on the right of the list's first section heading ("Uncommitted"),
+ * beside the files it acts on, so it costs no row of its own. Only when no
+ * plain heading exists -- commit view with nothing uncommitted, where every
+ * heading is a fold button -- does it fall back to a line under the list. The
+ * view switch and refresh live in the `⋯` menu in the pane head.
  *
  * Nothing here runs git or gh. Push and Create PR send Claude a prompt (see
  * gitPrompts.ts and sendPrompt.ts) and so carry no ellipsis: the click is the
@@ -23,9 +24,7 @@ import { createPortal } from 'react-dom';
 import type { Task } from '../types';
 import type { UnmergedCommits } from '../git/worktree';
 import { getPrStatus, usePrStatus } from '../gh/prStore';
-import { prLabel, prTooltip } from '../gh/prStatus';
 import { prLookupBranch } from '../gh/gh';
-import { openExternal } from '../lib/openUrl';
 import { menuPosition } from './ClosedProjectsMenu';
 import { canSquashRebase, createPrPrompt, nextStep, pushPrompt } from './gitPrompts';
 import './pr.css';
@@ -45,6 +44,13 @@ export interface GitBarProps {
   mode: 'branch' | 'commit';
   onMode: (mode: 'branch' | 'commit') => void;
   onRefresh: () => void;
+  /**
+   * Where the ⋯ menu goes: the Files pane's head row, beside its other
+   * controls. Without one (not mounted yet) it stays in the bar.
+   */
+  menuSlot?: HTMLElement | null;
+  /** Where the main action goes: the first section heading's right end. */
+  actionSlot?: HTMLElement | null;
   refreshing: boolean;
 }
 
@@ -71,6 +77,8 @@ export default function GitBar({
   onMode,
   onRefresh,
   refreshing,
+  menuSlot = null,
+  actionSlot = null,
 }: GitBarProps): ReactNode {
   const pr = usePrStatus(task);
   // `undefined` is "not asked yet": no Create PR until gh has had its say,
@@ -85,13 +93,13 @@ export default function GitBar({
    */
   const unpushed = remote === null || remote.upstream === null ? commits : remote.ahead;
   const step = nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
-  const main = step === 'create-pr' && !prKnown ? 'none' : step;
+  // An existing PR is not this bar's to show: the task bar carries the branch
+  // and its PR badge, the one place git and GitHub state appears. This bar
+  // keeps only the actions that act on the files above it.
+  const main = (step === 'create-pr' && !prKnown) || step === 'open-pr' ? 'none' : step;
 
   const push = () => onAsk(pushPrompt(task));
   const createPr = () => onAsk(createPrPrompt(task));
-  const openPr = () => {
-    if (pr) void openExternal(pr.url);
-  };
 
   const items: MenuItem[] = [];
   if (main !== 'push' && (dirty > 0 || unpushed > 0)) {
@@ -100,13 +108,10 @@ export default function GitBar({
   if (main !== 'create-pr' && prKnown && pr === null && prable && commits > 0) {
     items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
   }
-  if (main !== 'open-pr' && pr) {
-    items.push({ key: 'open', label: `Open #${pr.number} on GitHub`, hint: pr.title, run: openPr });
-  }
   if (canSquashRebase(task) && commits > 0) {
     items.push({
       key: 'squash',
-      label: 'Squash & rebase…',
+      label: 'Squash & Rebase…',
       hint: `One commit, on the latest ${task.baseBranch}`,
       run: onSquash,
     });
@@ -114,7 +119,7 @@ export default function GitBar({
   items.push(
     {
       key: 'by-branch',
-      label: 'Group by branch',
+      label: 'Group by Branch',
       hint: 'Every changed file once, by where it stands',
       run: () => onMode('branch'),
       checked: mode === 'branch',
@@ -122,7 +127,7 @@ export default function GitBar({
     },
     {
       key: 'by-commit',
-      label: 'Group by commit',
+      label: 'Group by Commit',
       hint: 'Each commit with the files it changed',
       run: () => onMode('commit'),
       checked: mode === 'commit',
@@ -137,36 +142,27 @@ export default function GitBar({
     },
   );
 
-  return (
-    <div className="tf-git">
-      <div className="tf-git-id">
-        <span className="tf-git-branch" title={`${task.branch}, off ${task.baseBranch}`}>
-          {task.branch}
-        </span>
-        <span>{commits === 0 ? 'no commits' : `${commits} commit${commits === 1 ? '' : 's'}`}</span>
-        {dirty > 0 ? <span>{dirty} uncommitted</span> : null}
-        {remote === null || commits === 0 ? null : remote.upstream === null ? (
-          <span data-tone="warn" title="This branch has no upstream: nothing on it is on the remote">
-            not on remote
-          </span>
-        ) : remote.ahead > 0 ? (
-          <span data-tone="warn" title={`Ahead of ${remote.upstream}`}>
-            {remote.ahead} unpushed
-          </span>
-        ) : (
-          <span title={`Up to date with ${remote.upstream}`}>pushed</span>
-        )}
-      </div>
+  // The menu sits in the pane head; this bar appears only when there is an
+  // action to take (Push, Create PR). A bar holding nothing but ⋯ was a whole
+  // row of chrome for one button.
+  const menu = <MoreMenu items={items} drop={menuSlot ? 'down' : 'up'} />;
+  const placed = menuSlot ? createPortal(menu, menuSlot) : null;
+  if (main !== 'push' && main !== 'create-pr' && menuSlot) return placed;
 
-      <div className="tf-git-actions">
-        {main === 'push' ? (
+  const action =
+        main === 'push' ? (
           <button
             type="button"
             className="tf-btn tf-btn-primary"
             onClick={push}
-            title="Ask Claude to commit what is outstanding and push. Sent at once when the session is idle; otherwise it waits in the message box."
+            title={
+              (unpushed > 0 ? `${unpushed} commit(s) not on the remote. ` : '') +
+              'Ask Claude to commit what is outstanding and push. Sent at once when the session is idle; otherwise it waits in the message box.'
+            }
           >
-            Push
+            {/* The count rides on the action: how much is waiting is the
+                reason to press it, and it needs no line of its own. */}
+            Push{unpushed > 0 ? ` ↑${unpushed}` : ''}
           </button>
         ) : main === 'create-pr' ? (
           <button
@@ -177,40 +173,33 @@ export default function GitBar({
           >
             Create PR
           </button>
-        ) : main === 'open-pr' && pr ? (
-          <PrButton pr={pr} onOpen={openPr} />
-        ) : null}
-        <MoreMenu items={items} />
+        ) : null;
+
+  if (actionSlot && menuSlot) {
+    return (
+      <>
+        {placed}
+        {createPortal(action, actionSlot)}
+      </>
+    );
+  }
+
+  return (
+    <>
+    {placed}
+    <div className="tf-git">
+      <div className="tf-git-actions">
+        {action}
+        {menuSlot ? null : menu}
       </div>
     </div>
-  );
-}
-
-function PrButton({ pr, onOpen }: { pr: NonNullable<ReturnType<typeof usePrStatus>>; onOpen: () => void }): ReactNode {
-  const label = prLabel(pr);
-  return (
-    <button
-      type="button"
-      className="pr-badge"
-      data-tone={label.tone}
-      title={prTooltip(pr, { clickable: true })}
-      aria-label={`Pull request ${pr.number}, ${label.text}. Open on GitHub`}
-      onClick={onOpen}
-    >
-      <span className="pr-num">#{pr.number}</span>
-      {label.glyph && (
-        <span className="pr-glyph" aria-hidden="true">
-          {label.glyph}
-        </span>
-      )}
-      <span>{label.text}</span>
-    </button>
+    </>
   );
 }
 
 /** The `⋯` button and its menu. Same mechanics as the closed-projects menu. */
-function MoreMenu({ items }: { items: MenuItem[] }): ReactNode {
-  const [at, setAt] = useState<{ left: number; bottom: number } | null>(null);
+function MoreMenu({ items, drop }: { items: MenuItem[]; drop: 'up' | 'down' }): ReactNode {
+  const [at, setAt] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const open = at !== null;
@@ -221,8 +210,10 @@ function MoreMenu({ items }: { items: MenuItem[] }): ReactNode {
       return;
     }
     const rect = buttonRef.current?.getBoundingClientRect();
-    // Upward: the bar is at the bottom of the pane, often of the window.
-    if (rect) setAt({ left: menuPosition(rect, window.innerWidth).left, bottom: window.innerHeight - rect.top + 2 });
+    if (!rect) return;
+    const { left, top } = menuPosition(rect, window.innerWidth);
+    // Upward from the bar at the foot of the pane; downward from the head.
+    setAt(drop === 'up' ? { left, bottom: window.innerHeight - rect.top + 2 } : { left, top });
   };
 
   useEffect(() => {
@@ -287,7 +278,7 @@ function MoreMenu({ items }: { items: MenuItem[] }): ReactNode {
             className="row-menu"
             role="menu"
             aria-label="Git actions"
-            style={{ left: at.left, bottom: at.bottom }}
+            style={{ left: at.left, top: at.top, bottom: at.bottom }}
             onKeyDown={onMenuKey}
           >
             {items.map((item) => (

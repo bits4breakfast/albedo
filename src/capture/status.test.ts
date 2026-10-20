@@ -452,6 +452,68 @@ describe('deriveStatus — fed straight from the adapter', () => {
     // a thinking block is still an assistant row, so recent => running
     expect(deriveStatus(asMessages(thinkingOnly), NOW)).toBe('running');
   });
+
+  // Shapes copied from a real session started by /clear (Claude Code 2.1.302).
+  const clearTranscript = [
+    JSON.stringify({
+      type: 'user',
+      sessionId: SESSION,
+      timestamp: '2026-09-15T11:59:50.021Z',
+      message: { role: 'user', content: '<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>' },
+    }),
+    JSON.stringify({
+      type: 'system',
+      subtype: 'local_command',
+      sessionId: SESSION,
+      timestamp: '2026-09-15T11:59:50.055Z',
+      content: '<local-command-stdout></local-command-stdout>',
+      isMeta: false,
+    }),
+    JSON.stringify({
+      type: 'user',
+      isMeta: true,
+      sessionId: SESSION,
+      timestamp: '2026-09-15T11:59:50.056Z',
+      message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' },
+    }),
+    '',
+  ].join('\n');
+
+  it('is idle right after /clear, not running for the recency window', () => {
+    expect(deriveStatus(asMessages(clearTranscript), NOW)).toBe('idle');
+  });
+
+  it('is idle right after /model, whose output is a user line', () => {
+    const model = [
+      JSON.stringify({
+        type: 'user',
+        sessionId: SESSION,
+        timestamp: '2026-09-15T11:59:50.000Z',
+        message: { role: 'user', content: '<command-name>/model</command-name>\n<command-args>opus</command-args>' },
+      }),
+      JSON.stringify({
+        type: 'user',
+        sessionId: SESSION,
+        timestamp: '2026-09-15T11:59:50.100Z',
+        message: { role: 'user', content: '<local-command-stdout>Set model to Opus</local-command-stdout>' },
+      }),
+      '',
+    ].join('\n');
+    expect(deriveStatus(asMessages(model), NOW)).toBe('idle');
+  });
+
+  it('runs again as soon as a prompt follows the /clear', () => {
+    const prompted =
+      clearTranscript +
+      JSON.stringify({
+        type: 'user',
+        sessionId: SESSION,
+        timestamp: '2026-09-15T11:59:55.000Z',
+        message: { role: 'user', content: 'next task' },
+      }) +
+      '\n';
+    expect(deriveStatus(asMessages(prompted), NOW)).toBe('running');
+  });
 });
 
 describe('statusExpiresAt — when the clock alone changes the answer', () => {

@@ -150,7 +150,7 @@ export default function SymbolResults({ state, onClose, onOpen }: SymbolResultsP
           <span className="qo-status" role="status" aria-live="polite">
             {status}
           </span>
-          <span className="qo-hint">↑↓ move · ↵ open · esc close</span>
+          <span className="qo-hint">↑↓ Move · ↵ Open · Esc Close</span>
         </div>
       </div>
     </div>

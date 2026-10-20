@@ -96,7 +96,7 @@ describe('PrBadge Follow-up…', () => {
     await prime(1, 'MERGED');
     const onFollowUp = vi.fn();
     render(<PrBadge task={task()} onEnd={() => {}} onFollowUp={onFollowUp} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Follow-up…' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Follow-Up…' }));
     expect(onFollowUp).toHaveBeenCalledWith(expect.objectContaining({ number: 42, state: 'merged' }));
     expect(screen.getByRole('button', { name: 'Archive…' })).toBeTruthy();
   });
@@ -105,7 +105,7 @@ describe('PrBadge Follow-up…', () => {
     await prime(1, 'OPEN');
     render(<PrBadge task={task()} onEnd={() => {}} onFollowUp={() => {}} />);
     await screen.findByText('#42');
-    expect(screen.queryByRole('button', { name: 'Follow-up…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Follow-Up…' })).toBeNull();
   });
 });
 
@@ -121,7 +121,7 @@ describe('TaskList row menu Follow-up…', () => {
     return screen.getByRole('menu');
   }
   const followUpItem = (menu: HTMLElement) =>
-    [...menu.querySelectorAll('[role=menuitem]')].find((b) => b.textContent?.startsWith('Follow-up'));
+    [...menu.querySelectorAll('[role=menuitem]')].find((b) => b.textContent?.startsWith('Follow-Up'));
 
   it('appears for a merged or archived task only', async () => {
     await prime(1, 'MERGED');
@@ -158,13 +158,13 @@ describe('NewTaskDialog prefilled as a follow-up', () => {
     const prefill = buildFollowUp(original, { number: 42, url: 'https://github.com/o/r/pull/42', state: 'merged' });
     render(<NewTaskDialog open prefill={prefill} onClose={() => {}} onCreated={onCreated} />);
 
-    expect(await screen.findByText('New follow-up task')).toBeTruthy();
+    expect(await screen.findByText('New Follow-Up Task')).toBeTruthy();
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('ACME-2398 follow-up');
-    const prompt = screen.getByLabelText('Initial prompt') as HTMLTextAreaElement;
+    const prompt = screen.getByLabelText('Initial Prompt') as HTMLTextAreaElement;
     expect(prompt.value).toContain('PR #42');
     await waitFor(() => expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('3'));
     // The project's default, not the repo's current (shipped) branch.
-    await waitFor(() => expect((screen.getByLabelText('Base branch') as HTMLSelectElement).value).toBe('main'));
+    await waitFor(() => expect((screen.getByLabelText('Base Branch') as HTMLSelectElement).value).toBe('main'));
     expect(screen.getByText('ACME-2398-follow-up')).toBeTruthy();
     // Its own folder, not the shipped task's /w/app/ACME-2398.
     expect(screen.getByText('/w/app/ACME-2398-follow-up')).toBeTruthy();
@@ -172,7 +172,7 @@ describe('NewTaskDialog prefilled as a follow-up', () => {
 
     // Everything is editable, and what the user wrote is what is sent.
     fireEvent.change(prompt, { target: { value: `${prompt.value}The redirect still loops on Safari.` } });
-    const create = screen.getByRole('button', { name: 'Create worktree' });
+    const create = screen.getByRole('button', { name: 'Create Worktree' });
     await waitFor(() => expect(create).not.toHaveProperty('disabled', true));
     fireEvent.click(create);
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
@@ -190,7 +190,7 @@ describe('NewTaskDialog prefilled as a follow-up', () => {
     const { rerender } = render(
       <NewTaskDialog open prefill={pending} onClose={() => {}} onCreated={() => {}} />,
     );
-    const prompt = (await screen.findByLabelText('Initial prompt')) as HTMLTextAreaElement;
+    const prompt = (await screen.findByLabelText('Initial Prompt')) as HTMLTextAreaElement;
     expect(screen.getByText('Looking up the pull request…')).toBeTruthy();
     rerender(<NewTaskDialog open prefill={merged} onClose={() => {}} onCreated={() => {}} />);
     expect(prompt.value).toContain('gh pr view 42');
@@ -202,8 +202,8 @@ describe('NewTaskDialog prefilled as a follow-up', () => {
 
   it('shows no prompt field for a plain new task', async () => {
     render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
-    await screen.findByText('New task');
-    expect(screen.queryByLabelText('Initial prompt')).toBeNull();
+    await screen.findByText('New Task');
+    expect(screen.queryByLabelText('Initial Prompt')).toBeNull();
   });
 });
 

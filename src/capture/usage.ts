@@ -31,9 +31,9 @@
  * the plan's token allowance or its reset time -- ~/.claude/stats-cache.json
  * holds historical totals only, policy-limits.json holds policy restrictions
  * rather than quota, and no cached JSON under ~/.claude carries a
- * rate-limit/reset/utilisation field. Being confidently wrong about "how much
- * have I got left" is worse than not answering, so this module reports real
- * counts and rates and leaves the denominator to a future setting.
+ * rate-limit/reset/utilisation field. The percentages come from Claude Code's
+ * status line instead (hookEvents.ts, STATUS_SNAPSHOT); these counts are the
+ * detail behind them, never divided into a percentage of their own.
  *
  * Presentation belongs to the header; this module returns raw numbers.
  */

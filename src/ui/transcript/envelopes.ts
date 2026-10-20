@@ -101,7 +101,7 @@ export type AlbedoAction = 'push' | 'create-pr' | 'squash-rebase';
 const ACTION_LABEL: Record<AlbedoAction, string> = {
   push: 'Push',
   'create-pr': 'Create PR',
-  'squash-rebase': 'Squash & rebase',
+  'squash-rebase': 'Squash & Rebase',
 };
 
 function isAction(v: string | null): v is AlbedoAction {

@@ -42,12 +42,12 @@ describe('diff context expansion', () => {
     // Whether anything surrounds the hunk is not knowable without reading the
     // file, and reading one per diff in a long transcript is the wrong trade.
     renderDiff(fileNow);
-    expect(screen.getAllByRole('button', { name: /more context/ }).length).toBe(2);
+    expect(screen.getAllByRole('button', { name: /More Context/ }).length).toBe(2);
   });
 
   it('reveals the lines above and below once anchored', async () => {
     const read = renderDiff(fileNow);
-    fireEvent.click(screen.getAllByRole('button', { name: /more context/ })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: /More Context/ })[0]!);
 
     await waitFor(() => expect(screen.getByText('before 10')).toBeTruthy());
     expect(read).toHaveBeenCalledWith('src/thing.ts');
@@ -59,9 +59,9 @@ describe('diff context expansion', () => {
     // The hunk's own content is gone: anything rendered around it would be a
     // splice of the present onto the past.
     renderDiff([...before, 'something else entirely', ...after].join('\n'));
-    fireEvent.click(screen.getAllByRole('button', { name: /more context/ })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: /More Context/ })[0]!);
 
-    await waitFor(() => expect(screen.getByText(/this file has changed since/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/This file has changed since/)).toBeTruthy());
     expect(screen.queryByText('before 10')).toBeNull();
   });
 
@@ -81,15 +81,15 @@ describe('diff context expansion', () => {
         />
       </FileTextContext.Provider>,
     );
-    expect(screen.queryByRole('button', { name: /more context/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /More Context/ })).toBeNull();
     // ...and the whole-file gaps above and below the hunk open instead.
-    expect(screen.getAllByRole('button', { name: /unchanged line/ }).length).toBe(2);
+    expect(screen.getAllByRole('button', { name: /Unchanged Line/ }).length).toBe(2);
     expect(read).not.toHaveBeenCalled();
   });
 
   it('shows nothing extra when the file cannot be read', async () => {
     renderDiff(null);
-    fireEvent.click(screen.getAllByRole('button', { name: /more context/ })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: /More Context/ })[0]!);
     await waitFor(() => expect(screen.getByText(/could not be read/)).toBeTruthy());
   });
 });

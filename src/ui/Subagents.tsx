@@ -171,7 +171,7 @@ export default function Subagents({ sessionId, taskTitle = null }: SubagentsProp
               aria-expanded={expanded}
               onClick={() => setExpanded((v) => !v)}
             >
-              {expanded ? 'Show less' : 'Show all'}
+              {expanded ? 'Show Less' : 'Show All'}
             </button>
           ) : null}
         </div>

@@ -101,7 +101,7 @@ export default function EmptyState({
 }: EmptyStateProps) {
   const content = emptyStateContent(projectCount, activeProject);
   const handler = content.action === 'add-project' ? onAddProject : onNewTask;
-  const label = content.action === 'add-project' ? 'Add a project' : 'New task';
+  const label = content.action === 'add-project' ? 'Add a Project' : 'New Task';
 
   return (
     <div className="empty-state" data-variant={variant} data-state={content.key}>

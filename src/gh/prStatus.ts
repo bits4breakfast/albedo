@@ -223,19 +223,19 @@ export type PrTone = 'pass' | 'fail' | 'pending' | 'merged' | 'quiet';
  */
 export function prLabel(pr: PrStatus): { glyph: string; text: string; tone: PrTone } {
   // The word alone: once merged, the checks no longer matter.
-  if (pr.state === 'merged') return { glyph: '', text: 'merged', tone: 'merged' };
-  if (pr.state === 'closed') return { glyph: '×', text: 'closed', tone: 'quiet' };
+  if (pr.state === 'merged') return { glyph: '', text: 'Merged', tone: 'merged' };
+  if (pr.state === 'closed') return { glyph: '×', text: 'Closed', tone: 'quiet' };
   const c = pr.checks;
-  const draft = pr.state === 'draft' ? 'draft · ' : '';
+  const draft = pr.state === 'draft' ? 'Draft · ' : '';
   switch (c.kind) {
     case 'failing':
-      return { glyph: '✗', text: `${draft}${c.failing} failing`, tone: 'fail' };
+      return { glyph: '✗', text: `${draft}${c.failing} Failing`, tone: 'fail' };
     case 'pending':
-      return { glyph: '●', text: `${draft}pending`, tone: 'pending' };
+      return { glyph: '●', text: `${draft}Pending`, tone: 'pending' };
     case 'passing':
-      return { glyph: '✓', text: `${draft}checks`, tone: 'pass' };
+      return { glyph: '✓', text: `${draft}Checks`, tone: 'pass' };
     case 'none':
-      return { glyph: '', text: pr.state === 'draft' ? 'draft' : 'open', tone: 'quiet' };
+      return { glyph: '', text: pr.state === 'draft' ? 'Draft' : 'Open', tone: 'quiet' };
   }
 }
 

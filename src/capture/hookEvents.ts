@@ -64,6 +64,7 @@ import {
   exists,
   mkdir,
   open,
+  readDir,
   readTextFile,
   rename,
   SeekMode,
@@ -151,6 +152,13 @@ export interface HookEvent {
   requestId: string | null;
   /** `PermissionRequest` only: Claude Code's `permission_suggestions`. */
   suggestions: unknown[] | null;
+  /**
+   * `SessionStart` only: the session the terminal is on now, and why
+   * (`startup`, `resume`, `clear`, `compact`). The one fact this channel
+   * carries besides "waiting on you" -- see CLAUDE.md and sessionLink.ts.
+   */
+  sessionId: string | null;
+  source: string | null;
   at: number;
 }
 
@@ -181,6 +189,8 @@ export function parseHookLines(text: string, fallbackAt = Date.now()): HookEvent
         // Stamped by HOOK_SCRIPT. Checked here because it becomes a file name.
         requestId: REQUEST_ID.test(str(d['albedo_req']) ?? '') ? (d['albedo_req'] as string) : null,
         suggestions: Array.isArray(d['permission_suggestions']) ? (d['permission_suggestions'] as unknown[]) : null,
+        sessionId: event === 'SessionStart' && SESSION_ID.test(str(d['session_id']) ?? '') ? (d['session_id'] as string) : null,
+        source: event === 'SessionStart' ? str(d['source']) : null,
         // Hook payloads carry no timestamp; the script stamps one (`albedo_at`).
         at: typeof d['albedo_at'] === 'number' ? (d['albedo_at'] as number) : fallbackAt,
       });
@@ -199,6 +209,9 @@ const ASK_TOOL = 'AskUserQuestion';
  * is dropped rather than trusted.
  */
 const REQUEST_ID = /^\d{1,10}-\d{10,16}$/;
+
+/** A Claude Code session id. Anything else in `session_id` is not trusted. */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function rawQuestionsOf(input: Record<string, unknown> | null): unknown[] {
   const raw = input?.['questions'];
@@ -560,6 +573,9 @@ export function answerFileName(taskId: number, requestId: string): string {
 /** Directory under $HOME holding the script and the event files. */
 export const ALBEDO_DIR = '.albedo';
 
+/** `status-<taskId>.json`: the status-line snapshot, beside the event files. */
+export const STATUS_PREFIX = 'status-';
+
 /**
  * Longest prompt payload HOOK_SCRIPT keeps whole, in characters. Well under
  * what one `cat` writes in a single write(2), so a line stays one write.
@@ -611,6 +627,21 @@ emit() {
 }
 payload=$(cat)
 now=$(date +%s)000
+if [ "$2" = status ]; then
+  # Status-line mode: the plan's usage and the context fill, nothing else, as
+  # one snapshot replaced by rename. Prints nothing: the status line is empty.
+  one=$(printf '%s' "$payload" | tr -d '\\n')
+  pick() { printf '%s' "$one" | sed -n "s/$1/\\1/p" | head -n 1; }
+  num() { pick ".*\\"$1\\" *: *{[^}]*\\"$2\\" *: *\\([0-9][0-9.]*\\).*"; }
+  j() { if [ -n "$1" ]; then printf '%s' "$1"; else printf null; fi; }
+  sid=$(pick '.*"session_id" *: *"\\([0-9a-fA-F-]*\\)".*')
+  ctx=$(pick '.*"used_percentage" *: *\\([0-9][0-9.]*\\) *, *"remaining_percentage".*')
+  size=$(pick '.*"context_window_size" *: *\\([0-9][0-9]*\\).*')
+  line="{\\"session_id\\":\\"$sid\\",\\"five_pct\\":$(j "$(num five_hour used_percentage)"),\\"five_resets\\":$(j "$(num five_hour resets_at)"),\\"week_pct\\":$(j "$(num seven_day used_percentage)"),\\"week_resets\\":$(j "$(num seven_day resets_at)"),\\"ctx_pct\\":$(j "$ctx"),\\"ctx_size\\":$(j "$size"),\\"albedo_at\\":$now}"
+  t="$dir/.status-$1-$$"
+  printf '%s\\n' "$line" > "$t" && mv -f "$t" "$dir/${STATUS_PREFIX}$1.json"
+  exit 0
+fi
 ev=$(printf '%s' "$payload" | sed -n 's/.*"hook_event_name" *: *"\\([^"\\\\]*\\)".*/\\1/p')
 case "$ev" in
   PermissionRequest|PreToolUse|Notification)
@@ -643,6 +674,12 @@ case "$ev" in
     done ;;
   PreToolUse|Notification)
     emit "\${body%\\}},\\"albedo_at\\":$now}" ev ;;
+  SessionStart)
+    # Which session this terminal is on now: /clear and /resume change it.
+    # Only a UUID and a lowercase word get through.
+    sid=$(printf '%s' "$payload" | sed -n 's/.*"session_id" *: *"\\([0-9a-fA-F-]*\\)".*/\\1/p' | head -n 1)
+    src=$(printf '%s' "$payload" | sed -n 's/.*"source" *: *"\\([a-z_]*\\)".*/\\1/p' | head -n 1)
+    emit "{\\"hook_event_name\\":\\"SessionStart\\",\\"session_id\\":\\"$sid\\",\\"source\\":\\"$src\\",\\"albedo_at\\":$now}" ev ;;
   *)
     id=$(printf '%s' "$payload" | sed -n 's/.*"tool_use_id" *: *"\\([^"\\\\]*\\)".*/\\1/p')
     emit "{\\"hook_event_name\\":\\"$ev\\",\\"tool_use_id\\":\\"$id\\",\\"albedo_at\\":$now}" ev ;;
@@ -683,6 +720,9 @@ export function hookSettingsArg(taskId: number, scriptPath: string): string {
       SessionStart: [{ hooks: hook }],
       SessionEnd: [{ hooks: hook }],
     },
+    // Not a hook: Claude Code's status line, which is handed the plan's usage
+    // and the context fill. See STATUS_SNAPSHOT below.
+    statusLine: { type: 'command', command: `${command} status`, padding: 0 },
   });
 }
 
@@ -798,19 +838,21 @@ async function readFrom(path: string, offset: number, length: number): Promise<U
   }
 }
 
-/** Apply the complete lines of `path` past `tail.offset`. */
-async function consume(path: string, tail: Tail): Promise<void> {
+/** Apply the complete lines of `path` past `tail.offset`; returns them. */
+async function consume(path: string, tail: Tail): Promise<HookEvent[]> {
   const size = (await stat(path)).size;
   if (size < tail.offset) {
     // Shorter than what was read: emptied under us. Start over with it.
     tail.offset = 0;
     tail.state = emptyPending();
   }
-  if (size === tail.offset) return;
+  if (size === tail.offset) return [];
   const { text, consumed } = completeLines(await readFrom(path, tail.offset, size - tail.offset));
-  if (consumed === 0) return;
-  applyHookEvents(tail.state, parseHookLines(text));
+  if (consumed === 0) return [];
+  const events = parseHookLines(text);
+  applyHookEvents(tail.state, events);
   tail.offset += consumed;
+  return events;
 }
 
 /**
@@ -822,15 +864,16 @@ async function consume(path: string, tail: Tail): Promise<void> {
  * hook caught between its open(2) and its write(2) at that instant could be
  * lost -- one `cat`, microseconds.
  */
-async function compact(path: string, tail: Tail): Promise<void> {
+async function compact(path: string, tail: Tail): Promise<HookEvent[]> {
   const aside = `${path}.old`;
   try {
     await rename(path, aside);
   } catch {
-    return; // nothing to compact, or not now; the next quiet read retries
+    return []; // nothing to compact, or not now; the next quiet read retries
   }
+  let events: HookEvent[] = [];
   try {
-    await consume(aside, tail);
+    events = await consume(aside, tail);
   } catch {
     /* read what we could */
   }
@@ -840,6 +883,7 @@ async function compact(path: string, tail: Tail): Promise<void> {
   } catch {
     /* a stale copy costs disk, never correctness */
   }
+  return events;
 }
 
 /** Per-task queue: two reads of one file at once would apply its lines twice. */
@@ -861,23 +905,67 @@ async function eventsPath(taskId: number): Promise<string> {
 function refreshTask(taskId: number): Promise<void> {
   return serial(taskId, async () => {
     if (!live.has(taskId)) return;
+    const events: HookEvent[] = [];
     let tail = tails.get(taskId);
     if (!tail) tails.set(taskId, (tail = { offset: 0, state: emptyPending() }));
     try {
       const path = await eventsPath(taskId);
       // Missing is normal right after a compaction: nothing new, state stands.
       if (await exists(path)) {
-        await consume(path, tail);
-        if (isQuiet(tail.state) && tail.offset >= COMPACT_AT_BYTES) await compact(path, tail);
+        events.push(...(await consume(path, tail)));
+        if (isQuiet(tail.state) && tail.offset >= COMPACT_AT_BYTES) events.push(...(await compact(path, tail)));
       }
     } catch {
       /* unreadable this tick; the next one retries from the same offset */
     }
-    if (live.has(taskId)) publish(taskId, currentPrompt(tail.state, answered));
+    if (!live.has(taskId)) return;
+    publish(taskId, currentPrompt(tail.state, answered));
+    const start = latestSessionStart(events);
+    if (start) publishSession(taskId, start.sessionId, start.source ?? 'unknown');
   });
 }
 
+// ---------------------------------------------------------------------------
+// Which session the terminal is on
+// ---------------------------------------------------------------------------
+
+type SessionListener = (taskId: number, sessionId: string, source: string) => void;
+const sessionListeners = new Set<SessionListener>();
+
+/** The last SessionStart in `events` that names a session, or null. */
+export function latestSessionStart(events: readonly HookEvent[]): { sessionId: string; source: string | null } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.event === 'SessionStart' && e.sessionId) return { sessionId: e.sessionId, source: e.source };
+  }
+  return null;
+}
+
+/**
+ * Called when a task's terminal reports the session it is on: at startup,
+ * after `/clear`, after `/resume` inside Claude Code. The id may be the one
+ * the task already has; deciding whether that changes anything is the
+ * subscriber's job (sessionLink.ts).
+ */
+export function onSessionStart(cb: SessionListener): () => void {
+  sessionListeners.add(cb);
+  return () => {
+    sessionListeners.delete(cb);
+  };
+}
+
+function publishSession(taskId: number, sessionId: string, source: string): void {
+  for (const cb of [...sessionListeners]) {
+    try {
+      cb(taskId, sessionId, source);
+    } catch {
+      /* a broken subscriber must not stall the others */
+    }
+  }
+}
+
 const TASK_FILE = /task-(\d+)\.jsonl$/;
+const STATUS_FILE = new RegExp(`${STATUS_PREFIX}(\\d+)\\.json$`);
 
 /**
  * Write the script only when it differs, and then by rename: a hook that is
@@ -905,10 +993,23 @@ export async function startHookEvents(): Promise<string> {
   started ??= (async () => {
     await mkdir(`${base}/events`, { recursive: true });
     await installScript(scriptPath);
-    const sweep = () => void Promise.all([...live].map((id) => refreshTask(id)));
+    const sweep = () =>
+      void Promise.all([...live].flatMap((id) => [refreshTask(id), readSnapshot(id)]));
+    // Whatever the last sessions reported, so the strip has figures at launch.
+    try {
+      for (const e of await readDir(`${base}/events`)) {
+        const st = e.isFile ? STATUS_FILE.exec(e.name) : null;
+        if (st) await readSnapshot(Number(st[1]));
+      }
+    } catch {
+      /* none yet; the first status line brings one */
+    }
     try {
       unwatch = await watch(`${base}/events`, (event) => {
         for (const p of event.paths) {
+          // Any task's: the plan's usage is the account's, whoever reported it.
+          const st = STATUS_FILE.exec(p);
+          if (st) void readSnapshot(Number(st[1]));
           const m = TASK_FILE.exec(p);
           // Only sessions running now: a file's own task may be long gone.
           if (m && live.has(Number(m[1]))) void refreshTask(Number(m[1]));
@@ -1043,4 +1144,141 @@ export async function stopHookEvents(): Promise<void> {
   }
   unwatch = null;
   started = null;
+}
+
+// ---------------------------------------------------------------------------
+// The status line: plan usage and context fill
+// ---------------------------------------------------------------------------
+
+/*
+ * STATUS_SNAPSHOT. A second widening, by the owner's decision (2026-10-20).
+ * Claude Code hands its status-line command the plan's usage -- the figures
+ * `/usage` shows -- and the session's context fill. Nothing on disk carries
+ * either: the transcript has token counts but no allowance, and no window size.
+ *
+ * HOOK_SCRIPT's `status` mode keeps exactly this from that payload: the
+ * five-hour and seven-day used percentage and reset time, the context used
+ * percentage and window size, and the session id the context belongs to.
+ * It replaces `status-<taskId>.json` by rename on every refresh and prints
+ * nothing, so Albedo's terminals show no status line.
+ *
+ * Measured on Claude Code 2.1.304: `rate_limits.{five_hour,seven_day}` hold
+ * `used_percentage` (0-100) and `resets_at` (epoch seconds), present only for
+ * a subscription; `context_window` holds `used_percentage` followed by
+ * `remaining_percentage`, and `context_window_size`.
+ */
+
+/** One plan window: how much of it is used, and when it resets. */
+export interface PlanWindow {
+  /** 0-100. */
+  usedPct: number;
+  /** Epoch ms, or null when Claude Code did not say. */
+  resetsAt: number | null;
+}
+
+export interface StatusSnapshot {
+  /** The session `contextPct` and `contextSize` describe. */
+  sessionId: string | null;
+  fiveHour: PlanWindow | null;
+  sevenDay: PlanWindow | null;
+  /** 0-100, or null before the session's first reply. */
+  contextPct: number | null;
+  /** Tokens: the window Claude Code itself is measuring against. */
+  contextSize: number | null;
+  /** When the status line ran, epoch ms (to the second). */
+  at: number;
+}
+
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function planWindow(pct: unknown, resets: unknown): PlanWindow | null {
+  const p = num(pct);
+  if (p === null) return null;
+  const r = num(resets);
+  return { usedPct: Math.min(100, Math.max(0, p)), resetsAt: r === null ? null : r * 1000 };
+}
+
+/** A snapshot file's text, or null when it is torn or foreign. */
+export function parseStatusSnapshot(text: string): StatusSnapshot | null {
+  let d: Record<string, unknown>;
+  try {
+    const v: unknown = JSON.parse(text.trim());
+    if (!v || typeof v !== 'object') return null;
+    d = v as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const at = num(d['albedo_at']);
+  if (at === null) return null;
+  const sid = str(d['session_id']);
+  const ctx = num(d['ctx_pct']);
+  const size = num(d['ctx_size']);
+  return {
+    sessionId: sid !== null && SESSION_ID.test(sid) ? sid : null,
+    fiveHour: planWindow(d['five_pct'], d['five_resets']),
+    sevenDay: planWindow(d['week_pct'], d['week_resets']),
+    contextPct: ctx === null ? null : Math.min(100, Math.max(0, ctx)),
+    contextSize: size !== null && size > 0 ? size : null,
+    at,
+  };
+}
+
+type SnapshotListener = (taskId: number, snapshot: StatusSnapshot) => void;
+
+const snapshots = new Map<number, StatusSnapshot>();
+/** The text last read per task: `at` is whole seconds, the text is not. */
+const snapshotText = new Map<number, string>();
+const snapshotListeners = new Set<SnapshotListener>();
+
+export function onStatusSnapshot(cb: SnapshotListener): () => void {
+  snapshotListeners.add(cb);
+  return () => {
+    snapshotListeners.delete(cb);
+  };
+}
+
+/** The newest snapshot taken on `sessionId`, or null. */
+export function snapshotForSession(sessionId: string): StatusSnapshot | null {
+  let best: StatusSnapshot | null = null;
+  for (const s of snapshots.values()) {
+    if (s.sessionId === sessionId && (best === null || s.at > best.at)) best = s;
+  }
+  return best;
+}
+
+/**
+ * The plan's usage as last reported by any session. The plan is the
+ * account's, so the freshest report wins whichever task made it.
+ */
+export function planUsage(): { fiveHour: PlanWindow | null; sevenDay: PlanWindow | null; at: number } | null {
+  let best: StatusSnapshot | null = null;
+  for (const s of snapshots.values()) {
+    if ((s.fiveHour || s.sevenDay) && (best === null || s.at > best.at)) best = s;
+  }
+  return best && { fiveHour: best.fiveHour, sevenDay: best.sevenDay, at: best.at };
+}
+
+async function readSnapshot(taskId: number): Promise<void> {
+  let text: string;
+  try {
+    const path = `${await home()}/${ALBEDO_DIR}/events/${STATUS_PREFIX}${taskId}.json`;
+    if (!(await exists(path))) return;
+    text = await readTextFile(path);
+  } catch {
+    return;
+  }
+  if (snapshotText.get(taskId) === text) return;
+  const snap = parseStatusSnapshot(text);
+  if (snap === null) return;
+  snapshotText.set(taskId, text);
+  snapshots.set(taskId, snap);
+  for (const cb of [...snapshotListeners]) {
+    try {
+      cb(taskId, snap);
+    } catch {
+      /* a broken subscriber must not stall the others */
+    }
+  }
 }

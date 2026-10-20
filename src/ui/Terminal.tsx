@@ -4,11 +4,15 @@ import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
-import { endTaskEvents, hookSettingsArg, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
+import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
+import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
 import { getTaskModel } from './taskModel';
+import { isResumePlan, planSpawn } from './sessionSpawn';
+import { displayName } from './text';
 import { submitDelayFor } from '../lib/ptyInput';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
+import { terminalTakesKey } from './shortcuts';
 
 /**
  * The embedded pty.
@@ -268,7 +272,7 @@ export interface TerminalProps {
   onError?: (message: string) => void;
 }
 
-function cssVar(name: string, fallback: string): string {
+export function cssVar(name: string, fallback: string): string {
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
@@ -324,7 +328,7 @@ const ANSI_LIGHT = {
 } as const;
 
 /** Palette derived from the shell tokens in styles.css. */
-function terminalTheme(): ITheme {
+export function terminalTheme(): ITheme {
   return {
     background: cssVar('--panel-inset', '#090b0e'),
     foreground: cssVar('--text', '#ccd3de'),
@@ -339,20 +343,16 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function isResumeArgs(args: string[]): boolean {
-  return args.includes('--resume');
-}
-
 /**
  * `claude [options] [prompt]`. Each element stays a separate argv entry so it
  * goes through the pty layer's own shell-quoting — nothing here builds a
  * command string, and a task title is arbitrary user-typed text.
  */
-function composeArgs(opts: { name?: string; resume?: string[]; prompt?: string }): string[] {
+function composeArgs(opts: { name?: string; flags: string[]; prompt?: string }): string[] {
   const out: string[] = [];
   if (opts.name) out.push('--name', opts.name);
-  if (opts.resume && opts.resume.length > 0) out.push(...opts.resume);
-  else if (opts.prompt) out.push(opts.prompt);
+  out.push(...opts.flags);
+  if (opts.prompt) out.push(opts.prompt);
   return out;
 }
 
@@ -437,6 +437,8 @@ export default function Terminal({
       theme: terminalTheme(),
     });
     termRef.current = term;
+    // App shortcuts on Option (the project jump) must not reach the pty too.
+    term.attachCustomKeyEventHandler(terminalTakesKey);
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -517,7 +519,7 @@ export default function Terminal({
      * Start (or restart) `claude`. Extracted so the failure path can run it a
      * second time without re-creating the xterm or losing the scrollback.
      */
-    const spawn = async (args: string[], isResume: boolean) => {
+    const spawn = async (fresh: boolean) => {
       // Detach the previous pty's listeners before attaching new ones.
       for (const off of ptyUnsubs) {
         try {
@@ -530,19 +532,52 @@ export default function Terminal({
 
       deadRef.current = false;
       sawOutputRef.current = false;
-      usedResumeRef.current = isResume;
       setExitCode(null);
       setFailure(null);
       setPhase('starting');
       spawningRef.current = true;
 
+      // Which session, decided before `claude` runs and recorded on the task,
+      // so the first transcript line already finds its task and a restart
+      // resumes exactly this one (see sessionSpawn.ts and sessionLink.ts).
+      const live = taskRef.current;
+      const neverStarted = live.sessionId === null;
+      const pending = spawnArgsRef.current;
+      // History's args are for the first spawn only: a later restart of a
+      // fork must resume the fork, not fork the original again.
+      spawnArgsRef.current = undefined;
+      const known =
+        !fresh && !pending && live.sessionId !== null ? await sessionTranscriptExists(live.sessionId) : null;
+      const plan = planSpawn({ sessionId: live.sessionId, pending, fresh, transcriptExists: known, newId: newSessionId });
+      try {
+        await linkTaskSession(task.id, plan.sessionId, `spawn:${plan.mode}`);
+      } catch (err) {
+        // The hook will report the id once `claude` starts; spawn regardless.
+        console.warn('[terminal] could not record the session id', err);
+      }
+      if (disposed) return;
+      usedResumeRef.current = isResumePlan(plan);
+
+      // `--name` only where a session is being created; a resumed one keeps
+      // whatever name its owner gave it. The opening prompt only for a task
+      // that never had a session: the agent has already been told otherwise.
+      const title = displayName(live.title);
+      const creating = plan.mode === 'new' || plan.mode === 'reuse' || plan.mode === 'fork';
+      const name = fresh ? title : creating ? (sessionNameRef.current ?? title) : undefined;
+      const prompt = plan.mode === 'new' && neverStarted ? initialPromptRef.current?.trim() : undefined;
+      const args = composeArgs({ name, flags: plan.args, prompt });
+
+      // The task's chosen model, on every spawn: a resume after restart would
+      // otherwise fall back to the user's default and quietly switch models.
+      // With no choice stored (a `/model` typed in the terminal), the model
+      // the session last answered with.
+      const model = getTaskModel(task.id) ?? (plan.modelFrom ? await lastModelOf(plan.modelFrom) : null);
+      if (disposed) return;
+      let spawnArgs = model ? ['--model', model, ...args] : args;
+
       // Hooks tell Albedo when the session is waiting on the user, which the
       // transcript cannot (see capture/hookEvents.ts). Never allowed to stop a
       // session starting: without them the task simply reads as it did before.
-      // The task's chosen model, on every spawn: a resume after restart would
-      // otherwise fall back to the user's default and quietly switch models.
-      const model = getTaskModel(task.id);
-      let spawnArgs = model ? ['--model', model, ...args] : args;
       try {
         const script = await startHookEvents();
         await resetTaskEvents(task.id);
@@ -650,42 +685,32 @@ export default function Terminal({
       return true;
     });
 
-    // Exposed so the "start a fresh session" affordance can reach it.
+    // Exposed so the "start a fresh session" affordance can reach it. Not
+    // fresh means "pick this task's session back up": the LIVE session id, so
+    // a `/clear` since mount is what gets resumed, not the mount-time one.
+    // The prompt goes in as argv, never as a pty write. Writing it would mean
+    // knowing when Claude Code has finished booting, and the only way to know
+    // that is to read terminal output -- the one thing this app never does.
     restartRef.current = (fresh: boolean) => {
       if (fresh) {
         term.write('\r\n\x1b[90m--- starting a fresh session ---\x1b[0m\r\n');
         onFreshStartRef.current?.();
       }
-      // The opening prompt goes to a genuinely fresh session only. If this
-      // task ever established a session, the agent has already been told --
-      // re-sending would make it start the work over, and that reads as the
-      // agent behaving bizarrely rather than as a spawn bug. Deliberately the
-      // LIVE sessionId, not the mount-time one: the whole point is what has
-      // happened since.
-      const neverStarted = taskRef.current.sessionId === null;
-      const prompt = neverStarted ? initialPromptRef.current?.trim() : undefined;
-      if (!fresh) {
-        const again = buildArgs();
-        void spawn(again, isResumeArgs(again));
-        return;
-      }
-      // A fresh session is a NEW session, so naming it renames nothing.
-      void spawn(composeArgs({ name: taskRef.current.title, prompt }), false);
+      void spawn(fresh);
     };
 
-    function buildArgs(): string[] {
-      // The prompt goes in as argv, never as a pty write. Writing it would mean
-      // knowing when Claude Code has finished booting, and the only way to know
-      // that is to read terminal output -- the one thing this app never does.
-      return composeArgs({
-        name: sessionNameRef.current,
-        resume: spawnArgsRef.current,
-        prompt: initialPromptRef.current?.trim(),
-      });
-    }
+    // `/clear` and `/resume` inside Claude Code move this terminal to another
+    // session; the SessionStart hook says which, and the task follows it.
+    unsubs.push(
+      onSessionStart((taskId, sessionId, source) => {
+        if (taskId !== task.id || sessionId === taskRef.current.sessionId) return;
+        void linkTaskSession(task.id, sessionId, `hook:${source}`).catch((err) =>
+          console.warn('[terminal] could not follow the session', err),
+        );
+      }),
+    );
 
-    const first = buildArgs();
-    void spawn(first, isResumeArgs(first));
+    void spawn(false);
 
     return () => {
       disposed = true;
@@ -766,7 +791,7 @@ export default function Terminal({
   return (
     <div className="term" hidden={!active} aria-hidden={!active}>
       <div className="term-surface" ref={hostRef} />
-      {phase === 'starting' && <div className="term-starting">starting claude in {task.worktreePath}…</div>}
+      {phase === 'starting' && <div className="term-starting">Starting claude in {task.worktreePath}…</div>}
 
       {/* Never a dead end. A task whose transcript aged out must not become
           permanently unopenable, so every terminated pane offers a way back. */}
@@ -779,9 +804,9 @@ export default function Terminal({
                 <span className="term-status-calm">Your files and worktree are untouched.</span>
               </>
             ) : phase === 'failed' ? (
-              `could not start: ${failure ?? 'unknown error'}`
+              `Could not start: ${failure ?? 'unknown error'}`
             ) : (
-              `session ended${exitCode === null ? '' : ` (exit ${exitCode})`} — scrollback kept`
+              `Session ended${exitCode === null ? '' : ` (exit ${exitCode})`} — scrollback kept`
             )}
           </span>
           <button
@@ -789,7 +814,7 @@ export default function Terminal({
             onClick={() => restartRef.current?.(true)}
             title="Start a new claude session in this directory"
           >
-            Start a fresh session
+            Start a Fresh Session
           </button>
         </div>
       )}

@@ -10,7 +10,9 @@
  *  1. `used` is the SUM of input_tokens + cache_read + cache_creation on ONE
  *     turn -- not `input_tokens` alone, and not a sum across turns.
  *  2. The context window SIZE is not in the transcript at all, so `limit` is
- *     inferred. `limitBasis` tells the caller how much to trust it.
+ *     inferred. `limitBasis` tells the caller how much to trust it -- unless
+ *     the session's status line reported it (hookEvents.ts), which is Claude
+ *     Code's own figure and wins over everything here.
  */
 
 import {
@@ -20,6 +22,7 @@ import {
   SEQ_STRIDE,
 } from './adapter';
 import { loadModelWindows, windowFor } from './modelCatalog';
+import { snapshotForSession, type StatusSnapshot } from './hookEvents';
 import { getSessionBodyChars, getSessionContextRows, getSessionUsageRows } from '../db';
 
 export interface ContextUsage {
@@ -189,11 +192,31 @@ export async function contextUsageForSessions(
   }
 
   const windows = await loadModelWindows();
-  for (const [sessionId, input] of inputs) {
-    const usage = deriveContextUsage(input, windows);
+  for (const sessionId of unique) {
+    const input = inputs.get(sessionId);
+    const derived = input ? deriveContextUsage(input, windows) : null;
+    const usage = withReportedWindow(derived, snapshotForSession(sessionId));
     if (usage !== null) out.set(sessionId, usage);
   }
   return out;
+}
+
+/**
+ * The reading, measured against the window Claude Code's status line said
+ * this session has. The token count stays the transcript's (it is exact and
+ * may be newer); only the denominator is replaced, and it is now known. With
+ * no transcript reading yet, the status line's own percentage stands in.
+ */
+export function withReportedWindow(usage: ContextUsage | null, snap: StatusSnapshot | null): ContextUsage | null {
+  const size = snap?.contextSize ?? null;
+  if (size === null) return usage;
+  if (usage === null) {
+    if (snap?.contextPct == null) return null;
+    const fraction = snap.contextPct / 100;
+    return { used: Math.round(fraction * size), limit: size, fraction, limitBasis: 'known', model: null, at: snap.at };
+  }
+  const limit = Math.max(size, usage.used);
+  return { ...usage, limit, fraction: Math.min(1, usage.used / limit), limitBasis: 'known' };
 }
 
 async function aggregateInDatabase(sessionIds: string[]): Promise<Map<string, ContextInput>> {

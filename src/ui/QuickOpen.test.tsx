@@ -74,7 +74,7 @@ describe('QuickOpen', () => {
   it('with an empty query, lists the open file outline', async () => {
     setup('symbol', 'src/UserService.php');
     await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
-    expect(screen.getAllByRole('option')[0]!.textContent).toContain('this file');
+    expect(screen.getAllByRole('option')[0]!.textContent).toContain('This File');
   });
 
   it('Escape closes and does not reach window listeners', () => {

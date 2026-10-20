@@ -16,8 +16,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ContextBands, ContextUsage, WindowUsage } from '../../capture';
-import ContextGauge from './ContextGauge';
+import type { WindowUsage } from '../../capture';
 import WindowGauge from './WindowGauge';
 import {
   abbreviateTokens,
@@ -170,126 +169,6 @@ describe('elapsedFraction / quantisePercent', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Rendered honesty claims
-// ---------------------------------------------------------------------------
-
-function usage(over: Partial<ContextUsage> = {}): ContextUsage {
-  return {
-    used: 186_919,
-    limit: 200_000,
-    fraction: 186_919 / 200_000,
-    limitBasis: 'inferred',
-    model: 'claude-opus-5',
-    at: 1_700_000_000_000,
-    ...over,
-  };
-}
-
-function bands(over: Partial<ContextBands> = {}): ContextBands {
-  return {
-    totalUsed: 186_919,
-    conversationEst: 120_000,
-    overheadEst: 66_919,
-    freeEst: null,
-    basis: { total: 'measured', conversation: 'estimated', overhead: 'estimated' },
-    ...over,
-  };
-}
-
-describe('ContextGauge — inferred limit', () => {
-  const html = renderToStaticMarkup(
-    <ContextGauge usage={usage()} bands={bands()} state="ready" />,
-  );
-
-  it('always shows the exact total, which is the only measurement', () => {
-    expect(html).toContain('186.9k');
-    expect(html).toContain('186,919 tokens');
-  });
-
-  it('never prints a bare percentage', () => {
-    expect(html).toContain('~93%');
-    expect(html).not.toMatch(/>93%</);
-    expect(html).toContain('approx');
-  });
-
-  it('marks the bar as inferred so the fill is not read as measured', () => {
-    expect(html).toContain('data-basis="inferred"');
-    expect(html).toContain('data-band="free" data-est="true"');
-  });
-
-  it('declines to print a headroom figure it cannot stand behind', () => {
-    // capture returns freeEst === null for an inferred limit; we do not
-    // recompute limit - used behind its back.
-    expect(html).not.toContain('13.1k');
-    expect(html).toContain(NO_VALUE);
-  });
-
-  it('explains the inference in a tooltip', () => {
-    expect(html).toContain('inferred from the session');
-  });
-
-  it('warns near the ceiling without claiming precision', () => {
-    expect(html).toContain('near the inferred ceiling');
-  });
-});
-
-describe('ContextGauge — known limit', () => {
-  const known = usage({ limitBasis: 'known', limit: 1_000_000, used: 420_000, fraction: 0.42 });
-  const html = renderToStaticMarkup(
-    <ContextGauge
-      usage={known}
-      bands={bands({ totalUsed: 420_000, conversationEst: 300_000, overheadEst: 120_000, freeEst: 580_000 })}
-      state="ready"
-    />,
-  );
-
-  it('prints a hard percentage with no tilde and no approx marker on it', () => {
-    expect(html).toContain('42%');
-    expect(html).not.toContain('~42%');
-    expect(html).toContain('data-approx="false"');
-  });
-
-  it('prints real headroom and leaves the free band unhatched', () => {
-    expect(html).toContain('580.0k');
-    expect(html).toContain('data-band="free" data-est="false"');
-    expect(html).toContain('data-basis="known"');
-  });
-
-  it('still marks the two estimated bands', () => {
-    expect(html).toContain('approx');
-    expect(html).toContain('overhead');
-    expect(html).toContain('conversation');
-  });
-
-  it('does not cry wolf below the ceiling', () => {
-    expect(html).not.toContain('compaction likely');
-  });
-});
-
-describe('ContextGauge — degraded states', () => {
-  it('renders a quiet note rather than a zero', () => {
-    for (const state of ['loading', 'unavailable', 'no-session'] as const) {
-      const html = renderToStaticMarkup(<ContextGauge usage={null} bands={null} state={state} />);
-      expect(html).toContain('gz-unavailable');
-      expect(html).not.toContain('0%');
-    }
-  });
-
-  it('falls back to a single measured band when the split is missing', () => {
-    const html = renderToStaticMarkup(
-      <ContextGauge usage={usage()} bands={null} state="ready" />,
-    );
-    expect(html).toContain('data-band="used"');
-    expect(html).toContain('186.9k');
-  });
-
-  it('says nothing at all when the session has no reading yet', () => {
-    const html = renderToStaticMarkup(<ContextGauge usage={null} bands={null} state="ready" />);
-    expect(html).toContain('no context reading yet');
-  });
-});
-
-// ---------------------------------------------------------------------------
 
 function windowData(over: Partial<WindowUsage> = {}): WindowUsage {
   const now = 1_700_000_000_000;
@@ -313,7 +192,7 @@ describe('WindowGauge', () => {
       <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
     );
     expect(html).toContain('2:47:13');
-    expect(html).toContain('ages out in');
+    expect(html).toContain('Ages out in');
     expect(html).not.toMatch(/resets? in/i);
   });
 
@@ -331,7 +210,7 @@ describe('WindowGauge', () => {
     const html = renderToStaticMarkup(
       <WindowGauge label="5h" data={windowData()} state="ready" now={now} fetchedAt={now} />,
     );
-    expect(html).toContain('spend/h');
+    expect(html).toContain('>Spend<');
     expect(html).not.toMatch(/>rate</);
     expect(html).toContain('tokens spent per hour');
     expect(html).toContain('Cached re-read is not counted');
@@ -354,7 +233,7 @@ describe('WindowGauge', () => {
         fetchedAt={now}
       />,
     );
-    expect(html).toContain('no usage in window');
+    expect(html).toContain('No usage in window');
     expect(html).not.toContain('00:00');
   });
 
@@ -377,8 +256,7 @@ describe('WindowGauge', () => {
     );
     // Present, and labelled so it cannot be read as spend.
     expect(html).toContain('186.0k');
-    expect(html).toContain('cached re-read');
-    expect(html).toContain('not spend');
+    expect(html).toContain('cached re-read, not spend');
     // Never described as input -- that word is what made the old number look
     // reasonable at 38x reality.
     expect(html).not.toMatch(/cached[^<]*input/i);

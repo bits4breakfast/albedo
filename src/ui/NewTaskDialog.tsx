@@ -46,13 +46,24 @@ export interface NewTaskDialogProps {
    * has not touched it.
    */
   prefill?: NewTaskPrefill | null;
+  /**
+   * The project the task list is showing. Wins over the remembered last
+   * project: a "New task" pressed under the albedo tab means albedo.
+   */
+  defaultProjectId?: number | null;
 }
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewTaskDialogProps) {
+export function NewTaskDialog({
+  open,
+  onClose,
+  onCreated,
+  prefill = null,
+  defaultProjectId = null,
+}: NewTaskDialogProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(false);
@@ -120,7 +131,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
 
   useEffect(() => {
     if (!open) return;
-    void loadProjects(prefill?.projectId ?? undefined);
+    void loadProjects(prefill?.projectId ?? defaultProjectId ?? undefined);
     void (async () => {
       try {
         const { homeDir } = await import('@tauri-apps/api/path');
@@ -348,7 +359,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
         >
           <div className="wt-modal-head">
             <h2 className="wt-modal-title" id="wt-newtask-title">
-              {prefill ? 'New follow-up task' : 'New task'}
+              {prefill ? 'New Follow-Up Task' : 'New Task'}
             </h2>
             <span className="wt-modal-sub">
               {project ? `a worktree under ${project.worktreeRoot}` : 'in a project'}
@@ -375,7 +386,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
                     className="btn btn-primary"
                     onClick={() => setProjectsOpen(true)}
                   >
-                    Add a project…
+                    Add a Project…
                   </button>
                 </div>
               </div>
@@ -445,7 +456,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
 
                 <div className="wt-field">
                   <label className="wt-label" htmlFor="wt-base">
-                    Base branch
+                    Base Branch
                   </label>
                   <select
                     id="wt-base"
@@ -506,7 +517,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
                 {prefill && (
                   <div className="wt-field">
                     <label className="wt-label" htmlFor="wt-prompt">
-                      Initial prompt
+                      Initial Prompt
                     </label>
                     <textarea
                       id="wt-prompt"
@@ -585,7 +596,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
                           disabled={busy}
                           onClick={() => void submit(true)}
                         >
-                          Check out the existing branch
+                          Check Out the Existing Branch
                         </button>
                         <span className="wt-modal-sub">
                           runs{' '}
@@ -616,7 +627,7 @@ export function NewTaskDialog({ open, onClose, onCreated, prefill = null }: NewT
               disabled={!canSubmit}
               onClick={() => void submit(false)}
             >
-              {busy ? 'Creating…' : 'Create worktree'}
+              {busy ? 'Creating…' : 'Create Worktree'}
             </button>
           </div>
         </div>

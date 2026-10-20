@@ -8,9 +8,12 @@
    worktree. Shell classes are unprefixed or `sh-`.
 
    Design intent: a desktop cockpit for someone who lives in a terminal and an
-   IDE. Dark, dense, low-chrome, information first. Square corners, hairline
-   borders, no decorative padding. Quiet until something needs attention —
-   `blocked` is the only thing allowed to move.
+   IDE. Calm, layered greys, low-chrome, information first: four close grounds
+   (window, pane, chrome, selected), soft 5-10px radii, and 1px hairlines doing
+   all the separation -- no boxes inside boxes. One accent, used only for
+   "this is live or chosen". One chrome row per pane, one main action, the
+   rest behind ⋯. Quiet until something needs attention -- `blocked` is the
+   only thing allowed to ping.
    ========================================================================== */
 
 :root {
@@ -27,77 +30,118 @@
      harder to spot than rendering as the wrong colour.
 
      RULE: the contrast bar is identical in both themes -- 4.5:1 for text,
-     3.0:1 for UI, against the WORST ground. The worst ground flips with the
-     theme: in dark it is the LIGHTEST surface (--panel-hover), because
-     hover/selected states lift; in light it is the DARKEST (--panel-active),
-     because they sink. Ratios below are worst-case across every surface.
+     3.0:1 for UI, against the WORST ground. In this palette the worst flat
+     ground is --panel-raised (the selected row) in BOTH themes: it is the
+     darkest light surface and the lightest dark one, so "measure against
+     --panel-raised" (CLAUDE.md) is literally the worst case. Tinted grounds
+     (--user-row, --accent-soft, --add-soft, --del-soft, --banner-bg,
+     --prompt-bg, --row-blocked) were measured separately; every text tier
+     below clears all of them. Ratios were computed by
+     scratchpad/contrast/contrast.py (WCAG 2.x relative luminance).
+
+     The palette is the "calm" draft: four close greys doing the layering
+     (ground, pane, chrome, selected), hairlines doing the separation, and
+     one desaturated indigo accent used only for "live or chosen".
      ====================================================================== */
 
   /* --- surfaces (light) --------------------------------------------------- */
-  --bg: #eceef1;           /* window ground */
-  --panel: #f6f7f9;        /* sidebar, header, pane chrome */
-  --panel-raised: #e7eaef; /* selected rows, menus, buttons */
+  --bg: #f6f6f7;           /* window ground */
+  --panel: #fcfcfd;        /* panes, dialogs, menus */
+  /* Sidebar, title bar, pane heads, kbd chips. Between --panel and the
+     selected row so a selected row still reads as a step down from it. */
+  --panel-chrome: #f1f1f3;
+  /* THE SELECTED ROW, and the darkest light surface. Every text tier is
+     measured against it first (CLAUDE.md, Contrast rule 1). Also code spans
+     and pressed-in chips. */
+  --panel-raised: #e6e6ea;
   /* Your own messages in the transcript. A flat ground, measured, not a tint:
-     on it --text 12.51, --text-strong 15.39, --muted 6.32, --faint 5.16,
-     --accent 5.40, --add 5.30, --del 5.06. */
-  --user-row: #dce7f7;
-  --panel-inset: #ffffff;  /* wells: terminal body, code blocks */
-  --panel-hover: #dfe4ea;  /* see the dark block for why this is a token */
-  --panel-active: #d7dde4; /* press; carries --text-strong only */
-  --track: #e0e5eb;        /* meter/gauge track, shared with the gauges panel */
-  --border: #dde1e7;       /* decorative hairlines */
-  --border-strong: #6e7683;/* load-bearing edges                        3.35 */
+     on it --text 14.99, --text-strong 17.54, --muted 6.46, --faint 5.37,
+     --accent 5.84, --add 6.49, --del 6.30. */
+  --user-row: #eef0fb;
+  --panel-inset: #ffffff;  /* wells: terminal body, code blocks, inputs */
+  /* Hovered row: between --panel-chrome and the selected row. A token, not a
+     hex in a :hover rule -- see the dark block for why. */
+  --panel-hover: #ececef;
+  --panel-active: #dfdfe4; /* press; carries --text-strong only (15.00) */
+  --track: #e4e4e8;        /* meter/gauge track, shared with the gauges panel */
+  --border: #e4e4e8;       /* decorative hairlines */
+  --card-edge: #ebebef;    /* the content card's outline: one step softer than --border (decorative) */
+  --subcard: #ffffff;      /* a card inside the card (Files sections): every text tier clears more on it than on --panel-raised */
+  --card-shadow: 0 1px 2px rgb(20 22 40 / 0.05), 0 0 1px rgb(20 22 40 / 0.04);
+  --border-mid: #c9c9d0;   /* button, card and dialog edges (decorative: the label identifies the control) */
+  --border-strong: #7a7d87;/* load-bearing edges: inputs, menus      3.30 on --panel-raised */
 
   /* --- type (light) ------------------------------------------------------- */
   /* Three tiers, same floor as dark. 4.5:1 IS A FLOOR, NOT A PREFERENCE.
      Light inverts the direction: a token gains contrast by getting DARKER,
      so "dimmer" here means lighter, and lighter is exactly what runs out of
-     room. That is why --faint is a mid-slate and not a pale grey. */
-  --text: #1e242c;         /* primary                                  11.75 */
-  --text-strong: #0b0f14;  /* titles, active row                       14.45 */
-  --muted: #4a525e;        /* repo, branch, timestamps                  6.17 */
-  --faint: #575f6c;        /* section labels, paths, hints              5.04 */
+     room. That is why --faint is a mid-slate and not a pale grey.
+     Worst flat ground first (--panel-raised), then the worst TINT, which
+     is --accent-soft-strong (a hovered chosen row) for every tier. */
+  --text: #1b1c20;         /* primary            13.68 | tints >= 13.05 */
+  --text-strong: #08090b;  /* titles, active row 16.00 | tints >= 15.26 */
+  --muted: #53565f;        /* repo, branch, time  5.89 | tints >= 5.62 */
+  --faint: #5f626b;        /* labels, paths, hints 4.90 | tints >= 4.67 */
 
   /* --- accent + diff (light) ---------------------------------------------- */
-  /* Re-picked, not reused: #4d9fff is 6.35 on near-black and 2.2 on near
-     white. Every hue below is a different value from its dark counterpart. */
-  --accent: #0b57bd;                          /* 5.28 */
-  --accent-soft: rgb(11 87 189 / 0.10);
-  --accent-soft-strong: rgb(11 87 189 / 0.18);
-  --accent-line: rgb(11 87 189 / 0.45);
-  --on-accent-soft: #0b4a9e;                  /* 6.77 on --accent-soft */
-  --add: #116b33;                             /* 5.17 */
-  --add-soft: rgb(17 107 51 / 0.11);
-  --del: #b32d27;                             /* 4.94 */
-  --del-soft: rgb(179 45 39 / 0.10);
-  --on-del-soft: #8f231e;                     /* 6.17 on --del-soft */
-  --focus: #0a5fd0;                           /* 4.31 */
+  /* Desaturated indigo. Every hue below is a different value from its dark
+     counterpart: a hue tuned for near-black is unreadable on near-white. */
+  --accent: #4650c0;                          /* 5.32 | 5.56 on --accent-soft */
+  --accent-soft: #e9eafb;                     /* chosen / active ground (opaque) */
+  --accent-soft-strong: #dde0f8;              /* the same, hovered */
+  --accent-line: #9ba1e0;                     /* splitters, link underlines, picked edges */
+  --on-accent-soft: #3a43a8;                  /* 6.32 on --accent-soft-strong, 6.92 on --accent-soft */
+  /* Filled primary button. Its own pair: --on-accent on --accent-btn 6.63. */
+  --accent-btn: #4650c0;
+  --accent-btn-hover: #3c45ad;               /* --on-accent on it 7.93 */
+  --on-accent: #ffffff;
+  /* Diff rows. OPAQUE, cleared against the tint itself, not against white:
+     on --add-soft --add 6.45, --text 14.90, --muted 6.42, --faint 5.33;
+     on --del-soft --del 6.11, --text 14.53, --muted 6.26, --faint 5.20.
+     --add 6.45 is also the word-highlight's row; see transcript.css. */
+  --add: #11632f;                             /* 5.92 */
+  --add-soft: #e6f3eb;
+  --del: #a8241d;                             /* 5.75 */
+  --del-soft: #fbe9e8;
+  --on-del-soft: #8a1d17;                     /* 7.90 on --del-soft */
+  --focus: #4650c0;                           /* 5.32 */
 
   /* --- status (light) ----------------------------------------------------- */
-  --status-idle: #6b7380;      /* 3.50 */
-  --status-running: #0b57bd;   /* 5.28 */
-  --status-blocked: #7d520a;   /* 5.33 */
-  --status-done: #116b33;      /* 5.17 */
-  --status-archived: #6f7784;  /* 3.30 */
-  --warn: #7d520a;             /* 5.33 */
-  --danger: #b32d27;           /* 4.94 */
-  /* Channels, so the blocked-row tint and the ping keyframes can vary alpha
-     off one hue instead of hardcoding six rgba() literals per theme. */
-  --warn-rgb: 125 82 10;
+  /* Status is a glyph first (ring, half ring, solid dot), colour second. */
+  --status-idle: #6e717a;      /* 3.92 (UI) */
+  --status-running: #4650c0;   /* 5.32 */
+  --status-blocked: #744903;   /* 6.26 */
+  --status-done: #11632f;      /* 5.92 */
+  --status-archived: #7d808a;  /* 3.17 (UI) */
+  --warn: #744903;             /* 6.26 | 6.90 on --banner-bg, 7.24 on --prompt-bg */
+  --danger: #a8241d;           /* 5.75 */
+  /* Channels, for the ping keyframes and the editor's search veil, which
+     vary alpha off one hue. Neither carries text. */
+  --warn-rgb: 116 73 3;
 
   /* --- derived surfaces + marks (light) ----------------------------------- */
-  --scrollbar: #939ba7;
-  --scrollbar-hover: #7d8592;
-  --banner-text: #6b4708;                     /* 6.19 on --banner-bg */
-  --banner-bg: rgb(var(--warn-rgb) / 0.10);
-  --banner-border: rgb(var(--warn-rgb) / 0.3);
-  --shadow-menu: 0 8px 24px rgb(15 23 35 / 0.18);
-  --overlay: rgb(90 100 115 / 0.34);
+  --scrollbar: #b6b7bf;
+  --scrollbar-hover: #9a9ca5;
+  /* Warning band. Opaque, so its pairs hold whatever is behind it. */
+  --banner-text: #6b4304;                     /* 7.65 on --banner-bg */
+  --banner-bg: #fbf0dc;                       /* also --muted 6.49, --faint 5.40 */
+  --banner-border: #e7cf9f;
+  /* "Waiting on you". Its own tint with its own measured tiers:
+     --warn 7.24, --text 15.83, --muted 6.82, --faint 5.67. */
+  --prompt-bg: #fdf6e8;
+  --prompt-line: #e7cf9f;
+  /* A task that needs you, in the sidebar. Opaque, replacing a 5%/9% alpha of
+     --warn that composited against whatever the row sat on. On it:
+     --faint 5.57 / 5.28 (hovered), --muted 6.70 / 6.35, --warn 7.11 / 6.75. */
+  --row-blocked: #fbf4e6;
+  --row-blocked-hover: #f6eedd;
+  --shadow-menu: 0 1px 0 rgb(0 0 0 / 0.02), 0 12px 32px -8px rgb(20 22 40 / 0.18);
+  --overlay: rgb(80 84 96 / 0.28);
   /* Context meters. Calibrated per theme on purpose: these encode an inferred
      limit and a near-ceiling warning, so a single compromise value would be
      invisible on one ground or garish on the other. */
-  --ctx-quiet-row: #7d8592;                   /* 3.47 on --panel */
-  --ctx-quiet-bar: #727a87;                   /* 3.42 on --track */
+  --ctx-quiet-row: #7d808a;                   /* 3.17 on --panel-raised */
+  --ctx-quiet-bar: #767983;                   /* 3.43 on --track */
   /* The inferred-limit marker. OPAQUE on purpose: an alpha modulation of the
      fill measured 2.06-3.26 across the six fill/theme combinations, i.e. the
      marker was in the CSS and absent to the user. It is the visual statement
@@ -106,28 +150,34 @@
      opaque panel-coloured stripe is the same geometry at 3.26-8.79.
      Tracks --panel automatically, so it needs no dark override. */
   --hatch: var(--panel);
-  --term-selection: rgb(11 87 189 / 0.22);
+  --term-selection: rgb(70 80 192 / 0.22);
   /* Read by Terminal.tsx. The theme's source of truth is CSS, so the xterm
      palette asks CSS which theme won rather than re-deriving it from the
      attribute and the media query and getting a different answer. */
   --is-dark: 0;
 
   /* --- metrics ----------------------------------------------------------- */
-  --titlebar-h: 40px;         /* macOS overlay title bar strip */
+  --titlebar-h: 44px;         /* macOS overlay title bar strip */
   /* Header space for the macOS stoplights. Zero elsewhere: Linux draws a
      native title bar above the webview, so there is nothing to clear. Set
-     to 78px by :root[data-platform='macos'] below (src/lib/platform.ts). */
+     to 88px by :root[data-platform='macos'] below (src/lib/platform.ts). */
   --traffic-lights-w: 0px;
   --sidebar-min: 200px;
   --sidebar-max: 480px;
-  --row-h: 50px;
-  --tab-h: 30px;
-  --radius: 3px;              /* barely there, on purpose */
+  --row-h: 36px;              /* one line per task */
+  --tab-h: 40px;              /* the one chrome row per pane */
+  --pane-head-h: 34px;
+  --radius-sm: 6px;           /* buttons, chips, menu items */
+  --radius: 8px;              /* rows, cards, inputs */
+  --radius-lg: 10px;          /* dialogs, menus, the waiting card */
+  --radius-card: 12px;        /* the content card on the chrome ground */
 
   /* --- fonts ------------------------------------------------------------- */
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+  /* Inter first when it is installed; nothing is fetched. Without it the
+     stack lands on SF Pro, which is what the HIG scale below was set in. */
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
     system-ui, sans-serif;
-  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas,
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas,
     monospace;
   /* Shaped on Apple's macOS text styles (HIG, Typography): Body 13/16,
      Callout 12/15, Subheadline 11/14, Title 3 15/20, Title 2 17/22; default
@@ -139,12 +189,12 @@
 
      macOS gives apps no Dynamic Type, so on top of this scale the user can
      zoom the whole UI with Cmd+ / Cmd- / Cmd0 (see ui/zoom.ts). */
-  --fs-xs: 12px;     /* labels, timestamps, counts     (Subheadline + 1) */
-  --fs-sm: 13px;     /* secondary text, chips           (Callout + 1)     */
-  --fs-md: 14px;     /* UI body                         (Body + 1)        */
-  --fs-lg: 15px;     /* reading prose                   (Title 3 size)    */
-  --fs-title: 18px;  /* transcript h1                   (Title 2 + 1)     */
-  --fs-heading: 16px;/* transcript h2                   (Title 3 + 1)     */
+  --fs-xs: 12.5px;   /* labels, timestamps, counts     (Subheadline + 1.5) */
+  --fs-sm: 13.5px;   /* secondary text, chips           (Callout + 1.5)     */
+  --fs-md: 14.5px;   /* UI body                         (Body + 1.5)        */
+  --fs-lg: 15.5px;   /* reading prose                   (Title 3 + 0.5)     */
+  --fs-title: 18px;  /* transcript h1                   (Title 2 + 1)       */
+  --fs-heading: 16.5px;/* transcript h2                 (Title 3 + 1.5)     */
 }
 
 /* Dark overrides. Duplicated deliberately: the media query handles "system",
@@ -154,146 +204,181 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
-  /* --- surfaces (dark) --- */
-  --bg: #0b0d10;
-  --panel: #111419;
-  --panel-raised: #171b21;
-  /* Your messages. On it: --text 10.61, --text-strong 14.49, --muted 6.35,
-     --faint 4.59, --accent 5.87, --add 6.85, --del 5.18. No lighter: --faint
-     is the tier that runs out first. */
-  --user-row: #162235;
-  --panel-inset: #090b0e;
-  /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
-     hex typed into whichever :hover rule needed one. Contrast is a property
-     of a pair, so a surface invented locally is a text-contrast decision made
-     by someone who was only thinking about a hover state. Not hypothetical:
-     mid-way through the contrast pass I lightened two hover grounds and
-     silently pushed --faint to 3.99, with nothing in the variables to show
-     it. DO NOT go lighter than about #1e232c -- that is where --faint hits
-     4.53 and the tier below it runs out. */
-  --panel-hover: #1c212a;
-  --panel-active: #10141a;
-  --track: #1b2029;
-  --border: #262c36;
-  --border-strong: #6b7585;/* 3.47 */
+    /* --- surfaces (dark) --- */
+    --bg: #0e0f11;
+    --panel: #131417;
+    --panel-chrome: #191a1e;
+    /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
+       worst ground for every text tier. */
+    --panel-raised: #23242a;
+    /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
+       --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
+    --user-row: #1a1c26;
+    --panel-inset: #0c0d0f;
+    /* Hovered row. A token, not a hex typed into whichever :hover rule needed
+       one: contrast is a property of a pair, so a surface invented locally is a
+       text-contrast decision made by someone only thinking about a hover state.
+       Not hypothetical -- an earlier pass lightened two hover grounds and
+       silently pushed --faint under 4.5. It must stay darker than
+       --panel-raised, which is where --faint has its 5.06. */
+    --panel-hover: #1e1f24;
+    --panel-active: #17181c; /* press; carries --text-strong (16.57) */
+    --track: #24262c;
+    --border: #24262c;
+    --card-edge: #202227;
+    --subcard: #17181c;      /* one step above --panel; still darker than --panel-raised, so text clears more */
+    --card-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
+    --border-mid: #34363e;
+    --border-strong: #70737e;/* 3.27 on --panel-raised, 3.20 on --track */
 
-  /* --- type (dark) --- */
-  --text: #ccd3de;         /* 10.72 */
-  --text-strong: #f1f4f9;  /* 14.65 */
-  --muted: #9aa4b4;        /*  6.42 */
-  --faint: #828a98;        /*  4.64 */
+    /* --- type (dark) --- worst flat (--panel-raised) | worst tint (--accent-soft-strong) */
+    --text: #e4e5e9;         /* 12.29 | 11.24 */
+    --text-strong: #f7f7f8;  /* 14.45 | 13.21 */
+    --muted: #a5a8b0;        /*  6.50 |  5.95 */
+    --faint: #9093a0;        /*  5.06 |  4.62 -- the floor tier */
 
-  /* --- accent + diff (dark) --- */
-  --accent: #4d9fff;                          /* 5.94 */
-  --accent-soft: rgb(77 159 255 / 0.14);
-  --accent-soft-strong: rgb(77 159 255 / 0.22);
-  --accent-line: rgb(77 159 255 / 0.6);
-  --on-accent-soft: #bcd9ff;                  /* 10.43 on --accent-soft */
-  --add: #4cbf72;                             /* 6.92 */
-  --add-soft: rgb(76 191 114 / 0.13);
-  --del: #ec6a64;                             /* 5.24 */
-  --del-soft: rgb(236 106 100 / 0.13);
-  --on-del-soft: #ffb3b0;                     /* 8.57 on --del-soft */
-  --focus: #6fb0ff;                           /* 7.18 */
+    /* --- accent + diff (dark) --- */
+    --accent: #9aa2ff;                          /* 6.62 | 6.82 on --accent-soft */
+    --accent-soft: #1f2130;
+    --accent-soft-strong: #272a3d;
+    --accent-line: #5560d0;
+    --on-accent-soft: #bcc1ff;                  /* 8.22 on --accent-soft-strong, 9.26 on --accent-soft */
+    --accent-btn: #5560d0;                      /* --on-accent on it 5.29 */
+    --accent-btn-hover: #4b55c2;                /* --on-accent on it 6.22 */
+    --on-accent: #ffffff;
+    /* on --add-soft --add 8.89, --text 12.85, --muted 6.80, --faint 5.29;
+       on --del-soft --del 7.73, --text 13.51, --muted 7.15, --faint 5.56. */
+    --add: #6fd496;                             /* 8.50 */
+    --add-soft: #14241b;
+    --del: #ff8f8a;                             /* 7.03 */
+    --del-soft: #2a1719;
+    --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
+    --focus: #9aa2ff;                           /* 6.62 */
 
-  /* --- status (dark) --- */
-  --status-idle: #79828f;      /* 4.15 */
-  --status-running: #4d9fff;   /* 5.94 */
-  --status-blocked: #f0a33a;   /* 7.69 */
-  --status-done: #4cbf72;      /* 6.92 */
-  --status-archived: #6f7783;  /* 3.57 */
-  --warn: #f0a33a;             /* 7.69 */
-  --danger: #ec6a64;           /* 5.24 */
-  --warn-rgb: 240 163 58;
+    /* --- status (dark) --- */
+    --status-idle: #80838f;      /* 4.10 (UI) */
+    --status-running: #9aa2ff;   /* 6.62 */
+    --status-blocked: #f2b35b;   /* 8.38 */
+    --status-done: #6fd496;      /* 8.50 */
+    --status-archived: #6b6e78;  /* 3.04 (UI) */
+    --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
+    --danger: #ff8f8a;           /* 7.03 */
+    --warn-rgb: 242 179 91;
 
-  /* --- derived surfaces + marks (dark) --- */
-  --scrollbar: #3b4351;
-  --scrollbar-hover: #4c5666;
-  --banner-text: #f6d6a4;                     /* 12.11 on --banner-bg */
-  --banner-bg: rgb(var(--warn-rgb) / 0.10);
-  --banner-border: rgb(var(--warn-rgb) / 0.25);
-  --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.55);
-  --overlay: rgb(3 5 7 / 0.62);
-  --ctx-quiet-row: #5e6875;                   /* 3.26 on --panel */
-  --ctx-quiet-bar: #667186;                   /* 3.32 on --track */
-  --term-selection: rgb(77 159 255 / 0.28);
-  --is-dark: 1;
+    /* --- derived surfaces + marks (dark) --- */
+    --scrollbar: #3a3c45;
+    --scrollbar-hover: #4c4f5a;
+    --banner-text: #f6d6a4;                     /* 11.27 on --banner-bg */
+    --banner-bg: #2a2214;                       /* also --muted 6.60, --faint 5.13 */
+    --banner-border: #4a3c20;
+    /* --warn 9.21, --text 13.51, --muted 7.15, --faint 5.56 */
+    --prompt-bg: #1f1c14;
+    --prompt-line: #4a3c20;
+    /* --faint 5.68 / 5.33 (hovered), --muted 7.31 / 6.85, --warn 9.42 / 8.82 */
+    --row-blocked: #1c1a15;
+    --row-blocked-hover: #22201a;
+    --shadow-menu: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 16px 40px -8px rgb(0 0 0 / 0.6);
+    --overlay: rgb(0 0 0 / 0.5);
+    --ctx-quiet-row: #6e717c;                   /* 3.18 on --panel-raised */
+    --ctx-quiet-bar: #74777f;                   /* 3.38 on --track */
+    --term-selection: rgb(154 162 255 / 0.26);
+    --is-dark: 1;
   }
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
   /* --- surfaces (dark) --- */
-  --bg: #0b0d10;
-  --panel: #111419;
-  --panel-raised: #171b21;
-  /* Your messages. On it: --text 10.61, --text-strong 14.49, --muted 6.35,
-     --faint 4.59, --accent 5.87, --add 6.85, --del 5.18. No lighter: --faint
-     is the tier that runs out first. */
-  --user-row: #162235;
-  --panel-inset: #090b0e;
-  /* THE LIGHTEST SURFACE IN DARK, and the reason it is a token rather than a
-     hex typed into whichever :hover rule needed one. Contrast is a property
-     of a pair, so a surface invented locally is a text-contrast decision made
-     by someone who was only thinking about a hover state. Not hypothetical:
-     mid-way through the contrast pass I lightened two hover grounds and
-     silently pushed --faint to 3.99, with nothing in the variables to show
-     it. DO NOT go lighter than about #1e232c -- that is where --faint hits
-     4.53 and the tier below it runs out. */
-  --panel-hover: #1c212a;
-  --panel-active: #10141a;
-  --track: #1b2029;
-  --border: #262c36;
-  --border-strong: #6b7585;/* 3.47 */
+  --bg: #0e0f11;
+  --panel: #131417;
+  --panel-chrome: #191a1e;
+  /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
+     worst ground for every text tier. */
+  --panel-raised: #23242a;
+  /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
+     --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
+  --user-row: #1a1c26;
+  --panel-inset: #0c0d0f;
+  /* Hovered row. A token, not a hex typed into whichever :hover rule needed
+     one: contrast is a property of a pair, so a surface invented locally is a
+     text-contrast decision made by someone only thinking about a hover state.
+     Not hypothetical -- an earlier pass lightened two hover grounds and
+     silently pushed --faint under 4.5. It must stay darker than
+     --panel-raised, which is where --faint has its 5.06. */
+  --panel-hover: #1e1f24;
+  --panel-active: #17181c; /* press; carries --text-strong (16.57) */
+  --track: #24262c;
+  --border: #24262c;
+  --card-edge: #202227;
+  --subcard: #17181c;      /* one step above --panel; still darker than --panel-raised, so text clears more */
+  --card-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
+  --border-mid: #34363e;
+  --border-strong: #70737e;/* 3.27 on --panel-raised, 3.20 on --track */
 
-  /* --- type (dark) --- */
-  --text: #ccd3de;         /* 10.72 */
-  --text-strong: #f1f4f9;  /* 14.65 */
-  --muted: #9aa4b4;        /*  6.42 */
-  --faint: #828a98;        /*  4.64 */
+  /* --- type (dark) --- worst flat (--panel-raised) | worst tint (--accent-soft-strong) */
+  --text: #e4e5e9;         /* 12.29 | 11.24 */
+  --text-strong: #f7f7f8;  /* 14.45 | 13.21 */
+  --muted: #a5a8b0;        /*  6.50 |  5.95 */
+  --faint: #9093a0;        /*  5.06 |  4.62 -- the floor tier */
 
   /* --- accent + diff (dark) --- */
-  --accent: #4d9fff;                          /* 5.94 */
-  --accent-soft: rgb(77 159 255 / 0.14);
-  --accent-soft-strong: rgb(77 159 255 / 0.22);
-  --accent-line: rgb(77 159 255 / 0.6);
-  --on-accent-soft: #bcd9ff;                  /* 10.43 on --accent-soft */
-  --add: #4cbf72;                             /* 6.92 */
-  --add-soft: rgb(76 191 114 / 0.13);
-  --del: #ec6a64;                             /* 5.24 */
-  --del-soft: rgb(236 106 100 / 0.13);
-  --on-del-soft: #ffb3b0;                     /* 8.57 on --del-soft */
-  --focus: #6fb0ff;                           /* 7.18 */
+  --accent: #9aa2ff;                          /* 6.62 | 6.82 on --accent-soft */
+  --accent-soft: #1f2130;
+  --accent-soft-strong: #272a3d;
+  --accent-line: #5560d0;
+  --on-accent-soft: #bcc1ff;                  /* 8.22 on --accent-soft-strong, 9.26 on --accent-soft */
+  --accent-btn: #5560d0;                      /* --on-accent on it 5.29 */
+  --accent-btn-hover: #4b55c2;                /* --on-accent on it 6.22 */
+  --on-accent: #ffffff;
+  /* on --add-soft --add 8.89, --text 12.85, --muted 6.80, --faint 5.29;
+     on --del-soft --del 7.73, --text 13.51, --muted 7.15, --faint 5.56. */
+  --add: #6fd496;                             /* 8.50 */
+  --add-soft: #14241b;
+  --del: #ff8f8a;                             /* 7.03 */
+  --del-soft: #2a1719;
+  --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
+  --focus: #9aa2ff;                           /* 6.62 */
 
   /* --- status (dark) --- */
-  --status-idle: #79828f;      /* 4.15 */
-  --status-running: #4d9fff;   /* 5.94 */
-  --status-blocked: #f0a33a;   /* 7.69 */
-  --status-done: #4cbf72;      /* 6.92 */
-  --status-archived: #6f7783;  /* 3.57 */
-  --warn: #f0a33a;             /* 7.69 */
-  --danger: #ec6a64;           /* 5.24 */
-  --warn-rgb: 240 163 58;
+  --status-idle: #80838f;      /* 4.10 (UI) */
+  --status-running: #9aa2ff;   /* 6.62 */
+  --status-blocked: #f2b35b;   /* 8.38 */
+  --status-done: #6fd496;      /* 8.50 */
+  --status-archived: #6b6e78;  /* 3.04 (UI) */
+  --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
+  --danger: #ff8f8a;           /* 7.03 */
+  --warn-rgb: 242 179 91;
 
   /* --- derived surfaces + marks (dark) --- */
-  --scrollbar: #3b4351;
-  --scrollbar-hover: #4c5666;
-  --banner-text: #f6d6a4;                     /* 12.11 on --banner-bg */
-  --banner-bg: rgb(var(--warn-rgb) / 0.10);
-  --banner-border: rgb(var(--warn-rgb) / 0.25);
-  --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.55);
-  --overlay: rgb(3 5 7 / 0.62);
-  --ctx-quiet-row: #5e6875;                   /* 3.26 on --panel */
-  --ctx-quiet-bar: #667186;                   /* 3.32 on --track */
-  --term-selection: rgb(77 159 255 / 0.28);
+  --scrollbar: #3a3c45;
+  --scrollbar-hover: #4c4f5a;
+  --banner-text: #f6d6a4;                     /* 11.27 on --banner-bg */
+  --banner-bg: #2a2214;                       /* also --muted 6.60, --faint 5.13 */
+  --banner-border: #4a3c20;
+  /* --warn 9.21, --text 13.51, --muted 7.15, --faint 5.56 */
+  --prompt-bg: #1f1c14;
+  --prompt-line: #4a3c20;
+  /* --faint 5.68 / 5.33 (hovered), --muted 7.31 / 6.85, --warn 9.42 / 8.82 */
+  --row-blocked: #1c1a15;
+  --row-blocked-hover: #22201a;
+  --shadow-menu: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 16px 40px -8px rgb(0 0 0 / 0.6);
+  --overlay: rgb(0 0 0 / 0.5);
+  --ctx-quiet-row: #6e717c;                   /* 3.18 on --panel-raised */
+  --ctx-quiet-bar: #74777f;                   /* 3.38 on --track */
+  --term-selection: rgb(154 162 255 / 0.26);
   --is-dark: 1;
 }
 
 :root[data-theme='light'] { color-scheme: light; }
 
 /* Only macOS overlays the stoplights on the webview (titleBarStyle "Overlay"
-   in tauri.conf.json, a macOS-only option). */
-:root[data-platform='macos'] { --traffic-lights-w: 78px; }
+   in tauri.conf.json, a macOS-only option). tauri.conf.json moves them to
+   trafficLightPosition {x: 15, y: 24}: measured, the buttons are 14pt, 23pt
+   apart and 9pt up inside their container, so y 24 centres them at 22pt in
+   the 44pt bar. They end at 15 + 2*23 + 14 = 75pt; 88px leaves a 13px gap. */
+:root[data-platform='macos'] { --traffic-lights-w: 88px; }
+/* Full screen hides the stoplights: the icon goes to the far left. */
+:root[data-platform='macos'][data-fullscreen='true'] { --traffic-lights-w: 0px; }
 
 /* --------------------------------------------------------------------------
    Reset
@@ -312,7 +397,9 @@ body {
   color: var(--text);
   font-family: var(--font-ui);
   font-size: var(--fs-md);
-  line-height: 1.45;
+  line-height: 1.5;
+  /* Inter's straight-tailed 1 and open digits; ignored by fonts without them. */
+  font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   /* A cockpit, not a document: no accidental text drag-select of chrome. */
@@ -363,6 +450,11 @@ button {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  /* The frame: the sidebar and the title bar are one
+     chrome ground, and the work sits on it as a single inset card. One
+     outline separates the two, so no two borders can meet at that edge. */
+  background: var(--panel-chrome);
+  padding: 0 8px 0 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -377,77 +469,116 @@ button {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding-left: max(var(--traffic-lights-w), 10px);   /* clear of the stoplights, if any */
+  /* Clear of the stoplights, if any. Without them (full screen) 8px: the
+     first project tab then starts on the sidebar's edge, New Task and the
+     rows' highlight, all at 8px. */
+  padding-left: max(var(--traffic-lights-w), 8px);
   padding-right: 10px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  background: var(--panel-chrome);
 }
 
-.header-brand {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  flex: 0 0 auto;
-}
+
 
 .header-spacer { flex: 1 1 auto; height: 100%; }
 
-.header-actions { display: flex; align-items: center; gap: 6px; }
+/* Hairline between the header's groups (waiting / burn / actions). */
+.header-sep { flex: 0 0 1px; width: 1px; height: 20px; background: var(--border); }
+
+.header-actions { display: flex; align-items: center; gap: 4px; }
 
 /* Usage meter ------------------------------------------------------------- */
 
 .usage {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   white-space: nowrap;
 }
 
-.usage-label {
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  font-size: var(--fs-xs);
-  color: var(--faint);
+
+.usage-figure { color: var(--text); font-weight: 500; }
+
+/* The "N waiting" pill: the one header item that is about you. */
+.usage-waiting .usage-figure { color: var(--text-strong); }
+/* A button since it jumps to the waiting task; hovers like the ghost buttons. */
+button.usage-waiting {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
 }
+button.usage-waiting:hover { background: var(--panel-hover); }
 
-.usage-figure { color: var(--text); font-family: var(--font-mono); }
-.usage-figure em { font-style: normal; color: var(--muted); }
 
-.usage-stale { color: var(--faint); font-style: italic; }
-.usage-error { color: var(--warn); }
-
-/* Small chrome button ----------------------------------------------------- */
+/* Buttons ------------------------------------------------------------------ */
 
 .btn {
-  height: 24px;
-  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
   font-size: var(--fs-sm);
+  font-weight: 500;
   color: var(--text);
-  background: var(--panel-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
   white-space: nowrap;
 }
-.btn:hover { background: var(--panel-hover); border-color: var(--border-strong); color: var(--text-strong); }
-.btn:active { background: var(--panel-active); }
-.btn[disabled] { color: var(--faint); background: transparent; }
+.btn:hover { background: var(--panel-hover); color: var(--text-strong); }
+.btn:active { background: var(--panel-active); color: var(--text-strong); }
 
-.btn-primary { background: var(--accent-soft); border-color: var(--accent-line); color: var(--on-accent-soft); }
-.btn-primary:hover { background: var(--accent-soft-strong); color: var(--on-accent-soft); }
+/* Filled: the one main action on a surface. Its own measured pair. */
+.btn-primary { background: var(--accent-btn); border-color: var(--accent-btn); color: var(--on-accent); }
+.btn-primary:hover,
+.btn-primary:active { background: var(--accent-btn-hover); border-color: var(--accent-btn-hover); color: var(--on-accent); }
+.btn-primary .kbd { color: var(--on-accent); background: transparent; border-color: var(--accent-line); }
 
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
-.btn-ghost:hover { background: var(--panel-raised); color: var(--text); border-color: var(--border); }
+.btn-ghost:hover { background: var(--panel-hover); color: var(--text); border-color: transparent; }
 
+/* Last, so a disabled primary or a hovered disabled button reads disabled. */
+.btn[disabled],
+.btn[disabled]:hover { color: var(--faint); background: transparent; border-color: var(--border); }
+
+/* A square, glyph-only button: ⋯, ✕. Always carries an aria-label. */
+.icon-btn {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 1px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.icon-btn:hover,
+.icon-btn[aria-expanded='true'] { background: var(--panel-hover); color: var(--text); }
+.icon-btn[disabled] { color: var(--faint); background: transparent; }
+
+/* A keyboard hint, shown inline where the binding is (⌘N, ⌘1). */
 .kbd {
-  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1;
   color: var(--faint);
-  margin-left: 6px;
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* --------------------------------------------------------------------------
@@ -459,8 +590,7 @@ button {
   display: flex;
   flex-direction: column;
   min-width: var(--sidebar-min);
-  background: var(--panel);
-  border-right: 1px solid var(--border);
+  background: var(--panel-chrome);
   overflow: hidden;
 }
 
@@ -469,13 +599,14 @@ button {
 .tasklist { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; outline: none; }
 
 .tasklist-head {
-  flex: 0 0 auto;
+  /* Level with the task bar beside it: the same height (its 40px plus the
+     card's 1px edges) and centred, so New Task and the task title share one
+     centre line. Its left edge is the rows' highlight edge (8px). */
+  flex: 0 0 calc(var(--tab-h) + 2px);
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--tab-h);
   padding: 0 8px;
-  border-bottom: 1px solid var(--border);
 }
 
 /* Scope label AND the way to change scope. Quiet by default: this is an
@@ -488,36 +619,28 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  padding: 1px 4px;
-  margin-left: -4px;
-  border-radius: var(--radius);
-  font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-/* Carrying a real name, so it earns a tier more contrast than the generic
-   "TASKS" caption it replaces. */
-.tasklist-scope[data-named='true'] {
-  color: var(--muted);
-  /* A project name is the user's own text, not a caption. Upper-casing it
-     would shout it and destroy its real casing ("MyRepo" -> "MYREPO"). */
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: var(--fs-sm);
+  height: 28px;
+  padding: 0 6px;
+  margin-left: -2px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-md);
   font-weight: 600;
+  color: var(--text-strong);
 }
 
-.tasklist-scope:not([disabled]):hover { background: var(--panel-hover); color: var(--text); }
+/* Carrying a real name. A project name is the user's own text, not a
+   caption, so it is never upper-cased ("MyRepo" stays "MyRepo"). */
+.tasklist-scope[data-named='true'] { color: var(--text-strong); }
+
+.tasklist-scope:not([disabled]):hover { background: var(--panel-hover); }
 
 .tasklist-count {
-  font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
   color: var(--faint);
 }
 
-.tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+.tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 8px 8px; }
 
 /* One component, two shapes. The copy and the CTA come from EmptyState.tsx;
    this only decides how much room they get. */
@@ -530,7 +653,7 @@ button {
   line-height: 1.6;
 }
 
-.empty-state[data-variant='list'] { padding: 18px 12px; align-items: flex-start; }
+.empty-state[data-variant='list'] { padding: 18px 8px; align-items: flex-start; }
 .empty-state[data-variant='pane'] { padding: 24px; align-items: center; text-align: center; }
 
 .empty-state-headline { margin: 0; color: var(--muted); font-size: var(--fs-md); }
@@ -540,48 +663,56 @@ button {
 
 .placeholder p { margin: 0; max-width: 42ch; }
 
+/* A Title Case label over a status glyph: "Needs You 1", "Running 2", "Idle 3". */
+.group-label > .status-dot { margin: 0 3.5px; }
 .group-label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 8px 4px;
+  gap: 8px;
+  /* Same left geometry as a row (10px padding, a 16px status column), so the
+     group's dot sits on the rows' dots and its name on their titles. */
+  padding: 14px 8px 6px 10px;
   font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font-weight: 500;
   color: var(--faint);
 }
 
 .group-label[data-tone='blocked'] { color: var(--status-blocked); }
 
-.group-rule { flex: 1 1 auto; height: 1px; background: var(--border); }
+.group-count { font-variant-numeric: tabular-nums; }
+/* A label, not a live row: its glyph stays still (the motion budget is the rows'). */
+.group-label .status-dot { animation: none; }
 
 /* Task row ---------------------------------------------------------------- */
 
 .task-row {
   display: grid;
-  grid-template-columns: 14px 1fr auto;
-  grid-template-rows: auto auto;
-  column-gap: 7px;
+  /* status | title | context %, ⌘N | age -- one line. The second line held
+     the branch, which now lives only in the task bar. */
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  column-gap: 8px;
   align-items: center;
   width: 100%;
   min-height: var(--row-h);
-  padding: 6px 8px;
+  margin-bottom: 1px;
+  padding: 6px 8px 6px 10px;
   text-align: left;
-  border-left: 2px solid transparent;
-  border-bottom: 1px solid transparent;
+  border-radius: var(--radius);
+  /* The attention mark (below). Transparent at rest, so it costs no width. */
+  box-shadow: inset 2px 0 0 transparent;
+  overflow: hidden;
 }
 
-.task-row:hover { background: var(--panel-raised); }
+.task-row:hover { background: var(--panel-hover); }
 
-.task-row[data-selected='true'] {
-  background: var(--panel-raised);
-  border-left-color: var(--accent);
-}
+.task-row[data-status='blocked'] { background: var(--row-blocked); }
+.task-row[data-status='blocked']:hover { background: var(--row-blocked-hover); }
+
+/* After the blocked tint, so the selection always wins the ground. */
+.task-row[data-selected='true'] { background: var(--panel-raised); }
 
 .task-row[data-selected='true'] .task-title { color: var(--text-strong); }
 
-.task-row[data-status='blocked'] { background: rgb(var(--warn-rgb) / 0.05); }
-.task-row[data-status='blocked']:hover { background: rgb(var(--warn-rgb) / 0.09); }
 .task-row[data-status='archived'] .task-title,
 .task-row[data-status='archived'] .task-meta { color: var(--faint); }
 
@@ -592,28 +723,28 @@ button {
  * when Albedo has focus this IS the notification -- not a decoration on top of
  * one. It marks the specific row, which the bounce cannot do.
  *
- * The animation runs on the left border only. Animating the row's background
+ * The animation runs on an inset edge only. Animating the row's background
  * would fight the four grounds already stacked on it (hover, selected, the
  * blocked tint, and the status groups), and each of those is a measured
  * text-contrast decision; a pulse underneath the title would undo them on a
- * timer, invisibly to any audit of the variables. The border carries no text,
+ * timer, invisibly to any audit of the variables. The edge carries no text,
  * so it can move freely.
  */
 @keyframes task-attention {
-  50% { border-left-color: transparent; }
+  50% { box-shadow: inset 2px 0 0 transparent; }
 }
 
 .task-row[data-attention] {
-  border-left-color: var(--warn);
+  box-shadow: inset 2px 0 0 var(--warn);
   animation: task-attention 1.4s steps(1, end) 6;
 }
-.task-row[data-attention='finished'] { border-left-color: var(--status-done); }
+.task-row[data-attention='finished'] { box-shadow: inset 2px 0 0 var(--status-done); }
 /* Accent, like the merged chip and row mark it sits beside. */
-.task-row[data-attention='merged'] { border-left-color: var(--accent); }
+.task-row[data-attention='merged'] { box-shadow: inset 2px 0 0 var(--accent); }
 
 /* Selection is the stronger statement, and clearing the mark follows it. */
 .task-row[data-selected='true'][data-attention] {
-  border-left-color: var(--accent);
+  box-shadow: inset 2px 0 0 transparent;
   animation: none;
 }
 
@@ -625,11 +756,12 @@ button {
   .task-row[data-attention] { animation: none; }
 }
 
-.task-dot-cell { grid-row: 1 / span 2; justify-self: center; }
+.task-dot-cell { grid-row: 1; justify-self: center; display: inline-flex; }
 
 .task-title {
   grid-column: 2;
   font-size: var(--fs-md);
+  font-weight: 500;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -637,72 +769,96 @@ button {
 }
 
 .task-age {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1;
-  font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
 .task-meta {
-  grid-column: 2 / span 2;
-  grid-row: 2;
+  grid-column: 3;
+  grid-row: 1;
   display: flex;
-  align-items: baseline;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: var(--fs-xs);
-  color: var(--muted);
+  color: var(--faint);
   overflow: hidden;
   white-space: nowrap;
 }
 
-.task-repo { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.task-repo { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .task-sep { color: var(--faint); }
 .task-branch {
   flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.task-index {
-  margin-left: auto;
-  flex: 0 0 auto;
-  font-family: var(--font-mono);
-  color: var(--faint);
-  opacity: 0;
-}
-.task-row:hover .task-index,
-.task-row[data-selected='true'] .task-index { opacity: 1; }
+/* ⌘1-9. Hidden until hover or selection, by visibility -- never opacity. */
+/* ⌘N sits in the age's cell and swaps in on hover, so it costs no width.
+   Hidden by visibility, never opacity (CLAUDE.md, Contrast rule 2). */
+.task-index { grid-column: 4; grid-row: 1; justify-self: end; visibility: hidden; }
+.task-row:hover .task-index { visibility: visible; }
+.task-row:hover .task-age { visibility: hidden; }
 
-/* Status dot -------------------------------------------------------------- */
+/* Status glyph ------------------------------------------------------------ */
+/*
+ * Shape first, colour second (HIG: never colour alone):
+ *   idle      ring
+ *   running   ring, half filled
+ *   blocked   solid dot with a halo
+ *   done      solid dot
+ *   archived  thin ring
+ */
 
 .status-dot {
+  position: relative;
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: var(--status-idle);
+  border: 2px solid var(--status-idle);
+  background: transparent;
   flex: 0 0 auto;
+  box-sizing: border-box;
 }
 
-.status-dot[data-status='idle'] { background: var(--status-idle); }
-.status-dot[data-status='done'] { background: var(--status-done); }
-.status-dot[data-status='archived'] { background: transparent; box-shadow: inset 0 0 0 1px var(--status-archived); }
+.status-dot[data-status='idle'] { border-color: var(--status-idle); }
+.status-dot[data-status='done'] { border-color: var(--status-done); background: var(--status-done); }
+.status-dot[data-status='archived'] { border-width: 1px; border-color: var(--status-archived); }
 .status-dot[data-status='running'] {
-  background: var(--status-running);
+  border-color: var(--status-running);
   animation: dot-breathe 1.9s ease-in-out infinite;
 }
+.status-dot[data-status='running']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--status-running);
+  clip-path: inset(0 0 0 50%);
+}
 .status-dot[data-status='blocked'] {
+  border-color: var(--status-blocked);
   background: var(--status-blocked);
   box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0.55);
   animation: dot-ping 1.6s ease-out infinite;
 }
 
+/* Glyph, not text: the breathing changes no text-contrast pair. */
 @keyframes dot-breathe {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  50% { opacity: 0.45; }
 }
 
 @keyframes dot-ping {
@@ -738,8 +894,13 @@ button {
 .splitter:hover::after,
 .splitter[data-dragging='true']::after { background: var(--accent-line); }
 
+/* The shell drawer docks under the panes, the full width of main. */
+.shell-drawer { border-top: 1px solid var(--border); }
+.shell-drawer-close { margin-left: 4px; }
+
 /* While dragging, don't let the terminal eat pointer events. */
 .app[data-dragging='true'] { cursor: col-resize; }
+.app[data-drag='shell'] { cursor: row-resize; }
 .app[data-dragging='true'] .pane-body { pointer-events: none; }
 
 /* --------------------------------------------------------------------------
@@ -751,32 +912,41 @@ button {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg);
+  background: var(--panel);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
 }
 
+/* The task bar: ONE chrome row. Identity on the left (project / title,
+   branch, path), then the model readout, the layout switch, the one
+   contextual action (the PR badge), and ⋯ for everything else. */
 .main-bar {
   flex: 0 0 var(--tab-h);
   height: var(--tab-h);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 8px;
+  gap: 12px;
+  padding: 0 8px 0 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   min-width: 0;
 }
 
 .main-ident {
+  flex: 1 1 auto;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
 }
 
 .main-ident-project {
   flex: 0 0 auto;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
+  font-weight: 500;
   color: var(--muted);
   max-width: 18ch;
   overflow: hidden;
@@ -790,16 +960,35 @@ button {
 .main-ident-project[data-foreign='true'] { color: var(--text-strong); }
 
 .main-ident-title {
+  /* Gives way last: the branch and folder shrink four and eight times as
+     fast. A min-width did this before and padded a short title with empty
+     space, which read as a gap in the bar. */
+  flex: 0 1 auto;
+  min-width: 4ch;
   font-size: var(--fs-md);
+  font-weight: 600;
   color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.main-ident-path {
+.main-ident-branch {
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-ident-path {
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -807,48 +996,85 @@ button {
   user-select: text;
 }
 
+/* Icon + value: the icon names the kind, the text truncates on its own. */
+.main-ident-branch,
+.main-ident-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.main-ident-branch { max-width: 28ch; flex-shrink: 4; }
+.main-ident-path { flex-shrink: 8; }
+
+/* Two groups, not five loose items: "project / title", then the git unit
+   (branch with its PR), then where it runs. 8px inside a group, 20px
+   between groups; the same type size and centre line for everything after
+   the title, so nothing reads as dropped in at its own height. */
+.main-ident > .main-ident-branch,
+.main-ident > .main-ident-path { margin-left: 12px; }
+.main-ident .pr-badge-wrap { margin-left: -2px; }
+.main-ident .pr-badge {
+  height: 22px;
+  align-items: center;
+  font-size: var(--fs-sm);
+  line-height: 1;
+}
+.main-ident-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.glyph { flex: none; }
+
+/* A pane's own ⋯ (the Files git menu), portalled in from the pane body. */
+.pane-head-slot { display: inline-flex; align-items: center; flex: none; }
+.pane-head-slot:empty { display: none; }
+
 .model-pick {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex: none;
-  font-family: var(--font-mono);
   font-size: var(--fs-xs);
 }
-.model-pick-name { color: var(--text); }
+.model-pick-name { color: var(--muted); font-family: var(--font-mono); }
 .model-pick-select {
   font: inherit;
-  color: var(--muted);
-  background: var(--panel-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0 2px;
+  height: 24px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
 }
-.model-pick-select:disabled { cursor: not-allowed; }
+.model-pick-select:disabled { cursor: not-allowed; color: var(--faint); }
 .model-pick-note { color: var(--muted); }
 
+/* Segmented control: pty | split | transcript. */
 .seg {
-  display: flex;
-  margin-left: auto;
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  background: var(--panel-chrome);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
-  flex: 0 0 auto;
 }
 
 .seg button {
-  height: 22px;
-  padding: 0 9px;
-  font-size: var(--fs-xs);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  height: 24px;
+  padding: 0 11px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
   color: var(--muted);
   background: transparent;
-  border-right: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
-.seg button:last-child { border-right: none; }
-.seg button:hover { color: var(--text); background: var(--panel-raised); }
-.seg button[aria-pressed='true'] { color: var(--on-accent-soft); background: var(--accent-soft); }
+.seg button:hover { color: var(--text); }
+.seg button[aria-pressed='true'] {
+  color: var(--text-strong);
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--border-mid);
+}
 
 .panes {
   flex: 1 1 auto;
@@ -867,33 +1093,41 @@ button {
   overflow: hidden;
 }
 
+/* Each pane's one chrome row. Set as a label, not upper-cased: "Terminal",
+   "Transcript", "Files". */
 .pane-head {
-  flex: 0 0 22px;
+  flex: 0 0 var(--pane-head-h);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--faint);
+  gap: 10px;
+  padding: 0 6px 0 14px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  /* No line under a pane head: inside the card the only separator is the
+     task bar's: one line under the page header. */
 }
 
 .pane-head-note {
-  margin-left: auto;
-  text-transform: none;
-  letter-spacing: 0;
-  font-family: var(--font-mono);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  color: var(--faint);
 }
 
 .pane[hidden] { display: none !important; }
 
 .pane-body { flex: 1 1 auto; position: relative; min-height: 0; min-width: 0; overflow: hidden; }
 
-.read-area { border-left: 1px solid var(--border); }
-.panes[data-orientation='column'] .read-area { border-left: none; border-top: 1px solid var(--border); }
+.read-area { border-left: 1px solid var(--card-edge); }
+.panes[data-orientation='column'] .read-area { border-left: none; border-top: 1px solid var(--card-edge); }
+/* The reading area's edge separates it from the terminal. With the terminal
+   hidden it sat 1px from the sidebar's own border: two hairlines. */
+.panes[data-mode='transcript'] .read-area { border-left: none; border-top: none; }
 
 /* --------------------------------------------------------------------------
    Terminal
@@ -922,7 +1156,7 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 8px;
+  padding: 4px 10px;
   font-size: var(--fs-xs);
   font-family: var(--font-mono);
   color: var(--muted);
@@ -982,7 +1216,7 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  padding: 6px 16px;
   font-size: var(--fs-sm);
   color: var(--banner-text);
   background: var(--banner-bg);
@@ -1000,24 +1234,25 @@ button {
 
 .task-more {
   position: absolute;
-  top: 5px;
-  right: 4px;
-  width: 22px;
-  height: 20px;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 22px;
   display: none;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
+  letter-spacing: 1px;
   color: var(--muted);
-  background: var(--panel-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
 }
 
 .task-row:hover .task-more,
 .task-row[data-menu-open='true'] .task-more { display: flex; }
-.task-more:hover { color: var(--text-strong); border-color: var(--border-strong); background: var(--panel-hover); }
+.task-more:hover { color: var(--text-strong); background: var(--panel-hover); }
 
 /* The age gets out of the way rather than the control overlapping it. */
 .task-row:hover .task-age,
@@ -1025,20 +1260,22 @@ button {
 
 .task-row[data-menu-open='true'] { background: var(--panel-raised); }
 
+/* Every ⋯ and right-click menu in the shell. */
 .row-menu {
   position: fixed;
   z-index: 40;
-  min-width: 168px;
-  padding: 3px;
-  background: var(--panel-raised);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  min-width: 220px;
+  max-width: 340px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
 }
 
 .row-menu-head {
-  padding: 4px 8px 5px;
-  margin-bottom: 3px;
+  padding: 6px 10px 6px;
+  margin-bottom: 4px;
   font-size: var(--fs-xs);
   color: var(--faint);
   border-bottom: 1px solid var(--border);
@@ -1048,49 +1285,66 @@ button {
 }
 
 .row-menu-item {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 10px;
   width: 100%;
-  padding: 4px 8px;
+  min-height: 32px;
+  padding: 5px 10px;
   text-align: left;
   font-size: var(--fs-sm);
   color: var(--text);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
-.row-menu-item:hover { background: var(--accent-soft); color: var(--text-strong); }
+.row-menu-item:hover { background: var(--panel-raised); color: var(--text-strong); }
 .row-menu-item:disabled { color: var(--faint); background: transparent; }
-/* A new group in the menu: a rule above it, inside the menu's padding. */
-.row-menu-item[data-group='true'] { margin-top: 3px; box-shadow: 0 -1px 0 var(--border); border-radius: 0 0 2px 2px; }
+/* A new group in the menu: a hairline above it, inside the menu's padding. */
+.row-menu-item[data-group='true'] { margin-top: 9px; position: relative; }
+.row-menu-item[data-group='true']::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: -5px;
+  height: 1px;
+  background: var(--border);
+}
 /* The tick column of a radio item; empty when unticked, so labels align. */
-.row-menu-check { display: inline-block; width: 1.2em; color: var(--accent); }
+.row-menu-check { display: inline-block; flex: 0 0 1.2em; width: 1.2em; color: var(--accent); }
+/* Label and a right-aligned shortcut or value: the label wraps, the hint never does. */
+.row-menu-label { flex: 1 1 0; min-width: 0; }
+.row-menu-aside { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
+.row-menu-item[data-tone='danger'] { color: var(--danger); }
 .row-menu-item[data-tone='danger']:hover { background: var(--del-soft); color: var(--on-del-soft); }
 
 /* --------------------------------------------------------------------------
    Reading pane tabs (M4)
    -------------------------------------------------------------------------- */
 
-.pane-head .tabs { display: flex; gap: 2px; margin-left: -4px; }
+.pane-head .tabs { display: flex; gap: 2px; margin-left: -8px; }
 
 .pane-head .tabs button {
-  height: 22px;
-  padding: 0 7px;
-  font-size: var(--fs-xs);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--faint);
-  border-radius: 2px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
 }
-.pane-head .tabs button:hover { color: var(--text); background: var(--panel-raised); }
+.pane-head .tabs button:hover { color: var(--text); background: var(--panel-hover); }
 .pane-head .tabs button[aria-selected='true'] { color: var(--text-strong); background: var(--panel-raised); }
 
 .pane-head-close {
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  font-size: 11px;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  font-weight: 400;
   color: var(--muted);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
-.pane-head-close:hover { color: var(--text-strong); background: var(--panel-raised); }
+.pane-head-close:hover { color: var(--text-strong); background: var(--panel-hover); }
 
 .tabpanel { position: absolute; inset: 0; overflow: hidden; }
 .tabpanel[hidden] { display: none !important; }
@@ -1149,7 +1403,7 @@ button {
   gap: 6px;
 }
 
-.task-index { margin-left: 0; }
+
 
 .task-ctx-text {
   font-family: var(--font-mono);
@@ -1196,52 +1450,37 @@ button {
 
 
 /* --------------------------------------------------------------------------
-   Sidebar footer — theme toggle (M4)
+   Small segmented switch
 
-   Placed here rather than in the header: it is a per-viewer preference set
-   once, not a control worth permanent header width next to Projects,
-   Worktrees and New task. The sidebar foot is always on screen and never
-   scrolls, so it is findable without being in the way.
+   Same shape as the pane-layout switch in the task bar, one size down: for a
+   choice between two or three values inside a panel (the usage window).
+   The theme used to be one, in a sidebar footer; it is in the title bar's ⋯
+   menu now, a preference set once rather than a control worth the room.
    -------------------------------------------------------------------------- */
 
-.sidebar-foot {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border-top: 1px solid var(--border);
-  background: var(--panel);
-}
-
-.sidebar-foot-label {
-  font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-.theme-toggle {
-  display: flex;
+.seg-sm {
+  display: inline-flex;
   margin-left: auto;
+  padding: 2px;
+  background: var(--panel-chrome);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
 }
 
-.theme-toggle button {
-  height: 20px;
-  padding: 0 7px;
+.seg-sm button {
+  height: 22px;
+  padding: 0 9px;
   font-size: var(--fs-xs);
+  font-weight: 500;
   color: var(--muted);
   background: transparent;
-  border-right: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
-.theme-toggle button:last-child { border-right: none; }
-.theme-toggle button:hover { color: var(--text); background: var(--panel-hover); }
-.theme-toggle button[aria-pressed='true'] {
-  color: var(--on-accent-soft);
-  background: var(--accent-soft);
+.seg-sm button:hover { color: var(--text); }
+.seg-sm button[aria-pressed='true'] {
+  color: var(--text-strong);
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--border-mid);
 }
 
 /* --------------------------------------------------------------------------
@@ -1260,29 +1499,38 @@ button {
   flex: 0 0 auto;
   display: flex;
   gap: 2px;
-  padding: 4px 4px 0;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  padding: 10px 10px 0;
+  background: var(--panel-chrome);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
 }
 .project-tabs::-webkit-scrollbar { display: none; }
 
+/* In the title bar, in the brand's place: the bar is the ground. The gaps
+   between tabs stay draggable (the bar carries data-tauri-drag-region; the
+   tabs themselves are buttons, which Tauri never treats as drag handles). */
+.header .project-tabs {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  align-self: center;
+}
+
 .project-tab {
   flex: 0 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 8px;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
   font-size: var(--fs-sm);
+  font-weight: 500;
   color: var(--muted);
   background: transparent;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--radius-sm);
   white-space: nowrap;
 }
 
@@ -1290,13 +1538,13 @@ button {
 
 .project-tab[aria-selected='true'] {
   color: var(--text-strong);
-  background: var(--bg);
-  border-color: var(--border);
-  /* Sit on the bar's bottom rule so the active tab reads as joined to the
-     list below it rather than floating above it. */
-  margin-bottom: -1px;
-  padding-bottom: 1px;
+  background: var(--panel-raised);
 }
+
+/* The dot centred in a 16px column after the tab's 10px padding: the rows'
+   status column (row padding 10, column 16). With the 6px gap the name then
+   starts where a row's title does. */
+.project-tab > .status-dot { margin: 0 5.5px 0 3.5px; }
 
 .project-tab-name {
   overflow: hidden;
@@ -1306,38 +1554,34 @@ button {
 
 .project-tab-count {
   flex: 0 0 auto;
-  font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
   color: var(--faint);
 }
 
-.project-tab[data-status='blocked'] .project-tab-count { color: var(--status-blocked); }
+.project-tab[data-status='blocked'] .project-tab-count { color: var(--status-blocked); font-weight: 600; }
 .project-tab[data-status='blocked'] { color: var(--text); }
+.project-tab[data-dragging='true'] { cursor: grabbing; color: var(--text-strong); background: var(--panel-hover); }
 
 /* --------------------------------------------------------------------------
-   Issue key chip (M4)
+   Issue key (M4)
 
-   The key is the task's identity to the user, so it is scannable down the
-   left edge of the list rather than being the first few characters of a
-   sentence. Monospace and tabular so keys of different lengths still line up.
+   The key is the task's identity to the user, so it leads the title, set a
+   tier quieter than the sentence after it. Tabular so keys of different
+   lengths still line up. Plain text, no chip: the accent is kept for "live
+   or chosen", and a column of indigo chips was neither.
    -------------------------------------------------------------------------- */
 
 .task-key {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  /* --on-accent-soft, not --accent: it is the token that exists for text on
-     this exact tint, so the chip keeps its headroom (6.04 worst case, vs 4.83)
-     and stays correct if the tint's alpha is ever retuned. */
-  color: var(--on-accent-soft);
-  background: var(--accent-soft);
-  border-radius: 2px;
-  padding: 1px 4px;
-  margin-right: 5px;
+  color: var(--muted);
+  margin-right: 6px;
 }
 
-.task-row[data-status='archived'] .task-key { color: var(--faint); background: none; }
+.task-row[data-status='archived'] .task-key { color: var(--faint); }
 .task-rest { overflow: hidden; text-overflow: ellipsis; }
 
 /* --------------------------------------------------------------------------
@@ -1362,11 +1606,11 @@ button {
 .sb-dialog {
   display: flex;
   flex-direction: column;
-  width: min(860px, 100%);
+  width: min(880px, 100%);
   max-height: 100%;
   background: var(--panel);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   overflow: hidden;
 }
@@ -1375,55 +1619,57 @@ button {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 12px;
+  padding: 12px 12px 12px 18px;
   border-bottom: 1px solid var(--border);
 }
 
 .sb-title {
-  font-size: var(--fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--faint);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-strong);
   white-space: nowrap;
 }
 
 .sb-search {
   flex: 1 1 auto;
   min-width: 0;
-  height: 26px;
-  padding: 0 8px;
+  height: 36px;
+  padding: 0 12px;
   font: inherit;
   font-size: var(--fs-md);
   color: var(--text);
-  background: var(--panel-inset);
+  background: var(--panel-chrome);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   user-select: text;
 }
-.sb-search:focus { border-color: var(--focus); outline: none; }
+.sb-search:focus { border-color: var(--accent); outline: none; background: var(--panel-inset); }
 .sb-search::placeholder { color: var(--faint); }
 
 .sb-banner { border-bottom: 1px solid var(--banner-border); }
 
-.sb-list { flex: 1 1 auto; overflow-y: auto; min-height: 120px; }
+.sb-list { flex: 1 1 auto; overflow-y: auto; min-height: 120px; padding: 6px; }
 
 .sb-empty { padding: 28px 14px; text-align: center; color: var(--faint); font-size: var(--fs-sm); }
 
 .sb-disk-head {
-  padding: 10px 10px 4px;
+  margin-top: 6px;
+  padding: 12px 12px 6px;
   font-size: var(--fs-xs);
+  font-weight: 500;
   color: var(--muted);
   border-top: 1px solid var(--border);
 }
-.sb-disk-note { color: var(--faint); }
+.sb-disk-note { color: var(--faint); font-weight: 400; }
 .sb-disk-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 2px 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: var(--radius);
 }
+.sb-disk-row:hover { background: var(--panel-hover); }
 .sb-disk-title {
   color: var(--text);
   overflow: hidden;
@@ -1443,23 +1689,22 @@ button {
 
 .sb-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 2px 8px;
+  grid-template-columns: minmax(0, 170px) minmax(0, 1fr) auto;
+  gap: 2px 14px;
   width: 100%;
-  padding: 7px 10px;
+  padding: 10px 12px;
   text-align: left;
-  border-left: 2px solid transparent;
-  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 /* Leads the row: 87 distinct branches across 115 sessions, against 13 cwds. */
 .sb-row-branch {
   grid-column: 1;
   grid-row: 1;
-  max-width: 24ch;
   font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  color: var(--accent);
+  font-size: var(--fs-xs);
+  line-height: 1.75;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1469,11 +1714,12 @@ button {
    let the eye fall through to the prompt and the files. */
 .sb-row-branch[data-weak='true'] { color: var(--faint); }
 .sb-row:hover { background: var(--panel-hover); }
-.sb-row[data-selected='true'] { background: var(--panel-raised); border-left-color: var(--accent); }
+.sb-row[data-selected='true'] { background: var(--panel-raised); }
 
 .sb-row-title {
   grid-column: 2;
   font-size: var(--fs-md);
+  font-weight: 500;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1483,9 +1729,9 @@ button {
 
 .sb-row-age {
   grid-column: 3;
-  font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--faint);
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1509,13 +1755,14 @@ button {
 }
 
 .sb-row-meta {
-  grid-column: 1 / span 3;
+  grid-column: 2 / span 2;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
+  margin-top: 2px;
   font-size: var(--fs-xs);
-  color: var(--muted);
+  color: var(--faint);
 }
 
 .sb-row-cwd {
@@ -1527,30 +1774,35 @@ button {
 
 .sb-row-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 
+/* A pill. Neutral by default (a hairline, the row's own ground). */
 .sb-chip {
   flex: 0 0 auto;
-  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
   font-size: var(--fs-xs);
-  color: var(--on-accent-soft);
-  background: var(--accent-soft);
-  border-radius: 2px;
+  color: var(--muted);
+  border: 1px solid var(--border-mid);
+  border-radius: 999px;
+  white-space: nowrap;
 }
-.sb-chip[data-tone='warn'] { color: var(--banner-text); background: var(--banner-bg); }
+.sb-chip[data-tone='warn'] { color: var(--banner-text); background: var(--banner-bg); border-color: transparent; }
 
 .sb-detail {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  background: var(--panel-raised);
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--panel-chrome);
   border-top: 1px solid var(--border);
 }
 
 .sb-detail-path {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--text);
@@ -1566,23 +1818,39 @@ button {
   background: var(--banner-bg);
   border: 1px solid var(--banner-border);
   border-radius: var(--radius);
-  padding: 6px 8px;
+  padding: 8px 10px;
 }
 
 .sb-actions { display: flex; align-items: center; gap: 8px; }
 
+/* Resume-place choices reuse the archive dialog's option cards; the detail
+   column's gap already spaces them. */
+.sb-places { margin-bottom: 0; }
+
 .sb-note {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: var(--fs-xs);
-  color: var(--faint);
+  font-size: var(--fs-sm);
+  color: var(--muted);
   line-height: 1.5;
 }
+
+/* Key hints along the foot. Only what the dialog actually binds. */
+.sb-foot {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 16px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.sb-foot > span { display: inline-flex; gap: 6px; align-items: center; }
 
 /* Terminated-pane status strip: text on the left, the way back on the right. */
 .term-status-text { flex: 1 1 auto; min-width: 0; }
 .term-status-calm { color: var(--muted); }
-.term-status .btn { flex: 0 0 auto; height: 20px; }
+.term-status .btn { flex: 0 0 auto; height: 24px; }
 
 /* --------------------------------------------------------------------------
    Launch notices + import picker (M4)
@@ -1597,10 +1865,10 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  padding: 6px 16px;
   font-size: var(--fs-sm);
   color: var(--muted);
-  background: var(--panel);
+  background: var(--panel-chrome);
   border-bottom: 1px solid var(--border);
 }
 
@@ -1614,7 +1882,7 @@ button {
   white-space: nowrap;
 }
 
-.notice .btn { flex: 0 0 auto; height: 20px; }
+.notice .btn { flex: 0 0 auto; height: 24px; }
 
 .ip-dialog { width: min(760px, 100%); }
 
@@ -1712,6 +1980,7 @@ button {
    three end-a-thing verbs now meet on one surface. */
 .row-menu-hint {
   display: block;
+  flex-basis: 100%;
   margin-top: 1px;
   font-size: var(--fs-xs);
   color: var(--faint);
@@ -1741,7 +2010,8 @@ button {
 .read-area > .pane-transcript { flex: 1 1 0; min-width: 0; }
 
 .pane-files {
-  border-left: 1px solid var(--border);
+  /* No divider: the Files sections are cards of their own (touched.css),
+     and their spacing separates the column from the transcript. */
   background: var(--panel);
 }
 
@@ -1751,13 +2021,14 @@ button {
   flex: 0 0 auto;
   /* Was a 20px square holding one glyph. It carries a word now, so it sizes
      to the word -- see the comment at the call site for why. */
-  height: 20px;
-  padding: 0 5px;
+  height: 26px;
+  padding: 0 8px;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
   line-height: 1;
-  color: var(--faint);
-  border-radius: 2px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
 }
 .pane-head-pin:hover { color: var(--text-strong); background: var(--panel-hover); }
 .pane-head-pin[data-on='true'] { color: var(--accent); }
@@ -1780,3 +2051,42 @@ button {
   white-space: nowrap;
   border: 0;
 }
+
+/* --------------------------------------------------------------------------
+   Status strip: subscription usage, the full width of the window, on the
+   chrome ground under the work card (src/ui/StatusBar.tsx). Quiet: a line
+   you glance at.
+   -------------------------------------------------------------------------- */
+.statusbar {
+  /* Right-aligned with the switch last, and tall enough that the card above
+     ends with room under it, the strip clearly below the content. */
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 16px;
+  background: var(--panel-chrome);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+}
+/* One plan window: label, the shared meter bar, percentage, reset. The bar and
+   its warn/high colours are .ctx's. Text cleared on --panel-chrome: --muted
+   6.50 / 7.31, --status-blocked 6.90 / 9.42, --danger 6.34 / 7.91. */
+.plan-meter { flex: none; gap: 6px; }
+.plan-meter .ctx-text { font-size: var(--fs-xs); }
+.plan-label { color: var(--muted); }
+.plan-reset { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* "Context 72% · Compact · Clear" in the message box's controls row, past 70%
+   only (src/ui/ClearContextButton.tsx). --warn on --panel-inset. */
+.ctx-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+  font-size: var(--fs-xs);
+}
+.ctx-clear-reading { color: var(--warn); font-variant-numeric: tabular-nums; }

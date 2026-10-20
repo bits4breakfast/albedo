@@ -185,8 +185,8 @@ export function inputViewFor(toolName: string | null, input: Obj): InputView {
         command: formatShellCommand(command),
         description: str(input.description),
         fields: [
-          ...field('timeout', num(input.timeout) === null ? null : `${num(input.timeout)} ms`),
-          ...field('background', input.run_in_background === true ? 'yes' : null),
+          ...field('Timeout', num(input.timeout) === null ? null : `${num(input.timeout)} ms`),
+          ...field('Background', input.run_in_background === true ? 'yes' : null),
         ],
       };
     }
@@ -194,7 +194,7 @@ export function inputViewFor(toolName: string | null, input: Obj): InputView {
     case 'Read': {
       const path = str(input.file_path) ?? str(input.notebook_path);
       if (path === null) return { kind: 'json' };
-      return { kind: 'fields', fields: [...field('file', path, true), ...field('lines', readRange(input))] };
+      return { kind: 'fields', fields: [...field('File', path, true), ...field('Lines', readRange(input))] };
     }
 
     case 'Grep': {
@@ -203,11 +203,11 @@ export function inputViewFor(toolName: string | null, input: Obj): InputView {
       return {
         kind: 'fields',
         fields: [
-          { label: 'pattern', value: pattern },
-          ...field('in', str(input.path), true),
-          ...field('files', str(input.glob) ?? str(input.type)),
-          ...field('mode', str(input.output_mode)),
-          ...field('ignore case', input['-i'] === true ? 'yes' : null),
+          { label: 'Pattern', value: pattern },
+          ...field('In', str(input.path), true),
+          ...field('Files', str(input.glob) ?? str(input.type)),
+          ...field('Mode', str(input.output_mode)),
+          ...field('Ignore Case', input['-i'] === true ? 'yes' : null),
         ],
       };
     }
@@ -215,7 +215,7 @@ export function inputViewFor(toolName: string | null, input: Obj): InputView {
     case 'Glob': {
       const pattern = str(input.pattern);
       if (pattern === null) return { kind: 'json' };
-      return { kind: 'fields', fields: [{ label: 'pattern', value: pattern }, ...field('in', str(input.path), true)] };
+      return { kind: 'fields', fields: [{ label: 'Pattern', value: pattern }, ...field('In', str(input.path), true)] };
     }
 
     case 'Write': {

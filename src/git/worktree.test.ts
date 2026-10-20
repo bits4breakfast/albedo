@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  probeWorkAtRisk,
   parseCommitFileTimes,
   parseCommitLog,
   parseNameStatus,
@@ -355,6 +356,20 @@ describe('unmergedCommits', () => {
 // ---------------------------------------------------------------------------
 // What a removal would destroy -- shared by both confirmation dialogs
 // ---------------------------------------------------------------------------
+
+describe('probeWorkAtRisk', () => {
+  it('reports a worktree folder deleted from disk instead of throwing', async () => {
+    // What the shell plugin does when the cwd is gone: the spawn rejects, no exit code.
+    const prev = setGitRunner(async () => {
+      throw new Error('No such file or directory (os error 2)');
+    });
+    restoreRunner = () => setGitRunner(prev);
+    const p = await probeWorkAtRisk('/gone', 'main');
+    expect(p.risk).toEqual({ files: null, ahead: null, aheadBase: 'main', head: null });
+    expect(p.filesError).toMatch(/No such file/);
+    expect(p.aheadError).toMatch(/No such file/);
+  });
+});
 
 describe('assessLoss', () => {
   const clean: WorkAtRisk = { files: [], ahead: 0, aheadBase: 'main' };

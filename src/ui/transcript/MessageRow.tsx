@@ -118,7 +118,7 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
   const machine = parts.every((p) => p.kind === 'blocks' && isAllEnvelopes(p.blocks));
   return (
     <div className={`tx-row ${machine ? 'tx-row-machine' : 'tx-row-user'}`}>
-      <div className="tx-gutter">{machine ? '' : 'you'}</div>
+      <div className="tx-gutter">{machine ? '' : 'You'}</div>
       <div className="tx-content">
         {parts.map((p, i) =>
           p.kind === 'blocks' ? (
@@ -153,7 +153,7 @@ function AttachedImage({ src }: { src: string | null }): ReactNode {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  if (src === null) return <div className="tx-img-missing">image (not stored in the transcript)</div>;
+  if (src === null) return <div className="tx-img-missing">Image (not stored in the transcript)</div>;
   return (
     <>
       <button type="button" className="tx-img-thumb" onClick={() => setOpen(true)} title="Show full size">
@@ -195,16 +195,16 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
     case 'cleared':
       return (
         <div className="tx-cleared" role="separator">
-          <span>context cleared</span>
+          <span>Context Cleared</span>
         </div>
       );
     case 'system-reminder':
-      return <Collapsed label="injected context" text={block.text} />;
+      return <Collapsed label="Injected Context" text={block.text} />;
     case 'skill':
       return <SkillBlock block={block} />;
     case 'pasted': {
       const lines = block.text.split('\n').length;
-      return <Collapsed label={`pasted text · ${lines} line${lines === 1 ? '' : 's'}`} text={block.text} />;
+      return <Collapsed label={`Pasted Text · ${lines} Line${lines === 1 ? '' : 's'}`} text={block.text} />;
     }
     case 'output':
       return (
@@ -222,7 +222,7 @@ function NotificationChip({ block }: { block: Extract<UserBlock, { kind: 'task-n
   const [open, setOpen] = useState(false);
   const toggle = useActivate(() => setOpen((v) => !v));
   const done = block.status === null || block.status === 'completed';
-  const summary = block.summary ?? 'finished';
+  const summary = block.summary ?? 'Finished';
   const fields = useMemo(() => block.fields.map((f) => ({ label: f.name, value: f.value })), [block.fields]);
 
   return (
@@ -230,7 +230,7 @@ function NotificationChip({ block }: { block: Extract<UserBlock, { kind: 'task-n
       <div className="tx-chip-head" onMouseDown={toggle.onMouseDown} onClick={toggle.onClick}>
         <button type="button" className="tx-chip-toggle" aria-expanded={open} aria-label="subagent detail">
           <Disclosure open={open} />
-          <span className="tx-chip-name">subagent</span>
+          <span className="tx-chip-name">Subagent</span>
         </button>
         <span className="tx-chip-summary tx-chip-summary-wide">{summary}</span>
         <span className="tx-chip-state">{done ? '✓' : (block.status ?? '…')}</span>
@@ -299,11 +299,11 @@ function ShellOutput({ stdout, stderr }: { stdout: string; stderr: string }): Re
     <div className="tx-shell-out">
       {hidden > 0 ? (
         <button type="button" className="tx-think-head" onClick={() => setOpen(true)} aria-expanded={false}>
-          <Disclosure open={false} /> {hidden} earlier line{hidden === 1 ? '' : 's'}
+          <Disclosure open={false} /> {hidden} Earlier Line{hidden === 1 ? '' : 's'}
         </button>
       ) : open ? (
         <button type="button" className="tx-think-head" onClick={() => setOpen(false)} aria-expanded>
-          <Disclosure open /> {total} lines
+          <Disclosure open /> {total} Lines
         </button>
       ) : null}
       <pre className="tx-pre tx-output">
@@ -339,7 +339,7 @@ function SkillBlock({ block }: { block: Extract<UserBlock, { kind: 'skill' }> })
   return (
     <div className="tx-collapsed">
       <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <Disclosure open={open} /> skill loaded · <span className="tx-cmd-name">{block.name}</span>
+        <Disclosure open={open} /> Skill Loaded · <span className="tx-cmd-name">{block.name}</span>
       </button>
       {open ? (
         <div className="tx-think-body">
@@ -362,16 +362,25 @@ function AssistantRow({ message }: { message: Message }): ReactNode {
   );
 }
 
+/**
+ * Claude Code now usually persists a thinking block as `"thinking": ""` plus a
+ * signature: the text was never written to disk. A caret that opens onto
+ * nothing is a broken promise, and a "not recorded" line on most turns is noise
+ * with nothing to act on, so an empty block renders nothing -- as `Collapsed`,
+ * `SystemRow` and `OrphanResultRow` already do. The row (and its raw_json) is
+ * still stored; this is only what the pane shows.
+ */
 function ThinkingRow({ message }: { message: Message }): ReactNode {
   const [open, setOpen] = useState(false);
   const text = message.body ?? '';
-  const words = text.trim().length === 0 ? 0 : text.trim().split(/\s+/).length;
+  if (text.trim().length === 0) return null;
+  const words = text.trim().split(/\s+/).length;
   return (
     <div className="tx-row tx-row-thinking">
       <div className="tx-gutter" />
       <div className="tx-content">
         <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <Disclosure open={open} /> thinking{words > 0 ? ` · ${words} words` : ''}
+          <Disclosure open={open} /> Thinking · {words} Word{words === 1 ? '' : 's'}
         </button>
         {open ? <div className="tx-think-body">{text}</div> : null}
       </div>
@@ -384,7 +393,7 @@ function SystemRow({ message }: { message: Message }): ReactNode {
   if (text.length === 0) return null;
   return (
     <div className="tx-row tx-row-system">
-      <div className="tx-gutter">sys</div>
+      <div className="tx-gutter">Sys</div>
       <div className="tx-content">
         <div className="tx-system-text">{text}</div>
       </div>

@@ -16,10 +16,12 @@ import {
   answerText,
   DENY_MESSAGE,
   derivePending,
+  latestSessionStart,
   HOOK_SCRIPT,
   hookSettingsArg,
   isAnswerable,
   parseHookLines,
+  parseStatusSnapshot,
   permissionDecision,
   questionDecision,
   type HookEvent,
@@ -36,6 +38,8 @@ const ev = (event: string, extra: Partial<HookEvent> = {}, at = 1): HookEvent =>
     notificationType: null,
     requestId: null,
     suggestions: null,
+    sessionId: null,
+    source: null,
     at,
     ...extra,
   }) as HookEvent;
@@ -150,6 +154,19 @@ describe('HOOK_SCRIPT, run for real', () => {
     const [e] = run(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'tu9', tool_input: { questions: [{ question: 'Q?', options: [{ label: 'A' }] }] } }, null, 2));
     expect(e).toMatchObject({ event: 'PreToolUse', toolUseId: 'tu9' });
     expect(derivePending([e as HookEvent])?.kind).toBe('question');
+  });
+
+  it('keeps the session id and source of a SessionStart, and nothing else', () => {
+    const sid = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+    const [e] = run(
+      JSON.stringify({ session_id: sid, transcript_path: '/p/x.jsonl', cwd: '/w', hook_event_name: 'SessionStart', source: 'clear' }),
+    );
+    expect(e).toMatchObject({ event: 'SessionStart', sessionId: sid, source: 'clear' });
+  });
+
+  it('drops a session id that is not a UUID', () => {
+    const [e] = run(JSON.stringify({ session_id: '../../etc"x', hook_event_name: 'SessionStart', source: 'startup' }));
+    expect(e).toMatchObject({ event: 'SessionStart', sessionId: null });
   });
 
   it('reduces a huge PostToolUse to its name and id', () => {
@@ -587,5 +604,99 @@ describe('HOOK_SCRIPT: safety, run for real', () => {
     const text = readFileSync(file, 'utf8');
     expect(text.split('\n').filter(Boolean)).toHaveLength(N);
     expect(parseHookLines(text)).toHaveLength(N);
+  });
+});
+
+describe('latestSessionStart', () => {
+  const a = '11111111-1111-4111-8111-111111111111';
+  const b = '22222222-2222-4222-8222-222222222222';
+  it('takes the last SessionStart that names a session', () => {
+    expect(
+      latestSessionStart([
+        ev('SessionStart', { sessionId: a, source: 'startup' }),
+        ev('Stop'),
+        ev('SessionStart', { sessionId: b, source: 'clear' }),
+        ev('SessionStart', { sessionId: null, source: 'clear' }),
+      ]),
+    ).toEqual({ sessionId: b, source: 'clear' });
+  });
+  it('is null without one', () => {
+    expect(latestSessionStart([ev('Stop'), ev('PostToolUse')])).toBeNull();
+  });
+});
+
+describe('HOOK_SCRIPT: status-line mode, run for real', () => {
+  // The shape Claude Code 2.1.304 hands a status-line command, trimmed.
+  const SID = '3ce16cb4-9e4c-4e1a-ab05-2929f8391b74';
+  const PAYLOAD = JSON.stringify({
+    session_id: SID,
+    cwd: '/w',
+    model: { id: 'claude-opus-5-5', display_name: 'Opus' },
+    cost: { total_cost_usd: 1.2 },
+    context_window: {
+      total_input_tokens: 5,
+      context_window_size: 1_000_000,
+      current_usage: { input_tokens: 3, cache_read_input_tokens: 2 },
+      used_percentage: 42.5,
+      remaining_percentage: 57.5,
+    },
+    rate_limits: {
+      five_hour: { used_percentage: 29, resets_at: 1_792_500_000 },
+      seven_day: { used_percentage: 14, resets_at: 1_792_900_000 },
+    },
+  });
+
+  function status(payload: string) {
+    const { home, script } = setupScript();
+    const r = spawnSync('sh', [script, '42', 'status'], { input: payload, env: { ...process.env, HOME: home } });
+    const path = join(home, '.albedo/events/status-42.json');
+    return { r, home, text: existsSync(path) ? readFileSync(path, 'utf8') : null };
+  }
+
+  it('keeps the plan usage and the context fill, and prints nothing', () => {
+    const { r, text } = status(PAYLOAD);
+    expect(r.status).toBe(0);
+    expect(r.stdout.toString()).toBe('');
+    expect(parseStatusSnapshot(text!)).toMatchObject({
+      sessionId: SID,
+      fiveHour: { usedPct: 29, resetsAt: 1_792_500_000_000 },
+      sevenDay: { usedPct: 14, resetsAt: 1_792_900_000_000 },
+      contextPct: 42.5,
+      contextSize: 1_000_000,
+    });
+  });
+
+  it('keeps nothing else from the payload', () => {
+    const { text } = status(PAYLOAD);
+    expect(Object.keys(JSON.parse(text!)).sort()).toEqual(
+      ['albedo_at', 'ctx_pct', 'ctx_size', 'five_pct', 'five_resets', 'session_id', 'week_pct', 'week_resets'],
+    );
+    expect(text).not.toContain('claude-opus');
+  });
+
+  it('writes nulls, still valid JSON, for an API-key session before its first reply', () => {
+    const { text } = status(
+      JSON.stringify({ session_id: SID, context_window: { context_window_size: 200_000, current_usage: null, used_percentage: null, remaining_percentage: null } }),
+    );
+    expect(parseStatusSnapshot(text!)).toMatchObject({ fiveHour: null, sevenDay: null, contextPct: null, contextSize: 200_000 });
+  });
+
+  it('writes no event line and leaves no scratch file', () => {
+    const { home } = status(PAYLOAD);
+    expect(readdirSync(join(home, '.albedo/events'))).toEqual(['status-42.json']);
+  });
+});
+
+describe('parseStatusSnapshot', () => {
+  it('rejects a torn file and an untrusted session id', () => {
+    expect(parseStatusSnapshot('{"five_pct":2')).toBeNull();
+    expect(parseStatusSnapshot('{"session_id":"../x","albedo_at":1}')?.sessionId).toBeNull();
+  });
+});
+
+describe('hookSettingsArg: status line', () => {
+  it('runs the same script in status mode, with no padding', () => {
+    const j = JSON.parse(hookSettingsArg(7, '/x/hook.sh'));
+    expect(j.statusLine).toEqual({ type: 'command', command: 'sh "/x/hook.sh" 7 status', padding: 0 });
   });
 });

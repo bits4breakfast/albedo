@@ -60,7 +60,7 @@ export function PrBadge({ task, onEnd, onFollowUp }: PrBadgeProps) {
           title="Merged — start a new task for a bug in what shipped (opens the new-task dialog)"
           onClick={() => onFollowUp(pr)}
         >
-          Follow-up…
+          Follow-Up…
         </button>
       )}
       {pr.state === 'merged' && onEnd && (
@@ -86,28 +86,6 @@ export function PrBadge({ task, onEnd, onFollowUp }: PrBadgeProps) {
           </button>
         </>
       )}
-    </span>
-  );
-}
-
-/**
- * Sidebar mark. Text-sized and non-interactive -- the row is the click target
- * -- so it is read like the context readout beside it: glyph first, number
- * after, detail in the tooltip.
- */
-export function PrRowMark({ pr }: { pr: PrStatus | null | undefined }) {
-  if (!pr) return null;
-  const label = prLabel(pr);
-  const short =
-    pr.state === 'merged'
-      ? 'merged'
-      : pr.checks.kind === 'failing'
-        ? `✗${pr.checks.failing}`
-        : label.glyph;
-  return (
-    <span className="pr-mark" data-tone={label.tone} title={prTooltip(pr)}>
-      {short && <span className="pr-mark-state">{short}</span>}
-      <span>#{pr.number}</span>
     </span>
   );
 }

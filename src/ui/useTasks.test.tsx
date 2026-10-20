@@ -44,6 +44,7 @@ vi.mock('../capture', async () => ({
 vi.mock('../capture/hookEvents', () => ({
   hasHooks: () => false,
   onPromptChange: () => () => {},
+  onStatusSnapshot: () => () => {},
   pendingPrompt: () => null,
 }));
 vi.mock('./attention', () => ({ noteStatusChange: vi.fn() }));
@@ -245,29 +246,17 @@ describe('failed writes are logged and retried', () => {
     error.mockRestore();
   });
 
-  it('rolls back a failed adoption so the next update adopts again', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('never adopts a session by folder — the task keeps the session it was given', async () => {
+    // The restart bug: any transcript in the task's folder used to become its
+    // session. A task is now on its session before `claude` starts.
     h.rows = [task({ sessionId: null, worktreePath: '/wt/9' })];
     h.messages.set('s9', [prompt('s9', T0 - 3_600_000)]);
-    let fail = true;
-    const write = h.updateTask;
-    h.updateTask = async (id, patch) => {
-      if (fail) throw new Error('database is locked');
-      await write(id, patch);
-    };
     const { result } = renderHook(() => useTasks());
     await tick();
 
     emitCapture('s9', '/wt/9');
     await tick(300);
-    expect(error).toHaveBeenCalled();
     expect(result.current.tasks[0]?.sessionId).toBeNull();
-
-    fail = false;
-    emitCapture('s9', '/wt/9');
-    await tick(300);
-    expect(result.current.tasks[0]?.sessionId).toBe('s9');
-    expect(h.rows[0]?.sessionId).toBe('s9');
-    error.mockRestore();
+    expect(h.rows[0]?.sessionId).toBeNull();
   });
 });

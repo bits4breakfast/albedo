@@ -116,12 +116,18 @@ describe('performance', () => {
       cands.push({ text, lower: text.toLowerCase() });
     }
     const q = normaliseQuery('usrv');
-    const t0 = performance.now();
+    // The fastest of five runs: a single wall-clock sample failed whenever the
+    // machine was busy (803ms under a parallel build, ~20ms idle). The best
+    // run is what the code costs; a regression to quadratic is seconds.
+    let best = Infinity;
     let hits = 0;
-    for (const c of cands) if (matchPath(q, c.text, c.lower, basenameStart(c.text))) hits++;
-    const ms = performance.now() - t0;
+    for (let run = 0; run < 5; run++) {
+      hits = 0;
+      const t0 = performance.now();
+      for (const c of cands) if (matchPath(q, c.text, c.lower, basenameStart(c.text))) hits++;
+      best = Math.min(best, performance.now() - t0);
+    }
     expect(hits).toBeGreaterThan(0);
-    // Generous: CI machines are slow. Locally this is ~20ms.
-    expect(ms).toBeLessThan(500);
+    expect(best).toBeLessThan(500);
   });
 });
