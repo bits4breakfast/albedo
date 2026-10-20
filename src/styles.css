@@ -451,7 +451,7 @@ button {
      chrome ground, and the work sits on it as a single inset card. One
      outline separates the two, so no two borders can meet at that edge. */
   background: var(--panel-chrome);
-  padding: 0 8px 8px 0;
+  padding: 0 8px 0 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -2039,3 +2039,35 @@ button.usage-waiting:hover { background: var(--panel-hover); }
   white-space: nowrap;
   border: 0;
 }
+
+/* --------------------------------------------------------------------------
+   Status strip: subscription usage, the full width of the window, on the
+   chrome ground under the work card (src/ui/StatusBar.tsx). Quiet: a line
+   you glance at, like Linear's global strip.
+   -------------------------------------------------------------------------- */
+.statusbar {
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 16px;
+  background: var(--panel-chrome);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+}
+.statusbar-label { flex: none; color: var(--faint); }
+.statusbar-switch { margin-left: 0; flex: none; }
+.statusbar-switch button { height: 18px; padding: 0 7px; }
+
+/* "Context 87% · Clear" in the message box's controls row, near the limit
+   only (src/ui/ClearContextButton.tsx). --warn on --panel-inset. */
+.ctx-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+  font-size: var(--fs-xs);
+}
+.ctx-clear-reading { color: var(--warn); font-variant-numeric: tabular-nums; }

@@ -395,7 +395,9 @@ export default function TaskList({
                      itself, so a paragraph-length task title renders as one
                      window-wide strip that covers whatever it was describing
                      — including the row's own context menu. */
-                  title={`${wrapForTooltip(task.title)}\n${task.repoPath}\n${task.branch}`}
+                  /* The row's details on hover: the context reading the
+                     hairline draws, in words, now that no panel shows it. */
+                  title={`${wrapForTooltip(task.title)}\n${task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
                 >
                   <span className="task-dot-cell">
                     <StatusDot status={task.status} />

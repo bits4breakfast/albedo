@@ -33,7 +33,8 @@ import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
 import { resolveInWorktree } from './lib/paths';
-import UsagePanel from './ui/gauges/UsagePanel';
+import StatusBar from './ui/StatusBar';
+import { ContextClear } from './ui/ClearContextButton';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
@@ -1619,12 +1620,6 @@ export default function App() {
             activeProject={activeProject}
             nameProject={!showTabs}
           />
-          {/* Pinned below the list, outside its scroller, so it is on screen
-              permanently. The panel carries its own boundary for render
-              throws; this one catches a failure to mount at all. */}
-          <PaneErrorBoundary label="Usage panel">
-            <UsagePanel task={selected} />
-          </PaneErrorBoundary>
         </aside>
 
         <div
@@ -1947,7 +1942,19 @@ export default function App() {
                       status={selected?.status ?? null}
                       /* The prompt is answered in the terminal; make sure it
                          is on screen, then give it the keyboard. */
-                      composerAccessory={selected ? <ModelPicker task={selected} /> : null}
+                      composerAccessory={
+                        selected ? (
+                          <>
+                            {/* Clear, only once the session is near the top of
+                                its window; the row's hairline shows the rest. */}
+                            <ContextClear
+                              task={selected}
+                              usage={selected.sessionId ? contextBySession.get(selected.sessionId) : null}
+                            />
+                            <ModelPicker task={selected} />
+                          </>
+                        ) : null
+                      }
                       onAnswerInTerminal={(id) => {
                         setMode((m) => (m === 'transcript' ? 'split' : m));
                         window.requestAnimationFrame(() => focusPty(id));
@@ -2080,6 +2087,11 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Usage is global, so it runs under everything, on the chrome ground. */}
+      <PaneErrorBoundary label="Usage">
+        <StatusBar />
+      </PaneErrorBoundary>
 
       <PaneErrorBoundary label="New task">
         <NewTaskDialog

@@ -499,3 +499,42 @@
 
 /* The 5H / 7D switch sits at the end of the Usage head, after its note. */
 .gz-window-switch { margin-left: auto; flex: 0 0 auto; align-self: center; }
+
+/* --------------------------------------------------------------------------
+   Inline layout: the same figures on one line, for the status strip.
+   Each stat reads "Spend 1.95M/h" -- label first, as prose does -- and
+   nothing wraps: the strip is one row.
+   -------------------------------------------------------------------------- */
+.gz-window[data-variant='inline'] {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 16px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.gz-window[data-variant='inline'] .gz-window-head { flex: none; }
+.gz-window[data-variant='inline'] .gz-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.gz-window[data-variant='inline'] .gz-stat {
+  flex-direction: row-reverse;
+  align-items: baseline;
+  gap: 5px;
+}
+.gz-window[data-variant='inline'] .gz-stat-val,
+.gz-window[data-variant='inline'] .gz-stat[data-primary] .gz-stat-val {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text);
+}
+.gz-window[data-variant='inline'] .gz-stat-key { letter-spacing: 0; }
+.gz-window[data-variant='inline'] .gz-countdown { font-size: var(--fs-xs); }
+.gz-window[data-variant='inline'] .gz-cache {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

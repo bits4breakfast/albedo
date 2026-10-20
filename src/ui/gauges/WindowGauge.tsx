@@ -55,7 +55,8 @@
 
 import type { WindowUsage } from '../../capture';
 import { abbreviateTokens, exactTokens, formatCountdown, formatRate, NO_VALUE } from './format';
-import type { GaugeState } from './ContextGauge';
+/** What a gauge has to show. `no-session` is kept for callers that pass it. */
+export type GaugeState = 'loading' | 'ready' | 'unavailable' | 'no-session';
 
 export interface WindowGaugeProps {
   /** Short label, e.g. `5h` or `7d`. */
@@ -68,6 +69,12 @@ export interface WindowGaugeProps {
   fetchedAt: number;
   /** Omit the label: a switch above already names the window. */
   hideLabel?: boolean;
+  /**
+   * `inline` lays the same figures out on one line, for the window's status
+   * strip: same markup and numbers, so the rules about what counts as spend
+   * are kept in one place.
+   */
+  variant?: 'block' | 'inline';
 }
 
 const ROLLING_NOTE =
@@ -92,7 +99,15 @@ function Stat({ value, label, title, primary }: StatProps) {
   );
 }
 
-export default function WindowGauge({ label, data, state, now, fetchedAt, hideLabel = false }: WindowGaugeProps) {
+export default function WindowGauge({
+  label,
+  data,
+  state,
+  now,
+  fetchedAt,
+  hideLabel = false,
+  variant = 'block',
+}: WindowGaugeProps) {
   // Hidden when a switch above already names the window.
   const head = hideLabel ? null : (
     <span className="gz-window-label" title={`Rolling ${label} window, across all sessions`}>
@@ -102,7 +117,7 @@ export default function WindowGauge({ label, data, state, now, fetchedAt, hideLa
 
   if (state !== 'ready' || !data) {
     return (
-      <div className="gz-window">
+      <div className="gz-window" data-variant={variant}>
         <div className="gz-window-head">
           {head}
           <span className="gz-unavailable">{state === 'loading' ? 'Reading…' : 'Unavailable'}</span>
@@ -132,7 +147,7 @@ export default function WindowGauge({ label, data, state, now, fetchedAt, hideLa
   const haveCountdown = !empty && remaining !== null && remaining > 0;
 
   return (
-    <div className="gz-window">
+    <div className="gz-window" data-variant={variant}>
       <div className="gz-window-head">
         {head}
         {empty ? (
