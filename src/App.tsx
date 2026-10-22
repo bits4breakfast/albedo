@@ -774,7 +774,7 @@ export default function App() {
       const tab = showTabs && digit !== null ? tabs[digit - 1] : undefined;
       if (tab) selectTab(tab.key);
     },
-    // The previous / next tab, wrapping; the same landing as the digit above.
+    // The previous / next tab, stopping at the ends; lands like the digit above.
     'mod+shift+[': () => stepProject(-1),
     'mod+shift+]': () => stepProject(1),
     'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),

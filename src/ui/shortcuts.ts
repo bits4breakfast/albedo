@@ -61,8 +61,9 @@
  * ⇧⌘[ / ⇧⌘] step through the same tabs, next to ⌘[ / ⌘] for tasks. Read
  * from `code` (`BracketLeft` / `BracketRight`): Shift turns `[` into `{` on a
  * US layout, and other layouts put the brackets elsewhere. Command only, like
- * the O family: Ctrl+[ is Escape in a terminal. ⌘[ / ⌘] themselves refuse
- * Shift, so the two pairs never both fire.
+ * the O family: Ctrl+[ is Escape in a terminal. Checked before ⌘[ / ⌘],
+ * which keep matching on `key` unchanged: a layout that types `[` with Shift
+ * still steps tasks, because its `code` is not `BracketLeft`.
  *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
@@ -229,11 +230,10 @@ export function comboOf(
       return { combo: 'mod+-', digit: null };
     case '0':
       return { combo: 'mod+0', digit: null };
-    // Not with Shift: that is the project step above, or nothing.
     case '[':
-      return e.shiftKey ? null : { combo: 'mod+[', digit: null };
+      return { combo: 'mod+[', digit: null };
     case ']':
-      return e.shiftKey ? null : { combo: 'mod+]', digit: null };
+      return { combo: 'mod+]', digit: null };
     case 'arrowleft':
       return { combo: 'mod+arrowleft', digit: null };
     case 'arrowright':

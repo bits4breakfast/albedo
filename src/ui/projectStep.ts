@@ -7,15 +7,17 @@
  */
 
 /**
- * The key `delta` tabs away from `activeKey`, wrapping at both ends. Null when
- * there is nowhere to go: fewer than two tabs. An active key that is not in
- * the list (nothing selected yet) counts as sitting just outside it, so ⇧⌘]
- * lands on the first tab and ⇧⌘[ on the last.
+ * The key `delta` tabs away from `activeKey`, stopping at the first and last
+ * tab like ⌘[ / ⌘] stop at the first and last task (`step` in TaskList.tsx).
+ * Null when there is nowhere to go: fewer than two tabs, or already at that
+ * end. An active key that is not in the list (nothing selected yet) enters
+ * from the matching end, as the task step does: ⇧⌘] the first tab, ⇧⌘[ the
+ * last.
  */
 export function stepProjectTab(keys: readonly string[], activeKey: string | null, delta: number): string | null {
   if (keys.length < 2) return null;
   const current = activeKey === null ? -1 : keys.indexOf(activeKey);
-  if (current === -1) return (delta > 0 ? keys[0] : keys[keys.length - 1]) ?? null;
-  const next = (((current + delta) % keys.length) + keys.length) % keys.length;
-  return keys[next] ?? null;
+  const next = current === -1 ? (delta > 0 ? 0 : keys.length - 1) : current + delta;
+  const clamped = Math.min(keys.length - 1, Math.max(0, next));
+  return clamped === current ? null : (keys[clamped] ?? null);
 }

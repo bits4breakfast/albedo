@@ -194,11 +194,17 @@ describe('project step', () => {
     expect(comboOf(ev({ key: '”', code: 'BracketLeft', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
   });
 
-  it('leaves ⌘[ / ⌘] to the task step, and only without Shift', () => {
+  it('leaves ⌘[ / ⌘] to the task step', () => {
     expect(comboOf(ev({ key: '[', code: 'BracketLeft', metaKey: true }))?.combo).toBe('mod+[');
     expect(comboOf(ev({ key: ']', code: 'BracketRight', metaKey: true }))?.combo).toBe('mod+]');
-    // A layout whose shifted key is a bracket must not step tasks with Shift held.
-    expect(comboOf(ev({ key: '[', code: 'Digit8', metaKey: true, shiftKey: true }))).toBeNull();
+    // ⇧⌘ on the bracket keys is the project step, whatever `key` says.
+    expect(comboOf(ev({ key: '[', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+[');
+  });
+
+  it('still steps tasks on a layout that types the bracket with Shift', () => {
+    // The `[` is on another physical key there, so the code check passes it by.
+    expect(comboOf(ev({ key: '[', code: 'Digit8', metaKey: true, shiftKey: true }))?.combo).toBe('mod+[');
+    expect(comboOf(ev({ key: ']', code: 'Digit9', metaKey: true, shiftKey: true }))?.combo).toBe('mod+]');
   });
 });
 

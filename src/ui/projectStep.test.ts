@@ -9,9 +9,9 @@ describe('stepProjectTab', () => {
     expect(stepProjectTab(keys, 'p3', -1)).toBe('p2');
   });
 
-  it('wraps at both ends', () => {
-    expect(stepProjectTab(keys, 'p3', 1)).toBe('p1');
-    expect(stepProjectTab(keys, 'p1', -1)).toBe('p3');
+  it('stops at both ends, like the task step', () => {
+    expect(stepProjectTab(keys, 'p3', 1)).toBeNull();
+    expect(stepProjectTab(keys, 'p1', -1)).toBeNull();
   });
 
   it('does nothing with fewer than two tabs', () => {
