@@ -187,6 +187,7 @@ describe('NewTaskDialog existing branch and main checkout', () => {
       worktreePath: '/Users/m/www/albedo',
       ownsWorktree: false,
       createdBranch: true,
+      kind: 'work',
     });
   });
 
@@ -210,5 +211,62 @@ describe('NewTaskDialog ⌘↩', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create Worktree' })).not.toHaveProperty('disabled', true));
     fireEvent.keyDown(screen.getByLabelText('Model'), { key: 'Enter', metaKey: true });
     await waitFor(() => expect(onCreated).toHaveBeenCalled());
+  });
+});
+
+describe('NewTaskDialog chat', () => {
+  it('starts a chat in the main checkout as it is, dirty or not, running no git', async () => {
+    vi.mocked(wt.probeMainCheckout).mockResolvedValueOnce({
+      path: '/Users/m/www/albedo', current: 'polishing', dirty: 3,
+    });
+    vi.mocked(db.createTask).mockImplementationOnce(async (t) => ({ ...t, id: 9 }) as never);
+    const onCreated = vi.fn();
+    render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
+    const chat = await screen.findByRole('radio', { name: 'Chat — No Branch' });
+    await waitFor(() => expect(chat).not.toHaveProperty('disabled', true));
+    fireEvent.click(chat);
+    // One calm sentence that it is the real folder, and no branch inputs.
+    expect(screen.getByText(/Claude works in your real folder, \/Users\/m\/www\/albedo, on polishing as it is/)).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
+    expect(screen.queryByLabelText('Base Branch')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'How does capture work?' } });
+    const go = screen.getByRole('button', { name: 'Start Chat' });
+    await waitFor(() => expect(go).not.toHaveProperty('disabled', true));
+    fireEvent.click(go);
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(wt.createWorktree).not.toHaveBeenCalled();
+    expect(wt.switchCleanCheckout).not.toHaveBeenCalled();
+    expect(vi.mocked(db.createTask).mock.calls[0]?.[0]).toEqual({
+      title: 'How does capture work?',
+      projectId: 1,
+      repoPath: '/Users/m/www/albedo',
+      baseBranch: '',
+      branch: '',
+      worktreePath: '/Users/m/www/albedo',
+      ownsWorktree: false,
+      createdBranch: false,
+      kind: 'chat',
+    });
+  });
+
+  it('is not offered when the repository has no main checkout', async () => {
+    vi.mocked(wt.probeMainCheckout).mockResolvedValueOnce(null);
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    const chat = await screen.findByRole('radio', { name: 'Chat — No Branch' });
+    await waitFor(() => expect(wt.probeMainCheckout).toHaveBeenCalled());
+    expect(chat).toHaveProperty('disabled', true);
+  });
+
+  it('says the main checkout was not changed when the row cannot be saved', async () => {
+    const onCreated = vi.fn();
+    render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
+    const chat = await screen.findByRole('radio', { name: 'Chat — No Branch' });
+    await waitFor(() => expect(chat).not.toHaveProperty('disabled', true));
+    fireEvent.click(chat);
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Why?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start Chat' }));
+    await screen.findByText('The task could not be saved');
+    expect(screen.getByText(/Nothing was changed in the main checkout/)).toBeTruthy();
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });

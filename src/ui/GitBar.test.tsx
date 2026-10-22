@@ -17,7 +17,7 @@ afterEach(cleanup);
 const task = {
   id: 1, title: 't', repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/w',
   sessionId: null, status: 'idle', createdAt: 1, lastActivityAt: null, projectId: null,
-  ownsWorktree: true, createdBranch: true,
+  ownsWorktree: true, createdBranch: true, kind: 'work',
 } as unknown as Task;
 
 const bar = (over: Partial<Parameters<typeof GitBar>[0]> = {}) => (
@@ -49,5 +49,25 @@ describe('GitBar head controls', () => {
     expect(screen.getByRole('button', { name: /Push/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     expect(screen.getByText('Create PR')).toBeTruthy();
+  });
+});
+
+describe('GitBar on a chat task', () => {
+  // The main checkout as it is: no branch of its own, nothing to push from.
+  const chat = { ...task, kind: 'chat', branch: '', baseBranch: '', ownsWorktree: false, createdBranch: false } as Task;
+
+  it('offers no Push, Create PR or Squash, and no ⋯ to hold them', () => {
+    render(bar({ task: chat, dirty: 3, commits: 2, remote: { ahead: 2, upstream: 'origin/main', detached: false } }));
+    expect(screen.queryByRole('button', { name: /Push/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
+  });
+
+  it('keeps the view controls', () => {
+    const onView = vi.fn();
+    render(bar({ task: chat, dirty: 3, onView }));
+    expect(screen.getByRole('button', { name: 'Group by Commit' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show All Files' }));
+    expect(onView).toHaveBeenCalledWith('project');
   });
 });

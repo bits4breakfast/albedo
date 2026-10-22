@@ -54,7 +54,7 @@ beforeEach(() => {
 async function newTask() {
   return createTask({
     title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'b',
-    worktreePath: '/repo', ownsWorktree: false, createdBranch: false,
+    worktreePath: '/repo', ownsWorktree: false, createdBranch: false, kind: 'work',
   });
 }
 

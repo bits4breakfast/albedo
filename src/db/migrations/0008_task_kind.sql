@@ -1,0 +1,12 @@
+-- v8: what kind of task this is -- work on a branch, or a chat.
+--
+-- Decided by the owner (schema.sql and migrations are a shared contract;
+-- issue #49, option (a)). A 'chat' task is a conversation about the code: it
+-- runs `claude` in the project's main checkout exactly as it is, and nothing
+-- is created, switched or checked out for it. It stores empty strings in
+-- `branch` and `base_branch`, which keeps every query that reads them working.
+--
+-- NOT NULL DEFAULT 'work': every row before v8 is work on a branch, and that is
+-- what the default backfills. createTask writes the value explicitly for
+-- every new task, so no insert relies on it.
+ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'work';

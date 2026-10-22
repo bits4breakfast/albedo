@@ -172,6 +172,15 @@
   white-space: nowrap;
 }
 
+/* A chat's glyph, where a branch would be named: --muted, the tier the
+   branch glyph has in the task bar (cleared there against --panel-raised).
+   Sized by the glyph itself (13px, 1.5 stroke), like BranchIcon. */
+.task-chat {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on

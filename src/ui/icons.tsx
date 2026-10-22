@@ -41,6 +41,18 @@ export function BranchIcon({ size }: { size?: number }) {
   );
 }
 
+/**
+ * A speech bubble: a chat task, which has no branch. Drawn on the branch
+ * glyph's grid and stroke so it reads as the same kind of fact in its place.
+ */
+export function ChatIcon({ size }: { size?: number }) {
+  return (
+    <Glyph size={size}>
+      <path d="M2.75 3.25h10.5c.55 0 1 .45 1 1v5.5c0 .55-.45 1-1 1H7.5l-3 2.5v-2.5H2.75c-.55 0-1-.45-1-1v-5.5c0-.55.45-1 1-1z" />
+    </Glyph>
+  );
+}
+
 /** A folder: the worktree on disk. */
 export function FolderIcon({ size }: { size?: number }) {
   return (

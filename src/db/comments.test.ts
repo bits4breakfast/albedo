@@ -37,7 +37,7 @@ async function task(): Promise<number> {
     branch: 'b',
     worktreePath: `/wt/${Math.random()}`,
     ownsWorktree: true,
-    createdBranch: true,
+    createdBranch: true, kind: 'work',
   });
   return t.id;
 }

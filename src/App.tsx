@@ -26,7 +26,7 @@ import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
-import { BranchIcon, FolderIcon, homeRelative } from './ui/icons';
+import { BranchIcon, ChatIcon, FolderIcon, homeRelative } from './ui/icons';
 import OverflowMenu from './ui/OverflowMenu';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
@@ -88,6 +88,10 @@ import type { PrStatus } from './gh/prStatus';
  * is a side effect they did not ask for, so the default is to say nothing.
  */
 function renderPromptTemplate(task: Task, project: Project | null): string | null {
+  // The template is written for work on a branch ("pick up {key} on
+  // {branch}"); sent to a chat it would contradict the chat's own
+  // instruction not to change anything. A chat starts with no prompt.
+  if (task.kind === 'chat') return null;
   // Shared with the ProjectsDialog preview on purpose. A preview that drifts
   // from what the agent is actually told is worse than no preview, and two
   // expanders in two files is precisely how that drift happens.
@@ -238,6 +242,8 @@ export default function App() {
       sessionId: null,
       ownsWorktree: false,
       createdBranch: false,
+      // Never spawned and never stored: only searched and read.
+      kind: 'work',
       status: 'idle',
       createdAt: 0,
       lastActivityAt: null,
@@ -725,7 +731,8 @@ export default function App() {
    */
   const pushSelected = async () => {
     const task = selected;
-    if (!task || task.status === 'archived') return;
+    // A chat has no branch to push, and the Files pane offers no Push for it.
+    if (!task || task.status === 'archived' || task.kind === 'chat') return;
     // As the Files pane: on no branch there is nothing to push, and pushing a
     // stale detached copy could overwrite the branch with old commits.
     const remote = await unmergedCommits(task.worktreePath, task.baseBranch).catch(() => null);
@@ -1006,7 +1013,9 @@ export default function App() {
                             if (selected.sessionId) void navigator.clipboard?.writeText(selected.sessionId).catch(() => {});
                           },
                         },
-                        {
+                        // Moving a chat to a worktree would turn it into work
+                        // on a branch: out of scope (#49), so not offered.
+                        ...(selected.kind === 'chat' ? [] : [{
                           id: 'move',
                           label:
                             normalizePath(selected.worktreePath) === normalizePath(selected.repoPath)
@@ -1014,7 +1023,7 @@ export default function App() {
                               : 'Move to Main Checkout…',
                           title: 'Same branch, same conversation; uncommitted changes come along',
                           onSelect: () => setMoveTarget(selected),
-                        },
+                        }]),
                         {
                           id: 'archive',
                           label: 'Archive Task…',
@@ -1040,15 +1049,28 @@ export default function App() {
                       the sidebar row repeats the branch only when it adds to
                       the title, the Files bar not at all. Icons say which is
                       which, so a branch named like its task reads as a fact. */}
-                  {selected.branch && (
+                  {/* A chat has no branch: the chat glyph takes its place, in
+                      the same tier, and the folder after it says where. */}
+                  {selected.kind === 'chat' ? (
+                    <span
+                      className="main-ident-branch"
+                      data-kind="chat"
+                      title="A chat about the code: no branch, in the main checkout as it is"
+                    >
+                      <ChatIcon />
+                      <span className="main-ident-text">Chat</span>
+                    </span>
+                  ) : selected.branch ? (
                     <span className="main-ident-branch" title={`Branch ${selected.branch}, off ${selected.baseBranch}`}>
                       <BranchIcon />
                       <span className="main-ident-text">{selected.branch}</span>
                     </span>
-                  )}
+                  ) : null}
                   {/* The PR, beside the branch it belongs to: with the branch,
                       the one place git and GitHub state shows. It never
-                      shrinks; the title and the folder give way first. */}
+                      shrinks; the title and the folder give way first. A chat
+                      has neither, and nothing takes their place. */}
+                  {selected.kind !== 'chat' && (
                   <PrBadge
                     task={selected}
                     onEnd={(intent) => {
@@ -1058,6 +1080,7 @@ export default function App() {
                     onFollowUp={(pr) => void openFollowUp(selected, pr)}
                     onCreatePr={() => void sendPrompt(selected, createPrPrompt(selected))}
                   />
+                  )}
                   {/* The folder only where it says something: a worktree Albedo
                       cut is always <root>/<branch>, so naming it cost the room
                       the title and branch needed. A task running anywhere else

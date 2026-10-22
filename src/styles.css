@@ -763,6 +763,8 @@ button {
   gap: 4px;
 }
 .main-ident-branch { max-width: 28ch; flex-shrink: 4; }
+/* "Chat" is a word, not a ref: the UI face, same size and --muted tier. */
+.main-ident-branch[data-kind='chat'] { font-family: inherit; }
 .main-ident-path { flex-shrink: 8; }
 
 /* Two groups, not five loose items: "project / title", then the git unit

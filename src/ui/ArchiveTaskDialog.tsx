@@ -296,6 +296,13 @@ export function ArchiveTaskDialog({
 
   if (!task) return null;
 
+  /**
+   * A chat (#49) made nothing: no worktree, no branch. `owned` is already
+   * false for it (albedoOwnsWorktree), so nothing is probed or offered; this
+   * only picks the words. Archiving a chat just closes it.
+   */
+  const chat = task.kind === 'chat';
+
   const risk: WorkAtRisk = {
     files: probe.files,
     ahead: probe.ahead,
@@ -346,21 +353,28 @@ export function ArchiveTaskDialog({
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title" id="wt-archive-title">
-            {deleting ? 'Delete Task' : owned ? 'Archive Task' : 'Remove from List'}
+            {deleting ? 'Delete Task' : owned || chat ? 'Archive Task' : 'Remove from List'}
           </h2>
           <span className="wt-modal-sub">{task.title}</span>
         </div>
 
         <div className="wt-modal-body">
           <div className="wt-derived">
+            {chat ? (
+              <div className="wt-derived-row">
+                <span className="wt-derived-key">Kind</span>
+                <span className="wt-derived-val">Chat — no branch</span>
+              </div>
+            ) : (
+              <div className="wt-derived-row">
+                <span className="wt-derived-key">Branch</span>
+                <span className="wt-derived-val">
+                  {task.branch} <span className="wt-modal-sub">off {task.baseBranch}</span>
+                </span>
+              </div>
+            )}
             <div className="wt-derived-row">
-              <span className="wt-derived-key">Branch</span>
-              <span className="wt-derived-val">
-                {task.branch} <span className="wt-modal-sub">off {task.baseBranch}</span>
-              </span>
-            </div>
-            <div className="wt-derived-row">
-              <span className="wt-derived-key">Worktree</span>
+              <span className="wt-derived-key">{chat ? 'Folder' : 'Worktree'}</span>
               <span className="wt-derived-val">{task.worktreePath}</span>
             </div>
             {owned && (
@@ -387,7 +401,17 @@ export function ArchiveTaskDialog({
           </div>
 
           {/* --- not ours: say so plainly, offer nothing ---------------------- */}
-          {!owned && (
+          {chat && (
+            <div className="wt-notice" data-tone="safe" style={{ marginTop: 14 }}>
+              <strong>Nothing on disk is touched.</strong> This chat ran in your main checkout,{' '}
+              <span className="wt-mono">{task.worktreePath}</span>, and created no worktree and no
+              branch, so there is nothing to remove.{' '}
+              {deleting
+                ? 'Deleting removes the task and its conversation from Albedo.'
+                : 'Archiving closes it; the conversation and its transcript are kept.'}
+            </div>
+          )}
+          {!owned && !chat && (
             <div className="wt-notice" data-tone="safe" style={{ marginTop: 14 }}>
               <strong>Nothing on disk is touched.</strong> This task is a resumed session, so
               Albedo did not create <span className="wt-mono">{task.worktreePath}</span> — it is
@@ -551,8 +575,10 @@ export function ArchiveTaskDialog({
 
         <div className="wt-modal-foot">
           <span className="wt-modal-sub">
-            {!owned
-              ? 'Albedo only forgets the task. Your files and your branch are untouched.'
+            {chat
+              ? 'Your main checkout is left exactly as it is.'
+              : !owned
+                ? 'Albedo only forgets the task. Your files and your branch are untouched.'
               : removing
                 ? `The worktree is removed first; the task is ${deleting ? 'deleted' : 'archived'} only if that succeeds.`
                 : `The task is ${deleting ? 'deleted' : 'archived'}. The worktree is left exactly as it is.`}
@@ -571,7 +597,7 @@ export function ArchiveTaskDialog({
             {busy
               ? deleting
                 ? 'Deleting…'
-                : owned
+                : owned || chat
                   ? 'Archiving…'
                   : 'Removing…'
               : deleting
@@ -584,7 +610,9 @@ export function ArchiveTaskDialog({
                         ? 'Delete Task, Worktree and Branch'
                         : 'Delete Task and Remove Worktree'
                       : 'Delete Task Only'
-                : !owned
+                : chat
+                  ? 'Archive Task'
+                  : !owned
                   ? 'Remove from List'
                   : needsAck
                     ? 'Archive and Discard Work'

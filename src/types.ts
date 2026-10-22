@@ -69,6 +69,18 @@ export type NewProject = Omit<
 /** Lifecycle of a task. Derived from the transcript, never from the pty. */
 export type TaskStatus = 'idle' | 'running' | 'blocked' | 'done' | 'archived';
 
+/**
+ * What a task is (migration v8).
+ *
+ *  - `work` -- work on a branch, in a worktree Albedo cut or in the main
+ *    checkout switched to that branch. Every task before v8.
+ *  - `chat` -- a conversation about the code. Runs in the project's main
+ *    checkout exactly as it is: nothing is created, switched or checked out,
+ *    and `branch` / `baseBranch` are empty strings. Every spawn tells Claude
+ *    not to change the folder (CHAT_SYSTEM_PROMPT in ui/sessionSpawn.ts).
+ */
+export type TaskKind = 'work' | 'chat';
+
 export interface Task {
   id: number;
   title: string;
@@ -79,9 +91,9 @@ export interface Task {
   projectId: number | null;
   /** Absolute path to the origin repository (not the worktree). */
   repoPath: string;
-  /** Branch the worktree was cut from. */
+  /** Branch the worktree was cut from. Empty for a chat. */
   baseBranch: string;
-  /** Branch checked out in the worktree. */
+  /** Branch checked out in the worktree. Empty for a chat. */
   branch: string;
   /** Absolute path to the git worktree this task runs in. */
   worktreePath: string;
@@ -105,6 +117,11 @@ export interface Task {
    * branch only when true; null falls back to the branch's reflog.
    */
   createdBranch: boolean | null;
+  /**
+   * Work on a branch, or a chat with no branch. Required on NewTask, like
+   * `ownsWorktree`: the caller always knows which it is creating.
+   */
+  kind: TaskKind;
   status: TaskStatus;
   createdAt: number;
   lastActivityAt: number | null;

@@ -34,7 +34,7 @@ const { default: FileEditor } = await import('./FileEditor');
 
 const checkout: Task = {
   id: -3, title: 'app', projectId: 3, repoPath: '/repo', baseBranch: '', branch: '',
-  worktreePath: '/repo', sessionId: null, ownsWorktree: false, createdBranch: false,
+  worktreePath: '/repo', sessionId: null, ownsWorktree: false, createdBranch: false, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null,
 };
 

@@ -2,10 +2,17 @@
  * NewTaskDialog — create a task, which means creating a git worktree, or
  * switching the main checkout when the user would rather work there.
  *
- * Two independent choices: a NEW branch cut from a base, or an EXISTING one
- * (a colleague's remote branch, to review), and a new worktree or the main
- * checkout. The main checkout is the user's own folder, so it is offered only
- * while it has no uncommitted changes, and a task there never owns it.
+ * First, what kind of task: work on a branch, or a chat (#49). A chat is a
+ * conversation about the code: `claude` runs in the project's main checkout
+ * exactly as it is -- any branch, clean or dirty -- and nothing is created,
+ * switched or checked out. Every spawn tells Claude not to change the folder
+ * (CHAT_SYSTEM_PROMPT); the dialog says plainly that it is the real folder.
+ *
+ * Work then has two independent choices: a NEW branch cut from a base, or an
+ * EXISTING one (a colleague's remote branch, to review), and a new worktree or
+ * the main checkout. The main checkout is the user's own folder, so it is
+ * offered only while it has no uncommitted changes, and a task there never
+ * owns it.
  *
  * The dialog's job is to make the consequence visible *before* it happens: the
  * derived branch name and the full worktree path are shown live and read-only,
@@ -18,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Project, Task } from '../types';
+import type { Project, Task, TaskKind } from '../types';
 import { createTask, findTaskByWorktreePath } from '../db';
 import { listProjects } from '../db/projects';
 import { nameTask } from '../git/slug';
@@ -138,6 +145,7 @@ export function NewTaskDialog({
   const [modelChoices, setModelChoices] = useState<ModelChoice[]>([]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   const [baseBranch, setBaseBranch] = useState('');
+  const [kind, setKind] = useState<TaskKind>('work');
   const [source, setSource] = useState<Source>('new');
   const [place, setPlace] = useState<Place>('worktree');
   /** The branch to check out, as picked: local, or `<remote>/<branch>`. */
@@ -234,6 +242,7 @@ export function NewTaskDialog({
     appliedPrompt.current = null;
     setError(null);
     setBusy(false);
+    setKind('work');
     setSource('new');
     setPlace('worktree');
     setExistingRef('');
@@ -478,7 +487,9 @@ export function NewTaskDialog({
   /** The existing branch is what the main checkout is on: nothing to switch. */
   const mainHasBranch = source === 'existing' && branch !== '' && mainCheckout?.current === branch;
   const mainUsable = mainOk || mainHasBranch;
-  const onMain = place === 'main';
+  // A follow-up is work on the shipped branch's base; it is never a chat.
+  const isChat = kind === 'chat' && !isFollowUp;
+  const onMain = place === 'main' || isChat;
   const alreadyThere = onMain && mainHasBranch;
   const worktreePath = useMemo(() => {
     if (onMain) return mainCheckout?.path ?? '';
@@ -504,8 +515,9 @@ export function NewTaskDialog({
       : `git worktree add -- ${worktreePath} ${branch}`;
   }, [source, onMain, branch, startPoint, worktreePath, checkout, alreadyThere]);
 
-  const canSubmit =
-    !busy &&
+  const canSubmit = isChat
+    ? !busy && project !== null && title.trim() !== '' && worktreePath !== ''
+    : !busy &&
     !branchesBusy &&
     !fetching &&
     !(source === 'existing' && baseBusy) &&
@@ -517,6 +529,11 @@ export function NewTaskDialog({
     (!onMain || mainUsable);
 
   // --- submit -------------------------------------------------------------
+
+  /** One calm sentence: where a chat runs, and that it is the real folder. */
+  const chatNote = !mainCheckout
+    ? 'This repository has no main checkout to chat in.'
+    : `Claude works in your real folder, ${mainCheckout.path}, on ${mainCheckout.current ?? 'a detached HEAD'} as it is; nothing is switched, and it is asked not to change files.`;
 
   const mainNote = !mainCheckout
     ? 'This repository has no main checkout to switch.'
@@ -532,6 +549,37 @@ export function NewTaskDialog({
       if (busy || !project) return;
       setBusy(true);
       setError(null);
+      if (isChat) {
+        // Nothing to run in git: the main checkout is used exactly as it is.
+        let task: Task;
+        try {
+          task = await createTask({
+            title: title.trim(),
+            projectId: project.id,
+            repoPath: project.repoPath,
+            // No branch, no base: a chat measures nothing and pushes nothing.
+            baseBranch: '',
+            branch: '',
+            worktreePath,
+            // The user's own folder, never Albedo's to remove.
+            ownsWorktree: false,
+            createdBranch: false,
+            kind: 'chat',
+          });
+        } catch (e) {
+          setError({
+            text: `${messageOf(e)}\n\nNothing was changed in the main checkout.`,
+            kind: 'task-save',
+          });
+          setBusy(false);
+          return;
+        }
+        setBusy(false);
+        writeLastProjectId(project.id);
+        setTaskModel(task.id, model || null);
+        onCreated(task);
+        return;
+      }
       const existing = source === 'existing' || useExistingBranch;
       const track = source === 'existing' ? (checkout?.track ?? null) : null;
       // A NEW branch starts from the base's upstream when the local base is
@@ -587,6 +635,7 @@ export function NewTaskDialog({
           // Only a branch `-b`/`-c` cut from a base is Albedo's to delete. A
           // local copy of a colleague's branch is theirs, even though cut now.
           createdBranch: !existing,
+          kind: 'work',
         });
       } catch (e) {
         // The worktree exists but no task names it, so a retry would fail on
@@ -617,7 +666,7 @@ export function NewTaskDialog({
     },
     [
       busy, project, source, checkout, baseBranch, branch, worktreePath, onMain, alreadyThere,
-      taskTitle, model, onCreated, prefill, prompt,
+      taskTitle, model, onCreated, prefill, prompt, isChat, title,
     ],
   );
 
@@ -656,7 +705,9 @@ export function NewTaskDialog({
             <span className="wt-modal-sub">
               {!project
                 ? 'in a project'
-                : onMain
+                : isChat
+                  ? 'a chat in the main checkout, as it is'
+                  : onMain
                   ? 'in the main checkout'
                   : `a worktree under ${project.worktreeRoot}`}
             </span>
@@ -727,6 +778,37 @@ export function NewTaskDialog({
                   )}
                 </div>
 
+                {/* The first choice: work on a branch, or a chat about the code.
+                    The same segmented control as Branch and Location, so a chat
+                    reads as one of the dialog's choices. A follow-up is always
+                    work, so it is not asked there. */}
+                {!isFollowUp && (
+                  <div className="wt-field">
+                    <span className="wt-label">Kind</span>
+                    <Segmented<TaskKind>
+                      label="Kind"
+                      value={kind}
+                      disabled={busy}
+                      options={[
+                        { value: 'work', label: 'Work on a Branch' },
+                        {
+                          value: 'chat',
+                          label: 'Chat — No Branch',
+                          disabled: !mainCheckout,
+                          title: mainCheckout ? 'A conversation about the code, in the main checkout as it is' : chatNote,
+                        },
+                      ]}
+                      onChange={(v) => {
+                        setKind(v);
+                        setError(null);
+                      }}
+                    />
+                    {isChat && <div className="wt-hint">{chatNote}</div>}
+                  </div>
+                )}
+
+                {!isChat && (
+                <>
                 {/* Two independent choices, side by side: what to work on, and
                     where. The branch picker, when needed, gets the full width. */}
                 <div className="wt-pair">
@@ -832,6 +914,8 @@ export function NewTaskDialog({
                     )}
                   </div>
                 )}
+                </>
+                )}
 
                 <div className="wt-field">
                   <label className="wt-label" htmlFor="wt-title">
@@ -844,7 +928,9 @@ export function NewTaskDialog({
                     type="text"
                     value={title}
                     placeholder={
-                      source === 'existing'
+                      isChat
+                        ? 'How does the session restart work?'
+                        : source === 'existing'
                         ? prTitle || branch || 'Defaults to the pull request or branch name'
                         : 'Fix the login redirect loop'
                     }
@@ -860,6 +946,7 @@ export function NewTaskDialog({
                   />
                 </div>
 
+                {!isChat && (
                 <div className="wt-field">
                   <label className="wt-label" htmlFor="wt-base">
                     Base Branch
@@ -910,6 +997,7 @@ export function NewTaskDialog({
                     </div>
                   )}
                 </div>
+                )}
 
                 <div className="wt-field">
                   <label className="wt-label" htmlFor="wt-model">
@@ -963,7 +1051,7 @@ export function NewTaskDialog({
 
                 {/* --- derived preview ------------------------------------- */}
                 <div className="wt-derived">
-                  {naming?.key && (
+                  {!isChat && naming?.key && (
                     <div className="wt-derived-row">
                       <span className="wt-derived-key">Issue</span>
                       <span className="wt-derived-val">
@@ -977,12 +1065,14 @@ export function NewTaskDialog({
                       </span>
                     </div>
                   )}
+                  {!isChat && (
                   <div className="wt-derived-row">
                     <span className="wt-derived-key">Branch</span>
                     <span className="wt-derived-val" data-pending={branch === ''}>
                       {branch || (source === 'new' ? 'from the title' : 'pick a branch')}
                     </span>
                   </div>
+                  )}
                   <div className="wt-derived-row">
                     <span className="wt-derived-key">{onMain ? 'Folder' : 'Worktree'}</span>
                     <span className="wt-derived-val" data-pending={worktreePath === ''}>
@@ -994,6 +1084,7 @@ export function NewTaskDialog({
                             : 'choose a project')}
                     </span>
                   </div>
+                  {!isChat && (
                   <div className="wt-derived-row">
                     <span className="wt-derived-key">Command</span>
                     <span className="wt-derived-val" data-pending={!canSubmit}>
@@ -1004,6 +1095,7 @@ export function NewTaskDialog({
                           : 'git worktree add …'}
                     </span>
                   </div>
+                  )}
                 </div>
 
                 {error && (
@@ -1046,7 +1138,9 @@ export function NewTaskDialog({
 
           <div className="wt-modal-foot">
             <span className="wt-modal-sub">
-              {onMain
+              {isChat
+                ? 'Nothing is created or switched; no git command runs.'
+                : onMain
                 ? 'Switches the main checkout itself, which must have no uncommitted changes.'
                 : <>The worktree is independent — uncommitted work in{' '}
                   {project?.name ?? 'the repo'} stays put.</>}
@@ -1064,7 +1158,9 @@ export function NewTaskDialog({
             >
               {busy
                 ? 'Creating…'
-                : !onMain
+                : isChat
+                  ? 'Start Chat'
+                  : !onMain
                   ? 'Create Worktree'
                   : alreadyThere
                     ? 'Create Task'

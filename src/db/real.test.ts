@@ -87,6 +87,7 @@ describe('the harness itself', () => {
     );
     expect(taskCols).toContain('project_id');
     expect(taskCols).toContain('owns_worktree');
+    expect(taskCols).toContain('kind');
   });
 
   it('rewrites $n placeholders positionally, including reuse and reordering', () => {
@@ -202,7 +203,7 @@ describe('listPastSessions — executed', () => {
 
   const taskBase = {
     projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'b',
-    worktreePath: '/wt/b', ownsWorktree: true, createdBranch: true,
+    worktreePath: '/wt/b', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
   };
 
   it('surfaces taskId when any row of the session was adopted', async () => {
@@ -375,7 +376,7 @@ describe('touchedFiles — executed', () => {
     });
     const task = await createTask({
       title: 't', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/slug', ownsWorktree: true, createdBranch: true,
+      branch: 'b', worktreePath: '/wt/slug', ownsWorktree: true, createdBranch: true, kind: 'work',
     });
 
     // The same file, written three times, named absolutely and relatively.
@@ -865,7 +866,7 @@ describe('deleteTask — removes the task and the conversation copy Albedo holds
     });
     const task = await createTask({
       title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'feat/retry', worktreePath: '/wt/retry', ownsWorktree: true, createdBranch: true,
+      branch: 'feat/retry', worktreePath: '/wt/retry', ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     await insertMessages([
       { taskId: task.id, sessionId: 'sess-keep', seq: 0, role: 'user', toolName: null,
@@ -925,7 +926,7 @@ describe('deleteTask — removes the task and the conversation copy Albedo holds
     const { taskId } = await seedTaskWithSession();
     const other = await createTask({
       title: 'other', projectId: null, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/other', ownsWorktree: true, createdBranch: true,
+      branch: 'b', worktreePath: '/wt/other', ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     await insertMessages([
       { taskId: other.id, sessionId: 'sess-other', seq: 0, role: 'user', toolName: null,
@@ -1156,7 +1157,7 @@ describe('archiving purges the conversation copy, keeping the task row', () => {
     });
     const task = await createTask({
       title: 'add retry', projectId: project.id, repoPath: '/repo', baseBranch: 'main',
-      branch: 'feat/retry', worktreePath: path, ownsWorktree: true, createdBranch: true,
+      branch: 'feat/retry', worktreePath: path, ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     await insertMessages([
       { taskId: task.id, sessionId: 'sess-a', seq: 0, role: 'user', toolName: null,
@@ -1206,7 +1207,7 @@ describe('touchTaskActivity — notifies only when the row moved', () => {
   it('reports and emits a change, then stays quiet for a replay of the same or older activity', async () => {
     const task = await createTask({
       title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main',
-      branch: 'b', worktreePath: '/wt/t', ownsWorktree: true, createdBranch: true,
+      branch: 'b', worktreePath: '/wt/t', ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     const cb = vi.fn();
     const off = onTasksChanged(cb);
@@ -1233,7 +1234,7 @@ describe('touchTaskActivity — notifies only when the row moved', () => {
 describe('created_branch (v6)', () => {
   const base = {
     title: 't', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'fix',
-    worktreePath: '/wt/fix', ownsWorktree: true,
+    worktreePath: '/wt/fix', ownsWorktree: true, kind: 'work' as const,
   };
 
   it('round-trips what createTask was told, in both directions', async () => {
@@ -1255,10 +1256,69 @@ describe('created_branch (v6)', () => {
   });
 });
 
+describe('tasks.kind (v8)', () => {
+  const work = {
+    title: 'fix', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'fix',
+    worktreePath: '/wt/fix', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
+  };
+  // What New Task stores for a chat: the main checkout, no branch, not owned.
+  const chat = {
+    title: 'How does the retry work?', projectId: null, repoPath: '/repo', baseBranch: '', branch: '',
+    worktreePath: '/repo', ownsWorktree: false, createdBranch: false, kind: 'chat' as const,
+  };
+
+  it('round-trips both kinds, with a chat keeping its empty branch and base', async () => {
+    const w = await createTask(work);
+    const c = await createTask(chat);
+    expect(w.kind).toBe('work');
+    expect(c.kind).toBe('chat');
+    expect(await getTask(w.id)).toMatchObject({ kind: 'work', branch: 'fix', baseBranch: 'main' });
+    expect(await getTask(c.id)).toMatchObject({ kind: 'chat', branch: '', baseBranch: '', ownsWorktree: false });
+    const listed = await listTasks();
+    expect(listed.find((t) => t.id === c.id)?.kind).toBe('chat');
+  });
+
+  it('writes the kind explicitly rather than leaning on the default', async () => {
+    const c = await createTask(chat);
+    const row = db.raw.prepare('SELECT kind FROM tasks WHERE id = ?').get(c.id) as { kind: string };
+    expect(row.kind).toBe('chat');
+    const insert = db.log.find((l) => l.sql.includes('INSERT INTO tasks'));
+    expect(insert?.sql).toContain('kind');
+  });
+
+  it('reads a row from before v8 as work', async () => {
+    db.raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    const [old] = (await listTasks()).filter((t) => t.title === 'old');
+    expect(old?.kind).toBe('work');
+  });
+
+  it('reads an unknown value as work, the kind every task was before v8', async () => {
+    db.raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, kind, status, created_at)
+         VALUES ('odd', '/repo', 'main', 'fix', '/wt/odd', 1, 'something', 'idle', 0)`,
+      )
+      .run();
+    const [odd] = (await listTasks()).filter((t) => t.title === 'odd');
+    expect(odd?.kind).toBe('work');
+  });
+
+  it('updates the kind through updateTask', async () => {
+    const w = await createTask(work);
+    await updateTask(w.id, { kind: 'chat' });
+    expect((await getTask(w.id))?.kind).toBe('chat');
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 describe('which task a transcript belongs to — session first, never a shared folder', () => {
-  const base = { projectId: null, repoPath: '/repo', baseBranch: 'main', createdBranch: false };
+  const base = { projectId: null, repoPath: '/repo', baseBranch: 'main', createdBranch: false, kind: 'work' as const };
 
   it('finds a task by its session id, and not once it is archived when asked for live ones', async () => {
     const t = await createTask({ ...base, title: 'a', branch: 'a', worktreePath: '/wt/a', ownsWorktree: true });
@@ -1301,7 +1361,7 @@ describe('which task a transcript belongs to — session first, never a shared f
 });
 
 describe('repairSelfBasedTasks — a base equal to the branch measures nothing', () => {
-  const base = { projectId: null, ownsWorktree: false, createdBranch: false };
+  const base = { projectId: null, ownsWorktree: false, createdBranch: false, kind: 'work' as const };
 
   it('gives a self-based task the repo default, and leaves real bases and default-branch tasks alone', async () => {
     const broken = await createTask({ ...base, title: 'p', repoPath: '/repo', baseBranch: 'polishing', branch: 'polishing', worktreePath: '/repo' });
