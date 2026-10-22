@@ -7,10 +7,15 @@
  * restart resumes exactly that session rather than whichever transcript
  * capture last read in the same folder.
  *
- * A chat task (issue #49) carries one more flag on every spawn, whatever the
- * mode: `--append-system-prompt` with {@link CHAT_SYSTEM_PROMPT}. Not a first
- * user message -- that is lost to `/clear`, and a resumed session would never
- * see it again -- and not a permission mode: the owner chose an instruction.
+ * A chat task (issue #49) passes `--append-system-prompt` with
+ * {@link CHAT_SYSTEM_PROMPT} on every spawn, whatever the mode. Measured on
+ * Claude Code 2.1.305 with `claude -p`: the instruction takes effect when the
+ * session is CREATED (new, reuse, fresh session) and is kept by the session
+ * on every later `--resume`, flag or not; passing it on a resume of a session
+ * created without it has no effect. So it matters for the creating modes and
+ * is harmless on the others. Not yet verified: interactive mode, and `/clear`
+ * inside a chat. It is an instruction, not a permission mode: the owner's
+ * choice.
  *
  * Pure, so every case is a test; Terminal.tsx does the I/O around it.
  */

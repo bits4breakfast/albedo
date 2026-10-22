@@ -404,9 +404,6 @@ export function parseNumstat(stdout: string): Map<string, LineChange> {
  * exists), which callers read as "uncommitted changes only".
  */
 export async function taskBase(worktreePath: string, baseBranch: string): Promise<string | null> {
-  // No base (a chat task, #49): there is nothing to measure against. Without
-  // this, `@{upstream}` below would quietly mean HEAD's own upstream.
-  if (baseBranch.trim() === '') return null;
   try {
     assertSafeArgv([baseBranch]);
     let base = baseBranch;
