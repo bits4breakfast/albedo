@@ -349,8 +349,9 @@ export function TranscriptPane({
      your message to the transcript a moment after it takes it, and its reply
      only once the reply is complete. Two cues fill it, both from Albedo's own
      state and the transcript, never from the terminal: your message shown at
-     once, marked as sending, until the transcript has it; and a "Working"
-     line while the task runs, timed from the latest activity.
+     once, marked as sending, until the transcript has it (or, sent during a
+     turn, until Claude Code's queue does); and a "Working" line while the
+     task runs, timed from the latest activity.
   */
   const [echo, setEcho] = useState<{ text: string; at: number } | null>(null);
   useEffect(() => setEcho(null), [taskId]);
@@ -365,6 +366,18 @@ export function TranscriptPane({
     const t = window.setTimeout(() => setEcho(null), ECHO_MAX_MS);
     return () => window.clearTimeout(t);
   }, [echo]);
+  // Sent during a turn, it is not a user row yet but a queue entry, and the
+  // Queued band shows it from then on: one place, not two.
+  useEffect(() => {
+    if (!echo || sessionId === null) return;
+    const check = () => {
+      if (echoIsQueued(echo, queuedFor(sessionId))) setEcho(null);
+    };
+    check();
+    return onQueueChange((sid) => {
+      if (sid === sessionId) check();
+    });
+  }, [echo, sessionId]);
   const working = status === 'running' || echo !== null;
   const lastTs = messages.length > 0 ? (messages[messages.length - 1] as Message).ts : 0;
   const since = Math.max(lastTs, echo?.at ?? 0);
@@ -419,7 +432,8 @@ export function TranscriptPane({
               </div>
             </div>
           ) : null}
-          {working ? <WorkingLine since={since} sending={echo !== null} /> : null}
+          {/* A running turn is what is working, whatever was just sent. */}
+          {working ? <WorkingLine since={since} sending={echo !== null && status !== 'running'} /> : null}
         </div>
 
         {!following ? (
@@ -440,6 +454,17 @@ export default TranscriptPane;
 
 /** How long a sent message waits to appear in the transcript before its echo goes. */
 const ECHO_MAX_MS = 30_000;
+
+/**
+ * Whether Claude Code's queue holds the message just sent: an entry with the
+ * same text, queued no earlier than the send (with the same second of slack as
+ * the user-row check). Text is compared trimmed, since the queue records what
+ * Claude Code read off the input, not Albedo's exact string.
+ */
+export function echoIsQueued(echo: { text: string; at: number }, entries: readonly QueuedEntry[]): boolean {
+  const text = echo.text.trim();
+  return entries.some((e) => !e.injected && e.ts >= echo.at - 1000 && e.text.trim() === text);
+}
 
 /** "Working · 14s", ticking: the session is busy and has not written yet. */
 export function WorkingLine({ since, sending }: { since: number; sending: boolean }): ReactNode {
