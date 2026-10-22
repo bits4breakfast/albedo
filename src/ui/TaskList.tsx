@@ -13,7 +13,11 @@ import { useShortcuts } from './shortcuts';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { useBranchSync } from '../git/branchSync';
+import { ChatIcon } from './icons';
 import './tasklist.css';
+
+/** The row's word for a chat, in its tooltip where a branch would be. */
+const CHAT_ROW_TITLE = 'Chat — no branch, in the main checkout as it is';
 
 /**
  * Left rail. With several sessions running in parallel the only question that
@@ -174,11 +178,14 @@ export default function TaskList({
    * owns "visible": these are exactly the tasks the owner can see a mark for.
    * One subscription for the whole list; rows read the cache directly.
    */
-  usePrPolling(tasks);
+  // A chat has no branch: no PR to poll, and no branch to sync -- syncing
+  // would record whatever the main checkout is on as the chat's branch.
+  const branchTasks = useMemo(() => tasks.filter((t) => t.kind !== 'chat'), [tasks]);
+  usePrPolling(branchTasks);
   usePrStatusVersion();
   // The stored branch goes stale when a checkout is switched under a task, and
   // the PR lookup above keys on it. A change reloads the tasks, which re-arms it.
-  useBranchSync(tasks);
+  useBranchSync(branchTasks);
 
   // Ages only need to be roughly right.
   useEffect(() => {
@@ -412,7 +419,7 @@ export default function TaskList({
                      — including the row's own context menu. */
                   /* The row's details on hover: the context reading the
                      hairline draws, in words, now that no panel shows it. */
-                  title={`${wrapForTooltip(task.title)}\n${task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
+                  title={`${wrapForTooltip(task.title)}\n${task.kind === 'chat' ? CHAT_ROW_TITLE : task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
                 >
                   <span className="task-dot-cell">
                     <StatusDot status={task.status} />
@@ -452,6 +459,13 @@ export default function TaskList({
                         place git and GitHub state is shown, for the selected
                         task. Rows identify the task; the title does that. */}
                     <span className="task-meta-tail">
+                      {/* A chat is told apart by a glyph, not a word: same
+                          size, stroke and tier as the branch glyph. */}
+                      {task.kind === 'chat' && (
+                        <span className="task-chat" role="img" aria-label="Chat, no branch" title={CHAT_ROW_TITLE}>
+                          <ChatIcon />
+                        </span>
+                      )}
                       {sig && sig.agents > 0 && (
                         <span
                           className="task-agents"

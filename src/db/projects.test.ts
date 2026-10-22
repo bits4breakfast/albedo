@@ -422,7 +422,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'feat/retry',
       worktreePath: '/Users/x/www/worktrees/albedo/retry',
-      ownsWorktree: true, createdBranch: true,
+      ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     expect(task.projectId).toBe(project.id);
     expect(store.tasks[0]?.['project_id']).toBe(project.id);
@@ -441,7 +441,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
-      ownsWorktree: true, createdBranch: true,
+      ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     expect((await listTasks()).map((t) => t.projectId)).toEqual([project.id]);
   });
@@ -454,7 +454,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
-      ownsWorktree: true, createdBranch: true,
+      ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     expect(task.projectId).toBeNull();
     expect((await getTask(task.id))?.projectId).toBeNull();
@@ -469,7 +469,7 @@ describe('projectId survives the Task mapping in both directions', () => {
       baseBranch: 'main',
       branch: 'b',
       worktreePath: '/wt/b',
-      ownsWorktree: true, createdBranch: true,
+      ownsWorktree: true, createdBranch: true, kind: 'work',
     });
     await updateTask(task.id, { projectId: project.id });
     expect((await getTask(task.id))?.projectId).toBe(project.id);
@@ -591,6 +591,7 @@ describe('ownsWorktree — the archive-safety flag', () => {
     baseBranch: 'main',
     branch: 'b',
     worktreePath: '/Users/x/www/acme',
+    kind: 'work' as const,
   };
 
   it('round-trips true for a worktree Albedo cut', async () => {

@@ -566,7 +566,15 @@ export default function Terminal({
       spawnArgsRef.current = undefined;
       const known =
         !fresh && !pending && live.sessionId !== null ? await sessionTranscriptExists(live.sessionId) : null;
-      const plan = planSpawn({ sessionId: live.sessionId, pending, fresh, transcriptExists: known, newId: newSessionId });
+      // A chat's instruction rides on every spawn, in the plan's flags.
+      const plan = planSpawn({
+        kind: live.kind,
+        sessionId: live.sessionId,
+        pending,
+        fresh,
+        transcriptExists: known,
+        newId: newSessionId,
+      });
       try {
         await linkTaskSession(task.id, plan.sessionId, `spawn:${plan.mode}`);
       } catch (err) {

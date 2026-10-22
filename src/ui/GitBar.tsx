@@ -97,7 +97,12 @@ export default function GitBar({
   // On no branch there is nothing to push or open a PR from -- and "Push
   // branch X" from a stale detached copy could overwrite X with old commits.
   const detached = remote?.detached === true;
-  const step = detached ? 'none' : nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
+  // A chat (#49) has no branch of its own: the folder is the user's main
+  // checkout, so Push, Create PR and Squash would act on whatever it is on.
+  // None is offered, and nothing takes their place; the view toggles stay.
+  const chat = task.kind === 'chat';
+  const actionable = !detached && !chat;
+  const step = !actionable ? 'none' : nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
   // An existing PR is not this bar's to show: the task bar carries the branch
   // and its PR badge, the one place git and GitHub state appears. This bar
   // keeps only the actions that act on the files above it.
@@ -107,16 +112,16 @@ export default function GitBar({
   const createPr = () => onAsk(createPrPrompt(task));
 
   const items: MenuItem[] = [];
-  if (!detached && main !== 'push' && (dirty > 0 || unpushed > 0)) {
+  if (actionable && main !== 'push' && (dirty > 0 || unpushed > 0)) {
     items.push({ key: 'push', label: 'Push', hint: 'Commit what is outstanding and push', run: push });
   }
   // Uncommitted work is enough: the prompt asks whether it belongs in the PR,
   // then commits and pushes. Waiting for a commit hid it on a branch Claude
   // had only edited -- which is most of them.
-  if (!detached && main !== 'create-pr' && prKnown && pr === null && prable && (commits > 0 || dirty > 0)) {
+  if (actionable && main !== 'create-pr' && prKnown && pr === null && prable && (commits > 0 || dirty > 0)) {
     items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
   }
-  if (!detached && canSquashRebase(task) && commits > 0) {
+  if (actionable && canSquashRebase(task) && commits > 0) {
     items.push({
       key: 'squash',
       label: 'Squash & Rebase…',

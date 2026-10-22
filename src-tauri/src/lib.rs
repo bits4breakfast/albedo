@@ -115,6 +115,8 @@ const M0005_SUBAGENTS: &str = include_str!("../../src/db/migrations/0005_subagen
 const M0006_CREATED_BRANCH: &str = include_str!("../../src/db/migrations/0006_created_branch.sql");
 /// v7: review comments on a task's files, sent to Claude Code.
 const M0007_COMMENTS: &str = include_str!("../../src/db/migrations/0007_comments.sql");
+/// v8: tasks.kind -- work on a branch, or a chat about the code (no branch).
+const M0008_TASK_KIND: &str = include_str!("../../src/db/migrations/0008_task_kind.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -158,6 +160,12 @@ pub fn run() {
             version: 7,
             description: "review comments",
             sql: M0007_COMMENTS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 8,
+            description: "tasks.kind",
+            sql: M0008_TASK_KIND,
             kind: MigrationKind::Up,
         },
     ];

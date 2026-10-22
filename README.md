@@ -188,6 +188,11 @@ From the composer you can also **Clear** or **Compact** the task's context.
 - **New Task** cuts a fresh branch into its own worktree, checks out an
   existing branch (including a colleague's, as `origin/their-branch`), or
   uses the main checkout.
+- **Chat — No Branch**, the other kind of New Task, is a conversation about
+  the code: Claude runs in the main checkout exactly as it is, and nothing is
+  created or switched. Every start tells Claude not to change files there;
+  tickets, documents or pages through MCP are fine. A chat has no Push,
+  pull request or Move, and archiving it removes nothing.
 - **Move** takes a task between its worktree and the main checkout, with the
   same branch, the same conversation and the uncommitted changes.
 - **Archive** and **Delete** ask what should happen to the worktree and the

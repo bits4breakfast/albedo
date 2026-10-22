@@ -48,6 +48,8 @@ import {
   switchCleanCheckout,
   uncommittedChanges,
   unmergedCommits,
+  taskBase,
+  lineChanges,
 } from './worktree';
 
 // ---------------------------------------------------------------------------
@@ -1447,5 +1449,20 @@ describe('commitsOnBranch', () => {
   it('is null for a branch git does not have', async () => {
     install(({ args }) => (args[0] === 'rev-parse' ? { code: 1, stdout: '', stderr: '' } : undefined));
     expect(await commitsOnBranch('/repo', 'main', 'gone')).toBeNull();
+  });
+});
+
+describe('taskBase with no base (a chat task)', () => {
+  it('asks git nothing and answers null, so the change set is uncommitted only', async () => {
+    const calls = install(() => ({ code: 0, stdout: 'origin/main\n', stderr: '' }));
+    expect(await taskBase('/r/app', '')).toBeNull();
+    // `@{upstream}` with an empty base would be HEAD's own upstream.
+    expect(calls).toEqual([]);
+  });
+
+  it('diffs a chat against HEAD', async () => {
+    const calls = install(() => undefined);
+    await lineChanges('/r/app', '');
+    expect(calls.map((c) => c.args)).toEqual([expect.arrayContaining(['HEAD'])]);
   });
 });

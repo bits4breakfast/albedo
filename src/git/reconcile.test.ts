@@ -661,6 +661,23 @@ describe('reclaimableTaskPaths', () => {
   it('drops empty paths rather than emitting them', () => {
     expect(reclaimableTaskPaths([cut({ worktreePath: '' })])).toEqual([]);
   });
+
+  it('never offers the folder of an archived chat, whatever its flag says', () => {
+    // A chat runs in the main checkout and created nothing. Even a row whose
+    // ownsWorktree reads true (a bad write) must not make it an orphan.
+    expect(
+      reclaimableTaskPaths([
+        cut({ kind: 'chat', worktreePath: '/Users/m/www/app', ownsWorktree: false }),
+        cut({ kind: 'chat', worktreePath: '/Users/m/www/app-two', ownsWorktree: true }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('still offers an archived work task beside an archived chat', () => {
+    expect(
+      reclaimableTaskPaths([cut({ kind: 'work' }), cut({ kind: 'chat', worktreePath: '/Users/m/www/app', ownsWorktree: false })]),
+    ).toEqual(['/Users/m/agents/albedo/cut-by-albedo']);
+  });
 });
 
 describe('albedoOwnsWorktree', () => {
@@ -668,6 +685,12 @@ describe('albedoOwnsWorktree', () => {
     expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: false })).toBe(false);
     expect(albedoOwnsWorktree({ worktreePath: '/a', ownsWorktree: true })).toBe(true);
     expect(albedoOwnsWorktree({ worktreePath: '/a' })).toBe(true);
+  });
+
+  it('is false for a chat, which runs in the main checkout and creates nothing', () => {
+    expect(albedoOwnsWorktree({ worktreePath: '/a', kind: 'chat' })).toBe(false);
+    expect(albedoOwnsWorktree({ worktreePath: '/a', kind: 'chat', ownsWorktree: true })).toBe(false);
+    expect(albedoOwnsWorktree({ worktreePath: '/a', kind: 'work', ownsWorktree: true })).toBe(true);
   });
 });
 

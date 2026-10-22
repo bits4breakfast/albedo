@@ -59,7 +59,7 @@ const T0 = Date.parse('2026-10-19T09:00:00.000Z');
 function task(over: Partial<Task> = {}): Task {
   return {
     id: 1, title: 't', projectId: null, repoPath: '/r', baseBranch: 'main', branch: 'b',
-    worktreePath: '/wt/1', sessionId: 's1', ownsWorktree: true, createdBranch: true, status: 'idle',
+    worktreePath: '/wt/1', sessionId: 's1', ownsWorktree: true, createdBranch: true, kind: 'work', status: 'idle',
     createdAt: 0, lastActivityAt: null, ...over,
   };
 }

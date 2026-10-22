@@ -449,6 +449,9 @@ export default function SessionBrowser({
           ownsWorktree: act === 'recreate',
           // The session's branch was the user's before Albedo saw it.
           createdBranch: false,
+          // A session picked up from History is work on its branch. Opening
+          // one as a chat is not offered (#49 keeps chats to New Task).
+          kind: 'work',
         });
 
         const args = ['--resume', session.sessionId];

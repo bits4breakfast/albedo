@@ -7,8 +7,27 @@
  * restart resumes exactly that session rather than whichever transcript
  * capture last read in the same folder.
  *
+ * A chat task (issue #49) carries one more flag on every spawn, whatever the
+ * mode: `--append-system-prompt` with {@link CHAT_SYSTEM_PROMPT}. Not a first
+ * user message -- that is lost to `/clear`, and a resumed session would never
+ * see it again -- and not a permission mode: the owner chose an instruction.
+ *
  * Pure, so every case is a test; Terminal.tsx does the I/O around it.
  */
+
+import type { TaskKind } from '../types';
+
+/**
+ * What a chat task's `claude` is told on every start. The one place the text
+ * lives, so it can be tuned without hunting for copies.
+ */
+export const CHAT_SYSTEM_PROMPT =
+  'This is a conversation about the code, not a change to it. Do not create, edit, move or delete files in this folder, and do not run commands that change them (no git commits, checkouts, installs or formatters). Read whatever you need. Making changes elsewhere through other tools is fine, for example tickets, documents or pages via MCP, when the user asks for it.';
+
+/** The flags a task's kind adds to every spawn: none for work. */
+export function kindFlags(kind: TaskKind): string[] {
+  return kind === 'chat' ? ['--append-system-prompt', CHAT_SYSTEM_PROMPT] : [];
+}
 
 export type SpawnMode =
   /** A new session under a new id. */
@@ -37,6 +56,8 @@ export interface SpawnPlan {
 }
 
 export interface SpawnInput {
+  /** The task's kind: a chat adds {@link kindFlags} to whatever the mode is. */
+  kind: TaskKind;
   /** The task's session now, or null if it never had one. */
   sessionId: string | null;
   /** History's argv for this task's first spawn (`--resume <id>` [`--fork-session`]). */
@@ -55,6 +76,13 @@ function valueAfter(args: readonly string[], flag: string): string | null {
 }
 
 export function planSpawn(o: SpawnInput): SpawnPlan {
+  const plan = planSession(o);
+  const extra = kindFlags(o.kind);
+  return extra.length === 0 ? plan : { ...plan, args: [...plan.args, ...extra] };
+}
+
+/** Which session, and the flags that pick it. */
+function planSession(o: SpawnInput): SpawnPlan {
   const fresh = (): SpawnPlan => {
     const id = o.newId();
     return { args: ['--session-id', id], sessionId: id, mode: 'new', modelFrom: null };

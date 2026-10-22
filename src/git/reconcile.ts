@@ -18,6 +18,7 @@
  * the async entry point only gathers the inputs.
  */
 
+import type { TaskKind } from '../types';
 import { detectPlatform } from '../lib/platform';
 import {
   basename,
@@ -221,11 +222,17 @@ export interface OwnershipFacts {
    * for every row that predates the flag.
    */
   ownsWorktree?: boolean;
+  /**
+   * A chat runs in the project's main checkout and creates nothing, so it
+   * never owns its folder -- whatever `ownsWorktree` says. Optional for the
+   * same reason as that flag: absent is work, as every row before v8 is.
+   */
+  kind?: TaskKind;
 }
 
 /** True when Albedo created this directory and may therefore remove it. */
 export function albedoOwnsWorktree(task: OwnershipFacts): boolean {
-  return task.ownsWorktree !== false;
+  return task.kind !== 'chat' && task.ownsWorktree !== false;
 }
 
 /**

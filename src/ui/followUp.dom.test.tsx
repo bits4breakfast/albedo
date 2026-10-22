@@ -65,7 +65,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   worktreePath: '/w/app/ACME-2398',
   sessionId: 's',
   ownsWorktree: true,
-  createdBranch: true,
+  createdBranch: true, kind: 'work',
   status: 'idle',
   createdAt: 1,
   lastActivityAt: 1,
