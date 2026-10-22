@@ -477,10 +477,10 @@ export function queueShows(status: TaskStatus | null): boolean {
  * the turn just ended and the next has not started, or the status refresh
  * lags the queue -- keeps the echo: the band is hidden then, and the message
  * would be nowhere.
- * Time, not text: the
- * queue records what Claude Code made of the input -- a pasted image becomes
- * `[Image #1]` where Albedo sent a file path -- and while the echo is up the
- * composer is the only thing sending.
+ *
+ * Time, not text: the queue records what Claude Code made of the input -- a
+ * pasted image becomes `[Image #1]` where Albedo sent a file path -- and
+ * while the echo is up the composer is the only thing sending.
  */
 export function echoIsQueued(
   echo: { at: number },
@@ -544,8 +544,8 @@ export function keyboardIsFree(active: Element | null, scroller: Element): boole
  * into the one running -- and then appears in the transcript as your message.
  *
  * Only while a turn is live (`queueShows`): showing what a killed session
- * never took would claim it is still coming. Entries Claude Code queued itself (a
- * background task finishing, a subagent's message) are not shown.
+ * never took would claim it is still coming. Entries Claude Code queued
+ * itself (a background task finishing, a subagent's message) are not shown.
  */
 export function QueuedStrip({ sessionId, status }: { sessionId: string | null; status: TaskStatus | null }): ReactNode {
   const [entries, setEntries] = useState<readonly QueuedEntry[]>(() => (sessionId ? queuedFor(sessionId) : []));
