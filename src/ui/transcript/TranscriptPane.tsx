@@ -461,14 +461,15 @@ export default TranscriptPane;
 const ECHO_MAX_MS = 30_000;
 
 /**
- * Whether Claude Code's queue holds the message just sent: an entry with the
- * same text, queued no earlier than the send (with the same second of slack as
- * the user-row check). Text is compared trimmed, since the queue records what
- * Claude Code read off the input, not Albedo's exact string.
+ * Whether Claude Code's queue holds the message just sent: any entry you
+ * typed (not one Claude Code queued itself), queued no earlier than the send,
+ * with the same second of slack as the user-row check. Time, not text: the
+ * queue records what Claude Code made of the input -- a pasted image becomes
+ * `[Image #1]` where Albedo sent a file path -- and while the echo is up the
+ * composer is the only thing sending.
  */
-export function echoIsQueued(echo: { text: string; at: number }, entries: readonly QueuedEntry[]): boolean {
-  const text = echo.text.trim();
-  return entries.some((e) => !e.injected && e.ts >= echo.at - 1000 && e.text.trim() === text);
+export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry[]): boolean {
+  return entries.some((e) => !e.injected && e.ts >= echo.at - 1000);
 }
 
 /** "Working · 14s", ticking: the session is busy and has not written yet. */

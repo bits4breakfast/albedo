@@ -36,7 +36,7 @@ describe('echoIsQueued', () => {
 
   it('finds the message in the queue once Claude Code has queued it', () => {
     expect(echoIsQueued(echo, [])).toBe(false);
-    expect(echoIsQueued(echo, [entry('something else', at + 200), entry('run the tests', at + 300)])).toBe(true);
+    expect(echoIsQueued(echo, [entry('run the tests', at + 300)])).toBe(true);
   });
 
   it('allows a second of clock slack, and no more', () => {
@@ -44,9 +44,9 @@ describe('echoIsQueued', () => {
     expect(echoIsQueued(echo, [entry('run the tests', at - 5000)])).toBe(false);
   });
 
-  it('ignores surrounding whitespace but not a different text', () => {
-    expect(echoIsQueued(echo, [entry('run the tests\n', at + 10)])).toBe(true);
-    expect(echoIsQueued(echo, [entry('run the tests now', at + 10)])).toBe(false);
+  it('goes by time, not text: Claude Code queues what it made of the input', () => {
+    const sent = { text: '/Users/me/Desktop/shot.png hello', at };
+    expect(echoIsQueued(sent, [entry('[Image #1] hello', at + 150)])).toBe(true);
   });
 
   it('does not count what Claude Code queued itself', () => {
