@@ -367,7 +367,12 @@ export function TranscriptPane({
     return () => window.clearTimeout(t);
   }, [echo]);
   // Sent during a turn, it is not a user row yet but a queue entry, and the
-  // Queued band shows it from then on: one place, not two.
+  // Queued band shows it from then on: one place, not two. The band's
+  // listener and this one run in the same queue notification, so React
+  // batches both into one commit: the echo goes in the frame the band
+  // arrives, never a frame with both or neither. The scroller shrinking by
+  // the band's height keeps a following reader at the end (the
+  // ResizeObserver above), so the transcript does not jump.
   useEffect(() => {
     if (!echo || sessionId === null) return;
     const check = () => {
