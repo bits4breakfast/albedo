@@ -1,9 +1,9 @@
 /**
  * Which project tab ⇧⌘[ / ⇧⌘] lands on.
  *
- * Pure, so the wrap and the edge cases are tested without the app: the
- * binding in App passes the tab keys in bar order and selects what comes
- * back, exactly as ⌥digit does.
+ * Pure, so the stops at both ends and the edge cases are tested without the
+ * app: the binding in App passes the tab keys in bar order and selects what
+ * comes back, exactly as ⌥digit does.
  */
 
 /**
