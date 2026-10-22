@@ -35,21 +35,28 @@ describe('echoIsQueued', () => {
   const entry = (text: string, ts: number, injected = false) => ({ text, ts, injected });
 
   it('finds the message in the queue once Claude Code has queued it', () => {
-    expect(echoIsQueued(echo, [])).toBe(false);
-    expect(echoIsQueued(echo, [entry('run the tests', at + 300)])).toBe(true);
+    expect(echoIsQueued(echo, [], 'running')).toBe(false);
+    expect(echoIsQueued(echo, [entry('run the tests', at + 300)], 'running')).toBe(true);
   });
 
   it('allows a second of clock slack, and no more', () => {
-    expect(echoIsQueued(echo, [entry('run the tests', at - 900)])).toBe(true);
-    expect(echoIsQueued(echo, [entry('run the tests', at - 5000)])).toBe(false);
+    expect(echoIsQueued(echo, [entry('run the tests', at - 900)], 'running')).toBe(true);
+    expect(echoIsQueued(echo, [entry('run the tests', at - 5000)], 'running')).toBe(false);
   });
 
   it('goes by time, not text: Claude Code queues what it made of the input', () => {
     const sent = { text: '/Users/me/Desktop/shot.png hello', at };
-    expect(echoIsQueued(sent, [entry('[Image #1] hello', at + 150)])).toBe(true);
+    expect(echoIsQueued(sent, [entry('[Image #1] hello', at + 150)], 'running')).toBe(true);
+  });
+
+  it('keeps the echo while the band is hidden, so the message is never nowhere', () => {
+    const queued = [entry('run the tests', at + 10)];
+    expect(echoIsQueued(echo, queued, 'idle')).toBe(false);
+    expect(echoIsQueued(echo, queued, null)).toBe(false);
+    expect(echoIsQueued(echo, queued, 'blocked')).toBe(true);
   });
 
   it('does not count what Claude Code queued itself', () => {
-    expect(echoIsQueued(echo, [entry('run the tests', at + 10, true)])).toBe(false);
+    expect(echoIsQueued(echo, [entry('run the tests', at + 10, true)], 'running')).toBe(false);
   });
 });

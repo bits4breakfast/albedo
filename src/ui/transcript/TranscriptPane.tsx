@@ -376,13 +376,13 @@ export function TranscriptPane({
   useEffect(() => {
     if (!echo || sessionId === null) return;
     const check = () => {
-      if (echoIsQueued(echo, queuedFor(sessionId))) setEcho(null);
+      if (echoIsQueued(echo, queuedFor(sessionId), status)) setEcho(null);
     };
     check();
     return onQueueChange((sid) => {
       if (sid === sessionId) check();
     });
-  }, [echo, sessionId]);
+  }, [echo, sessionId, status]);
   const working = status === 'running' || echo !== null;
   const lastTs = messages.length > 0 ? (messages[messages.length - 1] as Message).ts : 0;
   const since = Math.max(lastTs, echo?.at ?? 0);
@@ -461,15 +461,33 @@ export default TranscriptPane;
 const ECHO_MAX_MS = 30_000;
 
 /**
- * Whether Claude Code's queue holds the message just sent: any entry you
- * typed (not one Claude Code queued itself), queued no earlier than the send,
- * with the same second of slack as the user-row check. Time, not text: the
+ * Whether the Queued band is on screen for a session in this status. Only
+ * while a turn is live: a queue cannot be waiting in an idle session, so
+ * anything left at idle is what a killed session never took.
+ */
+export function queueShows(status: TaskStatus | null): boolean {
+  return status === 'running' || status === 'blocked';
+}
+
+/**
+ * Whether the Queued band now shows the message just sent: it is showing at
+ * all (`queueShows`), and it holds an entry you typed (not one Claude Code
+ * queued itself), queued no earlier than the send, with the same second of
+ * slack as the user-row check. A status still `idle` while the entry waits --
+ * the turn just ended and the next has not started, or the status refresh
+ * lags the queue -- keeps the echo: the band is hidden then, and the message
+ * would be nowhere.
+ * Time, not text: the
  * queue records what Claude Code made of the input -- a pasted image becomes
  * `[Image #1]` where Albedo sent a file path -- and while the echo is up the
  * composer is the only thing sending.
  */
-export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry[]): boolean {
-  return entries.some((e) => !e.injected && e.ts >= echo.at - 1000);
+export function echoIsQueued(
+  echo: { at: number },
+  entries: readonly QueuedEntry[],
+  status: TaskStatus | null,
+): boolean {
+  return queueShows(status) && entries.some((e) => !e.injected && e.ts >= echo.at - 1000);
 }
 
 /** "Working · 14s", ticking: the session is busy and has not written yet. */
@@ -525,9 +543,8 @@ export function keyboardIsFree(active: Element | null, scroller: Element): boole
  * leaves the moment Claude Code takes it, either as the next turn or folded
  * into the one running -- and then appears in the transcript as your message.
  *
- * Only while a turn is live: a queue cannot be waiting in an idle session,
- * so anything left at idle is what a killed session never took, and showing
- * it would claim it is still coming. Entries Claude Code queued itself (a
+ * Only while a turn is live (`queueShows`): showing what a killed session
+ * never took would claim it is still coming. Entries Claude Code queued itself (a
  * background task finishing, a subagent's message) are not shown.
  */
 export function QueuedStrip({ sessionId, status }: { sessionId: string | null; status: TaskStatus | null }): ReactNode {
@@ -543,9 +560,8 @@ export function QueuedStrip({ sessionId, status }: { sessionId: string | null; s
     });
   }, [sessionId]);
 
-  const live = status === 'running' || status === 'blocked';
   const mine = entries.filter((e) => !e.injected);
-  if (!live || mine.length === 0) return null;
+  if (!queueShows(status) || mine.length === 0) return null;
   return (
     <div className="tx-queued" role="status" aria-label="Queued messages">
       <div className="tx-queued-head">
