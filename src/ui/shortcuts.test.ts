@@ -92,6 +92,8 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'P', code: 'KeyP', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'u', code: 'KeyU', metaKey: true }))?.combo,
+      comboOf(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
@@ -176,6 +178,36 @@ describe('push', () => {
   });
 });
 
+describe('project step', () => {
+  it('reads ⇧⌘[ / ⇧⌘] from the physical key', () => {
+    // US: Shift turns the brackets into braces.
+    expect(comboOf(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+[');
+    expect(comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+]');
+    // Italian: the same physical keys are è / + , shifted é / *.
+    expect(comboOf(ev({ key: 'é', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+[');
+    expect(comboOf(ev({ key: '*', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+]');
+  });
+
+  it('is Command only, without Alt', () => {
+    // Ctrl+[ is Escape in a terminal.
+    expect(comboOf(ev({ key: '{', code: 'BracketLeft', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '”', code: 'BracketLeft', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('leaves ⌘[ / ⌘] to the task step', () => {
+    expect(comboOf(ev({ key: '[', code: 'BracketLeft', metaKey: true }))?.combo).toBe('mod+[');
+    expect(comboOf(ev({ key: ']', code: 'BracketRight', metaKey: true }))?.combo).toBe('mod+]');
+    // ⇧⌘ on the bracket keys is the project step, whatever `key` says.
+    expect(comboOf(ev({ key: '[', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+[');
+  });
+
+  it('still steps tasks on a layout that types the bracket with Shift', () => {
+    // The `[` is on another physical key there, so the code check passes it by.
+    expect(comboOf(ev({ key: '[', code: 'Digit8', metaKey: true, shiftKey: true }))?.combo).toBe('mod+[');
+    expect(comboOf(ev({ key: ']', code: 'Digit9', metaKey: true, shiftKey: true }))?.combo).toBe('mod+]');
+  });
+});
+
 describe('createDoubleShift', () => {
   it('fires on two bare Shift presses inside the window', () => {
     const d = createDoubleShift();
@@ -225,5 +257,12 @@ describe('terminalTakesKey', () => {
     expect(terminalTakesKey(ev({ key: '¡', code: 'Digit1', altKey: true }))).toBe(false);
     expect(terminalTakesKey(ev({ key: 'b', code: 'KeyB', altKey: true }))).toBe(true);
     expect(terminalTakesKey(ev({ key: '1', code: 'Digit1', metaKey: true }))).toBe(true);
+  });
+
+  it('keeps the project step from the terminal, and leaves it the task step', () => {
+    expect(terminalTakesKey(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: '[', code: 'BracketLeft', metaKey: true }))).toBe(true);
+    expect(terminalTakesKey(ev({ key: '{', code: 'BracketLeft', ctrlKey: true, shiftKey: true }))).toBe(true);
   });
 });
