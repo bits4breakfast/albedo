@@ -310,6 +310,61 @@
 }
 
 /* --------------------------------------------------------------------------
+   Project view: the whole worktree as a tree (ProjectTree.tsx). Same grounds
+   and text tiers as the change rows, so no new contrast is introduced: names
+   in --text, the status letter in its tone, both cleared on --panel-raised.
+   -------------------------------------------------------------------------- */
+
+.tf-tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  padding-right: 12px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.tf-tree-row:hover { background: var(--panel-hover); }
+.tf-tree-row:hover .tf-tree-name { color: var(--text-strong); }
+.tf-tree-row[aria-current='true'] {
+  background: var(--panel-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tf-tree-row[aria-current='true'] .tf-tree-name { color: var(--text-strong); }
+.tf-tree-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.tf-tree-caret {
+  flex: 0 0 1em;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.tf-tree-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status sits at the row's right end, like the change rows' letter. */
+.tf-tree-row .tf-status { margin-left: auto; }
+
+/* A folder holding changes. A UI mark, not text: --accent clears 3.0 on
+   every row ground in both themes. */
+.tf-tree-dot {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
    Empty / loading
    -------------------------------------------------------------------------- */
 

@@ -31,6 +31,7 @@ import {
 import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
+import ProjectTree from './ProjectTree';
 import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
@@ -50,6 +51,15 @@ function readMode(): ViewMode {
 function writeMode(m: ViewMode): ViewMode {
   writePersisted(KEYS.touchedMode, modeCodec, m);
   return m;
+}
+
+/** What the pane lists: the change set, or every file in the worktree. */
+export type FilesView = 'changes' | 'project';
+const viewCodec = oneOfCodec<FilesView>(['changes', 'project']);
+
+function writeView(v: FilesView): FilesView {
+  writePersisted(KEYS.touchedView, viewCodec, v);
+  return v;
 }
 
 /** Capture fires per batch of rows; coalesce bursts into one reload. */
@@ -88,6 +98,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   /** Commits not on the upstream yet. Null when git could not say. */
   const [remote, setRemote] = useState<UnmergedCommits | null>(null);
   const [mode, setMode] = useState<ViewMode>(readMode);
+  const [filesView, setFilesView] = useState<FilesView>(() => readPersisted(KEYS.touchedView, viewCodec, 'changes'));
   /** Commits the user folded away in the by-commit view. */
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -286,6 +297,14 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
     return { uncommitted, committed };
   }, [files, lines, committedAt, modifiedAt]);
 
+  /** The status letter per changed path, for the Project view's rows. */
+  const changedStatus = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of view.committed) m.set(f.path, kinds.get(f.path) ?? 'M');
+    for (const f of view.uncommitted) if (f.gitStatus !== null) m.set(f.path, f.gitStatus);
+    return m;
+  }, [view, kinds]);
+
   // The order the editor steps through with next / previous file: what is on
   // screen, top to bottom, each file once.
   useEffect(() => {
@@ -377,6 +396,18 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
       ) : null}
 
       <div className="tf-scroll" ref={scrollRef}>
+        {filesView === 'project' ? (
+          <ProjectTree
+            taskId={task.id}
+            worktreePath={task.worktreePath}
+            status={changedStatus}
+            toneOf={statusTone}
+            activePath={activePath}
+            reloadKey={reloadKey}
+            onOpen={(path) => openFile({ path })}
+          />
+        ) : (
+          <>
         <CommentsSection task={task} onOpen={(path, line) => openFile({ path, line })} />
         {mode === 'commit' ? (
           <>
@@ -484,6 +515,8 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
         ) : null}
 
         {!loaded && loading ? <div className="tf-empty">Reading the change set…</div> : null}
+          </>
+        )}
       </div>
       {loaded ? (
         <GitBar
@@ -495,6 +528,8 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           onSquash={() => setSquashOpen(true)}
           mode={mode}
           onMode={(m) => setMode(writeMode(m))}
+          view={filesView}
+          onView={(v) => setFilesView(writeView(v))}
           menuSlot={menuSlot}
           actionSlot={actionSlot}
         />

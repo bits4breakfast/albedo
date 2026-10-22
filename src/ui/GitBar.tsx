@@ -43,6 +43,9 @@ export interface GitBarProps {
   /** How the list below groups its files. */
   mode: 'branch' | 'commit';
   onMode: (mode: 'branch' | 'commit') => void;
+  /** Changes or the whole worktree; the head's first icon switches it. */
+  view?: 'changes' | 'project';
+  onView?: (view: 'changes' | 'project') => void;
   /**
    * Where the head controls go -- the group-by toggle, and ⋯ when it holds an
    * action: the Files pane's head row. Without one (not mounted yet) they
@@ -74,6 +77,8 @@ export default function GitBar({
   onSquash,
   mode,
   onMode,
+  view = 'changes',
+  onView,
   menuSlot = null,
   actionSlot = null,
 }: GitBarProps): ReactNode {
@@ -124,7 +129,9 @@ export default function GitBar({
   // This bar appears only when there is a main action (Push, Create PR).
   const menu = (
     <>
-      <GroupToggle mode={mode} onMode={onMode} />
+      {onView ? <ViewToggle view={view} onView={onView} /> : null}
+      {/* Grouping is a Changes option: the tree has one order. */}
+      {view === 'changes' ? <GroupToggle mode={mode} onMode={onMode} /> : null}
       {items.length > 0 ? <MoreMenu items={items} drop={menuSlot ? 'down' : 'up'} /> : null}
     </>
   );
@@ -176,6 +183,45 @@ export default function GitBar({
       </div>
     </div>
     </>
+  );
+}
+
+/**
+ * Changed files or every file. One button with two states, like GroupToggle:
+ * the glyph shows the view in effect, the label what a click does.
+ */
+function ViewToggle({
+  view,
+  onView,
+}: {
+  view: 'changes' | 'project';
+  onView: (view: 'changes' | 'project') => void;
+}): ReactNode {
+  const project = view === 'project';
+  const label = project ? 'Show Changes' : 'Show All Files';
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      aria-pressed={project}
+      aria-label={label}
+      title={
+        project
+          ? 'Showing every file in the worktree. Click to show only the changes'
+          : 'Showing the changes. Click to browse every file in the worktree'
+      }
+      onClick={() => onView(project ? 'changes' : 'project')}
+    >
+      <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+        {project ? (
+          // A folder tree.
+          <path d="M3 2.5v9.5h4M3 7h4M9.5 5.5h4M9.5 12h4M9.5 7h4" />
+        ) : (
+          // A folder.
+          <path d="M1.75 4.25v8a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1v-6.5a1 1 0 0 0-1-1H8L6.5 3.25H2.75a1 1 0 0 0-1 1z" />
+        )}
+      </svg>
+    </button>
   );
 }
 
