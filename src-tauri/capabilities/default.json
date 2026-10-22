@@ -36,6 +36,7 @@
         "$HOME/.claude/projects",
         "$HOME/.claude/projects/**",
         "$HOME/.claude/settings.json",
+        "$HOME/.claude.json",
         "$HOME/.claude/cache/model-catalog",
         "$HOME/.claude/cache/model-catalog/*",
         "$HOME/.albedo",

@@ -46,6 +46,17 @@ terminals have no status line). It feeds the status strip's plan meters and
 the context window size; `hookEvents.ts` (STATUS_SNAPSHOT) is still the only
 file that knows the shape.
 
+A fourth, by the owner's decision (issue #42): Claude Code's workspace trust
+dialog comes before any hook runs and before there is a transcript, so neither
+channel sees it. Before spawning, Albedo reads
+`projects[<path>].hasTrustDialogAccepted` from `~/.claude.json` -- that flag
+and nothing else from that file, read only, never written -- to know the
+dialog is coming. It shows "waiting on you" until the session's first
+`SessionStart` hook event, which fires only once the folder is trusted, and
+says the answer is in the terminal. Anything it cannot read means "unknown",
+and unknown shows nothing. `src/capture/workspaceTrust.ts` is the only file
+that knows this.
+
 ## Which session a task is on
 
 A restart resumes `tasks.session_id`, so that value is a fact, never a guess.
