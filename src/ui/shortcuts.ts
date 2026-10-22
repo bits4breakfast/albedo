@@ -58,6 +58,12 @@
  * types characters (`{`, `²`, `@`), so there it is Alt+1–9 -- what Firefox
  * and many Linux apps use for tab N.
  *
+ * ⇧⌘[ / ⇧⌘] step through the same tabs, next to ⌘[ / ⌘] for tasks. Read
+ * from `code` (`BracketLeft` / `BracketRight`): Shift turns `[` into `{` on a
+ * US layout, and other layouts put the brackets elsewhere. Command only, like
+ * the O family: Ctrl+[ is Escape in a terminal. ⌘[ / ⌘] themselves refuse
+ * Shift, so the two pairs never both fire.
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
@@ -71,6 +77,8 @@ export type Combo =
   | 'mod+\\'
   | 'mod+['
   | 'mod+]'
+  | 'mod+shift+['
+  | 'mod+shift+]'
   | 'mod+arrowleft'
   | 'mod+arrowright'
   | 'mod+/'
@@ -116,6 +124,8 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+alt+digit', keys: '⌥1…9', description: 'Jump to the Nth Project (Alt+1…9 on Windows and Linux)' },
   { combo: 'mod+[', keys: '⌘[', description: 'Previous Task' },
   { combo: 'mod+]', keys: '⌘]', description: 'Next Task' },
+  { combo: 'mod+shift+[', keys: '⇧⌘[', description: 'Previous Project' },
+  { combo: 'mod+shift+]', keys: '⇧⌘]', description: 'Next Project' },
   { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous Reading Tab' },
   { combo: 'mod+arrowright', keys: '⌘→', description: 'Next Reading Tab' },
   { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle PTY / Split / Transcript' },
@@ -186,6 +196,10 @@ export function comboOf(
   if (e.code === 'KeyP' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+p', digit: null };
   }
+  // Project step. Command only and read from `code`; see the module comment.
+  if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: e.code === 'BracketLeft' ? 'mod+shift+[' : 'mod+shift+]', digit: null };
+  }
   // Attach files. Command only: Ctrl+U is the terminal's kill-line.
   if (e.code === 'KeyU' && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+u', digit: null };
@@ -215,10 +229,11 @@ export function comboOf(
       return { combo: 'mod+-', digit: null };
     case '0':
       return { combo: 'mod+0', digit: null };
+    // Not with Shift: that is the project step above, or nothing.
     case '[':
-      return { combo: 'mod+[', digit: null };
+      return e.shiftKey ? null : { combo: 'mod+[', digit: null };
     case ']':
-      return { combo: 'mod+]', digit: null };
+      return e.shiftKey ? null : { combo: 'mod+]', digit: null };
     case 'arrowleft':
       return { combo: 'mod+arrowleft', digit: null };
     case 'arrowright':
@@ -229,12 +244,13 @@ export function comboOf(
 }
 
 /** Combos the app takes from a focused terminal rather than sharing them. */
-const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit']);
+const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit', 'mod+shift+[', 'mod+shift+]']);
 
 /**
  * For xterm's `attachCustomKeyEventHandler`: false when the key is one of the
  * app's that the terminal must not also act on. The terminals treat Option as
- * Meta, so without this ⌥1 would switch project AND send `Esc 1` to the pty.
+ * Meta, so without this ⌥1 would switch project AND send `Esc 1` to the pty;
+ * ⇧⌘[ / ⇧⌘] switch project too, so the pty does not get them either.
  */
 export function terminalTakesKey(e: KeyboardEvent): boolean {
   const hit = comboOf(e);

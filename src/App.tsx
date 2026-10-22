@@ -19,6 +19,7 @@ import { sendPrompt } from './ui/sendPrompt';
 import Subagents from './ui/Subagents';
 import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
+import { stepProjectTab } from './ui/projectStep';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import FindInFiles from './ui/FindInFiles';
@@ -741,6 +742,12 @@ export default function App() {
     }
   };
 
+  const stepProject = (delta: number) => {
+    if (!showTabs) return;
+    const key = stepProjectTab(tabs.map((t) => t.key), activeProjectTab?.key ?? null, delta);
+    if (key) selectTab(key);
+  };
+
   useShortcuts({
     // PhpStorm's keymap. Live while typing: nothing in a text field, the
     // terminal included, binds ⌘O (Ctrl+O is left alone -- see shortcuts.ts).
@@ -767,6 +774,9 @@ export default function App() {
       const tab = showTabs && digit !== null ? tabs[digit - 1] : undefined;
       if (tab) selectTab(tab.key);
     },
+    // The previous / next tab, wrapping; the same landing as the digit above.
+    'mod+shift+[': () => stepProject(-1),
+    'mod+shift+]': () => stepProject(1),
     'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),
     // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
     // field, and this app has a composer, a title input and a code editor.
