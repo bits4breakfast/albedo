@@ -20,6 +20,7 @@ import { hasLivePty, onPtyPresenceChange } from './Terminal';
 import { sendPrompt } from './sendPrompt';
 import { squashRebasePrompt } from './gitPrompts';
 import { relativeTime } from './TaskList';
+import { wrapForTooltip } from './text';
 import './worktree.css';
 
 export interface SquashRebaseDialogProps {
@@ -106,7 +107,9 @@ export default function SquashRebaseDialog({ task, commits, uncommitted, onClose
           <h2 className="wt-modal-title" id="sq-title">
             Squash &amp; Rebase
           </h2>
-          <span className="wt-modal-sub">{task.title}</span>
+          <span className="wt-modal-sub wt-modal-task" title={wrapForTooltip(task.title)}>
+            {task.title}
+          </span>
         </div>
 
         <div className="wt-modal-body">
