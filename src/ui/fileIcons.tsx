@@ -3,14 +3,16 @@
  * and Quick Open draw the same glyph for the same file.
  *
  * One hand-drawn set on the 16-unit grid and 1.5 stroke of BranchIcon /
- * FolderIcon, in currentColor. The glyphs are told apart by silhouette, not
- * colour, so each surface paints them in one existing text token and no new
- * contrast pair is introduced. Decorative: the file name beside one is the
- * label, so every glyph is aria-hidden (Glyph does that).
+ * FolderIcon, in currentColor. Each glyph carries its kind as `data-kind`;
+ * fileicons.css maps a kind to its --icon-* token, and each surface's one
+ * colour rule reads that. Shape still tells the kinds apart without colour.
+ * Decorative: the file name beside one is the label, so every glyph is
+ * aria-hidden (Glyph does that).
  */
 
 import type { ReactNode } from 'react';
-import { Glyph } from './icons';
+import { FOLDER_CLOSED, Glyph } from './icons';
+import './fileicons.css';
 
 export type FileIconKind =
   | 'php'
@@ -156,9 +158,25 @@ const DRAWN: Record<FileIconKind, ReactNode> = {
 
 /** The glyph for a file. `className` places it; the colour is the caller's. */
 export function FileIcon({ path, size = 14, className }: { path: string; size?: number; className?: string }) {
+  const kind = iconFor(path);
   return (
-    <Glyph size={size} className={className}>
-      {DRAWN[iconFor(path)]}
+    <Glyph size={size} className={className} kind={kind}>
+      {DRAWN[kind]}
+    </Glyph>
+  );
+}
+
+/** A folder in the Project tree: FolderIcon's outline closed, its front flap fallen open. */
+export function FolderGlyph({ open, size = 14, className }: { open: boolean; size?: number; className?: string }) {
+  return (
+    <Glyph size={size} className={className} kind="folder">
+      <path
+        d={
+          open
+            ? 'M2.25 12.25v-8c0-.83.67-1.5 1.5-1.5h2.5l1.5 1.75h4c.83 0 1.5.67 1.5 1.5V7M2.25 12.25l1.9-4.4c.17-.4.55-.6.97-.6h8.6c.55 0 .9.55.7 1.05l-1.65 4.05c-.17.4-.55.65-.97.65h-8.5c-.55 0-1.05-.25-1.05-.75z'
+            : FOLDER_CLOSED
+        }
+      />
     </Glyph>
   );
 }

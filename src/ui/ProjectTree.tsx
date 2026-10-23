@@ -12,8 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { git } from '../git/worktree';
 import { parseLsFilesZ } from '../git/codeIndex';
-import { FileIcon } from './fileIcons';
-import { FolderIcon, FolderOpenIcon } from './icons';
+import { FileIcon, FolderGlyph } from './fileIcons';
 import { ancestors, buildTree, changedDirs, parentOf, visibleRows, type TreeRow } from './projectTreeModel';
 
 /**
@@ -180,10 +179,8 @@ export default function ProjectTree({ taskId, worktreePath, status, toneOf, acti
             </span>
             {row.kind === 'file' ? (
               <FileIcon path={row.path} className="tf-icon" />
-            ) : row.open ? (
-              <FolderOpenIcon size={14} className="tf-icon" />
             ) : (
-              <FolderIcon size={14} className="tf-icon" />
+              <FolderGlyph open={row.open} className="tf-icon" />
             )}
             <span className="tf-tree-name">{row.name}</span>
             {row.kind === 'dir' ? (

@@ -1,0 +1,24 @@
+/* --------------------------------------------------------------------------
+   File icon colours (fileIcons.tsx): one rule per kind, shared by the Project
+   tree, the Changes rows and Quick Open. Each rule sets --file-icon, never
+   `color`; each surface has ONE colour declaration that reads it,
+   `color: var(--file-icon, var(--muted))`, so the surface stays in charge and
+   no specificity contest decides the colour.
+
+   The tokens and their measured ratios are in styles.css ("file icons").
+   Kinds with no rule here -- lock files, manifests, the generic page -- fall
+   back to --muted: they are bookkeeping, and staying grey keeps them quiet.
+   -------------------------------------------------------------------------- */
+
+.glyph[data-kind='php'] { --file-icon: var(--icon-php); }
+.glyph[data-kind='react'] { --file-icon: var(--icon-react); }
+.glyph[data-kind='script'] { --file-icon: var(--icon-script); }
+.glyph[data-kind='data'] { --file-icon: var(--icon-data); }
+.glyph[data-kind='config'] { --file-icon: var(--icon-config); }
+.glyph[data-kind='docs'] { --file-icon: var(--icon-docs); }
+.glyph[data-kind='styles'] { --file-icon: var(--icon-styles); }
+.glyph[data-kind='markup'] { --file-icon: var(--icon-markup); }
+.glyph[data-kind='image'] { --file-icon: var(--icon-image); }
+.glyph[data-kind='shell'] { --file-icon: var(--icon-shell); }
+.glyph[data-kind='sql'] { --file-icon: var(--icon-sql); }
+.glyph[data-kind='folder'] { --file-icon: var(--icon-folder); }

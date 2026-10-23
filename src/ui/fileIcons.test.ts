@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { iconFor } from './fileIcons';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { FileIcon, FolderGlyph, iconFor } from './fileIcons';
 
 describe('iconFor', () => {
   it('reads the extension', () => {
@@ -72,5 +74,15 @@ describe('iconFor', () => {
     expect(iconFor('.envrc')).toBe('file');
     // The folder a path sits in never decides.
     expect(iconFor('styles.css/README')).toBe('file');
+  });
+});
+
+describe('glyph kind', () => {
+  it('tags each glyph with its kind, for fileicons.css to colour', () => {
+    expect(renderToStaticMarkup(createElement(FileIcon, { path: 'src/App.tsx' }))).toContain('data-kind="react"');
+    expect(renderToStaticMarkup(createElement(FileIcon, { path: 'LICENSE' }))).toContain('data-kind="file"');
+    for (const open of [true, false]) {
+      expect(renderToStaticMarkup(createElement(FolderGlyph, { open }))).toContain('data-kind="folder"');
+    }
   });
 });

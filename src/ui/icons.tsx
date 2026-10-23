@@ -9,10 +9,22 @@
 
 import type { ReactNode } from 'react';
 
-export function Glyph({ children, size = 13, className }: { children: ReactNode; size?: number; className?: string }) {
+export function Glyph({
+  children,
+  size = 13,
+  className,
+  kind,
+}: {
+  children: ReactNode;
+  size?: number;
+  className?: string;
+  /** What the glyph stands for, as `data-kind`: fileicons.css colours by it. */
+  kind?: string;
+}) {
   return (
     <svg
       className={className === undefined ? 'glyph' : `glyph ${className}`}
+      data-kind={kind}
       width={size}
       height={size}
       viewBox="0 0 16 16"
@@ -53,20 +65,15 @@ export function ChatIcon({ size }: { size?: number }) {
   );
 }
 
-/** A folder: the worktree on disk, or a closed folder in the Project tree. */
-export function FolderIcon({ size, className }: { size?: number; className?: string }) {
-  return (
-    <Glyph size={size} className={className}>
-      <path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h3l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v6.25c0 .83-.67 1.5-1.5 1.5h-9.5c-.83 0-1.5-.67-1.5-1.5z" />
-    </Glyph>
-  );
-}
+/** A closed folder's outline: FolderIcon, and the Project tree's closed folder. */
+export const FOLDER_CLOSED =
+  'M1.75 4.25c0-.83.67-1.5 1.5-1.5h3l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v6.25c0 .83-.67 1.5-1.5 1.5h-9.5c-.83 0-1.5-.67-1.5-1.5z';
 
-/** An open folder: FolderIcon's back, and its front flap fallen open. */
-export function FolderOpenIcon({ size, className }: { size?: number; className?: string }) {
+/** A folder: the worktree on disk. */
+export function FolderIcon({ size }: { size?: number }) {
   return (
-    <Glyph size={size} className={className}>
-      <path d="M2.25 12.25v-8c0-.83.67-1.5 1.5-1.5h2.5l1.5 1.75h4c.83 0 1.5.67 1.5 1.5V7M2.25 12.25l1.9-4.4c.17-.4.55-.6.97-.6h8.6c.55 0 .9.55.7 1.05l-1.65 4.05c-.17.4-.55.65-.97.65h-8.5c-.55 0-1.05-.25-1.05-.75z" />
+    <Glyph size={size}>
+      <path d={FOLDER_CLOSED} />
     </Glyph>
   );
 }
