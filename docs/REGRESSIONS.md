@@ -28,9 +28,13 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 
 ## Tests and verification
 
-- **jsdom passes, the app doesn't.** Review comments have never been saved in the running app (0 rows in the live database), while `FileEditor.comments.test.tsx` passes (#58). **Rule:**
+- **jsdom passes, the app doesn't.** Review comments were never saved in the running app (0 rows in the live database), while `FileEditor.comments.test.tsx` passed (#58). **Rule:**
   - A test that mocks the database or the WebView doesn't prove the production path.
   - Check the live database (read only) or the real flow when a feature "works in tests".
+- **The affordance was never drawn.** The cause of #58: the comment gutter (`commentsExtension` in `src/ui/editor/comments.ts`) was created without CodeMirror's `renderEmptyElements: true`. CodeMirror draws a gutter cell only on lines that have a marker, so on a file with no comments the hover "+" appeared on the cursor's line alone, and every other line was a blank strip that gave no sign it could be clicked. The save path and ⇧⌘C worked; nobody could find the way in. The tests drove the keyboard shortcut and the save function, never the thing a person clicks. **Rule:**
+  - Test the entry point a person uses: the rendered control (a cell, a button, a menu item exists and responds), not only the handler behind it.
+  - Gutters, widgets and decorations in CodeMirror render only what their config asks for. Check the config options for "empty" or "default" rendering before assuming the DOM is there.
+  - When a feature has zero real-world uses (an empty table, no log lines), suspect discoverability before suspecting the data path.
 - **Test counts as a regression check.** Compare the combined test count with `main` plus what each PR adds. A drop means a test was lost. Also audit that no existing test file lost `it(` or `expect(` calls.
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
