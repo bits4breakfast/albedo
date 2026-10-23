@@ -24,6 +24,7 @@ import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath 
 import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import PromptCard from './PromptCard';
+import { PermissionModeLabel } from './PermissionModeLabel';
 import { isSidechain, toolUseId } from './ToolChip';
 import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
 import './transcript.css';
@@ -450,7 +451,7 @@ export function TranscriptPane({
 
       <QueuedStrip sessionId={sessionId} status={status} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
-      {taskId !== null ? <Composer taskId={taskId} status={status} onSent={onSent} accessory={composerAccessory} /> : null}
+      {taskId !== null ? <Composer taskId={taskId} sessionId={sessionId} status={status} onSent={onSent} accessory={composerAccessory} /> : null}
     </div>
   );
 }
@@ -654,6 +655,7 @@ export function Composer({
   onSent,
   status = null,
   accessory,
+  sessionId = null,
 }: {
   taskId: number;
   /** Called with what Claude Code was sent. */
@@ -661,6 +663,8 @@ export function Composer({
   status?: TaskStatus | null;
   /** Beside Send (the model picker). */
   accessory?: ReactNode;
+  /** The task's session, for the permission mode beside +. */
+  sessionId?: string | null;
 }): ReactNode {
   const [text, setText] = useState('');
   /** Large text pastes kept aside; the draft holds their placeholders. */
@@ -1144,6 +1148,7 @@ export function Composer({
             <path d="M8 3v10M3 8h10" />
           </svg>
         </button>
+        <PermissionModeLabel sessionId={sessionId} />
         <div className="tx-composer-accessory">{accessory}</div>
         <button
           type="button"
