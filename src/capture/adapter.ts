@@ -521,6 +521,70 @@ export function queueOperationsIn(text: string): QueueOperation[] {
 }
 
 /**
+ * Everything the queue model reconciles against, in file order: the queue's
+ * own operations, plus two facts that say what became of entries a `dequeue`
+ * did not account for.
+ *  - `prompt`: a main-thread `user` line that starts a turn, with its typed
+ *    text (what an `enqueue` records). Claude Code does not always write
+ *    one `dequeue` per message it takes: seen on 2.1.302 while the API was
+ *    unreachable, four enqueues, then one `dequeue` and one `user` line
+ *    holding only the newest text. The other three were never sent, and no
+ *    line says so.
+ *  - `turn-end`: a main-thread assistant line whose stop_reason ends the turn
+ *    (TURN_ENDING_STOP_REASONS). A typed entry still waiting when a turn ends
+ *    is taken at once (measured: within 3 s in every case on this machine);
+ *    one that is not is never coming.
+ */
+export type QueueFact =
+  | QueueOperation
+  | { op: 'prompt'; sessionId: string; text: string; ts: number }
+  | { op: 'turn-end'; sessionId: string; ts: number };
+
+/**
+ * The queue facts in a chunk, in order. Pre-filtered on substrings that occur
+ * only as real keys (a quote inside a JSON string is escaped), so tool results
+ * and most other lines are rejected before any JSON.parse.
+ */
+export function queueFactsIn(text: string): QueueFact[] {
+  const out: QueueFact[] = [];
+  for (const line of text.split('\n')) {
+    if (line.length === 0) continue;
+    if (line.includes('"queue-operation"')) {
+      out.push(...queueOperationsIn(line));
+      continue;
+    }
+    const prompt = line.includes('"type":"user"') && !line.includes('"tool_use_id"') && !line.includes('"isMeta":true');
+    const ending = line.includes('"stop_reason":"end_turn"') || line.includes('"stop_reason":"stop_sequence"');
+    if (!prompt && !ending) continue;
+    const obj = safeParse(line);
+    if (!obj || obj['isSidechain'] === true) continue;
+    const sessionId = stringOr(obj['sessionId'], '');
+    const ts = parseTs(obj['timestamp']);
+    if (obj['type'] === 'assistant') {
+      if (TURN_ENDING_STOP_REASONS.has(stopReasonOf(line) ?? '')) out.push({ op: 'turn-end', sessionId, ts });
+      continue;
+    }
+    // A meta line or a compaction summary starts no turn, and a summary
+    // quotes recent messages -- queued ones included. Other envelopes Claude
+    // Code writes as user lines (`[Request interrupted…]`, `<command-name>…`,
+    // `<local-command-stdout>…`) do count: they match no typed entry, and
+    // reading one as a turn start only delays an idle clear, never forces one.
+    if (obj['type'] !== 'user' || obj['isMeta'] === true || obj['isCompactSummary'] === true) continue;
+    // Text blocks only: an image's own block is not part of what was typed,
+    // which already says `[Image #N]`.
+    const blocks = contentBlocksOf(obj);
+    const message = obj['message'];
+    const body = blocks
+      ? blocks.flatMap((b) => (isRecord(b) && b['type'] === 'text' && typeof b['text'] === 'string' ? [b['text']] : [])).join('\n')
+      : isRecord(message) && typeof message['content'] === 'string'
+        ? message['content']
+        : '';
+    if (body.trim() !== '') out.push({ op: 'prompt', sessionId, text: body, ts });
+  }
+  return out;
+}
+
+/**
  * Queue entries Claude Code puts there itself rather than the person typing:
  * a background task finishing, a subagent's message. They take part in the
  * queue's order -- a `dequeue` can take one -- but are not "your message".
