@@ -1,7 +1,8 @@
 /**
  * The editor's window-level keys: the ones that work wherever focus is, as
  * long as an editor is on screen. (Keys that act on the text -- ⌘S, ⌘B, ⌥F7,
- * the comment key -- are in CodeMirror's keymap in FileEditor.tsx.)
+ * the comment key -- are in CodeMirror's keymap in FileEditor.tsx; ⌥⌘B, which
+ * acts on the cursor too, is matched by `isImplementationKey` there.)
  *
  * All Command only and matched on the physical key: Shift turns `key` into
  * "C" or "D" and Option into "ç", while `code` stays `KeyC` / `KeyD` on every
@@ -26,4 +27,16 @@ export function editorKeyOf(e: EditorKeyProbe): EditorKey | null {
   if (e.code === 'KeyD') return e.altKey ? null : 'toggle-diff';
   if (e.code === 'KeyC') return e.altKey ? 'copy-path' : 'copy-full-path';
   return null;
+}
+
+/**
+ * ⌥⌘B, Go to Implementation, read by the editor's CodeMirror key handler
+ * since it acts on the cursor. On `code`: Option makes `key` "∫" on macOS.
+ * Command only, as above, and not with Shift, which nothing binds yet.
+ * Taken by nothing else: CodeMirror's keymaps bind no Mod-Alt-b, the app's
+ * `comboOf` refuses Option with Command outside the O family, and macOS text
+ * fields and the native menu have no ⌥⌘B.
+ */
+export function isImplementationKey(e: EditorKeyProbe): boolean {
+  return e.code === 'KeyB' && e.metaKey && e.altKey && !e.ctrlKey && !e.shiftKey;
 }

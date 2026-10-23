@@ -84,8 +84,10 @@ the bytes is still forbidden.
 
 The editor spec says no LSP. The owner made one narrow exception
 (`src/lsp/phpantom.ts`): the PHPantom language server answers Go to
-Declaration and Find Usages, nothing else -- no completion, no diagnostics, no
-formatting, and its PHPStan/PHPCS/PHPMD/Mago runners are switched off in the
+Declaration, Find Usages and Go to Implementation (`textDocument/definition`,
+`textDocument/references` and `textDocument/implementation`; the last added
+by the owner's decision, 2026-10-23), nothing else -- no completion, no
+diagnostics, no formatting, and its PHPStan/PHPCS/PHPMD/Mago runners are switched off in the
 config Albedo writes. It is optional: `./build.sh --with-phpantom` bundles a
 pinned, checksummed binary into the app as a Tauri sidecar, and
 `scripts/install-phpantom.sh` puts one in `~/.albedo/bin` (the bundled copy

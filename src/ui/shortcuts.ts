@@ -105,6 +105,7 @@ export type Gesture =
   | 'shift shift'
   | 'editor mod+b'
   | 'editor alt+f7'
+  | 'editor mod+alt+b'
   | 'editor mod+shift+d'
   | 'editor mod+shift+c'
   | 'editor mod+alt+shift+c'
@@ -143,6 +144,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
+  {
+    combo: 'editor mod+alt+b',
+    keys: '⌥⌘B',
+    description: 'In the Editor: Go to Implementation (PHP: Implementers, Subclasses or Trait Users)',
+  },
   { combo: 'editor mod+shift+d', keys: '⇧⌘D', description: 'In the Editor: Diff / File' },
   { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Copy Full Path' },
   { combo: 'editor mod+alt+shift+c', keys: '⌥⇧⌘C', description: 'In the Editor: Copy Path (from the Worktree)' },

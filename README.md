@@ -38,7 +38,8 @@ every other one. Know these choices before you adopt it.
   follow-up read from GitHub through `gh`. Albedo works with other git hosts,
   but without any pull request status.
 - **PHP for code intelligence.** Go to Declaration and Find Usages are
-  type-aware only for PHP, through PHPantom. Every other language gets the
+  type-aware only for PHP, through PHPantom, and Go to Implementation is
+  PHP only. Every other language gets the
   same commands through text search (git grep), and there is no completion
   or diagnostics for any language.
 - **A cockpit, not an IDE.** Albedo has an editor for reading changes and
@@ -60,7 +61,7 @@ Albedo runs on macOS and Linux, and on Windows as a Linux app under WSL2 (see
 | [Claude Code](https://claude.com/claude-code) (`claude`), signed in | Every task: Albedo runs it in the terminal | Nothing works |
 | `git` | Worktrees, branches, the Files panel, Quick Open, Find in Files | Nothing works |
 | [GitHub CLI](https://cli.github.com) (`gh`), signed in with `gh auth login` | The pull request badge: state, checks, merged | No PR status, and no hint saying why. Push and Create PR still work, because Claude runs `git` and `gh` itself in the terminal |
-| [PHPantom](https://github.com/PHPantom-dev/phpantom_lsp), optional | Type-aware Go to Declaration and Find Usages in PHP | Navigation falls back to git grep |
+| [PHPantom](https://github.com/PHPantom-dev/phpantom_lsp), optional | Type-aware Go to Declaration, Find Usages and Go to Implementation in PHP | Navigation falls back to git grep |
 
 To build Albedo you also need Node 22 or newer and a Rust toolchain
 (`rustup`). On Linux, Tauri needs a few system libraries; the build script
@@ -245,6 +246,9 @@ to the wrong code.
   **⌘O** Go to Class, **⌥⌘O** Go to Symbol.
 - **⇧⌘F** Find in Files, with match case (**⌥C**) and regex (**⌥X**).
 - **⌘B** or **⌘-click** Go to Declaration, **⌥F7** Find Usages.
+- **⌥⌘B** Go to Implementation, in PHP: on an interface the classes that
+  implement it, on a class its subclasses, on a trait the classes that use
+  it. One result opens straight away.
 - **⌥F12** opens a shell drawer in the main checkout. It keeps running while
   hidden.
 
@@ -285,9 +289,9 @@ shell, so the tools Claude uses are the ones you have in a terminal.
 mid-turn or waiting on you would be interrupted, so ⌘Q and the close button
 ask first. Quitting from the Dock does not ask yet.
 
-**PHP navigation is navigation only.** PHPantom answers Go to Declaration and
-Find Usages and nothing else: no completion, no diagnostics, and its
-linters are switched off. It starts only when you open a PHP file. Without
+**PHP navigation is navigation only.** PHPantom answers Go to Declaration,
+Find Usages and Go to Implementation and nothing else: no completion, no
+diagnostics, and its linters are switched off. It starts only when you open a PHP file. Without
 it, the same commands use git grep.
 
 **Where things live.**
@@ -323,6 +327,7 @@ you resume or import from History.
 | ⌘↓ | Jump to the latest message |
 | ⌘B or ⌘-click | Go to Declaration (in the editor) |
 | ⌥F7 | Find Usages (in the editor) |
+| ⌥⌘B | Go to Implementation: implementers, subclasses or trait users (in the editor, PHP) |
 | ⌥⌘M | Comment on the selected lines (in the editor); send them all from the Files panel |
 | ⇧⌘D | File / this task's change (in the editor) |
 | ⇧⌘C / ⌥⇧⌘C | Copy the file's full path / its path in the worktree (in the editor) |

@@ -1,8 +1,15 @@
 /**
  * PHPantom, a PHP language server, used for NAVIGATION ONLY: Go to
- * Declaration and Find Usages in the editor. No completion, no diagnostics,
- * no formatting -- the editor's spec still says no LSP features, and this is
- * the narrow exception the owner chose: a jump target and a list of usages.
+ * Declaration, Find Usages and Go to Implementation in the editor. No
+ * completion, no diagnostics, no formatting -- the editor's spec still says no
+ * LSP features, and this is the narrow exception the owner chose: a jump
+ * target, a list of usages and a list of implementations.
+ *
+ * Three requests, and only these are advertised: `textDocument/definition`,
+ * `textDocument/references` and `textDocument/implementation`. PHPantom 0.11.1
+ * has no type hierarchy (`typeHierarchy/prepareTypeHierarchy` is "Method not
+ * found"), and its `implementation` answers all three questions a type is
+ * asked -- see `implementation` below for what it returns.
  *
  * ## Optional
  *
@@ -289,6 +296,29 @@ export class PhpServer {
     );
   }
 
+  /**
+   * The types under a type. Measured on 0.11.1, transitively in every case:
+   * on an interface, the non-abstract classes implementing it, directly or
+   * through a parent (no abstract class, no interface extending it); on a
+   * class, its non-abstract subclasses at any depth; on a trait, every class
+   * and trait using it, directly, through another trait or through a parent.
+   * On an interface under vendor/ (not indexed) it answered null, with and
+   * without the exclusion. It also answers on a method; `symbolNav` asks only
+   * on a type.
+   */
+  implementation(path: string, text: string, line0: number, character: number): Promise<Location[]> {
+    return this.withDocument(path, text, async (uri) =>
+      toLocations(
+        this.root,
+        await this.conn.request(
+          'textDocument/implementation',
+          { textDocument: { uri }, position: { line: line0, character } },
+          30_000,
+        ),
+      ),
+    );
+  }
+
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
@@ -470,6 +500,7 @@ async function start(root: string): Promise<PhpServer | null> {
             synchronization: { didSave: false },
             definition: { linkSupport: false },
             references: {},
+            implementation: { linkSupport: false },
           },
         },
         initializationOptions: { indexing: { exclude: ['vendor/', 'node_modules/'] } },

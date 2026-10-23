@@ -111,6 +111,14 @@ describe('SHORTCUTS', () => {
   });
 });
 
+describe('⌥⌘B, the editor’s Go to Implementation', () => {
+  it('is documented, and no app-wide combo takes it first', () => {
+    expect(SHORTCUTS.find((s) => s.combo === 'editor mod+alt+b')?.keys).toBe('⌥⌘B');
+    expect(comboOf(ev({ key: '∫', code: 'KeyB', metaKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'b', code: 'KeyB', ctrlKey: true, altKey: true }))).toBeNull();
+  });
+});
+
 describe('shell drawer key', () => {
   it('is Option-F12 alone, read from code', () => {
     expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo).toBe('alt+f12');
