@@ -17,6 +17,7 @@ import {
   flushDrafts,
   getDraft,
   keepDraftsFor,
+  keepUnsent,
   saveDraft,
   withoutExpired,
 } from './drafts';
@@ -124,6 +125,16 @@ describe('the store', () => {
     vi.setSystemTime(T0 + DRAFT_MAX_AGE_MS);
     expect(getDraft(3)).toBeNull();
     expect(getDraft(2)?.text).toBe('newer');
+  });
+
+  it('marks a cancelled send as not sent, until its text changes', () => {
+    keepUnsent(1, 'held', new Map([[1, 'p']]));
+    expect(getDraft(1)).toEqual({ text: 'held', pastes: [[1, 'p']], savedAt: T0, notSent: true });
+    restart();
+    saveDraft(1, 'held', new Map([[1, 'p']])); // the restore writing it back
+    expect(getDraft(1)?.notSent).toBe(true);
+    saveDraft(1, 'held, edited', new Map());
+    expect(getDraft(1)?.notSent).toBeUndefined();
   });
 
   it('keepDraftsFor drops archived and deleted tasks, and the expired', () => {

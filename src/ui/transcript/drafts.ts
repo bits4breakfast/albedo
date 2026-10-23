@@ -11,8 +11,9 @@
  * unavailable drafts still survive a task switch, just not a restart.
  *
  * A draft leaves when it is sent, when its task is archived or deleted, or
- * once it is a week old. The composer never saves a send that is pending or
- * held: that text is on its way, and restoring it could send it twice.
+ * once it is a week old. A send under way is never a draft: restoring it
+ * could send it twice. Leaving a task whose send is held or waiting cancels
+ * that send first, and only then keeps its text (`keepUnsent`).
  */
 
 import { useSyncExternalStore } from 'react';
@@ -24,6 +25,11 @@ export interface Draft {
   /** Placeholder id -> the pasted text it stands for. */
   pastes: ReadonlyArray<readonly [number, string]>;
   savedAt: number;
+  /**
+   * A send that was held or waiting for a session when its task was left. The
+   * hold is cancelled and the text kept here, so it says "not sent" on return.
+   */
+  notSent?: boolean;
 }
 
 export type DraftMap = ReadonlyMap<number, Draft>;
@@ -42,6 +48,7 @@ function isDraft(value: unknown): value is Draft {
   return (
     typeof d.text === 'string' &&
     typeof d.savedAt === 'number' &&
+    (d.notSent === undefined || typeof d.notSent === 'boolean') &&
     Array.isArray(d.pastes) &&
     d.pastes.every(
       (p: unknown) => Array.isArray(p) && p.length === 2 && typeof p[0] === 'number' && typeof p[1] === 'string',
@@ -126,14 +133,31 @@ export function getDraft(taskId: number, now = Date.now()): Draft | null {
   return d;
 }
 
-/** Keep the task's draft. Empty text removes it instead. */
+/**
+ * Keep the task's draft. Empty text removes it instead. A "not sent" mark
+ * stays only while the text is still exactly what was not sent.
+ */
 export function saveDraft(taskId: number, text: string, pastes: ReadonlyMap<number, string>, now = Date.now()): void {
   if (isEmptyDraft(text)) {
     dropDraft(taskId);
     return;
   }
+  const prev = current().get(taskId);
+  put(taskId, { text, pastes: [...pastes], savedAt: now, ...(prev?.notSent && prev.text === text ? { notSent: true } : {}) });
+}
+
+/**
+ * Keep the text of a send that was cancelled because its task was left. The
+ * caller must have cancelled the send first: text is never both pending and a draft.
+ */
+export function keepUnsent(taskId: number, text: string, pastes: ReadonlyMap<number, string>, now = Date.now()): void {
+  if (isEmptyDraft(text)) return;
+  put(taskId, { text, pastes: [...pastes], savedAt: now, notSent: true });
+}
+
+function put(taskId: number, draft: Draft): void {
   const next = new Map(current());
-  next.set(taskId, { text, pastes: [...pastes], savedAt: now });
+  next.set(taskId, draft);
   commit(next);
 }
 

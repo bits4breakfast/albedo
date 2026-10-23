@@ -105,7 +105,7 @@ describe('(a) a task switch mid-await does not wedge the composer', () => {
     expect(vi.mocked(submitPty).mock.calls[1]).toEqual([2, 'second message']);
   });
 
-  it('a task switch takes a pending send out of the box, and does not keep it as a draft', async () => {
+  it('a switch away from a send waiting for a session cancels it and keeps the text as a draft', async () => {
     deadPty();
     const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
 
@@ -114,13 +114,20 @@ describe('(a) a task switch mid-await does not wedge the composer', () => {
     await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
     // A failed send keeps the text. Losing it would be the unforgivable case.
     expect(box().value).toBe('half-written thought');
+    expect(getDraft(1)).toBeNull(); // pending, so not a draft
 
     rerender(<Composer taskId={2} onSent={vi.fn()} />);
     expect(box().value).toBe('');
-    // It was on its way, frozen: restoring it could send it twice.
+    // The session comes up after all: the cancelled send must not fire.
+    act(() => term.__emitPresence(1, true));
+    expect(submitPty).toHaveBeenCalledTimes(1);
+
     rerender(<Composer taskId={1} onSent={vi.fn()} />);
-    expect(box().value).toBe('');
-    expect(getDraft(1)).toBeNull();
+    expect(box().value).toBe('half-written thought');
+    expect(box().readOnly).toBe(false);
+    expect(screen.getByText('Not sent \u2014 press Send when you\u2019re ready.')).toBeTruthy();
+    act(() => term.__emitPresence(1, true));
+    expect(submitPty).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -677,6 +684,34 @@ describe('(d) each task keeps its own draft', () => {
     await waitFor(() => expect(getDraft(5)?.text).toBe('after the prompt'));
     rerender(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
     expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('a switch away from a held send cancels the hold and keeps it, pastes and all', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    const clipLog = clip(log);
+    const { rerender } = render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+    type('look: ');
+    box().setSelectionRange(box().value.length, box().value.length);
+    fireEvent.paste(box(), { clipboardData: clipLog });
+    pressEnter();
+    await waitFor(() => expect(box().readOnly).toBe(true));
+
+    rerender(<Composer taskId={6} status="idle" onSent={vi.fn()} />);
+    expect(getDraft(5)?.text).toBe('look: [Pasted text #1 +4 lines]');
+    // The prompt being answered no longer releases anything.
+    rerender(<Composer taskId={6} status="running" onSent={vi.fn()} />);
+    expect(submitPty).not.toHaveBeenCalled();
+
+    rerender(<Composer taskId={5} status="idle" onSent={vi.fn()} />);
+    expect(box().value).toBe('look: [Pasted text #1 +4 lines]');
+    expect(screen.getByText('Not sent \u2014 press Send when you\u2019re ready.')).toBeTruthy();
+    expect(submitPty).not.toHaveBeenCalled();
+
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(submitPty).mock.calls[0]).toEqual([5, `look: ${log}`]);
+    await waitFor(() => expect(box().value).toBe(''));
+    expect(getDraft(5)).toBeNull();
   });
 
   it('opens on the draft a previous run left', () => {

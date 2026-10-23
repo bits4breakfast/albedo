@@ -10,7 +10,7 @@
 
 import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
 import { onComposerInsert, onAttachRequest } from './composerBridge';
-import { dropDraft, getDraft, saveDraft } from './drafts';
+import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
 import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
@@ -694,6 +694,9 @@ export function Composer({
   const [userPx, setUserPx] = useState<number | null>(storedComposerPx);
   const userPxRef = useRef(userPx);
   userPxRef.current = userPx;
+  /** The box's text, for the task switch below, which must not depend on it. */
+  const textRef = useRef(text);
+  textRef.current = text;
 
   const grow = useCallback(() => {
     const el = ref.current;
@@ -712,6 +715,9 @@ export function Composer({
   useEffect(() => {
     grow();
   }, [userPx, grow]);
+  /** Read by the task switch, which must run on a switch and nothing else. */
+  const growRef = useRef(grow);
+  growRef.current = grow;
 
   const dragRef = useRef<{ y: number; h: number } | null>(null);
   const onGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -781,7 +787,7 @@ export function Composer({
      switch it still sees the old owner and saves nothing. A send that is
      under way -- busy, waiting for a session, or held at a prompt -- is not
      a draft: it leaves the store, so a restore can never send it twice. A
-     send that fails unfreezes the box and the draft is kept again.
+     send that fails or is cancelled unfreezes the box and is kept again.
   */
   useEffect(() => {
     if (draftOwnerRef.current !== taskId) return;
@@ -789,8 +795,19 @@ export function Composer({
     else saveDraft(taskId, text, pastesRef.current);
   }, [taskId, text, busy, awaiting, held]);
 
-  // A task switch puts that task's own draft in the box -- never a failed send.
+  /*
+     A task switch puts that task's own draft in the box. A send the old task
+     still had held or waiting is cancelled -- taken, so it can no longer fire
+     -- and only then kept as that task's draft: what was typed is never lost,
+     and never both pending and a draft. One already being written is not
+     cancellable, and is left to land.
+  */
   useEffect(() => {
+    const left = draftOwnerRef.current;
+    if (left !== null && left !== taskId && pendingRef.current !== null) {
+      pendingRef.current = null;
+      keepUnsent(left, textRef.current, pastesRef.current);
+    }
     const draft = getDraft(taskId);
     draftOwnerRef.current = taskId;
     setText(draft?.text ?? '');
@@ -798,20 +815,19 @@ export function Composer({
     pasteSeqRef.current = draft ? Math.max(0, ...draft.pastes.map(([id]) => id)) : 0;
     if (draft) {
       requestAnimationFrame(() => {
-        grow();
+        growRef.current();
         const el = ref.current;
         el?.setSelectionRange(el.value.length, el.value.length);
       });
     }
-    setNotice(null);
+    setNotice(draft?.notSent ? 'Not sent \u2014 press Send when you\u2019re ready.' : null);
     setAwaiting(false);
     setHeld(false);
-    pendingRef.current = null;
     insertWatchersRef.current = [];
     inFlightRef.current = false; // or a switch mid-await wedges the composer shut
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
-  }, [taskId, grow]);
+  }, [taskId]);
 
   /** Send whatever is waiting, once a session exists. */
   const flushPending = useCallback(async () => {
