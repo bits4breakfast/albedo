@@ -10,6 +10,7 @@
 
 import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
 import { onComposerInsert, onAttachRequest } from './composerBridge';
+import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
 import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
@@ -684,6 +685,11 @@ export function Composer({
   const pendingRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const timerRef = useRef(0);
+  /**
+   * The task the box's text belongs to. On the render that switches task,
+   * `text` is still the old task's, so it must not be saved under the new id.
+   */
+  const draftOwnerRef = useRef<number | null>(null);
 
   /**
    * A height the user dragged the composer to. While set it is the height --
@@ -692,6 +698,9 @@ export function Composer({
   const [userPx, setUserPx] = useState<number | null>(storedComposerPx);
   const userPxRef = useRef(userPx);
   userPxRef.current = userPx;
+  /** The box's text, for the task switch below, which must not depend on it. */
+  const textRef = useRef(text);
+  textRef.current = text;
 
   const grow = useCallback(() => {
     const el = ref.current;
@@ -710,6 +719,9 @@ export function Composer({
   useEffect(() => {
     grow();
   }, [userPx, grow]);
+  /** Read by the task switch, which must run on a switch and nothing else. */
+  const growRef = useRef(grow);
+  growRef.current = grow;
 
   const dragRef = useRef<{ y: number; h: number } | null>(null);
   const onGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -740,7 +752,9 @@ export function Composer({
   /** Waiting to hear that text handed in from elsewhere was sent (see composerBridge). */
   const insertWatchersRef = useRef<Array<(sent: string) => boolean>>([]);
   const succeeded = useCallback(
-    (body: string) => {
+    (sentFor: number, body: string) => {
+      // Sent after the box moved to another task: that task's draft is in it now.
+      if (draftOwnerRef.current !== sentFor) return;
       setText('');
       pastesRef.current = new Map();
       pasteSeqRef.current = 0;
@@ -772,15 +786,47 @@ export function Composer({
     [taskId, grow],
   );
 
-  // Only a task switch discards a draft -- never a failed send.
+  /*
+     Keep the draft (drafts.ts). Declared before the switch below, so on a
+     switch it still sees the old owner and saves nothing. A send that is
+     under way -- busy, waiting for a session, or held at a prompt -- is not
+     a draft: it leaves the store, so a restore can never send it twice. A
+     send that fails or is cancelled unfreezes the box and is kept again.
+  */
   useEffect(() => {
-    setText('');
-    pastesRef.current = new Map();
-    pasteSeqRef.current = 0;
-    setNotice(null);
+    if (draftOwnerRef.current !== taskId) return;
+    if (busy || awaiting || held) dropDraft(taskId);
+    else saveDraft(taskId, text, pastesRef.current);
+  }, [taskId, text, busy, awaiting, held]);
+
+  /*
+     A task switch puts that task's own draft in the box. A send the old task
+     still had held or waiting is cancelled -- taken, so it can no longer fire
+     -- and only then kept as that task's draft: what was typed is never lost,
+     and never both pending and a draft. One already being written is not
+     cancellable, and is left to land.
+  */
+  useEffect(() => {
+    const left = draftOwnerRef.current;
+    if (left !== null && left !== taskId && pendingRef.current !== null) {
+      pendingRef.current = null;
+      keepUnsent(left, textRef.current, pastesRef.current);
+    }
+    const draft = getDraft(taskId);
+    draftOwnerRef.current = taskId;
+    setText(draft?.text ?? '');
+    pastesRef.current = new Map(draft?.pastes);
+    pasteSeqRef.current = draft ? Math.max(0, ...draft.pastes.map(([id]) => id)) : 0;
+    if (draft) {
+      requestAnimationFrame(() => {
+        growRef.current();
+        const el = ref.current;
+        el?.setSelectionRange(el.value.length, el.value.length);
+      });
+    }
+    setNotice(draft?.notSent ? 'Not sent \u2014 press Send when you\u2019re ready.' : null);
     setAwaiting(false);
     setHeld(false);
-    pendingRef.current = null;
     insertWatchersRef.current = [];
     inFlightRef.current = false; // or a switch mid-await wedges the composer shut
     window.clearTimeout(timerRef.current);
@@ -795,7 +841,7 @@ export function Composer({
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
     try {
-      if (await submitPty(taskId, body)) succeeded(body);
+      if (await submitPty(taskId, body)) succeeded(taskId, body);
       else setNotice('Could not deliver your message. It is still here — press Send to retry.');
     } catch {
       setNotice('Could not send your message. It is still here — press Send to retry.');
@@ -1023,7 +1069,7 @@ export function Composer({
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
       if (await submitPty(taskId, body)) {
-        succeeded(body);
+        succeeded(taskId, body);
         inFlightRef.current = false;
         return;
       }

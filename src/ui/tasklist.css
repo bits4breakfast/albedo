@@ -181,6 +181,9 @@
   color: var(--muted);
 }
 
+/* An unsent draft in the composer: a word in the caption, --muted like the
+   repo name (cleared against --panel-raised). */
+.task-draft { color: var(--muted); }
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on

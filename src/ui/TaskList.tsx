@@ -14,6 +14,7 @@ import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { useBranchSync } from '../git/branchSync';
 import { ChatIcon } from './icons';
+import { useDraftTaskIds } from './transcript/drafts';
 import './tasklist.css';
 
 /** The row's word for a chat, in its tooltip where a branch would be. */
@@ -172,6 +173,7 @@ export default function TaskList({
   const [menu, setMenu] = useState<RowMenu | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const drafts = useDraftTaskIds();
 
   /*
    * PR status for the rows on screen. The list owns the polling because it
@@ -459,6 +461,14 @@ export default function TaskList({
                         place git and GitHub state is shown, for the selected
                         task. Rows identify the task; the title does that. */}
                     <span className="task-meta-tail">
+                      {/* An unsent message waiting in this task's composer, so a
+                          forgotten one can be found. Not on the selected row:
+                          its draft is in the box right below. */}
+                      {drafts.has(task.id) && task.id !== selectedId && (
+                        <span className="task-draft" title="An unsent message is waiting in this task's message box">
+                          Draft
+                        </span>
+                      )}
                       {/* A chat is told apart by a glyph, not a word: same
                           size, stroke and tier as the branch glyph. */}
                       {task.kind === 'chat' && (

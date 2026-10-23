@@ -53,6 +53,7 @@ const db = await import('../db');
 const { noteStatusChange } = await import('./attention');
 const { useTasks, reconcileTasks } = await import('./useTasks');
 const { RUNNING_WINDOW_MS } = await import('../capture/status');
+const { __resetDrafts } = await import('./transcript/drafts');
 
 const T0 = Date.parse('2026-10-19T09:00:00.000Z');
 
@@ -100,6 +101,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.useRealTimers();
+  __resetDrafts();
 });
 
 describe('status that depends on the clock is re-checked', () => {
@@ -258,5 +260,38 @@ describe('failed writes are logged and retried', () => {
     await tick(300);
     expect(result.current.tasks[0]?.sessionId).toBeNull();
     expect(h.rows[0]?.sessionId).toBeNull();
+  });
+});
+
+describe('composer drafts follow the task list', () => {
+  it('archiving a task drops its draft', async () => {
+    const { saveDraft, getDraft } = await import('./transcript/drafts');
+    h.rows = [task(), task({ id: 2, sessionId: 's2', worktreePath: '/wt/2' })];
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    saveDraft(1, 'unsent', new Map());
+    saveDraft(2, 'also unsent', new Map());
+
+    await act(async () => {
+      await result.current.archive(1);
+    });
+    expect(getDraft(1)).toBeNull();
+    expect(getDraft(2)?.text).toBe('also unsent');
+  });
+
+  it('a reload without the task (deleted, or archived elsewhere) drops its draft', async () => {
+    const { saveDraft, getDraft } = await import('./transcript/drafts');
+    h.rows = [task(), task({ id: 2, sessionId: 's2', worktreePath: '/wt/2' })];
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    saveDraft(1, 'unsent', new Map());
+    saveDraft(2, 'deleted with its task', new Map());
+
+    h.rows = [h.rows[0]!];
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(getDraft(1)?.text).toBe('unsent');
+    expect(getDraft(2)).toBeNull();
   });
 });
