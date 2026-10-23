@@ -26,7 +26,8 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { exists, open, readDir, SeekMode, stat, watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
 
-import { countLines, cwdOf, lastTitleIn, parseTranscript, queueOperationsIn, SEQ_STRIDE } from './adapter';
+import { countLines, cwdOf, lastTitleIn, parseTranscript, permissionModesIn, queueOperationsIn, SEQ_STRIDE } from './adapter';
+import { recordPermissionModes } from './permissionMode';
 import { recordQueueOperations, seedQueue } from './queue';
 import {
   adoptSessionIntoTask,
@@ -748,6 +749,8 @@ class Capture implements CaptureHandle {
 
       // Queue lines are bookkeeping too: no rows, only "waiting" state.
       recordQueueOperations(queueOperationsIn(text));
+      // So is the permission mode, kept in memory for the composer's label.
+      recordPermissionModes(permissionModesIn(text));
 
       // Resolve identity from the rows themselves. sessionId can change
       // mid-file after a resume or compaction, so the LAST row wins and the

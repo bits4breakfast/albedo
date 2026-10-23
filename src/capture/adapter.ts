@@ -530,6 +530,54 @@ export function isInjectedQueueText(text: string): boolean {
 }
 
 /**
+ * The permission modes Claude Code names, as written in the transcript. A value
+ * outside this list is a mode this build does not know, and reads as unknown
+ * rather than as the nearest guess.
+ */
+export const PERMISSION_MODES = ['default', 'auto', 'plan', 'acceptEdits', 'bypassPermissions', 'dontAsk'] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+/**
+ * The permission mode a line records for its session, or undefined if it
+ * records none. `mode` is null for a value this build does not recognise.
+ *
+ * Two lines carry it: `{type: "permission-mode", permissionMode, sessionId}`,
+ * and the top-level `permissionMode` on the `user` line of a prompt (not on
+ * tool results). Subagent lines are skipped: they are stored under the
+ * parent's session id, and the mode they ran in is not the session's.
+ *
+ * Measured on Claude Code 2.1.308: across 108 transcripts, 3,268
+ * `permission-mode` lines, all `auto`, and 2,009 `user` lines with the field,
+ * 1,992 `auto` and 17 `default`; subagent files carried none. `claude -p
+ * --permission-mode plan` (and `acceptEdits`) wrote that value on the prompt's
+ * `user` line, and no `permission-mode` line. The six names are the enum in
+ * that build. Not measured: whether ⇧⇥ alone, without a prompt, writes a line;
+ * this code assumes it does not, so the mode is as of the last prompt sent.
+ */
+export function permissionModeOf(rawLine: string): { sessionId: string; mode: PermissionMode | null } | undefined {
+  const line = safeParse(rawLine);
+  if (!line) return undefined;
+  if (line['type'] !== 'permission-mode' && line['type'] !== 'user') return undefined;
+  if (line['isSidechain'] === true) return undefined;
+  const value = line['permissionMode'];
+  const sessionId = line['sessionId'];
+  if (typeof value !== 'string' || typeof sessionId !== 'string' || sessionId === '') return undefined;
+  const mode = (PERMISSION_MODES as readonly string[]).includes(value) ? (value as PermissionMode) : null;
+  return { sessionId, mode };
+}
+
+/** The latest mode per session in a chunk. Same cheap pre-filter as titles. */
+export function permissionModesIn(text: string): Map<string, PermissionMode | null> {
+  const out = new Map<string, PermissionMode | null>();
+  for (const line of text.split('\n')) {
+    if (line.length === 0 || !line.includes('"permissionMode"')) continue;
+    const seen = permissionModeOf(line);
+    if (seen) out.set(seen.sessionId, seen.mode);
+  }
+  return out;
+}
+
+/**
  * Prefixes marking a `user` row that Claude Code injected rather than the human
  * typing it: slash-command envelopes (`<command-name>…`), system reminders, and
  * interruption notices (`[Request interrupted…]`).

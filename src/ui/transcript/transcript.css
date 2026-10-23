@@ -337,6 +337,23 @@
 }
 .tx-composer-attach:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
 .tx-composer-attach:disabled { color: var(--faint); }
+/* The permission mode: read only, so plain text with no hover ground, at the
+   model picker's size and tier. It sits against + and takes over its push to
+   the right. Plan and bypass differ by colour alone; the word names them.
+   Cleared on --panel-inset, the box's ground (light / dark): --muted 7.33 /
+   8.17, --accent 6.63 / 8.32, --warn 7.79 / 10.53. */
+.tx-composer-attach:has(+ .tx-permission-mode) { margin-right: 0; }
+.tx-permission-mode {
+  flex: none;
+  margin-right: auto;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: default;
+}
+.tx-permission-mode[data-tone='plan'] { color: var(--accent); }
+.tx-permission-mode[data-tone='bypass'] { color: var(--warn); }
 /* The model reads as text with a chevron, as on claude.ai, not as a boxed
    field: it is a setting of the message, not a form control beside it. */
 .tx-composer-accessory .model-pick-select {

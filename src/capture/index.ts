@@ -41,6 +41,10 @@ export type { WindowUsage } from './usage';
 export { queuedFor, onQueueChange } from './queue';
 export type { QueuedEntry } from './queue';
 
+// The permission mode each session was last seen in (in memory).
+export { permissionModeFor, loadPermissionMode, onPermissionModeChange } from './permissionMode';
+export type { PermissionMode } from './adapter';
+
 export { onCaptureProgress } from './watcher';
 export type { CaptureProgress } from './watcher';
 
