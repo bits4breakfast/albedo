@@ -302,7 +302,9 @@ export class PhpServer {
    * through a parent (no abstract class, no interface extending it); on a
    * class, its non-abstract subclasses at any depth; on a trait, every class
    * and trait using it, directly, through another trait or through a parent.
-   * It also answers on a method; `symbolNav` asks only on a type.
+   * On an interface under vendor/ (not indexed) it answered null, with and
+   * without the exclusion. It also answers on a method; `symbolNav` asks only
+   * on a type.
    */
   implementation(path: string, text: string, line0: number, character: number): Promise<Location[]> {
     return this.withDocument(path, text, async (uri) =>

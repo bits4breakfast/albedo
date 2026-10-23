@@ -214,8 +214,12 @@ export function referencesOn(line: string, fqcn: string, header: PhpHeader): Arr
 // Matching subtypes on a line
 // ---------------------------------------------------------------------------
 
-/** What Go to Implementation can be asked of: the kinds a type can extend, implement or use. */
-export type SupertypeKind = 'class' | 'interface' | 'trait';
+/**
+ * What Go to Implementation can be asked of: the kinds a type can extend,
+ * implement or use, or `any` for a type this worktree does not declare (a
+ * vendor interface), whose kind is unknown: any `extends` or `implements`.
+ */
+export type SupertypeKind = 'class' | 'interface' | 'trait' | 'any';
 
 const DECLARATION_HEAD = /^(\s*(?:(?:abstract|final|readonly)\s+)*(class|interface|trait|enum)\s+)([A-Za-z_\x80-￿][\w\x80-￿]*)/i;
 
@@ -227,6 +231,15 @@ export function declaredSpan(line: string): [number, number] | null {
   return [from, from + (m[3] as string).length];
 }
 
+/** The clauses a declaration of `declares` may name a `kind` in. */
+function clausesFor(kind: SupertypeKind, declares: string): Array<'extends' | 'implements'> {
+  if (kind === 'trait') return [];
+  if (declares === 'interface') return kind === 'class' ? [] : ['extends'];
+  if (declares === 'enum') return kind === 'class' ? [] : ['implements'];
+  if (declares !== 'class') return [];
+  return kind === 'class' ? ['extends'] : kind === 'interface' ? ['implements'] : ['extends', 'implements'];
+}
+
 /**
  * The span of the type `line` declares when that declaration extends or
  * implements `fqcn` (a `kind`): `class X extends Name`, `class X implements
@@ -234,29 +247,24 @@ export function declaredSpan(line: string): [number, number] | null {
  * Null otherwise -- also for a trait, whose users are `traitUseOn`'s.
  */
 export function subtypeDeclaredOn(line: string, fqcn: string, kind: SupertypeKind, header: PhpHeader): [number, number] | null {
-  if (kind === 'trait') return null;
   const m = DECLARATION_HEAD.exec(line);
   if (!m) return null;
-  const declares = (m[2] as string).toLowerCase();
-  // The clause the target must be named in, for what this line declares.
-  const clause =
-    kind === 'class' ? (declares === 'class' ? 'extends' : null)
-    : declares === 'interface' ? 'extends'
-    : declares === 'class' || declares === 'enum' ? 'implements'
-    : null;
-  if (!clause) return null;
+  const clauses = clausesFor(kind, (m[2] as string).toLowerCase());
+  if (clauses.length === 0) return null;
 
   const start = m[0].length;
   const cut = /\{|\/\/|\/\*|#/.exec(line.slice(start));
   const rest = line.slice(start, cut ? start + cut.index : line.length);
   const extendsAt = /\bextends\b/i.exec(rest);
   const implementsAt = /\bimplements\b/i.exec(rest);
-  const at = clause === 'extends' ? extendsAt : implementsAt;
-  if (!at) return null;
-  const from = start + at.index + at[0].length;
-  const ends = clause === 'extends' && implementsAt && implementsAt.index > at.index ? start + implementsAt.index : start + rest.length;
+  const spans: Array<[number, number]> = [];
+  if (extendsAt && clauses.includes('extends')) {
+    const ends = implementsAt && implementsAt.index > extendsAt.index ? implementsAt.index : rest.length;
+    spans.push([start + extendsAt.index + extendsAt[0].length, start + ends]);
+  }
+  if (implementsAt && clauses.includes('implements')) spans.push([start + implementsAt.index + implementsAt[0].length, start + rest.length]);
 
-  const named = referencesOn(line, fqcn, header).some(([a, b]) => a >= from && b <= ends);
+  const named = referencesOn(line, fqcn, header).some(([a, b]) => spans.some(([from, to]) => a >= from && b <= to));
   return named ? declaredSpan(line) : null;
 }
 
@@ -373,8 +381,9 @@ async function candidateLines(root: string, fqcn: string): Promise<{ hits: Hit[]
  * The types that extend, implement or use `fqcn`, one row per declaration
  * line with the declared name marked: the direct subclasses of a class; the
  * classes, enums and interfaces naming an interface; the classes, enums and
- * traits using a trait. Direct only, and line-based like the rest of this
- * file (see Known limits).
+ * traits using a trait; for `any`, every declaration naming it in `extends`
+ * or `implements`. Direct only, and line-based like the rest of this file
+ * (see Known limits).
  *
  * A trait use sits inside the class body, so its row is the nearest
  * declaration above it, read with one more grep over those files.

@@ -13,6 +13,7 @@ import {
   phpTargetAt,
   referencesOn,
   resolveClassName,
+  type SupertypeKind,
   subtypeDeclaredOn,
   traitUseOn,
 } from './phpRefs';
@@ -121,7 +122,7 @@ describe('declaredSpan', () => {
 
 describe('subtypeDeclaredOn', () => {
   const header = parsePhpHeader(['namespace App\\Other;', 'use App\\Model\\Shape;', 'use App\\Model as M;']);
-  const named = (line: string, fqcn: string, kind: 'class' | 'interface') => {
+  const named = (line: string, fqcn: string, kind: 'class' | 'interface' | 'any') => {
     const span = subtypeDeclaredOn(line, fqcn, kind, header);
     return span ? line.slice(span[0], span[1]) : null;
   };
@@ -151,6 +152,15 @@ describe('subtypeDeclaredOn', () => {
     // The declaration of the interface itself is not one of its implementers.
     const own = parsePhpHeader(['namespace App\\Model;']);
     expect(subtypeDeclaredOn('interface Shape extends Shape', 'App\\Model\\Shape', 'interface', own)).toBeNull();
+  });
+
+  it('for a type of unknown kind, takes either clause', () => {
+    const fq = 'Vendor\\Kit\\Widget';
+    expect(named('class Panel extends \\Vendor\\Kit\\Widget', fq, 'any')).toBe('Panel');
+    expect(named('final class Panel implements \\Countable, \\Vendor\\Kit\\Widget', fq, 'any')).toBe('Panel');
+    expect(named('interface Pane extends \\Vendor\\Kit\\Widget', fq, 'any')).toBe('Pane');
+    expect(named('enum Size implements \\Vendor\\Kit\\Widget', fq, 'any')).toBe('Size');
+    expect(named('class Panel { private \\Vendor\\Kit\\Widget $w; }', fq, 'any')).toBeNull();
   });
 
   it('cannot see a list that goes on to the next line', () => {
@@ -251,6 +261,9 @@ describe('findPhpSubtypes', () => {
     'src/Other/Tiny.php': '<?php\nnamespace App\\Other;\n\nuse App\\Model\\Square;\n\nclass Tiny extends Square {}\n',
     'src/Other/Oval.php': '<?php\nnamespace App\\Other;\n\nuse App\\Model\\Shape;\n\nclass Oval implements\n    Shape\n{\n}\n',
     'src/Other/Shape.php': '<?php\nnamespace App\\Other;\n\ninterface Shape {}\nclass Decoy implements Shape {}\n',
+    // Vendor\Kit\Widget is declared nowhere here, as a vendor type is not.
+    'src/Other/Panel.php': '<?php\nnamespace App\\Other;\n\nuse Vendor\\Kit\\Widget;\n\nclass Panel extends Widget {}\n',
+    'src/Other/Sheet.php': '<?php\nnamespace App\\Other;\n\nfinal class Sheet implements \\Vendor\\Kit\\Widget {}\n',
   };
 
   beforeAll(() => {
@@ -277,7 +290,7 @@ describe('findPhpSubtypes', () => {
   });
 
   /** Each row as `path:line Name`, the marked name being the declared one. */
-  const rows = async (fqcn: string, kind: 'class' | 'interface' | 'trait') => {
+  const rows = async (fqcn: string, kind: SupertypeKind) => {
     const r = await findPhpSubtypes(root, fqcn, kind);
     return r.groups.flatMap((g) => g.matches.map((m) => `${g.path}:${m.line} ${m.text.slice(...m.ranges[0]!)}`));
   };
@@ -303,6 +316,10 @@ describe('findPhpSubtypes', () => {
       'src/Model/Tagged.php:4 Tagged',
       'src/Other/Circle.php:7 Circle',
     ]);
+  });
+
+  it('for a type of unknown kind, lists both what extends and what implements it', async () => {
+    expect(await rows('Vendor\\Kit\\Widget', 'any')).toEqual(['src/Other/Panel.php:6 Panel', 'src/Other/Sheet.php:4 Sheet']);
   });
 
   it('finds nothing for a type nobody extends', async () => {

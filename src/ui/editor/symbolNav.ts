@@ -16,9 +16,9 @@
  *    mistaken for a resolved one.
  *
  * Go to Implementation has the first two only: it is a question about a PHP
- * class, interface or trait, which a text search cannot answer. The two
- * engines answer it differently (see `implementations`), and each says how in
- * the results.
+ * class, interface or trait, which a text search cannot answer. It runs both
+ * and lists their union (see `implementations`), saying in the results what
+ * that can and cannot hold.
  */
 
 import { readTextFile } from '@tauri-apps/plugin-fs';
@@ -173,24 +173,30 @@ function implementationQuestion(kind: SupertypeKind, name: string): { title: str
       return { title: `Subclasses of ${name}`, empty: `No subclasses of ${name}` };
     case 'trait':
       return { title: `Classes Using ${name}`, empty: `No classes use ${name}` };
+    case 'any':
+      return { title: `Implementations of ${name}`, empty: `No implementations of ${name}` };
   }
 }
 
 /**
- * What each engine's list can hold, said under its title. Not the same
- * question answered twice: PHPantom's `implementation` is transitive and
- * leaves abstract types out (measured, see `PhpServer.implementation`); git
- * grep reads declarations line by line and finds direct ones only.
+ * What the list can hold, said under its title after the type's full name.
+ * With PHPantom the list is the union of both engines: PHPantom's answer is
+ * transitive and multi-line-proof but leaves abstract types out (measured,
+ * see `PhpServer.implementation`); grep adds the direct ones it skipped. So
+ * an abstract type or an extending interface is there when it names the
+ * target itself, and missed only further down.
  */
-function implementationNote(engine: 'phpantom' | 'grep', kind: SupertypeKind): string {
-  if (engine === 'phpantom') {
+function implementationNote(engines: 'both' | 'grep', kind: SupertypeKind): string {
+  if (engines === 'both') {
     switch (kind) {
       case 'interface':
-        return 'Non-abstract classes, direct and inherited · abstract classes and extending interfaces are not listed';
+        return 'Classes implementing it at any depth, and the abstract classes and interfaces that name it directly';
       case 'class':
-        return 'Non-abstract subclasses at any depth · abstract ones are not listed';
+        return 'Subclasses at any depth; abstract ones when they extend it directly';
       case 'trait':
         return 'Classes and traits using it, directly or through a parent class or trait';
+      case 'any':
+        return 'Not declared in this worktree · what PHPantom resolves, and declarations naming it in extends or implements';
     }
   }
   switch (kind) {
@@ -200,39 +206,54 @@ function implementationNote(engine: 'phpantom' | 'grep', kind: SupertypeKind): s
       return 'Direct subclasses, by text search · an extends split across lines is missed';
     case 'trait':
       return 'Direct users, by text search · a use split across lines is missed';
+    case 'any':
+      return 'Not declared in this worktree · direct extends and implements, by text search · a list split across lines is missed';
   }
 }
 
+/** Two result lists as one, each line once, in path then line order. */
+function mergeResults(a: FindResult, b: FindResult): FindResult {
+  const groups = new Map<string, FindMatch[]>();
+  for (const g of [...a.groups, ...b.groups]) {
+    const list = groups.get(g.path) ?? [];
+    for (const m of g.matches) if (!list.some((x) => x.line === m.line)) list.push(m);
+    groups.set(g.path, list);
+  }
+  const out = [...groups]
+    .sort(([p], [q]) => p.localeCompare(q))
+    .map(([path, matches]) => ({ path, matches: matches.sort((x, y) => x.line - y.line) }));
+  return { groups: out, count: out.reduce((n, g) => n + g.matches.length, 0), capped: a.capped || b.capped };
+}
+
 /**
- * ⌥⌘B: the types under the PHP type at the cursor. PHPantom first, git grep
- * when it has no answer -- which includes an empty one, since PHPantom leaves
- * abstract types out and grep may still find some.
+ * ⌥⌘B: the types under the PHP type at the cursor. One answer whichever
+ * engines run: git grep always, and PHPantom's answer added to it when it has
+ * one. A type this worktree does not declare (a vendor interface: vendor/ is
+ * not indexed) is still asked, as either kind.
  */
 async function implementations(ctx: NavContext, line: string, col: number, number: number): Promise<NavOutcome> {
   if (!isPhpPath(ctx.path)) return { kind: 'none', message: 'Go to Implementation works on PHP classes, interfaces and traits' };
   const target = phpTargetAt(line, col, parsePhpHeader(ctx.text.split('\n')));
   if (!target) return { kind: 'none', message: 'Put the cursor on a class, interface or trait name' };
+  const short = lastSegment(target.fqcn);
   const declared = (await phpTypesNamed(ctx.root, target.fqcn)).exact[0];
-  if (!declared) return { kind: 'none', message: `${target.fqcn} is not declared in this worktree` };
-  if (declared.kind === 'enum') return { kind: 'none', message: `${target.fqcn} is an enum: nothing can extend it` };
-  const kind = declared.kind as SupertypeKind;
-  const { title, empty } = implementationQuestion(kind, target.fqcn);
+  if (declared?.kind === 'enum') return { kind: 'none', message: `${short} is an enum: nothing can extend it` };
+  const kind: SupertypeKind = declared ? (declared.kind as SupertypeKind) : 'any';
+  const { title, empty } = implementationQuestion(kind, short);
 
-  let result: FindResult | null = null;
-  let note = implementationNote('phpantom', kind);
+  let found: FindResult | null = null;
   try {
     const server = await phpantomFor(ctx.root);
     if (server && (await server.whenReady(READY_WAIT_MS))) {
-      const found = await server.implementation(ctx.path, ctx.text, number - 1, col);
-      if (found.length > 0) result = declarationsAsResult(await locationsAsResult(ctx.root, found, lastSegment(target.fqcn)));
+      const locations = await server.implementation(ctx.path, ctx.text, number - 1, col);
+      if (locations.length > 0) found = declarationsAsResult(await locationsAsResult(ctx.root, locations, short));
     }
   } catch (err) {
-    console.warn('[phpantom] falling back to git grep:', err);
+    console.warn('[phpantom] answering with git grep only:', err);
   }
-  if (!result) {
-    result = await findPhpSubtypes(ctx.root, target.fqcn, kind);
-    note = implementationNote('grep', kind);
-  }
+  const grepped = await findPhpSubtypes(ctx.root, target.fqcn, kind);
+  const result = found ? mergeResults(found, grepped) : grepped;
+  const note = `${target.fqcn} · ${implementationNote(found ? 'both' : 'grep', kind)}`;
 
   if (result.count === 0) return { kind: 'none', message: empty, note };
   const only = result.count === 1 ? result.groups[0]!.matches[0]! : null;
