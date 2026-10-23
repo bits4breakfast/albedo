@@ -26,6 +26,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import { Composer } from './TranscriptPane';
+import { __resetDrafts, getDraft, saveDraft } from './drafts';
 
 // Replaces the real module, so xterm and the Tauri pty bridge never load.
 // The signatures are checked against the real exports by tsc: a mock that
@@ -59,6 +60,7 @@ const term = (await import('../Terminal')) as unknown as {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  __resetDrafts();
 });
 
 const box = () => screen.getByRole('textbox') as HTMLTextAreaElement;
@@ -103,7 +105,7 @@ describe('(a) a task switch mid-await does not wedge the composer', () => {
     expect(vi.mocked(submitPty).mock.calls[1]).toEqual([2, 'second message']);
   });
 
-  it('clears the draft on a task switch, and only then', async () => {
+  it('a task switch takes a pending send out of the box, and does not keep it as a draft', async () => {
     deadPty();
     const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
 
@@ -115,6 +117,10 @@ describe('(a) a task switch mid-await does not wedge the composer', () => {
 
     rerender(<Composer taskId={2} onSent={vi.fn()} />);
     expect(box().value).toBe('');
+    // It was on its way, frozen: restoring it could send it twice.
+    rerender(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(box().value).toBe('');
+    expect(getDraft(1)).toBeNull();
   });
 });
 
@@ -598,5 +604,101 @@ describe('(z) text handed to the composer through the bridge', () => {
 
     pressEnter();
     await waitFor(() => expect(onSent).toHaveBeenCalledWith('my draft\n\ncomments\nsecond line'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (d) one draft per task
+// ---------------------------------------------------------------------------
+
+describe('(d) each task keeps its own draft', () => {
+  const clip = (text: string) => ({
+    items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }],
+    getData: (t: string) => (t === 'text/plain' ? text : ''),
+  });
+  const log = 'Error: boom\n  at a (x.ts:1)\n  at b (y.ts:2)\n  at c (z.ts:3)';
+
+  it('A, B, then A again: each box holds its own text, caret at the end', async () => {
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('for A');
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    expect(box().value).toBe('');
+    type('for B');
+
+    rerender(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(box().value).toBe('for A');
+    await waitFor(() => expect(box().selectionStart).toBe('for A'.length));
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    expect(box().value).toBe('for B');
+  });
+
+  it('brings the paste placeholders back with the pastes they stand for', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    expect(box().value).toBe('[Pasted text #1 +4 lines]');
+
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    rerender(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(box().value).toBe('[Pasted text #1 +4 lines]');
+
+    // A new paste does not reuse the restored placeholder's number.
+    box().setSelectionRange(box().value.length, box().value.length);
+    fireEvent.paste(box(), { clipboardData: clip('second\nlong\npaste') });
+    expect(box().value).toBe('[Pasted text #1 +4 lines][Pasted text #2 +3 lines]');
+
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `${log}second\nlong\npaste`));
+  });
+
+  it('a sent draft is gone', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('ship it');
+    pressEnter();
+    await waitFor(() => expect(box().value).toBe(''));
+    expect(getDraft(1)).toBeNull();
+
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    rerender(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(box().value).toBe('');
+  });
+
+  it('a held send is not a draft, and cancelling the hold keeps it again', async () => {
+    const { rerender } = render(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+    type('after the prompt');
+    expect(getDraft(5)?.text).toBe('after the prompt');
+    pressEnter();
+    await waitFor(() => expect(box().readOnly).toBe(true));
+    expect(getDraft(5)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(getDraft(5)?.text).toBe('after the prompt'));
+    rerender(<Composer taskId={5} status="blocked" onSent={vi.fn()} />);
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('opens on the draft a previous run left', () => {
+    saveDraft(8, 'from before the restart', new Map());
+    render(<Composer taskId={8} onSent={vi.fn()} />);
+    expect(box().value).toBe('from before the restart');
+  });
+
+  it('a send that lands after a switch leaves the other task\'s draft alone', async () => {
+    let land: (ok: boolean) => void = () => {};
+    vi.mocked(submitPty).mockImplementation(() => new Promise<boolean>((r) => (land = r)));
+    saveDraft(2, 'B is mine', new Map());
+    const onSent = vi.fn();
+    const { rerender } = render(<Composer taskId={1} onSent={onSent} />);
+    type('for A');
+    pressEnter();
+    rerender(<Composer taskId={2} onSent={onSent} />);
+    expect(box().value).toBe('B is mine');
+
+    await act(async () => land(true));
+    expect(box().value).toBe('B is mine');
+    expect(getDraft(2)?.text).toBe('B is mine');
+    expect(getDraft(1)).toBeNull();
   });
 });

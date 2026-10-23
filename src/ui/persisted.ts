@@ -3,7 +3,7 @@
  * write them.
  *
  * Only per-machine view preferences live here -- widths, which tab, which
- * notice was waved away. Anything that has to survive a reinstall or be
+ * notice was waved away -- and the composer's unsent drafts. Anything that has to survive a reinstall or be
  * reprocessed belongs in SQLite. Every key is listed below, so this file is
  * the whole answer to "what does the app remember outside the database".
  *
@@ -44,6 +44,8 @@ export const KEYS = {
   /** The Files pane: the change set, or the whole worktree as a tree. */
   touchedView: 'albedo.touched.view',
   composerPx: 'albedo.composerPx',
+  /** Unsent composer drafts, one per task (transcript/drafts.ts owns the shape). */
+  composerDrafts: 'albedo.composerDrafts',
   /** Absent means on. */
   notifications: 'albedo.notifications',
   commentsIntro: 'albedo.comments.intro',

@@ -8,6 +8,7 @@ import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { noteQuestion, noteStatusChange } from './attention';
+import { dropDraft, keepDraftsFor } from './transcript/drafts';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
 /** Shape of the `onCaptureUpdate` payload. */
@@ -302,6 +303,8 @@ export function useTasks(): UseTasksResult {
         return { ...row, ...patch };
       });
       commit((prev) => reconcileTasks(prev, merged));
+      // The read holds every live task: an archived or deleted one's draft goes.
+      keepDraftsFor(merged.filter((t) => t.status !== 'archived').map((t) => t.id));
       setLoadError(null);
     } catch (err) {
       if (!aliveRef.current) return;
@@ -338,6 +341,7 @@ export function useTasks(): UseTasksResult {
   const archive = useCallback(
     async (id: number) => {
       applyTask(id, { status: 'archived' });
+      dropDraft(id);
       // On failure the overlay is dropped, not the status reverted: archiveTask
       // flips the row before purging, so a failure may or may not have
       // archived, and a reload shows whichever is true.

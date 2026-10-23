@@ -10,6 +10,7 @@
 
 import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
 import { onComposerInsert, onAttachRequest } from './composerBridge';
+import { dropDraft, getDraft, saveDraft } from './drafts';
 import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
@@ -680,6 +681,11 @@ export function Composer({
   const pendingRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const timerRef = useRef(0);
+  /**
+   * The task the box's text belongs to. On the render that switches task,
+   * `text` is still the old task's, so it must not be saved under the new id.
+   */
+  const draftOwnerRef = useRef<number | null>(null);
 
   /**
    * A height the user dragged the composer to. While set it is the height --
@@ -736,7 +742,9 @@ export function Composer({
   /** Waiting to hear that text handed in from elsewhere was sent (see composerBridge). */
   const insertWatchersRef = useRef<Array<(sent: string) => boolean>>([]);
   const succeeded = useCallback(
-    (body: string) => {
+    (sentFor: number, body: string) => {
+      // Sent after the box moved to another task: that task's draft is in it now.
+      if (draftOwnerRef.current !== sentFor) return;
       setText('');
       pastesRef.current = new Map();
       pasteSeqRef.current = 0;
@@ -768,11 +776,33 @@ export function Composer({
     [taskId, grow],
   );
 
-  // Only a task switch discards a draft -- never a failed send.
+  /*
+     Keep the draft (drafts.ts). Declared before the switch below, so on a
+     switch it still sees the old owner and saves nothing. A send that is
+     under way -- busy, waiting for a session, or held at a prompt -- is not
+     a draft: it leaves the store, so a restore can never send it twice. A
+     send that fails unfreezes the box and the draft is kept again.
+  */
   useEffect(() => {
-    setText('');
-    pastesRef.current = new Map();
-    pasteSeqRef.current = 0;
+    if (draftOwnerRef.current !== taskId) return;
+    if (busy || awaiting || held) dropDraft(taskId);
+    else saveDraft(taskId, text, pastesRef.current);
+  }, [taskId, text, busy, awaiting, held]);
+
+  // A task switch puts that task's own draft in the box -- never a failed send.
+  useEffect(() => {
+    const draft = getDraft(taskId);
+    draftOwnerRef.current = taskId;
+    setText(draft?.text ?? '');
+    pastesRef.current = new Map(draft?.pastes);
+    pasteSeqRef.current = draft ? Math.max(0, ...draft.pastes.map(([id]) => id)) : 0;
+    if (draft) {
+      requestAnimationFrame(() => {
+        grow();
+        const el = ref.current;
+        el?.setSelectionRange(el.value.length, el.value.length);
+      });
+    }
     setNotice(null);
     setAwaiting(false);
     setHeld(false);
@@ -781,7 +811,7 @@ export function Composer({
     inFlightRef.current = false; // or a switch mid-await wedges the composer shut
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
-  }, [taskId]);
+  }, [taskId, grow]);
 
   /** Send whatever is waiting, once a session exists. */
   const flushPending = useCallback(async () => {
@@ -791,7 +821,7 @@ export function Composer({
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
     try {
-      if (await submitPty(taskId, body)) succeeded(body);
+      if (await submitPty(taskId, body)) succeeded(taskId, body);
       else setNotice('Could not deliver your message. It is still here — press Send to retry.');
     } catch {
       setNotice('Could not send your message. It is still here — press Send to retry.');
@@ -1019,7 +1049,7 @@ export function Composer({
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
       if (await submitPty(taskId, body)) {
-        succeeded(body);
+        succeeded(taskId, body);
         inFlightRef.current = false;
         return;
       }
