@@ -1,5 +1,6 @@
 /**
- * Go to Declaration (⌘B, ⌘-click) and Find Usages (⌥F7) from the editor.
+ * Go to Declaration (⌘B, ⌘-click), Find Usages (⌥F7) and, for PHP types, Go
+ * to Implementation (⌥⌘B) from the editor.
  *
  * Three tiers, best first, each falling through to the next when it has no
  * answer:
@@ -13,6 +14,11 @@
  *    could place -- by name from the code index, and usages by whole-word
  *    text search. Its title says so, so a list of text matches is never
  *    mistaken for a resolved one.
+ *
+ * Go to Implementation has the first two only: it is a question about a PHP
+ * class, interface or trait, which a text search cannot answer. The two
+ * engines answer it differently (see `implementations`), and each says how in
+ * the results.
  */
 
 import { readTextFile } from '@tauri-apps/plugin-fs';
@@ -20,6 +26,8 @@ import { loadCodeIndex, TYPE_KINDS, type CodeSymbol } from '../../git/codeIndex'
 import type { FindMatch, FindResult } from '../../git/findInFiles';
 import { isPhpPath, phpantomFor, READY_WAIT_MS, type Location } from '../../lsp/phpantom';
 import {
+  declaredSpan,
+  findPhpSubtypes,
   findPhpUsages,
   findWord,
   lastSegment,
@@ -27,14 +35,16 @@ import {
   namespacesOf,
   parsePhpHeader,
   phpTargetAt,
+  type SupertypeKind,
 } from '../../git/phpRefs';
 
-export type NavAction = 'declaration' | 'usages';
+export type NavAction = 'declaration' | 'usages' | 'implementations';
 
+/** `note`: how the answer was found, when that limits what it can contain. */
 export type NavOutcome =
   | { kind: 'open'; path: string; line: number }
-  | { kind: 'list'; title: string; result: FindResult }
-  | { kind: 'none'; message: string };
+  | { kind: 'list'; title: string; result: FindResult; note?: string }
+  | { kind: 'none'; message: string; note?: string };
 
 export interface NavContext {
   /** The worktree (or main checkout) being browsed. */
@@ -140,9 +150,112 @@ async function viaPhpantom(ctx: NavContext, action: NavAction, line0: number, co
   }
 }
 
-/** Where ⌘B or ⌥F7 at the cursor leads. */
+/** The PHP types this worktree declares with `fqcn`'s short name, and those that are `fqcn`. */
+async function phpTypesNamed(root: string, fqcn: string): Promise<{ named: CodeSymbol[]; exact: CodeSymbol[] }> {
+  const index = await loadCodeIndex(root);
+  const short = lastSegment(fqcn).toLowerCase();
+  const named = index.symbols.filter((s) => TYPE_KINDS.has(s.kind) && s.name.toLowerCase() === short && /\.php$/i.test(s.path));
+  if (named.length === 0) return { named, exact: [] };
+  const ns = await namespacesOf(root, [...new Set(named.map((s) => s.path))]);
+  const fq = (s: CodeSymbol) => {
+    const space = ns.get(s.path) ?? '';
+    return (space === '' ? s.name : `${space}\\${s.name}`).toLowerCase();
+  };
+  return { named, exact: named.filter((s) => fq(s) === fqcn.toLowerCase()) };
+}
+
+/** Go to Implementation's question, per kind of type: the title of the list, and what none reads as. */
+function implementationQuestion(kind: SupertypeKind, name: string): { title: string; empty: string } {
+  switch (kind) {
+    case 'interface':
+      return { title: `Classes Implementing ${name}`, empty: `No classes implement ${name}` };
+    case 'class':
+      return { title: `Subclasses of ${name}`, empty: `No subclasses of ${name}` };
+    case 'trait':
+      return { title: `Classes Using ${name}`, empty: `No classes use ${name}` };
+  }
+}
+
+/**
+ * What each engine's list can hold, said under its title. Not the same
+ * question answered twice: PHPantom's `implementation` is transitive and
+ * leaves abstract types out (measured, see `PhpServer.implementation`); git
+ * grep reads declarations line by line and finds direct ones only.
+ */
+function implementationNote(engine: 'phpantom' | 'grep', kind: SupertypeKind): string {
+  if (engine === 'phpantom') {
+    switch (kind) {
+      case 'interface':
+        return 'Non-abstract classes, direct and inherited · abstract classes and extending interfaces are not listed';
+      case 'class':
+        return 'Non-abstract subclasses at any depth · abstract ones are not listed';
+      case 'trait':
+        return 'Classes and traits using it, directly or through a parent class or trait';
+    }
+  }
+  switch (kind) {
+    case 'interface':
+      return 'Direct implementers and extending interfaces, by text search · an implements list split across lines is missed';
+    case 'class':
+      return 'Direct subclasses, by text search · an extends split across lines is missed';
+    case 'trait':
+      return 'Direct users, by text search · a use split across lines is missed';
+  }
+}
+
+/**
+ * ⌥⌘B: the types under the PHP type at the cursor. PHPantom first, git grep
+ * when it has no answer -- which includes an empty one, since PHPantom leaves
+ * abstract types out and grep may still find some.
+ */
+async function implementations(ctx: NavContext, line: string, col: number, number: number): Promise<NavOutcome> {
+  if (!isPhpPath(ctx.path)) return { kind: 'none', message: 'Go to Implementation works on PHP classes, interfaces and traits' };
+  const target = phpTargetAt(line, col, parsePhpHeader(ctx.text.split('\n')));
+  if (!target) return { kind: 'none', message: 'Put the cursor on a class, interface or trait name' };
+  const declared = (await phpTypesNamed(ctx.root, target.fqcn)).exact[0];
+  if (!declared) return { kind: 'none', message: `${target.fqcn} is not declared in this worktree` };
+  if (declared.kind === 'enum') return { kind: 'none', message: `${target.fqcn} is an enum: nothing can extend it` };
+  const kind = declared.kind as SupertypeKind;
+  const { title, empty } = implementationQuestion(kind, target.fqcn);
+
+  let result: FindResult | null = null;
+  let note = implementationNote('phpantom', kind);
+  try {
+    const server = await phpantomFor(ctx.root);
+    if (server && (await server.whenReady(READY_WAIT_MS))) {
+      const found = await server.implementation(ctx.path, ctx.text, number - 1, col);
+      if (found.length > 0) result = declarationsAsResult(await locationsAsResult(ctx.root, found, lastSegment(target.fqcn)));
+    }
+  } catch (err) {
+    console.warn('[phpantom] falling back to git grep:', err);
+  }
+  if (!result) {
+    result = await findPhpSubtypes(ctx.root, target.fqcn, kind);
+    note = implementationNote('grep', kind);
+  }
+
+  if (result.count === 0) return { kind: 'none', message: empty, note };
+  const only = result.count === 1 ? result.groups[0]!.matches[0]! : null;
+  if (only) return { kind: 'open', path: only.path, line: only.line };
+  return { kind: 'list', title, result, note };
+}
+
+/** Rows that are declarations, re-marked on the name each one declares. */
+function declarationsAsResult(result: FindResult): FindResult {
+  const groups = result.groups.map((g) => ({
+    ...g,
+    matches: g.matches.map((m) => {
+      const span = declaredSpan(m.text);
+      return span ? { ...m, ranges: [span] } : m;
+    }),
+  }));
+  return { ...result, groups };
+}
+
+/** Where ⌘B, ⌥F7 or ⌥⌘B at the cursor leads. */
 export async function navigate(ctx: NavContext, action: NavAction): Promise<NavOutcome> {
   const { line, col, number } = lineAround(ctx.text, ctx.offset);
+  if (action === 'implementations') return implementations(ctx, line, col, number);
 
   if (isPhpPath(ctx.path)) {
     const at = nameAt(line, col);
@@ -157,18 +270,8 @@ export async function navigate(ctx: NavContext, action: NavAction): Promise<NavO
       // answers the useful question instead, and so does this.
       if (action === 'usages' || target.kind === 'declaration') return phpUsages(ctx.root, target.fqcn);
 
-      const index = await loadCodeIndex(ctx.root);
-      const short = lastSegment(target.fqcn).toLowerCase();
-      const named = index.symbols.filter(
-        (s) => TYPE_KINDS.has(s.kind) && s.name.toLowerCase() === short && /\.php$/i.test(s.path),
-      );
+      const { named, exact } = await phpTypesNamed(ctx.root, target.fqcn);
       if (named.length > 0) {
-        const ns = await namespacesOf(ctx.root, [...new Set(named.map((s) => s.path))]);
-        const fq = (s: CodeSymbol) => {
-          const space = ns.get(s.path) ?? '';
-          return (space === '' ? s.name : `${space}\\${s.name}`).toLowerCase();
-        };
-        const exact = named.filter((s) => fq(s) === target.fqcn.toLowerCase());
         if (exact.length > 0) return pick(exact, `Declarations of ${target.fqcn}`, '');
         // Resolved to a class nobody declares (a vendor class, a typo, a
         // missing import): offer the same-named ones rather than nothing.

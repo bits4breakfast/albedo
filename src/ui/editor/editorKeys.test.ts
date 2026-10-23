@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editorKeyOf } from './editorKeys';
+import { editorKeyOf, isImplementationKey } from './editorKeys';
 
 const ev = (init: Partial<KeyboardEvent> & { code: string }) =>
   ({ altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, ...init }) as KeyboardEvent;
@@ -39,5 +39,22 @@ describe('editorKeyOf', () => {
 
   it('leaves ⌥⌘M, the comment key, to CodeMirror', () => {
     expect(editorKeyOf(ev({ key: 'µ', code: 'KeyM', metaKey: true, altKey: true }))).toBeNull();
+  });
+});
+
+describe('isImplementationKey', () => {
+  it('is ⌥⌘B by the physical key: Option makes `key` "∫"', () => {
+    expect(isImplementationKey(ev({ key: '∫', code: 'KeyB', metaKey: true, altKey: true }))).toBe(true);
+    // A layout that types something else on that key still matches; B elsewhere does not.
+    expect(isImplementationKey(ev({ key: 'x', code: 'KeyB', metaKey: true, altKey: true }))).toBe(true);
+    expect(isImplementationKey(ev({ key: '∫', code: 'KeyX', metaKey: true, altKey: true }))).toBe(false);
+  });
+
+  it('leaves ⌘B, Go to Declaration, and every other modifier set alone', () => {
+    expect(isImplementationKey(ev({ key: 'b', code: 'KeyB', metaKey: true }))).toBe(false);
+    expect(isImplementationKey(ev({ key: 'ı', code: 'KeyB', metaKey: true, altKey: true, shiftKey: true }))).toBe(false);
+    expect(isImplementationKey(ev({ key: 'b', code: 'KeyB', ctrlKey: true, altKey: true }))).toBe(false);
+    expect(isImplementationKey(ev({ key: 'b', code: 'KeyB', metaKey: true, ctrlKey: true, altKey: true }))).toBe(false);
+    expect(editorKeyOf(ev({ key: '∫', code: 'KeyB', metaKey: true, altKey: true }))).toBeNull();
   });
 });

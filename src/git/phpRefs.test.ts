@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  declaredSpan,
+  findPhpSubtypes,
   findPhpUsages,
   findWord,
   parsePhpHeader,
@@ -11,6 +13,8 @@ import {
   phpTargetAt,
   referencesOn,
   resolveClassName,
+  subtypeDeclaredOn,
+  traitUseOn,
 } from './phpRefs';
 import { setGitRunner, type GitRunner } from './worktree';
 
@@ -105,6 +109,72 @@ describe('referencesOn', () => {
   });
 });
 
+describe('declaredSpan', () => {
+  it('marks the declared name, after any modifiers', () => {
+    const line = 'final readonly class Square extends Polygon';
+    const [a, b] = declaredSpan(line)!;
+    expect(line.slice(a, b)).toBe('Square');
+    expect(declaredSpan('    use Loggable;')).toBeNull();
+    expect(declaredSpan('$x = new class extends Polygon {};')).toBeNull();
+  });
+});
+
+describe('subtypeDeclaredOn', () => {
+  const header = parsePhpHeader(['namespace App\\Other;', 'use App\\Model\\Shape;', 'use App\\Model as M;']);
+  const named = (line: string, fqcn: string, kind: 'class' | 'interface') => {
+    const span = subtypeDeclaredOn(line, fqcn, kind, header);
+    return span ? line.slice(span[0], span[1]) : null;
+  };
+
+  it('finds a class among an implements list, resolved through the imports', () => {
+    expect(named('final class Circle implements \\Countable, Shape', 'App\\Model\\Shape', 'interface')).toBe('Circle');
+    expect(named('class Oval implements M\\Shape {', 'App\\Model\\Shape', 'interface')).toBe('Oval');
+    expect(named('enum Suit: string implements Shape', 'App\\Model\\Shape', 'interface')).toBe('Suit');
+    // An interface extends an interface.
+    expect(named('interface SolidShape extends \\Countable, Shape', 'App\\Model\\Shape', 'interface')).toBe('SolidShape');
+  });
+
+  it('finds a subclass by its extends, and only there', () => {
+    expect(named('class Tiny extends M\\Square implements Shape', 'App\\Model\\Square', 'class')).toBe('Tiny');
+    // Square named in the implements list is not an extends.
+    expect(named('class Tiny extends Base implements M\\Square', 'App\\Model\\Square', 'class')).toBeNull();
+    // A class does not "implement" a class, nor an interface "extend" one.
+    expect(named('interface Odd extends M\\Square', 'App\\Model\\Square', 'class')).toBeNull();
+    expect(named('class Odd extends Shape', 'App\\Model\\Shape', 'interface')).toBeNull();
+  });
+
+  it('keeps names that resolve elsewhere, in comments or in the body out', () => {
+    // Fully qualified to another namespace's Shape.
+    expect(named('class Wrong implements \\App\\Other\\Shape', 'App\\Model\\Shape', 'interface')).toBeNull();
+    expect(named('class Plain // implements Shape', 'App\\Model\\Shape', 'interface')).toBeNull();
+    expect(named('class Plain { public Shape $s; }', 'App\\Model\\Shape', 'interface')).toBeNull();
+    // The declaration of the interface itself is not one of its implementers.
+    const own = parsePhpHeader(['namespace App\\Model;']);
+    expect(subtypeDeclaredOn('interface Shape extends Shape', 'App\\Model\\Shape', 'interface', own)).toBeNull();
+  });
+
+  it('cannot see a list that goes on to the next line', () => {
+    // The documented limit: `implements` alone on the line names nothing yet.
+    expect(named('class Oval implements', 'App\\Model\\Shape', 'interface')).toBeNull();
+  });
+});
+
+describe('traitUseOn', () => {
+  const header = parsePhpHeader(['namespace App\\Other;', 'use App\\Model\\Loggable;', 'use App\\Model as M;']);
+
+  it('reads an indented use as a trait use, with a list, an alias or an adaptation block', () => {
+    expect(traitUseOn('    use Loggable;', 'App\\Model\\Loggable', header)).toBe(true);
+    expect(traitUseOn('    use M\\Tagged, Loggable {', 'App\\Model\\Loggable', header)).toBe(true);
+    expect(traitUseOn('\tuse M\\Loggable;', 'App\\Model\\Loggable', header)).toBe(true);
+  });
+
+  it('is not an import, and not a name inside the adaptation block', () => {
+    expect(traitUseOn('use App\\Model\\Loggable;', 'App\\Model\\Loggable', header)).toBe(false);
+    expect(traitUseOn('    use Tagged { Loggable::log insteadof Tagged; }', 'App\\Model\\Loggable', header)).toBe(false);
+    expect(traitUseOn('    use function App\\Model\\Loggable;', 'App\\Model\\Loggable', header)).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Against a real repository
 // ---------------------------------------------------------------------------
@@ -162,5 +232,80 @@ describe('findPhpUsages', () => {
   it('falls back to whole-word text matches', async () => {
     const r = await findWord(root, 'Imports');
     expect(r.groups.map((g) => g.path)).toEqual(['src/Service/Imports.php']);
+  });
+});
+
+describe('findPhpSubtypes', () => {
+  let root = '';
+  let restore: GitRunner | null = null;
+
+  const files: Record<string, string> = {
+    'src/Model/Shape.php': '<?php\nnamespace App\\Model;\n\ninterface Shape {}\n',
+    'src/Model/SolidShape.php': '<?php\nnamespace App\\Model;\n\ninterface SolidShape extends Shape {}\n',
+    'src/Model/Polygon.php': '<?php\nnamespace App\\Model;\n\nabstract class Polygon implements Shape\n{\n    use Loggable;\n}\n',
+    'src/Model/Square.php': '<?php\nnamespace App\\Model;\n\nclass Square extends Polygon {}\n',
+    'src/Model/Loggable.php': '<?php\nnamespace App\\Model;\n\ntrait Loggable {}\n',
+    'src/Model/Tagged.php': '<?php\nnamespace App\\Model;\n\ntrait Tagged\n{\n    use Loggable;\n}\n',
+    'src/Other/Circle.php':
+      '<?php\nnamespace App\\Other;\n\nuse App\\Model\\Shape as Form;\nuse App\\Model as M;\n\nfinal class Circle implements \\Countable, Form\n{\n    use M\\Loggable, M\\Tagged;\n    use M\\Loggable;\n}\n',
+    'src/Other/Tiny.php': '<?php\nnamespace App\\Other;\n\nuse App\\Model\\Square;\n\nclass Tiny extends Square {}\n',
+    'src/Other/Oval.php': '<?php\nnamespace App\\Other;\n\nuse App\\Model\\Shape;\n\nclass Oval implements\n    Shape\n{\n}\n',
+    'src/Other/Shape.php': '<?php\nnamespace App\\Other;\n\ninterface Shape {}\nclass Decoy implements Shape {}\n',
+  };
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'phpsubtypes-'));
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), text);
+    }
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    restore = setGitRunner(async (args, cwd) => {
+      try {
+        const stdout = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        return { code: 0, stdout, stderr: '' };
+      } catch (err) {
+        const e = err as { status?: number; stdout?: string; stderr?: string };
+        return { code: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
+      }
+    });
+  });
+
+  afterAll(() => {
+    if (restore) setGitRunner(restore);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Each row as `path:line Name`, the marked name being the declared one. */
+  const rows = async (fqcn: string, kind: 'class' | 'interface' | 'trait') => {
+    const r = await findPhpSubtypes(root, fqcn, kind);
+    return r.groups.flatMap((g) => g.matches.map((m) => `${g.path}:${m.line} ${m.text.slice(...m.ranges[0]!)}`));
+  };
+
+  it('lists the direct implementers of an interface and the interfaces extending it', async () => {
+    expect(await rows('App\\Model\\Shape', 'interface')).toEqual([
+      'src/Model/Polygon.php:4 Polygon',
+      'src/Model/SolidShape.php:4 SolidShape',
+      // Through an alias import, which the short-name grep alone would miss.
+      'src/Other/Circle.php:7 Circle',
+      // Not Square (indirect), not Decoy (another Shape), not Oval (split across lines).
+    ]);
+  });
+
+  it('lists the direct subclasses of a class', async () => {
+    expect(await rows('App\\Model\\Polygon', 'class')).toEqual(['src/Model/Square.php:4 Square']);
+    expect(await rows('App\\Model\\Square', 'class')).toEqual(['src/Other/Tiny.php:6 Tiny']);
+  });
+
+  it('lists the users of a trait on their declaration line, once per user', async () => {
+    expect(await rows('App\\Model\\Loggable', 'trait')).toEqual([
+      'src/Model/Polygon.php:4 Polygon',
+      'src/Model/Tagged.php:4 Tagged',
+      'src/Other/Circle.php:7 Circle',
+    ]);
+  });
+
+  it('finds nothing for a type nobody extends', async () => {
+    expect(await rows('App\\Other\\Tiny', 'class')).toEqual([]);
   });
 });
