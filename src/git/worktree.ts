@@ -406,17 +406,27 @@ export function parseNumstat(stdout: string): Map<string, LineChange> {
 export async function taskBase(worktreePath: string, baseBranch: string): Promise<string | null> {
   try {
     assertSafeArgv([baseBranch]);
-    let base = baseBranch;
-    try {
-      const up = (await gitOk(['rev-parse', '--abbrev-ref', `${baseBranch}@{upstream}`], worktreePath)).trim();
-      if (up) base = up;
-    } catch {
-      /* no upstream: the local branch is the base */
-    }
+    const base = await baseOrUpstream(worktreePath, baseBranch);
     return (await gitOk(['merge-base', base, 'HEAD'], worktreePath)).trim() || null;
   } catch {
     return null;
   }
+}
+
+/**
+ * `baseBranch`'s upstream when it has one, else `baseBranch` itself: what a
+ * branch is measured against. Everything that counts or diffs a task's work
+ * against its base goes through here, so a stale local base cannot make one
+ * place see 24 commits where another sees none (#82).
+ */
+async function baseOrUpstream(cwd: string, baseBranch: string): Promise<string> {
+  try {
+    const up = (await gitOk(['rev-parse', '--abbrev-ref', `${baseBranch}@{upstream}`], cwd)).trim();
+    if (up) return up;
+  } catch {
+    /* no upstream: the local branch is the base */
+  }
+  return baseBranch;
 }
 
 /**
@@ -563,7 +573,9 @@ export function revRange(base: string, head = 'HEAD'): string {
 
 /**
  * Commits on `branch` that its base lacks: what a PR from it would hold.
- * Asked of the repository, not of a folder: a PR comes from the branch,
+ * Counted against the base's upstream when it has one, like {@link taskBase}:
+ * a local base that has not been pulled would otherwise lend the branch every
+ * upstream commit it lacks. Asked of the repository, not of a folder: a PR comes from the branch,
  * wherever it is checked out -- the task's worktree, the main checkout, or
  * nowhere. Null when the branch does not exist or git cannot say. Never throws.
  */
@@ -572,7 +584,9 @@ export async function commitsOnBranch(repoPath: string, baseBranch: string, bran
     assertValidRefName(branch, 'branch');
     const ref = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoPath);
     if (ref.code !== 0) return null;
-    const r = await git(['rev-list', '--count', revRange(baseBranch, `refs/heads/${branch}`), '--'], repoPath);
+    assertValidRefName(baseBranch, 'base branch');
+    const base = await baseOrUpstream(repoPath, baseBranch);
+    const r = await git(['rev-list', '--count', revRange(base, `refs/heads/${branch}`), '--'], repoPath);
     return r.code === 0 ? parseCommitCount(r.stdout) : null;
   } catch {
     return null;

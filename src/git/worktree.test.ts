@@ -1439,9 +1439,22 @@ describe('commitsOnBranch', () => {
     expect(await commitsOnBranch('/repo', 'main', 'fix-import')).toBe(18);
     expect(calls.map((c) => c.args)).toEqual([
       ['rev-parse', '--verify', '--quiet', 'refs/heads/fix-import'],
+      ['rev-parse', '--abbrev-ref', 'main@{upstream}'],
       ['rev-list', '--count', 'main..refs/heads/fix-import', '--'],
     ]);
     expect(calls.every((c) => c.cwd === '/repo')).toBe(true);
+  });
+
+  // #82: a local main 24 commits behind origin/main, and a branch already in
+  // origin/main. Against local main it "had" 24 commits and offered Create PR.
+  it("counts against the base's upstream, so a stale local base lends it nothing", async () => {
+    const calls = install(({ args }) => {
+      if (args[1] === '--abbrev-ref') return { code: 0, stdout: 'origin/main\n', stderr: '' };
+      if (args[0] === 'rev-list') return { code: 0, stdout: args[2] === 'origin/main..refs/heads/fix' ? '0\n' : '24\n', stderr: '' };
+      return undefined;
+    });
+    expect(await commitsOnBranch('/repo', 'main', 'fix')).toBe(0);
+    expect(calls.at(-1)?.args).toEqual(['rev-list', '--count', 'origin/main..refs/heads/fix', '--']);
   });
 
   it('is null for a branch git does not have', async () => {
