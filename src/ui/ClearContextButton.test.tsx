@@ -5,6 +5,7 @@ import type { Task } from '../types';
 
 vi.mock('./Terminal', () => ({
   hasLivePty: () => true,
+  ptyLiveSince: () => null,
   onPtyPresenceChange: () => () => {},
   submitPty: async () => true,
 }));
@@ -42,7 +43,7 @@ describe('ContextClear', () => {
     expect(html).toContain('Context ~900k');
   });
 
-  it('is not offered while messages are waiting to send: a command is never held', async () => {
+  it('is not offered while messages are waiting to send: a command would be held', async () => {
     const { holdMessage, __resetOutbox } = await import('./transcript/outbox');
     holdMessage(1, 'waiting for the connection');
     const html = renderToStaticMarkup(<ContextClear task={task} usage={usage(CLEAR_OFFER_AT + 0.02)} />);

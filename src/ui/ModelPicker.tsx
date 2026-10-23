@@ -121,13 +121,15 @@ export default function ModelPicker({ task }: { task: Task }) {
   }, [pending, model, choices]);
 
   const idle = task.status === 'idle';
-  // A command is never held (send.ts): while sends wait, there is no switching.
+  // While a send would be held (offline, messages waiting, a turn running),
+  // there is no switching: the picker shows the switch as under way at once.
   const waiting = useSendsWait(task.id);
   const choose = async (choice: string) => {
     if (choice === current && !pending) return;
     setFailed(false);
-    // `held` cannot happen: a command that would be held is refused.
-    const ok = (await sendToSession(task.id, `/model ${choice}`)) === 'sent';
+    // Held only if sends started waiting since the menu was offered: it then
+    // goes once the session is idle, so the switch is under way all the same.
+    const ok = (await sendToSession(task.id, `/model ${choice}`)) !== 'failed';
     if (ok) {
       setPending(choice);
       // The process is on it from now, reply or not: a /clear before the

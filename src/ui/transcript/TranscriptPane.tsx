@@ -12,8 +12,20 @@ import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pas
 import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
 import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
 import { editHeld, holdMessage, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
-import { conditionsFor, heldLabel, noteShownStatus, promptOpen, startOutboxRelease, type ReleaseConditions } from './outboxRelease';
-import { COMMAND_CANNOT_WAIT, COMMAND_CANNOT_WAIT_PROMPT, isSlashCommand, mustHold, submitLocked } from './send';
+import {
+  conditionsFor,
+  heldHint,
+  heldLabel,
+  noteShownStatus,
+  promptOpen,
+  sendNow,
+  sendNowAllowed,
+  sendNowOfferedFor,
+  startOutboxRelease,
+  type ReleaseConditions,
+} from './outboxRelease';
+import { isSlashCommand, mustHold, submitLocked } from './send';
+import { onTurnChange, shownQueue } from './turn';
 import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
@@ -489,27 +501,6 @@ export default TranscriptPane;
 const ECHO_MAX_MS = 30_000;
 
 /**
- * The entries of Claude Code's queue the band shows: the ones you typed (not
- * the ones Claude Code queued itself) that the running process can still hold.
- *
- * - Only while the session's pty is alive (`liveSince` not null), whatever the
- *   status. Status is derived from the transcript and lags the queue --
- *   between one turn ending and the next starting, and the whole time Claude
- *   Code retries a dead connection, it reads `idle` with entries waiting.
- * - Only entries queued since that pty was spawned. Claude Code's queue lives
- *   in its process's memory, so a new or resumed `claude` starts empty; the
- *   transcript, which the queue is rebuilt from, still lists what the last
- *   process never took, and no turn end will ever clear it.
- *
- * The one rule for both copies of a message (`echoIsQueued`), so it is
- * always in exactly one place.
- */
-export function shownQueue(entries: readonly QueuedEntry[], liveSince: number | null): QueuedEntry[] {
-  if (liveSince === null) return [];
-  return entries.filter((e) => !e.injected && e.ts >= liveSince);
-}
-
-/**
  * Whether the Queued band now shows the message just sent: one of its
  * entries (`shownQueue`) was queued no earlier than the send, with the same
  * second of slack as the user-row check. While the band would not show it
@@ -597,8 +588,9 @@ export function keyboardIsFree(active: Element | null, scroller: Element): boole
  *    in the transcript as your message. Shown while the session is alive,
  *    and only what this process queued (`shownQueue`). Entries Claude Code queued itself (a background task
  *    finishing, a subagent's message) are not shown.
- *  - Albedo's outbox (outbox.ts): sent while offline, still here, so they
- *    can be edited or removed until they go.
+ *  - Albedo's outbox (outbox.ts): sent while offline, or while a turn was
+ *    running (turn.ts), still here, so they can be edited or removed until
+ *    they go.
  */
 export function QueuedStrip({
   sessionId,
@@ -665,16 +657,20 @@ export function QueuedStrip({
 /** The outbox's part of the band, headed by what its messages wait for. */
 function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessage[] }): ReactNode {
   const conditions = useReleaseConditions(taskId);
+  const hint = heldHint(conditions);
   return (
     <>
       <div className="tx-queued-head">
         {heldLabel(conditions)} <span className="tx-queued-count">{held.length}</span>
-        {conditions.offline && !conditions.headMaybeSent ? (
-          <span className="tx-queued-hint">sent in order once it is back</span>
-        ) : null}
+        {hint !== null ? <span className="tx-queued-hint">{hint}</span> : null}
       </div>
       {held.map((h) => (
-        <HeldRow key={h.id} taskId={taskId} held={h} />
+        <HeldRow
+          key={h.id}
+          taskId={taskId}
+          held={h}
+          sendNow={sendNowOfferedFor(conditions, h.text) ? sendNowAllowed(conditions) : null}
+        />
       ))}
     </>
   );
@@ -682,8 +678,8 @@ function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessag
 
 /**
  * What the task's held messages wait for. Re-read on the connection, a
- * prompt or the trust dialog changing, and on any render: the outbox and the
- * pty already re-render the band.
+ * prompt, the trust dialog or the turn changing, and on any render: the
+ * outbox and the pty already re-render the band.
  */
 function useReleaseConditions(taskId: number): ReleaseConditions {
   const [, bump] = useState(0);
@@ -691,7 +687,12 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
     const mine = (id: number) => {
       if (id === taskId) bump((n) => n + 1);
     };
-    const offs = [onConnectivityChange(() => bump((n) => n + 1)), onPromptChange(mine), onTrustWaiting(mine)];
+    const offs = [
+      onConnectivityChange(() => bump((n) => n + 1)),
+      onPromptChange(mine),
+      onTrustWaiting(mine),
+      onTurnChange(mine),
+    ];
     return () => offs.forEach((off) => off());
   }, [taskId]);
   return conditionsFor(taskId);
@@ -706,9 +707,28 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
  * One that was being sent when the app stopped may already be with Claude
  * Code, so it says so and offers Send beside Edit and Remove: nothing sends
  * it again, or drops it, without the person.
+ *
+ * One held only for the running turn offers Send Now: into the turn, as a
+ * mid-turn message went before (`sendNow`); never a command. `sendNow` is
+ * null when not offered, else whether it can be used now. If it could not go
+ * after all -- a release had the task's lock -- the row says so briefly.
  */
-function HeldRow({ taskId, held }: { taskId: number; held: HeldMessage }): ReactNode {
+function HeldRow({
+  taskId,
+  held,
+  sendNow: sendNowEnabled,
+}: {
+  taskId: number;
+  held: HeldMessage;
+  sendNow: boolean | null;
+}): ReactNode {
   const [draft, setDraft] = useState<string | null>(null);
+  const [notNow, setNotNow] = useState(false);
+  useEffect(() => {
+    if (!notNow) return;
+    const t = window.setTimeout(() => setNotNow(false), SEND_NOW_NOTE_MS);
+    return () => window.clearTimeout(t);
+  }, [notNow]);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   // Left open (a task switch): what was typed is kept, not thrown away.
@@ -774,6 +794,26 @@ function HeldRow({ taskId, held }: { taskId: number; held: HeldMessage }): React
           </button>
         </>
       ) : null}
+      {notNow ? <span className="tx-queued-note">Couldn{'\u2019'}t send now — try again</span> : null}
+      {sendNowEnabled !== null && !held.maybeSent ? (
+        <button
+          type="button"
+          className="tx-btn tx-queued-act"
+          onClick={() =>
+            void sendNow(taskId, held.id).then((went) => {
+              if (!went) setNotNow(true);
+            })
+          }
+          disabled={sending || !sendNowEnabled}
+          title={
+            sendNowEnabled
+              ? 'Send it into the running turn now: Claude takes it at its next step'
+              : 'Not while Claude is asking you something, or the session is not running'
+          }
+        >
+          Send Now
+        </button>
+      ) : null}
       <button type="button" className="tx-btn tx-queued-act" onClick={open} disabled={sending}>
         Edit
       </button>
@@ -783,6 +823,9 @@ function HeldRow({ taskId, held }: { taskId: number; held: HeldMessage }): React
     </div>
   );
 }
+
+/** How long a held row says Send Now could not go. */
+const SEND_NOW_NOTE_MS = 3_000;
 
 // ---------------------------------------------------------------------------
 // Composer
@@ -858,9 +901,9 @@ const START_TIMEOUT_MS = 12_000;
  * `submitPty` types into the pty. If Claude Code is showing a permission
  * prompt it is asking "1 / 2 / 3", and a paragraph pasted into that is an
  * answer to the prompt, not a message -- the one case where sending does
- * something the user did not mean. A task that is merely `running` is fine:
- * Claude Code queues typed input itself, which is the normal way to follow up
- * mid-turn and is left alone.
+ * something the user did not mean. A running turn does not get this hold: a
+ * message sent during one waits in the outbox instead (send.ts, turn.ts), and
+ * goes when the turn ends.
  *
  * So `blocked` holds the message instead of sending it, and releases it when
  * the status clears. The text stays visible in the box the whole time, frozen
@@ -1101,17 +1144,19 @@ export function Composer({
     const owner = taskId;
     let ok = false;
     let threw = false;
-    let refused = false;
+    if (mustHold(owner)) {
+      // Gone offline, something held, or a turn under way since it waited
+      // (after an answer, the turn goes on): it joins the outbox. The band
+      // shows it from now, so it is not sent as far as the box is concerned
+      // -- no echo, no `onSent` -- or it would be on screen twice.
+      holdBody(body);
+      setAwaiting(false);
+      setHeld(false);
+      inFlightRef.current = false;
+      return;
+    }
     try {
-      // Gone offline, or something was held, while it waited: it queues
-      // too -- unless it is a command, which never waits (send.ts).
-      if (mustHold(owner)) {
-        refused = isSlashCommand(body);
-        if (!refused) {
-          holdBody(body);
-          ok = true;
-        }
-      } else ok = await submitLocked(owner, body);
+      ok = await submitLocked(owner, body);
     } catch {
       threw = true;
     }
@@ -1119,7 +1164,6 @@ export function Composer({
     // task's now (see `leftDuringSend`).
     if (leftDuringSend(owner, ok, body, new Map())) return;
     if (ok) succeeded(owner, body);
-    else if (refused) setNotice(COMMAND_CANNOT_WAIT);
     else if (threw) setNotice('Could not send your message. It is still here — press Send to retry.');
     else setNotice('Could not deliver your message. It is still here — press Send to retry.');
     setAwaiting(false);
@@ -1325,15 +1369,15 @@ export function Composer({
     // What Claude Code receives: the draft with its paste placeholders filled.
     const body = expandPastes(text, pastesRef.current);
     /*
-       Offline, it waits in the outbox (outbox.ts) rather than in Claude
-       Code's queue, which retries and may drop it. Behind messages already
-       held or being released it waits too: they go first (send.ts).
+       It waits in the outbox (outbox.ts) rather than in Claude Code's queue
+       while offline (Claude Code retries, and may drop it), behind messages
+       already held or being released (they go first), and while a turn is
+       running (it would go with any dialog the turn opens: turn.ts). A
+       command waits the same way: the release sends only into an idle
+       session (send.ts).
     */
     if (mustHold(taskId)) {
-      // A command would run inside whatever turn the held messages start:
-      // it stays in the box instead (send.ts, `isSlashCommand`).
-      if (isSlashCommand(body)) setNotice(COMMAND_CANNOT_WAIT);
-      else holdBody(body);
+      holdBody(body);
       return;
     }
     /*
@@ -1344,8 +1388,10 @@ export function Composer({
     */
     // The release's gate (outboxRelease.ts): a hook prompt, the trust dialog, or `blocked`.
     if (promptOpen(taskId, status)) {
+      // After the answer the turn goes on, and a command would land in it:
+      // it waits in the outbox for an idle session instead.
       if (isSlashCommand(body)) {
-        setNotice(COMMAND_CANNOT_WAIT_PROMPT);
+        holdBody(body);
         return;
       }
       pendingRef.current = body;

@@ -11,9 +11,9 @@
  * back. A failed write is tried again after `RETRY_MS`.
  *
  * Checked on every event that can open the gate: the connection coming back,
- * a session going live, a prompt being answered, the outbox changing. While
- * anything is held the connection is watched (connectivity.ts), which is what
- * notices it coming back.
+ * a session going live, a prompt being answered, a turn ending, the outbox
+ * changing. While anything is held the connection is watched
+ * (connectivity.ts), which is what notices it coming back.
  *
  * A delivered message's review comments are marked sent here, from the ids
  * kept with it: the composer that held it may be long gone.
@@ -25,8 +25,9 @@ import { markCommentsSent } from '../../db/comments';
 import { isOffline, onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import type { TaskStatus } from '../../types';
 import { hasLivePty, onPtyPresenceChange, startPty } from '../Terminal';
-import { heldFor, lastReleaseFailed, onHeldReleased, onOutboxChange, releaseHeld, tasksWithHeld } from './outbox';
-import { submitLocked } from './send';
+import { heldFor, lastReleaseFailed, onHeldReleased, onOutboxChange, releaseHeld, sendHeldNow, tasksWithHeld } from './outbox';
+import { isSlashCommand, submitLocked } from './send';
+import { isTurnRunning, onTurnChange } from './turn';
 
 /** How long after a failed write the release tries again. */
 export const RETRY_MS = 10_000;
@@ -40,6 +41,11 @@ export interface ReleaseConditions {
    * covers a session without hooks). The composer's hold uses the same gate.
    */
   promptOpen: boolean;
+  /**
+   * A turn is running in the session (turn.ts): typed now, a message would
+   * go with any dialog the turn opens next.
+   */
+  turnRunning: boolean;
   /** The session's pty is running. */
   live: boolean;
   /** The first held message may already have been sent, and waits for the person. */
@@ -49,8 +55,8 @@ export interface ReleaseConditions {
 }
 
 /** Whether held messages may go now. */
-export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen'>): boolean {
-  return !c.offline && !c.promptOpen;
+export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' | 'turnRunning'>): boolean {
+  return !c.offline && !c.promptOpen && !c.turnRunning;
 }
 
 /** What the Queued band says held messages are waiting for: what actually stops them. */
@@ -58,9 +64,53 @@ export function heldLabel(c: ReleaseConditions): string {
   if (c.headMaybeSent) return 'Waiting for you to resend or remove the first message';
   if (c.offline) return 'Waiting for connection';
   if (c.promptOpen) return 'Waiting for your answer';
+  if (c.turnRunning) return 'Queued';
   if (!c.live) return 'Waiting for the session to start';
   if (c.failed) return 'Couldn’t send — retrying';
   return 'Sending';
+}
+
+/** The line beside `heldLabel` saying when they will go; null when it has none. */
+export function heldHint(c: ReleaseConditions): string | null {
+  if (c.headMaybeSent) return null;
+  if (c.offline) return 'sent in order once it is back';
+  if (!c.promptOpen && c.turnRunning) return 'sent when Claude finishes this turn';
+  return null;
+}
+
+/**
+ * "Send Now" on a held row: offered while the turn is all that holds it --
+ * online, with nothing waiting for the person -- and usable only with no
+ * prompt open (typed then, it would answer it) and a live session.
+ */
+export function sendNowOffered(c: ReleaseConditions): boolean {
+  return c.turnRunning && !c.offline && !c.headMaybeSent;
+}
+export function sendNowAllowed(c: ReleaseConditions): boolean {
+  return sendNowOffered(c) && !c.promptOpen && c.live;
+}
+
+/**
+ * Send Now for this held text: never for a command, which must only reach
+ * an idle session (send.ts) -- typed into a turn it is chat text, or lands
+ * in a dialog.
+ */
+export function sendNowOfferedFor(c: ReleaseConditions, text: string): boolean {
+  return sendNowOffered(c) && !isSlashCommand(text);
+}
+
+/**
+ * Send one held message into the running turn, at the person's word: it joins
+ * Claude Code's queue, as a message sent mid-turn did before #61. Checked
+ * again here, since the band may be a render behind. False when it did not
+ * go: not allowed now, or a release holds the task's lock.
+ */
+export function sendNow(taskId: number, id: string): Promise<boolean> {
+  const held = heldFor(taskId).find((h) => h.id === id);
+  if (!held || !sendNowOfferedFor(conditionsFor(taskId), held.text) || !sendNowAllowed(conditionsFor(taskId))) {
+    return Promise.resolve(false);
+  }
+  return sendHeldNow(taskId, id, (text) => submitLocked(taskId, text));
 }
 
 /** The status of the task on screen, the only one Albedo derives a status for here. */
@@ -84,6 +134,7 @@ export function conditionsFor(taskId: number, status?: TaskStatus | null): Relea
   return {
     offline: isOffline(),
     promptOpen: promptOpen(taskId, status),
+    turnRunning: isTurnRunning(taskId),
     live: hasLivePty(taskId),
     headMaybeSent: heldFor(taskId)[0]?.maybeSent === true,
     failed: lastReleaseFailed(taskId),
@@ -142,6 +193,7 @@ function start(): () => void {
     onTrustWaiting((id, waiting) => {
       if (!waiting) tryRelease(id);
     }),
+    onTurnChange(tryRelease),
     onHeldReleased((id, held) => {
       if (!held.commentIds || held.commentIds.length === 0) return;
       markCommentsSent(id, held.commentIds).catch((err: unknown) =>

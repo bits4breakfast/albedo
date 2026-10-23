@@ -4,10 +4,10 @@
  *
  * The click is the decision, so on a live session the prompt is submitted at
  * once -- being made to press send as well is a second confirmation of
- * something already confirmed. That includes a running turn: Claude Code
- * queues a message typed while it works and takes it up next, exactly as it
- * does one sent from the message box. Only a permission prompt (typing into
- * it would answer it) or no session leave the prompt in the message box,
+ * something already confirmed. During a running turn it is held in the
+ * task's outbox and goes when the turn ends, exactly as one sent from the
+ * message box. Only a permission prompt (typing into it would answer it) or
+ * no session leave the prompt in the message box,
  * whose send path knows how to wait for those.
  *
  * It goes through the one send gateway (transcript/send.ts): offline, or

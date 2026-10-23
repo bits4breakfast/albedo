@@ -86,7 +86,8 @@ function SessionCommandButton({ task, cmd }: { task: Task; cmd: SessionCommand }
     return () => clearTimeout(t);
   }, [arming]);
 
-  // A command is never held (send.ts): while sends wait, it is not offered.
+  // While a send would be held (offline, messages waiting, a turn running),
+  // it is not offered.
   const waiting = useSendsWait(task.id);
   const ready = live && task.status === 'idle' && !waiting;
   useEffect(() => {
@@ -113,8 +114,9 @@ function SessionCommandButton({ task, cmd }: { task: Task; cmd: SessionCommand }
     setArming(false);
     busyRef.current = true;
     try {
-      // Refused, not held, if sends started waiting since the click was offered.
-      setFailed((await sendToSession(task.id, cmd.command)) !== 'sent');
+      // Held, not lost, if sends started waiting since the click was offered:
+      // it goes once the session is idle (send.ts).
+      setFailed((await sendToSession(task.id, cmd.command)) === 'failed');
     } catch {
       setFailed(true);
     } finally {

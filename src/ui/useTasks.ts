@@ -10,6 +10,7 @@ import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { noteQuestion, noteStatusChange } from './attention';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
 import { keepOutboxFor } from './transcript/outbox';
+import { noteTaskSessions } from './transcript/turn';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
 /** Shape of the `onCaptureUpdate` payload. */
@@ -212,6 +213,8 @@ export function useTasks(): UseTasksResult {
     const next = update(prev);
     if (next === prev) return;
     tasksRef.current = next;
+    // The outbox's turn follows each task's session (transcript/turn.ts).
+    noteTaskSessions(next);
     setTasks(next);
   }, []);
 

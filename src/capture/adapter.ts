@@ -534,11 +534,35 @@ export function queueOperationsIn(text: string): QueueOperation[] {
  *    (TURN_ENDING_STOP_REASONS). A typed entry still waiting when a turn ends
  *    is taken at once (measured: within 3 s in every case on this machine);
  *    one that is not is never coming.
+ *  - `turn-stop`: any other line that says the session is back at its
+ *    prompt, for the outbox's turn (src/ui/transcript/turn.ts); the queue
+ *    ignores it. Claude Code's `system` `turn_duration` line (after every
+ *    turn end, interrupts included: 1934 of them in 150 sessions here, after
+ *    `end_turn`, `stop_sequence` and `[Request interrupted…]`), the
+ *    `[Request interrupted…]` line itself (Esc, or a refused dialog), and
+ *    the lines that close a command run without a turn (`endsLocalCommand`,
+ *    and `<bash-stdout>` / `<bash-stderr>` for `!` input).
+ *  - `turn-step`: proof that a turn is running, whatever started it, for the
+ *    outbox's turn too. Claude Code's `api-request` line for a main-thread
+ *    call (`querySource` `repl_main_thread`, every 2.1.30x here), written
+ *    as the call starts, and a main-thread assistant line that does not
+ *    end the turn. A turn Claude Code starts from its own queue begins with
+ *    an `isMeta` line, which is no `prompt`: these are its first signs. An
+ *    API error line is not one: it says a turn failed.
+ *    If a Claude Code version stops writing `api-request` (2.1.278-2.1.299
+ *    did not), a queue-started turn shows no sign until its first assistant
+ *    line, and a release in that gap types into it: that reopens #61, not
+ *    just a delay. Re-check this when the transcript format changes.
  */
 export type QueueFact =
   | QueueOperation
   | { op: 'prompt'; sessionId: string; text: string; ts: number }
-  | { op: 'turn-end'; sessionId: string; ts: number };
+  | { op: 'turn-end'; sessionId: string; ts: number }
+  | { op: 'turn-stop'; sessionId: string; ts: number }
+  | { op: 'turn-step'; sessionId: string; ts: number };
+
+/** Text of a `user` line that closes what started without a model turn ending it. */
+const STOPPING_PROMPT = /^(?:\[Request interrupted|<local-command-stdout>|<bash-stdout>|<bash-stderr>)/;
 
 /**
  * The queue facts in a chunk, in order. Pre-filtered on substrings that occur
@@ -554,14 +578,25 @@ export function queueFactsIn(text: string): QueueFact[] {
       continue;
     }
     const prompt = line.includes('"type":"user"') && !line.includes('"tool_use_id"') && !line.includes('"isMeta":true');
-    const ending = line.includes('"stop_reason":"end_turn"') || line.includes('"stop_reason":"stop_sequence"');
-    if (!prompt && !ending) continue;
+    const assistant = line.includes('"type":"assistant"');
+    const stopping = line.includes('"subtype":"turn_duration"') || line.includes('"subtype":"local_command"');
+    const request = line.includes('"type":"api-request"') && line.includes('"querySource":"repl_main_thread"');
+    if (!prompt && !assistant && !stopping && !request) continue;
     const obj = safeParse(line);
     if (!obj || obj['isSidechain'] === true) continue;
     const sessionId = stringOr(obj['sessionId'], '');
     const ts = parseTs(obj['timestamp']);
+    if (obj['type'] === 'api-request') {
+      if (obj['querySource'] === 'repl_main_thread') out.push({ op: 'turn-step', sessionId, ts });
+      continue;
+    }
+    if (obj['type'] === 'system') {
+      if (obj['subtype'] === 'turn_duration' || obj['subtype'] === 'local_command') out.push({ op: 'turn-stop', sessionId, ts });
+      continue;
+    }
     if (obj['type'] === 'assistant') {
       if (TURN_ENDING_STOP_REASONS.has(stopReasonOf(line) ?? '')) out.push({ op: 'turn-end', sessionId, ts });
+      else if (obj['isApiErrorMessage'] !== true) out.push({ op: 'turn-step', sessionId, ts });
       continue;
     }
     // A meta line or a compaction summary starts no turn, and a summary
@@ -580,6 +615,7 @@ export function queueFactsIn(text: string): QueueFact[] {
         ? message['content']
         : '';
     if (body.trim() !== '') out.push({ op: 'prompt', sessionId, text: body, ts });
+    if (STOPPING_PROMPT.test(body.trimStart())) out.push({ op: 'turn-stop', sessionId, ts });
   }
   return out;
 }

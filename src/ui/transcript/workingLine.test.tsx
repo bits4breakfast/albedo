@@ -7,7 +7,8 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 
 vi.mock('../../capture', () => ({}));
 
-const { WorkingLine, echoIsQueued, shownQueue } = await import('./TranscriptPane');
+const { WorkingLine, echoIsQueued } = await import('./TranscriptPane');
+const { shownQueue } = await import('./turn');
 
 afterEach(() => {
   cleanup();
