@@ -553,7 +553,7 @@ export function queueFactsIn(text: string): QueueFact[] {
       out.push(...queueOperationsIn(line));
       continue;
     }
-    const prompt = line.includes('"type":"user"') && !line.includes('"tool_use_id"');
+    const prompt = line.includes('"type":"user"') && !line.includes('"tool_use_id"') && !line.includes('"isMeta":true');
     const ending = line.includes('"stop_reason":"end_turn"') || line.includes('"stop_reason":"stop_sequence"');
     if (!prompt && !ending) continue;
     const obj = safeParse(line);
@@ -565,7 +565,10 @@ export function queueFactsIn(text: string): QueueFact[] {
       continue;
     }
     // A meta line or a compaction summary starts no turn, and a summary
-    // quotes recent messages -- queued ones included.
+    // quotes recent messages -- queued ones included. Other envelopes Claude
+    // Code writes as user lines (`[Request interrupted…]`, `<command-name>…`,
+    // `<local-command-stdout>…`) do count: they match no typed entry, and
+    // reading one as a turn start only delays an idle clear, never forces one.
     if (obj['type'] !== 'user' || obj['isMeta'] === true || obj['isCompactSummary'] === true) continue;
     // Text blocks only: an image's own block is not part of what was typed,
     // which already says `[Image #N]`.
