@@ -672,7 +672,23 @@
   padding-left: 20px;
 }
 .tx-md-list li { margin: 3px 0; }
+/* Markers in --muted: 7.15 / 7.74 on --panel (the assistant's ground),
+   6.46 / 7.13 on --user-row, 5.89 / 6.50 on --panel-raised (light / dark). */
 .tx-md-list li::marker { color: var(--muted); }
+/* Nested lists (#53). A sub-list starts at its item's text column, and its
+   1.25em padding puts its marker under the parent's first letter. No margin
+   above it, and sub-items sit closer than top-level ones, so a group reads
+   as one item. Bullets go disc, circle, square by depth; numbers stay
+   decimal at every depth. */
+ul.tx-md-list { list-style-type: disc; }
+ol.tx-md-list { list-style-type: decimal; }
+.tx-md-list .tx-md-list {
+  margin: 0;
+  padding-left: 1.25em;
+}
+.tx-md-list .tx-md-list li { margin: 1px 0; }
+.tx-md-list ul.tx-md-list { list-style-type: circle; }
+.tx-md-list .tx-md-list ul.tx-md-list { list-style-type: square; }
 
 .tx-md-quote {
   margin: 0 0 7px;

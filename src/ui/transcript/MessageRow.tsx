@@ -2,7 +2,7 @@
  * One transcript row, rendered according to its `role`.
  *
  * Markdown in assistant text is rendered by a small hand-written subset
- * (paragraphs, fenced code, inline code, lists, quotes, emphasis, links as
+ * (paragraphs, fenced code, inline code, nested lists, quotes, emphasis, links as
  * plain text) that builds React nodes. There is no markdown dependency and no
  * `dangerouslySetInnerHTML` anywhere in this module, on purpose: model output
  * is untrusted content, and injecting it as HTML is the one security mistake
@@ -545,12 +545,18 @@ type Block =
   | { t: 'p'; text: string }
   | { t: 'h'; level: number; text: string }
   | { t: 'code'; lang: string; code: string }
-  | { t: 'list'; ordered: boolean; items: string[] }
+  | { t: 'list'; ordered: boolean; start: number; items: ListItem[] }
   | { t: 'quote'; text: string }
   | { t: 'hr' }
   | { t: 'table'; align: Align[]; head: string[]; rows: string[][] };
 
 type Align = 'left' | 'center' | 'right' | null;
+
+/** One list item: its own text, then any blocks nested under it (sub-lists). */
+interface ListItem {
+  text: string;
+  children: Block[];
+}
 
 const FENCE_RE = /^\s*(`{3,}|~{3,})\s*([^\s`]*)/;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
@@ -602,6 +608,95 @@ function alignOf(cell: string): Align {
   const left = cell.startsWith(':');
   const right = cell.endsWith(':');
   return left && right ? 'center' : right ? 'right' : left ? 'left' : null;
+}
+
+/** Width of leading whitespace in columns, a tab advancing to the next multiple of 4. */
+function columns(ws: string): number {
+  let col = 0;
+  for (const c of ws) col = c === '\t' ? col + 4 - (col % 4) : col + 1;
+  return col;
+}
+
+interface ItemLine {
+  /** Columns before the marker. */
+  indent: number;
+  ordered: boolean;
+  num: number;
+  text: string;
+}
+
+function itemAt(line: string): ItemLine | null {
+  const m = ITEM_RE.exec(line);
+  if (!m) return null;
+  const indent = columns(m[1] ?? '');
+  return { indent, ordered: m[2] === undefined, num: Number(m[3] ?? 1), text: m[4] ?? '' };
+}
+
+/**
+ * One list starting at `lines[i]`, nested lists included, as a tree.
+ *
+ * Nesting is relative to marker indents, not CommonMark's content column:
+ * a transcript viewer should show what the author meant, and `1. a` followed
+ * by `  - b` (2 spaces) is meant as a sub-list -- Claude Code's terminal
+ * renders it nested -- though CommonMark makes it a separate list. So the
+ * list records its first item's indent as `base`. An item indented further
+ * than the last item's marker opens a nested list under that item (any step:
+ * 1, 2, 3 or 4 spaces); one at `base` or beyond, but not further than the
+ * last item's marker, is a sibling; one left of `base` belongs to an outer
+ * list. `floor` is the parent item's marker indent + 1 (0 at the top level).
+ * A marker of the other kind (bullet vs number) at this level ends the list,
+ * as in CommonMark. A blank
+ * line ends it unless the next non-blank line is an item this list or one
+ * of its sub-lists takes (a loose list). Continuation lines -- non-blank,
+ * not an item, indented 2+ -- join the deepest open item, as before nesting
+ * existed; that includes an indented code fence, which stays item text.
+ *
+ * Returns the list and the index of the first line it did not take.
+ */
+function parseList(lines: readonly string[], i: number, floor: number): [Block, number] {
+  const first = itemAt(lines[i] ?? '');
+  const ordered = first?.ordered ?? false;
+  const start = first?.num ?? 1;
+  const base = first?.indent ?? 0;
+  const items: ListItem[] = [];
+  let last = 0; // the last item's marker indent
+
+  while (i < lines.length) {
+    const l = lines[i] ?? '';
+    if (l.trim() === '') {
+      let j = i + 1;
+      while (j < lines.length && (lines[j] ?? '').trim() === '') j++;
+      const after = itemAt(lines[j] ?? '');
+      if (after && after.indent >= floor && items.length > 0) {
+        i = j;
+        continue;
+      }
+      break;
+    }
+    const it = itemAt(l);
+    if (it) {
+      if (items.length > 0 && it.indent > last) {
+        const [sub, next] = parseList(lines, i, last + 1);
+        items[items.length - 1]?.children.push(sub);
+        i = next;
+        continue;
+      }
+      if (it.indent < base || (items.length > 0 && it.ordered !== ordered)) break;
+      items.push({ text: it.text, children: [] });
+      last = it.indent;
+      i++;
+      continue;
+    }
+    if (/^\s{2,}/.test(l) && items.length > 0) {
+      const open = items[items.length - 1] as ListItem;
+      open.text = `${open.text}\n${l.trim()}`;
+      i++;
+      continue;
+    }
+    break;
+  }
+
+  return [{ t: 'list', ordered, start, items }, i];
 }
 
 export function parseBlocks(src: string): Block[] {
@@ -682,27 +777,10 @@ export function parseBlocks(src: string): Block[] {
       continue;
     }
 
-    const item = ITEM_RE.exec(line);
-    if (item) {
-      const ordered = item[2] === undefined;
-      const items: string[] = [];
-      while (i < lines.length) {
-        const l = lines[i] ?? '';
-        const m = ITEM_RE.exec(l);
-        if (m) {
-          items.push(m[4] ?? '');
-          i++;
-          continue;
-        }
-        // Continuation of the previous item: indented, non-empty, not a new block.
-        if (l.trim() !== '' && /^\s{2,}/.test(l) && items.length > 0) {
-          items[items.length - 1] = `${items[items.length - 1] ?? ''}\n${l.trim()}`;
-          i++;
-          continue;
-        }
-        break;
-      }
-      out.push({ t: 'list', ordered, items });
+    if (ITEM_RE.test(line)) {
+      const [list, next] = parseList(lines, i, 0);
+      out.push(list);
+      i = next;
       continue;
     }
 
@@ -881,19 +959,7 @@ export function Markdown({ text }: { text: string }): ReactNode {
               </blockquote>
             );
           case 'list':
-            return b.ordered ? (
-              <ol key={i} className="tx-md-list">
-                {b.items.map((it, j) => (
-                  <li key={j}>{parseInline(it)}</li>
-                ))}
-              </ol>
-            ) : (
-              <ul key={i} className="tx-md-list">
-                {b.items.map((it, j) => (
-                  <li key={j}>{parseInline(it)}</li>
-                ))}
-              </ul>
-            );
+            return <MdList key={i} list={b} />;
           case 'p':
           default:
             return (
@@ -904,6 +970,23 @@ export function Markdown({ text }: { text: string }): ReactNode {
         }
       })}
     </div>
+  );
+}
+
+/** A list and, inside each item, the lists nested under it. */
+function MdList({ list }: { list: Extract<Block, { t: 'list' }> }): ReactNode {
+  const items = list.items.map((it, j) => (
+    <li key={j}>
+      {parseInline(it.text)}
+      {it.children.map((c, k) => (c.t === 'list' ? <MdList key={k} list={c} /> : null))}
+    </li>
+  ));
+  return list.ordered ? (
+    <ol className="tx-md-list" start={list.start === 1 ? undefined : list.start}>
+      {items}
+    </ol>
+  ) : (
+    <ul className="tx-md-list">{items}</ul>
   );
 }
 
