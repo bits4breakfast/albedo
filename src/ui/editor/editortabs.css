@@ -44,10 +44,12 @@
 }
 
 /* Grows, so the controls sit at the row's end, and gives way before anything
-   else (shrink weight 1000 vs 1): the tabs truncate first. */
+   else (shrink weight 1000 vs 1): the tabs truncate first. But never below
+   one readable tab: the row's only copy of the file's name. Past that floor
+   the status gives way instead (below). */
 .ed-tabstrip {
   flex: 1 1000 auto;
-  min-width: 0;
+  min-width: 88px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -131,19 +133,59 @@
 }
 .ed-tab-panel[hidden] { display: none; }
 
-/* The active editor's ‹ ›, Save and ⋯ (FileEditor.tsx). Never shrink: the
-   tabs give way first, then the counter below. */
+/* The active editor's toolbar (FileEditor.tsx): status, ‹ ›, Save, ⋯. Only
+   the status shrinks, with an ellipsis and its full text in a tooltip and as
+   the ⋯ menu's heading; the buttons never do. */
 .ed-head-controls {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+}
+.ed-head-controls:empty { display: none; }
+.ed-controls {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
-.ed-head-controls:empty { display: none; }
-.ed-head-controls .btn { height: 26px; }
+.ed-controls .btn { flex: none; height: 26px; }
+.ed-controls .ed-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ed-readonly {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 
-/* A narrow column, once the tabs are down to stubs: the counter goes and the
-   arrows stay. */
+/* A narrow column, once the tabs are down to one. What goes, in order:
+   - the status, which ⋯ repeats as its heading;
+   - the counter; the arrows stay;
+   - the arrows while there are unsaved edits, when they are disabled anyway
+     and Save needs the room;
+   - the read-only words, leaving the lock (the words stay for a screen reader).
+   Sized for Split at its default ratio on a laptop, a ~230px slot: one tab,
+   the arrows and ⋯, or one tab, Save and ⋯. */
 @container ed-head (max-width: 360px) {
+  .ed-controls .ed-status { display: none; }
   .ed-nav-pos { display: none; }
+  .ed-controls[data-dirty] .ed-nav { display: none; }
+  .ed-readonly-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* Narrower still: the arrows go too (⌥⌘↑ / ⌥⌘↓ still step), so ⋯ always fits. */
+@container ed-head (max-width: 220px) {
+  .ed-nav { display: none; }
 }

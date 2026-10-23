@@ -98,4 +98,13 @@ describe('FileEditor keys', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /Copy Full Path/ }));
     await waitFor(() => expect(copyText).toHaveBeenLastCalledWith('/wt/src/a.ts'));
   });
+
+  it('names its toolbar after the file, and ⋯ repeats the status a narrow column hides', async () => {
+    await open();
+    expect(screen.getByRole('toolbar', { name: 'a.ts Actions' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'C', code: 'KeyC', metaKey: true, shiftKey: true });
+    await screen.findByText('Full Path Copied');
+    fireEvent.click(screen.getByRole('button', { name: 'File Actions' }));
+    expect(document.querySelector('.row-menu-head')?.textContent).toBe('Full Path Copied');
+  });
 });

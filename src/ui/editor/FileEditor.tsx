@@ -1161,15 +1161,25 @@ export default function FileEditor({
     },
   ];
 
+  // Status first, so the arrows stay put when it comes and goes. It is the
+  // first thing to give way in a narrow column (editortabs.css), so ⋯ repeats
+  // it as its heading.
+  const status: Status | null =
+    copied !== null
+      ? copied === 'failed'
+        ? { tone: 'error', text: 'Copy Failed' }
+        : { tone: 'ok', text: copied === 'full' ? 'Full Path Copied' : 'Path Copied' }
+      : saveStatus(saveState);
+
   // Drawn at the end of the tab row, which already names the file: the tab
   // carries the name, the unsaved dot and the Diff marker, and its tooltip the
-  // path. Status first, so the arrows stay put when it comes and goes.
+  // path. Outside this component's dialog in the page, so the group names the
+  // file itself.
   const controls = (
-    <>
-      <SaveIndicator state={saveState} />
-      {copied !== null && (
-        <span className="ed-status" data-tone={copied === 'failed' ? 'error' : 'ok'}>
-          {copied === 'failed' ? 'Copy Failed' : copied === 'full' ? 'Full Path Copied' : 'Path Copied'}
+    <div className="ed-controls" role="toolbar" aria-label={`${fileName} Actions`} data-dirty={dirty || undefined}>
+      {status && (
+        <span className="ed-status" data-tone={status.tone} title={status.text}>
+          {status.text}
         </span>
       )}
       {position >= 0 && order.length > 1 ? (
@@ -1201,8 +1211,16 @@ export default function FileEditor({
         </span>
       ) : null}
       {readOnly ? (
-        <span className="ed-badge" title="Opened with no task selected: this is the project's own folder, so it is shown and never saved">
-          Read-Only · Main Checkout
+        // A lock alone in a narrow column; the words stay for a screen reader.
+        <span
+          className="ed-badge ed-readonly"
+          title="Read-only, main checkout: opened with no task selected, this is the project's own folder, so it is shown and never saved"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+          <span className="ed-readonly-text">Read-Only · Main Checkout</span>
         </span>
       ) : dirty ? (
         // The one main action, and only while there is something to save.
@@ -1216,8 +1234,8 @@ export default function FileEditor({
           Save
         </button>
       ) : null}
-      <OverflowMenu label="File Actions" items={menu} />
-    </>
+      <OverflowMenu label="File Actions" items={menu} heading={status?.text} />
+    </div>
   );
 
   return (
@@ -1406,20 +1424,21 @@ function ImagePreview({ url, bytes, name }: { url: string; bytes: number; name: 
   );
 }
 
-function SaveIndicator({ state }: { state: SaveState }) {
+interface Status {
+  tone: 'muted' | 'ok' | 'warn' | 'error';
+  text: string;
+}
+
+function saveStatus(state: SaveState): Status | null {
   switch (state.kind) {
     case 'saving':
-      return <span className="ed-status" data-tone="muted">Saving…</span>;
+      return { tone: 'muted', text: 'Saving…' };
     case 'saved':
-      return (
-        <span className="ed-status" data-tone="ok">
-          {state.noted ? 'Saved · Note in Terminal' : 'Saved'}
-        </span>
-      );
+      return { tone: 'ok', text: state.noted ? 'Saved · Note in Terminal' : 'Saved' };
     case 'failed':
-      return <span className="ed-status" data-tone="error">Not Saved</span>;
+      return { tone: 'error', text: 'Not Saved' };
     case 'conflict':
-      return <span className="ed-status" data-tone="warn">Changed on Disk</span>;
+      return { tone: 'warn', text: 'Changed on Disk' };
     default:
       return null;
   }
