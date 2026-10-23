@@ -46,7 +46,7 @@ import {
   touchTaskActivity,
   updateTask,
 } from './index';
-import { listPastSessions, listSessionCwds } from './sessions';
+import { listPastSessions, listSessionCwds, PROMPT_CHARS } from './sessions';
 import { deriveStatus } from '../capture/status';
 import { usageBreakdown, usageSummary, windowUsage } from '../capture/usage';
 import { contextUsage } from '../capture/context';
@@ -522,12 +522,12 @@ describe('branch and first prompt — the discriminators', () => {
   });
 
   it('collapses newlines and truncates a long opening prompt', async () => {
-    seedBranchedTurn('s1', 0, 1, 'master', `first line\n\n\tsecond   line ${'x'.repeat(300)}`);
+    seedBranchedTurn('s1', 0, 1, 'master', `first line\n\n\tsecond   line ${'x'.repeat(600)}`);
     seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
     const p = (await listPastSessions())[0]?.firstPrompt ?? '';
     expect(p).not.toContain('\n');
     expect(p).not.toContain('  ');
-    expect(p.length).toBeLessThanOrEqual(160);
+    expect(p.length).toBeLessThanOrEqual(PROMPT_CHARS);
     expect(p.startsWith('first line second line')).toBe(true);
   });
 
