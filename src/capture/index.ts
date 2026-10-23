@@ -38,7 +38,7 @@ export type { WindowUsage } from './usage';
 
 // --- For the shell's startup indicator ------------------------------------
 // What is waiting in Claude Code's input queue, per session (in memory).
-export { queuedFor, onQueueChange } from './queue';
+export { queuedFor, queueSettlesAt, onQueueChange } from './queue';
 export type { QueuedEntry } from './queue';
 
 // The permission mode each session was last seen in (in memory).

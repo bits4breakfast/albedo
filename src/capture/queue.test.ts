@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { absorbedPromptText, parseLine, queueFactsIn, queueOperationsIn } from './adapter';
-import { applyQueueOperations, IDLE_GRACE_MS, type SessionQueue } from './queue';
+import { applyQueueOperations, IDLE_GRACE_MS, queuedFor, queueSettlesAt, seedQueue, type SessionQueue } from './queue';
 import { queuedLabel } from '../ui/transcript/pastedText';
 
 const S = 'sess-1';
@@ -221,5 +221,33 @@ describe('absorbed mid-turn messages', () => {
 describe('queuedLabel', () => {
   it('shows a paste as a mention of it', () => {
     expect(queuedLabel('see this <pasted_content id="1">long\ntext</pasted_content id="1"> please')).toBe('see this [pasted text] please');
+  });
+});
+
+describe('reading the queue of an idle session', () => {
+  // The band now shows while the session is alive, idle included (#56), and an
+  // idle session writes no fact that would clear what it dropped at a turn end.
+  const T = Date.parse('2026-10-23T09:00:00.000Z');
+  const SID = 'sess-idle';
+
+  it('drops a typed entry left at a turn end once the grace is over, with no new fact', () => {
+    seedQueue([SID], [
+      { op: 'enqueue', sessionId: SID, text: 'dropped', ts: T },
+      { op: 'enqueue', sessionId: SID, text: '<task-notification>done</task-notification>', ts: T + 1 },
+      { op: 'turn-end', sessionId: SID, ts: T + 1000 },
+    ]);
+    expect(queuedFor(SID, T + 1000 + IDLE_GRACE_MS - 1).map((e) => e.text)).toHaveLength(2);
+    expect(queueSettlesAt(SID)).toBe(T + 1000 + IDLE_GRACE_MS);
+    // Injected entries can wait out an idle session; only the typed one goes.
+    expect(queuedFor(SID, T + 1000 + IDLE_GRACE_MS).map((e) => e.injected)).toEqual([true]);
+  });
+
+  it('keeps entries while a turn runs, however long: a retrying session ends no turn', () => {
+    seedQueue([SID], [
+      { op: 'dequeue', sessionId: SID, ts: T },
+      { op: 'enqueue', sessionId: SID, text: 'waiting out the outage', ts: T + 10 },
+    ]);
+    expect(queuedFor(SID, T + 60 * 60_000).map((e) => e.text)).toEqual(['waiting out the outage']);
+    expect(queueSettlesAt(SID)).toBeNull();
   });
 });

@@ -227,6 +227,34 @@
   overflow: hidden;
 }
 
+/* Held messages (outbox.ts): the same item, with Edit and Remove beside it.
+   The buttons are .tx-btn, a row shorter; the open editor is the composer's
+   own ground and edge, so --text keeps the contrast it has there. A second
+   group below Claude Code's queue starts a step apart. */
+.tx-queued-item + .tx-queued-head { margin-top: 6px; }
+.tx-queued-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+.tx-queued-row > .tx-queued-item { flex: 1; min-width: 0; margin: 0; }
+.tx-queued-act { flex: none; height: 22px; padding: 0 8px; }
+/* "May already have been sent": the notice's own --warn (5.33 on --panel). */
+.tx-queued-note { flex: none; align-self: center; color: var(--warn); font-size: var(--fs-xs); }
+.tx-queued-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  resize: vertical;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-inset);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+}
+.tx-queued-edit:focus { outline: none; border-color: var(--border-strong); }
+
 /* --- composer -------------------------------------------------------------- */
 
 /*

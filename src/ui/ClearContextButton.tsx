@@ -11,7 +11,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ContextUsage } from '../capture';
 import type { Task } from '../types';
-import { hasLivePty, onPtyPresenceChange, submitPty } from './Terminal';
+import { hasLivePty, onPtyPresenceChange } from './Terminal';
+import { sendToSession, useSendsWait } from './transcript/send';
 import { contextReadout, contextTitle } from './StatusDot';
 import './gauges/gauges.css';
 import './clearcontext.css';
@@ -85,7 +86,9 @@ function SessionCommandButton({ task, cmd }: { task: Task; cmd: SessionCommand }
     return () => clearTimeout(t);
   }, [arming]);
 
-  const ready = live && task.status === 'idle';
+  // A command is never held (send.ts): while sends wait, it is not offered.
+  const waiting = useSendsWait(task.id);
+  const ready = live && task.status === 'idle' && !waiting;
   useEffect(() => {
     if (!ready) setArming(false);
   }, [ready]);
@@ -94,7 +97,9 @@ function SessionCommandButton({ task, cmd }: { task: Task; cmd: SessionCommand }
     ? 'No session is running for this task.'
     : task.status !== 'idle'
       ? 'Available once the session is idle.'
-      : arming
+      : waiting
+        ? 'Not available while messages are waiting to send'
+        : arming
         ? (cmd.confirmHint ?? cmd.hint)
         : cmd.hint;
 
@@ -108,7 +113,8 @@ function SessionCommandButton({ task, cmd }: { task: Task; cmd: SessionCommand }
     setArming(false);
     busyRef.current = true;
     try {
-      setFailed(!(await submitPty(task.id, cmd.command)));
+      // Refused, not held, if sends started waiting since the click was offered.
+      setFailed((await sendToSession(task.id, cmd.command)) !== 'sent');
     } catch {
       setFailed(true);
     } finally {

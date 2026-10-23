@@ -46,6 +46,8 @@ const RESIZE_DEBOUNCE_MS = 100;
 // ---------------------------------------------------------------------------
 
 const livePtys = new Map<number, string>();
+/** When each live pty was spawned, ms. A new `claude` process starts with an empty input queue. */
+const liveSince = new Map<number, number>();
 
 /**
  * Per-task "start a session here". Registered by each mounted Terminal, which
@@ -78,12 +80,14 @@ function notifyPresence(taskId: number, live: boolean): void {
 
 function registerPty(taskId: number, ptyId: string): void {
   livePtys.set(taskId, ptyId);
+  liveSince.set(taskId, Date.now());
   notifyPresence(taskId, true);
 }
 
 function unregisterPty(taskId: number, ptyId: string): void {
   if (livePtys.get(taskId) !== ptyId) return;
   livePtys.delete(taskId);
+  liveSince.delete(taskId);
   notifyPresence(taskId, false);
 }
 
@@ -189,6 +193,15 @@ export function focusPty(taskId: number): boolean {
 /** True when the task has a spawned, un-exited pty. */
 export function hasLivePty(taskId: number): boolean {
   return livePtys.has(taskId);
+}
+
+/**
+ * When the task's live pty was spawned, or null with none. Claude Code's
+ * input queue lives in its process, so nothing queued before this moment is
+ * still waiting in it.
+ */
+export function ptyLiveSince(taskId: number): number | null {
+  return liveSince.get(taskId) ?? null;
 }
 
 /**

@@ -27,6 +27,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
 import { Composer } from './TranscriptPane';
 import { __resetDrafts, getDraft, saveDraft } from './drafts';
+import { __resetOutbox, heldFor, holdMessage } from './outbox';
+import { startOutboxRelease } from './outboxRelease';
+import { __resetConnectivity } from '../../lib/connectivity';
 
 // Replaces the real module, so xterm and the Tauri pty bridge never load.
 // The signatures are checked against the real exports by tsc: a mock that
@@ -47,6 +50,9 @@ vi.mock('../Terminal', () => {
     },
   };
 });
+
+// A held message's review comments are marked sent through this on delivery.
+vi.mock('../../db/comments', () => ({ markCommentsSent: vi.fn(async () => {}) }));
 
 // Paste writes through these; nothing touches a real disk.
 vi.mock('@tauri-apps/api/path', () => ({ homeDir: vi.fn(async () => '/Users/me') }));
@@ -367,6 +373,17 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     expect(box().value).toBe('never mind');
     // ...and the cancelled body must not fire when the status later clears.
     expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('does not hold a command for the prompt: after the answer the turn goes on', async () => {
+    render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
+    type('/compact');
+    pressEnter();
+    await waitFor(() =>
+      expect(screen.getByText('Commands can\u2019t wait for the prompt. Send it once Claude has finished.')).toBeTruthy(),
+    );
+    expect(box().value).toBe('/compact');
+    expect(box().readOnly).toBe(false);
   });
 
   it('leaves a merely running task alone — Claude Code queues those itself', async () => {
@@ -735,5 +752,201 @@ describe('(d) each task keeps its own draft', () => {
     expect(box().value).toBe('B is mine');
     expect(getDraft(2)?.text).toBe('B is mine');
     expect(getDraft(1)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (o) offline: the outbox (#56)
+// ---------------------------------------------------------------------------
+
+describe('(o) offline, a send waits in the outbox', () => {
+  let online = true;
+  const setOnline = (value: boolean) => {
+    online = value;
+    act(() => {
+      window.dispatchEvent(new Event(value ? 'online' : 'offline'));
+    });
+  };
+
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    online = true;
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => online });
+    __resetConnectivity(async () => online);
+    __resetOutbox();
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    __resetConnectivity();
+    __resetOutbox();
+  });
+
+  it('holds it instead of typing it, empties the box, and says why in one line', async () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    setOnline(false);
+    expect(screen.getByText('You’re offline. Messages wait here and go when the connection is back.')).toBeTruthy();
+    type('while the wifi is down');
+    pressEnter();
+    await waitFor(() => expect(box().value).toBe(''));
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(heldFor(1).map((h) => h.text)).toEqual(['while the wifi is down']);
+    // Held is not a draft: it cannot come back and be sent twice.
+    expect(getDraft(1)).toBeNull();
+  });
+
+  it('holds what Claude Code will receive, pastes filled in', async () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    setOnline(false);
+    const log = 'a\nb\nc\nd\ne';
+    fireEvent.paste(box(), {
+      clipboardData: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }], getData: () => log },
+    });
+    pressEnter();
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([log]));
+  });
+
+  it('keeps held messages across a task switch and a restart', async () => {
+    const { rerender, unmount } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    setOnline(false);
+    type('for A');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1)).toHaveLength(1));
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    rerender(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(heldFor(1).map((h) => h.text)).toEqual(['for A']);
+    unmount();
+    __resetOutbox(); // the restart: memory gone, storage kept
+    expect(heldFor(1).map((h) => h.text)).toEqual(['for A']);
+  });
+
+  it('back online, a new message waits behind the held ones rather than overtaking them', async () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    setOnline(false);
+    type('first');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1)).toHaveLength(1));
+    setOnline(true);
+    type('second');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual(['first', 'second']));
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('never holds a typed command: it stays in the box, as the draft, with a notice', async () => {
+    holdMessage(1, 'already waiting');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('/clear');
+    pressEnter();
+    await waitFor(() =>
+      expect(screen.getByText('Commands can\u2019t wait in the queue. Send it when the connection is back.')).toBeTruthy(),
+    );
+    expect(box().value).toBe('/clear');
+    expect(getDraft(1)?.text).toBe('/clear');
+    expect(heldFor(1).map((h) => h.text)).toEqual(['already waiting']);
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('marks review comments sent when their held message is delivered, after a switch away', async () => {
+    const { insertIntoComposer } = await import('./composerBridge');
+    const { markCommentsSent } = await import('../../db/comments');
+    const stop = startOutboxRelease();
+    const { rerender } = render(<Composer taskId={5} onSent={vi.fn()} />);
+    setOnline(false);
+    const onSent = vi.fn(() => true);
+    act(() => {
+      insertIntoComposer({ taskId: 5, text: 'Comment at a.ts:3', onSent, comments: [{ id: 7, marker: 'a.ts:3' }] });
+    });
+    pressEnter();
+    await waitFor(() => expect(heldFor(5)).toEqual([expect.objectContaining({ commentIds: [7] })]));
+    rerender(<Composer taskId={6} onSent={vi.fn()} />); // the watcher goes with the switch
+    expect(markCommentsSent).not.toHaveBeenCalled();
+
+    setOnline(true);
+    await waitFor(() => expect(markCommentsSent).toHaveBeenCalledWith(5, [7]));
+    expect(submitPty).toHaveBeenCalledWith(5, 'Comment at a.ts:3');
+    expect(onSent).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('never resends what already went to Claude Code before the outage', async () => {
+    const stop = startOutboxRelease();
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('sent before anyone knew');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    setOnline(false);
+    type('held');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1)).toHaveLength(1));
+    setOnline(true);
+    await waitFor(() => expect(heldFor(1)).toHaveLength(0));
+    expect(vi.mocked(submitPty).mock.calls).toEqual([
+      [1, 'sent before anyone knew'],
+      [1, 'held'],
+    ]);
+    stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (s) a switch while a send is being written
+// ---------------------------------------------------------------------------
+
+describe('(s) switching task while a send is still being written', () => {
+  let land: (ok: boolean) => void = () => {};
+  beforeEach(() => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(startPty).mockReturnValue(false);
+    vi.mocked(submitPty).mockImplementation(() => new Promise<boolean>((r) => (land = r)));
+  });
+
+  it('a send that succeeds after the switch leaves the new task’s draft intact', async () => {
+    saveDraft(2, 'B, restored', new Map());
+    const onSent = vi.fn();
+    const { rerender } = render(<Composer taskId={1} onSent={onSent} />);
+    type('for A');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    rerender(<Composer taskId={2} onSent={onSent} />);
+    expect(box().value).toBe('B, restored');
+    expect(getDraft(2)?.text).toBe('B, restored');
+
+    await act(async () => land(true));
+    expect(box().value).toBe('B, restored');
+    expect(getDraft(2)?.text).toBe('B, restored');
+    expect(getDraft(1)).toBeNull(); // sent: not a draft
+    // The box is B's to use: a send from it is not blocked by A's.
+    type('B, restored and sent');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+  });
+
+  it('a send that fails after the switch comes back as the old task’s draft, and the new one is intact', async () => {
+    saveDraft(2, 'B, restored', new Map());
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('for A');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+
+    await act(async () => land(false));
+    expect(box().value).toBe('B, restored');
+    expect(getDraft(2)?.text).toBe('B, restored');
+    expect(screen.queryByText(/Could not|isn’t running/)).toBeNull();
+    expect(getDraft(1)).toMatchObject({ text: 'for A', notSent: true });
+
+    rerender(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(box().value).toBe('for A');
+    expect(screen.getByText('Not sent — press Send when you’re ready.')).toBeTruthy();
   });
 });

@@ -9,6 +9,7 @@ import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../ca
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { noteQuestion, noteStatusChange } from './attention';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
+import { keepOutboxFor } from './transcript/outbox';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
 /** Shape of the `onCaptureUpdate` payload. */
@@ -303,8 +304,11 @@ export function useTasks(): UseTasksResult {
         return { ...row, ...patch };
       });
       commit((prev) => reconcileTasks(prev, merged));
-      // The read holds every live task: an archived or deleted one's draft goes.
-      keepDraftsFor(merged.filter((t) => t.status !== 'archived').map((t) => t.id));
+      // The read holds every live task: an archived or deleted one's draft
+      // and held messages go.
+      const live = merged.filter((t) => t.status !== 'archived').map((t) => t.id);
+      keepDraftsFor(live);
+      keepOutboxFor(live);
       setLoadError(null);
     } catch (err) {
       if (!aliveRef.current) return;

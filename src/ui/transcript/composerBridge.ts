@@ -12,6 +12,13 @@ export interface ComposerInsert {
   text: string;
   /** Called with the text Claude Code received, each time a message is sent until it returns true. */
   onSent?: (sent: string) => boolean;
+  /**
+   * Review comments in the text, each found by a marker (its location). A
+   * message held offline keeps the ids of those whose marker it carries, and
+   * they are marked sent when it is delivered: by then this insert, and the
+   * `onSent` above, may be gone.
+   */
+  comments?: ReadonlyArray<{ id: number; marker: string }>;
 }
 
 /** Returns true when it took the text: only the task's own composer does. */
