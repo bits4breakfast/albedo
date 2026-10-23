@@ -1107,21 +1107,21 @@ export default function App() {
             {selected && !showTranscript && <ModelPicker task={selected} />}
 
             {!editorShowing && (
-            <div className="seg" role="group" aria-label="Pane layout">
-              <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} title="Terminal only (⌘\)">
-                PTY
-              </button>
-              <button aria-pressed={mode === 'split'} onClick={() => setMode('split')} title="Split (⌘\)">
-                Split
-              </button>
-              <button
-                aria-pressed={mode === 'transcript'}
-                onClick={() => setMode('transcript')}
-                title="Transcript only (⌘\)"
-              >
-                Transcript
-              </button>
-            </div>
+              <div className="seg" role="group" aria-label="Pane layout">
+                <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} title="Terminal only (⌘\)">
+                  PTY
+                </button>
+                <button aria-pressed={mode === 'split'} onClick={() => setMode('split')} title="Split (⌘\)">
+                  Split
+                </button>
+                <button
+                  aria-pressed={mode === 'transcript'}
+                  onClick={() => setMode('transcript')}
+                  title="Transcript only (⌘\)"
+                >
+                  Transcript
+                </button>
+              </div>
             )}
 
             {/* Two icons where a ⋯ held two items: the orientation only
