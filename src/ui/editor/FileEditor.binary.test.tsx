@@ -66,7 +66,8 @@ describe('FileEditor, files that are not text', () => {
     expect(readFile).toHaveBeenCalledWith('/wt/docs/shot.png');
     expect(readTextFile).not.toHaveBeenCalled();
     expect(document.querySelector('.cm-content')).toBeNull();
-    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    // Save shows only for unsaved edits, and a picture never has any.
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 
   it('releases the picture when the editor closes', async () => {

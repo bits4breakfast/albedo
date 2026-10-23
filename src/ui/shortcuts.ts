@@ -98,13 +98,17 @@ export type Combo =
 
 /**
  * Bindings that are not one app-wide keystroke, documented alongside the
- * combos: a gesture, or a key bound inside the editor's own keymap.
+ * combos: a gesture, or a key that only the editor answers (its CodeMirror
+ * keymap, or editorKeys.ts while it is on screen).
  */
 export type Gesture =
   | 'shift shift'
   | 'editor mod+b'
   | 'editor alt+f7'
+  | 'editor mod+shift+d'
   | 'editor mod+shift+c'
+  | 'editor mod+alt+shift+c'
+  | 'editor mod+alt+m'
   | 'transcript mod+arrowdown'
   | 'new-task mod+enter';
 
@@ -129,7 +133,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+]', keys: '⇧⌘]', description: 'Next Project' },
   { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous Reading Tab' },
   { combo: 'mod+arrowright', keys: '⌘→', description: 'Next Reading Tab' },
-  { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle PTY / Split / Transcript' },
+  { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle PTY / Split / Transcript (not on the Editor tab)' },
   { combo: 'mod+shift+o', keys: '⇧⌘O', description: 'Go to File' },
   { combo: 'mod+o', keys: '⌘O', description: 'Go to Class' },
   { combo: 'mod+alt+o', keys: '⌥⌘O', description: 'Go to Symbol' },
@@ -139,7 +143,10 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
-  { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Comment on the Selected Lines' },
+  { combo: 'editor mod+shift+d', keys: '⇧⌘D', description: 'In the Editor: Diff / File' },
+  { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Copy Full Path' },
+  { combo: 'editor mod+alt+shift+c', keys: '⌥⇧⌘C', description: 'In the Editor: Copy Path (from the Worktree)' },
+  { combo: 'editor mod+alt+m', keys: '⌥⌘M', description: 'In the Editor: Comment on the Selected Lines' },
   { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },

@@ -4,7 +4,8 @@
  * user's real repo: it must show the file and never write it.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { EditorView } from '@codemirror/view';
 import type { Task } from '../../types';
 
 const writeTextFile = vi.fn(async () => {});
@@ -44,7 +45,12 @@ afterEach(() => {
 });
 
 function open(readOnly: boolean) {
-  render(<FileEditor task={checkout} request={{ path: 'src/a.ts' }} onClose={() => {}} readOnly={readOnly} />);
+  // The tab row's slot for the editor's controls, as EditorTabs gives it.
+  const slot = document.createElement('div');
+  document.body.appendChild(slot);
+  render(
+    <FileEditor task={checkout} request={{ path: 'src/a.ts' }} onClose={() => {}} readOnly={readOnly} controlsSlot={slot} />,
+  );
 }
 
 describe('FileEditor, read-only', () => {
@@ -52,7 +58,8 @@ describe('FileEditor, read-only', () => {
     open(true);
     await screen.findByText(/Read-Only · Main Checkout/);
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Diff' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'File Actions' }));
+    expect(screen.queryByRole('menuitemcheckbox', { name: /Diff/ })).toBeNull();
   });
 
   it('is not editable, and Cmd+S never writes', async () => {
@@ -70,10 +77,19 @@ describe('FileEditor, read-only', () => {
     expect(writeTextFile).not.toHaveBeenCalled();
   });
 
-  it('a normal task still gets Save and Diff', async () => {
+  it('a normal task still gets Diff, and Save once there is something to save', async () => {
     open(false);
-    await screen.findByRole('button', { name: 'Save' });
-    expect(screen.getByRole('button', { name: 'Diff' })).toBeTruthy();
+    const content = await waitFor(() => {
+      const el = document.querySelector('.cm-content');
+      if (!el) throw new Error('editor not mounted yet');
+      return el as HTMLElement;
+    });
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'File Actions' }));
+    expect(screen.getByRole('menuitemcheckbox', { name: /Diff/ })).toBeTruthy();
     expect(screen.queryByText(/Read-Only · Main Checkout/)).toBeNull();
+    const view = EditorView.findFromDOM(content)!;
+    act(() => view.dispatch({ changes: { from: 0, insert: '// ' } }));
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy();
   });
 });

@@ -18,7 +18,10 @@
  *    re-reads the file and refuses to overwrite a version that moved under us.
  */
 
+import { createPortal } from 'react-dom';
 import { copyText } from '../../lib/clipboard';
+import OverflowMenu, { type OverflowItem } from '../OverflowMenu';
+import { editorKeyOf } from './editorKeys';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
 import { useOpenFile } from './openFile';
 import { formatBytes, imageTypeForPath } from './preview';
@@ -80,7 +83,7 @@ import type { ResolvedPath } from '../../lib/paths';
 import { resolveInWorktree } from '../../lib/paths';
 import { highlightToTokens, peekTokens, styleToCss } from '../../lib/highlight';
 import { langForPath } from '../../lib/diff';
-import { isHandEdited, markHandEdited, onHandEditedChange } from '../../lib/handEdited';
+import { markHandEdited } from '../../lib/handEdited';
 import { onThemeChange, resolvedTheme } from '../theme';
 import type { ResolvedTheme } from '../theme';
 import { notePty } from '../Terminal';
@@ -391,9 +394,15 @@ export interface FileEditorProps {
   /**
    * The tab on screen. Several editors stay mounted, one per open tab, so
    * each keeps its buffer, undo history and scroll; only the active one may
-   * answer the window-level keys (Esc, ⇧⌘D, ⌥⌘↑↓, ⌥⌘C). Default true.
+   * answer the window-level keys (Esc, ⇧⌘D, ⌥⌘↑↓, ⇧⌘C, ⌥⇧⌘C) and draw its
+   * controls. Default true.
    */
   active?: boolean;
+  /**
+   * Where the active editor draws its controls: the ‹ › arrows, Save and ⋯,
+   * at the end of the tab row (EditorTabs). Null draws none.
+   */
+  controlsSlot?: HTMLElement | null;
   /** Told when unsaved edits appear or go, for the tab's dot. */
   onDirtyChange?: (dirty: boolean) => void;
   /**
@@ -405,8 +414,10 @@ export interface FileEditorProps {
   closeSignal?: number;
   /** File or Diff to start in: the tabs carry the last choice to a new tab. */
   initialMode?: 'file' | 'diff';
-  /** The person picked File or Diff (a button or ⇧⌘D), not a line jump. */
+  /** The person picked File or Diff (⋯ or ⇧⌘D), not a line jump. */
   onModeChosen?: (mode: 'file' | 'diff') => void;
+  /** Told whenever File or Diff changes, for the tab's Diff marker. */
+  onModeChange?: (mode: 'file' | 'diff') => void;
 }
 
 function message(err: unknown): string {
@@ -424,6 +435,8 @@ export default function FileEditor({
   closeSignal = 0,
   initialMode = 'file',
   onModeChosen,
+  onModeChange,
+  controlsSlot = null,
 }: FileEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -440,7 +453,7 @@ export default function FileEditor({
   const navRef = useRef<(action: NavAction) => void>(() => {});
   /** Review-comment callbacks, read by the CodeMirror extension; null when comments are off. */
   const commentActionsRef = useRef<CommentActions | null>(null);
-  /** ⇧⌘C: start a comment on the selected lines. */
+  /** ⌥⌘M: start a comment on the selected lines. */
   const startCommentRef = useRef<() => void>(() => {});
 
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
@@ -448,7 +461,6 @@ export default function FileEditor({
   const [doc, setDoc] = useState<{ text: string; key: number } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
-  const [handEdited, setHandEdited] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
 
   /*
@@ -521,7 +533,6 @@ export default function FileEditor({
       }
       resolvedRef.current = target;
       setResolved(target);
-      setHandEdited(isHandEdited(task.id, target.relative));
 
       const imageType = imageTypeForPath(target.relative);
       if (imageType) {
@@ -574,14 +585,6 @@ export default function FileEditor({
       if (imageUrl) URL.revokeObjectURL(imageUrl);
     };
   }, [task.id, task.worktreePath, requestPath]);
-
-  // --- hand-edited badge stays live ---------------------------------------
-  useEffect(() => {
-    if (!resolved) return;
-    const sync = () => setHandEdited(isHandEdited(task.id, resolved.relative));
-    sync();
-    return onHandEditedChange(sync);
-  }, [task.id, resolved]);
 
   // --- save ----------------------------------------------------------------
   const readOnlyRef = useRef(readOnly);
@@ -643,7 +646,6 @@ export default function FileEditor({
 
     // Order matters and is fixed by the spec: write, mark, then note.
     markHandEdited(task.id, target.relative);
-    setHandEdited(true);
 
     // One line, no newline. `notePty` places it in the input unsent, because
     // the agent may be mid-turn and sending has to stay a human decision.
@@ -696,7 +698,9 @@ export default function FileEditor({
             { key: 'Mod-b', preventDefault: true, run: () => (navRef.current('declaration'), true) },
             { key: 'Alt-F7', preventDefault: true, run: () => (navRef.current('usages'), true) },
             // A review comment on the selected lines (or the cursor's line).
-            { key: 'Shift-Mod-c', preventDefault: true, run: () => (startCommentRef.current(), true) },
+            // ⌥⌘M: free in CodeMirror, the app and macOS text fields. With
+            // Option, `key` is "µ"; CodeMirror then matches on `keyCode`.
+            { key: 'Mod-Alt-m', preventDefault: true, run: () => (startCommentRef.current(), true) },
           ]),
         ),
         // ⌘-click is Go to Declaration, as in PhpStorm, so adding a cursor
@@ -811,14 +815,12 @@ export default function FileEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  // --- File | Diff: Shift-Command-D -----------------------------------------
-  // Not PhpStorm's Command-D: CodeMirror binds Mod-d to "select next
-  // occurrence", and an editor where that key stopped working would be worse
-  // than a different chord. Shift-Command-D is bound by neither CodeMirror,
-  // the default macOS menu, nor the app keymap. Command only, matched on the
-  // physical key (Shift makes `key` "D"), and Control is left alone: it would
-  // reach the terminal as Ctrl-D, which is EOF. Capture phase, so it works
-  // with the cursor inside the editor -- same as the stepping keys.
+  // --- File | Diff, and copying the path -----------------------------------
+  // ⇧⌘D, ⇧⌘C and ⌥⇧⌘C; see editorKeys.ts for the choice of keys. Capture
+  // phase, so they work with the cursor inside the editor -- same as the
+  // stepping keys. Only while this editor is on screen: an editor kept
+  // mounted behind the Transcript tab must not take a key it cannot show the
+  // result of, nor overwrite the clipboard with a path nobody is looking at.
   // A main checkout has no task base to diff against.
   const canDiff = !readOnly && resolved !== null && phase.kind === 'ready';
   /** A choice the person made, which the tabs remember for the next file. */
@@ -834,16 +836,43 @@ export default function FileEditor({
     chooseMode(modeRef.current === 'file' ? 'diff' : 'file');
   }, [chooseMode]);
   useEffect(() => {
+    onModeChange?.(mode);
+  }, [mode, onModeChange]);
+
+  const title = resolved?.relative ?? request?.path ?? '';
+  const absolute = resolved?.absolute ?? null;
+  /** "Copied" for a moment, so a keystroke with nothing else to show says it worked. */
+  const [copied, setCopied] = useState<'path' | 'full' | 'failed' | null>(null);
+  useEffect(() => {
+    if (copied === null) return;
+    const t = setTimeout(() => setCopied(null), 1400);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const copyPath = useCallback(
+    (full: boolean) => {
+      // Relative to the worktree is what you paste into a prompt or a command
+      // run there; the full path is for anything outside it.
+      const text = full && absolute ? absolute : title;
+      void copyText(text).then((ok) => setCopied(ok ? (full ? 'full' : 'path') : 'failed'));
+    },
+    [title, absolute],
+  );
+
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
     if (request === null || !active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'KeyD') return;
+      const hit = editorKeyOf(e);
+      const root = rootRef.current;
+      if (hit === null || root === null || root.closest('[hidden]') !== null) return;
       e.preventDefault();
       e.stopPropagation();
-      toggleMode();
+      if (hit === 'toggle-diff') toggleMode();
+      else copyPath(hit === 'copy-full-path');
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [request, toggleMode, active]);
+  }, [request, toggleMode, copyPath, active]);
 
   // --- close ---------------------------------------------------------------
   const requestClose = useCallback(() => {
@@ -1097,116 +1126,123 @@ export default function FileEditor({
 
   if (request === null) return null;
 
-  const title = resolved?.relative ?? request.path;
-  // Filename first, its folder after and clipped first, as Linear's review
-  // tool does: the part you are reading never moves when the folder is long.
-  const slash = title.lastIndexOf('/');
-  const fileName = title.slice(slash + 1);
-  const folder = slash > 0 ? title.slice(0, slash + 1) : '';
+  const fileName = title.slice(title.lastIndexOf('/') + 1);
 
-  return (
-    <div className="ed-root" role="dialog" aria-label={`Editing ${title}`}>
-      <div className="ed-bar">
-        {/* The arrows lead the bar so stepping through files never moves them. */}
-        {position >= 0 && order.length > 1 ? (
-          <span className="ed-nav" aria-label="Changed files">
-            <button
-              type="button"
-              className="ed-nav-btn"
-              onClick={() => step(-1)}
-              disabled={dirty}
-              title={dirty ? 'Save or discard your edits first' : 'Previous changed file (⌥⌘↑)'}
-              aria-label="Previous changed file"
-            >
-              ‹
-            </button>
-            <span className="ed-nav-pos">
-              {position + 1} / {order.length}
-            </span>
-            <button
-              type="button"
-              className="ed-nav-btn"
-              onClick={() => step(1)}
-              disabled={dirty}
-              title={dirty ? 'Save or discard your edits first' : 'Next changed file (⌥⌘↓)'}
-              aria-label="Next changed file"
-            >
-              ›
-            </button>
-          </span>
-        ) : null}
-        <span className="ed-path" title={resolved?.absolute ?? request.path}>
-          <span className="ed-name">
-            {fileName}
-            {requestLine !== null && <span className="ed-line">:{requestLine}</span>}
-          </span>
-          {folder && <span className="ed-folder">{folder}</span>}
+  const menu: OverflowItem[] = [
+    ...(readOnly
+      ? []
+      : [
+          {
+            id: 'diff',
+            label: 'Diff',
+            checked: mode === 'diff',
+            aside: '⇧⌘D',
+            disabled: !canDiff,
+            title: "This task's change to the file: the branch's base against the working tree, committed and uncommitted together",
+            onSelect: toggleMode,
+          },
+        ]),
+    {
+      id: 'find',
+      label: 'Find',
+      aside: '⌘F',
+      disabled: phase.kind !== 'ready' || mode === 'diff',
+      onSelect: () => {
+        const view = viewRef.current;
+        if (view) openSearchPanel(view);
+      },
+    },
+    { id: 'copy-path', label: 'Copy Path', aside: '⌥⇧⌘C', title, group: true, onSelect: () => copyPath(false) },
+    {
+      id: 'copy-full-path',
+      label: 'Copy Full Path',
+      aside: '⇧⌘C',
+      title: absolute ?? undefined,
+      disabled: absolute === null,
+      onSelect: () => copyPath(true),
+    },
+  ];
+
+  // Status first, so the arrows stay put when it comes and goes. It is the
+  // first thing to give way in a narrow column (editortabs.css), so ⋯ repeats
+  // it as its heading.
+  const status: Status | null =
+    copied !== null
+      ? copied === 'failed'
+        ? { tone: 'error', text: 'Copy Failed' }
+        : { tone: 'ok', text: copied === 'full' ? 'Full Path Copied' : 'Path Copied' }
+      : saveStatus(saveState);
+
+  // Drawn at the end of the tab row, which already names the file: the tab
+  // carries the name, the unsaved dot and the Diff marker, and its tooltip the
+  // path. Outside this component's dialog in the page, so the group names the
+  // file itself.
+  const controls = (
+    <div className="ed-controls" role="toolbar" aria-label={`${fileName} Actions`} data-dirty={dirty || undefined}>
+      {status && (
+        <span className="ed-status" data-tone={status.tone} title={status.text}>
+          {status.text}
         </span>
-        <CopyPathButton path={title} absolute={resolved?.absolute ?? null} active={active} />
-        {handEdited && (
-          <span className="ed-badge" title="You saved this file by hand in this session">
-            Hand-Edited
+      )}
+      {position >= 0 && order.length > 1 ? (
+        <span className="ed-nav" aria-label="Changed files">
+          <button
+            type="button"
+            className="ed-nav-btn"
+            onClick={() => step(-1)}
+            disabled={dirty}
+            title={dirty ? 'Save or discard your edits first' : 'Previous changed file (⌥⌘↑)'}
+            aria-label="Previous changed file"
+          >
+            ‹
+          </button>
+          {/* Hidden first when the column narrows; see editortabs.css. */}
+          <span className="ed-nav-pos">
+            {position + 1} / {order.length}
           </span>
-        )}
-        {dirty && <span className="ed-dot" title="Unsaved changes" />}
-
-        <span className="ed-spacer" />
-
-        {readOnly ? (
-          <span className="ed-badge" title="Opened with no task selected: this is the project's own folder, so it is shown and never saved">
-            Read-Only · Main Checkout
-          </span>
-        ) : (
-          <>
-            <span className="ed-mode" role="group" aria-label="Show">
-              <button
-                type="button"
-                className="ed-mode-btn"
-                aria-pressed={mode === 'file'}
-                onClick={() => chooseMode('file')}
-                title="The file as it is now (⇧⌘D toggles)"
-              >
-                File
-              </button>
-              <button
-                type="button"
-                className="ed-mode-btn"
-                aria-pressed={mode === 'diff'}
-                aria-keyshortcuts="Shift+Meta+D"
-                onClick={() => chooseMode('diff')}
-                disabled={!canDiff}
-                title="This task's change to the file: the branch's base against the working tree, committed and uncommitted together (⇧⌘D)"
-              >
-                Diff
-              </button>
-            </span>
-
-            <SaveIndicator state={saveState} />
-
-            <button
-              type="button"
-              className="ed-btn"
-              onClick={() => saveRef.current()}
-              disabled={phase.kind !== 'ready' || saveState.kind === 'saving'}
-              title="Save to the worktree (⌘S)"
-            >
-              Save
-            </button>
-          </>
-        )}
+          <button
+            type="button"
+            className="ed-nav-btn"
+            onClick={() => step(1)}
+            disabled={dirty}
+            title={dirty ? 'Save or discard your edits first' : 'Next changed file (⌥⌘↓)'}
+            aria-label="Next changed file"
+          >
+            ›
+          </button>
+        </span>
+      ) : null}
+      {readOnly ? (
+        // A lock alone in a narrow column; the words stay for a screen reader.
+        <span
+          className="ed-badge ed-readonly"
+          title="Read-only, main checkout: opened with no task selected, this is the project's own folder, so it is shown and never saved"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+          <span className="ed-readonly-text">Read-Only · Main Checkout</span>
+        </span>
+      ) : dirty ? (
+        // The one main action, and only while there is something to save.
         <button
           type="button"
-          className="ed-btn"
-          onClick={() => {
-            const view = viewRef.current;
-            if (view) openSearchPanel(view);
-          }}
-          disabled={phase.kind !== 'ready' || mode === 'diff'}
-          title="Find (⌘F)"
+          className="btn btn-primary"
+          onClick={() => saveRef.current()}
+          disabled={saveState.kind === 'saving'}
+          title="Save to the worktree (⌘S)"
         >
-          Find
+          Save
         </button>
-      </div>
+      ) : null}
+      <OverflowMenu label="File Actions" items={menu} heading={status?.text} />
+    </div>
+  );
+
+  return (
+    <div ref={rootRef} className="ed-root" role="dialog" aria-label={`Editing ${title}`}>
+      {active && controlsSlot ? createPortal(controls, controlsSlot) : null}
 
       {saveState.kind === 'conflict' && (
         <div className="ed-notice" data-tone="warn">
@@ -1390,78 +1426,22 @@ function ImagePreview({ url, bytes, name }: { url: string; bytes: number; name: 
   );
 }
 
-function SaveIndicator({ state }: { state: SaveState }) {
+interface Status {
+  tone: 'muted' | 'ok' | 'warn' | 'error';
+  text: string;
+}
+
+function saveStatus(state: SaveState): Status | null {
   switch (state.kind) {
     case 'saving':
-      return <span className="ed-status" data-tone="muted">Saving…</span>;
+      return { tone: 'muted', text: 'Saving…' };
     case 'saved':
-      return (
-        <span className="ed-status" data-tone="ok">
-          {state.noted ? 'Saved · Note in Terminal' : 'Saved'}
-        </span>
-      );
+      return { tone: 'ok', text: state.noted ? 'Saved · Note in Terminal' : 'Saved' };
     case 'failed':
-      return <span className="ed-status" data-tone="error">Not Saved</span>;
+      return { tone: 'error', text: 'Not Saved' };
     case 'conflict':
-      return <span className="ed-status" data-tone="warn">Changed on Disk</span>;
+      return { tone: 'warn', text: 'Changed on Disk' };
     default:
       return null;
   }
-}
-
-/**
- * Copy the path shown above the editor. A click copies it as shown (relative
- * to the worktree, which is what you paste into a prompt or a command run
- * there); Option-click copies the absolute path. "copied" confirms it for a
- * moment rather than leaving you to wonder whether it worked.
- */
-function CopyPathButton({ path, absolute, active }: { path: string; absolute: string | null; active: boolean }) {
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  useEffect(() => {
-    if (state === 'idle') return;
-    const t = setTimeout(() => setState('idle'), 1400);
-    return () => clearTimeout(t);
-  }, [state]);
-
-  const copy = useCallback(
-    (wantAbsolute: boolean) => {
-      const text = wantAbsolute && absolute ? absolute : path;
-      void copyText(text).then((ok) => setState(ok ? 'copied' : 'failed'));
-    },
-    [path, absolute],
-  );
-
-  // Option-Command-C, Finder's "Copy as Pathname" (VS Code agrees); with Shift,
-  // the absolute path. Matched on `code`, because Option turns `key` into "ç".
-  // Capture phase, so it works with the cursor inside the editor too.
-  useEffect(() => {
-    if (!active) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey || !e.altKey || e.ctrlKey || e.code !== 'KeyC') return;
-      e.preventDefault();
-      e.stopPropagation();
-      copy(e.shiftKey);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [copy, active]);
-
-  return (
-    <button
-      type="button"
-      className="ed-copy"
-      data-state={state}
-      onClick={(e) => copy(e.altKey)}
-      title={absolute ? 'Copy path (⌥⌘C) · absolute path: ⌥-click or ⇧⌥⌘C' : 'Copy path (⌥⌘C)'}
-      aria-label="Copy path"
-      aria-keyshortcuts="Alt+Meta+C"
-    >
-      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy Failed' : (
-        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" strokeWidth="1.3" />
-        </svg>
-      )}
-    </button>
-  );
 }

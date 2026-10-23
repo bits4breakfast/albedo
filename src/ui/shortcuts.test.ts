@@ -266,3 +266,20 @@ describe('terminalTakesKey', () => {
     expect(terminalTakesKey(ev({ key: '{', code: 'BracketLeft', ctrlKey: true, shiftKey: true }))).toBe(true);
   });
 });
+
+describe('editor keys', () => {
+  it('none of them is also an app combo, so one key never does two things', () => {
+    // ⇧⌘D, ⇧⌘C, ⌥⇧⌘C (editorKeys.ts) and ⌥⌘M (the editor's CodeMirror keymap).
+    expect(comboOf(ev({ key: 'D', code: 'KeyD', metaKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'C', code: 'KeyC', metaKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'Ç', code: 'KeyC', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'µ', code: 'KeyM', metaKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('lists each editor key once, and the old ⌥⌘C not at all', () => {
+    const keys = SHORTCUTS.filter((s) => s.combo.startsWith('editor ')).map((s) => s.keys);
+    expect(keys).toEqual(expect.arrayContaining(['⇧⌘D', '⇧⌘C', '⌥⇧⌘C', '⌥⌘M']));
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(SHORTCUTS.some((s) => s.keys === '⌥⌘C')).toBe(false);
+  });
+});

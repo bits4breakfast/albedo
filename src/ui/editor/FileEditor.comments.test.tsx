@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Review comments through the real editor: ⇧⌘C on a line opens a draft, a
+ * Review comments through the real editor: ⌥⌘M on a line opens a draft, a
  * multi-line comment is saved with the line and its text, and a stored
  * comment shows as a card under its code.
  */
@@ -97,10 +97,10 @@ async function editorContent(): Promise<HTMLElement> {
 configure({ asyncUtilTimeout: 5_000 });
 
 describe('FileEditor review comments', { timeout: 15_000 }, () => {
-  it('⇧⌘C opens a draft on the cursor line; ⌘↵ saves a multi-line comment with that line', async () => {
+  it('⌥⌘M opens a draft on the cursor line; ⌘↵ saves a multi-line comment with that line', async () => {
     const content = await editorContent();
     // jsdom is not a Mac, so CodeMirror's Mod is Ctrl here (⌘ in the app).
-    fireEvent.keyDown(content, { key: 'C', code: 'KeyC', keyCode: 67, ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(content, { key: 'µ', code: 'KeyM', keyCode: 77, ctrlKey: true, altKey: true });
     const box = (await screen.findByPlaceholderText(/Leave a comment/)) as HTMLTextAreaElement;
     box.value = 'Rename this.\nAnd test it.';
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
@@ -137,7 +137,7 @@ describe('FileEditor review comments', { timeout: 15_000 }, () => {
   it('a comment that fails to save stays in its box, with the reason', async () => {
     addComment.mockRejectedValueOnce(new Error('disk full'));
     const content = await editorContent();
-    fireEvent.keyDown(content, { key: 'C', code: 'KeyC', keyCode: 67, ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(content, { key: 'µ', code: 'KeyM', keyCode: 77, ctrlKey: true, altKey: true });
     const box = (await screen.findByPlaceholderText(/Leave a comment/)) as HTMLTextAreaElement;
     box.value = 'Do not lose me.';
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });

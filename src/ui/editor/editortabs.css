@@ -1,43 +1,75 @@
 /* ==========================================================================
    Editor tabs -- one per open file. Imported by EditorTabs.tsx.
 
-   Surfaces are shell tokens only. The strip is --panel, like the editor's
-   title bar under it; the active tab takes the editor's own ground
-   (--panel-inset) so it reads as joined to the file below. Text is --muted on
-   the strip (cleared against --panel-raised, a darker ground than --panel in
-   light and a lighter one in dark), --text on hover, --text-strong when
-   active. Never opacity.
+   The tab row is drawn in the reading pane's head (App.tsx), after its
+   Transcript / Editor tabs and a hairline, with the active editor's controls
+   at its end: one row of chrome, the file named once.
+
+   Surfaces are shell tokens only, the same grammar as the pane tabs beside
+   them: the head is --panel, a hovered tab --panel-hover, the active tab
+   --panel-raised. Text is --muted (cleared against --panel-raised), --text on
+   hover, --text-strong when active; the Diff marker is --accent, also cleared
+   against --panel-raised. Never opacity.
    ========================================================================== */
 
 .ed-tabs-root {
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+  /* Keeps the editor's own z-index (editor.css) inside the pane, so the ⋯
+     menu it draws in the head row, earlier in the page, opens above it. */
+  isolation: isolate;
 }
 
-.ed-tabstrip {
-  flex: none;
+/* Fills the head's flexible slot. Its width is what the narrow-column rules
+   at the end of this file measure. */
+.ed-head {
   display: flex;
-  align-items: stretch;
-  height: 32px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+  container-name: ed-head;
+  /* Room for the controls' focus rings: the head's slot clips. */
+  padding-block: 3px;
+  font-weight: 400;
+}
+
+/* Pane tabs | file tabs. Decorative: the two sets read apart by type too. */
+.ed-head-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--border-mid);
+}
+
+/* Grows, so the controls sit at the row's end, and gives way before anything
+   else (shrink weight 1000 vs 1): the tabs truncate first. But never below
+   one readable tab: the row's only copy of the file's name. Past that floor
+   the status gives way instead (below). */
+.ed-tabstrip {
+  flex: 1 1000 auto;
+  min-width: 88px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
 }
 .ed-tabstrip::-webkit-scrollbar { display: none; }
 
+/* Each tab shrinks to a short stub before the strip starts to scroll. */
 .ed-tab {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 72px;
+  max-width: 240px;
+  height: 26px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 240px;
-  padding: 0 4px 0 12px;
-  border-right: 1px solid var(--border);
+  gap: 4px;
+  padding: 0 1px 0 8px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
@@ -47,21 +79,26 @@
   -webkit-user-select: none;
 }
 .ed-tab:hover { color: var(--text); background: var(--panel-hover); }
-.ed-tab[aria-selected='true'] {
-  color: var(--text-strong);
-  background: var(--panel-inset);
-  /* Covers the strip's hairline, so the tab opens into the file below. */
-  margin-bottom: -1px;
-}
+.ed-tab[aria-selected='true'] { color: var(--text-strong); background: var(--panel-raised); }
 .ed-tab:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 .ed-tab-name {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Unsaved edits: the same quiet dot as the title bar's. */
+/* The tab is showing its diff (⇧⌘D): the state, since no button shows it. */
+.ed-tab-mark {
+  flex: none;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+/* Unsaved edits. Quiet: Save, at the row's end, carries the real signal. */
 .ed-tab-dot {
   flex: none;
   width: 6px;
@@ -82,13 +119,12 @@
   font-size: var(--fs-xs);
   cursor: pointer;
 }
-.ed-tab-close:hover { color: var(--text-strong); background: var(--panel-raised); }
+.ed-tab-close:hover { color: var(--text-strong); background: var(--panel-active); }
 .ed-tab-close:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 .ed-tabs-body {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
 }
 
 .ed-tab-panel {
@@ -96,3 +132,60 @@
   inset: 0;
 }
 .ed-tab-panel[hidden] { display: none; }
+
+/* The active editor's toolbar (FileEditor.tsx): status, ‹ ›, Save, ⋯. Only
+   the status shrinks, with an ellipsis and its full text in a tooltip and as
+   the ⋯ menu's heading; the buttons never do. */
+.ed-head-controls {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+}
+.ed-head-controls:empty { display: none; }
+.ed-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ed-controls .btn { flex: none; height: 26px; }
+.ed-controls .ed-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ed-readonly {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A narrow column, once the tabs are down to one. What goes, in order:
+   - the status, which ⋯ repeats as its heading;
+   - the counter; the arrows stay;
+   - the arrows while there are unsaved edits, when they are disabled anyway
+     and Save needs the room;
+   - the read-only words, leaving the lock (the words stay for a screen reader).
+   Sized for Split at its default ratio on a laptop, a ~230px slot: one tab,
+   the arrows and ⋯, or one tab, Save and ⋯. */
+@container ed-head (max-width: 360px) {
+  .ed-controls .ed-status { display: none; }
+  .ed-nav-pos { display: none; }
+  .ed-controls[data-dirty] .ed-nav { display: none; }
+  .ed-readonly-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* Narrower still: the arrows go too (⌥⌘↑ / ⌥⌘↓ still step), so ⋯ always fits. */
+@container ed-head (max-width: 220px) {
+  .ed-nav { display: none; }
+}
