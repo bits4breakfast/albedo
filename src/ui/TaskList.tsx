@@ -527,7 +527,9 @@ export default function TaskList({
           style={{ left: Math.min(menu.x, window.innerWidth - 180), top: menu.y }}
           role="menu"
         >
-          <div className="row-menu-head">{menu.task.title}</div>
+          <div className="row-menu-head" title={wrapForTooltip(menu.task.title)}>
+            {menu.task.title}
+          </div>
           <button
             className="row-menu-item"
             role="menuitem"

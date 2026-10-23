@@ -36,6 +36,7 @@ import {
   mayDeleteTaskBranch,
 } from '../git/worktree';
 import { stopPhpantom } from '../lsp/phpantom';
+import { wrapForTooltip } from './text';
 import './worktree.css';
 
 /**
@@ -358,7 +359,9 @@ export function ArchiveTaskDialog({
           <h2 className="wt-modal-title" id="wt-archive-title">
             {deleting ? 'Delete Task' : owned || chat ? 'Archive Task' : 'Remove from List'}
           </h2>
-          <span className="wt-modal-sub">{task.title}</span>
+          <span className="wt-modal-sub wt-modal-task" title={wrapForTooltip(task.title)}>
+            {task.title}
+          </span>
         </div>
 
         <div className="wt-modal-body">

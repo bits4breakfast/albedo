@@ -193,6 +193,16 @@
   color: var(--muted);
 }
 
+/* The task title beside a dialog name: one line, cut with an ellipsis, the
+   full title in its tooltip. A title can be a whole pasted prompt. */
+.wt-modal-task {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .wt-modal-body {
   flex: 1 1 auto;
   overflow-y: auto;

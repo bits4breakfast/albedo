@@ -16,6 +16,7 @@ import { updateTask } from '../db';
 import { listBranches } from '../git/worktree';
 import { planMove, runMove, type MovePlan } from '../git/moveTask';
 import { stopPhpantom } from '../lsp/phpantom';
+import { wrapForTooltip } from './text';
 import './worktree.css';
 
 export interface MoveTaskDialogProps {
@@ -140,7 +141,9 @@ export default function MoveTaskDialog({ task, project, onClose, onStop, onDone 
           <h2 className="wt-modal-title" id="wt-move-title">
             {title}
           </h2>
-          <span className="wt-modal-sub">{task.title}</span>
+          <span className="wt-modal-sub wt-modal-task" title={wrapForTooltip(task.title)}>
+            {task.title}
+          </span>
         </div>
 
         <div className="wt-modal-body">

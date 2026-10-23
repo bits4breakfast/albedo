@@ -80,8 +80,12 @@ interface SessionRow {
 
 const DEFAULT_LIMIT = 200;
 
-/** Characters of opening prompt kept for the browser row. */
-export const PROMPT_CHARS = 160;
+/**
+ * Characters of opening prompt kept: the browser row, and the title of a task
+ * created from it. Every place that shows a title truncates it itself, so this
+ * is the length its tooltip can show in full (wrapForTooltip caps at 320).
+ */
+export const PROMPT_CHARS = 320;
 
 /** How many distinct paths to pull before collapsing to basenames. */
 const TOP_FILES_SCAN = 8;

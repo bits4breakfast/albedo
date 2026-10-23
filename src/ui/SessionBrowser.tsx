@@ -23,7 +23,7 @@ import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
 import { exists } from '@tauri-apps/plugin-fs';
 import type { Project, Task } from '../types';
 import type { PastSession } from '../db/sessions';
-import { listPastSessions } from '../db/sessions';
+import { listPastSessions, PROMPT_CHARS } from '../db/sessions';
 import { importTranscripts, listDiskSessions, type DiskSession } from '../capture';
 import { adoptSessionIntoTask, createTask } from '../db';
 import { linkTaskSession, newSessionId } from '../capture/sessionLink';
@@ -89,9 +89,11 @@ function sessionLabel(session: PastSession): string {
   if (title) return title;
   // A first prompt can be an entire paragraph. This value is both a row
   // headline AND the created task's title, so it is capped here rather than
-  // left for each consumer to shorten differently.
+  // left for each consumer to shorten differently -- at the length a tooltip
+  // shows in full: the row, the task list and the pane header all truncate
+  // with an ellipsis and show the whole title on hover.
   const prompt = session.firstPrompt?.trim();
-  if (prompt) return displayName(prompt, 120);
+  if (prompt) return displayName(prompt, PROMPT_CHARS);
   if (session.branch) return session.branch;
   if (session.cwd) return `session in ${basename(session.cwd)}`;
   return `session ${session.sessionId.slice(0, 8)}`;
