@@ -18,6 +18,7 @@ vi.mock('../Terminal', () => ({
   submitPty: vi.fn(async () => true),
   startPty: vi.fn(() => false),
   hasLivePty: vi.fn(() => false),
+  ptyLiveSince: vi.fn(() => null),
   canResume: vi.fn(() => false),
   onPtyPresenceChange: vi.fn(() => () => {}),
 }));
@@ -25,6 +26,9 @@ vi.mock('../Terminal', () => ({
 const { QueuedStrip } = await import('./TranscriptPane');
 const { __resetOutbox, heldFor, holdMessage, releaseHeld } = await import('./outbox');
 const { __resetConnectivity } = await import('../../lib/connectivity');
+const { hasLivePty, ptyLiveSince, submitPty } = await import('../Terminal');
+const { __resetTurns, noteTaskSessions } = await import('./turn');
+const { recordQueueOperations, seedQueue } = await import('../../capture/queue');
 
 let online = true;
 
@@ -45,10 +49,22 @@ beforeEach(() => {
   __resetOutbox();
 });
 
+/** A live session whose transcript says a turn is running. */
+function turnRunning(): void {
+  vi.mocked(hasLivePty).mockReturnValue(true);
+  vi.mocked(ptyLiveSince).mockReturnValue(SPAWNED);
+  noteTaskSessions([{ id: 1, sessionId: 's' }]);
+  recordQueueOperations([{ op: 'prompt', sessionId: 's', text: 'p', ts: T }]);
+}
+
 afterEach(() => {
+  seedQueue(['s'], []);
   cleanup();
   __resetConnectivity();
   __resetOutbox();
+  __resetTurns();
+  vi.mocked(ptyLiveSince).mockReturnValue(null);
+  vi.mocked(hasLivePty).mockReturnValue(false);
 });
 
 const T = Date.parse('2026-10-23T09:00:00.000Z');
@@ -94,6 +110,87 @@ describe('held messages', () => {
     const band = screen.getByRole('status');
     expect(band.textContent).toMatch(/in Claude Code.*Waiting for connection.*in Albedo/);
     expect(screen.getByText('sent in order once it is back')).toBeTruthy();
+  });
+
+  it('held for a running turn: Queued, sent when the turn ends, and still editable and removable', () => {
+    turnRunning();
+    holdMessage(1, 'also check the lint output');
+    holdMessage(1, 'and update the docs');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const band = screen.getByRole('status');
+    expect(band.textContent).toMatch(/^Queued 2sent when Claude finishes this turn/);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]!);
+    expect(heldFor(1).map((h) => h.text)).toEqual(['and update the docs']);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByRole('textbox', { name: 'Edit held message' });
+    fireEvent.change(field, { target: { value: 'and update the README' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(heldFor(1).map((h) => h.text)).toEqual(['and update the README']);
+  });
+
+  it('change their head when the turn ends', () => {
+    turnRunning();
+    holdMessage(1, 'next');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.getByText('sent when Claude finishes this turn')).toBeTruthy();
+    act(() => recordQueueOperations([{ op: 'turn-end', sessionId: 's', ts: T + 1 }]));
+    expect(screen.queryByText('sent when Claude finishes this turn')).toBeNull();
+    expect(screen.getByRole('status').textContent).toMatch(/^Sending 1/);
+  });
+
+  it('offer Send Now while only the turn holds them, usable with a live session', async () => {
+    turnRunning();
+    holdMessage(1, 'now, please');
+    const { rerender } = render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const button = screen.getByRole('button', { name: 'Send Now' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    rerender(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect((screen.getByRole('button', { name: 'Send Now' }) as HTMLButtonElement).disabled).toBe(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    rerender(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send Now' }));
+    });
+    expect(submitPty).toHaveBeenCalledWith(1, 'now, please');
+    expect(heldFor(1)).toEqual([]);
+  });
+
+  it('never offer Send Now on a command: it only goes into an idle session', () => {
+    turnRunning();
+    holdMessage(1, '/compact');
+    holdMessage(1, 'a message');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.getAllByRole('button', { name: 'Send Now' })).toHaveLength(1);
+  });
+
+  it('say so briefly when Send Now could not go: a release had the lock', async () => {
+    vi.mocked(submitPty).mockClear();
+    turnRunning();
+    holdMessage(1, 'being written');
+    holdMessage(1, 'now, please');
+    let finish: (ok: boolean) => void = () => {};
+    // A release under way, its write still in flight.
+    const release = releaseHeld(1, () => new Promise<boolean>((r) => (finish = r)));
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const buttons = screen.getAllByRole('button', { name: 'Send Now' });
+    await act(async () => {
+      fireEvent.click(buttons[buttons.length - 1]!);
+    });
+    expect(screen.getByText('Couldn\u2019t send now — try again')).toBeTruthy();
+    expect(submitPty).not.toHaveBeenCalled();
+    finish(false);
+    await act(async () => {
+      await release;
+    });
+  });
+
+  it('do not offer Send Now when the connection, not the turn, holds them', () => {
+    holdMessage(1, 'offline');
+    online = false;
+    window.dispatchEvent(new Event('offline'));
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.queryByRole('button', { name: 'Send Now' })).toBeNull();
   });
 
   it('show even when the session is not running: they are Albedo’s, not its', () => {

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const writes: string[] = [];
 vi.mock('../Terminal', () => ({
   hasLivePty: vi.fn(() => true),
+  ptyLiveSince: vi.fn(() => null),
   // As the real one: the paste, a pause, then Enter, as two writes.
   submitPty: vi.fn(async (_taskId: number, text: string) => {
     writes.push(`paste:${text}`);
@@ -21,11 +22,13 @@ vi.mock('../Terminal', () => ({
 }));
 vi.mock('./composerBridge', () => ({ insertIntoComposer: vi.fn(() => true) }));
 
-import { submitPty } from '../Terminal';
+import { ptyLiveSince, submitPty } from '../Terminal';
 import { __resetConnectivity } from '../../lib/connectivity';
 import { sendPrompt } from '../sendPrompt';
 import { __resetOutbox, heldFor, holdMessage, releaseHeld } from './outbox';
 import { isSlashCommand, sendToSession, submitLocked } from './send';
+import { __resetTurns, isTurnRunning, noteTaskSessions } from './turn';
+import { recordQueueOperations, seedQueue } from '../../capture/queue';
 
 let online = true;
 
@@ -53,6 +56,8 @@ beforeEach(() => {
 afterEach(() => {
   __resetConnectivity();
   __resetOutbox();
+  __resetTurns();
+  vi.mocked(ptyLiveSince).mockReturnValue(null);
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -73,15 +78,14 @@ describe('holding', () => {
     expect(heldFor(1).map((h) => h.text)).toEqual(['waiting for the session', 'and then this']);
   });
 
-  it('never holds a command: released into a running turn it would be chat text', async () => {
+  it('holds a command like a message, in order: the release sends only into an idle session', async () => {
     holdMessage(1, 'starts a turn once released');
-    expect(await sendToSession(1, '/model opus')).toBe('failed');
-    expect(await sendToSession(1, '  /clear\n')).toBe('failed');
-    expect(heldFor(1).map((h) => h.text)).toEqual(['starts a turn once released']);
+    expect(await sendToSession(1, '/model opus')).toBe('held');
+    expect(heldFor(1).map((h) => h.text)).toEqual(['starts a turn once released', '/model opus']);
     expect(submitPty).not.toHaveBeenCalled();
   });
 
-  it('sends a command at once when nothing waits', async () => {
+  it('sends a command at once in an idle session', async () => {
     const sent = sendToSession(1, '/compact');
     await vi.advanceTimersByTimeAsync(100);
     expect(await sent).toBe('sent');
@@ -92,6 +96,43 @@ describe('holding', () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(await sent).toBe('sent');
     expect(writes).toEqual(['paste:/clear', 'enter:/clear']);
+  });
+});
+
+describe('a running turn (#61)', () => {
+  const fact = (op: 'prompt' | 'turn-end', ts: number) =>
+    recordQueueOperations([op === 'prompt' ? { op, sessionId: 'send-s1', text: 'p', ts } : { op, sessionId: 'send-s1', ts }]);
+
+  beforeEach(() => {
+    seedQueue(['send-s1'], []);
+    vi.mocked(ptyLiveSince).mockReturnValue(Date.now() - 60_000);
+    noteTaskSessions([{ id: 1, sessionId: 'send-s1' }]);
+    fact('prompt', Date.now() - 1_000);
+  });
+
+  afterEach(() => seedQueue(['send-s1'], []));
+
+  it('holds a button\u2019s prompt for the turn, and reports it as held', async () => {
+    expect(await sendPrompt({ id: 1, status: 'running' }, 'Create the PR')).toBe('held');
+    expect(heldFor(1).map((h) => h.text)).toEqual(['Create the PR']);
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('holds a button\u2019s command for the turn too', async () => {
+    expect(await sendToSession(1, '/compact')).toBe('held');
+    expect(heldFor(1).map((h) => h.text)).toEqual(['/compact']);
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('a delivered submit counts as a turn starting until the transcript says otherwise', async () => {
+    fact('turn-end', Date.now() - 500);
+    expect(isTurnRunning(1)).toBe(false);
+    const sent = sendToSession(1, 'go');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await sent).toBe('sent');
+    expect(isTurnRunning(1)).toBe(true);
+    // So the next message is held rather than typed into the turn it started.
+    expect(await sendToSession(1, 'and then')).toBe('held');
   });
 });
 

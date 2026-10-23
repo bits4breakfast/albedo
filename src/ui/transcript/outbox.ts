@@ -8,8 +8,12 @@
  * edited or removed, and `releaseHeld` sends it, oldest first, through the
  * same locked send a normal send uses (send.ts; outboxRelease.ts decides when).
  *
+ * A message sent while a turn is running waits here too, for the turn to end:
+ * in Claude Code's queue it would go with the outcome of any dialog the turn
+ * opens, and nothing can take it back from there (turn.ts).
+ *
  * What Claude Code already holds is never here and never resent: only the
- * composer adds entries, and only instead of sending.
+ * send gateway (send.ts) adds entries, and only instead of sending.
  *
  * Memory is the store and localStorage its copy, written on every change (an
  * entry is something you meant to send, so there is no write delay to lose
@@ -234,27 +238,53 @@ export async function releaseHeld(
     for (;;) {
       const head = heldFor(taskId)[0];
       if (!head || head.maybeSent || editing.has(head.id) || !mayGo()) return sent;
-      patch(taskId, head.id, { sending: true });
-      let ok = false;
-      try {
-        ok = await send(head.text);
-      } catch {
-        ok = false;
-      }
-      if (!ok) {
+      if (!(await deliver(taskId, head, send))) {
         failing.add(taskId);
-        patch(taskId, head.id, { sending: undefined });
         return sent;
       }
       failing.delete(taskId);
-      const held = heldFor(taskId);
-      if (held.some((h) => h.id === head.id)) commit(taskId, held.filter((h) => h.id !== head.id));
       sent++;
-      for (const cb of [...releaseListeners]) cb(taskId, head);
     }
   } finally {
     releasing.delete(taskId);
   }
+}
+
+/**
+ * Send one held message now, whatever holds the rest: the person's choice
+ * ("Send Now" in the band). The same discipline as a release -- marked
+ * `sending`, removed only once delivered -- and the same lock, so it never
+ * overlaps one. Does nothing while a release is under way, or for an entry
+ * open for editing or `maybeSent`. Resolves with whether it went.
+ */
+export async function sendHeldNow(taskId: number, id: string, send: (text: string) => Promise<boolean>): Promise<boolean> {
+  const entry = heldFor(taskId).find((h) => h.id === id);
+  if (!entry || entry.maybeSent || editing.has(id) || releasing.has(taskId)) return false;
+  releasing.add(taskId);
+  try {
+    return await deliver(taskId, entry, send);
+  } finally {
+    releasing.delete(taskId);
+  }
+}
+
+/** Mark `entry` sending, send it, and take it out once delivered; a failure clears the mark. */
+async function deliver(taskId: number, entry: HeldMessage, send: (text: string) => Promise<boolean>): Promise<boolean> {
+  patch(taskId, entry.id, { sending: true });
+  let ok = false;
+  try {
+    ok = await send(entry.text);
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    patch(taskId, entry.id, { sending: undefined });
+    return false;
+  }
+  const held = heldFor(taskId);
+  if (held.some((h) => h.id === entry.id)) commit(taskId, held.filter((h) => h.id !== entry.id));
+  for (const cb of [...releaseListeners]) cb(taskId, entry);
+  return true;
 }
 
 /** Change fields of one entry, if it is still there. Undefined removes a field. */
@@ -286,8 +316,9 @@ export function lastReleaseFailed(taskId: number): boolean {
 }
 
 /**
- * A release is sending this task's messages. A new message must queue behind
- * them, not go straight to the pty: two sends at once interleave their writes.
+ * A release, or a Send Now, is sending this task's messages. A new message
+ * must queue behind them, not go straight to the pty: two sends at once
+ * interleave their writes.
  */
 export function isReleasing(taskId: number): boolean {
   return releasing.has(taskId);

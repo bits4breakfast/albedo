@@ -24,11 +24,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty, submitPty } from '../Terminal';
 import { Composer } from './TranscriptPane';
 import { __resetDrafts, getDraft, saveDraft } from './drafts';
-import { __resetOutbox, heldFor, holdMessage } from './outbox';
+import { __resetOutbox, heldFor, holdMessage, removeHeld } from './outbox';
 import { startOutboxRelease } from './outboxRelease';
+import { __resetTurns, noteTaskSessions } from './turn';
+import { recordQueueOperations, seedQueue } from '../../capture/queue';
 import { __resetConnectivity } from '../../lib/connectivity';
 
 // Replaces the real module, so xterm and the Tauri pty bridge never load.
@@ -40,6 +42,7 @@ vi.mock('../Terminal', () => {
     submitPty: vi.fn(async () => false),
     startPty: vi.fn(() => false),
     hasLivePty: vi.fn(() => false),
+    ptyLiveSince: vi.fn(() => null),
     canResume: vi.fn(() => false),
     onPtyPresenceChange: vi.fn((cb: (taskId: number, live: boolean) => void) => {
       listeners.add(cb);
@@ -375,18 +378,17 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     expect(submitPty).not.toHaveBeenCalled();
   });
 
-  it('does not hold a command for the prompt: after the answer the turn goes on', async () => {
+  it('holds a command at a prompt in the outbox: after the answer the turn goes on, and it must not land in it', async () => {
     render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
     type('/compact');
     pressEnter();
-    await waitFor(() =>
-      expect(screen.getByText('Commands can\u2019t wait for the prompt. Send it once Claude has finished.')).toBeTruthy(),
-    );
-    expect(box().value).toBe('/compact');
-    expect(box().readOnly).toBe(false);
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual(['/compact']));
+    expect(box().value).toBe('');
+    expect(submitPty).not.toHaveBeenCalled();
+    for (const h of heldFor(1)) removeHeld(1, h.id);
   });
 
-  it('leaves a merely running task alone — Claude Code queues those itself', async () => {
+  it('does not take a running status for a prompt: no prompt hold', async () => {
     livePty();
     render(<Composer taskId={5} status="running" onSent={vi.fn()} />);
     type('follow-up mid-turn');
@@ -842,17 +844,14 @@ describe('(o) offline, a send waits in the outbox', () => {
     expect(submitPty).not.toHaveBeenCalled();
   });
 
-  it('never holds a typed command: it stays in the box, as the draft, with a notice', async () => {
+  it('holds a typed command like a message, behind what is held: the release sends it only into an idle session', async () => {
     holdMessage(1, 'already waiting');
     render(<Composer taskId={1} onSent={vi.fn()} />);
     type('/clear');
     pressEnter();
-    await waitFor(() =>
-      expect(screen.getByText('Commands can\u2019t wait in the queue. Send it when the connection is back.')).toBeTruthy(),
-    );
-    expect(box().value).toBe('/clear');
-    expect(getDraft(1)?.text).toBe('/clear');
-    expect(heldFor(1).map((h) => h.text)).toEqual(['already waiting']);
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual(['already waiting', '/clear']));
+    expect(box().value).toBe('');
+    expect(getDraft(1)).toBeNull();
     expect(submitPty).not.toHaveBeenCalled();
   });
 
@@ -948,5 +947,125 @@ describe('(s) switching task while a send is still being written', () => {
     rerender(<Composer taskId={1} onSent={vi.fn()} />);
     expect(box().value).toBe('for A');
     expect(screen.getByText('Not sent — press Send when you’re ready.')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (t) a running turn: the message waits in the outbox (#61)
+// ---------------------------------------------------------------------------
+
+describe('(t) during a running turn, a message waits in the outbox', () => {
+  /** The transcript's facts for the task's session, as the watcher records them. */
+  const fact = (taskId: number, op: 'prompt' | 'turn-end') =>
+    recordQueueOperations([
+      op === 'prompt'
+        ? { op, sessionId: `s${taskId}`, text: 'p', ts: Date.now() - 1_000 }
+        : { op, sessionId: `s${taskId}`, ts: Date.now() },
+    ]);
+  /** A live session whose transcript says a turn is running. */
+  const turnRunning = (taskId: number) => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(ptyLiveSince).mockReturnValue(Date.now() - 60_000);
+    noteTaskSessions([{ id: taskId, sessionId: `s${taskId}` }]);
+    fact(taskId, 'prompt');
+  };
+
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    __resetConnectivity(async () => true);
+    __resetOutbox();
+    __resetTurns();
+    seedQueue(['s1', 's2', 's5'], []);
+    vi.mocked(submitPty).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    __resetTurns();
+    __resetOutbox();
+    __resetConnectivity();
+    seedQueue(['s1', 's2', 's5'], []);
+    vi.mocked(ptyLiveSince).mockReturnValue(null);
+  });
+
+  it('holds it instead of typing it, and empties the box without a notice: the band shows it', async () => {
+    turnRunning(1);
+    const onSent = vi.fn();
+    render(<Composer taskId={1} status="running" onSent={onSent} />);
+    type('also check the lint output');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual(['also check the lint output']));
+    expect(box().value).toBe('');
+    expect(getDraft(1)).toBeNull();
+    expect(screen.queryByText(/asking you something|can’t wait/)).toBeNull();
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(onSent).not.toHaveBeenCalled(); // no echo: the band shows it
+  });
+
+  it('holds a command too: typed into the turn it could land in a dialog', async () => {
+    turnRunning(1);
+    render(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    type('/compact');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual(['/compact']));
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('a message held at a prompt joins the outbox when a turn is running by the time it is released, shown once', async () => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(ptyLiveSince).mockReturnValue(Date.now() - 60_000);
+    noteTaskSessions([{ id: 5, sessionId: 's5' }]);
+    const onSent = vi.fn();
+    const { rerender } = render(<Composer taskId={5} status="blocked" onSent={onSent} />);
+    type('after the answer');
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+    fact(5, 'prompt'); // answered: the turn goes on
+    await act(async () => {
+      rerender(<Composer taskId={5} status="running" onSent={onSent} />);
+    });
+    await waitFor(() => expect(heldFor(5).map((h) => h.text)).toEqual(['after the answer']));
+    // In the band only: not echoed as sent, not left in the box, no notice.
+    expect(onSent).not.toHaveBeenCalled();
+    expect(box().value).toBe('');
+    expect(box().readOnly).toBe(false);
+    expect(screen.queryByText(/asking you something/)).toBeNull();
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('keeps it across a task switch and a restart', async () => {
+    turnRunning(1);
+    const { rerender, unmount } = render(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    type('for A');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1)).toHaveLength(1));
+    rerender(<Composer taskId={2} status="idle" onSent={vi.fn()} />);
+    rerender(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    expect(heldFor(1).map((h) => h.text)).toEqual(['for A']);
+    unmount();
+    __resetOutbox(); // the restart: memory gone, storage kept
+    expect(heldFor(1).map((h) => h.text)).toEqual(['for A']);
+  });
+
+  it('sends it once when the turn ends, and never twice', async () => {
+    const stop = startOutboxRelease();
+    turnRunning(1);
+    render(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    type('when you are done');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1)).toHaveLength(1));
+    act(() => fact(1, 'turn-end'));
+    await waitFor(() => expect(heldFor(1)).toHaveLength(0));
+    act(() => fact(1, 'turn-end'));
+    term.__emitPresence(1, true);
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'when you are done']]);
+    stop();
   });
 });

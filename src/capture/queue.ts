@@ -93,7 +93,7 @@ export function promptTaken(entries: QueuedEntry[], prompt: string, taken: reado
 export function applyQueueOperations(state: Map<string, SessionQueue>, facts: readonly QueueFact[]): Set<string> {
   const touched = new Set<string>();
   for (const f of facts) {
-    if (f.sessionId === '') continue;
+    if (f.sessionId === '' || f.op === 'turn-stop' || f.op === 'turn-step') continue;
     const q = state.get(f.sessionId) ?? { entries: [], startedAt: 0, endedAt: null, taken: [] };
     const before = q.entries.length;
     // A dequeue is the queue being served, however long after a turn end (a
@@ -131,10 +131,79 @@ export function applyQueueOperations(state: Map<string, SessionQueue>, facts: re
   return touched;
 }
 
+/**
+ * Where a session's turns stand, from the same facts, for the outbox
+ * (src/ui/transcript/turn.ts); the queue itself does not use it.
+ *
+ * In FILE order, not by timestamp: a start holds (`running`) until the next
+ * end after it in the file. Claude Code writes a queued entry's `dequeue`
+ * just before the end lines of the turn it was folded into, stamped a few
+ * ms after them; by time that read as a new turn that never came.
+ *
+ * - A start: a `prompt` Claude Code did not inject, or a `turn-step` (its
+ *   main-thread API call, or an assistant line mid-turn).
+ * - An end: a `turn-end` or `turn-stop`.
+ * - Pending (`pendingAt`): a `dequeue`, or a prompt Claude Code injected
+ *   (`isInjectedQueueText`). A turn about to start -- or not: measured over
+ *   this machine's transcripts, a notification's dequeue and user line were
+ *   followed by a turn within 5 s 102 times and by nothing, until the
+ *   person typed, 47 times (once for 47 minutes); its user line is written
+ *   after the `turn_duration` of the turn before. turn.ts counts it for a
+ *   grace only, and the turn's own API call, within milliseconds when it
+ *   comes, takes over as a start.
+ */
+export interface TurnMarks {
+  running: boolean;
+  /** The latest start, ms. */
+  startedAt: number | null;
+  /** The latest end, ms. */
+  endedAt: number | null;
+  /** The latest dequeue or injected prompt, ms. */
+  pendingAt: number | null;
+}
+
+const turns = new Map<string, TurnMarks>();
+
+/** Apply facts to `state`, in file order. Returns the sessions whose marks moved. */
+export function applyTurnFacts(state: Map<string, TurnMarks>, facts: readonly QueueFact[]): Set<string> {
+  const touched = new Set<string>();
+  for (const f of facts) {
+    if (f.sessionId === '') continue;
+    const pending = f.op === 'dequeue' || (f.op === 'prompt' && isInjectedQueueText(f.text));
+    const start = f.op === 'turn-step' || (f.op === 'prompt' && !pending);
+    const end = f.op === 'turn-end' || f.op === 'turn-stop';
+    if (!start && !end && !pending) continue;
+    const m = state.get(f.sessionId) ?? { running: false, startedAt: null, endedAt: null, pendingAt: null };
+    const latest = (at: number | null) => Math.max(at ?? f.ts, f.ts);
+    const next: TurnMarks = pending
+      ? { ...m, pendingAt: latest(m.pendingAt) }
+      : start
+        ? { ...m, running: true, startedAt: latest(m.startedAt) }
+        : { ...m, running: false, endedAt: latest(m.endedAt) };
+    if (
+      next.running !== m.running ||
+      next.startedAt !== m.startedAt ||
+      next.endedAt !== m.endedAt ||
+      next.pendingAt !== m.pendingAt
+    ) {
+      state.set(f.sessionId, next);
+      touched.add(f.sessionId);
+    }
+  }
+  return touched;
+}
+
+/** The session's turn marks, or null when no turn fact has been read. */
+export function turnMarksFor(sessionId: string): TurnMarks | null {
+  return turns.get(sessionId) ?? null;
+}
+
 /** Called by the watcher with the facts from each chunk it ingests. */
 export function recordQueueOperations(facts: readonly QueueFact[]): void {
   if (facts.length === 0) return;
-  for (const sid of applyQueueOperations(queues, facts)) for (const l of listeners) l(sid);
+  const touched = applyQueueOperations(queues, facts);
+  for (const sid of applyTurnFacts(turns, facts)) touched.add(sid);
+  for (const sid of touched) for (const l of listeners) l(sid);
 }
 
 /**
@@ -145,12 +214,18 @@ export function recordQueueOperations(facts: readonly QueueFact[]): void {
 export function seedQueue(sessionIds: Iterable<string>, facts: readonly QueueFact[]): void {
   const fresh = new Map<string, SessionQueue>();
   applyQueueOperations(fresh, facts);
+  const freshTurns = new Map<string, TurnMarks>();
+  applyTurnFacts(freshTurns, facts);
   const touched = new Set<string>(sessionIds);
   for (const sid of fresh.keys()) touched.add(sid);
+  for (const sid of freshTurns.keys()) touched.add(sid);
   for (const sid of touched) {
     const q = fresh.get(sid);
     if (q) queues.set(sid, q);
     else queues.delete(sid);
+    const m = freshTurns.get(sid);
+    if (m) turns.set(sid, m);
+    else turns.delete(sid);
     for (const l of listeners) l(sid);
   }
 }
@@ -172,7 +247,7 @@ export function queueSettlesAt(sessionId: string): number | null {
   return endedAt + IDLE_GRACE_MS;
 }
 
-/** Subscribe to changes; the callback gets the session that changed. */
+/** Subscribe to changes; the callback gets the session whose queue or turn marks changed. */
 export function onQueueChange(listener: (sessionId: string) => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

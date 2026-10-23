@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { absorbedPromptText, parseLine, queueFactsIn, queueOperationsIn } from './adapter';
-import { applyQueueOperations, IDLE_GRACE_MS, queuedFor, queueSettlesAt, seedQueue, type SessionQueue } from './queue';
+import { applyQueueOperations, applyTurnFacts, IDLE_GRACE_MS, queuedFor, queueSettlesAt, seedQueue, type SessionQueue, type TurnMarks } from './queue';
 import { queuedLabel } from '../ui/transcript/pastedText';
 
 const S = 'sess-1';
@@ -72,17 +72,99 @@ describe('queueFactsIn', () => {
     ]);
   });
 
-  it('skips tool results, meta lines, summaries, subagents and paused turns', () => {
+  it('skips tool results, meta lines, summaries and subagents; a paused turn is only a step', () => {
     const text = [
       user([{ type: 'tool_result', tool_use_id: 't1', content: 'output' }]),
       user('caveat', { isMeta: true }),
       user('summary of what was said', { isCompactSummary: true }),
       user('subagent prompt', { isSidechain: true }),
       assistant('end_turn', { isSidechain: true }),
-      assistant('tool_use'),
+      assistant('tool_use', { isSidechain: true }),
       user(''),
     ].join('\n');
     expect(queueFactsIn(text)).toEqual([]);
+    // A turn paused on a tool is still running: a step, not a prompt or an end.
+    expect(queueFactsIn(assistant('tool_use'))).toEqual([{ op: 'turn-step', sessionId: S, ts: Date.parse(at('00:02')) }]);
+  });
+});
+
+describe('turn-stop facts (the outbox’s turn)', () => {
+  const at = (s: string) => `2026-10-23T08:${s}.000Z`;
+  const user = (content: unknown) =>
+    JSON.stringify({ type: 'user', sessionId: S, timestamp: at('00:01'), message: { role: 'user', content } });
+  const system = (subtype: string) => JSON.stringify({ type: 'system', subtype, sessionId: S, timestamp: at('00:03') });
+  const ts1 = Date.parse(at('00:01'));
+  const ts3 = Date.parse(at('00:03'));
+
+  it('reads an interrupt, a command run without a turn, and turn_duration as turn stops', () => {
+    const text = [
+      user([{ type: 'text', text: '[Request interrupted by user for tool use]' }]),
+      user('<local-command-stdout>Set model to opus</local-command-stdout>'),
+      user('<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>'),
+      system('turn_duration'),
+      system('local_command'),
+      system('stop_hook_summary'),
+    ].join('\n');
+    expect(queueFactsIn(text)).toEqual([
+      { op: 'prompt', sessionId: S, text: '[Request interrupted by user for tool use]', ts: ts1 },
+      { op: 'turn-stop', sessionId: S, ts: ts1 },
+      { op: 'prompt', sessionId: S, text: '<local-command-stdout>Set model to opus</local-command-stdout>', ts: ts1 },
+      { op: 'turn-stop', sessionId: S, ts: ts1 },
+      { op: 'prompt', sessionId: S, text: '<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>', ts: ts1 },
+      { op: 'turn-stop', sessionId: S, ts: ts1 },
+      { op: 'turn-stop', sessionId: S, ts: ts3 },
+      { op: 'turn-stop', sessionId: S, ts: ts3 },
+    ]);
+  });
+
+  it('leaves the queue alone', () => {
+    const state = new Map<string, SessionQueue>();
+    applyQueueOperations(state, [{ op: 'enqueue', sessionId: S, text: 'waiting', ts: 0 }, { op: 'turn-stop', sessionId: S, ts: 1 }]);
+    expect(state.get(S)?.endedAt).toBeNull();
+    expect(state.get(S)?.entries.map((e) => e.text)).toEqual(['waiting']);
+  });
+
+  it('reads a main-thread API call and a mid-turn assistant line as steps, an API error as neither', () => {
+    const request = (querySource: string) =>
+      JSON.stringify({ type: 'api-request', sessionId: S, timestamp: at('00:04'), version: '2.1.308', querySource });
+    expect(queueFactsIn([request('repl_main_thread'), request('sdk')].join('\n'))).toEqual([
+      { op: 'turn-step', sessionId: S, ts: Date.parse(at('00:04')) },
+    ]);
+    const error = JSON.stringify({
+      type: 'assistant',
+      sessionId: S,
+      timestamp: at('00:05'),
+      isApiErrorMessage: true,
+      message: { role: 'assistant', content: [], stop_reason: 'stop_sequence_x' },
+    });
+    expect(queueFactsIn(error)).toEqual([]);
+  });
+
+  it('marks turns in file order: an end written after a start closes it, whatever the stamps', () => {
+    const marks = new Map<string, TurnMarks>();
+    const touched = applyTurnFacts(marks, [
+      { op: 'prompt', sessionId: S, text: 'go', ts: 10 },
+      { op: 'turn-step', sessionId: S, ts: 12 },
+      { op: 'enqueue', sessionId: S, text: 'x', ts: 15 },
+    ]);
+    expect(marks.get(S)).toEqual({ running: true, startedAt: 12, endedAt: null, pendingAt: null });
+    expect([...touched]).toEqual([S]);
+    // A dequeue folded into the ending turn, stamped after its end lines.
+    applyTurnFacts(marks, [
+      { op: 'dequeue', sessionId: S, ts: 31 },
+      { op: 'turn-end', sessionId: S, ts: 29 },
+      { op: 'turn-stop', sessionId: S, ts: 30 },
+    ]);
+    expect(marks.get(S)).toEqual({ running: false, startedAt: 12, endedAt: 30, pendingAt: 31 });
+  });
+
+  it('takes an injected prompt as pending, not a start', () => {
+    const marks = new Map<string, TurnMarks>();
+    applyTurnFacts(marks, [
+      { op: 'turn-stop', sessionId: S, ts: 30 },
+      { op: 'prompt', sessionId: S, text: '<task-notification>\n<task-id>a</task-id>', ts: 31 },
+    ]);
+    expect(marks.get(S)).toEqual({ running: false, startedAt: null, endedAt: 30, pendingAt: 31 });
   });
 });
 
