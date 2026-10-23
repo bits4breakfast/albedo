@@ -15,6 +15,7 @@
 import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { OpenFileRequest } from '../types';
 import { loadCodeIndex, peekCodeIndex, type CodeIndex } from '../git/codeIndex';
+import { FileIcon } from './fileIcons';
 import { prepareIndex, search, type QuickOpenItem, type QuickOpenMode } from './quickOpenModel';
 import './quickopen.css';
 
@@ -280,6 +281,7 @@ export default function QuickOpen({ mode, worktreePath, scopeLabel = null, curre
             >
               <span className="qo-kind">{KIND_LABEL[item.kind]}</span>
               <span className="qo-name">
+                <FileIcon path={item.file} className="qo-icon" />
                 <Highlighted text={item.name} hits={item.nameHits} />
               </span>
               <span className="qo-where">

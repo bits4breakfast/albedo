@@ -162,6 +162,25 @@
      attribute and the media query and getting a different answer. */
   --is-dark: 0;
 
+  /* --- file icons (light) -------------------------------------------------
+     One hue per file kind (src/ui/fileIcons.tsx), on 1.5px line glyphs, so
+     the bar is 3:1 (UI), not 4.5. Ratios on --panel / --panel-hover /
+     --panel-raised; each light value is the lightest of its hue that clears
+     3.3 on --panel-raised, a little headroom over the floor. Lock files, the
+     generic page and manifests stay --muted. Never washed or dimmed. */
+  --icon-php: #836acd;        /* 4.17 / 3.63 / 3.44 violet */
+  --icon-react: #0d84a5;      /* 4.21 / 3.66 / 3.47 cyan */
+  --icon-script: #387cdc;     /* 4.03 / 3.50 / 3.32 blue: JS and TS */
+  --icon-data: #a47404;       /* 4.03 / 3.51 / 3.32 amber */
+  --icon-config: #d54d59;     /* 4.07 / 3.54 / 3.35 red-pink */
+  --icon-docs: #6c7e9d;       /* 4.01 / 3.49 / 3.30 blue-grey */
+  --icon-styles: #cb4d9d;     /* 4.03 / 3.50 / 3.32 pink */
+  --icon-markup: #cb5b10;     /* 4.06 / 3.53 / 3.35 orange */
+  --icon-image: #5a871d;      /* 4.16 / 3.62 / 3.43 yellow-green */
+  --icon-shell: #2f8e4f;      /* 4.01 / 3.49 / 3.31 green */
+  --icon-sql: #148a7b;        /* 4.14 / 3.60 / 3.41 teal */
+  --icon-folder: #8a7b60;     /* 4.03 / 3.50 / 3.32 sand, restrained */
+
   /* --- metrics ----------------------------------------------------------- */
   --titlebar-h: 44px;         /* macOS overlay title bar strip */
   /* Header space for the macOS stoplights. Zero elsewhere: Linux draws a
@@ -290,6 +309,19 @@
     --ctx-quiet-row: #6e717c;                   /* 3.18 on --panel-raised */
     --ctx-quiet-bar: #74777f;                   /* 3.38 on --track */
     --term-selection: rgb(154 162 255 / 0.26);
+    /* --- file icons (dark) --- on --panel / --panel-hover / --panel-raised */
+    --icon-php: #ac9cde;      /* 7.51 / 6.71 / 6.31 */
+    --icon-react: #47b3d1;    /* 7.58 / 6.76 / 6.36 */
+    --icon-script: #74a4e7;   /* 7.20 / 6.43 / 6.05 */
+    --icon-data: #ddae40;     /* 8.95 / 7.99 / 7.52 */
+    --icon-config: #e2838b;   /* 6.89 / 6.15 / 5.79 */
+    --icon-docs: #9da9be;     /* 7.76 / 6.93 / 6.52 */
+    --icon-styles: #df90c2;   /* 7.81 / 6.98 / 6.56 */
+    --icon-markup: #f08842;   /* 7.28 / 6.51 / 6.12 */
+    --icon-image: #8ebc4e;    /* 8.29 / 7.40 / 6.97 */
+    --icon-shell: #5eba7d;    /* 7.71 / 6.89 / 6.48 */
+    --icon-sql: #39c6b3;      /* 8.69 / 7.76 / 7.30 */
+    --icon-folder: #b4a893;   /* 7.86 / 7.02 / 6.60 */
     --is-dark: 1;
   }
 }
@@ -376,6 +408,19 @@
   --ctx-quiet-row: #6e717c;                   /* 3.18 on --panel-raised */
   --ctx-quiet-bar: #74777f;                   /* 3.38 on --track */
   --term-selection: rgb(154 162 255 / 0.26);
+  /* --- file icons (dark) --- on --panel / --panel-hover / --panel-raised */
+  --icon-php: #ac9cde;        /* 7.51 / 6.71 / 6.31 */
+  --icon-react: #47b3d1;      /* 7.58 / 6.76 / 6.36 */
+  --icon-script: #74a4e7;     /* 7.20 / 6.43 / 6.05 */
+  --icon-data: #ddae40;       /* 8.95 / 7.99 / 7.52 */
+  --icon-config: #e2838b;     /* 6.89 / 6.15 / 5.79 */
+  --icon-docs: #9da9be;       /* 7.76 / 6.93 / 6.52 */
+  --icon-styles: #df90c2;     /* 7.81 / 6.98 / 6.56 */
+  --icon-markup: #f08842;     /* 7.28 / 6.51 / 6.12 */
+  --icon-image: #8ebc4e;      /* 8.29 / 7.40 / 6.97 */
+  --icon-shell: #5eba7d;      /* 7.71 / 6.89 / 6.48 */
+  --icon-sql: #39c6b3;        /* 8.69 / 7.76 / 7.30 */
+  --icon-folder: #b4a893;     /* 7.86 / 7.02 / 6.60 */
   --is-dark: 1;
 }
 

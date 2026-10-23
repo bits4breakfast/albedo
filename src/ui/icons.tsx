@@ -9,10 +9,22 @@
 
 import type { ReactNode } from 'react';
 
-function Glyph({ children, size = 13 }: { children: ReactNode; size?: number }) {
+export function Glyph({
+  children,
+  size = 13,
+  className,
+  kind,
+}: {
+  children: ReactNode;
+  size?: number;
+  className?: string;
+  /** What the glyph stands for, as `data-kind`: fileicons.css colours by it. */
+  kind?: string;
+}) {
   return (
     <svg
-      className="glyph"
+      className={className === undefined ? 'glyph' : `glyph ${className}`}
+      data-kind={kind}
       width={size}
       height={size}
       viewBox="0 0 16 16"
@@ -53,11 +65,15 @@ export function ChatIcon({ size }: { size?: number }) {
   );
 }
 
+/** A closed folder's outline: FolderIcon, and the Project tree's closed folder. */
+export const FOLDER_CLOSED =
+  'M1.75 4.25c0-.83.67-1.5 1.5-1.5h3l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v6.25c0 .83-.67 1.5-1.5 1.5h-9.5c-.83 0-1.5-.67-1.5-1.5z';
+
 /** A folder: the worktree on disk. */
 export function FolderIcon({ size }: { size?: number }) {
   return (
     <Glyph size={size}>
-      <path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h3l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v6.25c0 .83-.67 1.5-1.5 1.5h-9.5c-.83 0-1.5-.67-1.5-1.5z" />
+      <path d={FOLDER_CLOSED} />
     </Glyph>
   );
 }

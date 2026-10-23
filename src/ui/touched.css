@@ -231,6 +231,19 @@
   white-space: nowrap;
 }
 
+/* The file's kind, by shape (fileIcons.tsx). First in the path, before the
+   directory, so every row's glyph sits in the same column whatever the path's
+   depth; a fixed 14px glyph never shrinks. Coloured by kind (fileicons.css),
+   --muted for the kinds left grey. Every --icon-* token clears 3:1 (UI) on
+   --panel, --panel-hover and --panel-raised in both themes; ratios in
+   styles.css. Hover and the selected row keep the glyph's colour. */
+.tf-path .tf-icon {
+  flex: none;              /* a fixed glyph: never squeezed by a narrow row */
+  align-self: center;
+  margin-right: 6px;
+  color: var(--file-icon, var(--muted));
+}
+
 /* Shrink order inside a row, and it is deliberate: the directory gives way
    first (it is context), then the basename ellipsises, and the badges never
    shrink at all. Before this, .tf-name was `flex: 0 0 auto` and the badges sat
@@ -342,6 +355,16 @@
   font-size: var(--fs-xs);
 }
 
+/* The folder (closed or open) or the file's kind, after the caret: the caret
+   says the row toggles, the glyph says what it is. Same token and size as the
+   change rows' glyph, coloured by kind. Folders, open or closed, are
+   --icon-folder. */
+.tf-tree-row .tf-icon {
+  flex: none;              /* a fixed glyph: never squeezed by a narrow row */
+  align-self: center;
+  color: var(--file-icon, var(--muted));
+}
+
 .tf-tree-name {
   flex: 0 1 auto;
   min-width: 0;
@@ -425,10 +448,12 @@
   .tf-name,
   .tf-badge { order: 0; }
   .tf-sep { display: none; }
+  /* Indented by the glyph and its margin, so line 2 starts under the name. */
   .tf-dir {
     order: 1;
     flex: 0 0 100%;
     max-width: 100%;
+    padding-left: 20px;
     line-height: 1.35;
   }
 }
