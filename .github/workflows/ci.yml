@@ -44,10 +44,11 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev libfuse2
 
       # No engines field or .nvmrc; better-sqlite3 (a test dependency) needs
-      # Node 22 or newer.
+      # Node 22 or newer. CI runs Node 26 (LTS from 2026-10-28), the version
+      # development uses, so local runs and CI agree.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
