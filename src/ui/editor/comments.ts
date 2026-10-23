@@ -240,6 +240,10 @@ export function commentsExtension(actions: () => CommentActions | null): Extensi
 
   const commentGutter = gutter({
     class: 'ed-cmt-gutter',
+    // Every line, not only the commented ones: CodeMirror otherwise draws a
+    // gutter cell only where there is a marker, so a file with no comments
+    // showed its + on the cursor's line alone, and a blank strip elsewhere.
+    renderEmptyElements: true,
     lineMarker(view, line) {
       const { placed } = view.state.field(commentsField);
       return placed.some((p) => p.to >= line.from && p.from <= line.to) ? dot : null;
