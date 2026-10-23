@@ -43,6 +43,13 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Don't patch globals the runtime owns; inject through the module's own seam.
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
+## Cleanup paths
+
+- **An optional helper blocked a core action.** Removing a task failed with "forbidden path: ~/.albedo/phpantom/phpantom_lsp/.phpantom.toml (not a git failure)". Archive calls `stopPhpantom(worktree)`, which awaited the server's *start*; the start had failed (the config write was refused), so the stop rethrew that error and the archive aborted. The start failed because Tauri's fs scope `$HOME/.albedo/**` does not match dot-files on Unix (`requireLiteralLeadingDot`), so PHPantom had never started at all and navigation silently used git grep. **Rule:**
+  - Cleanup of an optional component (language server, watcher, probe) never throws into the action it is part of: catch, log, carry on.
+  - A file whose name starts with a dot needs that dot spelled out in the fs scope.
+  - An optional feature that fails to start says so somewhere visible, instead of silently falling back for months.
+
 ## Data and contracts
 
 - **`schema.sql` is migration v1 and is never edited.** tauri-plugin-sql checksums applied migrations. New columns go in a new numbered migration, registered in `src-tauri/src/lib.rs`.
