@@ -29,7 +29,13 @@ import { looksBinary } from '../../git/fileDiff';
 import FileDiffView from './FileDiffView';
 import SymbolResults, { type SymbolResultsState } from './SymbolResults';
 import { navigate, type NavAction } from './symbolNav';
-import { isPhpPath, warmPhpantom } from '../../lsp/phpantom';
+import {
+  dismissPhpantomFailure,
+  isPhpPath,
+  phpantomFailure,
+  subscribePhpantomFailure,
+  warmPhpantom,
+} from '../../lsp/phpantom';
 import {
   addComment,
   deleteComment,
@@ -50,7 +56,7 @@ import {
   type CommentActions,
   type PlacedComment,
 } from './comments';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Compartment,
   EditorState,
@@ -958,6 +964,10 @@ export default function FileEditor({
   useEffect(() => {
     if (current !== null && isPhpPath(current)) warmPhpantom(worktree);
   }, [current, worktree]);
+  // When it could not start, lookups quietly answer by text search instead.
+  // Said on a PHP file, the only place it matters, and once per run.
+  const phpantomDown = useSyncExternalStore(subscribePhpantomFailure, phpantomFailure);
+  const showPhpantomDown = phpantomDown !== null && current !== null && isPhpPath(current);
 
   // Like stepping, a jump to another file is blocked while there are unsaved
   // edits; a jump within this file is not, since nothing is reloaded.
@@ -1299,6 +1309,15 @@ export default function FileEditor({
           </button>
           <button type="button" className="ed-btn ed-danger" onClick={onClose}>
             Discard
+          </button>
+        </div>
+      )}
+
+      {showPhpantomDown && (
+        <div className="ed-notice" data-tone="muted">
+          <span title={phpantomDown}>Go to Declaration and Find Usages are using text search: PHPantom couldn’t start.</span>
+          <button type="button" className="ed-btn" onClick={dismissPhpantomFailure}>
+            OK
           </button>
         </div>
       )}

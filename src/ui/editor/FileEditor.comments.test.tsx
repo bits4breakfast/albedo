@@ -45,7 +45,13 @@ vi.mock('../../git/fileDiff', async () => {
   };
 });
 vi.mock('../Terminal', () => ({ notePty: vi.fn() }));
-vi.mock('../../lsp/phpantom', () => ({ isPhpPath: () => false, warmPhpantom: vi.fn() }));
+vi.mock('../../lsp/phpantom', () => ({
+  isPhpPath: () => false,
+  warmPhpantom: vi.fn(),
+  phpantomFailure: () => null,
+  subscribePhpantomFailure: () => () => {},
+  dismissPhpantomFailure: vi.fn(),
+}));
 
 const stored: ReviewComment[] = [];
 const addComment = vi.fn(async () => 1);

@@ -41,6 +41,7 @@
         "$HOME/.claude/cache/model-catalog/*",
         "$HOME/.albedo",
         "$HOME/.albedo/**",
+        "$HOME/.albedo/phpantom/phpantom_lsp/.phpantom.toml",
         "$HOME/agents",
         "$HOME/agents/**"
       ]

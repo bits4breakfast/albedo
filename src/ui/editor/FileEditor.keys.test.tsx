@@ -22,7 +22,13 @@ vi.mock('../../lib/highlight', () => ({
   styleToCss: vi.fn(() => ''),
 }));
 vi.mock('../Terminal', () => ({ notePty: vi.fn() }));
-vi.mock('../../lsp/phpantom', () => ({ isPhpPath: () => false, warmPhpantom: vi.fn() }));
+vi.mock('../../lsp/phpantom', () => ({
+  isPhpPath: () => false,
+  warmPhpantom: vi.fn(),
+  phpantomFailure: () => null,
+  subscribePhpantomFailure: () => () => {},
+  dismissPhpantomFailure: vi.fn(),
+}));
 vi.mock('../../db/comments', () => ({
   listComments: vi.fn(async () => []),
   onCommentsChanged: vi.fn(() => () => {}),

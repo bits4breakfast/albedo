@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { changeType, CREATED, DELETED, fileUri, isPhpPath, isWatchedPath, relativeFromUri, toLocations } from './phpantom';
+import { changeType, CONFIG_FILE_RELATIVE, CREATED, DELETED, fileUri, isPhpPath, isWatchedPath, relativeFromUri, toLocations } from './phpantom';
 import { locationsAsResult } from '../ui/editor/symbolNav';
 
 const ROOT = '/Users/me/www/wt/task-1';
@@ -9,6 +10,14 @@ describe('isPhpPath', () => {
     expect(isPhpPath('src/A.php')).toBe(true);
     expect(isPhpPath('src/A.PHP')).toBe(true);
     for (const p of ['src/a.ts', 'README.md', 'composer.json', 'a.php.bak', 'phpunit.xml']) expect(isPhpPath(p)).toBe(false);
+  });
+});
+
+describe('fs scope', () => {
+  it('allows the config file by its exact path, since `$HOME/.albedo/**` never matches a dot-file', () => {
+    const caps = JSON.parse(readFileSync(new URL('../../src-tauri/capabilities/default.json', import.meta.url), 'utf8'));
+    const scope = caps.permissions.find((p: { identifier?: string }) => p.identifier === 'fs:scope');
+    expect(scope.allow).toContain(`$HOME/${CONFIG_FILE_RELATIVE}`);
   });
 });
 

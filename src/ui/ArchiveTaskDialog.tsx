@@ -251,7 +251,10 @@ export function ArchiveTaskDialog({
     try {
       // An archived task needs no language server, whatever happens to its
       // folder. Stopping is the whole cleanup: PHPantom writes nothing to disk.
-      await stopPhpantom(task.worktreePath);
+      // stopPhpantom never throws; the catch keeps that true here whatever it
+      // becomes, because an optional server must never leave a task that cannot
+      // be archived (docs/REGRESSIONS.md, "Cleanup paths").
+      await stopPhpantom(task.worktreePath).catch((err: unknown) => console.warn('[phpantom] stop on archive', err));
       // `owned` is checked here as well as in the render: the render decides
       // what is offered, this decides what runs, and the two failing together
       // is the only way a not-owned directory could be touched.
