@@ -46,6 +46,8 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 ## UI
 
 - **Defaults that lose work.** The composer cleared its draft on every task switch, by design, and a project switch is a task switch (#55). **Rule:** treat anything the user typed as data: keep it until it's sent or explicitly discarded.
+- **A late send acting on the wrong task.** Caught in review of #56: switch task while a send is still being written, and when that send completed it cleared the composer -- which by then held the *new* task's restored draft. A send held at a permission prompt was also simply dropped on a switch (#55's first version). **Rule:** anything that completes asynchronously (a send, a save, a release) acts only on the task that started it; check ownership at completion, not at start, and on failure give the text back to its own task.
+- **Two writers on one pty.** Buttons (Push, Create PR, Clear, the model picker) wrote to the terminal directly while the outbox released held messages; two pastes landing between a paste and its Enter merge into one message (#56 review). **Rule:** every write to a task's pty goes through one gateway with a per-task lock; no component calls `submitPty` on its own.
 - **Two copies of the same thing on screen.** The file name showed three times in the editor (#57), and "Transcript" twice while the editor was open. **Rule:** before adding a label, check whether a parent row already shows it.
 
 ## Shell scripts (for agents)
