@@ -36,6 +36,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Gutters, widgets and decorations in CodeMirror render only what their config asks for. Check the config options for "empty" or "default" rendering before assuming the DOM is there.
   - When a feature has zero real-world uses (an empty table, no log lines), suspect discoverability before suspecting the data path.
 - **Test counts as a regression check.** Compare the combined test count with `main` plus what each PR adds. A drop means a test was lost. Also audit that no existing test file lost `it(` or `expect(` calls.
+- **Green locally, red on CI: a different Node.** The outbox's `send.test.ts` passed on the local Node 25 and failed 6 tests, deterministically, on CI's Node 22 (`.github/workflows`: `node-version: 22`). Node ships its own global `navigator` since 21 and it differs between versions; tests that patched `navigator.onLine` behaved differently. **Rule:** before reporting tests as passing, also run them on CI's Node: `npx -y -p node@22 -- node node_modules/vitest/vitest.mjs run`. Don't patch globals the runtime owns; inject through the module's own seam.
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
 ## Data and contracts
