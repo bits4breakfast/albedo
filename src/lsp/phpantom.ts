@@ -50,6 +50,12 @@ const SCOPE_NAME = 'phpantom';
 const SIDECAR_NAME = 'binaries/phpantom_lsp';
 const BIN_RELATIVE = '.albedo/bin/phpantom_lsp';
 const CONFIG_HOME_RELATIVE = '.albedo/phpantom';
+/**
+ * The config file. Its name starts with a dot, which Tauri's fs scope globs
+ * never match on Unix (`$HOME/.albedo/**` does not cover it), so
+ * `capabilities/default.json` names this exact path, dot spelled out.
+ */
+export const CONFIG_FILE_RELATIVE = `${CONFIG_HOME_RELATIVE}/phpantom_lsp/.phpantom.toml`;
 
 export const MAX_SERVERS = 2;
 export const IDLE_MS = 10 * 60_000;
@@ -225,6 +231,7 @@ export class PhpServer {
       // Without a watcher the index goes stale as soon as an agent writes a
       // file. Better no server than a confidently wrong one.
       console.error('[phpantom] cannot watch', this.root, err);
+      noteStartFailure(err);
       await this.stop();
     }
   }
@@ -311,7 +318,51 @@ export class PhpServer {
 // ---------------------------------------------------------------------------
 
 const servers = new Map<string, Promise<PhpServer | null>>();
+/**
+ * What each start came to, once it has. A start still under way is never
+ * waited on by anything but its own caller: not by a stop, and not by another
+ * worktree's start (two starting at once would each wait on the other).
+ */
+const settled = new WeakMap<Promise<PhpServer | null>, PhpServer | null>();
 let home: string | null = null;
+
+// ---------------------------------------------------------------------------
+// Start failures, said once
+// ---------------------------------------------------------------------------
+
+/**
+ * Why the first start that failed did, until the user has seen it. Not installed is not
+ * a failure: the server is optional and git grep is the expected answer then.
+ * Anything else used to be a `console.warn` only, and navigation fell back to
+ * git grep for months without anyone knowing (docs/REGRESSIONS.md, "Cleanup
+ * paths"). One per run: the cause is the same for every worktree.
+ */
+let startFailure: string | null = null;
+let failureDismissed = false;
+const failureListeners = new Set<() => void>();
+
+function noteStartFailure(err: unknown): void {
+  if (startFailure !== null) return;
+  startFailure = err instanceof Error ? err.message : String(err);
+  for (const l of failureListeners) l();
+}
+
+/** Why PHPantom couldn't start, while that is still to be said; else null. */
+export function phpantomFailure(): string | null {
+  return failureDismissed ? null : startFailure;
+}
+
+export function subscribePhpantomFailure(listener: () => void): () => void {
+  failureListeners.add(listener);
+  return () => failureListeners.delete(listener);
+}
+
+/** Seen: not shown again this run. */
+export function dismissPhpantomFailure(): void {
+  if (failureDismissed) return;
+  failureDismissed = true;
+  for (const l of failureListeners) l();
+}
 
 async function homeDir(): Promise<string> {
   if (home === null) {
@@ -327,20 +378,24 @@ export async function phpantomInstalled(): Promise<boolean> {
 }
 
 async function writeConfig(): Promise<string> {
-  const configHome = `${await homeDir()}/${CONFIG_HOME_RELATIVE}`;
+  const base = await homeDir();
+  const configHome = `${base}/${CONFIG_HOME_RELATIVE}`;
   await mkdir(`${configHome}/phpantom_lsp`, { recursive: true });
-  await writeTextFile(`${configHome}/phpantom_lsp/.phpantom.toml`, CONFIG_TOML);
+  await writeTextFile(`${base}/${CONFIG_FILE_RELATIVE}`, CONFIG_TOML);
   return configHome;
 }
 
 /**
- * Stop least-recently-used servers until there is room for one more. The
- * worktree being started is left out: its entry is the very start that is
- * waiting here, and waiting on it would never end.
+ * Stop least-recently-used servers until there is room for one more. Only
+ * servers already running count: the worktree being started is the very
+ * start waiting here, and another one still starting may be waiting on this
+ * one. Two starting at once can briefly make it one more than the cap.
  */
 async function evictToFit(starting: string): Promise<void> {
-  const others = [...servers.entries()].filter(([root]) => root !== starting).map(([, p]) => p);
-  const live = (await Promise.all(others)).filter((s): s is PhpServer => s !== null && !s.stopped);
+  const live = [...servers.entries()]
+    .filter(([root]) => root !== starting)
+    .map(([, p]) => settled.get(p))
+    .filter((s): s is PhpServer => s != null && !s.stopped);
   live.sort((a, b) => a.lastUsed - b.lastUsed);
   while (live.length >= MAX_SERVERS) await live.shift()!.stop();
 }
@@ -424,6 +479,7 @@ async function start(root: string): Promise<PhpServer | null> {
     conn.notify('initialized', {});
   } catch (err) {
     console.error('[phpantom] initialize failed', err);
+    noteStartFailure(err);
     await server.stop();
     return null;
   }
@@ -435,14 +491,21 @@ async function start(root: string): Promise<PhpServer | null> {
 /**
  * The server for a worktree, starting it if needed. Callers must only ask for
  * PHP files: that is the rule, and `symbolNav` and the editor both check.
- * Resolves null when PHPantom is not installed or failed to start.
+ * Resolves null when PHPantom is not installed or failed to start; it never
+ * rejects, so nothing that awaits it -- a lookup, a stop, an archive -- can be
+ * failed by an optional server.
  */
 export function phpantomFor(root: string): Promise<PhpServer | null> {
   const existing = servers.get(root);
   if (existing) return existing;
-  const started = start(root);
+  const started = start(root).catch((err: unknown) => {
+    console.warn('[phpantom] could not start; git grep answers instead:', err);
+    noteStartFailure(err);
+    return null;
+  });
   servers.set(root, started);
   void started.then((s) => {
+    settled.set(started, s);
     if ((s === null || s.stopped) && servers.get(root) === started) servers.delete(root);
   });
   return started;
@@ -453,9 +516,18 @@ export function warmPhpantom(root: string): void {
   void phpantomFor(root);
 }
 
-/** Stop a worktree's server: on archive, or when the worktree goes away. */
+/**
+ * Stop a worktree's server: on archive, or when the worktree goes away.
+ * Never throws, and never waits on a start: a running server is stopped here,
+ * one still starting is stopped whenever it gets there. Cleanup of an optional
+ * server must not hold up or fail the action it is part of.
+ */
 export async function stopPhpantom(root: string): Promise<void> {
-  const s = await servers.get(root);
+  const entry = servers.get(root);
+  if (!entry) return;
   servers.delete(root);
-  await s?.stop();
+  const stop = (s: PhpServer | null | undefined) =>
+    s?.stop().catch((err: unknown) => console.warn('[phpantom] stop failed', root, err));
+  if (settled.has(entry)) await stop(settled.get(entry));
+  else void entry.then(stop);
 }
