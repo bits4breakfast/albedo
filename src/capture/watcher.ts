@@ -26,7 +26,7 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { exists, open, readDir, SeekMode, stat, watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
 
-import { countLines, cwdOf, lastTitleIn, parseTranscript, queueOperationsIn, SEQ_STRIDE } from './adapter';
+import { countLines, cwdOf, lastTitleIn, parseTranscript, queueFactsIn, SEQ_STRIDE } from './adapter';
 import { recordQueueOperations, seedQueue } from './queue';
 import {
   adoptSessionIntoTask,
@@ -746,8 +746,9 @@ class Capture implements CaptureHandle {
       const chunkTitle = lastTitleIn(text);
       if (chunkTitle !== null) knownTitle = chunkTitle;
 
-      // Queue lines are bookkeeping too: no rows, only "waiting" state.
-      recordQueueOperations(queueOperationsIn(text));
+      // Queue lines are bookkeeping too: no rows, only "waiting" state. The
+      // prompts and turn ends among the rows reconcile it (see queue.ts).
+      recordQueueOperations(queueFactsIn(text));
 
       // Resolve identity from the rows themselves. sessionId can change
       // mid-file after a resume or compaction, so the LAST row wins and the
@@ -1002,7 +1003,7 @@ async function seedQueueFrom(path: string, upTo: number, sessionId: string): Pro
     const start = Math.max(0, upTo - QUEUE_SEED_BYTES);
     let text = new TextDecoder().decode(await readRange(path, start, upTo - start));
     if (start > 0) text = text.slice(text.indexOf('\n') + 1);
-    seedQueue([sessionId], queueOperationsIn(text));
+    seedQueue([sessionId], queueFactsIn(text));
   } catch {
     /* a queue we cannot rebuild just starts empty */
   }
