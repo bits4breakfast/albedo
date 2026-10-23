@@ -220,7 +220,7 @@ Review a task's work the way you would review a pull request: leave comments
 on the code as you read, and hand them to Claude together when you are done.
 Nothing reaches Claude until you send it.
 
-1. **Comment as you read.** In the editor, select lines and press **⇧⌘C**. In
+1. **Comment as you read.** In the editor, select lines and press **⌥⌘M**. In
    the diff view, press or drag the **+** next to the lines. Comments are
    saved in Albedo's database, so they survive a restart.
 2. **Collect.** Every comment is listed in the **Comments** section at the top
@@ -314,7 +314,7 @@ you resume or import from History.
 | ⌥1…9 | Jump to the Nth project |
 | ⌘[ / ⌘] | Previous / next task |
 | ⌘← / ⌘→ | Previous / next reading tab |
-| ⌘\\ | Cycle PTY / Split / Transcript |
+| ⌘\\ | Cycle PTY / Split / Transcript (not on the Editor tab) |
 | ⇧⇧ | Search Everywhere |
 | ⇧⌘O / ⌘O / ⌥⌘O | Go to File / Class / Symbol |
 | ⇧⌘F | Find in Files |
@@ -323,8 +323,9 @@ you resume or import from History.
 | ⌘↓ | Jump to the latest message |
 | ⌘B or ⌘-click | Go to Declaration (in the editor) |
 | ⌥F7 | Find Usages (in the editor) |
-| ⇧⌘C | Comment on the selected lines (in the editor); send them all from the Files panel |
+| ⌥⌘M | Comment on the selected lines (in the editor); send them all from the Files panel |
 | ⇧⌘D | File / this task's change (in the editor) |
+| ⇧⌘C / ⌥⇧⌘C | Copy the file's full path / its path in the worktree (in the editor) |
 | ⌥F12 | Shell in the main checkout |
 | ⌘+ / ⌘− / ⌘0 | Bigger / smaller / actual-size text |
 | ⌘/ | Show the shortcuts |

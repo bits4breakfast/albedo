@@ -6,11 +6,16 @@
  * scroll. A tab's editor is only created the first time the tab is shown:
  * tabs restored for a task do not all read their files and fight for focus.
  *
+ * The tabs are not drawn here but in the reading pane's own head row (`headSlot`),
+ * after its Transcript / Editor tabs, so the file's name is on screen once.
+ * The active editor's controls follow them in the same row.
+ *
  * The rules for opening and closing live in tabsModel.ts.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { OpenFileRequest, Task } from '../../types';
 import { worktreeRelative } from '../quickOpenModel';
 import FileEditor from './FileEditor';
@@ -26,8 +31,10 @@ export interface EditorTabsProps {
   onCloseAll: () => void;
   /** Bumped by ⌘W: close the active tab. */
   closeSignal: number;
-  /** The active tab's file, for the pane header and Quick Open. */
+  /** The active tab's file, for the files list and Quick Open. */
   onActivePath?: (path: string | null) => void;
+  /** The pane head's slot the tab row is drawn into; null while it is not on screen. */
+  headSlot: HTMLElement | null;
 }
 
 /** Open tabs per task, so switching tasks and back keeps them (not their unsaved edits). */
@@ -48,7 +55,15 @@ function baseName(path: string): string {
   return path.split('/').pop() ?? path;
 }
 
-export default function EditorTabs({ task, request, readOnly, onCloseAll, closeSignal, onActivePath }: EditorTabsProps): ReactNode {
+export default function EditorTabs({
+  task,
+  request,
+  readOnly,
+  onCloseAll,
+  closeSignal,
+  onActivePath,
+  headSlot,
+}: EditorTabsProps): ReactNode {
   const [state, setState] = useState<TabsState>(() => {
     const kept = remembered.get(task.id);
     // A restored tab must not re-jump to a line it was opened at long ago.
@@ -80,6 +95,8 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
   }, [state.active, mounted]);
 
   const [dirty, setDirty] = useState<ReadonlyMap<number, boolean>>(() => new Map());
+  /** Tabs showing their diff, for the tab's marker. */
+  const [diffing, setDiffing] = useState<ReadonlySet<number>>(() => new Set());
   const [closeAsks, setCloseAsks] = useState<ReadonlyMap<number, number>>(() => new Map());
   /** Ask a tab to close: through its own editor, so unsaved edits are asked about. */
   const askClose = useCallback(
@@ -112,6 +129,11 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
     });
     setDirty((m) => {
       const next = new Map(m);
+      next.delete(id);
+      return next;
+    });
+    setDiffing((m) => {
+      const next = new Set(m);
       next.delete(id);
       return next;
     });
@@ -150,10 +172,36 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
     }
     return h;
   };
+  const modeHandlers = useRef(new Map<number, (mode: 'file' | 'diff') => void>());
+  const modeHandler = (id: number) => {
+    let h = modeHandlers.current.get(id);
+    if (!h) {
+      h = (mode: 'file' | 'diff') =>
+        setDiffing((m) => {
+          if (m.has(id) === (mode === 'diff')) return m;
+          const next = new Set(m);
+          if (mode === 'diff') next.add(id);
+          else next.delete(id);
+          return next;
+        });
+      modeHandlers.current.set(id, h);
+    }
+    return h;
+  };
 
-  return (
-    <div className="ed-tabs-root">
-      <div className="ed-tabstrip" role="tablist" aria-label="Open files">
+  // The active tab scrolled into view when the row is too narrow for all of them.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    stripRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [state.active, headSlot]);
+
+  /** Where the active editor draws its ‹ ›, Save and ⋯. */
+  const [controlsSlot, setControlsSlot] = useState<HTMLDivElement | null>(null);
+
+  const head = (
+    <div className="ed-head">
+      <span className="ed-head-sep" aria-hidden="true" />
+      <div className="ed-tabstrip" role="tablist" aria-label="Open files" ref={stripRef}>
         {state.tabs.map((t) => {
           const isActive = t.id === state.active;
           return (
@@ -174,6 +222,11 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
               onClick={() => setState((s) => activateTab(s, t.id))}
             >
               <span className="ed-tab-name">{baseName(t.key)}</span>
+              {diffing.has(t.id) ? (
+                <span className="ed-tab-mark" title="Showing this task's change to the file (⇧⌘D for the file)">
+                  Diff
+                </span>
+              ) : null}
               {dirty.get(t.id) ? <span className="ed-tab-dot" aria-label="unsaved changes" /> : null}
               <button
                 type="button"
@@ -191,6 +244,13 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
           );
         })}
       </div>
+      <div className="ed-head-controls" ref={setControlsSlot} />
+    </div>
+  );
+
+  return (
+    <div className="ed-tabs-root">
+      {headSlot ? createPortal(head, headSlot) : null}
       <div className="ed-tabs-body">
         {state.tabs.map((t) =>
           mounted.has(t.id) ? (
@@ -202,6 +262,8 @@ export default function EditorTabs({ task, request, readOnly, onCloseAll, closeS
                 active={t.id === state.active}
                 onClose={() => closed(t.id)}
                 onDirtyChange={dirtyHandler(t.id)}
+                onModeChange={modeHandler(t.id)}
+                controlsSlot={controlsSlot}
                 onStep={step}
                 closeSignal={closeAsks.get(t.id) ?? 0}
                 // A new file opens in the last mode chosen. One opened at a

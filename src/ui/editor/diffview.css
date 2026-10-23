@@ -1,6 +1,5 @@
 /* ==========================================================================
-   Editor Diff mode — owner: editor workstream. Imported by FileDiffView.tsx
-   and FileEditor.tsx (the File | Diff switch).
+   Editor Diff mode — owner: editor workstream. Imported by FileDiffView.tsx.
 
    No new surfaces and no new colours. The diff itself is `.tx-d` from
    transcript.css, whose ground is already `--panel-inset` -- the same well the
@@ -8,31 +7,6 @@
    against exactly the ground it lands on here. This file only re-frames it as
    a full pane: no card border, no margin, the editor's code size.
    ========================================================================== */
-
-/* --- File | Diff switch, in the editor bar ------------------------------- */
-
-/* A segmented control, the HIG's answer for "two views of the same thing".
-   Same grammar as the touched-files Branch | By commit switch. */
-.ed-mode {
-  flex: none;
-  display: inline-flex;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-.ed-mode-btn {
-  min-height: 24px;   /* WCAG 2.2 target size */
-  padding: 0 10px;
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.ed-mode-btn + .ed-mode-btn { border-left: 1px solid var(--border-strong); }
-.ed-mode-btn:hover:not(:disabled) { color: var(--text-strong); }
-.ed-mode-btn[aria-pressed='true'] { color: var(--text-strong); background: var(--panel-raised); }
-.ed-mode-btn:disabled { color: var(--faint); cursor: default; }
-.ed-mode-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 /* --- the pane ------------------------------------------------------------ */
 

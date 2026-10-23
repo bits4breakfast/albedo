@@ -566,7 +566,7 @@ export default function App() {
 
   /** Bumped by ⌘W: the editor closes its active tab. */
   const [editorCloseSignal, setEditorCloseSignal] = useState(0);
-  /** The active tab's file, for the pane header and Quick Open. */
+  /** The active tab's file, for the files list and Quick Open. */
   const [editorActivePath, setEditorActivePath] = useState<string | null>(null);
 
   // Pick something sensible once tasks land: whatever is blocked first, and
@@ -624,6 +624,13 @@ export default function App() {
       : rightTab === 'files' && filesColumnShown
         ? 'transcript'
         : rightTab;
+
+  /**
+   * The Editor tab is on screen. Its head row then carries the file tabs, so
+   * the PTY / Split / Transcript switch steps aside: on the Editor tab its
+   * "Transcript" was the pane tab's word a second time.
+   */
+  const editorShowing = mode !== 'pty' && selected !== null && activeTab === 'editor';
 
   // --- shortcuts -----------------------------------------------------------
 
@@ -784,7 +791,10 @@ export default function App() {
     // The previous / next tab, stopping at the ends; lands like the digit above.
     'mod+shift+[': () => stepProject(-1),
     'mod+shift+]': () => stepProject(1),
-    'mod+\\': () => setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty')),
+    // Only where the switch is shown: not over the editor (see the switch).
+    'mod+\\': () => {
+      if (!editorShowing) setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty'));
+    },
     // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
     // field, and this app has a composer, a title input and a code editor.
     'mod+arrowleft': { run: () => stepReadingTab(-1), whenTyping: 'ignore' },
@@ -811,17 +821,14 @@ export default function App() {
   const selectedProjectIsForeign =
     showTabs && selectedProject !== null && selectedProject.id !== activeProject?.id;
 
-  // Only the editor's file needs saying here. The branch is in the task bar,
-  // and the session id -- 36 characters nobody reads -- is the Transcript
-  // tab's tooltip and "Copy Session ID" in the task's ⋯ menu.
   /**
    * The Files heads' slots for the git ⋯ menu, one per Files list: the tab's
    * list stays mounted while hidden, and a shared slot drew both menus.
    */
   const [tabFilesSlot, setTabFilesSlot] = useState<HTMLSpanElement | null>(null);
   const [columnFilesSlot, setColumnFilesSlot] = useState<HTMLSpanElement | null>(null);
-
-  const noteFor = (tab: RightTab): string => (tab === 'editor' ? (editorActivePath ?? '') : '');
+  /** The Editor tab's head: EditorTabs draws the file tabs and their controls into it. */
+  const [editorHeadSlot, setEditorHeadSlot] = useState<HTMLDivElement | null>(null);
 
   const banner = loadError ?? startupError ?? captureError;
 
@@ -1099,6 +1106,7 @@ export default function App() {
                 transcript hidden (terminal only) does it fall back to here. */}
             {selected && !showTranscript && <ModelPicker task={selected} />}
 
+            {!editorShowing && (
             <div className="seg" role="group" aria-label="Pane layout">
               <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} title="Terminal only (⌘\)">
                 PTY
@@ -1114,6 +1122,7 @@ export default function App() {
                 Transcript
               </button>
             </div>
+            )}
 
             {/* Two icons where a ⋯ held two items: the orientation only
                 means something in Split, and the shell keeps ⌥F12. */}
@@ -1262,9 +1271,14 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                <span className="pane-head-note" title={noteFor(activeTab)}>
-                  {noteFor(activeTab)}
-                </span>
+                {/* The editor's file tabs, ‹ ›, Save and ⋯, in this same row. The
+                    branch is in the task bar, and the session id is the
+                    Transcript tab's tooltip, so nothing else needs saying. */}
+                {activeTab === 'editor' ? (
+                  <div className="pane-head-note" ref={setEditorHeadSlot} />
+                ) : (
+                  <span className="pane-head-note" />
+                )}
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
                     ✕
@@ -1343,6 +1357,7 @@ export default function App() {
                         onCloseAll={closeEditor}
                         closeSignal={editorCloseSignal}
                         onActivePath={setEditorActivePath}
+                        headSlot={editorHeadSlot}
                       />
                     </PaneErrorBoundary>
                   )}

@@ -15,6 +15,8 @@ interface StubProps {
   closeSignal: number;
   initialMode: 'file' | 'diff';
   onModeChosen: (mode: 'file' | 'diff') => void;
+  onModeChange: (mode: 'file' | 'diff') => void;
+  controlsSlot: HTMLElement | null;
 }
 const rendered = new Map<string, StubProps>();
 vi.mock('./FileEditor', async () => {
@@ -49,13 +51,21 @@ afterEach(() => {
   forgetEditorTabs(task.id);
 });
 
+/** The pane head's slot, as App gives it. */
+function headSlot(): HTMLElement {
+  const slot = document.createElement('div');
+  document.body.appendChild(slot);
+  return slot;
+}
+
 function setup() {
   const onCloseAll = vi.fn();
-  const props = { task, readOnly: false, onCloseAll, closeSignal: 0 };
+  const props = { task, readOnly: false, onCloseAll, closeSignal: 0, headSlot: headSlot() };
   const view = render(<EditorTabs {...props} request={{ path: 'a.php' }} />);
   const open = (path: string, closeSignal = 0) =>
     view.rerender(<EditorTabs {...props} closeSignal={closeSignal} request={{ path }} />);
-  const tabs = () => screen.getAllByRole('tab').map((t) => `${t.textContent?.replace('✕', '')}${t.getAttribute('aria-selected') === 'true' ? '*' : ''}`);
+  const tabs = () =>
+    screen.getAllByRole('tab').map((t) => `${t.textContent?.replace('✕', '')}${t.getAttribute('aria-selected') === 'true' ? '*' : ''}`);
   return { view, open, tabs, onCloseAll, props };
 }
 
@@ -93,6 +103,30 @@ describe('EditorTabs', () => {
     act(() => rendered.get('b.php')!.onModeChosen('file'));
     open('c.php');
     expect(rendered.get('c.php')!.initialMode).toBe('file');
+  });
+
+  it('draws the tabs in the pane head, and nothing there without one', () => {
+    const { props, view } = setup();
+    expect(props.headSlot.querySelector('[role="tablist"]')).not.toBeNull();
+    view.rerender(<EditorTabs {...props} headSlot={null} request={{ path: 'a.php' }} />);
+    expect(screen.queryAllByRole('tab')).toEqual([]);
+    // The editor stays mounted, so its buffer survives the Transcript tab.
+    expect(screen.getByTestId('editor:a.php')).toBeTruthy();
+  });
+
+  it('hands the active editor the slot for its controls', () => {
+    setup();
+    const slot = rendered.get('a.php')!.controlsSlot;
+    expect(slot?.className).toBe('ed-head-controls');
+  });
+
+  it('marks a tab showing its diff', () => {
+    const { open, tabs } = setup();
+    open('b.php');
+    act(() => rendered.get('a.php')!.onModeChange('diff'));
+    expect(tabs()).toEqual(['a.phpDiff', 'b.php*']);
+    act(() => rendered.get('a.php')!.onModeChange('file'));
+    expect(tabs()).toEqual(['a.php', 'b.php*']);
   });
 
   it('⌘W closes the active tab, and the last close closes the editor', () => {
