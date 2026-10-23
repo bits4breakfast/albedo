@@ -152,6 +152,22 @@ src/ui/transcript/  transcript renderer and diff component         (M4)
 src-tauri/     Tauri shell; src/pty.rs plus small fs and scope helpers
 ```
 
+## Past regressions
+
+`docs/REGRESSIONS.md` lists mistakes already made here once -- keyboard
+matching, Claude Code's queue and transcript quirks, shared helpers changed for
+one feature, tests that pass while the app does not. Read the sections your
+change touches before starting, and add an entry when a review catches a new
+one.
+
+**Every time the owner reports something that used to work and no longer
+does, add an entry** -- brief: what broke, a short concrete example of how it
+showed up, the cause once known, the rule that prevents it. Update it when the
+cause or the fix is found. A `UserPromptSubmit` hook
+(`scripts/regression-reminder.sh`, wired in `.claude/settings.json`) adds a
+reminder when a message reads like such a report; the rule applies whether or
+not it fires.
+
 ## Commands
 
 ```

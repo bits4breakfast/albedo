@@ -4,8 +4,10 @@ src-tauri/target
 .DS_Store
 *.log
 
-# Claude Code agent worktrees and local settings
-.claude/
+# Claude Code agent worktrees and local settings. The shared project settings
+# (the regression-reminder hook) are tracked; everything else stays local.
+.claude/*
+!.claude/settings.json
 
 # PHPantom binaries fetched by build.sh --with-phpantom
 src-tauri/binaries/
