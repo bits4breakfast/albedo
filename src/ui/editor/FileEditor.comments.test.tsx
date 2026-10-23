@@ -123,6 +123,7 @@ describe('FileEditor review comments', { timeout: 15_000 }, () => {
     await editorContent();
     const cells = document.querySelectorAll('.ed-cmt-gutter .cm-gutterElement');
     expect(cells.length).toBeGreaterThanOrEqual(3);
+    for (const cell of cells) expect(cell.querySelector('[title]')?.getAttribute('title')).toBe('Add a Comment (⌥⌘M)');
     // jsdom has no layout, so every cell measures as the first line.
     fireEvent.mouseDown(cells[0] as HTMLElement, { button: 0 });
     fireEvent.mouseUp(window);

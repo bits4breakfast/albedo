@@ -196,12 +196,27 @@ class DraftBox extends WidgetType {
 
 const commentedLine = Decoration.line({ class: 'ed-cmt-line' });
 
-class Dot extends GutterMarker {
+/**
+ * A gutter cell's content on every line: the place to press, named by its
+ * tooltip, since the gutter is the one way in with no label. A dot when the
+ * line already has a comment.
+ */
+class Slot extends GutterMarker {
+  constructor(readonly commented: boolean) {
+    super();
+  }
+  eq(other: Slot): boolean {
+    return other.commented === this.commented;
+  }
   toDOM(): Node {
-    return el('span', 'ed-cmt-dot');
+    const slot = el('span', 'ed-cmt-slot');
+    slot.title = 'Add a Comment (⌥⌘M)';
+    if (this.commented) slot.append(el('span', 'ed-cmt-dot'));
+    return slot;
   }
 }
-const dot = new Dot();
+const dot = new Slot(true);
+const empty = new Slot(false);
 
 /**
  * The extension. `actions` is read through a getter so the editor can hand
@@ -240,13 +255,12 @@ export function commentsExtension(actions: () => CommentActions | null): Extensi
 
   const commentGutter = gutter({
     class: 'ed-cmt-gutter',
-    // Every line, not only the commented ones: CodeMirror otherwise draws a
+    // A marker on every line, not only the commented ones: CodeMirror draws a
     // gutter cell only where there is a marker, so a file with no comments
     // showed its + on the cursor's line alone, and a blank strip elsewhere.
-    renderEmptyElements: true,
     lineMarker(view, line) {
       const { placed } = view.state.field(commentsField);
-      return placed.some((p) => p.to >= line.from && p.from <= line.to) ? dot : null;
+      return placed.some((p) => p.to >= line.from && p.from <= line.to) ? dot : empty;
     },
     lineMarkerChange: (update) => update.transactions.some((t) => t.effects.some((e) => e.is(setPlacedComments))),
     domEventHandlers: {
