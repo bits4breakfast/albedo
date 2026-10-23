@@ -11,8 +11,9 @@
  * `dequeue` and `remove` are not the whole story: Claude Code can take several
  * entries, or drop them, with a single `dequeue` (see `QueueFact`). Two rules
  * reconcile the queue against what actually happened:
- *  - a prompt that is a typed entry's text took that entry, and the queue is
- *    FIFO, so every entry queued before it is gone too, merged or dropped;
+ *  - a prompt no dequeue accounts for, whose text is a typed entry's, took
+ *    that entry, and the queue is FIFO, so every entry queued before it is
+ *    gone too, merged or dropped;
  *  - a turn ended and, `IDLE_GRACE_MS` later, no new turn has started: typed
  *    entries queued before that end are never coming. Injected entries are
  *    left alone, since a task notification can wait out an idle session.
@@ -42,6 +43,11 @@ export interface SessionQueue {
   startedAt: number;
   /** The turn end no turn has started since, ms; null while a turn runs. */
   endedAt: number | null;
+  /**
+   * What each dequeue since the last prompt took, by text; null for a dequeue
+   * on an empty queue, which took something this run never saw.
+   */
+  taken: (string | null)[];
 }
 
 const queues = new Map<string, SessionQueue>();
@@ -60,20 +66,25 @@ export function idleCleared(q: SessionQueue, now: number): QueuedEntry[] {
 }
 
 /**
- * The entries left once `prompt` started a turn: the newest typed entry with
- * that text, and everything queued before it, are gone.
+ * The entries left once `prompt` started a turn, given what the dequeues
+ * since the last prompt `taken`.
+ *
+ * Normally the dequeue comes first and took the prompt's own entry, so the
+ * prompt removes nothing: an entry with the same text still queued is another
+ * message ("continue" sent twice), still waiting. Likewise when a dequeue took
+ * something unseen (null). Only a prompt no dequeue accounts for reconciles:
+ * the OLDEST typed entry with its text was taken, and since the queue is FIFO,
+ * everything queued before it is gone too.
  *
  * Whole text, not a substring: a short entry ("ok", "yes") turns up inside
  * unrelated prompts. Measured on this machine: of 105 prompts after a typed
  * entry's dequeue, 88 were that entry's text exactly, and none merely held it.
  */
-export function promptTaken(entries: QueuedEntry[], prompt: string): QueuedEntry[] {
+export function promptTaken(entries: QueuedEntry[], prompt: string, taken: readonly (string | null)[]): QueuedEntry[] {
   const text = prompt.trim();
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i]!;
-    if (!e.injected && e.text.trim() === text) return entries.slice(i + 1);
-  }
-  return entries;
+  if (taken.some((t) => t === null || t.trim() === text)) return entries;
+  const i = entries.findIndex((e) => !e.injected && e.text.trim() === text);
+  return i === -1 ? entries : entries.slice(i + 1);
 }
 
 /** Apply facts in order. Pure with respect to its input `state`. */
@@ -81,20 +92,23 @@ export function applyQueueOperations(state: Map<string, SessionQueue>, facts: re
   const touched = new Set<string>();
   for (const f of facts) {
     if (f.sessionId === '') continue;
-    const q = state.get(f.sessionId) ?? { entries: [], startedAt: 0, endedAt: null };
+    const q = state.get(f.sessionId) ?? { entries: [], startedAt: 0, endedAt: null, taken: [] };
     const before = q.entries.length;
-    if (f.op !== 'turn-end') q.entries = idleCleared(q, f.ts);
+    // A dequeue is the queue being served, however long after a turn end (a
+    // Stop hook can carry a turn on): nothing waiting is stale then.
+    if (f.op !== 'turn-end' && f.op !== 'dequeue') q.entries = idleCleared(q, f.ts);
     if (f.op === 'enqueue') {
       q.entries.push({ text: f.text, ts: f.ts, injected: isInjectedQueueText(f.text) });
     } else if (f.op === 'dequeue') {
       // Oldest first. Popping an empty queue is a dequeue whose enqueue came
       // before what was read (a replay window): nothing to undo.
-      q.entries.shift();
+      q.taken.push(q.entries.shift()?.text ?? null);
     } else if (f.op === 'remove') {
       const i = q.entries.findIndex((e) => e.text === f.text);
       if (i !== -1) q.entries.splice(i, 1);
     } else if (f.op === 'prompt') {
-      q.entries = promptTaken(q.entries, f.text);
+      q.entries = promptTaken(q.entries, f.text, q.taken);
+      q.taken = [];
     } else if (f.ts >= q.startedAt) {
       // A turn end stamped before the latest start was written late, after
       // the next turn's dequeue: it ends the previous turn, not this one.
@@ -104,9 +118,10 @@ export function applyQueueOperations(state: Map<string, SessionQueue>, facts: re
       q.startedAt = Math.max(q.startedAt, f.ts);
       q.endedAt = null;
     }
-    // An empty queue keeps no turn state: anything queued later is stamped
-    // after every turn end it could be cleared by, so nothing is lost.
-    if (q.entries.length > 0) state.set(f.sessionId, q);
+    // An empty queue keeps no turn state once its dequeues have met their
+    // prompt: anything queued later is stamped after every turn end it could
+    // be cleared by, so nothing is lost.
+    if (q.entries.length > 0 || q.taken.length > 0) state.set(f.sessionId, q);
     else state.delete(f.sessionId);
     const queueLine = f.op === 'enqueue' || f.op === 'dequeue' || f.op === 'remove';
     if (queueLine || q.entries.length !== before) touched.add(f.sessionId);

@@ -132,6 +132,20 @@ describe('reconciling the queue', () => {
     expect(texts(state)).toEqual(['later']);
   });
 
+  it('leaves a same-text entry queued when a dequeue already took the prompt', () => {
+    const state = new Map<string, SessionQueue>();
+    applyQueueOperations(state, [enq('continue'), enq('continue'), enq('C'), end(T + 1000), deq(T + 1100), prompt('continue', T + 1100)]);
+    expect(texts(state)).toEqual(['continue', 'C']);
+    applyQueueOperations(state, [end(T + 5000), deq(T + 5100), prompt('continue', T + 5100)]);
+    expect(texts(state)).toEqual(['C']);
+  });
+
+  it('takes the oldest same-text entry when no dequeue accounts for the prompt', () => {
+    const state = new Map<string, SessionQueue>();
+    applyQueueOperations(state, [enq('a'), enq('x'), enq('b'), enq('x'), prompt('x')]);
+    expect(texts(state)).toEqual(['b', 'x']);
+  });
+
   it('leaves the queue alone when the prompt is no queued text, even one containing it', () => {
     const state = new Map<string, SessionQueue>();
     applyQueueOperations(state, [enq('ok'), enq('b'), prompt('ok, something typed straight in')]);
@@ -160,6 +174,13 @@ describe('reconciling the queue', () => {
     applyQueueOperations(state, [enq('a'), enq('b'), end(T + 1000), deq(T + 2000), prompt('a', T + 2000)]);
     applyQueueOperations(state, [enq('c', T + 1000 + 2 * IDLE_GRACE_MS)]);
     expect(texts(state)).toEqual(['b', 'c']);
+  });
+
+  it('serves a dequeue long after a turn end without clearing first', () => {
+    // A Stop hook carries the turn on past its end_turn, then the queue is served.
+    const state = new Map<string, SessionQueue>();
+    applyQueueOperations(state, [enq('a'), enq('b'), end(T + 1000), deq(T + 1000 + 2 * IDLE_GRACE_MS)]);
+    expect(texts(state)).toEqual(['b']);
   });
 
   it('ignores a turn end written after the next turn started', () => {
