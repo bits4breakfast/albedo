@@ -8,6 +8,12 @@ set -u
 
 prompt=$(jq -r '.prompt // empty' 2>/dev/null) || exit 0
 
+# Only the owner's own words: agent reports, task notifications and other
+# injected messages arrive wrapped in a tag and may well say "regression".
+case "$(printf '%s' "$prompt" | sed -e 's/^[[:space:]]*//' | head -c 40)" in
+  '<agent-message'* | '<task-notification'* | '<cross-session-message'* | '<system-reminder'*) exit 0 ;;
+esac
+
 pattern='used to work|stopped working|no longer work|not working any ?more|(doesn|does not|isn|is not|don|do not).{0,3}work(ing)? any ?more|worked before|was working|regress|broke|broken again|works? again'
 
 if printf '%s' "$prompt" | grep -Eiq "$pattern"; then
