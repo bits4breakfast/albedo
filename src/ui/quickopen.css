@@ -127,6 +127,7 @@
    worst row ground (--panel-raised): 5.89 light, 6.50 dark, against the 3:1 a
    UI mark needs. Monochrome: shape tells the kinds apart. */
 .qo-icon {
+  flex: none;              /* a fixed glyph: never squeezed by a narrow row */
   margin-right: 8px;
   vertical-align: -0.125em;
   color: var(--muted);

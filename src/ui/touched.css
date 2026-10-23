@@ -239,6 +239,7 @@
    mark needs. Shape alone tells the kinds apart, so no colour per kind and
    no new token. */
 .tf-path .tf-icon {
+  flex: none;              /* a fixed glyph: never squeezed by a narrow row */
   align-self: center;
   margin-right: 6px;
   color: var(--muted);
@@ -359,6 +360,7 @@
    says the row toggles, the glyph says what it is. Same token and size as the
    change rows' glyph. */
 .tf-tree-row .tf-icon {
+  flex: none;              /* a fixed glyph: never squeezed by a narrow row */
   align-self: center;
   color: var(--muted);
 }
