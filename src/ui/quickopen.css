@@ -122,6 +122,16 @@
 }
 .qo-row[aria-selected='true'] .qo-name { color: var(--text-strong); }
 
+/* The kind of file the row opens -- a symbol's file too, so the column is
+   never blank. Inside the name box so it costs no grid gap. --muted on the
+   worst row ground (--panel-raised): 5.89 light, 6.50 dark, against the 3:1 a
+   UI mark needs. Monochrome: shape tells the kinds apart. */
+.qo-icon {
+  margin-right: 8px;
+  vertical-align: -0.125em;
+  color: var(--muted);
+}
+
 /* Matched characters. Weight carries it as much as colour does, so it reads
    the same whatever the row ground; --accent is measured on all three. */
 .qo-hit {

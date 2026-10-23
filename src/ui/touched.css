@@ -231,6 +231,19 @@
   white-space: nowrap;
 }
 
+/* The file's kind, by shape (fileIcons.tsx). First in the path, before the
+   directory, so every row's glyph sits in the same column whatever the path's
+   depth; a fixed 14px glyph never shrinks. --muted, the tier the tree's caret
+   already uses. Measured on --panel / --panel-hover / --panel-raised:
+   light 7.15 / 6.22 / 5.89, dark 7.74 / 6.91 / 6.50 -- far above the 3:1 a UI
+   mark needs. Shape alone tells the kinds apart, so no colour per kind and
+   no new token. */
+.tf-path .tf-icon {
+  align-self: center;
+  margin-right: 6px;
+  color: var(--muted);
+}
+
 /* Shrink order inside a row, and it is deliberate: the directory gives way
    first (it is context), then the basename ellipsises, and the badges never
    shrink at all. Before this, .tf-name was `flex: 0 0 auto` and the badges sat
@@ -342,6 +355,14 @@
   font-size: var(--fs-xs);
 }
 
+/* The folder (closed or open) or the file's kind, after the caret: the caret
+   says the row toggles, the glyph says what it is. Same token and size as the
+   change rows' glyph. */
+.tf-tree-row .tf-icon {
+  align-self: center;
+  color: var(--muted);
+}
+
 .tf-tree-name {
   flex: 0 1 auto;
   min-width: 0;
@@ -425,10 +446,12 @@
   .tf-name,
   .tf-badge { order: 0; }
   .tf-sep { display: none; }
+  /* Indented by the glyph and its margin, so line 2 starts under the name. */
   .tf-dir {
     order: 1;
     flex: 0 0 100%;
     max-width: 100%;
+    padding-left: 20px;
     line-height: 1.35;
   }
 }

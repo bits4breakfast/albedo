@@ -32,6 +32,7 @@ import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
 import ProjectTree from './ProjectTree';
+import { FileIcon } from './fileIcons';
 import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
@@ -615,6 +616,7 @@ function FileRow({
       </span>
 
       <span className="tf-path">
+        <FileIcon path={file.path} className="tf-icon" />
         {dir === '' ? null : (
           <>
             <span className="tf-dir">{dir}</span>
