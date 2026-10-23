@@ -561,7 +561,7 @@ interface ListItem {
 const FENCE_RE = /^\s*(`{3,}|~{3,})\s*([^\s`]*)/;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const HR_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
-const ITEM_RE = /^(\s*)(?:([-*+])|(\d+)[.)])(\s+)(.*)$/;
+const ITEM_RE = /^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)$/;
 /** A GFM delimiter row: `|---|:--:|`, outer pipes optional. */
 const DELIM_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
@@ -618,9 +618,8 @@ function columns(ws: string): number {
 }
 
 interface ItemLine {
+  /** Columns before the marker. */
   indent: number;
-  /** Where the item's text starts (CommonMark): marker indent + marker + spaces. */
-  content: number;
   ordered: boolean;
   num: number;
   text: string;
@@ -630,23 +629,23 @@ function itemAt(line: string): ItemLine | null {
   const m = ITEM_RE.exec(line);
   if (!m) return null;
   const indent = columns(m[1] ?? '');
-  const marker = m[2] ?? `${m[3] ?? ''}.`;
-  const gap = columns(m[4] ?? ' ');
-  // Five or more spaces after the marker would be indented code inside the
-  // item; CommonMark then puts the content one space after the marker.
-  const content = indent + marker.length + (gap > 4 ? 1 : gap);
-  return { indent, content, ordered: m[2] === undefined, num: Number(m[3] ?? 1), text: m[5] ?? '' };
+  return { indent, ordered: m[2] === undefined, num: Number(m[3] ?? 1), text: m[4] ?? '' };
 }
 
 /**
  * One list starting at `lines[i]`, nested lists included, as a tree.
  *
- * `floor` is the content column of the item this list hangs under (0 at the
- * top level). An item indented to the current item's content column or
- * beyond opens a nested list under it (CommonMark's rule, so 2- and 4-space
- * indents both work); one between `floor` and that column is a sibling; one
- * left of `floor` belongs to an outer list. A marker of the other kind
- * (bullet vs number) at this level ends the list, as in CommonMark. A blank
+ * Nesting is relative to marker indents, not CommonMark's content column:
+ * a transcript viewer should show what the author meant, and `1. a` followed
+ * by `  - b` (2 spaces) is meant as a sub-list -- Claude Code's terminal
+ * renders it nested -- though CommonMark makes it a separate list. So the
+ * list records its first item's indent as `base`. An item indented further
+ * than the last item's marker opens a nested list under that item (any step:
+ * 1, 2, 3 or 4 spaces); one at `base` or beyond, but not further than the
+ * last item's marker, is a sibling; one left of `base` belongs to an outer
+ * list. `floor` is the parent item's marker indent + 1 (0 at the top level).
+ * A marker of the other kind (bullet vs number) at this level ends the list,
+ * as in CommonMark. A blank
  * line ends it unless the next non-blank line is an item this list or one
  * of its sub-lists takes (a loose list). Continuation lines -- non-blank,
  * not an item, indented 2+ -- join the deepest open item, as before nesting
@@ -658,8 +657,9 @@ function parseList(lines: readonly string[], i: number, floor: number): [Block, 
   const first = itemAt(lines[i] ?? '');
   const ordered = first?.ordered ?? false;
   const start = first?.num ?? 1;
+  const base = first?.indent ?? 0;
   const items: ListItem[] = [];
-  let content = 0;
+  let last = 0; // the last item's marker indent
 
   while (i < lines.length) {
     const l = lines[i] ?? '';
@@ -675,21 +675,21 @@ function parseList(lines: readonly string[], i: number, floor: number): [Block, 
     }
     const it = itemAt(l);
     if (it) {
-      if (items.length > 0 && it.indent >= content) {
-        const [sub, next] = parseList(lines, i, content);
+      if (items.length > 0 && it.indent > last) {
+        const [sub, next] = parseList(lines, i, last + 1);
         items[items.length - 1]?.children.push(sub);
         i = next;
         continue;
       }
-      if (it.indent < floor || (items.length > 0 && it.ordered !== ordered)) break;
+      if (it.indent < base || (items.length > 0 && it.ordered !== ordered)) break;
       items.push({ text: it.text, children: [] });
-      content = it.content;
+      last = it.indent;
       i++;
       continue;
     }
     if (/^\s{2,}/.test(l) && items.length > 0) {
-      const last = items[items.length - 1] as ListItem;
-      last.text = `${last.text}\n${l.trim()}`;
+      const open = items[items.length - 1] as ListItem;
+      open.text = `${open.text}\n${l.trim()}`;
       i++;
       continue;
     }

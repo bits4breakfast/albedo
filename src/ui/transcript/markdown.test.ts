@@ -91,7 +91,19 @@ describe('parseBlocks: lists', () => {
     ]);
   });
 
-  it('uses the content column, so a numbered item nests at 3 spaces', () => {
+  it('nests under a numbered item at 2 spaces, not only at its content column', () => {
+    const src = ['1. **Step**', '  - detail', '  - more', '2. next'].join('\n');
+    expect(parseBlocks(src)).toEqual([ol(1, item('**Step**', [ul(item('detail'), item('more'))]), item('next'))]);
+  });
+
+  it('nests sloppy 1-space indents by how far each marker moved', () => {
+    const src = ['- a', ' - b', '  - c', ' - d', '- e'].join('\n');
+    expect(parseBlocks(src)).toEqual([
+      ul(item('a', [ul(item('b', [ul(item('c'))]), item('d'))]), item('e')),
+    ]);
+  });
+
+  it('nests a numbered item at 3 spaces too', () => {
     const src = ['1. a', '   - b', '   - c', '2. d'].join('\n');
     expect(parseBlocks(src)).toEqual([ol(1, item('a', [ul(item('b'), item('c'))]), item('d'))]);
   });
