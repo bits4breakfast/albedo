@@ -46,7 +46,7 @@ import {
   touchTaskActivity,
   updateTask,
 } from './index';
-import { listPastSessions } from './sessions';
+import { listPastSessions, listSessionCwds } from './sessions';
 import { deriveStatus } from '../capture/status';
 import { usageBreakdown, usageSummary, windowUsage } from '../capture/usage';
 import { contextUsage } from '../capture/context';
@@ -154,6 +154,50 @@ describe('listPastSessions — executed', () => {
     expect(filtered).toHaveLength(1);
     // The wrong implementation reports 1 here.
     expect(filtered[0]?.messageCount).toBe(31);
+  });
+
+  it('counts the main thread only, but takes activity times from subagents too (#74)', async () => {
+    seedSession('s1', 2, 1_000); // 6 main-thread rows
+    db.raw
+      .prepare(
+        `INSERT INTO messages (task_id, session_id, agent_id, seq, role, body, raw_json, ts)
+         VALUES (NULL, 's1', 'agent-a1', ?, 'assistant', 'subagent row', '{}', ?)`,
+      )
+      .run(0, 5_000);
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    const [s] = await listPastSessions();
+    expect(s?.messageCount).toBe(6);
+    expect(s?.firstTs).toBe(1_000);
+    expect(s?.lastTs).toBe(5_000);
+  });
+
+  it("takes cwd and title from the main transcript, even when a subagent file is newer (#74)", async () => {
+    // Subagent files are registered under the parent's session id with an
+    // empty-title sentinel and their own cwd; the newest-file rule picked it.
+    seedSession('s1', 2, 1_000);
+    seedTranscriptFile(db, { path: '/p/proj/s1.jsonl', sessionId: 's1', cwd: '/w', title: 'Real title', updatedAt: 1 });
+    seedTranscriptFile(db, {
+      path: '/p/proj/s1/subagents/agent-a1.jsonl', sessionId: 's1', cwd: '/w/.claude/worktrees/a1', title: '', updatedAt: 9,
+    });
+    const [s] = await listPastSessions();
+    expect(s?.title).toBe('Real title');
+    expect(s?.cwd).toBe('/w');
+    expect(s?.messageCount).toBe(6);
+    expect(await listPastSessions({ cwd: '/w/.claude/worktrees/a1' })).toEqual([]);
+  });
+
+  it('offers only cwds a main transcript ran in as filters (#74)', async () => {
+    seedTranscriptFile(db, { path: '/p/proj/s1.jsonl', sessionId: 's1', cwd: '/w', updatedAt: 1 });
+    seedTranscriptFile(db, {
+      path: '/p/proj/s1/subagents/agent-a1.jsonl', sessionId: 's1', cwd: '/w/.claude/worktrees/a1', updatedAt: 9,
+    });
+    expect(await listSessionCwds()).toEqual(['/w']);
+  });
+
+  it("reports a titleless main transcript's '' sentinel as no title", async () => {
+    seedSession('s1', 1, 1_000);
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w', title: '' });
+    expect((await listPastSessions())[0]?.title).toBeNull();
   });
 
   it('does NOT multiply counts when a session spans several transcript files', async () => {
@@ -415,19 +459,21 @@ describe('branch and first prompt — the discriminators', () => {
     branch: string | null,
     body: string,
     role = 'user',
+    agentId: string | null = null,
   ): void {
     const raw = JSON.stringify({
       type: role === 'user' ? 'user' : 'assistant',
       sessionId, timestamp: new Date(ts).toISOString(), cwd: '/w',
       ...(branch === null ? {} : { gitBranch: branch }),
+      ...(agentId === null ? {} : { agentId, isSidechain: true }),
       message: { role, content: body },
     });
     db.raw
       .prepare(
-        `INSERT INTO messages (task_id, session_id, seq, role, tool_name, target_path, body, raw_json, ts)
-         VALUES (NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+        `INSERT INTO messages (task_id, session_id, agent_id, seq, role, tool_name, target_path, body, raw_json, ts)
+         VALUES (NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
       )
-      .run(sessionId, line * 100, role, body, raw, ts);
+      .run(sessionId, agentId, line * 100, role, body, raw, ts);
   }
 
   it('reports the branch the session ENDED on', async () => {
@@ -496,6 +542,26 @@ describe('branch and first prompt — the discriminators', () => {
     seedBranchedTurn('s1', 1, 2, 'master', 'the human question', 'user');
     seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
     expect((await listPastSessions())[0]?.firstPrompt).toBe('the human question');
+  });
+
+  it("takes the main thread's opener, not a subagent's seq-0 prompt (#74)", async () => {
+    // The live shape: subagent rows carry the parent's session id and restart
+    // seq at 0, so the review subagent's prompt sorted before the real opener.
+    seedBranchedTurn('s1', 0, 50, 'master', 'Review the committed change in the worktree', 'user', 'agent-a1');
+    seedBranchedTurn('s1', 0, 1, 'master', '<command-name>/clear</command-name>');
+    seedBranchedTurn('s1', 4, 2, 'master', 'help me investigate this ticket');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.firstPrompt).toBe('help me investigate this ticket');
+  });
+
+  it("reports the main thread's branch, not a later subagent's (#74)", async () => {
+    // A subagent run in a worktree records that worktree's branch, and its
+    // seq can exceed the main thread's last.
+    seedBranchedTurn('s1', 0, 1, 'feature-x', 'start here');
+    seedBranchedTurn('s1', 1, 2, 'feature-x', 'carry on');
+    seedBranchedTurn('s1', 9, 3, 'worktree-agent-a1', 'subagent work', 'user', 'agent-a1');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.branch).toBe('feature-x');
   });
 });
 
@@ -596,6 +662,18 @@ describe('topFiles', () => {
     seedWrite('s1', 200, 'Edit', '/wt/real.ts');
     seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
     expect((await listPastSessions())[0]?.topFiles).toEqual(['real.ts']);
+  });
+
+  it("includes files a subagent wrote: they are the session's work", async () => {
+    seedWrite('s1', 0, 'Edit', '/wt/main.ts');
+    db.raw
+      .prepare(
+        `INSERT INTO messages (task_id, session_id, agent_id, seq, role, tool_name, target_path, body, raw_json, ts)
+         VALUES (NULL, 's1', 'agent-a1', ?, 'tool_use', 'Edit', ?, 'x', '{}', 2000)`,
+      )
+      .run(0, '/wt/by-agent.ts');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect([...((await listPastSessions())[0]?.topFiles ?? [])].sort()).toEqual(['by-agent.ts', 'main.ts']);
   });
 
   it('keeps sessions separate', async () => {

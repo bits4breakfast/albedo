@@ -29,7 +29,8 @@ export interface PastSession {
    */
   branch: string | null;
   /**
-   * First prompt the human actually typed, one line, truncated.
+   * First prompt the human actually typed, one line, truncated. Main thread
+   * only: a subagent's task prompt is typed by Claude, not the human (#74).
    *
    * Skips Claude Code's injected openers (slash-command envelopes, system
    * reminders): 75 of 115 sessions begin with one, and taking the naive first
@@ -48,8 +49,10 @@ export interface PastSession {
    * out of 36. Empty array when the session wrote nothing.
    */
   topFiles: string[];
+  /** Across the whole session, subagents included: their activity is its activity. */
   firstTs: number;
   lastTs: number;
+  /** Main-thread rows only: the length of the conversation a resume reopens. */
   messageCount: number;
   /** Set when a task already adopted this session: the UI says "open", not "resume". */
   taskId: number | null;
@@ -85,6 +88,33 @@ const TOP_FILES_SCAN = 8;
 
 /** How many basenames to show. */
 export const TOP_FILES_SHOWN = 3;
+
+/**
+ * A `messages` row from the main thread, not from one of its subagents.
+ *
+ * Subagent rows carry the PARENT's session_id (migration 5) and restart `seq`
+ * at 0 in each subagent file, so "first" or "latest by seq" across a whole
+ * session can land on a subagent's row: a review subagent's `seq 0` prompt
+ * outranked the conversation's real opener at `seq 400` (#74).
+ *
+ * Written as COALESCE rather than `agent_id IS NULL` so it matches the unique
+ * index `(session_id, COALESCE(agent_id, ''), seq)` exactly: SQLite then walks
+ * one session's main thread in seq order and stops at the first hit. The
+ * `IS NULL` form picks `messages_agent` instead and sorts every candidate row.
+ */
+function mainThreadSql(alias: string): string {
+  return `COALESCE(${alias}.agent_id, '') = ''`;
+}
+
+/**
+ * A `transcript_files` row for the main transcript, not a subagent file.
+ *
+ * Subagent files (`<projectDir>/<session>/subagents/<agent>.jsonl`) are
+ * registered under the parent's session id too and never carry a title (27
+ * of 27 on the live database: the ai-title is written to the main file). Their
+ * cwd is the subagent's own, which may be a worktree the session never ran in.
+ */
+const MAIN_TRANSCRIPT_SQL = `path NOT LIKE '%/' || session_id || '/subagents/%'`;
 
 /**
  * `count<TAB>path` lines into basenames, most-touched first.
@@ -170,26 +200,36 @@ export async function listPastSessions(opts?: {
   binds.push(Math.max(1, opts?.limit ?? DEFAULT_LIMIT));
 
   const db = await getDb();
+  // Which columns see subagent rows is decided per column:
+  //   main thread only -- branch, first_prompt, message_count, and cwd/title
+  //     through tf: they describe the conversation `--resume` reopens, and a
+  //     subagent's seq, branch, prompt and transcript file are not part of it.
+  //   whole session -- top_files, first_ts/last_ts, task_id and the search
+  //     filter: a subagent's edits are the session's work (an orchestrating
+  //     session may write nothing itself), its activity is the session's
+  //     activity, and a match inside it is a match in the session.
   const rows = await db.select<SessionRow[]>(
     `SELECT m.session_id                AS session_id,
             tf.cwd                      AS cwd,
-            tf.title                    AS title,
-            -- Latest non-null branch. The unique index on (session_id, seq)
-            -- serves both the filter and the ordering, so this stops at the
-            -- newest row rather than scanning the session.
+            -- '' is the "scanned, no title" sentinel, never a title.
+            NULLIF(tf.title, '')        AS title,
+            -- Latest non-null branch on the main thread: the branch the
+            -- session ENDED on. A subagent run in a worktree records that
+            -- worktree's branch, and its restarted seq makes "latest" meaningless.
             (SELECT ${gitBranchSqlExpr('x.raw_json')}
                FROM messages x
-              WHERE x.session_id = m.session_id
+              WHERE x.session_id = m.session_id AND ${mainThreadSql('x')}
                 AND ${gitBranchSqlExpr('x.raw_json')} IS NOT NULL
               ORDER BY x.seq DESC LIMIT 1)  AS branch,
             (SELECT SUBSTR(REPLACE(REPLACE(y.body, char(10), ' '), char(9), ' '), 1, ${PROMPT_CHARS})
                FROM messages y
-              WHERE y.session_id = m.session_id AND y.role = 'user'
+              WHERE y.session_id = m.session_id AND ${mainThreadSql('y')}
+                AND y.role = 'user'
                 AND ${prosePromptSqlPredicate('y.body')}
               ORDER BY y.seq ASC LIMIT 1)   AS first_prompt,
             -- count and path per line, parsed and re-sorted in TypeScript so
             -- the result never depends on GROUP_CONCAT preserving subquery
-            -- order, which SQLite does not guarantee.
+            -- order, which SQLite does not guarantee. Subagents included.
             (SELECT GROUP_CONCAT(c || char(9) || p, char(10)) FROM (
                SELECT t.target_path AS p, COUNT(*) AS c
                  FROM messages t
@@ -203,7 +243,9 @@ export async function listPastSessions(opts?: {
              ))                           AS top_files,
             MIN(m.ts)                   AS first_ts,
             MAX(m.ts)                   AS last_ts,
-            COUNT(*)                    AS message_count,
+            -- The resumed conversation's length. Subagent transcripts are
+            -- often longer than the conversation that started them.
+            COUNT(*) FILTER (WHERE ${mainThreadSql('m')}) AS message_count,
             MAX(live.id)                AS task_id
        FROM messages m
        -- An archived task is no task to open: its session resumes afresh.
@@ -213,9 +255,12 @@ export async function listPastSessions(opts?: {
          -- transcript file (resume, compaction), and joining transcript_files
          -- directly would multiply every session's message count by the number
          -- of files carrying it. The single MAX() makes SQLite take the bare
-         -- columns from the most recently updated of them.
+         -- columns from the most recently updated of them -- among the main
+         -- transcripts only, or a subagent file written last supplied its
+         -- empty title and its own cwd.
          SELECT session_id, MAX(updated_at) AS newest, cwd, title
            FROM transcript_files
+          WHERE ${MAIN_TRANSCRIPT_SQL}
           GROUP BY session_id
        ) tf ON tf.session_id = m.session_id
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
@@ -265,13 +310,18 @@ export function fallbackSessionLabel(
   return oneLine.length <= maxChars ? oneLine : `${oneLine.slice(0, maxChars - 1)}…`;
 }
 
-/** The distinct cwds that have captured sessions, newest activity first. */
+/**
+ * The distinct cwds that have captured sessions, newest activity first.
+ *
+ * Main transcripts only, matching the cwd `listPastSessions` reports: a cwd
+ * only a subagent ran in would be offered as a filter that lists nothing.
+ */
 export async function listSessionCwds(): Promise<string[]> {
   const db = await getDb();
   const rows = await db.select<{ cwd: string | null }[]>(
     `SELECT cwd, MAX(updated_at) AS newest
        FROM transcript_files
-      WHERE cwd IS NOT NULL
+      WHERE cwd IS NOT NULL AND ${MAIN_TRANSCRIPT_SQL}
       GROUP BY cwd
       ORDER BY newest DESC`,
   );
