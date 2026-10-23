@@ -18,7 +18,15 @@
   justify-content: center;
   cursor: pointer;
 }
-.ed-cmt-gutter .cm-gutterElement:hover:not(:has(.ed-cmt-dot))::after {
+/* Fills the cell, so the tooltip is there wherever the pointer is in it. */
+.ed-cmt-slot {
+  align-self: stretch;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ed-cmt-slot:hover:not(:has(.ed-cmt-dot))::after {
   content: '+';
   color: var(--accent);
   font-weight: 600;

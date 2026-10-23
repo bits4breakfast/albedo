@@ -995,8 +995,10 @@ export default function FileEditor({
           if (live) setFileComments(all.filter((c) => c.path === current));
         },
         // Comments are a layer on the file: failing to read them must not
-        // break the editor. Logged, and the file shows without them.
-        (err: unknown) => console.warn('[comments] could not load', err),
+        // break the editor. The file shows without them, and says so.
+        (err: unknown) => {
+          if (live) setCommentNotice(`Could not read this file’s comments: ${message(err)}`);
+        },
       );
     load();
     const off = onCommentsChanged((id) => {

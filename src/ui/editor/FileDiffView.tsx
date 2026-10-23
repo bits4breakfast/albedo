@@ -172,7 +172,11 @@ function DiffBody({ data }: { data: TaskFileDiff }): ReactNode {
         return (
           <div className="ed-message">
             No difference from the base.
-            <div className="ed-message-sub">The file was edited and is now back to what it was where the branch started.</div>
+            {/* Also every file the branch never touched, opened from the Project
+                view: a diff has no lines to comment on, so say where they are. */}
+            <div className="ed-message-sub">
+              This branch never changed the file, or changed it back. Switch to File to comment on it.
+            </div>
           </div>
         );
       }
