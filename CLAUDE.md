@@ -152,6 +152,14 @@ src/ui/transcript/  transcript renderer and diff component         (M4)
 src-tauri/     Tauri shell; src/pty.rs plus small fs and scope helpers
 ```
 
+## Past regressions
+
+`docs/REGRESSIONS.md` lists mistakes already made here once -- keyboard
+matching, Claude Code's queue and transcript quirks, shared helpers changed for
+one feature, tests that pass while the app does not. Read the sections your
+change touches before starting, and add an entry when a review catches a new
+one.
+
 ## Commands
 
 ```
