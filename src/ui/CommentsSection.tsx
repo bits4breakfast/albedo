@@ -78,6 +78,8 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
       text: formatForClaude(batch, intro),
       // Sent means Claude Code received a message naming it -- not merely
       // that it was put in the composer, where it may be edited or dropped.
+      // Held offline, the message keeps these ids and marks them on delivery.
+      comments: batch.map((c) => ({ id: c.id, marker: commentLocation(c) })),
       onSent: (sent) => {
         const delivered = batch.filter((c) => sent.includes(commentLocation(c)));
         if (delivered.length > 0) {

@@ -5,7 +5,7 @@
  * assistant line, via `contextUsage`), never from the terminal: it shows what
  * the last reply actually used, so it cannot drift from reality.
  *
- * Changing it types `/model <alias>` into the pty with `submitPty`. That is
+ * Changing it types `/model <alias>` into the pty with `sendToSession`. That is
  * input only -- no output is parsed -- so the two-channel rule holds. It is
  * offered only while the task is idle, because the same text sent mid-turn
  * would land in the agent's prompt as a message instead of running a command.
@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Task } from '../types';
 import { contextUsage, onCaptureUpdate } from '../capture';
-import { submitPty } from './Terminal';
+import { sendToSession, useSendsWait } from './transcript/send';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { getTaskModel, setTaskModel } from './taskModel';
 
@@ -121,10 +121,13 @@ export default function ModelPicker({ task }: { task: Task }) {
   }, [pending, model, choices]);
 
   const idle = task.status === 'idle';
+  // A command is never held (send.ts): while sends wait, there is no switching.
+  const waiting = useSendsWait(task.id);
   const choose = async (choice: string) => {
     if (choice === current && !pending) return;
     setFailed(false);
-    const ok = await submitPty(task.id, `/model ${choice}`);
+    // `held` cannot happen: a command that would be held is refused.
+    const ok = (await sendToSession(task.id, `/model ${choice}`)) === 'sent';
     if (ok) {
       setPending(choice);
       // The process is on it from now, reply or not: a /clear before the
@@ -139,7 +142,11 @@ export default function ModelPicker({ task }: { task: Task }) {
   const label = shown ? shown.replace(/^claude-/, '') : 'Model Unknown';
   const title =
     (model ? `${model}. ` : assumed ? `Probably ${assumed}: confirmed on the first reply. ` : '') +
-    (!idle ? 'Switching models is only offered while the task is idle' : 'Sends /model to this session');
+    (!idle
+      ? 'Switching models is only offered while the task is idle'
+      : waiting
+        ? 'Not available while messages are waiting to send'
+        : 'Sends /model to this session');
   const nameOf = (id: string) => choices.find((c) => c.id === id)?.name ?? id;
 
   return (
@@ -155,7 +162,7 @@ export default function ModelPicker({ task }: { task: Task }) {
         className="model-pick-select"
         aria-label="Change model"
         title={title}
-        disabled={!idle}
+        disabled={!idle || waiting}
         value={pending ?? current ?? ''}
         onChange={(e) => void choose(e.target.value)}
       >

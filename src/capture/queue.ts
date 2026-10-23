@@ -55,9 +55,11 @@ const listeners = new Set<(sessionId: string) => void>();
 
 /**
  * The entries left at `now`: without the typed ones queued by a turn end that
- * no turn has followed for `IDLE_GRACE_MS`. Checked when the session's next
- * fact arrives, not on a timer: the band shows only while a turn runs, and a
- * turn starts with a fact, so nothing stale is on screen in between.
+ * no turn has followed for `IDLE_GRACE_MS`. Applied when the session's next
+ * fact arrives, and again on every read (`queuedFor`): the band shows while
+ * the session is alive, idle included, and an idle session writes no fact
+ * that would clear it -- least of all while Claude Code retries a dead
+ * connection.
  */
 export function idleCleared(q: SessionQueue, now: number): QueuedEntry[] {
   const endedAt = q.endedAt;
@@ -153,9 +155,21 @@ export function seedQueue(sessionIds: Iterable<string>, facts: readonly QueueFac
   }
 }
 
-/** The entries waiting for a session, oldest first. */
-export function queuedFor(sessionId: string): readonly QueuedEntry[] {
-  return queues.get(sessionId)?.entries ?? [];
+/** The entries waiting for a session at `now`, oldest first. */
+export function queuedFor(sessionId: string, now = Date.now()): readonly QueuedEntry[] {
+  const q = queues.get(sessionId);
+  return q ? idleCleared(q, now) : [];
+}
+
+/**
+ * When `queuedFor` next changes with no new fact: the moment typed entries
+ * left at a turn end stop counting. Null when nothing is waiting on that.
+ */
+export function queueSettlesAt(sessionId: string): number | null {
+  const q = queues.get(sessionId);
+  const endedAt = q?.endedAt ?? null;
+  if (!q || endedAt === null || !q.entries.some((e) => !e.injected && e.ts <= endedAt)) return null;
+  return endedAt + IDLE_GRACE_MS;
 }
 
 /** Subscribe to changes; the callback gets the session that changed. */

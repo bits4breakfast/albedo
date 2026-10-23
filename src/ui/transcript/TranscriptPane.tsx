@@ -9,8 +9,11 @@
  */
 
 import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
-import { onComposerInsert, onAttachRequest } from './composerBridge';
+import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
 import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
+import { editHeld, holdMessage, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
+import { conditionsFor, heldLabel, noteShownStatus, promptOpen, startOutboxRelease, type ReleaseConditions } from './outboxRelease';
+import { COMMAND_CANNOT_WAIT, COMMAND_CANNOT_WAIT_PROMPT, isSlashCommand, mustHold, submitLocked } from './send';
 import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
@@ -19,8 +22,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages } from '../../db';
-import { onCaptureUpdate, onQueueChange, queuedFor, type QueuedEntry } from '../../capture';
-import { canResume, hasLivePty, onPtyPresenceChange, startPty, submitPty } from '../Terminal';
+import { onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
+import { onPromptChange } from '../../capture/hookEvents';
+import { onTrustWaiting } from '../../capture/workspaceTrust';
+import { onConnectivityChange, useOffline, watchConnectivity } from '../../lib/connectivity';
+import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty } from '../Terminal';
 import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
@@ -144,6 +150,15 @@ export function TranscriptPane({
   }, [taskId, sessionId]);
 
   const inactive = taskId === null && sessionId === null;
+  const liveSince = usePtyLiveSince(taskId);
+
+  // Held messages go for every task, whichever one is on screen (outboxRelease.ts).
+  useEffect(() => startOutboxRelease(), []);
+  // The release's prompt gate counts this task's `blocked`, as the composer does.
+  useEffect(() => {
+    noteShownStatus(taskId, status);
+    return () => noteShownStatus(null, null);
+  }, [taskId, status]);
 
   // --- window load (initial, and every step backwards) ----------------------
   useEffect(() => {
@@ -357,6 +372,14 @@ export function TranscriptPane({
   */
   const [echo, setEcho] = useState<{ text: string; at: number } | null>(null);
   useEffect(() => setEcho(null), [taskId]);
+  // A held message leaving the Queued band is sent, so it shows as sending.
+  useEffect(
+    () =>
+      onHeldReleased((id, held) => {
+        if (id === taskId) setEcho({ text: held.text, at: Date.now() });
+      }),
+    [taskId],
+  );
   useEffect(() => {
     if (!echo) return;
     // Clock skew between this machine's two clocks is nil, but a second of
@@ -378,14 +401,17 @@ export function TranscriptPane({
   useEffect(() => {
     if (!echo || sessionId === null) return;
     const check = () => {
-      if (echoIsQueued(echo, queuedFor(sessionId), status)) setEcho(null);
+      if (echoIsQueued(echo, queuedFor(sessionId), liveSince)) setEcho(null);
     };
     check();
     return onQueueChange((sid) => {
       if (sid === sessionId) check();
     });
-  }, [echo, sessionId, status]);
+  }, [echo, sessionId, liveSince]);
   const working = status === 'running' || echo !== null;
+  // A turn running or a message on its way: if the connection is gone, now
+  // is when it matters (connectivity.ts probes only while watched).
+  useEffect(() => (working ? watchConnectivity() : undefined), [working]);
   const lastTs = messages.length > 0 ? (messages[messages.length - 1] as Message).ts : 0;
   const since = Math.max(lastTs, echo?.at ?? 0);
   const onSent = useCallback(
@@ -450,7 +476,7 @@ export function TranscriptPane({
         ) : null}
       </div>
 
-      <QueuedStrip sessionId={sessionId} status={status} />
+      <QueuedStrip sessionId={sessionId} taskId={taskId} liveSince={liveSince} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {taskId !== null ? <Composer taskId={taskId} sessionId={sessionId} status={status} onSent={onSent} accessory={composerAccessory} /> : null}
     </div>
@@ -463,33 +489,55 @@ export default TranscriptPane;
 const ECHO_MAX_MS = 30_000;
 
 /**
- * Whether the Queued band is on screen for a session in this status. Only
- * while a turn is live: a queue cannot be waiting in an idle session, so
- * anything left at idle is what a killed session never took.
+ * The entries of Claude Code's queue the band shows: the ones you typed (not
+ * the ones Claude Code queued itself) that the running process can still hold.
+ *
+ * - Only while the session's pty is alive (`liveSince` not null), whatever the
+ *   status. Status is derived from the transcript and lags the queue --
+ *   between one turn ending and the next starting, and the whole time Claude
+ *   Code retries a dead connection, it reads `idle` with entries waiting.
+ * - Only entries queued since that pty was spawned. Claude Code's queue lives
+ *   in its process's memory, so a new or resumed `claude` starts empty; the
+ *   transcript, which the queue is rebuilt from, still lists what the last
+ *   process never took, and no turn end will ever clear it.
+ *
+ * The one rule for both copies of a message (`echoIsQueued`), so it is
+ * always in exactly one place.
  */
-export function queueShows(status: TaskStatus | null): boolean {
-  return status === 'running' || status === 'blocked';
+export function shownQueue(entries: readonly QueuedEntry[], liveSince: number | null): QueuedEntry[] {
+  if (liveSince === null) return [];
+  return entries.filter((e) => !e.injected && e.ts >= liveSince);
 }
 
 /**
- * Whether the Queued band now shows the message just sent: it is showing at
- * all (`queueShows`), and it holds an entry you typed (not one Claude Code
- * queued itself), queued no earlier than the send, with the same second of
- * slack as the user-row check. A status still `idle` while the entry waits --
- * the turn just ended and the next has not started, or the status refresh
- * lags the queue -- keeps the echo: the band is hidden then, and the message
- * would be nowhere.
+ * Whether the Queued band now shows the message just sent: one of its
+ * entries (`shownQueue`) was queued no earlier than the send, with the same
+ * second of slack as the user-row check. While the band would not show it
+ * the echo stays, or the message would be nowhere.
  *
  * Time, not text: the queue records what Claude Code made of the input -- a
  * pasted image becomes `[Image #1]` where Albedo sent a file path -- and
- * while the echo is up the composer is the only thing sending.
+ * while the echo is up only Albedo is typing into the session.
  */
-export function echoIsQueued(
-  echo: { at: number },
-  entries: readonly QueuedEntry[],
-  status: TaskStatus | null,
-): boolean {
-  return queueShows(status) && entries.some((e) => !e.injected && e.ts >= echo.at - 1000);
+export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry[], liveSince: number | null): boolean {
+  return shownQueue(entries, liveSince).some((e) => e.ts >= echo.at - 1000);
+}
+
+/** When the task's live pty was spawned, or null with none; kept current by presence events. */
+function usePtyLiveSince(taskId: number | null): number | null {
+  const read = () => (taskId === null ? null : ptyLiveSince(taskId));
+  const [since, setSince] = useState(read);
+  useEffect(() => {
+    if (taskId === null) {
+      setSince(null);
+      return;
+    }
+    setSince(ptyLiveSince(taskId));
+    return onPtyPresenceChange((id) => {
+      if (id === taskId) setSince(ptyLiveSince(taskId));
+    });
+  }, [taskId]);
+  return since;
 }
 
 /** "Working · 14s", ticking: the session is busy and has not written yet. */
@@ -540,41 +588,198 @@ export function keyboardIsFree(active: Element | null, scroller: Element): boole
 // ---------------------------------------------------------------------------
 
 /**
- * What you sent while Claude Code was busy and it has not taken yet, read
- * from the transcript's queue records (src/capture/queue.ts). Each entry
- * leaves the moment Claude Code takes it, either as the next turn or folded
- * into the one running -- and then appears in the transcript as your message.
+ * What you sent and Claude Code has not taken yet, in one band between the
+ * transcript and the composer. Two kinds, in the order they will go:
  *
- * Only while a turn is live (`queueShows`): showing what a killed session
- * never took would claim it is still coming. Entries Claude Code queued
- * itself (a background task finishing, a subagent's message) are not shown.
+ *  - Claude Code's queue, read from the transcript's queue records
+ *    (src/capture/queue.ts). Each entry leaves the moment Claude Code takes
+ *    it, as the next turn or folded into the one running -- and then appears
+ *    in the transcript as your message. Shown while the session is alive,
+ *    and only what this process queued (`shownQueue`). Entries Claude Code queued itself (a background task
+ *    finishing, a subagent's message) are not shown.
+ *  - Albedo's outbox (outbox.ts): sent while offline, still here, so they
+ *    can be edited or removed until they go.
  */
-export function QueuedStrip({ sessionId, status }: { sessionId: string | null; status: TaskStatus | null }): ReactNode {
+export function QueuedStrip({
+  sessionId,
+  taskId,
+  liveSince,
+}: {
+  sessionId: string | null;
+  taskId: number | null;
+  /** When the session's pty was spawned; null with none (see `shownQueue`). */
+  liveSince: number | null;
+}): ReactNode {
   const [entries, setEntries] = useState<readonly QueuedEntry[]>(() => (sessionId ? queuedFor(sessionId) : []));
   useEffect(() => {
     if (sessionId === null) {
       setEntries([]);
       return;
     }
-    setEntries([...queuedFor(sessionId)]);
-    return onQueueChange((sid) => {
-      if (sid === sessionId) setEntries([...queuedFor(sessionId)]);
+    let timer = 0;
+    const read = () => {
+      setEntries([...queuedFor(sessionId)]);
+      // An idle session writes nothing that would clear an entry it dropped
+      // at a turn end, so the band re-reads when that entry stops counting.
+      window.clearTimeout(timer);
+      const at = queueSettlesAt(sessionId);
+      if (at !== null) timer = window.setTimeout(read, Math.max(0, at - Date.now()) + 1);
+    };
+    read();
+    const off = onQueueChange((sid) => {
+      if (sid === sessionId) read();
     });
+    return () => {
+      off();
+      window.clearTimeout(timer);
+    };
   }, [sessionId]);
 
-  const mine = entries.filter((e) => !e.injected);
-  if (!queueShows(status) || mine.length === 0) return null;
+  const held = useHeld(taskId);
+  const mine = shownQueue(entries, liveSince);
+  // Claude Code's entries are on their way to the API: watch it.
+  const waiting = mine.length > 0;
+  useEffect(() => (waiting ? watchConnectivity() : undefined), [waiting]);
+
+  if (mine.length === 0 && held.length === 0) return null;
   return (
     <div className="tx-queued" role="status" aria-label="Queued messages">
+      {mine.length > 0 ? (
+        <>
+          <div className="tx-queued-head">
+            Queued <span className="tx-queued-count">{mine.length}</span>
+            <span className="tx-queued-hint">sent when Claude Code finishes its current step</span>
+          </div>
+          {mine.map((e, i) => (
+            <div key={`${e.ts}-${i}`} className="tx-queued-item" title={e.text}>
+              {queuedLabel(e.text)}
+            </div>
+          ))}
+        </>
+      ) : null}
+      {held.length > 0 && taskId !== null ? <HeldGroup taskId={taskId} held={held} /> : null}
+    </div>
+  );
+}
+
+/** The outbox's part of the band, headed by what its messages wait for. */
+function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessage[] }): ReactNode {
+  const conditions = useReleaseConditions(taskId);
+  return (
+    <>
       <div className="tx-queued-head">
-        Queued <span className="tx-queued-count">{mine.length}</span>
-        <span className="tx-queued-hint">sent when Claude Code finishes its current step</span>
+        {heldLabel(conditions)} <span className="tx-queued-count">{held.length}</span>
+        {conditions.offline && !conditions.headMaybeSent ? (
+          <span className="tx-queued-hint">sent in order once it is back</span>
+        ) : null}
       </div>
-      {mine.map((e, i) => (
-        <div key={`${e.ts}-${i}`} className="tx-queued-item" title={e.text}>
-          {queuedLabel(e.text)}
-        </div>
+      {held.map((h) => (
+        <HeldRow key={h.id} taskId={taskId} held={h} />
       ))}
+    </>
+  );
+}
+
+/**
+ * What the task's held messages wait for. Re-read on the connection, a
+ * prompt or the trust dialog changing, and on any render: the outbox and the
+ * pty already re-render the band.
+ */
+function useReleaseConditions(taskId: number): ReleaseConditions {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const mine = (id: number) => {
+      if (id === taskId) bump((n) => n + 1);
+    };
+    const offs = [onConnectivityChange(() => bump((n) => n + 1)), onPromptChange(mine), onTrustWaiting(mine)];
+    return () => offs.forEach((off) => off());
+  }, [taskId]);
+  return conditionsFor(taskId);
+}
+
+/**
+ * One held message: Edit opens it in place, Remove takes it out. While it is
+ * open no release passes it, so what goes is what you saved. Enter saves,
+ * Shift+Enter is a newline, Escape puts it back as it was; saving it empty
+ * removes it. One being written right now cannot be changed.
+ *
+ * One that was being sent when the app stopped may already be with Claude
+ * Code, so it says so and offers Send beside Edit and Remove: nothing sends
+ * it again, or drops it, without the person.
+ */
+function HeldRow({ taskId, held }: { taskId: number; held: HeldMessage }): ReactNode {
+  const [draft, setDraft] = useState<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  // Left open (a task switch): what was typed is kept, not thrown away.
+  useEffect(
+    () => () => {
+      if (draftRef.current !== null) editHeld(taskId, held.id, draftRef.current);
+      setEditing(taskId, held.id, false);
+    },
+    [taskId, held.id],
+  );
+
+  const open = () => {
+    setEditing(taskId, held.id, true);
+    setDraft(held.text);
+  };
+  const close = (save: boolean) => {
+    if (save && draft !== null && draft !== held.text) editHeld(taskId, held.id, draft);
+    setDraft(null);
+    setEditing(taskId, held.id, false);
+  };
+
+  if (draft !== null) {
+    return (
+      <div className="tx-queued-row">
+        <textarea
+          className="tx-queued-edit"
+          aria-label="Edit held message"
+          value={draft}
+          rows={Math.min(6, Math.max(1, draft.split('\n').length))}
+          spellCheck={false}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              close(true);
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              close(false);
+            }
+          }}
+        />
+        <button type="button" className="tx-btn tx-queued-act" onClick={() => close(true)}>
+          Save
+        </button>
+        <button type="button" className="tx-btn tx-queued-act" onClick={() => close(false)}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  const sending = held.sending === true;
+  return (
+    <div className="tx-queued-row">
+      <div className="tx-queued-item" title={held.text}>
+        {queuedLabel(held.text)}
+      </div>
+      {held.maybeSent ? (
+        <>
+          <span className="tx-queued-note">May already have been sent</span>
+          <button type="button" className="tx-btn tx-queued-act" onClick={() => sendAnyway(taskId, held.id)}>
+            Send
+          </button>
+        </>
+      ) : null}
+      <button type="button" className="tx-btn tx-queued-act" onClick={open} disabled={sending}>
+        Edit
+      </button>
+      <button type="button" className="tx-btn tx-queued-act" onClick={() => removeHeld(taskId, held.id)} disabled={sending}>
+        Remove
+      </button>
     </div>
   );
 }
@@ -582,6 +787,24 @@ export function QueuedStrip({ sessionId, status }: { sessionId: string | null; s
 // ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
+
+/** Text handed in from elsewhere, waiting to be sent (see composerBridge). */
+type InsertWatcher = Pick<ComposerInsert, 'onSent' | 'comments'>;
+
+/**
+ * The review comments a held body carries, and the watchers left once they
+ * are handed to it: a watcher whose comments are all in the body is done.
+ */
+export function commentsHeldIn(body: string, watchers: readonly InsertWatcher[]): { ids: number[]; left: InsertWatcher[] } {
+  const ids: number[] = [];
+  const left: InsertWatcher[] = [];
+  for (const w of watchers) {
+    const found = (w.comments ?? []).filter((c) => body.includes(c.marker));
+    ids.push(...found.map((c) => c.id));
+    if (found.length === 0) left.push(w);
+  }
+  return { ids, left };
+}
 
 /** Auto-grow ceiling. Past this the composer scrolls instead of eating the pane. */
 const COMPOSER_MAX_PX = 140;
@@ -677,6 +900,7 @@ export function Composer({
   const [held, setHeld] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [live, setLive] = useState(true);
+  const offline = useOffline();
   /** Files are being dragged over the window. */
   const [dropping, setDropping] = useState(false);
 
@@ -750,7 +974,7 @@ export function Composer({
   };
 
   /** Waiting to hear that text handed in from elsewhere was sent (see composerBridge). */
-  const insertWatchersRef = useRef<Array<(sent: string) => boolean>>([]);
+  const insertWatchersRef = useRef<InsertWatcher[]>([]);
   const succeeded = useCallback(
     (sentFor: number, body: string) => {
       // Sent after the box moved to another task: that task's draft is in it now.
@@ -761,7 +985,7 @@ export function Composer({
       setNotice(null);
       requestAnimationFrame(grow);
       // A watcher that recognises its text in what was sent is done.
-      insertWatchersRef.current = insertWatchersRef.current.filter((w) => !w(body));
+      insertWatchersRef.current = insertWatchersRef.current.filter((w) => !w.onSent?.(body));
       onSent(body);
     },
     [grow, onSent],
@@ -773,7 +997,7 @@ export function Composer({
       onComposerInsert((insert) => {
         if (insert.taskId !== taskId) return false;
         setText((prev) => (prev.trim() === '' ? insert.text : `${prev.replace(/\s+$/, '')}\n\n${insert.text}`));
-        if (insert.onSent) insertWatchersRef.current.push(insert.onSent);
+        if (insert.onSent || insert.comments) insertWatchersRef.current.push({ onSent: insert.onSent, comments: insert.comments });
         requestAnimationFrame(() => {
           grow();
           const el = ref.current;
@@ -825,6 +1049,7 @@ export function Composer({
       });
     }
     setNotice(draft?.notSent ? 'Not sent \u2014 press Send when you\u2019re ready.' : null);
+    setBusy(false); // a send still being written belongs to the task left
     setAwaiting(false);
     setHeld(false);
     insertWatchersRef.current = [];
@@ -833,6 +1058,39 @@ export function Composer({
     timerRef.current = 0;
   }, [taskId]);
 
+  /**
+     Put the body in the outbox (outbox.ts), with the ids of the review
+     comments it carries, and empty the box: it is no longer a draft.
+  */
+  const holdBody = useCallback(
+    (body: string) => {
+      const { ids, left } = commentsHeldIn(body, insertWatchersRef.current);
+      holdMessage(taskId, body, Date.now(), ids);
+      insertWatchersRef.current = left;
+      setText('');
+      pastesRef.current = new Map();
+      pasteSeqRef.current = 0;
+      setNotice(null);
+      requestAnimationFrame(grow);
+    },
+    [taskId, grow],
+  );
+
+  /**
+     True when the person switched to another task while `owner`'s send was
+     being written. Then nothing about the box may change -- it holds the
+     other task's restored draft -- and a send that failed comes back as
+     `owner`'s draft, marked not sent, as a send cancelled by a switch does.
+  */
+  const leftDuringSend = useCallback(
+    (owner: number, ok: boolean, text: string, pastes: ReadonlyMap<number, string>): boolean => {
+      if (draftOwnerRef.current === owner) return false;
+      if (!ok) keepUnsent(owner, text, pastes);
+      return true;
+    },
+    [],
+  );
+
   /** Send whatever is waiting, once a session exists. */
   const flushPending = useCallback(async () => {
     const body = pendingRef.current;
@@ -840,17 +1098,34 @@ export function Composer({
     pendingRef.current = null; // taken: a repeat presence event finds nothing
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
+    const owner = taskId;
+    let ok = false;
+    let threw = false;
+    let refused = false;
     try {
-      if (await submitPty(taskId, body)) succeeded(taskId, body);
-      else setNotice('Could not deliver your message. It is still here — press Send to retry.');
+      // Gone offline, or something was held, while it waited: it queues
+      // too -- unless it is a command, which never waits (send.ts).
+      if (mustHold(owner)) {
+        refused = isSlashCommand(body);
+        if (!refused) {
+          holdBody(body);
+          ok = true;
+        }
+      } else ok = await submitLocked(owner, body);
     } catch {
-      setNotice('Could not send your message. It is still here — press Send to retry.');
-    } finally {
-      setAwaiting(false);
-      setHeld(false);
-      inFlightRef.current = false;
+      threw = true;
     }
-  }, [taskId, succeeded]);
+    // Left while it was being written: the box and its state are another
+    // task's now (see `leftDuringSend`).
+    if (leftDuringSend(owner, ok, body, new Map())) return;
+    if (ok) succeeded(owner, body);
+    else if (refused) setNotice(COMMAND_CANNOT_WAIT);
+    else if (threw) setNotice('Could not send your message. It is still here — press Send to retry.');
+    else setNotice('Could not deliver your message. It is still here — press Send to retry.');
+    setAwaiting(false);
+    setHeld(false);
+    inFlightRef.current = false;
+  }, [taskId, succeeded, holdBody, leftDuringSend]);
 
   // Latest-callback ref so the subscription below does not churn on every keystroke.
   const flushRef = useRef(flushPending);
@@ -878,10 +1153,10 @@ export function Composer({
      rather than reading it, so a status that flickers cannot send twice.
   */
   useEffect(() => {
-    if (status === 'blocked') return;
+    if (promptOpen(taskId, status)) return;
     if (!held || pendingRef.current === null) return;
     void flushRef.current();
-  }, [status, held]);
+  }, [taskId, status, held]);
 
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
@@ -1050,12 +1325,29 @@ export function Composer({
     // What Claude Code receives: the draft with its paste placeholders filled.
     const body = expandPastes(text, pastesRef.current);
     /*
+       Offline, it waits in the outbox (outbox.ts) rather than in Claude
+       Code's queue, which retries and may drop it. Behind messages already
+       held or being released it waits too: they go first (send.ts).
+    */
+    if (mustHold(taskId)) {
+      // A command would run inside whatever turn the held messages start:
+      // it stays in the box instead (send.ts, `isSlashCommand`).
+      if (isSlashCommand(body)) setNotice(COMMAND_CANNOT_WAIT);
+      else holdBody(body);
+      return;
+    }
+    /*
        Checked BEFORE submitPty, because submitPty types into the prompt. No
        timeout here, unlike the pty-start hold: a permission prompt waits for a
        person and can sit for an hour, so a deadline would only invent a
        failure. `Cancel` on the notice is the way out.
     */
-    if (status === 'blocked') {
+    // The release's gate (outboxRelease.ts): a hook prompt, the trust dialog, or `blocked`.
+    if (promptOpen(taskId, status)) {
+      if (isSlashCommand(body)) {
+        setNotice(COMMAND_CANNOT_WAIT_PROMPT);
+        return;
+      }
       pendingRef.current = body;
       inFlightRef.current = true;
       setHeld(true);
@@ -1064,12 +1356,17 @@ export function Composer({
     }
     inFlightRef.current = true;
     setBusy(true);
+    const owner = taskId;
+    // What the box held, for `leftDuringSend`: by then the box is another task's.
+    const pastes = new Map(pastesRef.current);
     try {
       // submitPty owns the bracketed-paste wrapper and the submitting \r (see
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
-      if (await submitPty(taskId, body)) {
-        succeeded(taskId, body);
+      const ok = await submitLocked(owner, body);
+      if (leftDuringSend(owner, ok, text, pastes)) return;
+      if (ok) {
+        succeeded(owner, body);
         inFlightRef.current = false;
         return;
       }
@@ -1094,12 +1391,14 @@ export function Composer({
       setNotice('This task\u2019s session isn\u2019t running, so there is nowhere to send this. Select the task in the list to start it, then press Send. Your message is still here.');
       inFlightRef.current = false;
     } catch {
+      if (leftDuringSend(owner, false, text, pastes)) return;
       setNotice('Could not send your message. It is still here — press Send to retry.');
       inFlightRef.current = false;
     } finally {
-      setBusy(false);
+      // The switch already cleared it; the other task may have a send of its own.
+      if (draftOwnerRef.current === owner) setBusy(false);
     }
-  }, [text, taskId, succeeded]);
+  }, [text, taskId, status, succeeded, holdBody, leftDuringSend]);
 
   /*
      Copy note: say what it means for the user's work, not what the process is
@@ -1138,6 +1437,11 @@ export function Composer({
       }}
     />
     <div className="tx-composer" data-drop={dropping}>
+      {offline ? (
+        <div className="tx-composer-notice" role="status">
+          You{'\u2019'}re offline. Messages wait here and go when the connection is back.
+        </div>
+      ) : null}
       {notice ? (
         <div className="tx-composer-notice">
           <span>{notice}</span>
