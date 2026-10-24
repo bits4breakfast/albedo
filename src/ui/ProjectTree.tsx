@@ -13,6 +13,8 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { git } from '../git/worktree';
 import { parseLsFilesZ } from '../git/codeIndex';
 import { FileIcon, FolderGlyph } from './fileIcons';
+import type { OpenFileOptions } from './editor/openFile';
+import { useListOpen } from './filesListOpen';
 import { ancestors, buildTree, changedDirs, parentOf, visibleRows, type TreeRow } from './projectTreeModel';
 
 /**
@@ -47,7 +49,7 @@ export interface ProjectTreeProps {
   activePath: string | null;
   /** Bumped by the pane whenever it reloads; the listing follows. */
   reloadKey: number;
-  onOpen: (path: string) => void;
+  onOpen: (path: string, options?: OpenFileOptions) => void;
 }
 
 export default function ProjectTree({ taskId, worktreePath, status, toneOf, activePath, reloadKey, onOpen }: ProjectTreeProps): ReactNode {
@@ -56,6 +58,7 @@ export default function ProjectTree({ taskId, worktreePath, status, toneOf, acti
   // A copy of the module set, so a toggle re-renders.
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(openFor(taskId)));
   const listRef = useRef<HTMLDivElement>(null);
+  const list = useListOpen(onOpen);
 
   useEffect(() => {
     setFiles(null);
@@ -107,20 +110,28 @@ export default function ProjectTree({ taskId, worktreePath, status, toneOf, acti
   const focusRow = (path: string) =>
     listRef.current?.querySelector<HTMLElement>(`.tf-tree-row[data-path="${CSS.escape(path)}"]`)?.focus();
 
-  // Arrows walk the visible rows; Right opens a folder, Left closes it or
-  // goes to its parent; Enter opens a file or toggles a folder.
+  // Up / down walk the visible rows, opening each file they land on (see
+  // filesListOpen.ts); Right opens a folder, Left closes it or goes to its
+  // parent; Enter or Space toggles a folder.
   const onKey = (e: KeyboardEvent<HTMLDivElement>, row: TreeRow, i: number) => {
     const go = (path: string | undefined) => {
       if (path === undefined) return;
       e.preventDefault();
       focusRow(path);
     };
+    const step = (j: number) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      const to = rows[j];
+      const el = listRef.current?.querySelectorAll<HTMLElement>('.tf-tree-row')[j];
+      if (to !== undefined && el !== undefined) list.step(el, to.kind === 'file' ? to.path : null, e.repeat);
+    };
     switch (e.key) {
       case 'ArrowDown':
-        go(rows[i + 1]?.path);
+        step(i + 1);
         break;
       case 'ArrowUp':
-        go(rows[i - 1]?.path);
+        step(i - 1);
         break;
       case 'ArrowRight':
         if (row.kind === 'dir') {
@@ -139,7 +150,8 @@ export default function ProjectTree({ taskId, worktreePath, status, toneOf, acti
       case ' ':
         e.preventDefault();
         if (row.kind === 'dir') toggle(row.path);
-        else onOpen(row.path);
+        else if (e.key === 'Enter') list.enter(e.currentTarget, row.path);
+        else list.pick(e.currentTarget, row.path);
         break;
     }
   };
@@ -167,11 +179,12 @@ export default function ProjectTree({ taskId, worktreePath, status, toneOf, acti
             className="tf-tree-row"
             data-kind={row.kind}
             data-path={row.path}
+            data-keeps-focus=""
             aria-expanded={row.kind === 'dir' ? row.open : undefined}
             aria-current={row.path === activePath ? 'true' : undefined}
             style={{ paddingLeft: `calc(8px + ${row.depth} * 1.1em)` }}
             title={row.path}
-            onClick={() => (row.kind === 'dir' ? toggle(row.path) : onOpen(row.path))}
+            onClick={(e) => (row.kind === 'dir' ? toggle(row.path) : list.pick(e.currentTarget, row.path))}
             onKeyDown={(e) => onKey(e, row, i)}
           >
             <span className="tf-tree-caret" aria-hidden="true">

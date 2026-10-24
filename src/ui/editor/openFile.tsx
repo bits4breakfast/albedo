@@ -20,11 +20,24 @@ function unprovided(req: OpenFileRequest): void {
   console.warn('openFile: no FileOpenContext provider above this component', req.path);
 }
 
-export const FileOpenContext = createContext<(req: OpenFileRequest) => void>(unprovided);
+/** How an open request treats the editor's tabs and the reading pane. */
+export interface OpenFileOptions {
+  /**
+   * Opened by ↑/↓ walking a Files list: it replaces the active tab, the way
+   * the editor's own ⌥⌘↑/↓ step does, so walking twenty files does not leave
+   * twenty tabs (a tab with unsaved edits is kept: a new one opens instead),
+   * and a Files tab on screen stays there so the next arrow still reaches it.
+   */
+  step?: boolean;
+}
+
+export type OpenFile = (req: OpenFileRequest, options?: OpenFileOptions) => void;
+
+export const FileOpenContext = createContext<OpenFile>(unprovided);
 FileOpenContext.displayName = 'FileOpenContext';
 
 /** Ask the shell to open a file. Honours `line` when the source had one. */
-export function useOpenFile(): (req: OpenFileRequest) => void {
+export function useOpenFile(): OpenFile {
   return useContext(FileOpenContext);
 }
 
