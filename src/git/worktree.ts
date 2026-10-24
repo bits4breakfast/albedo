@@ -738,6 +738,8 @@ export interface BranchList {
   /** Local branches first, then remote ones not named the same. */
   all: string[];
   locals: string[];
+  /** {@link locals} again, the most recently committed to first. */
+  recentLocals: string[];
   /** Remote branches as `<remote>/<branch>`, without `<remote>/HEAD`. */
   remoteRefs: string[];
   /** `git remote`, to tell a remote ref's remote from a slash in a branch. */
@@ -745,9 +747,17 @@ export interface BranchList {
 }
 
 export async function listBranches(repoPath: string): Promise<BranchList> {
-  const locals = parseRefList(
-    await gitOk(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], repoPath),
-  );
+  // The commit date rides along in the same call: no git call per branch.
+  // A refname never contains a space, so the last one splits the two.
+  const heads = parseRefList(
+    await gitOk(['for-each-ref', '--format=%(refname:short) %(committerdate:unix)', 'refs/heads'], repoPath),
+  ).map((line) => {
+    const at = line.lastIndexOf(' ');
+    return at < 0 ? { name: line, date: 0 } : { name: line.slice(0, at), date: Number(line.slice(at + 1)) || 0 };
+  });
+  const locals = heads.map((h) => h.name);
+  // Stable, so branches committed in the same second keep git's name order.
+  const recentLocals = [...heads].sort((a, b) => b.date - a.date).map((h) => h.name);
   let remotes: string[] = [];
   const r = await git(['for-each-ref', '--format=%(refname:short)', 'refs/remotes'], repoPath);
   if (r.code === 0) {
@@ -774,7 +784,7 @@ export async function listBranches(repoPath: string): Promise<BranchList> {
       all.push(b);
     }
   }
-  return { current, all, locals, remoteRefs: remotes, remotes: remoteNames };
+  return { current, all, locals, recentLocals, remoteRefs: remotes, remotes: remoteNames };
 }
 
 /** How to have a local branch for `ref`, picked from {@link BranchList.all}. */
