@@ -16,8 +16,9 @@
  * so a ref that is not listed yet can still be typed. Otherwise only a listed
  * branch can become the value.
  *
- * The WAI-ARIA combobox pattern, list autocomplete without automatic
- * selection: no row is highlighted until an arrow key moves to one.
+ * The WAI-ARIA combobox pattern, list autocomplete with automatic selection,
+ * as Quick Open does: once something is typed the top match is highlighted,
+ * so typing part of a name and pressing Enter picks it.
  */
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -87,13 +88,21 @@ export function BranchPicker({
     setActive(-1);
   }, []);
 
+  /**
+   * The row highlighted for a query: the top match once something is typed;
+   * with nothing typed, the chosen branch, so the list opens where the user is.
+   */
+  const startAt = (query: string) => {
+    if (query.trim() !== '') return 0;
+    const at = branches.indexOf(value);
+    return at < BRANCH_LIMIT ? at : -1;
+  };
+
   const show = () => {
     if (open || disabled) return;
     before.current = value;
     setDraft(null);
-    // Start on the chosen branch, so the list opens where the user is.
-    const at = branches.indexOf(value);
-    setActive(at < BRANCH_LIMIT ? at : -1);
+    setActive(startAt(''));
     setOpen(true);
   };
 
@@ -163,12 +172,10 @@ export function BranchPicker({
         // The list's Enter: never the dialog's submit, ⌘↩ included.
         e.preventDefault();
         e.stopPropagation();
+        // Nothing matches: free text is kept as typed; a base stays unpicked.
         const row = rows[active];
         if (row) pick(row.name);
-        else if (branches.includes(text)) pick(text);
         else if (freeText) close();
-        // Nothing highlighted and nothing named: show what Enter would take.
-        else if (rows.length > 0) setActive(0);
         break;
       }
       case 'Escape':
@@ -224,7 +231,7 @@ export function BranchPicker({
             setOpen(true);
           }
           setDraft(typed);
-          setActive(-1);
+          setActive(startAt(typed));
           if (freeText) onChange(typed);
         }}
         onKeyDown={onKeyDown}

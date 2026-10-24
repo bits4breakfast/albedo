@@ -285,7 +285,7 @@ describe('NewTaskDialog branch picker', () => {
   }
   const options = () => within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent);
 
-  it('filters as you type, and ↓ then Enter picks the base', async () => {
+  it('filters as you type, and Enter picks the top match as the base', async () => {
     render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Fix login' } });
     const base = await baseField();
@@ -298,9 +298,7 @@ describe('NewTaskDialog branch picker', () => {
     expect(options()).toEqual(['develop']);
     const list = screen.getByRole('listbox');
     expect(within(list).getByText('dev').tagName).toBe('MARK');
-    expect(base.getAttribute('aria-activedescendant')).toBeNull();
-
-    fireEvent.keyDown(base, { key: 'ArrowDown' });
+    // The top match is highlighted at once: no ↓ needed.
     const row = screen.getByRole('option', { name: 'develop' });
     expect(row.getAttribute('aria-selected')).toBe('true');
     expect(base.getAttribute('aria-activedescendant')).toBe(row.id);
@@ -392,5 +390,32 @@ describe('NewTaskDialog branch picker', () => {
     expect(base.disabled).toBe(true);
     act(() => base.focus());
     expect(screen.queryByRole('listbox')).toBeNull();
+  });
+});
+
+describe('NewTaskDialog branch picker highlight', () => {
+  it('moves with ↓ from the top match, and highlights the chosen branch with nothing typed', async () => {
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    const base = screen.getByLabelText('Base Branch') as HTMLInputElement;
+    await waitFor(() => expect(base.value).toBe('main'));
+    act(() => base.focus());
+    expect(screen.getByRole('option', { name: /^main/ }).getAttribute('aria-selected')).toBe('true');
+    // `main` and `origin/main` both match; ↓ moves off the top one.
+    fireEvent.change(base, { target: { value: 'mai' } });
+    fireEvent.keyDown(base, { key: 'ArrowDown' });
+    fireEvent.keyDown(base, { key: 'Enter' });
+    expect(base.value).toBe('origin/main');
+  });
+
+  it('does nothing on Enter in Base Branch when nothing matches', async () => {
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    const base = screen.getByLabelText('Base Branch') as HTMLInputElement;
+    await waitFor(() => expect(base.value).toBe('main'));
+    act(() => base.focus());
+    fireEvent.change(base, { target: { value: 'nope' } });
+    fireEvent.keyDown(base, { key: 'Enter' });
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(base.value).toBe('nope');
+    expect(wt.createWorktree).not.toHaveBeenCalled();
   });
 });
