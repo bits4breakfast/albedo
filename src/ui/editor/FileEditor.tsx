@@ -21,7 +21,7 @@
 import { createPortal } from 'react-dom';
 import { copyText } from '../../lib/clipboard';
 import OverflowMenu, { type OverflowItem } from '../OverflowMenu';
-import { editorKeyOf } from './editorKeys';
+import { editorKeyOf, isImplementationKey } from './editorKeys';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
 import { useOpenFile } from './openFile';
 import { formatBytes, imageTypeForPath } from './preview';
@@ -426,6 +426,13 @@ export interface FileEditorProps {
   onModeChange?: (mode: 'file' | 'diff') => void;
 }
 
+/** The results dialog's title while a lookup runs, and when it finds nothing. */
+const NAV_TITLES: Record<NavAction, string> = {
+  declaration: 'Go to Declaration',
+  usages: 'Find Usages',
+  implementations: 'Go to Implementation',
+};
+
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -455,7 +462,7 @@ export default function FileEditor({
   const overwriteRef = useRef(false);
   /** The live save handler, so the Cmd+S keymap never closes over stale state. */
   const saveRef = useRef<() => void>(() => {});
-  /** The live ⌘B / ⌥F7 handler, read by the keymap for the same reason. */
+  /** The live ⌘B / ⌥F7 / ⌥⌘B handler, read by the keymap for the same reason. */
   const navRef = useRef<(action: NavAction) => void>(() => {});
   /** Review-comment callbacks, read by the CodeMirror extension; null when comments are off. */
   const commentActionsRef = useRef<CommentActions | null>(null);
@@ -713,6 +720,14 @@ export default function FileEditor({
         // moves to ⌥-click.
         EditorView.clickAddsSelectionRange.of((e) => e.altKey),
         EditorView.domEventHandlers({
+          // ⌥⌘B, PhpStorm's Go to Implementation. Read from `code`, not
+          // through the keymap: Option turns `key` into "∫" on macOS.
+          keydown: (e) => {
+            if (!isImplementationKey(e)) return false;
+            e.preventDefault();
+            navRef.current('implementations');
+            return true;
+          },
           mousedown: (e, view) => {
             if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.button !== 0) return false;
             const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
@@ -956,7 +971,7 @@ export default function FileEditor({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [step, active]);
 
-  // --- Go to Declaration / Find Usages --------------------------------------
+  // --- Go to Declaration / Find Usages / Go to Implementation -------------
   // A PHP file opened is the one signal that starts PHPantom, ahead of the
   // first ⌘B so its ~1s of indexing overlaps the reading. Any other file
   // type never starts it. A no-op when it is not installed or already up.
@@ -995,7 +1010,7 @@ export default function FileEditor({
     const view = viewRef.current;
     if (!view || current === null) return;
     const mine = ++navSeq.current;
-    const title = action === 'usages' ? 'Find Usages' : 'Go to Declaration';
+    const title = NAV_TITLES[action];
     setNav({ kind: 'loading', title });
     navigate(
       { root: task.worktreePath, path: current, text: view.state.doc.toString(), offset: view.state.selection.main.head },
@@ -1004,8 +1019,8 @@ export default function FileEditor({
       .then((out) => {
         if (navSeq.current !== mine) return;
         if (out.kind === 'open') jump(out.path, out.line);
-        else if (out.kind === 'list') setNav({ kind: 'list', title: out.title, result: out.result });
-        else setNav({ kind: 'message', title, message: out.message });
+        else if (out.kind === 'list') setNav({ kind: 'list', title: out.title, result: out.result, note: out.note });
+        else setNav({ kind: 'message', title, message: out.message, note: out.note });
       })
       .catch((err: unknown) => {
         if (navSeq.current === mine) setNav({ kind: 'message', title, message: `Search failed: ${message(err)}` });
@@ -1315,7 +1330,7 @@ export default function FileEditor({
 
       {showPhpantomDown && (
         <div className="ed-notice" data-tone="muted">
-          <span title={phpantomDown}>Go to Declaration and Find Usages are using text search: PHPantom couldn’t start.</span>
+          <span title={phpantomDown}>PHP navigation is using text search: PHPantom couldn’t start.</span>
           <button type="button" className="ed-btn" onClick={dismissPhpantomFailure}>
             OK
           </button>

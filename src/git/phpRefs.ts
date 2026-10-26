@@ -1,6 +1,7 @@
 /**
- * Namespace-aware class navigation for PHP: go to a class's declaration, and
- * find the files that use it.
+ * Namespace-aware class navigation for PHP: go to a class's declaration,
+ * find the files that use it, and find the types that implement, extend or
+ * use it.
  *
  * Same engine as the code index -- `git grep` plus a precise pass in JS, no
  * parser and no language server (the spec rules out LSP). What makes it better
@@ -15,7 +16,10 @@
  * (`use A\{` ... `};`) is not read, nor is a name built at runtime
  * (`$class = 'App\\Foo'; new $class`). Imports are recognised only at the
  * start of a line, which is what PSR-12 writes; an indented `use` is a trait
- * use inside a class body and is treated as a reference, which it is.
+ * use inside a class body and is treated as a reference, which it is. For
+ * the same reason a declaration whose `extends` or `implements` list goes on
+ * past its first line is read from that line only, and an anonymous class
+ * (`new class extends Foo`) is not a declaration here.
  */
 
 import { git } from './worktree';
@@ -206,6 +210,76 @@ export function referencesOn(line: string, fqcn: string, header: PhpHeader): Arr
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Matching subtypes on a line
+// ---------------------------------------------------------------------------
+
+/**
+ * What Go to Implementation can be asked of: the kinds a type can extend,
+ * implement or use, or `any` for a type this worktree does not declare (a
+ * vendor interface), whose kind is unknown: any `extends` or `implements`.
+ */
+export type SupertypeKind = 'class' | 'interface' | 'trait' | 'any';
+
+const DECLARATION_HEAD = /^(\s*(?:(?:abstract|final|readonly)\s+)*(class|interface|trait|enum)\s+)([A-Za-z_\x80-￿][\w\x80-￿]*)/i;
+
+/** The span of the name a line declares, or null when it declares nothing. */
+export function declaredSpan(line: string): [number, number] | null {
+  const m = DECLARATION_HEAD.exec(line);
+  if (!m) return null;
+  const from = (m[1] as string).length;
+  return [from, from + (m[3] as string).length];
+}
+
+/** The clauses a declaration of `declares` may name a `kind` in. */
+function clausesFor(kind: SupertypeKind, declares: string): Array<'extends' | 'implements'> {
+  if (kind === 'trait') return [];
+  if (declares === 'interface') return kind === 'class' ? [] : ['extends'];
+  if (declares === 'enum') return kind === 'class' ? [] : ['implements'];
+  if (declares !== 'class') return [];
+  return kind === 'class' ? ['extends'] : kind === 'interface' ? ['implements'] : ['extends', 'implements'];
+}
+
+/**
+ * The span of the type `line` declares when that declaration extends or
+ * implements `fqcn` (a `kind`): `class X extends Name`, `class X implements
+ * A, Name`, `enum X: string implements Name`, `interface X extends Name`.
+ * Null otherwise -- also for a trait, whose users are `traitUseOn`'s.
+ */
+export function subtypeDeclaredOn(line: string, fqcn: string, kind: SupertypeKind, header: PhpHeader): [number, number] | null {
+  const m = DECLARATION_HEAD.exec(line);
+  if (!m) return null;
+  const clauses = clausesFor(kind, (m[2] as string).toLowerCase());
+  if (clauses.length === 0) return null;
+
+  const start = m[0].length;
+  const cut = /\{|\/\/|\/\*|#/.exec(line.slice(start));
+  const rest = line.slice(start, cut ? start + cut.index : line.length);
+  const extendsAt = /\bextends\b/i.exec(rest);
+  const implementsAt = /\bimplements\b/i.exec(rest);
+  const spans: Array<[number, number]> = [];
+  if (extendsAt && clauses.includes('extends')) {
+    const ends = implementsAt && implementsAt.index > extendsAt.index ? implementsAt.index : rest.length;
+    spans.push([start + extendsAt.index + extendsAt[0].length, start + ends]);
+  }
+  if (implementsAt && clauses.includes('implements')) spans.push([start + implementsAt.index + implementsAt[0].length, start + rest.length]);
+
+  const named = referencesOn(line, fqcn, header).some(([a, b]) => spans.some(([from, to]) => a >= from && b <= to));
+  return named ? declaredSpan(line) : null;
+}
+
+/** An indented `use A, B;` (or `use A { ... }`): traits used inside a class body. */
+const TRAIT_USE = /^(\s+use\s+)(?!function\b|const\b)([^;{]+)/i;
+
+/** Whether `line` uses trait `fqcn` inside a class, enum or trait body. */
+export function traitUseOn(line: string, fqcn: string, header: PhpHeader): boolean {
+  const m = TRAIT_USE.exec(line);
+  if (!m) return false;
+  const from = (m[1] as string).length;
+  const to = from + (m[2] as string).length;
+  return referencesOn(line, fqcn, header).some(([a, b]) => a >= from && b <= to);
+}
+
 function escape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -275,6 +349,15 @@ export async function readHeaders(root: string, paths: string[]): Promise<Map<st
  * 4. Each line keeps only the tokens that resolve to `fqcn`.
  */
 export async function findPhpUsages(root: string, fqcn: string): Promise<FindResult> {
+  const { hits, headers } = await candidateLines(root, fqcn);
+  return toResult(hits, (h) => {
+    const header = headers.get(h.path);
+    return header ? referencesOn(h.text, fqcn, header) : [];
+  });
+}
+
+/** Steps 1 to 3 of `findPhpUsages`: every line that could name `fqcn`, and its file's header. */
+async function candidateLines(root: string, fqcn: string): Promise<{ hits: Hit[]; headers: Map<string, PhpHeader> }> {
   const short = lastSegment(fqcn);
   const hits = await grep(root, ['-w', '-i', '-F', '-e', short], ['*.php']);
   const files = [...new Set(hits.map((h) => h.path))];
@@ -291,10 +374,47 @@ export async function findPhpUsages(root: string, fqcn: string): Promise<FindRes
     }
   }
   for (const [alias, paths] of byAlias) hits.push(...(await grepChunked(root, ['-w', '-i', '-F', '-e', alias], paths)));
+  return { hits, headers };
+}
 
-  return toResult(hits, (h) => {
-    const header = headers.get(h.path);
-    return header ? referencesOn(h.text, fqcn, header) : [];
+/**
+ * The types that extend, implement or use `fqcn`, one row per declaration
+ * line with the declared name marked: the direct subclasses of a class; the
+ * classes, enums and interfaces naming an interface; the classes, enums and
+ * traits using a trait; for `any`, every declaration naming it in `extends`
+ * or `implements`. Direct only, and line-based like the rest of this file
+ * (see Known limits).
+ *
+ * A trait use sits inside the class body, so its row is the nearest
+ * declaration above it, read with one more grep over those files.
+ */
+export async function findPhpSubtypes(root: string, fqcn: string, kind: SupertypeKind): Promise<FindResult> {
+  const { hits, headers } = await candidateLines(root, fqcn);
+  const headerOf = (h: Hit) => headers.get(h.path) ?? parsePhpHeader([]);
+  if (kind !== 'trait') {
+    return toResult(hits, (h) => {
+      const span = subtypeDeclaredOn(h.text, fqcn, kind, headerOf(h));
+      return span ? [span] : [];
+    });
+  }
+
+  const uses = hits.filter((h) => traitUseOn(h.text, fqcn, headerOf(h)));
+  const files = [...new Set(uses.map((h) => h.path))];
+  const declarations = await grepChunked(
+    root,
+    ['-E', '-i', '-e', '^[[:space:]]*((abstract|final|readonly)[[:space:]]+)*(class|trait|enum)[[:space:]]'],
+    files,
+  );
+  const owners = uses.map((use) => {
+    let owner: Hit | null = null;
+    for (const d of declarations) {
+      if (d.path === use.path && d.line <= use.line && (!owner || d.line > owner.line) && declaredSpan(d.text)) owner = d;
+    }
+    return owner ?? use;
+  });
+  return toResult(owners, (h) => {
+    const span = declaredSpan(h.text);
+    return span ? [span] : referencesOn(h.text, fqcn, headerOf(h));
   });
 }
 

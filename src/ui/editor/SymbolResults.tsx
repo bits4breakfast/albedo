@@ -1,6 +1,7 @@
 /**
- * The list behind ⌘B and ⌥F7 when there is more than one place to go: usages
- * of a class, or several declarations of a name.
+ * The list behind ⌘B, ⌥F7 and ⌥⌘B when there is more than one place to go:
+ * usages of a class, several declarations of a name, or the implementations
+ * of a type.
  *
  * Find in Files' dialog without the input -- same overlay, rows and keys -- so
  * a list of usages reads as the same family as a list of text matches. Focus
@@ -14,10 +15,14 @@ import { MatchText } from '../FindInFiles';
 import '../quickopen.css';
 import '../findinfiles.css';
 
+/**
+ * `note`, when set, is a line under the title saying what the search could
+ * not see -- shown with an empty answer too, where it matters most.
+ */
 export type SymbolResultsState =
   | { kind: 'loading'; title: string }
-  | { kind: 'list'; title: string; result: FindResult }
-  | { kind: 'message'; title: string; message: string };
+  | { kind: 'list'; title: string; result: FindResult; note?: string }
+  | { kind: 'message'; title: string; message: string; note?: string };
 
 export interface SymbolResultsProps {
   state: SymbolResultsState | null;
@@ -95,6 +100,7 @@ export default function SymbolResults({ state, onClose, onOpen }: SymbolResultsP
       : `${state.result.count.toLocaleString()} ${state.result.count === 1 ? 'result' : 'results'} in ${where}`;
   }
 
+  const note = state.kind === 'loading' ? undefined : state.note;
   let index = 0;
   return (
     <div className="qo-overlay" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -102,6 +108,11 @@ export default function SymbolResults({ state, onClose, onOpen }: SymbolResultsP
         <div className="ff-head">
           <span className="ff-title">{state.title}</span>
         </div>
+        {note && (
+          <div className="qo-scope" title={note}>
+            {note}
+          </div>
+        )}
 
         <div
           className="qo-list"

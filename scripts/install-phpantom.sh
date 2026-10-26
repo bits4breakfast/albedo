@@ -7,9 +7,9 @@
 #                                             (build.sh --with-phpantom uses this
 #                                             to bundle it into the app)
 #
-# Optional. Without it, Go to Declaration and Find Usages still work through
-# git grep; with it, PHP navigation also resolves methods and properties by
-# type. Albedo never downloads anything itself -- this script is the one
+# Optional. Without it, Go to Declaration, Find Usages and Go to
+# Implementation still work through git grep; with it, PHP navigation also
+# resolves methods and properties by type. Albedo never downloads anything itself -- this script is the one
 # place a binary arrives, pinned to a version and checked against the
 # release's published SHA-256 before it is moved into place.
 #
