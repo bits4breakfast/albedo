@@ -1,0 +1,169 @@
+/* --------------------------------------------------------------------------
+   Checks dialog. Built on quickopen.css and findinfiles.css (overlay, dialog,
+   head, list, footer); only the check, step and log rows are here. All
+   classes are `ck-` prefixed.
+
+   No new surfaces and no tints. Rows sit on the dialog's --panel and hover to
+   --panel-hover; the log is a well on --panel-inset, as code is everywhere.
+   Every text token is one already measured on those grounds:
+     --text, --muted, --accent   quickopen.css, worst of --panel/-raised/-hover:
+                                 12.22 / 6.17 / 5.28 light, 10.72 / 6.42 / 5.94 dark
+     --add, --danger, --warn     pr.css, worst ground --panel-active (light) --
+                                 darker than --panel-hover, so they clear here
+     --text on --panel-inset     the transcript's code wells (.tx-pre)
+   State is never colour alone: each has its own glyph shape (✓ ✗ ● – ×), and
+   its word for screen readers.
+   -------------------------------------------------------------------------- */
+
+.ck-dialog:focus { outline: none; }
+
+.ck-head { align-items: center; padding-bottom: 6px; }
+
+/* The PR the checks belong to: its number and title, giving way first. */
+.ck-pr {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-head-link { flex: 0 0 auto; }
+
+.ck-notice { white-space: normal; padding-bottom: 6px; }
+
+/* --- a check ---------------------------------------------------------------- */
+
+.ck-check + .ck-check { border-top: 1px solid var(--border); }
+
+.ck-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 10px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+}
+button.ck-row:hover { background: var(--panel-hover); }
+button.ck-row:hover .tx-disc { color: var(--text); }
+.ck-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+/* Where the caret would be, on a row with nothing to expand: names align. */
+.ck-caret-space { flex: none; width: 14px; }
+
+.ck-glyph {
+  flex: none;
+  width: 1.2em;
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.ck-glyph[data-state='pass'] { color: var(--add); }
+.ck-glyph[data-state='fail'] { color: var(--danger); }
+.ck-glyph[data-state='pending'],
+.ck-glyph[data-state='running'] { color: var(--warn); }
+
+.ck-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-row[data-state='fail'] .ck-name { color: var(--text-strong); font-weight: 600; }
+
+.ck-time {
+  flex: none;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ck-out { flex: none; height: 24px; }
+
+/* --- inside an open check ------------------------------------------------------- */
+
+/* Indented under the name: the caret (14px) and the gap (8px) past the row's own. */
+.ck-body { padding: 0 10px 8px 32px; }
+
+.ck-quiet {
+  padding: 4px 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.ck-steps { margin: 0; padding: 0; list-style: none; }
+
+.ck-step-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: var(--fs-sm);
+}
+.ck-step-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Skipped and not-yet-run steps say so in their glyph and time; the name
+   stays --muted rather than faded, so it still reads. */
+.ck-step[data-state='skipped'] .ck-step-name,
+.ck-step[data-state='pending'] .ck-step-name { color: var(--muted); }
+.ck-step[data-state='fail'] .ck-step-name { color: var(--text-strong); font-weight: 600; }
+
+/* The failed step's log, annotations and actions, under the step's name. */
+.ck-failure { padding: 4px 0 6px calc(1.2em + 8px); }
+
+.ck-log {
+  max-height: none;
+  margin: 2px 0 6px;
+  background: var(--panel-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  user-select: text;
+}
+
+.ck-notes { margin: 0 0 6px; padding: 0; list-style: none; }
+.ck-note {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+  font-size: var(--fs-sm);
+}
+.ck-place {
+  flex: none;
+  max-width: 50%;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.ck-place:hover { text-decoration: underline; }
+button.ck-place:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ck-note-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ck-actions { display: flex; gap: 6px; padding-top: 4px; }

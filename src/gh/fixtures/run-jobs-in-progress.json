@@ -1,0 +1,130 @@
+{
+  "conclusion": "",
+  "jobs": [
+    {
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "databaseId": 121563278356,
+      "name": "Playwright Fixture Tests",
+      "startedAt": "2026-10-26T12:09:03Z",
+      "status": "in_progress",
+      "steps": [
+        {
+          "completedAt": "2026-10-26T12:09:04Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-26T12:09:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:15Z",
+          "conclusion": "success",
+          "name": "Checkout",
+          "number": 2,
+          "startedAt": "2026-10-26T12:09:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:20Z",
+          "conclusion": "success",
+          "name": "Setup Node.js",
+          "number": 3,
+          "startedAt": "2026-10-26T12:09:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:30Z",
+          "conclusion": "success",
+          "name": "Restore node_modules cache",
+          "number": 4,
+          "startedAt": "2026-10-26T12:09:20Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:30Z",
+          "conclusion": "skipped",
+          "name": "Install dependencies",
+          "number": 5,
+          "startedAt": "2026-10-26T12:09:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:30Z",
+          "conclusion": "skipped",
+          "name": "Install rspack dependencies",
+          "number": 6,
+          "startedAt": "2026-10-26T12:09:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:30Z",
+          "conclusion": "success",
+          "name": "Copy codicons",
+          "number": 7,
+          "startedAt": "2026-10-26T12:09:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:36Z",
+          "conclusion": "success",
+          "name": "Build component explorer",
+          "number": 8,
+          "startedAt": "2026-10-26T12:09:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:36Z",
+          "conclusion": "success",
+          "name": "Install Playwright test dependencies",
+          "number": 9,
+          "startedAt": "2026-10-26T12:09:36Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-26T12:09:48Z",
+          "conclusion": "success",
+          "name": "Install Playwright Chromium",
+          "number": 10,
+          "startedAt": "2026-10-26T12:09:36Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "Run Playwright fixture tests",
+          "number": 11,
+          "startedAt": "2026-10-26T12:09:48Z",
+          "status": "in_progress"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "Upload Playwright test results",
+          "number": 12,
+          "startedAt": "0001-01-01T00:00:00Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "Post Setup Node.js",
+          "number": 23,
+          "startedAt": "0001-01-01T00:00:00Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "name": "Post Checkout",
+          "number": 24,
+          "startedAt": "0001-01-01T00:00:00Z",
+          "status": "pending"
+        }
+      ],
+      "url": "https://github.com/octo/app/actions/runs/40320312582/job/121563278356"
+    }
+  ],
+  "status": "in_progress",
+  "url": "https://github.com/octo/app/actions/runs/40320312582"
+}

@@ -13,6 +13,15 @@
 
 import type { Task } from '../types';
 import { parsePrView, type PrStatus } from './prStatus';
+import {
+  parseAnnotations,
+  parsePrChecks,
+  parseRunJob,
+  type Annotation,
+  type CheckSource,
+  type JobDetail,
+  type PrCheck,
+} from './checks';
 
 export interface GhResult {
   code: number | null;
@@ -171,4 +180,69 @@ export function parsePrBase(stdout: string, branch: string): PrBase | null {
   if (typeof o.number !== 'number' || typeof o.baseRefName !== 'string' || !o.baseRefName) return null;
   if (typeof o.headRefName === 'string' && o.headRefName !== branch) return null;
   return { number: o.number, title: typeof o.title === 'string' ? o.title : '', base: o.baseRefName };
+}
+
+// ---------------------------------------------------------------------------
+// Checks in detail (checks.ts), fetched only while the Checks dialog is open
+// ---------------------------------------------------------------------------
+
+const CHECK_FIELDS = 'bucket,completedAt,description,link,name,startedAt,workflow';
+
+/**
+ * A PR's checks, one per check after reruns. gh documents exit 8 for
+ * "pending"; measured on gh 2.97, `--json` with checks pending printed the
+ * list and exited 0. Either way stdout is read whatever the exit code, and
+ * only output that is not a list means "no answer".
+ */
+export async function fetchPrChecks(
+  prNumber: number,
+  task: Pick<Task, 'worktreePath' | 'repoPath'>,
+): Promise<PrCheck[] | null> {
+  const args = ['pr', 'checks', String(prNumber), '--json', CHECK_FIELDS];
+  for (const cwd of [task.worktreePath, task.repoPath]) {
+    if (!cwd) continue;
+    const r = await gh(args, cwd);
+    if (!r) continue; // could not spawn here: the cwd may not exist
+    return parsePrChecks(r.stdout);
+  }
+  return null;
+}
+
+type JobRef = Extract<CheckSource, { kind: 'actions' }>;
+
+/** `-R` names the repository, so these run anywhere: the check's link says which. */
+function repoFlag(ref: { host: string; repo: string }): string {
+  return ref.host === 'github.com' ? ref.repo : `${ref.host}/${ref.repo}`;
+}
+
+function hostArgs(ref: { host: string }): string[] {
+  return ref.host === 'github.com' ? [] : ['--hostname', ref.host];
+}
+
+/** One Actions job's steps. Null for no answer. */
+export async function fetchJob(ref: JobRef): Promise<JobDetail | null> {
+  const r = await gh(['run', 'view', ref.runId, '-R', repoFlag(ref), '--json', 'jobs']);
+  if (!r || r.code !== 0) return null;
+  return parseRunJob(r.stdout, ref.jobId);
+}
+
+/**
+ * One job's raw log, from the per-job endpoint (see checks.ts for why not
+ * `--log-failed`). gh 2.97 refuses to print a response that holds terminal
+ * escapes -- a log always does -- unless told it may; checks.ts strips them.
+ * A gh older than that flag is asked again without it.
+ */
+export async function fetchJobLog(ref: JobRef): Promise<string | null> {
+  const path = `repos/${ref.repo}/actions/jobs/${ref.jobId}/logs`;
+  let r = await gh(['api', '--allow-escape-sequences', ...hostArgs(ref), path]);
+  if (r && r.code !== 0 && /unknown flag/i.test(r.stderr)) r = await gh(['api', ...hostArgs(ref), path]);
+  if (!r || r.code !== 0) return null;
+  return r.stdout;
+}
+
+/** A check run's annotations: an Actions job is a check run with the job's id. */
+export async function fetchAnnotations(ref: { host: string; repo: string; id: string }): Promise<Annotation[]> {
+  const r = await gh(['api', ...hostArgs(ref), `repos/${ref.repo}/check-runs/${ref.id}/annotations`]);
+  if (!r || r.code !== 0) return [];
+  return parseAnnotations(r.stdout);
 }

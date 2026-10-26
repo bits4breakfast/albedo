@@ -1,0 +1,90 @@
+[
+  {
+    "bucket": "fail",
+    "completedAt": "2026-10-23T10:12:19Z",
+    "description": "",
+    "event": "push",
+    "link": "https://github.com/bits4breakfast/albedo/actions/runs/39937064964/job/120359352635",
+    "name": "linux",
+    "startedAt": "2026-10-23T10:10:01Z",
+    "state": "FAILURE",
+    "workflow": "CI"
+  },
+  {
+    "bucket": "skipping",
+    "completedAt": "2026-10-26T12:11:56Z",
+    "description": "",
+    "event": "",
+    "link": "https://github.com/octo/app/runs/121564525723",
+    "name": "CodeQL",
+    "startedAt": "2026-10-26T12:11:54Z",
+    "state": "NEUTRAL",
+    "workflow": ""
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "event": "pull_request",
+    "link": "https://github.com/octo/app/actions/runs/40319736532/job/121562228463",
+    "name": "Electron / Windows",
+    "startedAt": "2026-10-26T12:06:49Z",
+    "state": "IN_PROGRESS",
+    "workflow": "Code OSS"
+  },
+  {
+    "bucket": "pass",
+    "completedAt": "2026-10-26T12:10:34Z",
+    "description": "",
+    "event": "pull_request",
+    "link": "https://github.com/octo/app/actions/runs/40319736532/job/121562225789",
+    "name": "Compile & Hygiene",
+    "startedAt": "2026-10-26T12:06:44Z",
+    "state": "SUCCESS",
+    "workflow": "Code OSS"
+  },
+  {
+    "bucket": "skipping",
+    "completedAt": "2026-10-26T12:06:32Z",
+    "description": "",
+    "event": "pull_request",
+    "link": "https://github.com/octo/app/actions/runs/40319736532/job/121562227806",
+    "name": "CLI / Linux",
+    "startedAt": "2026-10-26T12:06:32Z",
+    "state": "SKIPPED",
+    "workflow": "Code OSS"
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "event": "",
+    "link": "https://github.com/octo/ci-hub/actions/runs/40319735246",
+    "name": "VS Code PR Check",
+    "startedAt": "2026-10-26T12:05:58Z",
+    "state": "IN_PROGRESS",
+    "workflow": ""
+  },
+  {
+    "bucket": "pass",
+    "completedAt": "2026-10-26T12:04:27Z",
+    "description": "",
+    "event": "",
+    "link": "https://github.com/apps/policy-service",
+    "name": "license/cla",
+    "startedAt": "2026-10-26T12:04:27Z",
+    "state": "SUCCESS",
+    "workflow": ""
+  },
+  {
+    "bucket": "pass",
+    "completedAt": "2026-10-26T11:44:06Z",
+    "description": "",
+    "event": "",
+    "link": "https://vercel.com",
+    "name": "Vercel Internal Security Review",
+    "startedAt": "2026-10-26T11:43:39Z",
+    "state": "SUCCESS",
+    "workflow": ""
+  }
+]

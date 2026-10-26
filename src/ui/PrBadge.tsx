@@ -7,12 +7,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { Task } from '../types';
+import type { OpenFileRequest, Task } from '../types';
 import { openExternal } from '../lib/openUrl';
 import { getPrStatus, refreshPrStatus, usePrStatus, usePrStatusVersion } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
 import { commitsOnBranch } from '../git/worktree';
 import { prLabel, prTooltip, type PrStatus } from '../gh/prStatus';
+import ChecksDialog from './ChecksDialog';
 import './pr.css';
 
 export interface PrBadgeProps {
@@ -35,14 +36,29 @@ export interface PrBadgeProps {
    * has commits of its own -- counted on the branch, wherever it is checked out.
    */
   onCreatePr?: () => void;
+  /** Opens a check annotation's file at its line (the Checks dialog). */
+  onOpenFile?: (request: OpenFileRequest) => void;
+}
+
+/**
+ * Does the badge open the Checks dialog, or the PR on GitHub? The dialog
+ * while the PR is open and has checks to show; once merged or closed the
+ * checks no longer matter, and the badge opens GitHub as it always did.
+ */
+export function opensChecks(pr: PrStatus): boolean {
+  return (pr.state === 'open' || pr.state === 'draft') && pr.lines.length > 0;
 }
 
 /** After a turn ends, when to look again for the checks a push started. */
 const AFTER_TURN_RECHECK_MS = [10_000, 30_000];
 
 /** Header badge: "#6 ✓ checks", "#6 ✗ 2 failing", "#6 merged  Archive… Delete…". */
-export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
+export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrBadgeProps) {
   const pr = usePrStatus(task);
+  const [checksOpen, setChecksOpen] = useState(false);
+  const badgeRef = useRef<HTMLButtonElement>(null);
+  // Another task's PR is another dialog: never carry one over a switch.
+  useEffect(() => setChecksOpen(false), [task?.id]);
   // `undefined` is "gh has not answered yet": no button that a PR already
   // opened would make wrong. usePrStatus maps both to null, so its snapshot
   // does not change when gh answers "none" -- the version does, and is what
@@ -96,15 +112,18 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
   }
   if (!task || !pr) return null;
   const label = prLabel(pr);
+  const checks = opensChecks(pr);
   return (
     <span className="pr-badge-wrap">
       <button
+        ref={badgeRef}
         type="button"
         className="pr-badge"
         data-tone={label.tone}
-        title={prTooltip(pr, { clickable: true })}
-        aria-label={`Pull request ${pr.number}, ${label.text}. Open on GitHub`}
-        onClick={() => void openExternal(pr.url)}
+        title={checks ? `${prTooltip(pr)}\nClick to see the checks` : prTooltip(pr, { clickable: true })}
+        aria-label={`Pull request ${pr.number}, ${label.text}. ${checks ? 'Show the checks' : 'Open on GitHub'}`}
+        aria-haspopup={checks ? 'dialog' : undefined}
+        onClick={() => (checks ? setChecksOpen(true) : void openExternal(pr.url))}
       >
         <span className="pr-num">#{pr.number}</span>
         {label.glyph && (
@@ -114,6 +133,17 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr }: PrBadgeProps) {
         )}
         <span>{label.text}</span>
       </button>
+      {checksOpen && checks && (
+        <ChecksDialog
+          task={task}
+          pr={pr}
+          onOpenFile={onOpenFile}
+          onClose={() => {
+            setChecksOpen(false);
+            badgeRef.current?.focus();
+          }}
+        />
+      )}
       {pr.state === 'merged' && onFollowUp && (
         // First: of the three, it is the one that starts work rather than
         // ending it.

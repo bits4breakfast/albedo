@@ -1,0 +1,384 @@
+2026-10-23T10:10:56.5072259Z Cache hit for: v0-rust-linux-Linux-x64-01b81e85-ac6c0d47
+2026-10-23T10:10:57.5375011Z Received 226492416 of 1550920533 (14.6%), 215.8 MBs/sec
+2026-10-23T10:10:58.5402996Z Received 436207616 of 1550920533 (28.1%), 207.8 MBs/sec
+2026-10-23T10:10:59.5453903Z Received 645922816 of 1550920533 (41.6%), 205.1 MBs/sec
+2026-10-23T10:11:00.5473360Z Received 868220928 of 1550920533 (56.0%), 206.7 MBs/sec
+2026-10-23T10:11:01.5422895Z Received 1073741824 of 1550920533 (69.2%), 204.6 MBs/sec
+2026-10-23T10:11:02.5470936Z Received 1304428544 of 1550920533 (84.1%), 207.0 MBs/sec
+2026-10-23T10:11:03.5488361Z Received 1526726656 of 1550920533 (98.4%), 207.6 MBs/sec
+2026-10-23T10:11:03.6395186Z Received 1550920533 of 1550920533 (100.0%), 208.2 MBs/sec
+2026-10-23T10:11:03.6395837Z Cache Size: ~1479 MB (1550920533 B)
+2026-10-23T10:11:03.6486734Z [command]/usr/bin/tar -xf /home/runner/work/_temp/d3efa914-9daf-4599-ac1e-a8edff24b774/cache.tzst -P -C /home/runner/work/albedo/albedo --use-compress-program unzstd
+2026-10-23T10:11:30.1353260Z Cache restored successfully
+2026-10-23T10:11:30.4278755Z Restored from cache key "v0-rust-linux-Linux-x64-01b81e85-ac6c0d47" full match: true.
+2026-10-23T10:11:30.5066001Z ##[group]Run npm ci
+2026-10-23T10:11:30.5066250Z [36;1mnpm ci[0m
+2026-10-23T10:11:30.5128652Z shell: /usr/bin/bash -e {0}
+2026-10-23T10:11:30.5128907Z env:
+2026-10-23T10:11:30.5129091Z   CARGO_HOME: /home/runner/.cargo
+2026-10-23T10:11:30.5129329Z   CARGO_INCREMENTAL: 0
+2026-10-23T10:11:30.5129541Z   CARGO_TERM_COLOR: always
+2026-10-23T10:11:30.5129748Z   CACHE_ON_FAILURE: false
+2026-10-23T10:11:30.5129958Z ##[endgroup]
+2026-10-23T10:11:39.9122978Z 
+2026-10-23T10:11:39.9123709Z added 240 packages, and audited 241 packages in 9s
+2026-10-23T10:11:39.9124557Z 
+2026-10-23T10:11:39.9124764Z 56 packages are looking for funding
+2026-10-23T10:11:39.9125185Z   run `npm fund` for details
+2026-10-23T10:11:39.9316209Z 
+2026-10-23T10:11:39.9316799Z 7 vulnerabilities (3 moderate, 2 high, 2 critical)
+2026-10-23T10:11:39.9317147Z 
+2026-10-23T10:11:39.9317431Z To address issues that do not require attention, run:
+2026-10-23T10:11:39.9317727Z   npm audit fix
+2026-10-23T10:11:39.9317854Z 
+2026-10-23T10:11:39.9318096Z To address all issues (including breaking changes), run:
+2026-10-23T10:11:39.9318392Z   npm audit fix --force
+2026-10-23T10:11:39.9318526Z 
+2026-10-23T10:11:39.9318641Z Run `npm audit` for details.
+2026-10-23T10:11:39.9849585Z ##[group]Run npm run typecheck
+2026-10-23T10:11:39.9849860Z [36;1mnpm run typecheck[0m
+2026-10-23T10:11:39.9911963Z shell: /usr/bin/bash -e {0}
+2026-10-23T10:11:39.9912205Z env:
+2026-10-23T10:11:39.9912387Z   CARGO_HOME: /home/runner/.cargo
+2026-10-23T10:11:39.9912620Z   CARGO_INCREMENTAL: 0
+2026-10-23T10:11:39.9912844Z   CARGO_TERM_COLOR: always
+2026-10-23T10:11:39.9913053Z   CACHE_ON_FAILURE: false
+2026-10-23T10:11:39.9913257Z ##[endgroup]
+2026-10-23T10:11:40.0748416Z 
+2026-10-23T10:11:40.0749073Z > albedo@0.1.0 typecheck
+2026-10-23T10:11:40.0749506Z > tsc --noEmit
+2026-10-23T10:11:40.0749686Z 
+2026-10-23T10:11:47.2690954Z ##[group]Run npx vitest run
+2026-10-23T10:11:47.2691226Z [36;1mnpx vitest run[0m
+2026-10-23T10:11:47.2754660Z shell: /usr/bin/bash -e {0}
+2026-10-23T10:11:47.2754972Z env:
+2026-10-23T10:11:47.2755199Z   CARGO_HOME: /home/runner/.cargo
+2026-10-23T10:11:47.2755528Z   CARGO_INCREMENTAL: 0
+2026-10-23T10:11:47.2755831Z   CARGO_TERM_COLOR: always
+2026-10-23T10:11:47.2756148Z   CACHE_ON_FAILURE: false
+2026-10-23T10:11:47.2756433Z ##[endgroup]
+2026-10-23T10:11:47.7361889Z 
+2026-10-23T10:11:47.7363772Z [1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90m/home/runner/work/albedo/albedo[39m
+2026-10-23T10:11:47.7364234Z 
+2026-10-23T10:11:48.3824976Z  [32m✓[39m src/git/worktree.test.ts [2m([22m[2m132 tests[22m[2m)[22m[90m 47[2mms[22m[39m
+2026-10-23T10:11:48.5722500Z [90mstderr[2m | src/db/real.test.ts[2m > [22m[2musage and context aggregates — executed[2m > [22m[2mcontextUsage sums ALL THREE counters — the opposite rule, on one turn
+2026-10-23T10:11:48.5723835Z [22m[39m[models] catalog unavailable ReferenceError: window is not defined
+2026-10-23T10:11:48.5724514Z     at invoke [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@tauri-apps/api[24m/core.js:202:5[90m)[39m
+2026-10-23T10:11:48.5725306Z     at Module.homeDir [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@tauri-apps/api[24m/path.js:382:12[90m)[39m
+2026-10-23T10:11:48.5726130Z     at readCatalogText [90m(/home/runner/work/albedo/albedo/[39msrc/capture/modelCatalog.ts:105:27[90m)[39m
+2026-10-23T10:11:48.5726861Z     at Module.loadModelWindows [90m(/home/runner/work/albedo/albedo/[39msrc/capture/modelCatalog.ts:147:22[90m)[39m
+2026-10-23T10:11:48.5727609Z     at contextUsageForSessions [90m(/home/runner/work/albedo/albedo/[39msrc/capture/context.ts:194:25[90m)[39m
+2026-10-23T10:11:48.5728273Z [90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+2026-10-23T10:11:48.5728890Z     at Module.contextUsage [90m(/home/runner/work/albedo/albedo/[39msrc/capture/context.ts:166:15[90m)[39m
+2026-10-23T10:11:48.5729443Z     at [90m/home/runner/work/albedo/albedo/[39msrc/db/real.test.ts:319:15
+2026-10-23T10:11:48.5730010Z     at [90mfile:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:533:5
+2026-10-23T10:11:48.5730731Z     at runTest [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1056:11[90m)[39m
+2026-10-23T10:11:48.5731087Z 
+2026-10-23T10:11:48.6255312Z  [32m✓[39m src/git/reconcile.test.ts [2m([22m[2m59 tests[22m[2m)[22m[90m 25[2mms[22m[39m
+2026-10-23T10:11:48.7712112Z  [32m✓[39m src/db/real.test.ts [2m([22m[2m93 tests[22m[2m)[22m[33m 306[2mms[22m[39m
+2026-10-23T10:11:48.9064514Z  [32m✓[39m src/lib/paths.test.ts [2m([22m[2m113 tests[22m[2m)[22m[90m 60[2mms[22m[39m
+2026-10-23T10:11:49.0577757Z  [32m✓[39m src/db/projects.test.ts [2m([22m[2m41 tests[22m[2m)[22m[90m 20[2mms[22m[39m
+2026-10-23T10:11:49.1994473Z  [32m✓[39m src/capture/context.test.ts [2m([22m[2m47 tests[22m[2m)[22m[90m 28[2mms[22m[39m
+2026-10-23T10:11:49.4116791Z  [32m✓[39m src/lib/diff.test.ts [2m([22m[2m54 tests[22m[2m)[22m[90m 149[2mms[22m[39m
+2026-10-23T10:11:49.4645043Z  [32m✓[39m src/capture/status.test.ts [2m([22m[2m42 tests[22m[2m)[22m[90m 16[2mms[22m[39m
+2026-10-23T10:11:49.7049215Z  [32m✓[39m src/ui/transcript/envelopes.test.ts [2m([22m[2m52 tests[22m[2m)[22m[90m 26[2mms[22m[39m
+2026-10-23T10:11:49.7687076Z  [32m✓[39m src/git/codeIndex.test.ts [2m([22m[2m33 tests[22m[2m)[22m[90m 26[2mms[22m[39m
+2026-10-23T10:11:49.9444417Z  [32m✓[39m src/capture/adapter.test.ts [2m([22m[2m42 tests[22m[2m)[22m[90m 23[2mms[22m[39m
+2026-10-23T10:11:50.0278652Z  [32m✓[39m src/db/touched.test.ts [2m([22m[2m26 tests[22m[2m)[22m[90m 23[2mms[22m[39m
+2026-10-23T10:11:50.1875964Z  [32m✓[39m src/ui/shortcuts.test.ts [2m([22m[2m33 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+2026-10-23T10:11:50.2743613Z  [32m✓[39m src/capture/queue.test.ts [2m([22m[2m22 tests[22m[2m)[22m[90m 14[2mms[22m[39m
+2026-10-23T10:11:50.5528810Z  [32m✓[39m src/ui/gauges/gauges.test.tsx [2m([22m[2m33 tests[22m[2m)[22m[90m 37[2mms[22m[39m
+2026-10-23T10:11:50.6037361Z  [32m✓[39m src/db/paging.test.ts [2m([22m[2m23 tests[22m[2m)[22m[90m 180[2mms[22m[39m
+2026-10-23T10:11:50.7776079Z  [32m✓[39m src/git/fileDiff.test.ts [2m([22m[2m23 tests[22m[2m)[22m[90m 17[2mms[22m[39m
+2026-10-23T10:11:50.8277934Z  [32m✓[39m src/ui/transcript/toolViews.test.ts [2m([22m[2m26 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+2026-10-23T10:11:51.0236934Z  [32m✓[39m src/ui/attention.test.ts [2m([22m[2m28 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+2026-10-23T10:11:51.1073382Z  [32m✓[39m src/capture/watcher.test.ts [2m([22m[2m20 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+2026-10-23T10:11:51.2393903Z  [32m✓[39m src/git/slug.test.ts [2m([22m[2m22 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+2026-10-23T10:11:51.3511224Z  [32m✓[39m src/db/sessions.test.ts [2m([22m[2m22 tests[22m[2m)[22m[90m 14[2mms[22m[39m
+2026-10-23T10:11:51.4670244Z  [32m✓[39m src/gh/prStatus.test.ts [2m([22m[2m13 tests[22m[2m)[22m[90m 17[2mms[22m[39m
+2026-10-23T10:11:51.5639542Z  [32m✓[39m src/lib/issueKey.test.ts [2m([22m[2m25 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+2026-10-23T10:11:51.7574615Z  [32m✓[39m src/git/phpRefs.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 53[2mms[22m[39m
+2026-10-23T10:11:51.7945603Z  [32m✓[39m src/git/moveTask.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+2026-10-23T10:11:51.9998873Z  [32m✓[39m src/db/index.test.ts [2m([22m[2m18 tests[22m[2m)[22m[90m 34[2mms[22m[39m
+2026-10-23T10:11:52.0116947Z  [32m✓[39m src/lib/fsGrants.test.ts [2m([22m[2m15 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+2026-10-23T10:11:52.2433531Z  [32m✓[39m src/git/resumePlace.test.ts [2m([22m[2m14 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+2026-10-23T10:11:52.4066487Z  [32m✓[39m src/ui/followUp.test.ts [2m([22m[2m14 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+2026-10-23T10:11:52.5899922Z  [32m✓[39m src/git/findInFiles.test.ts [2m([22m[2m18 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+2026-10-23T10:11:52.7386178Z  [32m✓[39m src/capture/hookEvents.runtime.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 519[2mms[22m[39m
+2026-10-23T10:11:52.7876630Z  [32m✓[39m src/ui/persisted.test.ts [2m([22m[2m11 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+2026-10-23T10:11:53.0809589Z  [32m✓[39m src/ui/sessionSpawn.test.ts [2m([22m[2m24 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+2026-10-23T10:11:53.1104471Z  [32m✓[39m src/gh/gh.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+2026-10-23T10:11:53.1384861Z  [32m✓[39m src/capture/hookEvents.test.ts [2m([22m[2m59 tests[22m[2m)[22m[33m 4841[2mms[22m[39m
+2026-10-23T10:11:53.1386472Z    [33m[2m✓[22m[39m HOOK_SCRIPT, run for real[2m > [22mkeeps the detail of a permission request and stamps a time [33m1036[2mms[22m[39m
+2026-10-23T10:11:53.1390594Z    [33m[2m✓[22m[39m HOOK_SCRIPT waiting for an answer, run for real[2m > [22mstamps a request id, then prints its own answer file verbatim and removes it [33m534[2mms[22m[39m
+2026-10-23T10:11:53.1392780Z    [33m[2m✓[22m[39m HOOK_SCRIPT waiting for an answer, run for real[2m > [22mnever prints an answer meant for another request, and decides nothing when the window closes [33m1023[2mms[22m[39m
+2026-10-23T10:11:53.1394744Z    [33m[2m✓[22m[39m HOOK_SCRIPT: end markers, run for real[2m > [22mwrites the marker when the window closes unanswered [33m1037[2mms[22m[39m
+2026-10-23T10:11:53.1396373Z    [33m[2m✓[22m[39m HOOK_SCRIPT: end markers, run for real[2m > [22mwrites the marker after printing a card answer [33m532[2mms[22m[39m
+2026-10-23T10:11:53.3851504Z  [32m✓[39m src/lib/pty.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 16[2mms[22m[39m
+2026-10-23T10:11:53.4791258Z  [32m✓[39m src/db/comments.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 45[2mms[22m[39m
+2026-10-23T10:11:53.6422322Z  [32m✓[39m src/lib/fuzzy.test.ts [2m([22m[2m17 tests[22m[2m)[22m[90m 226[2mms[22m[39m
+2026-10-23T10:11:53.7599233Z  [32m✓[39m src/capture/sessionLink.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 45[2mms[22m[39m
+2026-10-23T10:11:53.7600670Z  [32m✓[39m src/lib/handEdited.test.ts [2m([22m[2m17 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+2026-10-23T10:11:53.9264578Z  [32m✓[39m src/ui/quickOpenModel.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+2026-10-23T10:11:54.0710443Z  [32m✓[39m src/lsp/pool.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 24[2mms[22m[39m
+2026-10-23T10:11:54.1214523Z  [32m✓[39m src/lsp/phpantom.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 22[2mms[22m[39m
+2026-10-23T10:11:54.2049420Z  [32m✓[39m src/db/subagents.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+2026-10-23T10:11:54.3396491Z  [32m✓[39m src/lsp/jsonrpc.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+2026-10-23T10:11:54.3678196Z  [32m✓[39m src/capture/usage.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+2026-10-23T10:11:54.5041371Z  [32m✓[39m src/ui/gitPrompts.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+2026-10-23T10:11:54.6354146Z  [32m✓[39m src/ui/editor/comments.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+2026-10-23T10:11:54.6534518Z  [32m✓[39m src/lib/pasteImage.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+2026-10-23T10:11:54.7827452Z  [32m✓[39m src/ui/subagentView.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+2026-10-23T10:11:54.8899810Z  [32m✓[39m src/lib/anchor.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+2026-10-23T10:11:54.9411312Z  [32m✓[39m src/ui/mergeNotice.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+2026-10-23T10:11:55.0491703Z  [32m✓[39m src/gh/prStore.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+2026-10-23T10:11:55.0500218Z [90mstderr[2m | src/gh/prStore.test.ts[2m > [22m[2mprStore[2m > [22m[2mkeeps the previous answer when a fetch throws
+2026-10-23T10:11:55.0512699Z [22m[39m[gh] pr status failed Error: boom
+2026-10-23T10:11:55.0513404Z     at [90m/home/runner/work/albedo/albedo/[39msrc/gh/prStore.test.ts:78:13
+2026-10-23T10:11:55.0514133Z     at [90m/home/runner/work/albedo/albedo/[39msrc/gh/prStore.ts:116:24
+2026-10-23T10:11:55.0514938Z     at start [90m(/home/runner/work/albedo/albedo/[39msrc/gh/prStore.ts:79:7[90m)[39m
+2026-10-23T10:11:55.0516164Z     at [90m/home/runner/work/albedo/albedo/[39msrc/gh/prStore.ts:86:35
+2026-10-23T10:11:55.0516675Z     at new Promise (<anonymous>)
+2026-10-23T10:11:55.0517360Z     at gate [90m(/home/runner/work/albedo/albedo/[39msrc/gh/prStore.ts:76:10[90m)[39m
+2026-10-23T10:11:55.0518363Z     at Module.refreshPrStatus [90m(/home/runner/work/albedo/albedo/[39msrc/gh/prStore.ts:116:13[90m)[39m
+2026-10-23T10:11:55.0519272Z     at [90m/home/runner/work/albedo/albedo/[39msrc/gh/prStore.test.ts:82:11
+2026-10-23T10:11:55.0520210Z     at [90mfile:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:533:5
+2026-10-23T10:11:55.0521348Z     at runTest [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1056:11[90m)[39m
+2026-10-23T10:11:55.0522212Z 
+2026-10-23T10:11:55.1766228Z  [32m✓[39m src/lib/focusTimer.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+2026-10-23T10:11:55.1930595Z  [32m✓[39m src/ui/editor/tabsModel.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+2026-10-23T10:11:55.3059322Z  [32m✓[39m src/capture/workspaceTrust.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+2026-10-23T10:11:55.4523352Z  [32m✓[39m src/ui/projectTreeModel.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+2026-10-23T10:11:55.4664598Z  [32m✓[39m src/lib/urls.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+2026-10-23T10:11:55.7476015Z  [32m✓[39m src/ui/transcript/pastedText.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:55.8763739Z  [32m✓[39m src/ui/ClearContextButton.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+2026-10-23T10:11:55.9040941Z  [32m✓[39m src/ui/transcript/markdown.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+2026-10-23T10:11:56.0102532Z  [32m✓[39m src/capture/imagesIn.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+2026-10-23T10:11:56.1402844Z  [32m✓[39m src/lib/ptyInput.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+2026-10-23T10:11:56.1624472Z  [32m✓[39m src/capture/modelCatalog.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+2026-10-23T10:11:56.4044532Z  [32m✓[39m src/capture/imageAt.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+2026-10-23T10:11:56.4198011Z  [32m✓[39m src/ui/sendPrompt.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:56.7359841Z  [32m✓[39m src/ui/editor/preview.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:56.7924375Z  [32m✓[39m src/ui/branchDeletable.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:56.9990465Z  [32m✓[39m src/ui/icons.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:57.0233820Z  [32m✓[39m src/lib/platform.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:57.2547433Z  [32m✓[39m src/ui/projectStep.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:57.2574561Z  [32m✓[39m src/git/branchSync.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+2026-10-23T10:11:57.4880155Z  [32m✓[39m src/ui/quitGuard.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+2026-10-23T10:11:57.5026445Z  [32m✓[39m src/ui/touchedOrder.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 4[2mms[22m[39m
+2026-10-23T10:11:57.5425693Z  [32m✓[39m src/lib/highlight.cache.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 1231[2mms[22m[39m
+2026-10-23T10:11:57.5428700Z    [33m[2m✓[22m[39m the token cache[2m > [22mstays inside its token budget however many versions pass through [33m1229[2mms[22m[39m
+2026-10-23T10:11:57.7493641Z  [32m✓[39m src/ui/transcript/OverlayScrollbar.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 3[2mms[22m[39m
+2026-10-23T10:11:57.7686877Z  [32m✓[39m src/lib/build.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 29[2mms[22m[39m
+2026-10-23T10:11:58.0363937Z  [32m✓[39m src/ui/zoom.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 2[2mms[22m[39m
+2026-10-23T10:11:58.1599781Z  [32m✓[39m src/lib/highlight.colour.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 320[2mms[22m[39m
+2026-10-23T10:11:58.1601381Z    [33m[2m✓[22m[39m highlightToTokens colours tokens[2m > [22mgives a PHP keyword a colour in both themes [33m319[2mms[22m[39m
+2026-10-23T10:11:59.4743196Z  [32m✓[39m src/ui/useTasks.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[90m 68[2mms[22m[39m
+2026-10-23T10:12:00.1471244Z  [32m✓[39m src/ui/NewTaskDialog.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 795[2mms[22m[39m
+2026-10-23T10:12:00.9563837Z  [32m✓[39m src/ui/transcript/Composer.test.tsx [2m([22m[2m48 tests[22m[2m)[22m[33m 1094[2mms[22m[39m
+2026-10-23T10:12:01.2321329Z  [32m✓[39m src/ui/transcript/outboxRelease.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 20[2mms[22m[39m
+2026-10-23T10:12:01.4063694Z  [32m✓[39m src/ui/followUp.dom.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 508[2mms[22m[39m
+2026-10-23T10:12:02.0787500Z  [32m✓[39m src/ui/transcript/outbox.test.ts [2m([22m[2m17 tests[22m[2m)[22m[90m 64[2mms[22m[39m
+2026-10-23T10:12:02.5376783Z  [32m✓[39m src/ui/dom-harness.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[90m 257[2mms[22m[39m
+2026-10-23T10:12:03.1360631Z  [32m✓[39m src/ui/transcript/PromptCard.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 565[2mms[22m[39m
+2026-10-23T10:12:03.7673984Z  [32m✓[39m src/ui/transcript/queuedStrip.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 325[2mms[22m[39m
+2026-10-23T10:12:04.1790434Z  [32m✓[39m src/ui/transcript/drafts.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+2026-10-23T10:12:04.9971621Z  [32m✓[39m src/lib/connectivity.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 14[2mms[22m[39m
+2026-10-23T10:12:05.3455097Z  [32m✓[39m src/ui/editor/FileEditor.comments.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 370[2mms[22m[39m
+2026-10-23T10:12:06.3715760Z  [32m✓[39m src/ui/FindInFiles.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 2620[2mms[22m[39m
+2026-10-23T10:12:06.3722247Z    [33m[2m✓[22m[39m FindInFiles[2m > [22mdoes not search a one-character query [33m313[2mms[22m[39m
+2026-10-23T10:12:06.3723701Z    [33m[2m✓[22m[39m FindInFiles[2m > [22mdrops the answer of a search the user typed past [33m506[2mms[22m[39m
+2026-10-23T10:12:06.3725340Z    [33m[2m✓[22m[39m FindInFiles[2m > [22mtoggles Match Case and Regex with ⌥C / ⌥X, and passes them to git [33m433[2mms[22m[39m
+2026-10-23T10:12:06.3726418Z    [33m[2m✓[22m[39m FindInFiles[2m > [22msays so when capped [33m682[2mms[22m[39m
+2026-10-23T10:12:06.3799674Z  [32m✓[39m src/ui/QuickOpen.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[90m 289[2mms[22m[39m
+2026-10-23T10:12:06.5962432Z  [32m✓[39m src/ui/EmptyState.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[90m 187[2mms[22m[39m
+2026-10-23T10:12:07.9108656Z [90mstderr[2m | src/ui/transcript/workingLine.test.tsx
+2026-10-23T10:12:07.9132653Z [22m[39mNot implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+2026-10-23T10:12:07.9162158Z 
+2026-10-23T10:12:07.9383316Z [90mstderr[2m | src/ui/transcript/workingLine.test.tsx
+2026-10-23T10:12:07.9412051Z [22m[39mpty: could not kill the previous page's sessions TypeError: Cannot read properties of undefined (reading 'invoke')
+2026-10-23T10:12:07.9423342Z     at Module.invoke [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@tauri-apps/api[24m/core.js:202:39[90m)[39m
+2026-10-23T10:12:07.9424649Z     at [90m/home/runner/work/albedo/albedo/[39msrc/lib/pty.ts:59:15
+2026-10-23T10:12:07.9425865Z [90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+2026-10-23T10:12:07.9426656Z 
+2026-10-23T10:12:07.9474219Z  [32m✓[39m src/ui/editor/EditorTabs.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[90m 223[2mms[22m[39m
+2026-10-23T10:12:08.1098210Z  [32m✓[39m src/ui/transcript/DiffContext.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 379[2mms[22m[39m
+2026-10-23T10:12:08.2331187Z  [32m✓[39m src/ui/transcript/workingLine.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[90m 195[2mms[22m[39m
+2026-10-23T10:12:09.4253562Z  [32m✓[39m src/ui/ClosedProjectsMenu.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[90m 234[2mms[22m[39m
+2026-10-23T10:12:09.6686918Z  [32m✓[39m src/ui/GitBar.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[90m 198[2mms[22m[39m
+2026-10-23T10:12:10.6484637Z  [32m✓[39m src/ui/editor/FileEditor.binary.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[90m 191[2mms[22m[39m
+2026-10-23T10:12:11.0704826Z [90mstderr[2m | src/ui/editor/FileEditor.readonly.test.tsx[2m > [22m[2mFileEditor, read-only[2m > [22m[2ma normal task still gets Save and Diff
+2026-10-23T10:12:11.0706285Z  [32m✓[39m src/ui/editor/FileEditor.readonly.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 389[2mms[22m[39m
+2026-10-23T10:12:11.0712891Z [22m[39m[comments] could not load TypeError: Cannot read properties of undefined (reading 'invoke')
+2026-10-23T10:12:11.0714550Z     at invoke [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@tauri-apps/api[24m/core.js:202:39[90m)[39m
+2026-10-23T10:12:11.0715963Z     at Function.load [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@tauri-apps/plugin-sql[24m/dist-js/index.js:32:29[90m)[39m
+2026-10-23T10:12:11.0717164Z     at Module.getDb [90m(/home/runner/work/albedo/albedo/[39msrc/db/index.ts:39:26[90m)[39m
+2026-10-23T10:12:11.0718207Z     at Module.listComments [90m(/home/runner/work/albedo/albedo/[39msrc/db/comments.ts:93:20[90m)[39m
+2026-10-23T10:12:11.0719232Z     at load [90m(/home/runner/work/albedo/albedo/[39msrc/ui/editor/FileEditor.tsx:993:12[90m)[39m
+2026-10-23T10:12:11.0720149Z     at [90m/home/runner/work/albedo/albedo/[39msrc/ui/editor/FileEditor.tsx:1001:5
+2026-10-23T10:12:11.0721610Z     at commitHookEffectListMount [90m(/home/runner/work/albedo/albedo/[39mnode_modules/[4mreact-dom[24m/cjs/react-dom.development.js:23189:26[90m)[39m
+2026-10-23T10:12:11.0723370Z     at commitPassiveMountOnFiber [90m(/home/runner/work/albedo/albedo/[39mnode_modules/[4mreact-dom[24m/cjs/react-dom.development.js:24970:11[90m)[39m
+2026-10-23T10:12:11.0725029Z     at commitPassiveMountEffects_complete [90m(/home/runner/work/albedo/albedo/[39mnode_modules/[4mreact-dom[24m/cjs/react-dom.development.js:24930:9[90m)[39m
+2026-10-23T10:12:11.0726698Z     at commitPassiveMountEffects_begin [90m(/home/runner/work/albedo/albedo/[39mnode_modules/[4mreact-dom[24m/cjs/react-dom.development.js:24917:7[90m)[39m
+2026-10-23T10:12:11.0727480Z 
+2026-10-23T10:12:11.7507610Z  [32m✓[39m src/ui/ArchiveTaskDialog.chat.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 148[2mms[22m[39m
+2026-10-23T10:12:12.2754406Z  [32m✓[39m src/ui/transcript/DiffComments.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[90m 234[2mms[22m[39m
+2026-10-23T10:12:12.7452670Z  [32m✓[39m src/ui/editor/diffComments.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[90m 37[2mms[22m[39m
+2026-10-23T10:12:13.4605258Z  [32m✓[39m src/ui/transcript/links.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[90m 129[2mms[22m[39m
+2026-10-23T10:12:13.8003303Z  [32m✓[39m src/ui/PrBadge.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 163[2mms[22m[39m
+2026-10-23T10:12:14.2510922Z  [31m❯[39m src/ui/transcript/send.test.ts [2m([22m[2m6 tests[22m[2m | [22m[31m4 failed[39m[2m)[22m[33m 5026[2mms[22m[39m
+2026-10-23T10:12:14.2512654Z [31m   [31m×[31m holding[2m > [22mholds behind held messages online too, so it cannot overtake them[90m 7[2mms[22m[31m[39m
+2026-10-23T10:12:14.2513841Z [31m     → expected [ 'typed first', …(3) ] to deeply equal [ 'waiting for the session', …(1) ][39m
+2026-10-23T10:12:14.2514979Z [31m   [31m×[31m holding[2m > [22msends at once with nothing held and the connection up[90m 3[2mms[22m[31m[39m
+2026-10-23T10:12:14.2516363Z [31m     → expected 'held' to be 'sent' // Object.is equality[39m
+2026-10-23T10:12:14.2517430Z [31m   [31m×[31m one write at a time[2m > [22ma button send waits for a release under way[33m 5001[2mms[22m[31m[39m
+2026-10-23T10:12:14.2518215Z [31m     → Test timed out in 5000ms.
+2026-10-23T10:12:14.2519224Z If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".[39m
+2026-10-23T10:12:14.2520420Z [31m   [31m×[31m one write at a time[2m > [22mother sessions are not held up[90m 8[2mms[22m[31m[39m
+2026-10-23T10:12:14.2521400Z [31m     → expected [ 'paste:two' ] to deeply equal [ 'paste:one', 'paste:two' ][39m
+2026-10-23T10:12:14.5973947Z  [32m✓[39m src/ui/PrBadge.store.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 166[2mms[22m[39m
+2026-10-23T10:12:15.0239199Z  [32m✓[39m src/ui/TaskList.chat.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 202[2mms[22m[39m
+2026-10-23T10:12:15.4583133Z  [32m✓[39m src/ui/TaskList.draft.test.tsx [2m([22m[2m1 test[22m[2m)[22m[90m 53[2mms[22m[39m
+2026-10-23T10:12:16.1114607Z  [32m✓[39m src/ui/transcript/thinkingRow.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 166[2mms[22m[39m
+2026-10-23T10:12:16.2414994Z  [32m✓[39m src/gh/prPolling.test.tsx [2m([22m[2m1 test[22m[2m)[22m[90m 17[2mms[22m[39m
+2026-10-23T10:12:16.5803717Z [90mstderr[2m | src/ui/transcript/jumpKey.test.ts
+2026-10-23T10:12:16.5842961Z [22m[39mNot implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+2026-10-23T10:12:16.5892865Z 
+2026-10-23T10:12:16.6093311Z [90mstderr[2m | src/ui/transcript/jumpKey.test.ts
+2026-10-23T10:12:16.6123357Z [22m[39mpty: could not kill the previous page's sessions TypeError: Cannot read properties of undefined (reading 'invoke')
+2026-10-23T10:12:16.6152903Z     at Module.invoke [90m(file:///home/runner/work/albedo/albedo/[39mnode_modules/[4m@tauri-apps/api[24m/core.js:202:39[90m)[39m
+2026-10-23T10:12:16.6182729Z     at [90m/home/runner/work/albedo/albedo/[39msrc/lib/pty.ts:59:15
+2026-10-23T10:12:16.6212763Z [90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+2026-10-23T10:12:16.6223424Z 
+2026-10-23T10:12:16.7073286Z  [32m✓[39m src/ui/transcript/jumpKey.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 14[2mms[22m[39m
+2026-10-23T10:12:17.4341477Z  [32m✓[39m src/ui/transcript/CollapsibleDiff.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 166[2mms[22m[39m
+2026-10-23T10:12:17.4667854Z  [32m✓[39m src/ui/PanelToggle.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 125[2mms[22m[39m
+2026-10-23T10:12:17.5350930Z 
+2026-10-23T10:12:17.5383351Z [31m⎯⎯⎯⎯⎯⎯⎯[1m[7m Failed Tests 4 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+2026-10-23T10:12:17.5405712Z 
+2026-10-23T10:12:17.5413284Z [31m[1m[7m FAIL [27m[22m[39m src/ui/transcript/send.test.ts[2m > [22mholding[2m > [22mholds behind held messages online too, so it cannot overtake them
+2026-10-23T10:12:17.5414796Z [31m[1mAssertionError[22m: expected [ 'typed first', …(3) ] to deeply equal [ 'waiting for the session', …(1) ][39m
+2026-10-23T10:12:17.5415352Z 
+2026-10-23T10:12:17.5415536Z [32m- Expected[39m
+2026-10-23T10:12:17.5415903Z [31m+ Received[39m
+2026-10-23T10:12:17.5416083Z 
+2026-10-23T10:12:17.5416249Z [2m  Array [[22m
+2026-10-23T10:12:17.5416611Z [31m+   "typed first",[39m
+2026-10-23T10:12:17.5417049Z [31m+   "Push the branch",[39m
+2026-10-23T10:12:17.5417507Z [2m    "waiting for the session",[22m
+2026-10-23T10:12:17.5417925Z [2m    "/model opus",[22m
+2026-10-23T10:12:17.5418269Z [2m  ][22m
+2026-10-23T10:12:17.5418430Z 
+2026-10-23T10:12:17.5418836Z [36m [2m❯[22m src/ui/transcript/send.test.ts:[2m61:43[22m[39m
+2026-10-23T10:12:17.5603118Z     [90m 59| [39m    [34mholdMessage[39m([34m1[39m[33m,[39m [32m'waiting for the session'[39m)[33m;[39m
+2026-10-23T10:12:17.5627346Z     [90m 60| [39m    [34mexpect[39m([35mawait[39m [34msendToSession[39m([34m1[39m[33m,[39m [32m'/model opus'[39m))[33m.[39m[34mtoBe[39m([32m'held'[39m)[33m;[39m
+2026-10-23T10:12:17.5629134Z [2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m115 passed[39m[22m[90m (116)[39m
+2026-10-23T10:12:17.5630604Z     [90m 61| [39m    [34mexpect[39m([34mheldFor[39m([34m1[39m)[33m.[39m[34mmap[39m((h) [33m=>[39m h[33m.[39mtext))[33m.[39m[34mtoEqual[39m([[32m'waiting for the se[39m…
+2026-10-23T10:12:17.5662785Z [2m      Tests [22m [1m[31m4 failed[39m[22m[2m | [22m[1m[32m1749 passed[39m[22m[90m (1753)[39m
+2026-10-23T10:12:17.5663587Z     [90m   | [39m                                          [31m^[39m
+2026-10-23T10:12:17.5664119Z [2m   Start at [22m 10:11:47
+2026-10-23T10:12:17.5687097Z     [90m 62| [39m  })[33m;[39m
+2026-10-23T10:12:17.5688027Z [2m   Duration [22m 29.80s[2m (transform 4.02s, setup 0ms, collect 12.79s, tests 24.45s, environment 25.93s, prepare 7.80s)[22m
+2026-10-23T10:12:17.5690569Z     [90m 63| [39m
+2026-10-23T10:12:17.5690764Z 
+2026-10-23T10:12:17.5719748Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯[22m[39m
+2026-10-23T10:12:17.5720025Z 
+2026-10-23T10:12:17.5721656Z 
+2026-10-23T10:12:17.5721668Z 
+2026-10-23T10:12:17.5723275Z [31m[1m[7m FAIL [27m[22m[39m src/ui/transcript/send.test.ts[2m > [22mholding[2m > [22msends at once with nothing held and the connection up
+2026-10-23T10:12:17.5747384Z ##[error]AssertionError: expected [ 'typed first', …(3) ] to deeply equal [ 'waiting for the session', …(1) ]
+
+- Expected
++ Received
+
+  Array [
++   "typed first",
++   "Push the branch",
+    "waiting for the session",
+    "/model opus",
+  ]
+
+ ❯ src/ui/transcript/send.test.ts:61:43
+
+
+2026-10-23T10:12:17.5760218Z [31m[1mAssertionError[22m: expected 'held' to be 'sent' // Object.is equality[39m
+2026-10-23T10:12:17.5760646Z 
+2026-10-23T10:12:17.5760802Z Expected: [32m"sent"[39m
+2026-10-23T10:12:17.5761061Z Received: [31m"held"[39m
+2026-10-23T10:12:17.5761209Z 
+2026-10-23T10:12:17.5761487Z [36m [2m❯[22m src/ui/transcript/send.test.ts:[2m67:24[22m[39m
+2026-10-23T10:12:17.5762291Z     [90m 65| [39m    [35mconst[39m sent [33m=[39m [34msendToSession[39m([34m1[39m[33m,[39m [32m'/clear'[39m)[33m;[39m
+2026-10-23T10:12:17.5762973Z     [90m 66| [39m    [35mawait[39m vi[33m.[39m[34madvanceTimersByTimeAsync[39m([34m100[39m)[33m;[39m
+2026-10-23T10:12:17.5763589Z     [90m 67| [39m    [34mexpect[39m([35mawait[39m sent)[33m.[39m[34mtoBe[39m([32m'sent'[39m)[33m;[39m
+2026-10-23T10:12:17.5764023Z     [90m   | [39m                       [31m^[39m
+2026-10-23T10:12:17.5764629Z     [90m 68| [39m    [34mexpect[39m(writes)[33m.[39m[34mtoEqual[39m([[32m'paste:/clear'[39m[33m,[39m [32m'enter:/clear'[39m])[33m;[39m
+2026-10-23T10:12:17.5765109Z     [90m 69| [39m  })[33m;[39m
+2026-10-23T10:12:17.5765254Z 
+2026-10-23T10:12:17.5765455Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯[22m[39m
+2026-10-23T10:12:17.5765635Z 
+2026-10-23T10:12:17.5766156Z [31m[1m[7m FAIL [27m[22m[39m src/ui/transcript/send.test.ts[2m > [22mone write at a time[2m > [22ma button send waits for a release under way
+2026-10-23T10:12:17.5766800Z [31m[1mError[22m: Test timed out in 5000ms.
+2026-10-23T10:12:17.5767452Z If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".[39m
+2026-10-23T10:12:17.5767996Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯[22m[39m
+2026-10-23T10:12:17.5768169Z 
+2026-10-23T10:12:17.5768624Z [31m[1m[7m FAIL [27m[22m[39m src/ui/transcript/send.test.ts[2m > [22mone write at a time[2m > [22mother sessions are not held up
+2026-10-23T10:12:17.5769548Z [31m[1mAssertionError[22m: expected [ 'paste:two' ] to deeply equal [ 'paste:one', 'paste:two' ][39m
+2026-10-23T10:12:17.5769851Z 
+2026-10-23T10:12:17.5769963Z [32m- Expected[39m
+2026-10-23T10:12:17.5770193Z [31m+ Received[39m
+2026-10-23T10:12:17.5770308Z 
+2026-10-23T10:12:17.5770409Z [2m  Array [[22m
+2026-10-23T10:12:17.5770875Z [32m-   "paste:one",[39m
+2026-10-23T10:12:17.5771114Z [2m    "paste:two",[22m
+2026-10-23T10:12:17.5771334Z [2m  ][22m
+2026-10-23T10:12:17.5771433Z 
+2026-10-23T10:12:17.5771681Z [36m [2m❯[22m src/ui/transcript/send.test.ts:[2m95:20[22m[39m
+2026-10-23T10:12:17.5772650Z     [90m 93| [39m    [35mvoid[39m [34msubmitLocked[39m([34m2[39m[33m,[39m [32m'two'[39m)[33m;[39m
+2026-10-23T10:12:17.5773590Z     [90m 94| [39m    [35mawait[39m vi[33m.[39m[34madvanceTimersByTimeAsync[39m([34m0[39m)[33m;[39m
+2026-10-23T10:12:17.5774397Z     [90m 95| [39m    [34mexpect[39m(writes)[33m.[39m[34mtoEqual[39m([[32m'paste:one'[39m[33m,[39m [32m'paste:two'[39m])[33m;[39m
+2026-10-23T10:12:17.5774892Z     [90m   | [39m                   [31m^[39m
+2026-10-23T10:12:17.5775504Z     [90m 96| [39m    [35mawait[39m vi[33m.[39m[34madvanceTimersByTimeAsync[39m([34m100[39m)[33m;[39m
+2026-10-23T10:12:17.5776069Z     [90m 97| [39m  })[33m;[39m
+2026-10-23T10:12:17.5776225Z 
+2026-10-23T10:12:17.5776412Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯[22m[39m
+2026-10-23T10:12:17.5776620Z 
+2026-10-23T10:12:17.5776631Z 
+2026-10-23T10:12:17.5778779Z ##[error]AssertionError: expected 'held' to be 'sent' // Object.is equality
+
+Expected: "sent"
+Received: "held"
+
+ ❯ src/ui/transcript/send.test.ts:67:24
+
+
+2026-10-23T10:12:17.5780083Z 
+2026-10-23T10:12:17.5782371Z ##[error]AssertionError: expected [ 'paste:two' ] to deeply equal [ 'paste:one', 'paste:two' ]
+
+- Expected
++ Received
+
+  Array [
+-   "paste:one",
+    "paste:two",
+  ]
+
+ ❯ src/ui/transcript/send.test.ts:95:20
+
+
+2026-10-23T10:12:17.6225497Z ##[error]Process completed with exit code 1.
+2026-10-23T10:12:17.6337406Z Post job cleanup.
+2026-10-23T10:12:17.7035321Z [command]/usr/bin/git version
+2026-10-23T10:12:17.7100613Z git version 2.55.0
+2026-10-23T10:12:17.7129787Z Temporarily overriding HOME='/home/runner/work/_temp/fd69a084-5b3a-4b7f-8187-20e1f0fe2607' before making global git config changes
+2026-10-23T10:12:17.7130943Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-23T10:12:17.7134475Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/albedo/albedo
+2026-10-23T10:12:17.7167881Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-23T10:12:17.7203125Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-23T10:12:17.7439189Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-23T10:12:17.7462571Z http.https://github.com/.extraheader
+2026-10-23T10:12:17.7471657Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-23T10:12:17.7506072Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-23T10:12:17.7741156Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-23T10:12:17.7777652Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-23T10:12:17.8163800Z Cleaning up orphan processes
+2026-10-23T10:12:17.8519903Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
