@@ -25,6 +25,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 - **Changing a shared helper for one feature.** Chat tasks made `taskBase('')` return null. That also changed the main-checkout browse diff, from "against upstream" to "against HEAD", which nobody asked for. **Rule:**
   - Before changing a shared function, list every caller: `git grep`.
   - If another caller's behaviour changes, don't. Scope the change to the feature instead.
+- **One rule, fixed in one place.** The header offered Create PR for a branch with no commits of its own, and the tooltip said "24 commits" (#82). The cause: the local `master` was 24 commits behind `origin/master`. `taskBase` already measured against the base's upstream for exactly this reason, but `commitsOnBranch` counted against the local base. **Rule:** everything that counts or diffs a branch against its base resolves the base through `baseOrUpstream` (`src/git/worktree.ts`). When you fix a rule like this, `git grep` for the other places that apply it.
 - **Stale comments after a behaviour change.** A comment still said "wrap" after the behaviour became "stop at the ends". **Rule:** when behaviour changes, grep the comments and the PR text for the old words.
 
 ## Tests and verification
