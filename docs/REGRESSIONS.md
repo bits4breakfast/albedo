@@ -26,6 +26,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Before changing a shared function, list every caller: `git grep`.
   - If another caller's behaviour changes, don't. Scope the change to the feature instead.
 - **One rule, fixed in one place.** The header offered Create PR for a branch with no commits of its own, and the tooltip said "24 commits" (#82). The cause: the local `master` was 24 commits behind `origin/master`. `taskBase` already measured against the base's upstream for exactly this reason, but `commitsOnBranch` counted against the local base. **Rule:** everything that counts or diffs a branch against its base resolves the base through `baseOrUpstream` (`src/git/worktree.ts`). When you fix a rule like this, `git grep` for the other places that apply it.
+- **A one-file workaround hid the general case.** Opening `.claude/skills/x/SKILL.md` or `.github/workflows/ci.yml` in a worktree failed with "forbidden path", while the Files pane listed the folder (#93). On unix Tauri's fs scope matches with `require_literal_leading_dot: true` by default, so a `<dir>/**` grant never matches a path component that starts with a dot. #77 hit the same cause with `~/.albedo/.../.phpantom.toml` and fixed it with a literal scope entry for that one file, so nobody looked for the other dot-paths it broke. Turning the option off in `tauri.conf.json` was not enough either: the plugin applies it to capability scopes only, while `fs_scope().allow_directory` (the runtime grant) always keeps Tauri's default. **Rule:**
+  - When a scope or permission refuses one path, find the rule that refused it and list what else it refuses, before adding an exception.
+  - Read where a config option is applied before trusting that it applies: `allow_project_dir` grants through a runtime capability for this reason.
 - **Stale comments after a behaviour change.** A comment still said "wrap" after the behaviour became "stop at the ends". **Rule:** when behaviour changes, grep the comments and the PR text for the old words.
 
 ## Tests and verification
@@ -48,7 +51,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 
 - **An optional helper blocked a core action.** Removing a task failed with "forbidden path: ~/.albedo/phpantom/phpantom_lsp/.phpantom.toml (not a git failure)". Archive calls `stopPhpantom(worktree)`, which awaited the server's *start*; the start had failed (the config write was refused), so the stop rethrew that error and the archive aborted. The start failed because Tauri's fs scope `$HOME/.albedo/**` does not match dot-files on Unix (`requireLiteralLeadingDot`), so PHPantom had never started at all and navigation silently used git grep. **Rule:**
   - Cleanup of an optional component (language server, watcher, probe) never throws into the action it is part of: catch, log, carry on.
-  - A file whose name starts with a dot needs that dot spelled out in the fs scope.
+  - Dot-files are covered by the fs scope's globs only because `requireLiteralLeadingDot` is off (#93); see "Shared helpers and scope".
   - An optional feature that fails to start says so somewhere visible, instead of silently falling back for months.
 
 ## Data and contracts
