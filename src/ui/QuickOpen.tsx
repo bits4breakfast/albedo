@@ -16,6 +16,7 @@ import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useSt
 import type { OpenFileRequest } from '../types';
 import { loadCodeIndex, peekCodeIndex, type CodeIndex } from '../git/codeIndex';
 import { FileIcon } from './fileIcons';
+import { Highlighted } from './Highlighted';
 import { prepareIndex, search, type QuickOpenItem, type QuickOpenMode } from './quickOpenModel';
 import './quickopen.css';
 
@@ -55,32 +56,6 @@ const KIND_LABEL: Record<QuickOpenItem['kind'], string> = {
   method: 'Method',
   const: 'Const',
 };
-
-/** Split `text` into runs, marking the characters at `hits`. */
-function Highlighted({ text, hits }: { text: string; hits: number[] }) {
-  if (hits.length === 0) return <>{text}</>;
-  const out: React.ReactNode[] = [];
-  let at = 0;
-  let i = 0;
-  while (i < hits.length) {
-    const start = hits[i]!;
-    let end = start + 1;
-    while (i + 1 < hits.length && hits[i + 1] === end) {
-      i++;
-      end++;
-    }
-    i++;
-    if (start > at) out.push(text.slice(at, start));
-    out.push(
-      <mark className="qo-hit" key={start}>
-        {text.slice(start, end)}
-      </mark>,
-    );
-    at = end;
-  }
-  if (at < text.length) out.push(text.slice(at));
-  return <>{out}</>;
-}
 
 export default function QuickOpen({ mode, worktreePath, scopeLabel = null, currentFile, onMode, onClose, onOpen }: QuickOpenProps) {
   const open = mode !== null && worktreePath !== null;
@@ -282,14 +257,14 @@ export default function QuickOpen({ mode, worktreePath, scopeLabel = null, curre
               <span className="qo-kind">{KIND_LABEL[item.kind]}</span>
               <span className="qo-name">
                 <FileIcon path={item.file} className="qo-icon" />
-                <Highlighted text={item.name} hits={item.nameHits} />
+                <Highlighted text={item.name} hits={item.nameHits} className="qo-hit" />
               </span>
               <span className="qo-where">
                 <bdi>
                   {item.current ? (
                     'This File'
                   ) : (
-                    <Highlighted text={item.path} hits={item.pathHits} />
+                    <Highlighted text={item.path} hits={item.pathHits} className="qo-hit" />
                   )}
                   {item.line !== null && <span className="qo-line">:{item.line}</span>}
                 </bdi>

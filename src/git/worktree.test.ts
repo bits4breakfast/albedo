@@ -820,17 +820,22 @@ describe('listWorktrees / listBranches / uncommittedChanges', () => {
 
   it('lists local then remote branches and the current one', async () => {
     const calls = install(({ args }) => {
-      if (args[2] === 'refs/heads') return { code: 0, stdout: 'main\nfix-login\n', stderr: '' };
+      if (args[2] === 'refs/heads') return { code: 0, stdout: 'main 1700000000\nfix-login 1700000500\n', stderr: '' };
       if (args[2] === 'refs/remotes') {
         return { code: 0, stdout: 'origin/HEAD\norigin/main\norigin/next\n', stderr: '' };
       }
       if (args[0] === 'symbolic-ref') return { code: 0, stdout: 'main\n', stderr: '' };
       return undefined;
     });
-    const { current, all } = await listBranches('/repo');
+    const { current, all, recentLocals } = await listBranches('/repo');
     expect(current).toBe('main');
     expect(all).toEqual(['main', 'fix-login', 'origin/main', 'origin/next']);
-    expect(calls[0]?.args).toEqual(['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+    expect(recentLocals).toEqual(['fix-login', 'main']);
+    expect(calls[0]?.args).toEqual([
+      'for-each-ref',
+      '--format=%(refname:short) %(committerdate:unix)',
+      'refs/heads',
+    ]);
   });
 
   it('falls back to the short commit id on a detached HEAD', async () => {

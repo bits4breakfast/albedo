@@ -323,6 +323,82 @@
   color: var(--faint);
 }
 
+/* Branch picker (Base Branch, Branch to Check Out): a field, and a list under
+   it. Quick Open's idiom on the row-menu's surface -- --panel, the
+   load-bearing --border-strong edge (4.01 light / 3.90 dark on --panel),
+   --shadow-menu -- so no new ground. The highlighted row is --panel-raised
+   with an --accent edge; the pointer moves the highlight, so there is no
+   separate hover ground. Measured on --panel-raised, the worse of the two
+   row grounds (light / dark):
+       --text-strong 16.00 / 14.45   --accent 5.32 / 6.62   --muted 5.89 / 6.50
+   On --panel: --text 16.60 / 14.63, --muted 7.15 / 7.74, --accent 6.46 / 7.88.
+   No tints, no opacity. */
+.wt-branch-input:disabled { color: var(--faint); }   /* 6.09 / 6.36 on --panel-inset */
+
+.wt-branch-pop {
+  position: fixed;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-menu);
+  overflow: hidden;
+}
+
+.wt-branch-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.wt-branch-list:not(:empty) { padding: 4px 0; }
+
+.wt-branch-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 5px 10px 5px 8px;
+  font-size: var(--fs-md);
+  color: var(--text);
+  border-left: 2px solid transparent;
+  cursor: default;
+}
+.wt-branch-row[aria-selected='true'] {
+  color: var(--text-strong);
+  background: var(--panel-raised);
+  border-left-color: var(--accent);
+}
+
+.wt-branch-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Matched characters: weight carries it as much as colour does. */
+.wt-branch-hit {
+  background: none;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.wt-branch-note {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.wt-branch-foot {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.wt-branch-list:not(:empty) + .wt-branch-foot { border-top: 1px solid var(--border); }
+
 /* Segmented choice (New / Existing, New Worktree / Main Checkout). Drawn as
    the shell's .seg in styles.css: one edge, the track's; the selected segment
    lifted by --seg-on and the card shadow, never a ring. */

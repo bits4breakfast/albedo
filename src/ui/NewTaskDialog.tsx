@@ -53,6 +53,8 @@ import { readLastProjectId, writeLastProjectId } from './projectPrefs';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { setTaskModel } from './taskModel';
 import { nameFollowUp, type NewTaskPrefill } from './followUp';
+import { BranchPicker } from './BranchPicker';
+import { orderBranches } from './branchPickerModel';
 import './worktree.css';
 
 export interface NewTaskDialogProps {
@@ -85,7 +87,7 @@ function messageOf(e: unknown): string {
 type Source = 'new' | 'existing';
 type Place = 'worktree' | 'main';
 
-const NO_BRANCHES: BranchList = { current: '', all: [], locals: [], remoteRefs: [], remotes: [] };
+const NO_BRANCHES: BranchList = { current: '', all: [], locals: [], recentLocals: [], remoteRefs: [], remotes: [] };
 
 /** A two-way choice. On is carried by ground, edge and weight, not colour alone. */
 function Segmented<T extends string>({
@@ -433,13 +435,30 @@ export function NewTaskDialog({
     ],
     [branchList],
   );
+  // Both pickers list in one order: the project's default, the checked-out
+  // branch, main, recent locals, then remotes. The first two say why.
+  const projectDefault = project?.defaultBaseBranch ?? null;
+  const baseChoices = useMemo(
+    () => orderBranches(branches, branchList, projectDefault),
+    [branches, branchList, projectDefault],
+  );
+  const checkoutChoices = useMemo(
+    () => orderBranches(pickable, branchList, projectDefault),
+    [pickable, branchList, projectDefault],
+  );
+  const branchNotes = useMemo(() => {
+    const notes = new Map<string, string>();
+    if (branchList.current) notes.set(branchList.current, 'Checked out');
+    if (projectDefault) notes.set(projectDefault, 'Project default');
+    return notes;
+  }, [branchList, projectDefault]);
 
   const branch = source === 'new' ? (naming?.branch ?? '') : (checkout?.branch ?? '');
 
   /*
    * An existing branch's base is worked out, not asked for: what its pull
    * request merges into, and failing that the usual base it is fewest commits
-   * ahead of. The select stays editable, and a hand-picked base wins.
+   * ahead of. The field stays editable, and a hand-picked base wins.
    */
   const checkoutBranch = checkout?.branch ?? null;
   useEffect(() => {
@@ -449,7 +468,7 @@ export function NewTaskDialog({
     baseTouched.current = false;
     let live = true;
     setBaseBusy(true);
-    // A name GitHub or git gives, as the select lists it: local, else remote.
+    // A name GitHub or git gives, as the picker lists it: local, else remote.
     const listed = (b: string) =>
       branches.includes(b)
         ? b
@@ -866,27 +885,22 @@ export function NewTaskDialog({
                       Branch to Check Out
                     </label>
                     <div className="wt-row">
-                      <input
+                      <BranchPicker
                         id="wt-existing"
-                        className="wt-input"
-                        list="wt-existing-list"
+                        freeText
                         value={existingRef}
+                        branches={checkoutChoices}
+                        notes={branchNotes}
                         placeholder={fetching ? 'Fetching…' : 'origin/their-branch'}
-                        spellCheck={false}
                         disabled={busy}
-                        onChange={(e) => {
-                          setExistingRef(e.target.value.trim());
+                        onChange={(b) => {
+                          setExistingRef(b);
                           setError(null);
                         }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && canSubmit) void submit(false);
+                        onEnter={() => {
+                          if (canSubmit) void submit(false);
                         }}
                       />
-                      <datalist id="wt-existing-list">
-                        {pickable.map((b) => (
-                          <option key={b} value={b} />
-                        ))}
-                      </datalist>
                       <button
                         type="button"
                         className="btn"
@@ -951,24 +965,19 @@ export function NewTaskDialog({
                   <label className="wt-label" htmlFor="wt-base">
                     Base Branch
                   </label>
-                  <select
+                  <BranchPicker
                     id="wt-base"
-                    className="wt-select"
                     value={baseBranch}
+                    branches={baseChoices}
+                    notes={branchNotes}
+                    placeholder="—"
                     disabled={busy || branchesBusy || branches.length === 0}
-                    onChange={(e) => {
+                    onChange={(b) => {
                       baseTouched.current = true;
-                      setBaseBranch(e.target.value);
+                      setBaseBranch(b);
                       setError(null);
                     }}
-                  >
-                    {branches.length === 0 && <option value="">—</option>}
-                    {branches.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   {branchesBusy && <div className="wt-hint">Reading branches…</div>}
                   {source === 'existing' ? (
                     <div className="wt-hint">

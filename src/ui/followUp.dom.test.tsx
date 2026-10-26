@@ -38,6 +38,7 @@ vi.mock('../git/worktree', async (orig) => ({
     current: 'ACME-2398-fix',
     all: ['main', 'ACME-2398-fix'],
     locals: ['main', 'ACME-2398-fix'],
+    recentLocals: ['ACME-2398-fix', 'main'],
     remoteRefs: [],
     remotes: [],
   })),

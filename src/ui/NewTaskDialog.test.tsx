@@ -7,7 +7,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/path', () => ({ homeDir: async () => '/Users/m' }));
 vi.mock('./ProjectsDialog', () => ({ default: () => null }));
@@ -43,6 +43,7 @@ vi.mock('../git/worktree', async (orig) => ({
     current: 'main',
     all: ['main', 'develop', 'origin/main', 'origin/anna/fix-tz'],
     locals: ['main', 'develop'],
+    recentLocals: ['develop', 'main'],
     remoteRefs: ['origin/main', 'origin/anna/fix-tz'],
     remotes: ['origin'],
   })),
@@ -268,5 +269,153 @@ describe('NewTaskDialog chat', () => {
     await screen.findByText('The task could not be saved');
     expect(screen.getByText(/Nothing was changed in the main checkout/)).toBeTruthy();
     expect(onCreated).not.toHaveBeenCalled();
+  });
+});
+
+describe('NewTaskDialog branch picker', () => {
+  function created() {
+    vi.mocked(db.createTask).mockImplementationOnce(async (t) => ({ ...t, id: 9 }) as never);
+  }
+  /** The Base Branch field once the branches are read. */
+  async function baseField() {
+    const base = screen.getByLabelText('Base Branch') as HTMLInputElement;
+    await waitFor(() => expect(base.value).toBe('main'));
+    expect(base.disabled).toBe(false);
+    return base;
+  }
+  const options = () => within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent);
+
+  it('filters as you type, and Enter picks the top match as the base', async () => {
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Fix login' } });
+    const base = await baseField();
+    act(() => base.focus());
+    expect(base.getAttribute('aria-expanded')).toBe('true');
+    // The project's default (also checked out), then locals by date, then remotes.
+    expect(options()).toEqual(['mainProject default', 'develop', 'origin/main', 'origin/anna/fix-tz']);
+
+    fireEvent.change(base, { target: { value: 'dev' } });
+    expect(options()).toEqual(['develop']);
+    const list = screen.getByRole('listbox');
+    expect(within(list).getByText('dev').tagName).toBe('MARK');
+    // The top match is highlighted at once: no ↓ needed.
+    const row = screen.getByRole('option', { name: 'develop' });
+    expect(row.getAttribute('aria-selected')).toBe('true');
+    expect(base.getAttribute('aria-activedescendant')).toBe(row.id);
+    fireEvent.keyDown(base, { key: 'Enter' });
+
+    expect(base.value).toBe('develop');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(base.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'Create Worktree' }));
+    await waitFor(() => expect(wt.createWorktree).toHaveBeenCalled());
+    expect(vi.mocked(wt.createWorktree).mock.calls[0]?.[0]).toMatchObject({ baseBranch: 'develop' });
+  });
+
+  it('closes the list on the first Esc, restoring the base, and the dialog on the second', async () => {
+    const onClose = vi.fn();
+    render(<NewTaskDialog open onClose={onClose} onCreated={() => {}} />);
+    const base = await baseField();
+    act(() => base.focus());
+    fireEvent.change(base, { target: { value: 'dev' } });
+    fireEvent.keyDown(base, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(base.value).toBe('main');
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(base, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps typed text on blur only when it names a listed branch', async () => {
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    const base = await baseField();
+    act(() => base.focus());
+    fireEvent.change(base, { target: { value: 'nope' } });
+    expect(screen.getByText('No branch matches “nope”.')).toBeTruthy();
+    act(() => base.blur());
+    expect(base.value).toBe('main');
+    act(() => base.focus());
+    fireEvent.change(base, { target: { value: 'origin/main' } });
+    act(() => base.blur());
+    expect(base.value).toBe('origin/main');
+  });
+
+  it('does not submit on Enter, or ⌘↩, while the list is open', async () => {
+    created();
+    const onCreated = vi.fn();
+    render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
+    fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    const field = screen.getByLabelText('Branch to Check Out') as HTMLInputElement;
+    act(() => field.focus());
+    fireEvent.change(field, { target: { value: 'origin/anna/fix-tz' } });
+    const create = screen.getByRole('button', { name: 'Create Worktree' });
+    await waitFor(() => expect(create).not.toHaveProperty('disabled', true));
+
+    // Each closes the list on the branch typed, and creates nothing.
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    fireEvent.keyDown(field, { key: 'ArrowDown' });
+    expect(screen.getByRole('option', { name: 'origin/anna/fix-tz' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(field.value).toBe('origin/anna/fix-tz');
+    expect(wt.createWorktree).not.toHaveBeenCalled();
+
+    // Closed, Enter is the field's submit again, as before.
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(vi.mocked(wt.createWorktree).mock.calls[0]?.[0]).toMatchObject({ branch: 'anna/fix-tz', track: true });
+  });
+
+  it('takes a branch to check out that is not listed', async () => {
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    const field = screen.getByLabelText('Branch to Check Out') as HTMLInputElement;
+    act(() => field.focus());
+    expect(options()).toEqual(['mainProject default', 'develop', 'origin/anna/fix-tz']);
+    fireEvent.change(field, { target: { value: 'origin/not-fetched' } });
+    expect(screen.getByText('No listed branch matches; Enter keeps “origin/not-fetched”.')).toBeTruthy();
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    act(() => field.blur());
+    expect(field.value).toBe('origin/not-fetched');
+    expect(screen.getByText('Not a branch git knows: pick one from the list, or fetch.')).toBeTruthy();
+  });
+
+  it('is disabled while the branches are read', async () => {
+    vi.mocked(wt.listBranches).mockImplementationOnce(() => new Promise(() => {}));
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    await screen.findByText('Reading branches…');
+    const base = screen.getByLabelText('Base Branch') as HTMLInputElement;
+    expect(base.disabled).toBe(true);
+    act(() => base.focus());
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+});
+
+describe('NewTaskDialog branch picker highlight', () => {
+  it('moves with ↓ from the top match, and highlights the chosen branch with nothing typed', async () => {
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    const base = screen.getByLabelText('Base Branch') as HTMLInputElement;
+    await waitFor(() => expect(base.value).toBe('main'));
+    act(() => base.focus());
+    expect(screen.getByRole('option', { name: /^main/ }).getAttribute('aria-selected')).toBe('true');
+    // `main` and `origin/main` both match; ↓ moves off the top one.
+    fireEvent.change(base, { target: { value: 'mai' } });
+    fireEvent.keyDown(base, { key: 'ArrowDown' });
+    fireEvent.keyDown(base, { key: 'Enter' });
+    expect(base.value).toBe('origin/main');
+  });
+
+  it('does nothing on Enter in Base Branch when nothing matches', async () => {
+    render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
+    const base = screen.getByLabelText('Base Branch') as HTMLInputElement;
+    await waitFor(() => expect(base.value).toBe('main'));
+    act(() => base.focus());
+    fireEvent.change(base, { target: { value: 'nope' } });
+    fireEvent.keyDown(base, { key: 'Enter' });
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(base.value).toBe('nope');
+    expect(wt.createWorktree).not.toHaveBeenCalled();
   });
 });
