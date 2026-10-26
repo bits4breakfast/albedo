@@ -3,7 +3,7 @@ import type { Project, Task, TaskStatus } from '../types';
 import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged, compactHistory } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
-import { pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt } from '../capture/status';
+import { keepUserStatus, pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt, turnEndedAt } from '../capture/status';
 import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
@@ -49,11 +49,14 @@ const EXPIRY_SLACK_MS = 50;
 /**
  * What a task's status alone does not say, kept beside it rather than on the
  * Task row (src/types.ts is a shared contract): how many of its subagents are
- * still working, and whether its last turn ended on a question for the user.
+ * still working, whether its last turn ended on a question for the user, and
+ * when the session last handed control back (Ready to Review's "finished").
  */
 export interface TaskSignals {
   agents: number;
   question: boolean;
+  /** `turnEndedAt` over the task's rows; null when no turn has ended. */
+  finishedAt: number | null;
 }
 
 /**
@@ -86,6 +89,10 @@ export interface UseTasksResult {
   /** Insert or replace a task locally (e.g. after NewTaskDialog creates one). */
   upsertTask: (task: Task) => void;
   archive: (id: number) => Promise<void>;
+  /** Mark as Done, or with false, Mark as Not Done. A task at rest only. */
+  setDone: (id: number, done: boolean) => Promise<void>;
+  /** The task was on screen at `at` (epoch ms); see `Task.seenAt`. */
+  markSeen: (id: number, at: number) => void;
 }
 
 function message(err: unknown): string {
@@ -362,6 +369,29 @@ export function useTasks(): UseTasksResult {
     [applyTask, persist, refresh],
   );
 
+  const setDone = useCallback(
+    async (id: number, done: boolean) => {
+      const task = tasksRef.current.find((t) => t.id === id);
+      const from = done ? 'idle' : 'done';
+      // Only between turns: anything else would be replaced by the next
+      // derivation (keepUserStatus) the moment it landed.
+      if (!task || task.status !== from) return;
+      const status = done ? 'done' : 'idle';
+      applyTask(id, { status });
+      const err = await persist(id, { status });
+      if (err !== null && aliveRef.current) setLoadError(`Could not update task: ${message(err)}`);
+    },
+    [applyTask, persist],
+  );
+
+  const markSeen = useCallback(
+    (id: number, at: number) => {
+      applyTask(id, { seenAt: at });
+      void persist(id, { seenAt: at });
+    },
+    [applyTask, persist],
+  );
+
   const clearExpiry = useCallback((taskId: number) => {
     const t = expiryRef.current.get(taskId);
     if (t !== undefined) clearTimeout(t);
@@ -386,6 +416,7 @@ export function useTasks(): UseTasksResult {
       let newestTs = 0;
       let agents = 0;
       let asked: string | null = null;
+      let finishedAt: number | null = null;
       try {
         // Parent rows only: a subagent's tool call that is still running has no
         // result yet, and would read as this task waiting on a permission prompt.
@@ -395,6 +426,7 @@ export function useTasks(): UseTasksResult {
         status = deriveStatus(messages, now, opts);
         expiresAt = statusExpiresAt(messages, now, opts);
         for (const m of messages) if (m.ts > newestTs) newestTs = m.ts;
+        finishedAt = turnEndedAt(messages);
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
         if (pendingPrompt(taskId) !== null || isTrustWaiting(taskId)) status = 'blocked';
@@ -421,6 +453,8 @@ export function useTasks(): UseTasksResult {
       clearExpiry(taskId);
       const prior = tasksRef.current.find((t) => t.id === taskId);
       if (!prior || prior.status === 'archived') return;
+      // A task marked done stays done while its session stays at rest.
+      status = keepUserStatus(prior.status, status);
 
       const question = asked !== null;
       // The question as last seen, per task. Absent until the first derivation,
@@ -431,11 +465,14 @@ export function useTasks(): UseTasksResult {
 
       setSignals((prev) => {
         const old = prev.get(taskId);
-        const none = agents === 0 && !question;
-        if (none ? old === undefined : old?.agents === agents && old.question === question) return prev;
+        const none = agents === 0 && !question && finishedAt === null;
+        const same = none
+          ? old === undefined
+          : old?.agents === agents && old.question === question && old.finishedAt === finishedAt;
+        if (same) return prev;
         const next = new Map(prev);
         if (none) next.delete(taskId);
-        else next.set(taskId, { agents, question });
+        else next.set(taskId, { agents, question, finishedAt });
         return next;
       });
 
@@ -682,8 +719,23 @@ export function useTasks(): UseTasksResult {
       refresh,
       upsertTask,
       archive,
+      setDone,
+      markSeen,
     }),
-    [tasks, signals, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive],
+    [
+      tasks,
+      signals,
+      loading,
+      loadError,
+      captureError,
+      projects,
+      contextBySession,
+      refresh,
+      upsertTask,
+      archive,
+      setDone,
+      markSeen,
+    ],
   );
 }
 

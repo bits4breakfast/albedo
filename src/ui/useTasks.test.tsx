@@ -61,7 +61,7 @@ function task(over: Partial<Task> = {}): Task {
   return {
     id: 1, title: 't', projectId: null, repoPath: '/r', baseBranch: 'main', branch: 'b',
     worktreePath: '/wt/1', sessionId: 's1', ownsWorktree: true, createdBranch: true, kind: 'work', status: 'idle',
-    createdAt: 0, lastActivityAt: null, ...over,
+    createdAt: 0, lastActivityAt: null, seenAt: null, ...over,
   };
 }
 
@@ -293,5 +293,73 @@ describe('composer drafts follow the task list', () => {
     });
     expect(getDraft(1)?.text).toBe('unsent');
     expect(getDraft(2)).toBeNull();
+  });
+});
+
+/** An assistant row whose line ended the turn. */
+function finished(sessionId: string, ts: number): Message {
+  return {
+    id: ts, taskId: 1, sessionId, seq: 1, role: 'assistant', toolName: null, targetPath: null,
+    body: 'done', rawJson: JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn' } }),
+    agentId: null, ts,
+  };
+}
+
+describe('Done, and when a turn last ended', () => {
+  it('keeps a task marked done while its session stays at rest, with no write', async () => {
+    h.rows = [task({ status: 'done' })];
+    h.messages.set('s1', [finished('s1', T0 - 60_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    expect(result.current.tasks[0]?.status).toBe('done');
+    expect(db.updateTask).not.toHaveBeenCalled();
+  });
+
+  it('lets work replace done: a task working again is not done', async () => {
+    h.rows = [task({ status: 'done' })];
+    h.messages.set('s1', [prompt('s1', T0 - 1_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    expect(result.current.tasks[0]?.status).toBe('running');
+    expect(h.rows[0]?.status).toBe('running');
+  });
+
+  it('marks a task at rest done and not done, and stores it', async () => {
+    h.rows = [task()];
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    await act(async () => {
+      await result.current.setDone(1, true);
+    });
+    expect(result.current.tasks[0]?.status).toBe('done');
+    expect(h.rows[0]?.status).toBe('done');
+    await act(async () => {
+      await result.current.setDone(1, false);
+    });
+    expect(result.current.tasks[0]?.status).toBe('idle');
+    expect(h.rows[0]?.status).toBe('idle');
+  });
+
+  it('does not mark a running task done: the next derivation would undo it', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 1_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    await act(async () => {
+      await result.current.setDone(1, true);
+    });
+    expect(result.current.tasks[0]?.status).toBe('running');
+  });
+
+  it('reports when the last turn ended, and stores what was seen', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), finished('s1', T0 - 60_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    expect(result.current.signals.get(1)?.finishedAt).toBe(T0 - 60_000);
+    act(() => result.current.markSeen(1, T0));
+    await tick();
+    expect(result.current.tasks[0]?.seenAt).toBe(T0);
+    expect(h.rows[0]?.seenAt).toBe(T0);
   });
 });

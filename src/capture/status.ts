@@ -29,6 +29,7 @@
  * window is left as the fallback for lines that do not carry the field.
  *
  * 'done' and 'archived' are lifecycle states owned by the user, never derived.
+ * {@link keepUserStatus} says when a stored 'done' outlives a derivation.
  */
 
 import type { Message, TaskStatus } from '../types';
@@ -124,6 +125,41 @@ export function deriveStatus(
   if (last.role === 'assistant') return 'idle';
 
   return 'idle';
+}
+
+/**
+ * The status a task holds, given the one it holds now and the one just derived.
+ *
+ * 'done' is the user's (Mark as Done) and outlives an `idle` derivation, which
+ * is all a finished session ever derives again. Work replaces it -- `running`,
+ * or `blocked` on a prompt -- because a task working again is not done, and a
+ * prompt must reach Needs You whatever the task was marked.
+ */
+export function keepUserStatus(held: TaskStatus, derived: TaskStatus): TaskStatus {
+  return held === 'done' && derived === 'idle' ? 'done' : derived;
+}
+
+/**
+ * Whether the session is at rest: `idle`, or idle and marked done. What the
+ * controls that only act between turns (Clear, the model picker, a direct
+ * squash prompt) ask, so marking a task done never takes them away.
+ */
+export function atRest(status: TaskStatus): boolean {
+  return status === 'idle' || status === 'done';
+}
+
+/**
+ * When the session last handed control back: the timestamp of the newest
+ * assistant row whose line ended the turn (rule 2's test), or null when no
+ * turn in these rows has ended. Ready to Review compares it with the moment
+ * the task was last open (`Task.seenAt`).
+ */
+export function turnEndedAt(messages: StatusInput[]): number | null {
+  let at: number | null = null;
+  for (const m of messages) {
+    if ((at === null || m.ts > at) && handedControlBack(m)) at = m.ts;
+  }
+  return at;
 }
 
 /**

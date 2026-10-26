@@ -129,10 +129,13 @@ Albedo.
 2. **Title bar actions.** **N Waiting** jumps to the next task that needs you.
    **History** opens past sessions. **⋯** holds Projects, Worktrees, the theme
    (System, Light or Dark) and Keyboard Shortcuts.
-3. **Task list.** Tasks grouped as **Needs You**, **Running** and **Idle**,
-   with the time since their last activity. **⌘1–9** jumps to a task and
-   **⌘[** / **⌘]** steps through them. Each row's menu copies the worktree
-   path or session ID, moves, archives or deletes the task.
+3. **Task list.** Tasks grouped as **Needs You**, **Running**, **Ready to
+   Review** (a finished turn you have not opened, with commits, changes or an
+   open PR on its branch), **Idle** and **Done** (marked done, or its PR
+   merged), with the time since their last activity. **⌘1–9** jumps to a task
+   and **⌘[** / **⌘]** steps through them. Each row's menu marks the task done
+   or not done, copies the worktree path or session ID, moves, archives or
+   deletes the task.
 4. **Task header.** Project, task title, the task's own menu (**⋯**), its
    branch, and the next step for the branch: Push, Create PR, or the open
    pull request.

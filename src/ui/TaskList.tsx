@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
-import type { Project, Task, TaskStatus } from '../types';
-import StatusDot, { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
+import type { Project, Task } from '../types';
+import { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import { parseIssueKey } from '../lib/issueKey';
 import EmptyState from './EmptyState';
 import MoreGlyph from './MoreGlyph';
@@ -13,6 +13,19 @@ import { useShortcuts } from './shortcuts';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { useBranchSync } from '../git/branchSync';
+import { getReviewWork, useReviewWorkProbes, useReviewWorkVersion } from '../git/reviewWork';
+import {
+  canMarkDone,
+  canMarkNotDone,
+  compareInGroup,
+  GROUP_GLYPH,
+  GROUP_ORDER,
+  GROUP_TITLE,
+  groupOf,
+  wantsWorkProbe,
+  type GroupFacts,
+  type GroupKey,
+} from './taskGroups';
 import { ChatIcon } from './icons';
 import { useDraftTaskIds } from './transcript/drafts';
 import './tasklist.css';
@@ -48,6 +61,11 @@ export interface TaskListProps {
    * polled, so merged or not is looked up when the dialog opens).
    */
   onFollowUp?: (task: Task) => void;
+  /**
+   * Mark as Done, or with false, Mark as Not Done. Offered in the menu only
+   * where it can hold (`canMarkDone` / `canMarkNotDone`).
+   */
+  onSetDone?: (task: Task, done: boolean) => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
   /** Running agents and a pending question, per task (useTasks). */
   signals?: Map<number, TaskSignals>;
@@ -96,36 +114,12 @@ interface RowMenu {
   y: number;
 }
 
-/**
+/*
  * Status is the PRIMARY axis inside the list. Project scoping happens a level
  * up, in the tab bar, precisely so this grouping stays flat: "which session is
- * waiting on me" must never be more than one glance deep.
+ * waiting on me" must never be more than one glance deep. The groups and their
+ * order are `taskGroups.ts`.
  */
-type GroupKey = 'blocked' | 'active' | 'quiet' | 'archived';
-
-const GROUP_ORDER: GroupKey[] = ['blocked', 'active', 'quiet', 'archived'];
-
-/** The glyph a group label leads with: the same shape its rows carry. */
-const GROUP_GLYPH: Record<GroupKey, TaskStatus> = {
-  blocked: 'blocked',
-  active: 'running',
-  quiet: 'idle',
-  archived: 'archived',
-};
-
-const GROUP_TITLE: Record<GroupKey, string> = {
-  blocked: 'Needs You',
-  active: 'Running',
-  quiet: 'Idle',
-  archived: 'Archived',
-};
-
-function groupOf(status: TaskStatus): GroupKey {
-  if (status === 'blocked') return 'blocked';
-  if (status === 'running') return 'active';
-  if (status === 'archived') return 'archived';
-  return 'quiet';
-}
 
 /** Compact, glanceable age. "now", 45s, 12m, 3h, 6d. */
 export function relativeTime(ts: number | null, now: number): string {
@@ -161,6 +155,7 @@ export default function TaskList({
   onArchive,
   onDelete,
   onFollowUp,
+  onSetDone,
   contextBySession,
   signals,
   onManageProjects,
@@ -184,7 +179,8 @@ export default function TaskList({
   // would record whatever the main checkout is on as the chat's branch.
   const branchTasks = useMemo(() => tasks.filter((t) => t.kind !== 'chat'), [tasks]);
   usePrPolling(branchTasks);
-  usePrStatusVersion();
+  const prVersion = usePrStatusVersion();
+  const workVersion = useReviewWorkVersion();
   // The stored branch goes stale when a checkout is switched under a task, and
   // the PR lookup above keys on it. A change reloads the tasks, which re-arms it.
   useBranchSync(branchTasks);
@@ -234,17 +230,44 @@ export default function TaskList({
    * OUT into one triage group pinned above every project, carrying their
    * project name on the row; the project groups hold everything else.
    */
+  const facts = useMemo(() => {
+    const byId = new Map<number, GroupFacts>();
+    for (const task of tasks) {
+      const finishedAt = signals?.get(task.id)?.finishedAt ?? null;
+      byId.set(task.id, {
+        finishedAt,
+        pr: task.kind === 'chat' ? null : getPrStatus(task.id),
+        work: getReviewWork(task.id, finishedAt),
+      });
+    }
+    return byId;
+    // The versions stand for the caches read through getPrStatus/getReviewWork.
+  }, [tasks, signals, prVersion, workVersion]);
+
+  // Whether a finish left work on the branch is asked once per unseen finish.
+  const probes = useMemo(
+    () =>
+      tasks.flatMap((task) => {
+        const f = facts.get(task.id);
+        return f && f.finishedAt !== null && wantsWorkProbe(task, f) ? [{ task, finishedAt: f.finishedAt }] : [];
+      }),
+    [tasks, facts],
+  );
+  useReviewWorkProbes(probes);
+
   const sections = useMemo(() => {
+    const none: GroupFacts = { finishedAt: null, pr: undefined, work: undefined };
+    const factsOf = (t: Task) => facts.get(t.id) ?? none;
     const buckets = new Map<GroupKey, Task[]>();
     for (const key of GROUP_ORDER) buckets.set(key, []);
-    for (const task of tasks) buckets.get(groupOf(task.status))?.push(task);
-    for (const list of buckets.values()) {
-      list.sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt));
+    for (const task of tasks) buckets.get(groupOf(task, factsOf(task)))?.push(task);
+    for (const [key, list] of buckets) {
+      list.sort((a, b) => compareInGroup(key, a, factsOf(a), b, factsOf(b)));
     }
     return GROUP_ORDER.map((key) => ({ key, tasks: buckets.get(key) ?? [] })).filter(
       (g) => g.tasks.length > 0,
     );
-  }, [tasks]);
+  }, [tasks, facts]);
 
   /** Render order — the order arrow keys and ⌘1..9 walk. */
   const ordered = useMemo(() => sections.flatMap((g) => g.tasks), [sections]);
@@ -423,8 +446,17 @@ export default function TaskList({
                      hairline draws, in words, now that no panel shows it. */
                   title={`${wrapForTooltip(task.title)}\n${task.kind === 'chat' ? CHAT_ROW_TITLE : task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
                 >
+                  {/* The group's glyph, not the bare status: a row lifted into
+                      Ready to Review or Done by something other than its
+                      status wears the shape of the group it sits in. */}
                   <span className="task-dot-cell">
-                    <StatusDot status={task.status} />
+                    <span
+                      className="status-dot"
+                      data-status={GROUP_GLYPH[group.key]}
+                      role="img"
+                      aria-label={GROUP_TITLE[group.key]}
+                      title={GROUP_TITLE[group.key]}
+                    />
                   </span>
                   {/* The key IS the task's identity to the user, so it reads
                       as its own chip down the left edge instead of being the
@@ -541,6 +573,33 @@ export default function TaskList({
           >
             Copy Worktree Path
           </button>
+          {onSetDone && canMarkDone(menu.task, getPrStatus(menu.task.id)) && (
+            <button
+              className="row-menu-item"
+              role="menuitem"
+              onClick={() => {
+                const task = menu.task;
+                setMenu(null);
+                onSetDone(task, true);
+              }}
+            >
+              Mark as Done
+              <span className="row-menu-hint">worktree and session kept</span>
+            </button>
+          )}
+          {onSetDone && canMarkNotDone(menu.task, getPrStatus(menu.task.id)) && (
+            <button
+              className="row-menu-item"
+              role="menuitem"
+              onClick={() => {
+                const task = menu.task;
+                setMenu(null);
+                onSetDone(task, false);
+              }}
+            >
+              Mark as Not Done
+            </button>
+          )}
           {onFollowUp && canFollowUp(menu.task, getPrStatus(menu.task.id)) && (
             <button
               className="row-menu-item"

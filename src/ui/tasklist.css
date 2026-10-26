@@ -46,7 +46,8 @@
 
 .tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 8px 8px; }
 
-/* A Title Case label over a status glyph: "Needs You 1", "Running 2", "Idle 3". */
+/* A Title Case label over a status glyph: "Needs You 1", "Running 2",
+   "Ready to Review 1", "Idle 3", "Done 4". */
 .group-label > .status-dot { margin: 0 3.5px; }
 .group-label {
   display: flex;
@@ -61,6 +62,9 @@
 }
 
 .group-label[data-tone='blocked'] { color: var(--status-blocked); }
+/* The other group with something for you. On --panel-chrome: 6.53 light,
+   9.55 dark. Done keeps --faint: it is history. */
+.group-label[data-tone='review'] { color: var(--status-done); }
 
 .group-count { font-variant-numeric: tabular-nums; }
 

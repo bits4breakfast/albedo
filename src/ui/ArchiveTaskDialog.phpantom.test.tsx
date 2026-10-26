@@ -46,7 +46,7 @@ afterEach(() => {
 const task: Task = {
   id: 9, title: 'Fix the importer', projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: 'fix-importer',
   worktreePath: '/wt/fix-importer', sessionId: 's', ownsWorktree: true, createdBranch: true, kind: 'work',
-  status: 'idle', createdAt: 1, lastActivityAt: 1,
+  status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null,
 };
 
 describe('ArchiveTaskDialog after a failed PHPantom start', () => {

@@ -30,7 +30,7 @@ afterEach(() => {
 
 const base = {
   projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false, baseBranch: 'main',
-  status: 'idle', createdAt: 1, lastActivityAt: 1, ownsWorktree: true, kind: 'work',
+  status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, ownsWorktree: true, kind: 'work',
 } as const;
 const a: Task = { ...base, id: 1, title: 'Fix login', branch: 'fix-login', worktreePath: '/w/1' };
 const b: Task = { ...base, id: 2, title: 'Add search', branch: 'add-search', worktreePath: '/w/2' };

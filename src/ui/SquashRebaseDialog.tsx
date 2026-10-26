@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../types';
+import { atRest } from '../capture/status';
 import type { BranchCommit } from '../git/worktree';
 import { hasLivePty, onPtyPresenceChange } from './Terminal';
 import { sendPrompt } from './sendPrompt';
@@ -60,7 +61,7 @@ export default function SquashRebaseDialog({ task, commits, uncommitted, onClose
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const direct = live && task.status === 'idle';
+  const direct = live && atRest(task.status);
   const dirty = uncommitted.length > 0;
   const n = commits.length;
 

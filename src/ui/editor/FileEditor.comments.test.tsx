@@ -78,7 +78,7 @@ const { default: FileEditor } = await import('./FileEditor');
 const task: Task = {
   id: 4, title: 't', projectId: 1, repoPath: '/repo', baseBranch: 'main', branch: 'b',
   worktreePath: '/wt', sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
-  status: 'idle', createdAt: 0, lastActivityAt: null,
+  status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null,
 };
 
 afterEach(() => {
