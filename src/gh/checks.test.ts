@@ -23,7 +23,7 @@ import {
 import prChecks from './fixtures/pr-checks.json?raw';
 import runFailed from './fixtures/run-jobs-failed.json?raw';
 import runInProgress from './fixtures/run-jobs-in-progress.json?raw';
-import jobLog from './fixtures/job-failed.log?raw';
+import jobLog from './fixtures/job-failed.txt?raw';
 import annotations from './fixtures/annotations.json?raw';
 
 const FAILED_JOB = '120359352635';
