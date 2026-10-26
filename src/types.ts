@@ -125,9 +125,16 @@ export interface Task {
   status: TaskStatus;
   createdAt: number;
   lastActivityAt: number | null;
+  /**
+   * When the user last had the task open (epoch ms, migration v9). A turn that
+   * ended after it is a finish they have not seen, which is what lifts a task
+   * with work on it into Ready to Review. Null for a task never opened; every
+   * task that existed before v9 counts as seen at the moment it applied.
+   */
+  seenAt: number | null;
 }
 
-export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt'>;
+export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt'>;
 
 // ---------------------------------------------------------------------------
 // Messages

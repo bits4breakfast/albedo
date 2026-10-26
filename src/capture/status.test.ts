@@ -9,10 +9,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   asksAQuestion,
+  atRest,
   deriveStatus,
   endsOnQuestion,
+  keepUserStatus,
   RUNNING_WINDOW_MS,
   statusExpiresAt,
+  turnEndedAt,
   UNANSWERED_RUNNING_WINDOW_MS,
 } from './status';
 import { parseTranscript } from './adapter';
@@ -574,5 +577,60 @@ describe('endsOnQuestion — a turn handed back with a question for you', () => 
     expect(asksAQuestion('> why?\nFixed.')).toBe(false);
     expect(asksAQuestion('**Want me to open the PR?**')).toBe(true);
     expect(asksAQuestion('All done.')).toBe(false);
+  });
+});
+
+describe('turnEndedAt — when the session last handed control back', () => {
+  it('is the newest assistant row whose line ended the turn', () => {
+    reset();
+    const first = row('assistant', { ageMs: 60_000 });
+    const later = row('assistant', { ageMs: 20_000, stopReason: 'stop_sequence' });
+    expect(turnEndedAt([later, row('user', { ageMs: 40_000 }), first])).toBe(NOW - 20_000);
+  });
+
+  it('skips lines that did not end the turn: a tool call, no stop_reason, a prompt', () => {
+    reset();
+    const ended = row('assistant', { ageMs: 60_000 });
+    const rows = [
+      ended,
+      row('user', { ageMs: 50_000 }),
+      row('assistant', { ageMs: 40_000, stopReason: 'tool_use' }),
+      row('tool_use', { ageMs: 39_000 }),
+      row('assistant', { ageMs: 30_000, stopReason: null }),
+    ];
+    expect(turnEndedAt(rows)).toBe(NOW - 60_000);
+  });
+
+  it('is null when no turn has ended', () => {
+    reset();
+    expect(turnEndedAt([])).toBeNull();
+    expect(turnEndedAt([row('user'), row('assistant', { stopReason: 'tool_use' })])).toBeNull();
+  });
+});
+
+describe("keepUserStatus — 'done' is the user's", () => {
+  it('outlives an idle derivation', () => {
+    expect(keepUserStatus('done', 'idle')).toBe('done');
+  });
+
+  it('gives way to work: running, or a prompt waiting on you', () => {
+    expect(keepUserStatus('done', 'running')).toBe('running');
+    expect(keepUserStatus('done', 'blocked')).toBe('blocked');
+  });
+
+  it('is the derivation for every other status', () => {
+    expect(keepUserStatus('idle', 'running')).toBe('running');
+    expect(keepUserStatus('running', 'idle')).toBe('idle');
+    expect(keepUserStatus('blocked', 'idle')).toBe('idle');
+  });
+});
+
+describe('atRest — between turns, marked done or not', () => {
+  it('is idle and done only', () => {
+    expect(atRest('idle')).toBe(true);
+    expect(atRest('done')).toBe(true);
+    expect(atRest('running')).toBe(false);
+    expect(atRest('blocked')).toBe(false);
+    expect(atRest('archived')).toBe(false);
   });
 });

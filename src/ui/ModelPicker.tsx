@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Task } from '../types';
+import { atRest } from '../capture/status';
 import { contextUsage, onCaptureUpdate } from '../capture';
 import { sendToSession, useSendsWait } from './transcript/send';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
@@ -120,7 +121,7 @@ export default function ModelPicker({ task }: { task: Task }) {
     if (pending && choiceFor(model, choices) === pending) setPending(null);
   }, [pending, model, choices]);
 
-  const idle = task.status === 'idle';
+  const idle = atRest(task.status);
   // While a send would be held (offline, messages waiting, a turn running),
   // there is no switching: the picker shows the switch as under way at once.
   const waiting = useSendsWait(task.id);

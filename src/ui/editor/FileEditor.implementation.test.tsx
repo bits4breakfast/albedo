@@ -119,7 +119,7 @@ afterEach(() => {
 const task = (): Task => ({
   id: 4, title: 't', projectId: 1, repoPath: root, baseBranch: 'main', branch: 'b',
   worktreePath: root, sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
-  status: 'idle', createdAt: 0, lastActivityAt: null,
+  status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null,
 });
 
 /** Open `path`, put the cursor inside `name` on its declaration, and press ⌥⌘B. */

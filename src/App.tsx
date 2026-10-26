@@ -14,6 +14,7 @@ import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
 import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
+import { seenUpdate } from './ui/taskGroups';
 import { createPrPrompt, pushPrompt } from './ui/gitPrompts';
 import { sendPrompt } from './ui/sendPrompt';
 import Subagents from './ui/Subagents';
@@ -104,8 +105,20 @@ function renderPromptTemplate(task: Task, project: Project | null): string | nul
 // ---------------------------------------------------------------------------
 
 export default function App() {
-  const { tasks, signals, loading, loadError, captureError, projects, contextBySession, refresh, upsertTask, archive } =
-    useTasks();
+  const {
+    tasks,
+    signals,
+    loading,
+    loadError,
+    captureError,
+    projects,
+    contextBySession,
+    refresh,
+    upsertTask,
+    archive,
+    setDone,
+    markSeen,
+  } = useTasks();
 
   const [selectedId, setSelectedId] = useState<number | null>(() =>
     readPersisted(KEYS.selectedTask, idCodec, null),
@@ -223,6 +236,15 @@ export default function App() {
     [tasks, selectedId],
   );
 
+  // The task on screen is seen: when it is opened, and when a turn ends while
+  // it is open. Only a finish it has not covered yet is written.
+  const selectedFinishedAt = selected ? (signals.get(selected.id)?.finishedAt ?? null) : null;
+  useEffect(() => {
+    if (!selected) return;
+    const at = seenUpdate(selected.seenAt, selectedFinishedAt, Date.now());
+    if (at !== null) markSeen(selected.id, at);
+  }, [selected?.id, selected?.seenAt, selectedFinishedAt, markSeen]);
+
   /**
    * With no task selected, Go to File and Find in Files search the active
    * project's main checkout -- the repo folder itself -- and open what they
@@ -249,6 +271,7 @@ export default function App() {
       status: 'idle',
       createdAt: 0,
       lastActivityAt: null,
+      seenAt: null,
     };
   }, [selected, activeProject]);
   /** Whose main checkout the shell drawer is in: the project the list shows. */
@@ -956,6 +979,7 @@ export default function App() {
               setArchiveTarget(task);
             }}
             onFollowUp={(task) => void openFollowUp(task)}
+            onSetDone={(task, done) => void setDone(task.id, done)}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             signals={signals}

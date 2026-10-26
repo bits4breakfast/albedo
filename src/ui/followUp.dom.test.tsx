@@ -70,6 +70,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   status: 'idle',
   createdAt: 1,
   lastActivityAt: 1,
+  seenAt: null,
   ...over,
 });
 

@@ -117,6 +117,8 @@ const M0006_CREATED_BRANCH: &str = include_str!("../../src/db/migrations/0006_cr
 const M0007_COMMENTS: &str = include_str!("../../src/db/migrations/0007_comments.sql");
 /// v8: tasks.kind -- work on a branch, or a chat about the code (no branch).
 const M0008_TASK_KIND: &str = include_str!("../../src/db/migrations/0008_task_kind.sql");
+/// v9: tasks.seen_at -- when the task was last open, for Ready to Review.
+const M0009_SEEN_AT: &str = include_str!("../../src/db/migrations/0009_seen_at.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -166,6 +168,12 @@ pub fn run() {
             version: 8,
             description: "tasks.kind",
             sql: M0008_TASK_KIND,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
+            description: "tasks.seen_at",
+            sql: M0009_SEEN_AT,
             kind: MigrationKind::Up,
         },
     ];

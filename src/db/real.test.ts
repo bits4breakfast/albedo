@@ -14,7 +14,9 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import BetterSqlite3 from 'better-sqlite3';
 
+import schemaSql from './schema.sql?raw';
 import { createTestDb, migrationsInOrder, seedTranscriptFile, seedTurn, toPositional, type TestDb } from './testkit';
 
 const harness = vi.hoisted(() => ({ db: null as unknown }));
@@ -88,6 +90,7 @@ describe('the harness itself', () => {
     expect(taskCols).toContain('project_id');
     expect(taskCols).toContain('owns_worktree');
     expect(taskCols).toContain('kind');
+    expect(taskCols).toContain('seen_at');
   });
 
   it('rewrites $n placeholders positionally, including reuse and reordering', () => {
@@ -1390,6 +1393,48 @@ describe('tasks.kind (v8)', () => {
     const w = await createTask(work);
     await updateTask(w.id, { kind: 'chat' });
     expect((await getTask(w.id))?.kind).toBe('chat');
+  });
+});
+
+describe('tasks.seen_at (v9)', () => {
+  const work = {
+    title: 'fix', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'fix',
+    worktreePath: '/wt/fix', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
+  };
+
+  it('starts null on a new task: never opened', async () => {
+    const t = await createTask(work);
+    expect(t.seenAt).toBeNull();
+    expect((await getTask(t.id))?.seenAt).toBeNull();
+  });
+
+  it('round-trips through updateTask', async () => {
+    const t = await createTask(work);
+    await updateTask(t.id, { seenAt: 1_761_000_000_123 });
+    expect((await getTask(t.id))?.seenAt).toBe(1_761_000_000_123);
+    expect((await listTasks()).find((x) => x.id === t.id)?.seenAt).toBe(1_761_000_000_123);
+  });
+
+  it('backfills every existing row to the moment it applies, in epoch ms', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v9 = all.findIndex((m) => m.name.endsWith('0009_seen_at.sql'));
+    expect(v9).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v9)) raw.exec(m.sql);
+    raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    const before = Date.now();
+    raw.exec((all[v9] as { sql: string }).sql);
+    const row = raw.prepare(`SELECT seen_at FROM tasks WHERE title = 'old'`).get() as { seen_at: number };
+    // Whole seconds: strftime('%s') has no milliseconds.
+    expect(row.seen_at).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+    expect(row.seen_at).toBeLessThanOrEqual(Date.now());
+    raw.close();
   });
 });
 

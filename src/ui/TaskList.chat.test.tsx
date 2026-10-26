@@ -29,7 +29,7 @@ afterEach(() => {
 
 const base = {
   projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false,
-  status: 'idle', createdAt: 1, lastActivityAt: 1,
+  status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null,
 } as const;
 const work: Task = { ...base, id: 1, title: 'Fix login', baseBranch: 'main', branch: 'fix-login', worktreePath: '/w/fix-login', ownsWorktree: true, kind: 'work' };
 const chat: Task = { ...base, id: 2, title: 'How does capture work?', baseBranch: '', branch: '', worktreePath: '/r/app', ownsWorktree: false, kind: 'chat' };

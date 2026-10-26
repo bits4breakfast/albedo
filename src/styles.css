@@ -616,6 +616,8 @@ button {
  *   idle      ring
  *   running   ring, half filled
  *   blocked   solid dot with a halo
+ *   review    ring around a dot -- a task list group (Ready to Review), not a
+ *             TaskStatus: finished, in done's colour, and not yet looked at
  *   done      solid dot
  *   archived  thin ring
  */
@@ -634,6 +636,14 @@ button {
 
 .status-dot[data-status='idle'] { border-color: var(--status-idle); }
 .status-dot[data-status='done'] { border-color: var(--status-done); background: var(--status-done); }
+.status-dot[data-status='review'] { border-color: var(--status-done); }
+.status-dot[data-status='review']::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  background: var(--status-done);
+}
 .status-dot[data-status='archived'] { border-width: 1px; border-color: var(--status-archived); }
 .status-dot[data-status='running'] {
   border-color: var(--status-running);

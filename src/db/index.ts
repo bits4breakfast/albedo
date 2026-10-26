@@ -104,6 +104,7 @@ interface TaskRow {
   status: string;
   created_at: number;
   last_activity_at: number | null;
+  seen_at: number | null;
 }
 
 interface MessageRow {
@@ -136,10 +137,11 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   status: 'status',
   createdAt: 'created_at',
   lastActivityAt: 'last_activity_at',
+  seenAt: 'seen_at',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -171,6 +173,7 @@ function toTask(r: TaskRow): Task {
     status: (VALID_STATUSES.has(r.status) ? r.status : 'idle') as TaskStatus,
     createdAt: r.created_at,
     lastActivityAt: r.last_activity_at,
+    seenAt: r.seen_at,
   };
 }
 
@@ -222,8 +225,8 @@ export async function createTask(t: NewTask): Promise<Task> {
     // no insert from here is allowed to fall through to it.
     // created_branch likewise: NULL is reserved for pre-v6 rows. And kind:
     // its default backfills pre-v8 rows, and is not a decision for new ones.
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL)`,
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL)`,
     [
       t.title,
       t.projectId,
@@ -257,6 +260,7 @@ export async function createTask(t: NewTask): Promise<Task> {
     status: 'idle',
     createdAt,
     lastActivityAt: null,
+    seenAt: null,
   };
 }
 

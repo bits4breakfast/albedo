@@ -31,7 +31,7 @@ afterEach(() => {
 const chat: Task = {
   id: 7, title: 'How does the retry work?', projectId: 1, repoPath: '/r/app', baseBranch: '', branch: '',
   worktreePath: '/r/app', sessionId: 's', ownsWorktree: false, createdBranch: false, kind: 'chat',
-  status: 'idle', createdAt: 1, lastActivityAt: 1,
+  status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null,
 };
 
 describe('ArchiveTaskDialog on a chat', () => {

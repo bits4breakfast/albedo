@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ContextUsage } from '../capture';
 import type { Task } from '../types';
+import { atRest } from '../capture/status';
 import { hasLivePty, onPtyPresenceChange } from './Terminal';
 import { sendToSession, useSendsWait } from './transcript/send';
 import { contextReadout, contextTitle } from './StatusDot';
@@ -89,14 +90,14 @@ function SessionCommandButton({ task, cmd }: { task: Task; cmd: SessionCommand }
   // While a send would be held (offline, messages waiting, a turn running),
   // it is not offered.
   const waiting = useSendsWait(task.id);
-  const ready = live && task.status === 'idle' && !waiting;
+  const ready = live && atRest(task.status) && !waiting;
   useEffect(() => {
     if (!ready) setArming(false);
   }, [ready]);
 
   const why = !live
     ? 'No session is running for this task.'
-    : task.status !== 'idle'
+    : !atRest(task.status)
       ? 'Available once the session is idle.'
       : waiting
         ? 'Not available while messages are waiting to send'
