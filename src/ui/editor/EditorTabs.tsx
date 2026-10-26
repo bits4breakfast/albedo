@@ -26,6 +26,8 @@ export interface EditorTabsProps {
   task: Task;
   /** The latest open request from anywhere in the app; a new object opens it. */
   request: OpenFileRequest | null;
+  /** That request walks a Files list: it replaces the active tab (OpenFileOptions.step). */
+  step?: boolean;
   readOnly: boolean;
   /** The last tab was closed. */
   onCloseAll: () => void;
@@ -58,6 +60,7 @@ function baseName(path: string): string {
 export default function EditorTabs({
   task,
   request,
+  step: stepRequest = false,
   readOnly,
   onCloseAll,
   closeSignal,
@@ -71,13 +74,22 @@ export default function EditorTabs({
   });
   const keyFor = useCallback((path: string) => worktreeRelative(task.worktreePath, path) ?? path, [task.worktreePath]);
 
-  // Every new request object opens (or switches to) its file.
+  const [dirty, setDirty] = useState<ReadonlyMap<number, boolean>>(() => new Map());
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+
+  // Every new request object opens (or switches to) its file. A step replaces
+  // the active tab, unless that tab has unsaved edits: those are never swapped out.
   const seen = useRef<OpenFileRequest | null>(null);
   useEffect(() => {
     if (request === null || request === seen.current) return;
     seen.current = request;
-    setState((s) => openTab(s, keyFor(request.path), request));
-  }, [request, keyFor]);
+    setState((s) =>
+      stepRequest && !(s.active !== null && dirtyRef.current.get(s.active))
+        ? replaceActiveTab(s, keyFor(request.path), request)
+        : openTab(s, keyFor(request.path), request),
+    );
+  }, [request, stepRequest, keyFor]);
 
   useEffect(() => {
     remembered.set(task.id, state);
@@ -94,7 +106,6 @@ export default function EditorTabs({
     if (state.active !== null && !mounted.has(state.active)) setMounted((m) => new Set(m).add(state.active!));
   }, [state.active, mounted]);
 
-  const [dirty, setDirty] = useState<ReadonlyMap<number, boolean>>(() => new Map());
   /** Tabs showing their diff, for the tab's marker. */
   const [diffing, setDiffing] = useState<ReadonlySet<number>>(() => new Set());
   const [closeAsks, setCloseAsks] = useState<ReadonlyMap<number, number>>(() => new Map());

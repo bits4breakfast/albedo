@@ -93,6 +93,7 @@ import { markHandEdited } from '../../lib/handEdited';
 import { onThemeChange, resolvedTheme } from '../theme';
 import type { ResolvedTheme } from '../theme';
 import { notePty } from '../Terminal';
+import { editorMayTakeFocus, onFocusEditor } from './editorFocus';
 import './editor.css';
 import './comments.css';
 
@@ -776,7 +777,8 @@ export default function FileEditor({
 
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
-    view.focus();
+    // Not from under a Files row the arrows are walking (editorFocus.ts).
+    if (editorMayTakeFocus()) view.focus();
 
     // CodeMirror's own chrome follows the theme through a compartment, so the
     // switch keeps the undo history, the selection and the scroll position.
@@ -934,8 +936,10 @@ export default function FileEditor({
     const view = viewRef.current;
     if (!view) return;
     view.requestMeasure();
-    view.focus();
+    if (editorMayTakeFocus()) view.focus();
   }, [active]);
+  // Enter on a Files row hands the keyboard here.
+  useEffect(() => (active ? onFocusEditor(() => viewRef.current?.focus()) : undefined), [active]);
 
   // --- stepping through the change set --------------------------------------
   // The touched-files list publishes its order; the editor walks it. Blocked

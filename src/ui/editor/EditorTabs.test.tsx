@@ -16,6 +16,7 @@ interface StubProps {
   initialMode: 'file' | 'diff';
   onModeChosen: (mode: 'file' | 'diff') => void;
   onModeChange: (mode: 'file' | 'diff') => void;
+  onDirtyChange: (dirty: boolean) => void;
   controlsSlot: HTMLElement | null;
 }
 const rendered = new Map<string, StubProps>();
@@ -62,8 +63,8 @@ function setup() {
   const onCloseAll = vi.fn();
   const props = { task, readOnly: false, onCloseAll, closeSignal: 0, headSlot: headSlot() };
   const view = render(<EditorTabs {...props} request={{ path: 'a.php' }} />);
-  const open = (path: string, closeSignal = 0) =>
-    view.rerender(<EditorTabs {...props} closeSignal={closeSignal} request={{ path }} />);
+  const open = (path: string, closeSignal = 0, step = false) =>
+    view.rerender(<EditorTabs {...props} closeSignal={closeSignal} request={{ path }} step={step} />);
   const tabs = () =>
     screen.getAllByRole('tab').map((t) => `${t.textContent?.replace('✕', '')}${t.getAttribute('aria-selected') === 'true' ? '*' : ''}`);
   return { view, open, tabs, onCloseAll, props };
@@ -126,6 +127,22 @@ describe('EditorTabs', () => {
     act(() => rendered.get('a.php')!.onModeChange('diff'));
     expect(tabs()).toEqual(['a.phpDiff', 'b.php*']);
     act(() => rendered.get('a.php')!.onModeChange('file'));
+    expect(tabs()).toEqual(['a.php', 'b.php*']);
+  });
+
+  it('a step from the Files list replaces the active tab instead of adding one', () => {
+    const { open, tabs } = setup();
+    open('b.php');
+    open('c.php', 0, true);
+    expect(tabs()).toEqual(['a.php', 'c.php*']);
+    open('a.php', 0, true); // already open: switched to, not duplicated
+    expect(tabs()).toEqual(['a.php*', 'c.php']);
+  });
+
+  it('a step never replaces a tab with unsaved edits: the file opens beside it', () => {
+    const { open, tabs } = setup();
+    act(() => rendered.get('a.php')!.onDirtyChange(true));
+    open('b.php', 0, true);
     expect(tabs()).toEqual(['a.php', 'b.php*']);
   });
 

@@ -37,7 +37,7 @@ import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
-import { FileOpenContext, FileTextContext } from './ui/editor/openFile';
+import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
 import { ContextClear } from './ui/ClearContextButton';
@@ -161,9 +161,11 @@ export default function App() {
   } = useDialogs();
 
   /** Pending file-open, scoped to the task it was requested from. */
-  const [openRequest, setOpenRequest] = useState<{ taskId: number; request: OpenFileRequest } | null>(
-    null,
-  );
+  const [openRequest, setOpenRequest] = useState<{
+    taskId: number;
+    request: OpenFileRequest;
+    step?: boolean;
+  } | null>(null);
   /**
    * The prompt a follow-up was created with, for its first spawn. In memory
    * on purpose: the session starts the moment the task is created, and a
@@ -490,11 +492,15 @@ export default function App() {
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
 
-  const openFile = useCallback((request: OpenFileRequest) => {
+  const filesColumnShownRef = useRef(filesColumnShown);
+  filesColumnShownRef.current = filesColumnShown;
+
+  const openFile = useCallback((request: OpenFileRequest, options?: OpenFileOptions) => {
     const taskId = selectedIdRef.current ?? browseTaskRef.current?.id ?? null;
     if (taskId === null) return;
-    setOpenRequest({ taskId, request });
-    setRightTab('editor');
+    setOpenRequest({ taskId, request, step: options?.step });
+    // A step keeps the Files tab on screen: the list is what is being walked.
+    setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
     // The editor is useless behind a full-width terminal.
     setMode((m) => (m === 'pty' ? 'split' : m));
   }, []);
@@ -1353,6 +1359,7 @@ export default function App() {
                       <EditorTabs
                         task={editorTask}
                         request={openRequest?.request ?? null}
+                        step={openRequest?.step ?? false}
                         readOnly={editorTask === browseTask}
                         onCloseAll={closeEditor}
                         closeSignal={editorCloseSignal}

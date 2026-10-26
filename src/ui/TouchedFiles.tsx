@@ -36,7 +36,8 @@ import { FileIcon } from './fileIcons';
 import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
 import { onHandEditedChange } from '../lib/handEdited';
-import { useOpenFile } from './editor/openFile';
+import { useOpenFile, type OpenFile, type OpenFileOptions } from './editor/openFile';
+import { adjacent, useListOpen, type ListOpen } from './filesListOpen';
 import { relativeTime } from './TaskList';
 import { useActivate } from './transcript/Diff';
 import { KEYS, oneOfCodec, readPersisted, writePersisted } from './persisted';
@@ -332,19 +333,19 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
 
 
   // Keep the open file's row in view as tabs change, without yanking the
-  // list when it already shows.
+  // list when it already shows. A file listed under two commits has two
+  // current rows: the focused one, when ↑/↓ reached it, is the one to keep.
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (activePath === null) return;
-    scrollRef.current?.querySelector<HTMLElement>('.tf-row[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
+    const focused = scrollRef.current?.querySelector<HTMLElement>('.tf-row[aria-current="true"]:focus');
+    (focused ?? scrollRef.current?.querySelector<HTMLElement>('.tf-row[aria-current="true"]'))?.scrollIntoView?.({
+      block: 'nearest',
+    });
   }, [activePath, view, commits, mode]);
 
-  const onOpen = useCallback(
-    (file: TouchedFile) => {
-      openFile({ path: file.path });
-    },
-    [openFile],
-  );
+  const open = useCallback((path: string, options?: OpenFileOptions) => openFile({ path }, options), [openFile]);
+  const list = useListOpen(open);
 
   /** Why a git button could not hand its prompt over. Cleared on the next try. */
   const [askNotice, setAskNotice] = useState<string | null>(null);
@@ -405,7 +406,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
             toneOf={statusTone}
             activePath={activePath}
             reloadKey={reloadKey}
-            onOpen={(path) => openFile({ path })}
+            onOpen={open}
           />
         ) : (
           <>
@@ -424,7 +425,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
                     file={f}
                     change={lines.get(f.path) ?? null}
                     now={now}
-                    onOpen={onOpen}
+                    list={list}
                     current={f.path === activePath}
                   />
                 ))}
@@ -461,7 +462,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
                           file={rowFor(path)}
                           change={change}
                           now={now}
-                          onOpen={onOpen}
+                          list={list}
                           current={path === activePath}
                         />
                       ))
@@ -498,7 +499,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
                   change={lines.get(f.path) ?? null}
                   kind={kinds.get(f.path) ?? null}
                   now={now}
-                  onOpen={onOpen}
+                  list={list}
                   current={f.path === activePath}
                 />
               ))}
@@ -548,7 +549,7 @@ function FileRow({
   change,
   kind = null,
   now,
-  onOpen,
+  list,
   current = false,
 }: {
   file: TouchedFile;
@@ -560,7 +561,7 @@ function FileRow({
    */
   kind?: ChangeKind | null;
   now: number;
-  onOpen: (f: TouchedFile) => void;
+  list: ListOpen;
   /** This file is in the editor's active tab. */
   current?: boolean;
 }): ReactNode {
@@ -574,36 +575,39 @@ function FileRow({
   // A div, not a <button>: WebKit allows no text selection inside a button,
   // and the path is something people copy. useActivate opens the file on a
   // plain click but not on a click that ends a text selection.
-  const activate = useActivate(() => onOpen(file));
+  const rowRef = useRef<HTMLDivElement>(null);
+  const activate = useActivate(() => {
+    if (rowRef.current) list.pick(rowRef.current, file.path);
+  });
   // The row says what git says: the status letter, the line counts. How the
   // file was changed (an edit tool, a shell command, a formatter) is not
   // shown -- the change is the same either way, and the diff is what to read.
   const status = file.gitStatus ?? kind;
   return (
     <div
+      ref={rowRef}
       role="button"
       tabIndex={0}
       className="tf-row"
+      data-path={file.path}
+      data-keeps-focus=""
       aria-current={current ? 'true' : undefined}
       onMouseDown={activate.onMouseDown}
       onClick={activate.onClick}
       onKeyDown={(e) => {
+        const row = e.currentTarget;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen(file);
+          if (e.key === 'Enter') list.enter(row, file.path);
+          else list.pick(row, file.path);
           return;
         }
-        // Up / down walk the rows, across sections; Enter opens.
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          const rows = Array.from(
-            e.currentTarget.closest('.tf-scroll')?.querySelectorAll<HTMLElement>('.tf-row') ?? [],
-          );
-          const i = rows.indexOf(e.currentTarget);
-          const next = rows[i + (e.key === 'ArrowDown' ? 1 : -1)];
-          if (next) {
-            e.preventDefault();
-            next.focus();
-          }
+        // Up / down walk the rows, across sections, opening each file.
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !(e.metaKey || e.ctrlKey || e.altKey)) {
+          e.preventDefault();
+          const rows = Array.from(row.closest('.tf-scroll')?.querySelectorAll<HTMLElement>('.tf-row') ?? []);
+          const next = adjacent(rows, row, e.key === 'ArrowDown' ? 1 : -1);
+          if (next) list.step(next, next.dataset.path ?? null, e.repeat);
         }
       }}
       // Everything the row can shed when the column is narrow is still here.
@@ -724,8 +728,8 @@ function samePath(a: string, b: string): boolean {
  * The hook is called unconditionally on every render (React requires that);
  * only its RESULT is guarded.
  */
-function useSafeOpenFile(): (req: OpenFileRequest) => void {
-  let bound: ((req: OpenFileRequest) => void) | null = null;
+function useSafeOpenFile(): OpenFile {
+  let bound: OpenFile | null = null;
   try {
     bound = useOpenFile();
   } catch {
@@ -733,9 +737,9 @@ function useSafeOpenFile(): (req: OpenFileRequest) => void {
   }
   const ref = useRef(bound);
   ref.current = bound;
-  return useCallback((req: OpenFileRequest) => {
+  return useCallback((req: OpenFileRequest, options?: OpenFileOptions) => {
     try {
-      ref.current?.(req);
+      ref.current?.(req, options);
     } catch (err: unknown) {
       // eslint-disable-next-line no-console -- a dead click must not white-screen the pane
       console.warn('TouchedFiles: could not open', req.path, err);
