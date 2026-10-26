@@ -58,9 +58,9 @@ const SIDECAR_NAME = 'binaries/phpantom_lsp';
 const BIN_RELATIVE = '.albedo/bin/phpantom_lsp';
 const CONFIG_HOME_RELATIVE = '.albedo/phpantom';
 /**
- * The config file. Its name starts with a dot, which Tauri's fs scope globs
- * never match on Unix (`$HOME/.albedo/**` does not cover it), so
- * `capabilities/default.json` names this exact path, dot spelled out.
+ * The config file. Its name starts with a dot, so `$HOME/.albedo/**` in
+ * `capabilities/default.json` covers it only because `tauri.conf.json` turns
+ * the fs plugin's `requireLiteralLeadingDot` off (#93).
  */
 export const CONFIG_FILE_RELATIVE = `${CONFIG_HOME_RELATIVE}/phpantom_lsp/.phpantom.toml`;
 

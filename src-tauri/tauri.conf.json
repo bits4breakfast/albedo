@@ -36,6 +36,7 @@
     ]
   },
   "plugins": {
-    "sql": { "preload": [] }
+    "sql": { "preload": [] },
+    "fs": { "requireLiteralLeadingDot": false }
   }
 }

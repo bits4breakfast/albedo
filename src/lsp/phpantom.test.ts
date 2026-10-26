@@ -14,10 +14,12 @@ describe('isPhpPath', () => {
 });
 
 describe('fs scope', () => {
-  it('allows the config file by its exact path, since `$HOME/.albedo/**` never matches a dot-file', () => {
-    const caps = JSON.parse(readFileSync(new URL('../../src-tauri/capabilities/default.json', import.meta.url), 'utf8'));
-    const scope = caps.permissions.find((p: { identifier?: string }) => p.identifier === 'fs:scope');
-    expect(scope.allow).toContain(`$HOME/${CONFIG_FILE_RELATIVE}`);
+  it('allows the config file through `$HOME/.albedo/**`, which matches dot-files only with requireLiteralLeadingDot off', () => {
+    const read = (file: string) => JSON.parse(readFileSync(new URL(`../../src-tauri/${file}`, import.meta.url), 'utf8'));
+    const scope = read('capabilities/default.json').permissions.find((p: { identifier?: string }) => p.identifier === 'fs:scope');
+    expect(CONFIG_FILE_RELATIVE.startsWith('.albedo/')).toBe(true);
+    expect(scope.allow).toContain('$HOME/.albedo/**');
+    expect(read('tauri.conf.json').plugins.fs.requireLiteralLeadingDot).toBe(false);
   });
 });
 
