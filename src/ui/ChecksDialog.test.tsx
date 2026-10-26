@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import prChecks from '../gh/fixtures/pr-checks.json?raw';
 import runFailed from '../gh/fixtures/run-jobs-failed.json?raw';
-import jobLog from '../gh/fixtures/job-failed.log?raw';
+import jobLog from '../gh/fixtures/job-failed.txt?raw';
 import annotations from '../gh/fixtures/annotations.json?raw';
 import { parseAnnotations, parsePrChecks, parseRunJob } from '../gh/checks';
 import type { PrStatus } from '../gh/prStatus';
