@@ -42,6 +42,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Before reporting tests as passing, also run them on CI's Node: `npx -y -p node@22 -- node node_modules/vitest/vitest.mjs run`.
   - Any test touching persisted state installs a fresh in-memory store per test; never rely on the environment's `localStorage`.
   - Don't patch globals the runtime owns; inject through the module's own seam.
+- **Green locally, red on CI: a fixture git never saw.** #97's tests read `src/gh/fixtures/job-failed.log`. `.gitignore` has `*.log`, so the file existed in the worktree and the suite passed there, but it was never committed: CI and a merge trial both failed to resolve the import. **Rule:**
+  - After committing, run `git status --short --ignored` on new fixture folders, or run the suite from a clean checkout of the pushed branch.
+  - Name fixtures with an extension the repo doesn't ignore (`.txt`, `.json`, `.jsonl`).
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
 ## Cleanup paths
