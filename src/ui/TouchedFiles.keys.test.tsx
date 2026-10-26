@@ -227,4 +227,20 @@ describe('Project view', () => {
     expect(paths()).toEqual(['b.ts']);
     expect(document.activeElement?.closest('.tf-tree')).toBeNull();
   });
+
+  it('a folder carries the shared caret, open with the folder; a file carries none', async () => {
+    // Not setup(): which folders are open outlives a render, so the test
+    // before this one may have left `lib` open.
+    stored.set(KEYS.touchedView, 'project');
+    render(<Harness />);
+    const row = (path: string) => document.querySelector<HTMLElement>(`.tf-tree-row[data-path="${path}"]`);
+    await waitFor(() => expect(row('lib')).not.toBeNull());
+    const caret = (path: string) => row(path)!.querySelector('.tf-tree-caret .disc');
+    const expected = (open: boolean) => (open ? 'disc disc-open disc-inline' : 'disc disc-inline');
+    const wasOpen = row('lib')!.getAttribute('aria-expanded') === 'true';
+    expect(caret('lib')?.className).toBe(expected(wasOpen));
+    expect(caret('a.ts')).toBeNull();
+    fireEvent.click(row('lib')!);
+    await waitFor(() => expect(caret('lib')?.className).toBe(expected(!wasOpen)));
+  });
 });

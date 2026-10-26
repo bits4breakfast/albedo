@@ -32,6 +32,7 @@ import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
 import ProjectTree from './ProjectTree';
+import { Disclosure } from './Disclosure';
 import { FileIcon } from './fileIcons';
 import SquashRebaseDialog from './SquashRebaseDialog';
 import { onCaptureUpdate } from '../capture';
@@ -449,7 +450,9 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
                     }
                     title={`${c.sha}\n${c.subject}`}
                   >
-                    <span className="tf-section-caret">{open ? '▾' : '▸'}</span>
+                    <span className="tf-section-caret">
+                      <Disclosure open={open} inline />
+                    </span>
                     <span className="tf-commit-subject">{c.subject || '(No Message)'}</span>
                     <span className="tf-commit-meta">
                       {c.sha.slice(0, 7)} · {relativeTime(c.at, now)}

@@ -31,7 +31,11 @@ import { splitUrls } from '../../lib/urls';
 import { useOpenFile } from '../editor/openFile';
 import { anchorBlock, fileLines, type AnchorFailure } from '../../lib/anchor';
 import { useReadFile } from '../editor/openFile';
+import { Disclosure } from '../Disclosure';
 import './transcript.css';
+
+/* Re-exported so the transcript renderers keep importing it from here. */
+export { Disclosure };
 
 /** Below this container width the side-by-side layout stops being readable. */
 const SIDE_BY_SIDE_MIN = 860;
@@ -389,31 +393,6 @@ export function Code({ pieces }: { pieces: Piece[] }): ReactNode {
           {p.text}
         </span>
       ))}
-    </span>
-  );
-}
-
-/**
- * The disclosure caret, everywhere something in the pane opens.
- *
- * One component rather than a glyph typed at each site, so the next collapsible
- * thing inherits the right size instead of the wrong one. It is a control, not
- * decoration: `--muted`, a size ABOVE the text it sits beside, and a 24x24 hit
- * target regardless of how small the glyph looks.
- *
- * Quiet means subordinate, not invisible -- and that applies to the CONTENT a
- * thing hides, never to the control that reveals it. Thinking blocks and
- * injected context are de-emphasised on purpose; the caret that opens them is
- * not, or nobody finds out the content is there at all.
- */
-export function Disclosure({ open }: { open: boolean }): ReactNode {
-  return (
-    <span className={open ? 'tx-disc tx-disc-open' : 'tx-disc'} aria-hidden="true">
-      {/* Drawn, not typed: U+25B8 is a SMALL triangle by definition, so at any
-          font size it renders as a ~5px speck. One shape, rotated when open. */}
-      <svg viewBox="0 0 12 12" focusable="false">
-        <path d="M3.5 1.5 10 6l-6.5 4.5z" fill="currentColor" />
-      </svg>
     </span>
   );
 }
