@@ -69,6 +69,8 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 - **Two writers on one pty.** Buttons (Push, Create PR, Clear, the model picker) wrote to the terminal directly while the outbox released held messages; two pastes landing between a paste and its Enter merge into one message (#56 review). **Rule:** every write to a task's pty goes through one gateway with a per-task lock; no component calls `submitPty` on its own.
 - **Two copies of the same thing on screen.** The file name showed three times in the editor (#57), and "Transcript" twice while the editor was open. **Rule:** before adding a label, check whether a parent row already shows it.
 
+- **Ages out of line in the task list.** In a group of 12 Idle rows, the first nine showed their age ("1h", "2d") about 30px left of the last three. Cause: the hidden ⌘1–9 hint shares the age's grid cell and is wider than the age, so on those nine rows the cell grew and the start-aligned age moved left. It showed once a list had more than nine rows. **Rule:** content that shares a cell with something hidden by `visibility` is aligned to the edge it should keep (`justify-self: end` for a right column); check a list longer than the shortcut range.
+
 ## Shell scripts (for agents)
 
 - **zsh `path` is `PATH`.** `while read path …` in zsh wipes the command search path, and every later command is "not found". Use another variable name.
