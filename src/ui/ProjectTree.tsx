@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { git } from '../git/worktree';
 import { parseLsFilesZ } from '../git/codeIndex';
+import { Disclosure } from './Disclosure';
 import { FileIcon, FolderGlyph } from './fileIcons';
 import type { OpenFileOptions } from './editor/openFile';
 import { useListOpen } from './filesListOpen';
@@ -187,8 +188,8 @@ export default function ProjectTree({ taskId, worktreePath, status, toneOf, acti
             onClick={(e) => (row.kind === 'dir' ? toggle(row.path) : list.pick(e.currentTarget, row.path))}
             onKeyDown={(e) => onKey(e, row, i)}
           >
-            <span className="tf-tree-caret" aria-hidden="true">
-              {row.kind === 'dir' ? (row.open ? '▾' : '▸') : ''}
+            <span className="tf-tree-caret">
+              {row.kind === 'dir' ? <Disclosure open={row.open} inline /> : null}
             </span>
             {row.kind === 'file' ? (
               <FileIcon path={row.path} className="tf-icon" />

@@ -1,0 +1,66 @@
+/*
+   The disclosure caret. See Disclosure.tsx.
+
+   It was --faint at --fs-xs: the dimmest tier at the smallest size, on the one
+   element whose entire job is to announce that there is more to see. Quiet
+   means subordinate, not invisible, and the line falls in a specific place --
+   de-emphasise the CONTENT a thing hides, never the control that reveals it.
+
+   24x24 is the WCAG 2.2 target-size minimum. The negative block margin keeps
+   that hit area from pushing the rows apart: visible size and clickable size
+   are allowed to differ, and in a dense list they should.
+*/
+.disc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-block: -6px;
+  margin-inline: -5px;
+  color: var(--muted);
+  line-height: 1;
+  user-select: none;
+}
+
+/* Sized from the label, not in px: the chevron is as tall as a capital letter
+   beside it, at whatever size the row sets. Measured: cap height is 0.705em in
+   SF Pro (the stack's fallback, what the HIG scale was set in) and 0.727em in
+   Inter, so 0.71em; 9.6px at --fs-sm.
+
+   The stroke matches the label's stems. The I stem is 0.088em at weight 400 in
+   both fonts, which on this 10-unit square (1 unit = 0.071em) is 1.24 units:
+   1.2px at --fs-sm. A semibold label (600: 0.128em SF, 0.132em Inter) sets
+   --disc-stroke to 1.83. Overflow is visible so that heavier stroke is not
+   clipped at the square's edge.
+
+   --muted clears 5.89 (light) and 6.50 (dark) on --panel-raised. A 1.2px
+   stroke antialiased at 70% coverage on a 1x screen still lands 3.12 / 3.94,
+   above the 3:1 non-text floor; on Retina it is 2.4 device pixels and solid. */
+.disc svg {
+  display: block;
+  width: 0.71em;
+  height: 0.71em;
+  overflow: visible;
+  stroke-width: var(--disc-stroke, 1.24);
+  transition: transform 0.12s ease;
+}
+.disc-open svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .disc svg { transition: none; }
+}
+
+/* A row that is itself the control. The caret drops its own hit area and sits
+   in the label's line box on the baseline, so its 0.71em spans baseline to cap
+   height whatever the row's line-height or padding. */
+.disc-inline {
+  display: inline;
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+.disc-inline svg {
+  display: inline-block;
+  vertical-align: baseline;
+}

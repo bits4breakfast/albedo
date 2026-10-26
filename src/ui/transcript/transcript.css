@@ -792,51 +792,16 @@ ol.tx-md-list { list-style-type: decimal; }
   text-align: left;
 }
 
-/*
-   The disclosure caret. See Disclosure in Diff.tsx.
-
-   It was --faint at --fs-xs: the dimmest tier at the smallest size, on the one
-   element whose entire job is to announce that there is more to see. Quiet
-   means subordinate, not invisible, and the line falls in a specific place --
-   de-emphasise the CONTENT a thing hides, never the control that reveals it.
-
-   24x24 is the WCAG 2.2 target-size minimum. The negative block margin keeps
-   that hit area from pushing the rows apart: visible size and clickable size
-   are allowed to differ, and in a dense list they should.
-*/
-.tx-disc {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  margin-block: -6px;
-  margin-inline: -5px;
-  color: var(--muted);
-  line-height: 1;
-  user-select: none;
-}
-/* 12px drawn triangle, about 7x9 of ink. It was U+25B8 at --fs-lg, which is
-   roughly 5x6 -- smaller than the 13px label beside it, when the comment above
-   asks for a size ABOVE it. The 24x24 box (the hit area) is unchanged. */
-.tx-disc svg {
-  display: block;
-  width: 12px;
-  height: 12px;
-  transition: transform 0.12s ease;
-}
-.tx-disc-open svg { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) {
-  .tx-disc svg { transition: none; }
-}
+/* The caret is the shared Disclosure (src/ui/Disclosure.tsx). The chip's name
+   is semibold, so its caret takes the semibold stem. */
+.tx-chip-toggle .disc { --disc-stroke: 1.83; }
 
 /* Hovering anywhere on the control brings the caret up with it. */
-.tx-chip-head:hover .tx-disc,
-.tx-think-head:hover .tx-disc,
-.tx-sidechain-head:hover .tx-disc,
-.tx-d-gap:hover .tx-disc,
-.tx-chip-toggle:hover .tx-disc { color: var(--text); }
+.tx-chip-head:hover .disc,
+.tx-think-head:hover .disc,
+.tx-sidechain-head:hover .disc,
+.tx-d-gap:hover .disc,
+.tx-chip-toggle:hover .disc { color: var(--text); }
 
 .tx-chip-name {
   flex: none;
@@ -1099,7 +1064,7 @@ ol.tx-md-list { list-style-type: decimal; }
   align-items: center;
   flex: none;
 }
-.tx-d-head-toggle:hover .tx-disc { color: var(--text); }
+.tx-d-head-toggle:hover .disc { color: var(--text); }
 
 .tx-d-path {
   min-width: 0;

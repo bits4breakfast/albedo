@@ -349,11 +349,11 @@
 .tf-tree-row[aria-current='true'] .tf-tree-name { color: var(--text-strong); }
 .tf-tree-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
-.tf-tree-caret {
-  flex: 0 0 1em;
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
+/* The caret slot, empty on a file so names line up. It is set at the row's
+   size, not --fs-xs, because the Disclosure inside sizes itself from the
+   label: 1em here is the label's em. */
+.tf-tree-caret { flex: 0 0 1em; }
+.tf-tree-row:hover .disc { color: var(--text); }
 
 /* The folder (closed or open) or the file's kind, after the caret: the caret
    says the row toggles, the glyph says what it is. Same token and size as the
@@ -498,7 +498,9 @@
 }
 button.tf-section-head { cursor: pointer; }
 button.tf-section-head:hover { color: var(--text); }
-.tf-section-caret { width: 1em; color: var(--muted); }
+/* The header label is semibold, so its caret takes the semibold stem. */
+.tf-section-caret { width: 1em; --disc-stroke: 1.83; }
+button.tf-section-head:hover .disc { color: var(--text); }
 .tf-section-count {
   color: var(--muted);
   font-weight: 400;
