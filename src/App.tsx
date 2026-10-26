@@ -1092,6 +1092,7 @@ export default function App() {
                     }}
                     onFollowUp={(pr) => void openFollowUp(selected, pr)}
                     onCreatePr={() => void sendPrompt(selected, createPrPrompt(selected))}
+                    onOpenFile={openFile}
                   />
                   )}
                   {/* The folder only where it says something: a worktree Albedo
