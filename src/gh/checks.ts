@@ -21,6 +21,7 @@
  */
 
 import type { CheckLine } from './prStatus';
+import { formatDuration } from '../lib/duration';
 
 // ---------------------------------------------------------------------------
 // gh pr checks
@@ -496,14 +497,8 @@ export function fixPrompt(input: FixPromptInput): string {
 // Time
 // ---------------------------------------------------------------------------
 
-/** "41s", "2m 14s", "1h 3m". Seconds are dropped once there are hours. */
-export function formatDuration(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
+// formatDuration lives in lib/duration.ts, shared with the compaction divider.
+export { formatDuration };
 
 /**
  * What a check or step row says about time: how long it took, how long it has

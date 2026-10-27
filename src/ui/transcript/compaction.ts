@@ -17,7 +17,7 @@
 import type { Message } from '../../types';
 import { compactBoundaryOf, compactSummaryOf, isNoticeLine, type CompactBoundary } from '../../capture';
 import { formatContextTokens } from '../StatusDot';
-import { formatDuration } from '../../gh/checks';
+import { formatDuration } from '../../lib/duration';
 
 export interface Compaction {
   /** The boundary row, or null when only the summary is in the window. */
