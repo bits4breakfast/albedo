@@ -41,7 +41,8 @@ import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge'
 import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
-import { ContextClear } from './ui/ClearContextButton';
+import { COMPACT, ContextClear, useCommandBlocker } from './ui/ClearContextButton';
+import { sendToSession } from './ui/transcript/send';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
@@ -235,6 +236,8 @@ export default function App() {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+  /** Why Compact Now in the task's ⋯ menu cannot go now, or null. */
+  const compactBlocker = useCommandBlocker(selected);
 
   // The task on screen is seen: when it is opened, and when a turn ends while
   // it is open. Only a finish it has not covered yet is written.
@@ -1034,6 +1037,15 @@ export default function App() {
                     title="Task actions"
                     trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
                     items={[
+                        // The same /compact as the button by the message box,
+                        // which appears only past 70%; here at any fill.
+                        {
+                          id: 'compact',
+                          label: COMPACT.label,
+                          disabled: compactBlocker !== null,
+                          title: compactBlocker ?? COMPACT.hint,
+                          onSelect: () => void sendToSession(selected.id, COMPACT.command),
+                        },
                         {
                           id: 'copy-path',
                           label: 'Copy Worktree Path',
@@ -1350,8 +1362,9 @@ export default function App() {
                       composerAccessory={
                         selected ? (
                           <>
-                            {/* Compact and Clear, only once the session is past 70% of
-                                its window; the row's hairline shows the rest. */}
+                            {/* The context warning with Compact Now and Clear, only once
+                                the session is past 70% of its window; the row's
+                                hairline shows the rest. */}
                             <ContextClear
                               task={selected}
                               usage={selected.sessionId ? contextBySession.get(selected.sessionId) : null}

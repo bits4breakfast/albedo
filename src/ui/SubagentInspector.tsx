@@ -22,6 +22,7 @@ import { getMessages } from '../db';
 import { onCaptureUpdate } from '../capture';
 import StatusDot from './StatusDot';
 import MessageRow from './transcript/MessageRow';
+import CompactionRow from './transcript/CompactionRow';
 import { groupRows } from './transcript/TranscriptPane';
 import { agentLabel, agentStatusWord, elapsedMs, formatElapsed } from './subagentView';
 
@@ -232,6 +233,8 @@ export default function SubagentInspector({
       groupRows(messages, { foldSidechains: false }).map((item) =>
         item.kind === 'row' ? (
           <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
+        ) : item.kind === 'compaction' ? (
+          <CompactionRow key={item.key} compaction={item.compaction} />
         ) : null,
       ),
     [messages],

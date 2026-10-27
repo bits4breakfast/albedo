@@ -46,7 +46,7 @@ export function isSlashCommand(body: string): boolean {
  * be held, so they are not offered. A command they send changes what they
  * show at once; one held behind a turn would take effect later than it says.
  */
-export function useSendsWait(taskId: number): boolean {
+export function useSendsWait(taskId: number | null): boolean {
   const offline = useOffline();
   const held = useHeld(taskId);
   const turn = useTurnRunning(taskId);

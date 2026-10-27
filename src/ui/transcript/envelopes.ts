@@ -448,6 +448,19 @@ export function withoutImageMarkers(text: string): string {
   return text.replace(/\[Image #\d+\][ \t]*/g, '');
 }
 
+/**
+ * A compaction summary's text with its `<tools-used-before-summary>` envelope
+ * lifted out: the tools named in it, and the summary without it. Claude Code
+ * 2.1.309 writes the tag on its own line after the opening sentence; a summary
+ * without one comes back whole, with no tools.
+ */
+export function splitCompactSummary(text: string): { tools: string[]; text: string } {
+  const m = /<tools-used-before-summary>([^<]*)<\/tools-used-before-summary>[ \t]*\n?/.exec(text);
+  if (!m) return { tools: [], text };
+  const tools = (m[1] ?? '').split(',').map((t) => t.trim()).filter((t) => t.length > 0);
+  return { tools, text: text.slice(0, m.index) + text.slice(m.index + m[0].length) };
+}
+
 /** The placeholder body the adapter gives an image block. */
 export function isImagePlaceholder(body: string | null): boolean {
   return (body ?? '').trim() === '[image]';

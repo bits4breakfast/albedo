@@ -531,6 +531,40 @@
   border-top: 1px solid var(--border);
 }
 
+/* A compaction: the same boundary as `/clear`, its label the control that
+   unfolds the summary (src/ui/transcript/CompactionRow.tsx). The pane's own
+   text tiers on the pane's own ground: --muted for the label, as `/clear`'s;
+   --faint, the hint tier, for the notice and the tools line. */
+.tx-row-compacted { margin: 6px 0; }
+.tx-compacted-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 0 2px 5px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.tx-compacted-head:hover,
+.tx-compacted-head:hover .disc { color: var(--text); }
+.tx-compacted-note {
+  margin-top: 2px;
+  text-align: center;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+.tx-compacted-body {
+  margin: 6px 0 0 9px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+  max-height: 420px;
+  overflow-y: auto;
+}
+.tx-compacted-tools {
+  margin-bottom: 4px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
 .tx-collapsed { margin: 1px 0; }
 
 /* An action started from an Albedo button: the chip is the act, the prompt

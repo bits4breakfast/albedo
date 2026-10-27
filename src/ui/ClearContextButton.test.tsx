@@ -10,7 +10,8 @@ vi.mock('./Terminal', () => ({
   submitPty: async () => true,
 }));
 
-import { CLEAR_OFFER_AT, ContextClear } from './ClearContextButton';
+import { CLEAR_OFFER_AT, commandBlocker, ContextClear, contextWarning } from './ClearContextButton';
+import { CONTEXT_HIGH, CONTEXT_WARN } from './StatusDot';
 
 const task = { id: 1, status: 'idle', sessionId: 's' } as Task;
 const usage = (fraction: number, over: Partial<ContextUsage> = {}): ContextUsage => ({
@@ -29,10 +30,10 @@ describe('ContextClear', () => {
     expect(renderToStaticMarkup(<ContextClear task={task} usage={null} />)).toBe('');
   });
 
-  it('offers Compact and Clear beside the message once the window is filling up', () => {
+  it('offers Compact Now and Clear beside the message once the window is filling up', () => {
     const html = renderToStaticMarkup(<ContextClear task={task} usage={usage(CLEAR_OFFER_AT + 0.02)} />);
     expect(html).toContain('Context 72%');
-    expect(html).toContain('>Compact<');
+    expect(html).toContain('>Compact Now<');
     expect(html).toContain('>Clear<');
   });
 
@@ -50,5 +51,33 @@ describe('ContextClear', () => {
     expect(html).toContain('Not available while messages are waiting to send');
     expect(html).toMatch(/<button[^>]*disabled=""/);
     __resetOutbox();
+  });
+});
+
+describe('the warning before an automatic compaction', () => {
+  it('starts at the meter\'s warn level and grows stronger at its high level', () => {
+    expect(CLEAR_OFFER_AT).toBe(CONTEXT_WARN);
+    expect(contextWarning(usage(CONTEXT_WARN - 0.01))).toBeNull();
+    expect(contextWarning(usage(CONTEXT_WARN))).toEqual({ level: 'warn', text: 'Context 70%' });
+    expect(contextWarning(usage(CONTEXT_HIGH + 0.03))).toEqual({ level: 'high', text: 'Context 93% · compacts soon' });
+    expect(contextWarning(null)).toBeNull();
+  });
+
+  it('draws the high level as such, and says Claude Code compacts on its own', () => {
+    const html = renderToStaticMarkup(<ContextClear task={task} usage={usage(0.93)} />);
+    expect(html).toContain('data-level="high"');
+    expect(html).toContain('Context 93% · compacts soon');
+    expect(html).toContain('compacts the session on its own');
+  });
+});
+
+describe('commandBlocker', () => {
+  it('lets a command go only to a live, idle session with nothing waiting', () => {
+    expect(commandBlocker(true, 'idle', false)).toBeNull();
+    expect(commandBlocker(true, 'done', false)).toBeNull();
+    expect(commandBlocker(false, 'idle', false)).toBe('No session is running for this task.');
+    expect(commandBlocker(true, 'running', false)).toBe('Available once the session is idle.');
+    expect(commandBlocker(true, 'blocked', false)).toBe('Available once the session is idle.');
+    expect(commandBlocker(true, 'idle', true)).toBe('Not available while messages are waiting to send');
   });
 });
