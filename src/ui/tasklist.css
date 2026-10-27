@@ -155,9 +155,13 @@
   white-space: nowrap;
 }
 
+/* End-aligned: on the first nine rows the hidden ⌘N shares this cell and is
+   wider than "1h", so a start-aligned age sat further left on those rows than
+   on the rest. */
 .task-age {
   grid-column: 4;
   grid-row: 1;
+  justify-self: end;
   font-size: var(--fs-xs);
   color: var(--faint);
   font-variant-numeric: tabular-nums;
