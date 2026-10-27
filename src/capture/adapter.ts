@@ -408,6 +408,88 @@ export function isMetaLine(rawJson: string): boolean {
 }
 
 /**
+ * What a compaction's boundary line records about it. Null fields were absent
+ * or of a shape this build does not know, and are shown as nothing.
+ */
+export interface CompactBoundary {
+  /** The line's `uuid`; the summary's `parentUuid` names it. */
+  uuid: string | null;
+  /** `auto` when Claude Code compacted on its own, `manual` for `/compact`. */
+  trigger: 'auto' | 'manual' | null;
+  /** Tokens in the context when it was compacted. */
+  preTokens: number | null;
+  /** How long writing the summary took. */
+  durationMs: number | null;
+}
+
+/**
+ * The boundary Claude Code writes when it compacts a session, or null for any
+ * other line: `{type: "system", subtype: "compact_boundary", uuid,
+ * compactMetadata: {trigger, preTokens, durationMs, …}}`.
+ *
+ * Measured on Claude Code 2.1.309-2.1.310, across 16 compactions in 13
+ * transcripts: the summary line (`compactSummaryOf`) is always the very next
+ * line, its `parentUuid` is this line's `uuid`, and its `timestamp` is ~8 ms
+ * EARLIER than this one's -- so a read ordered by `ts` puts it first. Every
+ * one was `auto`; `manual` is what Claude Code's own `/compact` records.
+ */
+export function compactBoundaryOf(rawJson: string): CompactBoundary | null {
+  if (!rawJson.includes('compact_boundary')) return null;
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'system' || line['subtype'] !== 'compact_boundary') return null;
+  const meta = isRecord(line['compactMetadata']) ? line['compactMetadata'] : {};
+  const trigger = meta['trigger'];
+  const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  return {
+    uuid: typeof line['uuid'] === 'string' ? line['uuid'] : null,
+    trigger: trigger === 'auto' || trigger === 'manual' ? trigger : null,
+    preTokens: count(meta['preTokens']),
+    durationMs: count(meta['durationMs']),
+  };
+}
+
+/** A compaction's summary: the text Claude Code continues from. */
+export interface CompactSummary {
+  /** The boundary line it follows, by that line's `uuid`. */
+  parentUuid: string | null;
+  /** The whole summary, read from the line rather than the (truncated) body. */
+  text: string;
+}
+
+/**
+ * The summary written after a compaction boundary, or null for any other
+ * line: a `user` line with `isCompactSummary: true` (and
+ * `isVisibleInTranscriptOnly`), whose content opens "This session is being
+ * continued from a previous conversation…". Nobody typed it, so nothing may
+ * treat it as a prompt; `queueFactsIn` already skips it.
+ */
+export function compactSummaryOf(rawJson: string): CompactSummary | null {
+  if (!rawJson.includes('isCompactSummary')) return null;
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'user' || line['isCompactSummary'] !== true) return null;
+  const message = line['message'];
+  const text = isRecord(message) ? textOfUnknown(message['content']) : null;
+  return {
+    parentUuid: typeof line['parentUuid'] === 'string' ? line['parentUuid'] : null,
+    text: text ?? '',
+  };
+}
+
+/**
+ * A notice Claude Code writes into the session for the reader, not the model:
+ * `{type: "system", subtype: "informational", level, content}`. Not specific
+ * to compaction -- across 21 such lines here, 16 sat after a boundary (the
+ * "compacted while idle" note, ~450 ms later, with only `attachment` lines
+ * between), the rest elsewhere. So it says nothing on its own about what it
+ * is: where it sits is the only structural fact, and the caller decides.
+ */
+export function isNoticeLine(rawJson: string): boolean {
+  if (!rawJson.includes('informational')) return false;
+  const line = safeParse(rawJson);
+  return line?.['type'] === 'system' && line['subtype'] === 'informational';
+}
+
+/**
  * Session-title line types, mapped to the key each carries the title in.
  *
  * These stay OUT of `messages` -- they are bookkeeping, not conversation, and

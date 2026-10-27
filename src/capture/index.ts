@@ -21,6 +21,10 @@ export { deriveStatus } from './status';
 export { imageAt, imagesIn, SEQ_STRIDE } from './adapter';
 export type { TranscriptImage } from './adapter';
 
+/** A compaction's boundary and summary, and the notices Claude Code writes. */
+export { compactBoundaryOf, compactSummaryOf, isNoticeLine } from './adapter';
+export type { CompactBoundary, CompactSummary } from './adapter';
+
 export { usageSummary } from './usage';
 export type { UsageSummary } from './usage';
 

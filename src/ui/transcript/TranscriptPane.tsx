@@ -42,6 +42,8 @@ import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty } fr
 import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
+import CompactionRow from './CompactionRow';
+import { compactionAt, isPromptRow, type Compaction } from './compaction';
 import PromptCard from './PromptCard';
 import { PermissionModeLabel } from './PermissionModeLabel';
 import { isSidechain, toolUseId } from './ToolChip';
@@ -396,7 +398,7 @@ export function TranscriptPane({
     if (!echo) return;
     // Clock skew between this machine's two clocks is nil, but a second of
     // slack keeps a row written in the same instant from being missed.
-    if (messages.some((m) => m.role === 'user' && m.agentId === null && m.ts >= echo.at - 1000)) setEcho(null);
+    if (messages.some((m) => isPromptRow(m) && m.agentId === null && m.ts >= echo.at - 1000)) setEcho(null);
   }, [messages, echo]);
   useEffect(() => {
     if (!echo) return;
@@ -464,6 +466,8 @@ export function TranscriptPane({
           {items.map((item) =>
             item.kind === 'sidechain' ? (
               <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
+            ) : item.kind === 'compaction' ? (
+              <CompactionRow key={item.key} compaction={item.compaction} />
             ) : (
               <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
             ),
@@ -1586,12 +1590,14 @@ export function shellEscapePath(path: string): string {
 
 export type Item =
   | { kind: 'row'; key: string; message: Message; result: Message | null; extras?: Message[] }
-  | { kind: 'sidechain'; key: string; rows: Message[]; results: Map<number, Message | null> };
+  | { kind: 'sidechain'; key: string; rows: Message[]; results: Map<number, Message | null> }
+  | { kind: 'compaction'; key: string; compaction: Compaction };
 
 /**
  * Pair each `tool_use` with its `tool_result`, and fold runs of sidechain rows
  * into a single collapsible group. Subagent traffic is noise until you go
- * looking for it.
+ * looking for it. A compaction's boundary, summary and notice become one
+ * divider (compaction.ts), so the summary is never a "you" band.
  *
  * `foldSidechains: false` is for the subagent inspector, which IS going looking
  * for it: every row it shows is sidechain, so folding would hide the whole run
@@ -1641,6 +1647,13 @@ export function groupRows(messages: readonly Message[], { foldSidechains = true 
       continue;
     }
     if (!consumed.has(m.id)) {
+      const compacted = compactionAt(messages, i);
+      if (compacted) {
+        const first = compacted.compaction.boundary ?? m;
+        items.push({ kind: 'compaction', key: `c-${first.id}`, compaction: compacted.compaction });
+        i = compacted.next;
+        continue;
+      }
       if (m.role === 'user') {
         // One thing you sent is one band. Claude Code writes a message with an
         // attachment as several rows -- your text and the image are blocks of

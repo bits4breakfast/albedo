@@ -92,6 +92,29 @@ Top-level on the `user` line that carries a `tool_result`. Shape varies by tool:
 
 Treat it as `unknown` and narrow per tool name. Never assume a key exists.
 
+## Compaction (Claude Code 2.1.309-2.1.310)
+
+Not the `summary` line type. A compaction writes, back to back:
+
+1. `type: "system"`, `subtype: "compact_boundary"`, `content: "Conversation
+   compacted"`, `parentUuid: null` (`logicalParentUuid` names the last line
+   before it), and `compactMetadata`: `trigger` (`auto` / `manual`),
+   `preTokens`, `durationMs`, `preservedSegment`, `postTokens`, …
+2. `type: "user"`, `isCompactSummary: true`, `isVisibleInTranscriptOnly: true`,
+   `parentUuid` = the boundary's `uuid`: the summary, as string content. It
+   carries a `<tools-used-before-summary>` tag after its opening sentence.
+
+The summary's `timestamp` is ~8 ms **earlier** than the boundary's (16 of 16
+measured), so a ts-ordered read returns it first. The pane pairs them by
+adjacency and `parentUuid` (`src/ui/transcript/compaction.ts`). The preserved
+recent messages are not written again after the boundary.
+
+A compaction while idle is followed ~450 ms later, with only `attachment`
+lines between, by `type: "system"`, `subtype: "informational"`, `level:
+"notice"` ("Compacted while idle, …"). `trigger` still says `auto`, and
+`informational` is used for other notices too, so the transcript has no field
+marking it as idle: the pane recognises it only by its position.
+
 ## Permission prompts (status = `blocked`)
 
 There is no explicit "waiting for permission" line. A session is blocked when the
