@@ -1,5 +1,6 @@
-/* "Context 72% · Compact · Clear" in the message box's controls row, past 70%
-   only (src/ui/ClearContextButton.tsx). --warn on --panel-inset. */
+/* "Context 72% · Compact Now · Clear" in the message box's controls row, past
+   70% only (src/ui/ClearContextButton.tsx). On --panel-inset: --warn 7.79
+   light / 10.53 dark; past 90% --danger, 7.15 light / 8.84 dark. */
 .ctx-clear {
   display: inline-flex;
   align-items: center;
@@ -8,3 +9,4 @@
   font-size: var(--fs-xs);
 }
 .ctx-clear-reading { color: var(--warn); font-variant-numeric: tabular-nums; }
+.ctx-clear-reading[data-level='high'] { color: var(--danger); font-weight: 600; }
