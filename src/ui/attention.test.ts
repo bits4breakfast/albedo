@@ -128,7 +128,7 @@ describe('announcementFor', () => {
 });
 
 describe('system notifications', () => {
-  let posted: { title: string; body: string }[];
+  let posted: { title: string; body: string; taskId: number }[];
   const setup = (focused: boolean) => {
     posted = [];
     __setAttentionBackend(() => {}, focused, (n) => posted.push(n));
@@ -152,7 +152,7 @@ describe('system notifications', () => {
 
   it('quotes the question when a turn ends on one, instead of "finished"', () => {
     noteStatusChange(1, 'running', 'idle', 'Security audit', 'Fold these into the report, or do them now?');
-    expect(posted).toEqual([{ title: 'Security audit', body: 'Fold these into the report, or do them now?' }]);
+    expect(posted).toEqual([{ title: 'Security audit', body: 'Fold these into the report, or do them now?', taskId: 1 }]);
     expect(attentionMarks().get(1)).toBe('question');
   });
 
@@ -161,7 +161,7 @@ describe('system notifications', () => {
     __setAttentionBackend((critical) => bounces.push(critical), false, (n) => posted.push(n));
     noteQuestion(3, 'Audit', 'Shall I push?');
     expect(bounces).toEqual([false]);
-    expect(posted).toEqual([{ title: 'Audit', body: 'Shall I push?' }]);
+    expect(posted).toEqual([{ title: 'Audit', body: 'Shall I push?', taskId: 3 }]);
   });
 
   it('never lets a question replace a prompt that is waiting on you', () => {

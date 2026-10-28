@@ -8,7 +8,8 @@
  * differ more than they look:
  *
  *   - **Albedo is not focused.** Bounce the dock icon. macOS stops the bounce
- *     itself once the app is activated, so there is nothing to clean up.
+ *     once the app is activated; a critical one is also cancelled after ten
+ *     seconds (`src-tauri/src/attention.rs`), so it never bounces forever.
  *   - **Albedo is focused.** The dock bounce is a no-op by design -- macOS
  *     drops `requestUserAttention` for the active app -- so the cue has to be
  *     inside the window. The task's row is marked, and pulses.
@@ -17,7 +18,12 @@
  * bounce says "Albedo wants you"; with six sessions running, only the banner
  * says which one, and it is the one cue that reaches you in another Space or
  * on another display. It is rate-limited per task (see `shouldNotify`) and
- * can be switched off (`setNotificationsEnabled`).
+ * can be switched off (`setNotificationsEnabled`). Clicking it opens the task
+ * (`onNotificationClick`).
+ *
+ * Both go through `src-tauri/src/attention.rs`, not the Tauri APIs: the
+ * window's `requestUserAttention` was never granted and cannot cancel a
+ * bounce, and the notification plugin cannot deliver on macOS 26 (see there).
  *
  * The mark is set in BOTH cases, not just the focused one. The bounce says
  * "something happened"; only the mark says *which task*, and it has to survive
@@ -31,7 +37,9 @@
  * output -- so this adds no new knowledge of what Claude Code prints.
  */
 
-import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import type { TaskStatus } from '../types';
 import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
@@ -74,11 +82,10 @@ let focused = true;
 
 /** Test seam: `requestUserAttention` needs a real Tauri window. */
 let requestOsAttention: (critical: boolean) => void = (critical) => {
-  void getCurrentWindow()
-    .requestUserAttention(critical ? UserAttentionType.Critical : UserAttentionType.Informational)
-    .catch(() => {
-      /* Attention is a nicety; never let it take the app down. */
-    });
+  // A nicety: it never takes the app down, but it says when it fails.
+  void invoke('attention_bounce', { critical }).catch((err: unknown) => {
+    console.warn('[attention] dock bounce failed:', err);
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -168,40 +175,94 @@ export function setNotificationsEnabled(on: boolean): void {
 }
 
 /**
- * Permission is asked for once, on the first notification rather than at
- * launch: macOS shows its prompt with no context, and the moment a task first
- * needs you is the one moment the question explains itself. The answer is
- * cached for the session -- a refusal is not re-asked on every transition.
+ * Where banners go:
+ *
+ *   - `native`: the app's own notifications (`src-tauri/src/attention.rs`).
+ *   - `plugin`: `tauri dev`, a bare binary with no app bundle for macOS to
+ *     attribute a notification to. The plugin posts it as Terminal.
+ *   - `off`: macOS refused. `notificationProblem` says why; for a build
+ *     without a signing certificate it is "Notifications are not allowed for
+ *     this application".
  */
-let permission: Promise<boolean> | null = null;
-function ensurePermission(): Promise<boolean> {
-  permission ??= (async () => {
-    try {
-      if (await isPermissionGranted()) return true;
-      return (await requestPermission()) === 'granted';
-    } catch {
-      return false;
-    }
-  })();
-  return permission;
+type Route = 'native' | 'plugin' | 'off';
+
+let problem: string | null = null;
+
+/** Why banners are not being shown, once that is known. Null otherwise. */
+export function notificationProblem(): string | null {
+  return problem;
 }
 
-/** Test seam: `sendNotification` needs the Tauri plugin. */
-let postNotification: (n: { title: string; body: string }) => void = (n) => {
-  void ensurePermission()
-    .then((ok) => {
-      if (ok) sendNotification(n);
+/**
+ * Asked once, on the first notification rather than at launch: macOS shows
+ * its prompt with no context, and the moment a task first needs you is the one
+ * moment the question explains itself. The answer is cached for the session --
+ * a refusal is not re-asked on every transition.
+ */
+let route: Promise<Route> | null = null;
+function ensureRoute(): Promise<Route> {
+  route ??= (async (): Promise<Route> => {
+    try {
+      const native = await invoke<string>('notify_permission');
+      if (native === 'granted') return 'native';
+      if (native === 'denied') {
+        problem = 'Notifications are turned off for Albedo in System Settings.';
+        return 'off';
+      }
+      // 'unsupported': not an app bundle.
+      if (await isPermissionGranted()) return 'plugin';
+      return (await requestPermission()) === 'granted' ? 'plugin' : 'off';
+    } catch (err) {
+      problem = err instanceof Error ? err.message : String(err);
+      console.warn('[attention] notifications unavailable:', problem);
+      return 'off';
+    }
+  })();
+  return route;
+}
+
+/** Test seam: posting needs the Tauri runtime. */
+let postNotification: (n: { title: string; body: string; taskId: number }) => void = (n) => {
+  void ensureRoute()
+    .then(async (r) => {
+      if (r === 'native') await invoke('notify_post', n);
+      else if (r === 'plugin') sendNotification({ title: n.title, body: n.body });
     })
-    .catch(() => {
-      /* a notification is a nicety, like the bounce */
+    .catch((err: unknown) => {
+      // A notification is a nicety, like the bounce -- but a silent failure is
+      // how this went unnoticed before, so it is at least said.
+      console.warn('[attention] notification not shown:', err);
     });
 };
+
+/**
+ * A banner was clicked: `fn` gets the task it was posted for. The window is
+ * already brought forward by then. Returns a disposer; safe outside Tauri.
+ */
+export function onNotificationClick(fn: (taskId: number) => void): () => void {
+  let off: (() => void) | null = null;
+  let gone = false;
+  void listen<number | null>('albedo://notification-clicked', ({ payload }) => {
+    if (typeof payload === 'number') fn(payload);
+  })
+    .then((un) => {
+      if (gone) un();
+      else off = un;
+    })
+    .catch(() => {
+      /* outside Tauri: no banners to click */
+    });
+  return () => {
+    gone = true;
+    off?.();
+  };
+}
 
 /** @internal for tests */
 export function __setAttentionBackend(
   fn: ((critical: boolean) => void) | null,
   isFocused = true,
-  notify: ((n: { title: string; body: string }) => void) | null = null,
+  notify: ((n: { title: string; body: string; taskId: number }) => void) | null = null,
 ): void {
   requestOsAttention = fn ?? (() => {});
   postNotification = notify ?? (() => {});
@@ -311,14 +372,14 @@ export function noteQuestion(taskId: number, title: string | null, question: str
 function raise(taskId: number, kind: AttentionKind, title: string | null, detail: number | string | null): void {
   marked.set(taskId, kind);
   if (!focused) {
-    // Critical bounces until the app is activated; informational bounces
-    // once. "Blocked" will wait forever, so it gets the persistent one.
+    // Critical bounces for ten seconds; informational bounces once.
+    // "Blocked" will wait forever, so it gets the longer one.
     requestOsAttention(kind === 'blocked');
     // Only while unfocused: a banner for the window you are looking at is
     // the same noise the dock bounce already avoids.
     if (notificationsEnabled() && shouldNotify(lastNotified, taskId, kind, Date.now())) {
       try {
-        postNotification(notificationFor(kind, title, taskId, detail));
+        postNotification({ ...notificationFor(kind, title, taskId, detail), taskId });
       } catch {
         /* never let a notification take the status update down */
       }
@@ -350,7 +411,7 @@ export function noteMerged(
     requestOsAttention(false);
     if (notificationsEnabled() && shouldNotify(lastNotified, taskId, 'merged', Date.now())) {
       try {
-        postNotification(notificationFor('merged', title, taskId, prNumber));
+        postNotification({ ...notificationFor('merged', title, taskId, prNumber), taskId });
       } catch {
         /* as in noteStatusChange */
       }

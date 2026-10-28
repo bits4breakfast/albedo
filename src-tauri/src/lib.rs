@@ -1,3 +1,4 @@
+mod attention;
 mod fsscope;
 mod fsx;
 mod pty;
@@ -180,6 +181,10 @@ pub fn run() {
 
     tauri::Builder::default()
         .menu(build_menu)
+        .setup(|app| {
+            attention::install(app.handle());
+            Ok(())
+        })
         .on_menu_event(|app, event| {
             if event.id().as_ref() == CLOSE_TAB_ID {
                 let _ = app.emit(CLOSE_TAB_EVENT, ());
@@ -228,6 +233,9 @@ pub fn run() {
             pty::pty_kill_stale,
             fsx::canonicalize_path,
             fsscope::allow_project_dir,
+            attention::attention_bounce,
+            attention::notify_permission,
+            attention::notify_post,
             set_busy_tasks,
             quit_app,
         ])

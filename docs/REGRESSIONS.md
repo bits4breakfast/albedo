@@ -48,6 +48,15 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 - **Green locally, red on CI: a fixture git never saw.** #97's tests read `src/gh/fixtures/job-failed.log`. `.gitignore` has `*.log`, so the file existed in the worktree and the suite passed there, but it was never committed: CI and a merge trial both failed to resolve the import. **Rule:**
   - After committing, run `git status --short --ignored` on new fixture folders, or run the suite from a clean checkout of the pushed branch.
   - Name fixtures with an extension the repo doesn't ignore (`.txt`, `.json`, `.jsonl`).
+- **A cue that never fired, behind a catch-all and a mock.** Albedo's dock bounce and notification banners never reached the owner (#102), though `attention.ts` was fully tested. Each failed differently, and each error was caught and dropped as "a nicety":
+  - The bounce was refused: `core:window:default` does not include `allow-request-user-attention`.
+  - The banners went through `tauri-plugin-notification`, which on desktop answers "granted" without asking macOS. It posts through the deprecated `NSUserNotificationCenter`, which no longer delivers.
+  - The tests replaced both behind `__setAttentionBackend`, so nothing ever ran the real path.
+
+  **Rule:**
+  - A feature that reaches outside the app (OS attention, notifications, an external CLI) is checked once in the installed app, not only through its test seam.
+  - Its failures are logged, not swallowed: "a nicety" may fail quietly to the user, never to the console.
+  - A Tauri API call needs its permission in `capabilities/default.json`; `default` sets grant less than they sound.
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
 ## Cleanup paths

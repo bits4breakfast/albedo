@@ -44,7 +44,7 @@ describe('noteMerged', () => {
     noteMerged(7, 'ACME-1 fix', 42, true);
     expect(attentionMarks().get(7)).toBe('merged');
     expect(bounce).toHaveBeenCalledWith(false);
-    expect(post).toHaveBeenCalledWith({ title: 'ACME-1 fix', body: 'PR #42 merged — archive or follow up.' });
+    expect(post).toHaveBeenCalledWith({ title: 'ACME-1 fix', body: 'PR #42 merged — archive or follow up.', taskId: 7 });
   });
 
   it('marks without notifying for a merge that predates the run', () => {
