@@ -155,20 +155,51 @@ fi
 # allowed for this application"), so without a real identity Albedo can bounce
 # the dock but never show a banner. The cheapest real identity is a free Apple
 # Development certificate. Tauri signs with whatever APPLE_SIGNING_IDENTITY
-# names; one set by the caller wins.
+# names; one set by the caller is used without asking. Otherwise an installed
+# identity is offered, never taken unasked, and with none the build is ad-hoc
+# signed without a word: signing is optional.
 signed=0
 if [ "$os" = macos ]; then
   if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-    APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null |
-      sed -nE 's/.*"((Apple Development|Developer ID Application): [^"]*)".*/\1/p' | head -n 1 || true)
+    identities=()
+    while IFS= read -r name; do
+      [ -n "$name" ] && identities+=("$name")
+    done < <(security find-identity -v -p codesigning 2>/dev/null |
+      sed -nE 's/.*"((Apple Development|Developer ID Application): [^"]*)".*/\1/p' || true)
+
+    if [ ${#identities[@]} -eq 0 ]; then
+      # Installed but not valid is the one case worth a line: the usual cause
+      # is a certificate issued through Apple's WWDR G3 intermediate on a Mac
+      # that has only the old, expired one, and nothing else says so.
+      if security find-identity -p codesigning 2>/dev/null | grep -qE '"(Apple Development|Developer ID Application): '; then
+        echo "A signing certificate is installed, but macOS does not trust it, so the build is unsigned."
+        echo "  Usually Apple's intermediate certificate is missing: https://www.apple.com/certificateauthority/"
+      fi
+    elif [ ! -t 0 ]; then
+      echo "Not signing: no terminal to ask in. Set APPLE_SIGNING_IDENTITY to sign without asking."
+    elif [ ${#identities[@]} -eq 1 ]; then
+      printf 'Sign with "%s"? [Y/n] ' "${identities[0]}"
+      read -r answer || answer=n
+      case "$answer" in
+        "" | [Yy]*) APPLE_SIGNING_IDENTITY=${identities[0]} ;;
+      esac
+    else
+      echo "Signing certificates:"
+      for i in "${!identities[@]}"; do
+        printf '  %d) %s\n' $((i + 1)) "${identities[$i]}"
+      done
+      printf 'Sign with which? [1-%d, Enter for 1, 0 for none] ' "${#identities[@]}"
+      read -r answer || answer=0
+      [ -z "$answer" ] && answer=1
+      if [[ "$answer" =~ ^[0-9]+$ ]] && [ "$answer" -ge 1 ] && [ "$answer" -le ${#identities[@]} ]; then
+        APPLE_SIGNING_IDENTITY=${identities[$((answer - 1))]}
+      fi
+    fi
   fi
   if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
     export APPLE_SIGNING_IDENTITY
     signed=1
     echo "Signing as: $APPLE_SIGNING_IDENTITY"
-  else
-    warn "No signing certificate: Albedo will build ad-hoc signed, and macOS will not show its notifications." \
-      "A free one comes with any Apple ID: Xcode > Settings > Accounts > Manage Certificates > + > Apple Development."
   fi
 fi
 
