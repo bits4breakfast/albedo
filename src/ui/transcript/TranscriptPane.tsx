@@ -35,7 +35,7 @@ import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages, messageOrderKeys } from '../../db';
 import { mergeTail, tailCursor } from './tail';
-import { onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
+import { isLocalCommandLine, onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
 import { onConnectivityChange, useOffline, watchConnectivity } from '../../lib/connectivity';
@@ -393,7 +393,7 @@ export function TranscriptPane({
     if (!echo) return;
     // Clock skew between this machine's two clocks is nil, but a second of
     // slack keeps a row written in the same instant from being missed.
-    if (messages.some((m) => isPromptRow(m) && m.agentId === null && m.ts >= echo.at - 1000)) setEcho(null);
+    if (echoLanded(echo, messages)) setEcho(null);
   }, [messages, echo]);
   useEffect(() => {
     if (!echo) return;
@@ -498,6 +498,25 @@ export default TranscriptPane;
 
 /** How long a sent message waits to appear in the transcript before its echo goes. */
 const ECHO_MAX_MS = 30_000;
+
+/**
+ * Whether the transcript now has the message just sent: a row of the main
+ * session written no earlier than the send, with a second of slack for a row
+ * stamped in the same instant.
+ *
+ * A prompt arrives as a `user` row. A slash command Claude Code runs itself
+ * (`/rc`, `/rename`) writes none, only `system` lines for the command and its
+ * output; without them the echo of `/rc` sat below later rows as "Sending"
+ * until it timed out (#113). `isPromptRow` stays "a user row someone sent".
+ */
+export function echoLanded(echo: { at: number }, messages: readonly Message[]): boolean {
+  return messages.some(
+    (m) =>
+      m.agentId === null &&
+      m.ts >= echo.at - 1000 &&
+      (isPromptRow(m) || (m.role === 'system' && isLocalCommandLine(m.rawJson))),
+  );
+}
 
 /**
  * Whether the Queued band now shows the message just sent: one of its
