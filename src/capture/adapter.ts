@@ -728,19 +728,73 @@ export function queueFactsIn(text: string): QueueFact[] {
     // `<local-command-stdout>…`) do count: they match no typed entry, and
     // reading one as a turn start only delays an idle clear, never forces one.
     if (obj['type'] !== 'user' || obj['isMeta'] === true || obj['isCompactSummary'] === true) continue;
-    // Text blocks only: an image's own block is not part of what was typed,
-    // which already says `[Image #N]`.
-    const blocks = contentBlocksOf(obj);
-    const message = obj['message'];
-    const body = blocks
-      ? blocks.flatMap((b) => (isRecord(b) && b['type'] === 'text' && typeof b['text'] === 'string' ? [b['text']] : [])).join('\n')
-      : isRecord(message) && typeof message['content'] === 'string'
-        ? message['content']
-        : '';
+    const body = userTextOf(obj);
     if (body.trim() !== '') out.push({ op: 'prompt', sessionId, text: body, ts });
     if (STOPPING_PROMPT.test(body.trimStart())) out.push({ op: 'turn-stop', sessionId, ts });
   }
   return out;
+}
+
+/**
+ * The text of a `user` line. Text blocks only: an image's own block is not
+ * part of what was typed, which already says `[Image #N]`.
+ */
+function userTextOf(obj: Record<string, unknown>): string {
+  const blocks = contentBlocksOf(obj);
+  const message = obj['message'];
+  return blocks
+    ? blocks.flatMap((b) => (isRecord(b) && b['type'] === 'text' && typeof b['text'] === 'string' ? [b['text']] : [])).join('\n')
+    : isRecord(message) && typeof message['content'] === 'string'
+      ? message['content']
+      : '';
+}
+
+/**
+ * What a line says about the turn it belongs to, for the transcript's
+ * working line (src/ui/transcript/working.ts):
+ *  - `prompt`: a `user` line someone typed, which always starts a turn. Not
+ *    a meta line, a compaction summary, a tool result, or text Claude Code
+ *    gave itself (`isInjectedQueueText`): those are written inside a turn or
+ *    may start none.
+ *  - `end`: the session is back at its prompt -- an assistant line whose
+ *    stop_reason ends the turn, `turn_duration` / `local_command`, or the
+ *    `[Request interrupted…]`-style user lines. The same lines `queueFactsIn`
+ *    reads as `turn-end` and `turn-stop`.
+ * Null for every other line. Read per line, so it says nothing about
+ * sidechain traffic: callers keep to the main session's rows.
+ */
+export function turnEdgeOf(rawJson: string): 'prompt' | 'end' | null {
+  const obj = safeParse(rawJson);
+  if (!obj) return null;
+  if (obj['type'] === 'system') {
+    return obj['subtype'] === 'turn_duration' || obj['subtype'] === 'local_command' ? 'end' : null;
+  }
+  if (obj['type'] === 'assistant') return TURN_ENDING_STOP_REASONS.has(stopReasonOf(rawJson) ?? '') ? 'end' : null;
+  if (obj['type'] !== 'user' || obj['isMeta'] === true || obj['isCompactSummary'] === true) return null;
+  const blocks = contentBlocksOf(obj);
+  if (blocks?.some((b) => isRecord(b) && b['type'] === 'tool_result')) return null;
+  const body = userTextOf(obj).trimStart();
+  if (STOPPING_PROMPT.test(body)) return 'end';
+  if (body === '' || isInjectedQueueText(body)) return null;
+  return 'prompt';
+}
+
+/**
+ * The API message an assistant line belongs to, and the output tokens its
+ * usage reports. Claude Code writes one line per content block, each
+ * repeating its message's `id` and `usage`, so a sum over a turn counts each
+ * id once (measured: per distinct id matched the terminal's "↓ 37.6k
+ * tokens", 37,527). Null for any other line, or one without both fields.
+ */
+export function outputTokensOf(rawJson: string): { messageId: string; outputTokens: number } | null {
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'assistant') return null;
+  const message = line['message'];
+  if (!isRecord(message)) return null;
+  const id = message['id'];
+  const usage = message['usage'];
+  if (typeof id !== 'string' || id.length === 0 || !isRecord(usage)) return null;
+  return { messageId: id, outputTokens: num(usage['output_tokens']) };
 }
 
 /**
