@@ -151,7 +151,26 @@
   font-size: var(--fs-sm);
   color: var(--muted);
 }
-.tx-working-time { font-variant-numeric: tabular-nums; }
+/* One line whatever the step: the detail (a command, an agent's description)
+   is the only part that gives way, truncating with an ellipsis, so the label,
+   the step's time and the turn's totals always show. All --muted, which
+   clears 5.89 (light) and 6.50 (dark) on --panel-raised; the tool's name is
+   --text, as on its chip. */
+.tx-working { white-space: nowrap; min-width: 0; }
+.tx-working-label,
+.tx-working-time,
+.tx-working-totals { flex: none; }
+.tx-working-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-working-tool { color: var(--text); font-weight: 600; }
+.tx-working-mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
+.tx-working-time,
+.tx-working-totals { font-variant-numeric: tabular-nums; }
+.tx-working-totals { margin-left: auto; padding-left: 8px; }
 /* Three dots that swell in turn. Scale, not opacity, so the dots keep the
    --muted they are drawn in. */
 .tx-working-dots { display: inline-flex; gap: 3px; }

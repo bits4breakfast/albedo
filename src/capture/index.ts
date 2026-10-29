@@ -24,6 +24,9 @@ export type { TranscriptImage } from './adapter';
 /** A compaction's boundary and summary, and the notices Claude Code writes. */
 export { compactBoundaryOf, compactSummaryOf, isNoticeLine } from './adapter';
 
+/** Turn edges and output tokens, for the transcript's working line. */
+export { turnEdgeOf, outputTokensOf } from './adapter';
+
 /** A slash command Claude Code ran itself, recorded as a `system` line. */
 export { isLocalCommandLine } from './adapter';
 
