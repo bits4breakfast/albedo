@@ -374,7 +374,8 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   };
 
   return (
-    <div className="tf-pane">
+    /* A stop of the Tab cycle (focusAreas.ts): it lands on the open file's row. */
+    <div className="tf-pane" data-focus-area="files">
       {askNotice !== null ? <div className="tf-warn">{askNotice}</div> : null}
       {squashOpen ? (
         <SquashRebaseDialog
@@ -594,6 +595,8 @@ function FileRow({
       className="tf-row"
       data-path={file.path}
       data-keeps-focus=""
+      data-focus-default={current ? '' : undefined}
+      data-focus-fallback=""
       aria-current={current ? 'true' : undefined}
       onMouseDown={activate.onMouseDown}
       onClick={activate.onClick}

@@ -114,7 +114,8 @@ export default function CommentsSection({ task, onOpen }: CommentsSectionProps):
       </div>
 
       {editingIntro && (
-        <div className="tf-comments-intro">
+        /* A field and its Reset: Tab walks between them. */
+        <div className="tf-comments-intro" data-focus-keeps-tab="">
           <label className="tf-comments-intro-label" htmlFor={`tf-intro-${task.id}`}>
             The Message Starts With
           </label>

@@ -181,6 +181,8 @@ export default function ProjectTree({ taskId, worktreePath, status, toneOf, acti
             data-kind={row.kind}
             data-path={row.path}
             data-keeps-focus=""
+            data-focus-default={row.path === activePath ? '' : undefined}
+            data-focus-fallback=""
             aria-expanded={row.kind === 'dir' ? row.open : undefined}
             aria-current={row.path === activePath ? 'true' : undefined}
             style={{ paddingLeft: `calc(8px + ${row.depth} * 1.1em)` }}

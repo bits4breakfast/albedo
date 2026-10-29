@@ -36,6 +36,7 @@ import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
 import Terminal, { focusPty, usePtyLiveSince } from './ui/Terminal';
+import { useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
@@ -808,6 +809,8 @@ export default function App() {
   }, []);
   const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
   useDoubleShift(() => toggleQuickOpen('all'));
+  // Tab / Ctrl+Tab between the message box, terminal, Files and task list.
+  useFocusAreaCycle();
 
   /** Find in Files (⇧⌘F): same guards as the palette -- a folder, and no other modal. */
   const [findOpen, setFindOpen] = useState(false);
@@ -1317,7 +1320,7 @@ export default function App() {
             )}
 
             {/* Kept mounted in every mode: unmounting it would kill live ptys. */}
-            <section className="pane pane-pty" style={primaryStyle} hidden={!showPty || !selected}>
+            <section className="pane pane-pty" style={primaryStyle} hidden={!showPty || !selected} data-focus-area="terminal">
               {/* A name only when there is another pane to tell it from: in
                   PTY mode the switch above already says "PTY". */}
               {split && (
@@ -1472,7 +1475,7 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="tabpanel" hidden={activeTab !== 'editor'}>
+                <div className="tabpanel" hidden={activeTab !== 'editor'} data-focus-area="editor">
                   {editorTask && (
                     <PaneErrorBoundary key={`ed-${editorTask.id}`} label="Editor">
                       <EditorTabs

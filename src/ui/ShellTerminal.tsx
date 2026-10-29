@@ -74,6 +74,8 @@ export default function ShellTerminal({ cwd, active }: { cwd: string; active: bo
       /* links are a nicety */
     }
     term.open(host);
+    // Tab is the shell's completion; Ctrl+Tab leaves (focusAreas.ts).
+    term.textarea?.setAttribute('data-focus-keeps-tab', '');
 
     const offTheme = onThemeChange(() => {
       try {

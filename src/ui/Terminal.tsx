@@ -499,6 +499,9 @@ export default function Terminal({
       /* links are a nicety, not a requirement */
     }
     term.open(host);
+    // The Tab cycle's stop in the terminal, and Tab stays here (focusAreas.ts).
+    term.textarea?.setAttribute('data-focus-default', '');
+    term.textarea?.setAttribute('data-focus-keeps-tab', '');
 
     // Re-theme in place. Assigning `options.theme` repaints the screen and the
     // scrollback from the existing buffer -- it does not touch the pty, so a
