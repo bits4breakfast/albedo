@@ -29,6 +29,13 @@ export interface OpenFileOptions {
    * and a Files tab on screen stays there so the next arrow still reaches it.
    */
   step?: boolean;
+  /**
+   * The path is a bare file name from the transcript (`Foo.php`), not a path:
+   * find the file by name first. One match opens it; none or several open Go
+   * to File with the name typed. Only a link that knows it holds a bare name
+   * sets this -- a root-level `README.md` from the Files tree is a path.
+   */
+  lookup?: boolean;
 }
 
 export type OpenFile = (req: OpenFileRequest, options?: OpenFileOptions) => void;

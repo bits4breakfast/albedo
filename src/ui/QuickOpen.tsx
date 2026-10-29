@@ -36,6 +36,12 @@ export interface QuickOpenProps {
   onMode: (mode: QuickOpenMode) => void;
   onClose: () => void;
   onOpen: (request: OpenFileRequest) => void;
+  /**
+   * Text to start from, when the dialog is opened for something -- a file
+   * name from the transcript that matched no file, or several. A new object
+   * replaces the query.
+   */
+  seed?: { text: string } | null;
 }
 
 const MODES: readonly { mode: QuickOpenMode; label: string; keys: string; placeholder: string }[] = [
@@ -57,9 +63,12 @@ const KIND_LABEL: Record<QuickOpenItem['kind'], string> = {
   const: 'Const',
 };
 
-export default function QuickOpen({ mode, worktreePath, scopeLabel = null, currentFile, onMode, onClose, onOpen }: QuickOpenProps) {
+export default function QuickOpen({ mode, worktreePath, scopeLabel = null, currentFile, onMode, onClose, onOpen, seed = null }: QuickOpenProps) {
   const open = mode !== null && worktreePath !== null;
   const [query, setQuery] = useState('');
+  useEffect(() => {
+    if (seed) setQuery(seed.text);
+  }, [seed]);
   const [active, setActive] = useState(0);
   const [index, setIndex] = useState<CodeIndex | null>(null);
   const [loading, setLoading] = useState(false);

@@ -17,7 +17,7 @@ import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
 import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
-import { parsePathRef } from '../../lib/paths';
+import { bareFileRef, parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
 import { imageAt, imagesIn, peerMessageIdOf, senderTaskOf } from '../../capture';
@@ -868,10 +868,18 @@ export function parseBlocks(src: string): Block[] {
  * span like `npm run build` may well contain something path-shaped, and
  * turning that into a link makes the pane feel unreliable -- a false positive
  * costs more than a missed link. Extraction itself stays in `parsePathRef`.
+ *
+ * Two shapes a code span has and prose does not:
+ *  - a line range, `src/a.php:64-75`, which opens at its first line;
+ *  - a bare file name, `Foo.php` or `Foo.php:12` (`bareFileRef`), which the
+ *    shell looks up in the worktree when clicked.
  */
-function codeSpanRef(text: string): { path: string; line: number | null } | null {
-  const trimmed = text.trim();
+export function codeSpanRef(text: string): { path: string; line: number | null; bare?: boolean } | null {
+  const range = /^(.*:\d{1,7})-\d{1,7}$/.exec(text.trim());
+  const trimmed = range ? (range[1] ?? '') : text.trim();
   if (trimmed.length === 0) return null;
+  const bare = bareFileRef(trimmed);
+  if (bare) return { ...bare, bare: true };
   let ref: { path: string; line: number | null } | null = null;
   try {
     ref = parsePathRef(trimmed);
@@ -917,7 +925,7 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
             {codeText}
           </ExternalLink>
         ) : ref ? (
-          <PathLink key={key++} path={ref.path} line={ref.line} className="tx-md-code tx-md-code-link">
+          <PathLink key={key++} path={ref.path} line={ref.line} lookup={ref.bare === true} className="tx-md-code tx-md-code-link">
             {codeText}
           </PathLink>
         ) : (

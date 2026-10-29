@@ -28,7 +28,7 @@ import type { DualToken } from '../../lib/highlight';
 import { parsePathRef } from '../../lib/paths';
 import { openExternal } from '../../lib/openUrl';
 import { splitUrls } from '../../lib/urls';
-import { useOpenFile } from '../editor/openFile';
+import { useOpenFile, type OpenFileOptions } from '../editor/openFile';
 import { anchorBlock, fileLines, type AnchorFailure } from '../../lib/anchor';
 import { useReadFile } from '../editor/openFile';
 import { Disclosure } from '../Disclosure';
@@ -69,25 +69,31 @@ const MAX_LINKIFY_CHARS = 400_000;
  * Opening is best-effort. If no provider is mounted, or the editor throws, the
  * link quietly does nothing rather than taking the pane down with it.
  */
-export function useOpenPath(): (path: string, line?: number | null) => void {
-  let open: ((req: OpenFileRequest) => void) | null = null;
+export function useOpenPath(): (path: string, line?: number | null, lookup?: boolean) => void {
+  let open: ((req: OpenFileRequest, options?: OpenFileOptions) => void) | null = null;
   try {
     open = useOpenFile();
   } catch {
     open = null; // no provider (tests, or the editor not mounted yet)
   }
   return useCallback(
-    (path: string, line: number | null = null) => {
+    (path: string, line: number | null = null, lookup = false) => {
       if (typeof open !== 'function') return;
       if (typeof path !== 'string' || path.trim().length === 0) return;
       try {
-        open({ path, line });
+        open({ path, line }, lookup ? { lookup: true } : undefined);
       } catch {
         /* the editor is not allowed to break rendering */
       }
     },
     [open],
   );
+}
+
+/** Whether any of the selection's ranges reaches into `node`. */
+function touches(sel: Selection, node: Node): boolean {
+  for (let i = 0; i < sel.rangeCount; i++) if (sel.getRangeAt(i).intersectsNode(node)) return true;
+  return false;
 }
 
 /**
@@ -110,9 +116,13 @@ export function useActivate(onActivate: () => void): {
       const down = downRef.current;
       downRef.current = null;
       if (down && (Math.abs(e.clientX - down.x) > 3 || Math.abs(e.clientY - down.y) > 3)) return;
+      // A selection that touches this link means the click ended a selection
+      // gesture. A selection elsewhere does not: a line-number link is
+      // `user-select: none`, so clicking it leaves an earlier selection where
+      // it was, and every click on it was swallowed (#110).
       try {
         const sel = window.getSelection?.();
-        if (sel && !sel.isCollapsed && sel.toString().length > 0) return;
+        if (sel && !sel.isCollapsed && sel.toString().length > 0 && touches(sel, e.currentTarget)) return;
       } catch {
         /* selection API unavailable; fall through and treat it as a click */
       }
@@ -131,6 +141,8 @@ export interface PathLinkProps {
   title?: string;
   /** Visible text; defaults to the path itself. */
   children?: ReactNode;
+  /** `path` is a bare file name to look up (OpenFileOptions.lookup). */
+  lookup?: boolean;
   /**
    * Keyboard-reachable. Off for the per-line affordances inside a diff, which
    * would otherwise add two tab stops per line to a 5000-line diff; the file is
@@ -146,9 +158,10 @@ export function PathLink({
   title,
   children,
   focusable = true,
+  lookup = false,
 }: PathLinkProps): ReactNode {
   const openPath = useOpenPath();
-  const handlers = useActivate(() => openPath(path, line));
+  const handlers = useActivate(() => openPath(path, line, lookup));
   return (
     <span
       className={`tx-link${className ? ` ${className}` : ''}`}
@@ -160,7 +173,7 @@ export function PathLink({
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          openPath(path, line);
+          openPath(path, line, lookup);
         }
       }}
     >

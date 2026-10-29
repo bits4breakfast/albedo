@@ -471,6 +471,18 @@ export function loadCodeIndex(root: string): Promise<CodeIndex> {
  * `loadCodeIndex` resolves, so a stale-by-31-seconds index never costs the
  * user an "indexing…" flash.
  */
+/**
+ * Files in the worktree called `name`, worktree-relative: how a bare file name
+ * in the transcript (`Foo.php`) finds its file. The cached index first; when
+ * it has none (a file created since), a fresh one.
+ */
+export async function filesNamed(root: string, name: string): Promise<string[]> {
+  const match = (files: readonly string[]) => files.filter((f) => f === name || f.endsWith(`/${name}`));
+  const cached = peekCodeIndex(root);
+  const hits = cached ? match(cached.files) : [];
+  return hits.length > 0 ? hits : match((await loadCodeIndex(root)).files);
+}
+
 export function peekCodeIndex(root: string): CodeIndex | null {
   return cache.get(root)?.last ?? null;
 }
