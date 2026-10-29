@@ -10,11 +10,13 @@ import { describe, expect, it } from 'vitest';
 
 import basic from './fixtures/session-basic.jsonl?raw';
 import malformed from './fixtures/malformed.jsonl?raw';
+import localCommand from './fixtures/local-command.jsonl?raw';
 import {
   BODY_MAX_CHARS,
   countLines,
   cwdOf,
   extractUsage,
+  isLocalCommandLine,
   parseLine,
   parseTranscript,
   SEQ_STRIDE,
@@ -424,5 +426,31 @@ describe('session titles — lifted out, never persisted as messages', () => {
     expect(lastTitleIn('{"type":"ai-title","aiTit')).toBeNull();
     // and a good title earlier in the chunk still wins
     expect(lastTitleIn([aiTitle('good'), '{"type":"ai-title","aiTit'].join('\n'))).toBe('good');
+  });
+});
+
+describe('parseTranscript — a slash command Claude Code ran itself (#113)', () => {
+  const rows = parseTranscript(localCommand);
+
+  it('keeps each local_command line as one system row, envelope as body, raw line intact', () => {
+    const local = rows.filter((r) => isLocalCommandLine(r.rawJson));
+    expect(local.map((r) => [r.seq, r.role])).toEqual([
+      [2 * SEQ_STRIDE, 'system'],
+      [3 * SEQ_STRIDE, 'system'],
+      [6 * SEQ_STRIDE, 'system'],
+      [7 * SEQ_STRIDE, 'system'],
+    ]);
+    expect(bySeq(rows, 2 * SEQ_STRIDE).body).toBe(
+      '<command-name>/remote-control</command-name>\n            <command-message>remote-control</command-message>\n            <command-args></command-args>',
+    );
+    expect(bySeq(rows, 3 * SEQ_STRIDE).body).toBe('<local-command-stdout></local-command-stdout>');
+    expect(JSON.parse(bySeq(rows, 2 * SEQ_STRIDE).rawJson).subtype).toBe('local_command');
+  });
+
+  it('is false for other system lines, user lines and junk', () => {
+    expect(isLocalCommandLine(bySeq(rows, 5 * SEQ_STRIDE).rawJson)).toBe(false); // bridge_status
+    expect(isLocalCommandLine(bySeq(rows, 0).rawJson)).toBe(false);
+    expect(isLocalCommandLine('{"type":"user","subtype":"local_command"}')).toBe(false);
+    expect(isLocalCommandLine('{"type":"system"')).toBe(false);
   });
 });

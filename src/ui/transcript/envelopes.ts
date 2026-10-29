@@ -573,9 +573,14 @@ export function parseUserBody(body: string): UserBlock[] {
 }
 
 /**
- * True when the row is nothing but machine-generated envelopes. A `!` command
- * and an Albedo action arrive in envelopes too, but the user started them.
+ * True when the row is nothing but machine-generated envelopes. A `!` command,
+ * a slash command and an Albedo action arrive in envelopes too, but the user
+ * started them: every `<command-name>` on a non-meta line in local transcripts
+ * was one the user typed. A bare `/clear` is `cleared` by now, the divider.
  */
 export function isAllEnvelopes(blocks: readonly UserBlock[]): boolean {
-  return blocks.length > 0 && blocks.every((b) => b.kind !== 'text' && b.kind !== 'shell-input' && b.kind !== 'action');
+  return (
+    blocks.length > 0 &&
+    blocks.every((b) => b.kind !== 'text' && b.kind !== 'shell-input' && b.kind !== 'action' && b.kind !== 'command')
+  );
 }
