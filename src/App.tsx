@@ -29,7 +29,8 @@ import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
-import { BranchIcon, ChatIcon, FolderIcon, homeRelative } from './ui/icons';
+import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
+import BranchChip from './ui/BranchChip';
 import OverflowMenu from './ui/OverflowMenu';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
@@ -41,6 +42,7 @@ import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
+import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
 import { COMPACT, ContextClear, useCommandBlocker } from './ui/ClearContextButton';
@@ -512,6 +514,15 @@ export default function App() {
     setAnnouncement(text);
   }, [attention]);
   useEffect(() => watchFocus(), []);
+
+  // A transcript row that names a task (a message from another session) opens
+  // it through this. Stable, reading the list through a ref, like `select`.
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const taskOpener = useMemo<TaskOpener>(
+    () => ({ has: (id) => tasksRef.current.some((t) => t.id === id), open: select }),
+    [select],
+  );
   useMergeNotices(tasks);
 
   const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
@@ -892,6 +903,7 @@ export default function App() {
   return (
     <FileOpenContext.Provider value={openFile}>
     <FileTextContext.Provider value={readFileText}>
+    <TaskOpenContext.Provider value={taskOpener}>
     <div className="app" data-dragging={dragging !== null} data-drag={dragging ?? undefined}>
       <Header
         onReconcile={() => setReconcileOpen(true)}
@@ -1135,10 +1147,7 @@ export default function App() {
                       <span className="main-ident-text">Chat</span>
                     </span>
                   ) : selected.branch ? (
-                    <span className="main-ident-branch" title={`Branch ${selected.branch}, off ${selected.baseBranch}`}>
-                      <BranchIcon />
-                      <span className="main-ident-text">{selected.branch}</span>
-                    </span>
+                    <BranchChip task={selected} />
                   ) : null}
                   {/* The PR, beside the branch it belongs to: with the branch,
                       the one place git and GitHub state shows. It never
@@ -1717,6 +1726,7 @@ export default function App() {
         />
       </PaneErrorBoundary>
     </div>
+    </TaskOpenContext.Provider>
     </FileTextContext.Provider>
     </FileOpenContext.Provider>
   );

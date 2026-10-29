@@ -20,7 +20,7 @@ const task = (id: number) =>
 
 const pr = (kind: 'pending' | 'passing'): PrStatus =>
   ({
-    number: 1, url: '', title: '', state: 'open', headRefName: '', mergedAt: null, review: null, lines: [],
+    number: 1, url: '', title: '', state: 'open', headRefName: '', baseRefName: '', mergedAt: null, review: null, lines: [],
     checks: kind === 'pending' ? { kind, pending: 1, total: 1 } : { kind, total: 1 },
   }) as PrStatus;
 

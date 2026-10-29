@@ -82,6 +82,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   **Rule:**
   - A guard that cancels a click checks only what belongs to the element clicked.
   - An "opener" that gives up says so, or falls back to something visible (Go to File); it never just returns.
+- **A parsed block that nothing draws.** `envelopes.ts` parsed `<agent-message>` into a block, but `MessageRow`'s switch had no case for it and ended in `default: return null`. On this machine 6 messages from other sessions never appeared at all, and a newer `<cross-session-message>` showed as raw XML under "You" (#106). **Rule:**
+  - A switch over a union of things to draw is exhaustive (`const unhandled: never = block`), so a new kind without a case is a type error, not an empty row.
+  - Hiding a kind is written as its own case with the reason (as hand-backs are), never left to `default`.
 
 ## Shell scripts (for agents)
 
