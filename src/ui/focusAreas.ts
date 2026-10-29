@@ -25,9 +25,11 @@
  * Selecting a task focuses its terminal (Terminal.tsx), so typing goes
  * straight to Claude Code. That focus is marked `data-focus-auto` until the
  * person engages: any other key, a click anywhere, or focus moving away. While
- * it is marked, Tab is not the terminal's yet, so the first Tab after
+ * it is marked, plain Tab is not the terminal's yet, so the first Tab after
  * selecting a task still lands in the message box. Typing first and then
- * pressing Tab -- autocomplete -- reaches the terminal as before.
+ * pressing Tab -- autocomplete -- reaches the terminal as before. Shift+Tab is
+ * never taken from it: it is Claude Code's permission-mode switch, often the
+ * first key pressed on a task just opened.
  *
  * ## Who keeps Tab
  *
@@ -81,13 +83,18 @@ const AUTO_ATTR = 'data-focus-auto';
 
 /**
  * For the terminals' custom key handler: true for a key the terminal hands to
- * the cycle instead of sending it to the pty. Ctrl+Tab always; plain Tab and
- * Shift+Tab only while the terminal holds focus it took on its own.
+ * the cycle instead of sending it to the pty. Ctrl+Tab always; plain Tab only
+ * while the terminal holds focus it took on its own; Shift+Tab never.
  */
 export function terminalYieldsKey(e: KeyProbe & Pick<KeyboardEvent, 'target'>): boolean {
   const key = cycleKeyOf(e);
   if (key === null) return false;
-  return key.leave || isAutoFocused(e.target);
+  return key.leave || freshTab(key, e.target);
+}
+
+/** Plain Tab on focus the app placed: the one key that is not the terminal's yet. */
+function freshTab(key: CycleKey, el: EventTarget | null): boolean {
+  return key.dir === 1 && !key.leave && isAutoFocused(el);
 }
 
 function isAutoFocused(el: EventTarget | null): boolean {
@@ -236,13 +243,13 @@ export function handleCycleKey(e: KeyboardEvent, doc: Document = document): bool
   const inside = active !== null && active !== doc.body && active !== doc.documentElement ? active : null;
   const go = shouldCycle(key, {
     modalOpen: doc.querySelector('[aria-modal="true"]') !== null,
-    keepsTab: inside?.closest('[data-focus-keeps-tab]') != null && !isAutoFocused(inside),
+    keepsTab: inside?.closest('[data-focus-keeps-tab]') != null && !freshTab(key, inside),
     handled: e.defaultPrevented,
   });
   if (!go) return false;
   const roots = visibleRoots(doc);
   // Focus the app placed counts as no focus at all: the message box is next.
-  const from = isAutoFocused(inside) ? null : areaOf(inside);
+  const from = freshTab(key, inside) ? null : areaOf(inside);
   for (const area of areaSequence(from, new Set(roots.keys()), key.dir)) {
     const root = roots.get(area);
     if (root && focusArea(root)) {

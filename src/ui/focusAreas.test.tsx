@@ -331,14 +331,17 @@ describe('the cycle in the DOM', () => {
       });
     });
 
-    it('gives the first Tab, either direction, to the message box', () => {
+    it('gives the first Tab to the message box', () => {
       focusOnItsOwn($('xterm'));
       expect(active()).toBe('xterm');
       press();
       expect(active()).toBe('message');
+    });
+
+    it('never takes Shift+Tab: it is Claude Code\'s mode switch', () => {
       focusOnItsOwn($('xterm'));
-      press({ shiftKey: true });
-      expect(active()).toBe('message');
+      expect(press({ shiftKey: true })).toBe(false); // the terminal's handler took it
+      expect(active()).toBe('xterm');
     });
 
     it('keeps Tab once you type in it: autocomplete still works', () => {
