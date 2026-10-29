@@ -531,6 +531,13 @@ export interface GetMessagesOptions {
   taskId?: number;
   sessionId?: string;
   afterSeq?: number;
+  /**
+   * Only rows inserted after this id: "what is new since I last looked",
+   * across every file of the session at once. Ingest assigns ids in insertion
+   * order, so unlike `seq` it is one numbering for the parent and all its
+   * subagents. Pages forward like `afterSeq`, ordered by id.
+   */
+  afterId?: number;
   limit?: number;
   /**
    * Only the session's own conversation, not its subagents' rows. Subagent
@@ -561,6 +568,9 @@ export interface GetMessagesOptions {
  * would interleave the resumed session with the old one in the pane.
  */
 export function messageOrderKeys(opts: GetMessagesOptions): string[] {
+  // Paging on id must also be ordered by id, or a forward page could skip
+  // rows between the cursor and the page's first row.
+  if (opts.afterId !== undefined) return ['id'];
   const seqScoped = opts.taskId === undefined && opts.sessionId !== undefined;
   return seqScoped ? ['seq', 'ts', 'id'] : ['ts', 'seq', 'id'];
 }
@@ -571,10 +581,10 @@ export type PageDirection = 'head' | 'tail';
 /**
  * `limit` semantics depend on which way the caller is paging:
  *
- *   afterSeq ABSENT  -> 'tail', keep the MOST RECENT rows. deriveStatus needs
+ *   no cursor        -> 'tail', keep the MOST RECENT rows. deriveStatus needs
  *                       this; fed the oldest 400 rows of a long session it
  *                       would report a stale status forever.
- *   afterSeq PRESENT -> 'head', keep the OLDEST rows after that seq. The
+ *   afterSeq/afterId -> 'head', keep the OLDEST rows after the cursor. The
  *                       caller is paging FORWARD and will append the page to
  *                       what it already holds.
  *
@@ -586,7 +596,7 @@ export type PageDirection = 'head' | 'tail';
  * whatever limit the caller picks. Both directions return rows ascending.
  */
 export function messagePageDirection(opts: GetMessagesOptions): PageDirection {
-  return opts.afterSeq === undefined ? 'tail' : 'head';
+  return opts.afterSeq === undefined && opts.afterId === undefined ? 'tail' : 'head';
 }
 
 export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> {
@@ -612,6 +622,10 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
     // exclusive: pages forward from the last seq the caller already has
     binds.push(opts.afterSeq);
     where.push(`seq > $${binds.length}`);
+  }
+  if (opts.afterId !== undefined) {
+    binds.push(opts.afterId);
+    where.push(`id > $${binds.length}`);
   }
   binds.push(Math.max(1, opts.limit ?? DEFAULT_MESSAGE_LIMIT));
 

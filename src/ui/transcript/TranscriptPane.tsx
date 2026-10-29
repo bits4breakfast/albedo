@@ -33,7 +33,8 @@ import { imageSourceNote, isImagePlaceholder } from './envelopes';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
-import { getMessages } from '../../db';
+import { getMessages, messageOrderKeys } from '../../db';
+import { mergeTail, tailCursor } from './tail';
 import { onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
@@ -143,19 +144,15 @@ export function TranscriptPane({
   }, [taskId, sessionId]);
 
   /*
-     The tail is read session-scoped even when the window above is task-scoped,
-     and that is not an inconsistency.
+     The tail is read session-scoped even when the window above is task-scoped:
+     new rows only ever land in the session the task currently points at.
 
-     `seq` is `lineIndex * 100 + blockIndex` within ONE transcript file, so it
-     restarts at a fork. `afterSeq` therefore only means anything inside a
-     single session -- which is precisely what `messageOrderKeys` encodes when
-     it switches to seq-ordering only for a sessionId-without-taskId query. Ask
-     for the tail task-scoped after a fork and `seq > lastSeq` reads as a filter
-     against the OLD session's numbering: the page fills with already-held rows
-     from before the fork and the new ones never arrive.
-
-     Nothing is lost by scoping it: new rows only ever land in the session the
-     task currently points at.
+     It pages on row id, not `seq`. `seq` is `lineIndex * 100 + blockIndex`
+     within ONE transcript file: it restarts at a fork, and every subagent of
+     the session has a file and a numbering of its own. A seq cursor read
+     against the wrong numbering either refetched held rows or, once a
+     subagent's seq ran ahead of the parent's, skipped every parent row still
+     to come (#104). See tail.ts.
   */
   const tailQuery = useMemo(() => {
     if (sessionId !== null) return { sessionId };
@@ -207,17 +204,16 @@ export function TranscriptPane({
   // --- tail follow ----------------------------------------------------------
   // Driven by the capture watcher rather than a timer: rows land, we read the
   // new tail. Held in a ref so a new row does not re-subscribe.
-  // Highest seq *within the tail's scope* -- not simply the last row, which
-  // after a fork belongs to the new session while older rows carry higher seqs.
-  const lastSeqRef = useRef<number | null>(null);
+  // The cursor is the highest row id held, never a seq: seq is per file, and
+  // a subagent's file runs its own numbering under the same session (tail.ts).
+  const lastIdRef = useRef<number | null>(null);
   useEffect(() => {
-    let max: number | null = null;
-    for (const m of messages) {
-      if (sessionId !== null && m.sessionId !== sessionId) continue;
-      if (max === null || m.seq > max) max = m.seq;
-    }
-    lastSeqRef.current = max;
-  }, [messages, sessionId]);
+    lastIdRef.current = tailCursor(messages);
+  }, [messages]);
+  // Fresh rows go where a reload would put them.
+  const orderKeys = useMemo(() => messageOrderKeys(query), [query]);
+  const orderKeysRef = useRef(orderKeys);
+  orderKeysRef.current = orderKeys;
 
   useEffect(() => {
     if (inactive || tailQuery === null) return;
@@ -225,7 +221,7 @@ export function TranscriptPane({
     let timer = 0;
 
     const fetchTail = () => {
-      const after = lastSeqRef.current;
+      const after = lastIdRef.current;
       if (after === null) {
         // No rows in scope yet -- a session that has only just started writing,
         // or the first rows after a fork. Re-run the window query rather than
@@ -233,20 +229,19 @@ export function TranscriptPane({
         setReloadKey((k) => k + 1);
         return;
       }
-      void getMessages({ ...tailQuery, afterSeq: after, limit: TAIL_LIMIT })
+      void getMessages({ ...tailQuery, afterId: after, limit: TAIL_LIMIT })
         .then((rows) => {
           if (!live || rows.length === 0) return;
-          // With `afterSeq` set, `limit` keeps the OLDEST rows after it, so
+          // With `afterId` set, `limit` keeps the OLDEST rows after it, so
           // consecutive pages abut: appending can never leave a hole.
           // Advance the cursor here so a drain pass cannot re-read this page.
           const lastRow = rows[rows.length - 1];
-          if (lastRow) lastSeqRef.current = lastRow.seq;
+          if (lastRow) lastIdRef.current = lastRow.id;
           setMessages((prev) => {
-            const seen = new Set(prev.map((m) => m.id));
-            const fresh = rows.filter((r) => !seen.has(r.id));
-            if (fresh.length === 0) return prev;
+            const next = mergeTail(prev, rows, orderKeysRef.current);
+            if (next === null) return prev;
             if (followingRef.current) pendingScrollRef.current = 'bottom';
-            return [...prev, ...fresh];
+            return next;
           });
           // A full page means capture wrote more than one page since the last
           // update; keep draining rather than sitting on it until the next one.
