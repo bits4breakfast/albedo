@@ -53,16 +53,22 @@ describe('createPrPrompt', () => {
 
 describe('nextStep', () => {
   const base = { dirty: 0, unpushed: 0, commits: 3, hasPr: false, prable: true };
-  it('pushes first, whatever else is true', () => {
-    expect(nextStep({ ...base, dirty: 2 })).toBe('push');
-    expect(nextStep({ ...base, unpushed: 1, hasPr: true })).toBe('push');
-  });
-  it('then offers a PR, then the PR itself', () => {
+  it('offers a PR first on a branch with none, whatever is outstanding (#124)', () => {
     expect(nextStep(base)).toBe('create-pr');
+    expect(nextStep({ ...base, dirty: 14, commits: 0 })).toBe('create-pr');
+    expect(nextStep({ ...base, dirty: 2, unpushed: 3 })).toBe('create-pr');
+  });
+  it('pushes where a PR exists, cannot exist, or is not known yet', () => {
+    expect(nextStep({ ...base, unpushed: 1, hasPr: true })).toBe('push');
+    expect(nextStep({ ...base, dirty: 2, prable: false })).toBe('push');
+    expect(nextStep({ ...base, dirty: 2, hasPr: null })).toBe('push');
+  });
+  it('then the PR itself', () => {
     expect(nextStep({ ...base, hasPr: true })).toBe('open-pr');
   });
-  it('offers nothing on the base branch or an empty one', () => {
+  it('offers nothing on the base branch, an empty one, or before gh answers with nothing to push', () => {
     expect(nextStep({ ...base, prable: false })).toBe('none');
     expect(nextStep({ ...base, commits: 0 })).toBe('none');
+    expect(nextStep({ ...base, hasPr: null })).toBe('none');
   });
 });

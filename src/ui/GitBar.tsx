@@ -84,7 +84,8 @@ export default function GitBar({
 }: GitBarProps): ReactNode {
   const pr = usePrStatus(task);
   // `undefined` is "not asked yet": no Create PR until gh has had its say,
-  // or the button would offer one for a branch that already has it.
+  // or the button would offer one for a branch that already has it. Push
+  // leads meanwhile (nextStep).
   const prKnown = getPrStatus(task.id) !== undefined;
   const prable = prLookupBranch(task) !== null;
 
@@ -102,11 +103,11 @@ export default function GitBar({
   // None is offered, and nothing takes their place; the view toggles stay.
   const chat = task.kind === 'chat';
   const actionable = !detached && !chat;
-  const step = !actionable ? 'none' : nextStep({ dirty, unpushed, commits, hasPr: pr !== null, prable });
+  const step = !actionable ? 'none' : nextStep({ dirty, unpushed, commits, hasPr: prKnown ? pr !== null : null, prable });
   // An existing PR is not this bar's to show: the task bar carries the branch
   // and its PR badge, the one place git and GitHub state appears. This bar
   // keeps only the actions that act on the files above it.
-  const main = (step === 'create-pr' && !prKnown) || step === 'open-pr' ? 'none' : step;
+  const main = step === 'open-pr' ? 'none' : step;
 
   const push = () => onAsk(pushPrompt(task));
   const createPr = () => onAsk(createPrPrompt(task));
