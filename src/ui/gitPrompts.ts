@@ -68,6 +68,14 @@ export function createPrPrompt(task: GitTask): string {
 /** What the git bar's main button offers: the next thing this branch needs. */
 export type NextStep = 'push' | 'create-pr' | 'open-pr' | 'none';
 
+/**
+ * Create PR comes first on a branch that has none: its prompt commits and
+ * pushes what is outstanding on the way, so offering Push there hid the step
+ * that finishes the job until the work had been pushed separately (#124).
+ * Push leads where a PR already exists (it updates it), where none can exist
+ * (the base itself), and while gh has not said whether one does -- Create PR
+ * then could open a second one.
+ */
 export function nextStep(s: {
   /** Uncommitted files. */
   dirty: number;
@@ -75,14 +83,14 @@ export function nextStep(s: {
   unpushed: number;
   /** Commits on the branch against its base. */
   commits: number;
-  /** A PR exists for the branch (any state). */
-  hasPr: boolean;
+  /** A PR exists for the branch (any state); null while gh has not answered. */
+  hasPr: boolean | null;
   /** The branch can have a PR at all: it is not the base itself. */
   prable: boolean;
 }): NextStep {
+  if (s.hasPr === false && s.prable && (s.dirty > 0 || s.commits > 0)) return 'create-pr';
   if (s.dirty > 0 || s.unpushed > 0) return 'push';
-  if (s.hasPr) return 'open-pr';
-  if (s.prable && s.commits > 0) return 'create-pr';
+  if (s.hasPr === true) return 'open-pr';
   return 'none';
 }
 

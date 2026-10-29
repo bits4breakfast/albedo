@@ -8,11 +8,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Task } from '../types';
 
-vi.mock('../gh/prStore', () => ({ getPrStatus: () => null, usePrStatus: () => null }));
+// null: gh answered, no PR. undefined: gh has not answered yet.
+let prStatus: null | undefined = null;
+vi.mock('../gh/prStore', () => ({ getPrStatus: () => prStatus, usePrStatus: () => null }));
 
 const { default: GitBar } = await import('./GitBar');
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  prStatus = null;
+});
 
 const task = {
   id: 1, title: 't', repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/w',
@@ -44,11 +49,18 @@ describe('GitBar head controls', () => {
     expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
   });
 
-  it('offers Create PR in ⋯ for a branch with only uncommitted changes', () => {
+  it('offers Create PR first for a branch with no PR, and Push in ⋯ (#124)', () => {
+    render(bar({ dirty: 4, remote: { ahead: 0, upstream: null, detached: false } }));
+    expect(screen.getByRole('button', { name: 'Create PR' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByText('Push')).toBeTruthy();
+  });
+
+  it('offers Push while gh has not said whether a PR exists', () => {
+    prStatus = undefined;
     render(bar({ dirty: 4, remote: { ahead: 0, upstream: null, detached: false } }));
     expect(screen.getByRole('button', { name: /Push/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    expect(screen.getByText('Create PR')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
   });
 });
 
