@@ -25,6 +25,8 @@ import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
+import { filesNamed } from './git/codeIndex';
+import { isBareName } from './lib/paths';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
 import { BranchIcon, ChatIcon, FolderIcon, homeRelative } from './ui/icons';
@@ -188,6 +190,8 @@ export default function App() {
   const [promptOverrides, setPromptOverrides] = useState<Map<number, string>>(() => new Map());
   /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
   const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
+  /** What Go to File starts from when a transcript name opened it. */
+  const [quickSeed, setQuickSeed] = useState<{ text: string } | null>(null);
   /**
    * Resume argv for tasks created in THIS run. A fork lands under a new
    * session id that the task does not yet know, so the args cannot be derived
@@ -524,11 +528,32 @@ export default function App() {
   const openFile = useCallback((request: OpenFileRequest, options?: OpenFileOptions) => {
     const taskId = selectedIdRef.current ?? browseTaskRef.current?.id ?? null;
     if (taskId === null) return;
-    setOpenRequest({ taskId, request, step: options?.step });
-    // A step keeps the Files tab on screen: the list is what is being walked.
-    setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
-    // The editor is useless behind a full-width terminal.
-    setMode((m) => (m === 'pty' ? 'split' : m));
+    // A bare name from the transcript (`Foo.php` in backticks) is looked up:
+    // one file by that name opens; none or several open Go to File with the
+    // name typed, rather than an empty new file at the worktree root.
+    const show = (req: OpenFileRequest) => {
+      setOpenRequest({ taskId, request: req, step: options?.step });
+      // A step keeps the Files tab on screen: the list is what is being walked.
+      setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
+      // The editor is useless behind a full-width terminal.
+      setMode((m) => (m === 'pty' ? 'split' : m));
+    };
+    const root = (selectedRef.current ?? browseTaskRef.current)?.worktreePath ?? null;
+    if (!options?.lookup || !isBareName(request.path) || root === null) {
+      show(request);
+      return;
+    }
+    void filesNamed(root, request.path)
+      .catch(() => [] as string[])
+      .then((found) => {
+        const only = found.length === 1 ? found[0] : undefined;
+        if (only !== undefined) {
+          show({ ...request, path: only });
+          return;
+        }
+        setQuickSeed({ text: request.path });
+        setQuickOpen('file');
+      });
   }, []);
 
   /**
@@ -1556,6 +1581,7 @@ export default function App() {
           onMode={setQuickOpen}
           onClose={closeQuickOpen}
           onOpen={openFile}
+          seed={quickSeed}
         />
       </PaneErrorBoundary>
       <PaneErrorBoundary label="Find in Files">

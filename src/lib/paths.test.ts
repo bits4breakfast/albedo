@@ -641,3 +641,21 @@ describe('parsePathRef: composes with resolveInWorktree', () => {
     await expect(resolveInWorktree(root, ref!.path)).resolves.toBeNull();
   });
 });
+
+describe('bareFileRef', () => {
+  it('takes a file name with a known extension, and its line', async () => {
+    const { bareFileRef } = await import('./paths');
+    expect(bareFileRef('RemoteMessageFactory.php')).toEqual({ path: 'RemoteMessageFactory.php', line: null });
+    expect(bareFileRef('plan-v5-pr2.md')).toEqual({ path: 'plan-v5-pr2.md', line: null });
+    expect(bareFileRef('Consumer.php:170')).toEqual({ path: 'Consumer.php', line: 170 });
+    expect(bareFileRef('Consumer.php:170:4')).toEqual({ path: 'Consumer.php', line: 170 });
+  });
+
+  it('leaves calls and properties alone', async () => {
+    const { bareFileRef } = await import('./paths');
+    for (const t of ['JSON.parse', 'window.open', 'console.log', 'e.preventDefault', 'v1.2', 'src/a.ts', 'a b.php']) {
+      expect(bareFileRef(t)).toBeNull();
+    }
+  });
+});
+

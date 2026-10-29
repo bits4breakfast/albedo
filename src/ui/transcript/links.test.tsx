@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { openExternal } from '../../lib/openUrl';
-import { parseInline } from './MessageRow';
+import { codeSpanRef, parseInline } from './MessageRow';
 import { LinkifiedText } from './Diff';
 
 vi.mock('../../lib/openUrl', () => ({ openExternal: vi.fn(async () => {}) }));
@@ -62,3 +62,18 @@ describe('underscores inside words', () => {
     expect(ems[0]?.textContent).toBe('this');
   });
 });
+
+describe('file names in code spans', () => {
+  it('opens a line range at its first line', () => {
+    expect(codeSpanRef('src/Factory.php:64-75')).toEqual({ path: 'src/Factory.php', line: 64 });
+    expect(codeSpanRef('Consumer.php:170-187')).toEqual({ path: 'Consumer.php', line: 170, bare: true });
+  });
+
+  it('links a bare file name, marked for lookup, and nothing that only looks like one', () => {
+    expect(codeSpanRef('plan-v5-pr2.md')).toEqual({ path: 'plan-v5-pr2.md', line: null, bare: true });
+    expect(codeSpanRef('src/a.ts')).toEqual({ path: 'src/a.ts', line: null });
+    expect(codeSpanRef('console.log')).toBeNull();
+    expect(codeSpanRef('npm run build')).toBeNull();
+  });
+});
+
