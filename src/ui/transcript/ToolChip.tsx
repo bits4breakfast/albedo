@@ -78,13 +78,28 @@ function firstLine(s: string, max = 140): string {
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
+/**
+ * A command without its leading `cd <folder> &&` (or `;`) when that folder is
+ * the target the chip already names: `Bash ormfix cd /tmp/…/ormfix && git
+ * commit` truncated before saying what the command does (#117). Any other
+ * leading `cd` stays, and so does the expanded row's full command.
+ */
+export function withoutLeadingCd(command: string, target: string | null): string {
+  if (target === null) return command;
+  const m = /^\s*cd\s+(\S+)\s*(?:&&|;)\s*/.exec(command);
+  if (!m || m[1] !== target) return command;
+  const rest = command.slice(m[0].length);
+  return rest.trim() === '' ? command : rest;
+}
+
 /** The compact, tool-specific detail shown on the collapsed chip. */
 export function summaryOf(message: Message): string | null {
   const input = toolInput(message);
   switch (message.toolName) {
     case 'Bash':
     case 'BashOutput': {
-      return firstLine(str(input.command) ?? str(input.description) ?? '');
+      const command = str(input.command);
+      return firstLine(command ? withoutLeadingCd(command, targetOf(message)) : (str(input.description) ?? ''));
     }
     case 'Read': {
       const offset = typeof input.offset === 'number' ? input.offset : null;
