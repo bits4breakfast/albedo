@@ -30,6 +30,9 @@ export const REMOTE_CONTROL_COMMAND = '/remote-control';
 
 export const REMOTE_TITLE = 'Available through Remote Control. Open on claude.ai';
 
+/** The shortcut that asks to turn it on (shortcuts.ts, `mod+shift+r`). */
+export const REMOTE_CONTROL_KEYS = '⇧⌘R';
+
 /** Bursts of capture events for one session are looked up once (as useTasks does). */
 const COALESCE_MS = 250;
 
@@ -112,6 +115,9 @@ export function RemoteLink({ url, variant }: { url: string | null; variant: 'row
  * turn runs and released once the session is idle, so the command is never
  * typed into a turn or a dialog. On a waiting prompt with nothing held, it is
  * left in the message box rather than typed into the prompt.
+ *
+ * ⇧⌘R asks first and then runs this same item (RemoteControlDialog), so it
+ * is offered exactly where this is.
  */
 export function remoteControlItem(
   task: Pick<Task, 'id' | 'status'>,
@@ -123,6 +129,7 @@ export function remoteControlItem(
   return {
     id: 'remote-control',
     label: 'Make Available Remotely',
+    aside: REMOTE_CONTROL_KEYS,
     title: 'Send /remote-control: continue this session on your phone or on claude.ai',
     onSelect: () => void send(task, REMOTE_CONTROL_COMMAND),
   };

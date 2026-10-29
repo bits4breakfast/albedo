@@ -91,6 +91,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true }))?.combo,
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'P', code: 'KeyP', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'R', code: 'KeyR', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'u', code: 'KeyU', metaKey: true }))?.combo,
       comboOf(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo,
@@ -183,6 +184,30 @@ describe('push', () => {
     expect(comboOf(ev({ key: 'P', code: 'KeyP', ctrlKey: true, shiftKey: true }))).toBeNull();
     expect(comboOf(ev({ key: 'p', code: 'KeyP', ctrlKey: true }))).toBeNull();
     expect(comboOf(ev({ key: 'p', code: 'KeyP', metaKey: true }))).toBeNull();
+  });
+});
+
+describe('remote control', () => {
+  it('maps ⇧⌘R by physical key', () => {
+    expect(comboOf(ev({ key: 'R', code: 'KeyR', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+r');
+    // A layout where R is somewhere else still types `code` KeyR on that key.
+    expect(comboOf(ev({ key: 'P', code: 'KeyR', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+r');
+  });
+
+  it('leaves Ctrl+R / Ctrl+Shift+R to the terminal, and ⌘R and ⌥⇧⌘R unbound', () => {
+    expect(comboOf(ev({ key: 'R', code: 'KeyR', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'r', code: 'KeyR', ctrlKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'r', code: 'KeyR', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '‰', code: 'KeyR', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('is kept from the terminal, which opens a dialog over it', () => {
+    expect(terminalTakesKey(ev({ key: 'R', code: 'KeyR', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: 'r', code: 'KeyR', ctrlKey: true }))).toBe(true);
+  });
+
+  it('is in the shortcuts help', () => {
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+r')?.keys).toBe('⇧⌘R');
   });
 });
 

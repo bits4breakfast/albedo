@@ -46,6 +46,7 @@ import ShellTerminal from './ui/ShellTerminal';
 import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
+import RemoteControlDialog from './ui/RemoteControlDialog';
 import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
@@ -185,6 +186,8 @@ export default function App() {
     setMoveTarget,
     endIntent,
     setEndIntent,
+    remoteConfirmFor,
+    setRemoteConfirmFor,
   } = useDialogs();
 
   /** Pending file-open, scoped to the task it was requested from. */
@@ -257,6 +260,16 @@ export default function App() {
   const selectedLive = usePtyLiveSince(selected?.id ?? null) !== null;
   const remoteUrl = useRemoteControlUrl(selected);
   const remoteItem = selected ? remoteControlItem(selected, selectedLive, remoteUrl) : null;
+  /**
+   * ⇧⌘R's confirmation shows only while it still has something to confirm:
+   * on the task it was asked on, still selected, live and with Remote Control
+   * off. Switch task, end the session or turn it on in the terminal, and it
+   * is dropped rather than left to act on something else.
+   */
+  const remoteConfirm = remoteItem !== null && selected !== null && remoteConfirmFor === selected.id ? remoteItem : null;
+  useEffect(() => {
+    if (remoteConfirmFor !== null && remoteConfirm === null) setRemoteConfirmFor(null);
+  }, [remoteConfirmFor, remoteConfirm, setRemoteConfirmFor]);
 
   // The task on screen is seen: when it is opened, and when a turn ends while
   // it is open. Only a finish it has not covered yet is written.
@@ -853,6 +866,19 @@ export default function App() {
     'mod+alt+o': () => toggleQuickOpen('symbol'),
     'mod+shift+f': toggleFind,
     'mod+shift+p': () => void pushSelected(),
+    // Remote Control, after a confirmation. Heard in the capture phase so it
+    // works wherever focus is (shortcuts.ts). Only where the ⋯ item is
+    // offered: a selected task with a live session and Remote Control off.
+    // Already on, it does nothing -- the Remote mark beside the title opens
+    // the session. Never over another dialog, as the palette.
+    'mod+shift+r': {
+      phase: 'capture',
+      run: () => {
+        if (!selected || !remoteItem) return;
+        if (document.querySelector('[aria-modal="true"]') !== null) return;
+        setRemoteConfirmFor(selected.id);
+      },
+    },
     // The message box is in the transcript: show it, then ask it to attach.
     'mod+u': () => {
       if (!selected) return;
@@ -1695,6 +1721,16 @@ export default function App() {
           }}
         />
       </PaneErrorBoundary>
+
+      {remoteConfirm && selected && (
+        <PaneErrorBoundary label="Remote Control">
+          <RemoteControlDialog
+            task={selected}
+            onConfirm={remoteConfirm.onSelect}
+            onClose={() => setRemoteConfirmFor(null)}
+          />
+        </PaneErrorBoundary>
+      )}
 
       <PaneErrorBoundary label="Move task">
         <MoveTaskDialog
