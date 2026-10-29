@@ -584,6 +584,232 @@ export function remoteControlSqlPredicate(column = 'raw_json'): string {
   return `instr(${column}, '"subtype":"${REMOTE_CONTROL_SUBTYPE}"') > 0`;
 }
 
+// ---------------------------------------------------------------------------
+// Work running in the background (#122)
+// ---------------------------------------------------------------------------
+
+/**
+ * What runs outside the turn, as the transcript shows it. Measured across the
+ * transcripts on this machine, Claude Code 2.1.278-2.1.312 (2.1.312
+ * installed):
+ *
+ *  - **Start.** A call, then its result, which is what says it went to the
+ *    background:
+ *    - `Bash`: the result's `toolUseResult.backgroundTaskId` -- 86 with
+ *      `run_in_background: true`, and 7 more moved there by their timeout,
+ *      with no flag on the call.
+ *    - `Agent` (`Task` before): `toolUseResult.isAsync: true`, task id
+ *      `agentId` -- 63 with `run_in_background`, 334 async by default.
+ *    - `Monitor`: `toolUseResult.taskId` and `timeoutMs` (6, all 30 min).
+ *    - `ScheduleWakeup`: `toolUseResult.scheduledFor`, epoch ms (23).
+ *    - `CronCreate`: no call in any transcript here, so its result is not
+ *      measured. Its tool description says jobs are session-only, a
+ *      one-shot deletes itself once it fires, and a recurring one runs until
+ *      `CronDelete` or 7 days.
+ *  - **End.** A `<task-notification>` naming the start's `<tool-use-id>` with
+ *    a `<status>`: completed, failed, killed or stopped. Of 662, 415 came ONLY
+ *    as a `queued_command` attachment (`commandMode: "task-notification"`),
+ *    delivered into a running turn with no `user` line; 244 as a `user` line.
+ *    The attachments are kept as rows for this (`isBackgroundNoticeLine`).
+ *  - **Monitor events are not ends.** Its events carry `<task-id>` and
+ *    `<event>`, with no `<status>` and no `<tool-use-id>` (18). It ends with a
+ *    status once its script exits (3: `Monitor "…" stream ended`), or at its
+ *    timeout, which writes only one more event (2, at 1800 s), so its
+ *    deadline is the start plus `timeoutMs`.
+ *  - **TaskStop** names the task id (`toolUseResult.task_id`). Stopping a
+ *    shell wrote no notification (4 of 4); stopping an agent wrote `killed`.
+ *  - **A wake-up** is replaced by the next `ScheduleWakeup` (5 were, before
+ *    their time, and none of them fired), and cancelled by one with
+ *    `stop: true` (result `stopped: true`). One that fires writes a queue
+ *    entry and an `isMeta` user line with its prompt within 5 s of
+ *    `scheduledFor` (11 of 23); 7 left nothing near their time, 2 of them
+ *    during a running turn. So a wake-up is pending until `scheduledFor` and
+ *    gone after it, fired or not.
+ *  - **It all dies with the process.** A resumed session reports the old
+ *    process's leftovers as `stopped`, by `<task-id>` with no tool-use id
+ *    ("didn't finish before the previous session ended").
+ *  - **`/clear`** keeps the process, and its work: 3 ends arrived in the NEW
+ *    session's transcript, their starts in the old one. `/resume` inside a
+ *    running session was never seen with work running: not measured.
+ */
+export type BackgroundKind = 'shell' | 'agent' | 'monitor' | 'wakeup' | 'timer';
+
+/** What one row says about background work. See {@link backgroundFactsOf}. */
+export type BackgroundFact =
+  /** A call that may start background work; its result decides whether it did. */
+  | { fact: 'call'; toolUseId: string; kind: BackgroundKind; description: string }
+  /**
+   * A call's result. `taskId` is set only by a result that went to the
+   * background (shell, async agent, monitor); `scheduledFor` by a wake-up.
+   */
+  | {
+      fact: 'result';
+      toolUseId: string;
+      ok: boolean;
+      taskId: string | null;
+      scheduledFor: number | null;
+      /** A monitor's lifetime, when the result says. */
+      timeoutMs: number | null;
+      persistent: boolean;
+      /** CronCreate's job id. Its result's shape is not measured: `id`, when it has one. */
+      jobId: string | null;
+    }
+  /** A `<task-notification>` with a status: these are over. */
+  | { fact: 'end'; toolUseIds: string[]; taskIds: string[] }
+  /** TaskStop's result. */
+  | { fact: 'stop'; taskId: string }
+  /** `ScheduleWakeup` with `stop: true`: no wake-up is pending any more. */
+  | { fact: 'wakeups-stopped' }
+  /** A `CronDelete` call; `id` null when its input names none this knows. */
+  | { fact: 'timer-deleted'; id: string | null };
+
+/** The tools a background start can come from, by the kind it would be. */
+const BACKGROUND_CALL_KINDS: Readonly<Record<string, BackgroundKind>> = {
+  Bash: 'shell',
+  Agent: 'agent',
+  Task: 'agent',
+  Monitor: 'monitor',
+  ScheduleWakeup: 'wakeup',
+  CronCreate: 'timer',
+};
+
+/** Longest description kept; the band shows one line of it anyway. */
+const BACKGROUND_DESCRIPTION_MAX = 300;
+
+/**
+ * Whether a raw line is a `<task-notification>` Claude Code delivered into a
+ * running turn as a `queued_command` attachment. Kept as a `system` row with
+ * no body, so the transcript draws nothing for it, while the background fold
+ * sees the end it carries. Status counts it as activity (status.ts): the
+ * turn it came into goes on. Main thread only: a
+ * subagent's own notifications end its own work, which is not counted.
+ */
+export function isBackgroundNoticeLine(line: Record<string, unknown>): boolean {
+  if (line['type'] !== 'attachment' || line['isSidechain'] === true) return false;
+  const att = line['attachment'];
+  if (!isRecord(att) || att['type'] !== 'queued_command') return false;
+  const origin = att['origin'];
+  const notice = att['commandMode'] === 'task-notification' || (isRecord(origin) && origin['kind'] === 'task-notification');
+  return notice && typeof att['prompt'] === 'string' && /^<task-notification>/.test(att['prompt'].trimStart());
+}
+
+/** {@link isBackgroundNoticeLine} for a stored row's raw line. */
+export function isBackgroundNotice(rawJson: string): boolean {
+  if (!rawJson.includes('"queued_command"')) return false;
+  const line = safeParse(rawJson);
+  return line !== null && isBackgroundNoticeLine(line);
+}
+
+/**
+ * The background facts a stored row carries: a call, a result, a
+ * notification or a stop. Empty for every other row, which is nearly all of
+ * them. Which rows count (main thread, since when) is the caller's choice.
+ */
+export function backgroundFactsOf(m: Pick<Message, 'role' | 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
+  if (m.role === 'tool_use') return backgroundCallFacts(m);
+  if (m.role === 'tool_result') return backgroundResultFacts(m);
+  if (m.role !== 'user' && m.role !== 'system') return [];
+  if (!m.rawJson.includes('<task-notification>')) return [];
+  const line = safeParse(m.rawJson);
+  if (!line) return [];
+  let text = '';
+  if (line['type'] === 'user') text = userTextOf(line);
+  else if (isBackgroundNoticeLine(line)) text = String((line['attachment'] as Record<string, unknown>)['prompt']);
+  if (!/^<task-notification>/.test(text.trimStart())) return [];
+  const out: BackgroundFact[] = [];
+  for (const block of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+    const body = block[1] ?? '';
+    // An event (a monitor's line of output) has no status: it ends nothing.
+    if (tagValues(body, 'status').length === 0) continue;
+    out.push({ fact: 'end', toolUseIds: tagValues(body, 'tool-use-id'), taskIds: tagValues(body, 'task-id') });
+  }
+  return out;
+}
+
+function backgroundCallFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
+  const name = m.toolName ?? '';
+  const input = toolInputOf(m);
+  if (name === 'CronDelete') {
+    const id = [input['id'], input['job_id'], input['jobId']].find((v): v is string => typeof v === 'string' && v !== '');
+    return [{ fact: 'timer-deleted', id: id ?? null }];
+  }
+  const kind = BACKGROUND_CALL_KINDS[name];
+  if (kind === undefined) return [];
+  const toolUseId = textOf(blockFor(m, 'tool_use')?.['id']);
+  if (toolUseId === null) return [];
+  // Stopping the loop is no wake-up; its result says what it cancelled.
+  if (kind === 'wakeup' && input['stop'] === true) return [];
+  // A one-shot timer fires at a time only its cron expression says, which is
+  // not read here: shown, it could be counting a job that already ran.
+  if (kind === 'timer' && input['recurring'] === false) return [];
+  const keys = kind === 'wakeup' ? ['reason'] : kind === 'timer' ? ['prompt'] : kind === 'agent' ? ['description'] : ['description', 'command'];
+  const raw = keys.map((k) => input[k]).find((v): v is string => typeof v === 'string' && v.trim() !== '') ?? '';
+  const description = (raw.trim().split('\n')[0] ?? '').replace(/\s+/g, ' ').slice(0, BACKGROUND_DESCRIPTION_MAX);
+  return [{ fact: 'call', toolUseId, kind, description }];
+}
+
+function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
+  const line = safeParse(m.rawJson);
+  if (!line) return [];
+  const toolUseId = textOf(blockFor(m, 'tool_result')?.['tool_use_id']);
+  if (toolUseId === null) return [];
+  const ok = !toolResultIsErrorOf(m);
+  const r = isRecord(line['toolUseResult']) ? line['toolUseResult'] : {};
+  const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
+  const positive = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+  if (ok && r['stopped'] === true && 'cancelledWakeups' in r) return [{ fact: 'wakeups-stopped' }];
+  const stopped = str(r['task_id']);
+  if (ok && stopped !== null && 'task_type' in r) return [{ fact: 'stop', taskId: stopped }];
+  return [
+    {
+      fact: 'result',
+      toolUseId,
+      ok,
+      taskId: str(r['backgroundTaskId']) ?? (r['isAsync'] === true ? str(r['agentId']) : null) ?? str(r['taskId']),
+      scheduledFor: positive(r['scheduledFor']),
+      timeoutMs: positive(r['timeoutMs']),
+      persistent: r['persistent'] === true,
+      jobId: str(r['id']),
+    },
+  ];
+}
+
+/** The trimmed, non-empty values of every `<tag>…</tag>` in an envelope. */
+function tagValues(body: string, tag: string): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'g'))) {
+    const v = (m[1] ?? '').trim();
+    if (v !== '') out.push(v);
+  }
+  return out;
+}
+
+/**
+ * SQLite predicate preselecting the rows {@link backgroundFactsOf} may find
+ * something in, over the columns `role`, `tool_name` and `raw_json`. A
+ * shell's call is preselected only with its flag; one moved to the
+ * background by its timeout, an agent async by default and a timer's result
+ * are fetched by tool-use id once the other half is found
+ * (`backgroundRowsSince`). `instr`, not LIKE. Confirm each hit with the parser.
+ */
+export function backgroundSqlPredicate(): string {
+  const has = (needle: string) => `instr(raw_json, '${needle}') > 0`;
+  const resultKeys = [
+    '"backgroundTaskId":"',
+    '"isAsync":true',
+    '"scheduledFor":',
+    '"timeoutMs":',
+    '"task_type":',
+    '"cancelledWakeups":',
+  ];
+  return `(
+    (role = 'tool_use' AND tool_name IN ('Monitor', 'ScheduleWakeup', 'CronCreate', 'CronDelete'))
+    OR (role = 'tool_use' AND tool_name IN ('Bash', 'Agent', 'Task') AND ${has('"run_in_background":true')})
+    OR (role = 'tool_result' AND (${resultKeys.map(has).join(' OR ')}))
+    OR (role IN ('user', 'system') AND ${has('<task-notification>')})
+  )`;
+}
+
 /**
  * Session-title line types, mapped to the key each carries the title in.
  *
@@ -1085,7 +1311,8 @@ function parseLineWithContext(
   const type = line['type'];
   if (typeof type !== 'string') return [];
   const absorbed = type === 'attachment' ? absorbedPromptText(line) : null;
-  if (!PERSISTED_LINE_TYPES.has(type) && absorbed === null) return [];
+  const notice = type === 'attachment' && isBackgroundNoticeLine(line);
+  if (!PERSISTED_LINE_TYPES.has(type) && absorbed === null && !notice) return [];
 
   const base = {
     sessionId: stringOr(line['sessionId'], ''),
@@ -1118,6 +1345,9 @@ function parseLineWithContext(
   });
 
   if (absorbed !== null) return [emit(0, 'user', absorbed, null, null)];
+  // A background task's end, delivered into a running turn: kept for its raw
+  // line, with no body, so nothing draws it and no status reads it as a turn.
+  if (notice) return [emit(0, 'system', null, null, null)];
 
   if (type === 'system') {
     // `system` lines carry their text at the TOP level (`content`), not under

@@ -33,6 +33,11 @@ export { isLocalCommandLine } from './adapter';
 /** The claude.ai link a "Remote Control is active" line carries. */
 export { remoteControlUrlOf } from './adapter';
 
+/** Work running in the background: shells, agents, monitors, wake-ups, timers. */
+export { runningInBackground, nextChangeAt } from './background';
+export { isBackgroundNotice } from './adapter';
+export type { BackgroundItem, BackgroundKind } from './background';
+
 /** Which task sent a message from another session (`peers.ts`). */
 export { peerMessageIdOf } from './adapter';
 export { senderTaskOf } from './peers';

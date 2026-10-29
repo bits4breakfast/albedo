@@ -35,6 +35,7 @@
 import type { Message, TaskStatus } from '../types';
 import {
   endsLocalCommand,
+  isBackgroundNotice,
   isMetaLine,
   stopReasonOf,
   toolCallIdOf,
@@ -116,8 +117,11 @@ export function deriveStatus(
   // and the composer's controls stayed disabled after a /clear.
   if (endsLocalCommand(lastNonMeta(rows).rawJson)) return 'idle';
 
-  // rule 3 — fallback for lines with no usable stop_reason.
-  if (ACTIVITY_ROLES.has(last.role) && now - last.ts <= RUNNING_WINDOW_MS) {
+  // rule 3 — fallback for lines with no usable stop_reason. A background
+  // task's end taken into the running turn is stored as a `system` row
+  // (adapter.ts) and is as much activity as the tool result before it: the
+  // turn goes on with it.
+  if ((ACTIVITY_ROLES.has(last.role) || isBackgroundNotice(last.rawJson)) && now - last.ts <= RUNNING_WINDOW_MS) {
     return 'running';
   }
 
