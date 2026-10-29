@@ -17,6 +17,7 @@ import type { Message } from '../../types';
 import { outputTokensOf, turnEdgeOf } from '../../capture';
 import { basename, summaryOf, targetOf, toolUseId } from './ToolChip';
 import { formatDuration } from '../../lib/duration';
+import { isPromptRow } from './compaction';
 
 export type WorkingStep =
   /** Sent, not in the transcript yet. */
@@ -119,10 +120,13 @@ export function workingState(
 
 function turnTotals(main: readonly Message[], endAt: number, complete: boolean): TurnTotals | null {
   // The first user row after the latest end; with no end loaded, only when
-  // the rows start at the conversation's beginning.
+  // the rows start at the conversation's beginning. Not a compaction's
+  // summary: one written while idle comes after the end and before the row
+  // that starts the turn, and counted from there the clock ran 5 minutes
+  // ahead of the terminal's.
   let start = -1;
   if (endAt >= 0 || complete) {
-    start = main.findIndex((m, i) => i > endAt && m.role === 'user');
+    start = main.findIndex((m, i) => i > endAt && isPromptRow(m));
   }
   // A prompt before the latest end began a turn that is over.
   for (let i = main.length - 1; i > Math.max(start, endAt); i--) {

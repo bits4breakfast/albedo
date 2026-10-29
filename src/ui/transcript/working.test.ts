@@ -197,6 +197,21 @@ describe('workingState', () => {
     expect(w.turn?.startedAt).toBe(T0 + 60_000);
   });
 
+  it('does not start a turn at the summary of a compaction made while idle', () => {
+    const w = workingState(
+      rows(
+        ...before,
+        { ...base(30), type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'auto' } },
+        prompt(30, 'This session is being continued from a previous conversation', { isCompactSummary: true }),
+        // Five minutes later another session's message starts the turn.
+        prompt(330, 'Another Claude session sent a message', { isMeta: true }),
+        call(332, 'msg_b', 10, 'tu_1', 'Bash', { command: 'git status' }),
+      ),
+      opts,
+    );
+    expect(w.turn?.startedAt).toBe(T0 + 330_000);
+  });
+
   it('does not start a turn at text Claude Code gave itself mid-turn', () => {
     const w = workingState(
       rows(prompt(0, 'run it'), call(1, 'msg_b', 5, 'tu_1', 'Bash', { command: 'make' }), prompt(30, '<task-notification>done</task-notification>')),
