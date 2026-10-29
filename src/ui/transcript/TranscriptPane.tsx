@@ -39,7 +39,7 @@ import { isLocalCommandLine, onCaptureUpdate, onQueueChange, queuedFor, queueSet
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
 import { onConnectivityChange, useOffline, watchConnectivity } from '../../lib/connectivity';
-import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty } from '../Terminal';
+import { canResume, hasLivePty, onPtyPresenceChange, startPty, usePtyLiveSince } from '../Terminal';
 import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
@@ -530,23 +530,6 @@ export function echoLanded(echo: { at: number }, messages: readonly Message[]): 
  */
 export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry[], liveSince: number | null): boolean {
   return shownQueue(entries, liveSince).some((e) => e.ts >= echo.at - 1000);
-}
-
-/** When the task's live pty was spawned, or null with none; kept current by presence events. */
-function usePtyLiveSince(taskId: number | null): number | null {
-  const read = () => (taskId === null ? null : ptyLiveSince(taskId));
-  const [since, setSince] = useState(read);
-  useEffect(() => {
-    if (taskId === null) {
-      setSince(null);
-      return;
-    }
-    setSince(ptyLiveSince(taskId));
-    return onPtyPresenceChange((id) => {
-      if (id === taskId) setSince(ptyLiveSince(taskId));
-    });
-  }, [taskId]);
-  return since;
 }
 
 /** "Working · 14s", ticking: the session is busy and has not written yet. */

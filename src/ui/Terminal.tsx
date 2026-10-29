@@ -205,6 +205,23 @@ export function ptyLiveSince(taskId: number): number | null {
   return liveSince.get(taskId) ?? null;
 }
 
+/** {@link ptyLiveSince} for a component, kept current by presence events. */
+export function usePtyLiveSince(taskId: number | null): number | null {
+  const read = () => (taskId === null ? null : ptyLiveSince(taskId));
+  const [since, setSince] = useState(read);
+  useEffect(() => {
+    if (taskId === null) {
+      setSince(null);
+      return;
+    }
+    setSince(ptyLiveSince(taskId));
+    return onPtyPresenceChange((id) => {
+      if (id === taskId) setSince(ptyLiveSince(taskId));
+    });
+  }, [taskId]);
+  return since;
+}
+
 /**
  * True when restarting this task would pick its conversation back up.
  *

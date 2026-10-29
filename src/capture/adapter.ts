@@ -549,6 +549,42 @@ export function isNoticeLine(rawJson: string): boolean {
 }
 
 /**
+ * Remote Control turning on: `{type: "system", subtype: "bridge_status",
+ * content: "/remote-control is active · Continue here, on your phone, or at
+ * https://claude.ai/code/session_…", url: "https://claude.ai/code/session_…"}`.
+ * Stored as a `system` row; the `bridge-session` lines that follow are
+ * bookkeeping and are not.
+ *
+ * Measured on Claude Code 2.1.296-2.1.312: 11 such lines, all "is active", all
+ * with `url`. No line is written when it goes off -- it ends with the process
+ * -- so this says only that it came on, and when (the row's `ts`).
+ */
+export const REMOTE_CONTROL_SUBTYPE = 'bridge_status';
+
+/** The session's claude.ai link from a "Remote Control is active" line, else null. */
+export function remoteControlUrlOf(rawJson: string): string | null {
+  if (!rawJson.includes(REMOTE_CONTROL_SUBTYPE)) return null;
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'system' || line['subtype'] !== REMOTE_CONTROL_SUBTYPE) return null;
+  if (line['isSidechain'] === true) return null;
+  const content = typeof line['content'] === 'string' ? line['content'] : '';
+  if (!content.includes('is active')) return null;
+  const url = line['url'];
+  if (typeof url === 'string' && url.trim() !== '') return url.trim();
+  // A build that carries the link only in the text.
+  return /https?:\/\/\S+/.exec(content)?.[0] ?? null;
+}
+
+/**
+ * SQLite predicate preselecting rows that may be a Remote Control line, so a
+ * lookup parses a handful of rows instead of a session. `instr`, not LIKE: the
+ * needle's `_` would be a wildcard. Confirm each hit with `remoteControlUrlOf`.
+ */
+export function remoteControlSqlPredicate(column = 'raw_json'): string {
+  return `instr(${column}, '"subtype":"${REMOTE_CONTROL_SUBTYPE}"') > 0`;
+}
+
+/**
  * Session-title line types, mapped to the key each carries the title in.
  *
  * These stay OUT of `messages` -- they are bookkeeping, not conversation, and
