@@ -45,6 +45,8 @@ import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import CompactionRow from './CompactionRow';
 import { compactionAt, isPromptRow, type Compaction } from './compaction';
+import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
+import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
 import { PermissionModeLabel } from './PermissionModeLabel';
 import { isSidechain, toolUseId } from './ToolChip';
@@ -421,8 +423,12 @@ export function TranscriptPane({
   // A turn running or a message on its way: if the connection is gone, now
   // is when it matters (connectivity.ts probes only while watched).
   useEffect(() => (working ? watchConnectivity() : undefined), [working]);
-  const lastTs = messages.length > 0 ? (messages[messages.length - 1] as Message).ts : 0;
-  const since = Math.max(lastTs, echo?.at ?? 0);
+  // A running turn is what is working, whatever was just sent.
+  const sending = echo !== null && status !== 'running';
+  const workingNow = useMemo(
+    () => (working ? workingState(messages, { sending, echoAt: echo?.at ?? null, complete: !hasMore }) : null),
+    [working, messages, sending, echo, hasMore],
+  );
   const onSent = useCallback(
     (body: string) => {
       setEcho({ text: body, at: Date.now() });
@@ -476,8 +482,7 @@ export function TranscriptPane({
               </div>
             </div>
           ) : null}
-          {/* A running turn is what is working, whatever was just sent. */}
-          {working ? <WorkingLine since={since} sending={echo !== null && status !== 'running'} /> : null}
+          {workingNow ? <WorkingLine state={workingNow} /> : null}
         </div>
 
         {!following ? (
@@ -549,15 +554,20 @@ function usePtyLiveSince(taskId: number | null): number | null {
   return since;
 }
 
-/** "Working · 14s", ticking: the session is busy and has not written yet. */
-export function WorkingLine({ since, sending }: { since: number; sending: boolean }): ReactNode {
+/**
+ * "Running Bash git status · 9s", ticking, with the turn's "7m 48s · ↓ 37.6k
+ * tokens" at the right (working.ts). The step's detail is the one part that
+ * gives way: it truncates on one line, and the label, the step's time and the
+ * totals keep their width.
+ */
+export function WorkingLine({ state }: { state: Working }): ReactNode {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
-  const s = Math.max(0, Math.round((now - since) / 1000));
-  const elapsed = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  const { step, since, turn } = state;
+  const detail = stepDetail(step);
   // A row like every other, so it starts in the text column, not the gutter.
   return (
     <div className="tx-row tx-row-working">
@@ -568,9 +578,30 @@ export function WorkingLine({ since, sending }: { since: number; sending: boolea
           <span />
           <span />
         </span>
-        {sending ? 'Sending' : 'Working'}
-        {/* Read aloud as two words; between flex items it draws nothing. */}{' '}
-        {since > 0 ? <span className="tx-working-time">· {elapsed}</span> : null}
+        <span className="tx-working-label">{stepLabel(step)}</span>
+        {/* The spaces are for reading aloud and copying; between flex items
+            they draw nothing. */}
+        {detail ? ' ' : null}
+        {detail ? (
+          // A tool reads as its chip does: the name, then the target and
+          // summary in the chip's mono.
+          <span className="tx-working-detail" title={detail}>
+            {step.kind === 'tool' ? (
+              <>
+                <span className="tx-working-tool">{step.name}</span>
+                {detail.length > step.name.length ? (
+                  <span className="tx-working-mono">{detail.slice(step.name.length)}</span>
+                ) : null}
+              </>
+            ) : (
+              detail
+            )}
+          </span>
+        ) : null}
+        {since > 0 ? ' ' : null}
+        {since > 0 ? <span className="tx-working-time">· {formatDuration(now - since)}</span> : null}
+        {turn ? ' ' : null}
+        {turn ? <span className="tx-working-totals">{formatTurnTotals(turn, now)}</span> : null}
       </div>
     </div>
   );
