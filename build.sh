@@ -150,6 +150,28 @@ if [ "$with_phpantom" -eq 1 ]; then
   tauri_config=(--config '{"bundle":{"externalBin":["binaries/phpantom_lsp"]}}')
 fi
 
+# --- signing (macOS) -------------------------------------------------------------
+# macOS refuses notifications to an ad-hoc signed app ("Notifications are not
+# allowed for this application"), so without a real identity Albedo can bounce
+# the dock but never show a banner. The cheapest real identity is a free Apple
+# Development certificate. Tauri signs with whatever APPLE_SIGNING_IDENTITY
+# names; one set by the caller wins.
+signed=0
+if [ "$os" = macos ]; then
+  if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+    APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null |
+      sed -nE 's/.*"((Apple Development|Developer ID Application): [^"]*)".*/\1/p' | head -n 1 || true)
+  fi
+  if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+    export APPLE_SIGNING_IDENTITY
+    signed=1
+    echo "Signing as: $APPLE_SIGNING_IDENTITY"
+  else
+    warn "No signing certificate: Albedo will build ad-hoc signed, and macOS will not show its notifications." \
+      "A free one comes with any Apple ID: Xcode > Settings > Accounts > Manage Certificates > + > Apple Development."
+  fi
+fi
+
 # --- build ---------------------------------------------------------------------
 step "Building release bundles: $bundles"
 # Unquoted on purpose: bash 3.2 (macOS) with set -u needs this form to expand
@@ -171,7 +193,11 @@ if [ "$install" -eq 1 ]; then
     step "Installing $(basename "$app") into /Applications"
     rm -rf "/Applications/$(basename "$app")"
     cp -R "$app" /Applications/
-    echo "Installed. The build is unsigned: the first launch may need right-click > Open."
+    if [ "$signed" -eq 0 ]; then
+      echo "Installed. The build is unsigned: the first launch may need right-click > Open."
+    else
+      echo "Installed."
+    fi
   else
     deb=$(find "$bundle_dir/deb" -maxdepth 1 -name '*.deb' | head -n 1)
     [ -n "$deb" ] || fail "no .deb was produced"

@@ -18,7 +18,15 @@ import { seenUpdate } from './ui/taskGroups';
 import { createPrPrompt, pushPrompt } from './ui/gitPrompts';
 import { sendPrompt } from './ui/sendPrompt';
 import Subagents from './ui/Subagents';
-import { announcementFor, attentionMarks, clearAttention, onAttention, watchFocus, type AttentionKind } from './ui/attention';
+import {
+  announcementFor,
+  attentionMarks,
+  clearAttention,
+  onAttention,
+  onNotificationClick,
+  watchFocus,
+  type AttentionKind,
+} from './ui/attention';
 import { useDoubleShift, useShortcuts } from './ui/shortcuts';
 import { stepProjectTab } from './ui/projectStep';
 import ShortcutsHelp from './ui/ShortcutsHelp';
@@ -519,6 +527,8 @@ export default function App() {
     setAnnouncement(text);
   }, [attention]);
   useEffect(() => watchFocus(), []);
+  // A banner names one task; clicking it opens that task.
+  useEffect(() => onNotificationClick(select), [select]);
 
   // A transcript row that names a task (a message from another session) opens
   // it through this. Stable, reading the list through a ref, like `select`.

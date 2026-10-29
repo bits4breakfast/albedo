@@ -34,6 +34,16 @@ parking_lot = "0.12"
 # killpg/poll/dup for the pty bridge. Already in the tree via portable-pty.
 libc = "0.2"
 
+# attention.rs: banners through UNUserNotificationCenter, and a dock bounce
+# that stops on its own. All already in the tree via tauri; listed here so
+# attention.rs can name them.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-user-notifications = { version = "0.3", features = ["block2"] }
+
 [dev-dependencies]
 # Only for fsscope's tests, to match a scope pattern with the plugin's options.
 # Already in the tree via tauri.
