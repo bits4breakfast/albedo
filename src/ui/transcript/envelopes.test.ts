@@ -326,6 +326,12 @@ describe('/clear', () => {
     const blocks = parseUserBody('<command-name>/model</command-name>\n<command-args>opus</command-args>');
     expect(kinds(blocks)).toEqual(['command']);
   });
+
+  it('attributes a typed command to the user, and a cleared boundary to nobody (#113)', () => {
+    expect(isAllEnvelopes(parseUserBody('<command-name>/model</command-name>\n<command-args>opus</command-args>'))).toBe(false);
+    expect(isAllEnvelopes(parseUserBody('<command-name>/clear</command-name><command-args></command-args>'))).toBe(true);
+    expect(isAllEnvelopes(parseUserBody('<local-command-stdout>Set model to opus</local-command-stdout>'))).toBe(true);
+  });
 });
 
 describe('systemRowText', () => {
