@@ -704,11 +704,11 @@ export function queueFactsIn(text: string): QueueFact[] {
 
 /**
  * Queue entries Claude Code puts there itself rather than the person typing:
- * a background task finishing, a subagent's message. They take part in the
+ * a background task finishing, a subagent's message, another session's. They take part in the
  * queue's order -- a `dequeue` can take one -- but are not "your message".
  */
 export function isInjectedQueueText(text: string): boolean {
-  return /^<(task-notification|agent-message)\b/.test(text.trimStart());
+  return /^<(task-notification|agent-message|cross-session-message)\b/.test(text.trimStart());
 }
 
 /**

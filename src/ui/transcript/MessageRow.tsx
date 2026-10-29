@@ -203,6 +203,10 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
       return <Markdown text={block.text} />;
     case 'task-notification':
       return <NotificationChip block={block} />;
+    case 'agent-message':
+      // A hand-back is a subagent's final report to its parent: its group in
+      // the pane already shows that work, so it stays out of the row.
+      return block.handback ? null : <PeerMessage block={block} />;
     case 'command':
       return (
         <div className="tx-cmd">
@@ -229,6 +233,10 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
       );
     case 'system-reminder':
       return <Collapsed label="Injected Context" text={block.text} />;
+    case 'context':
+      // Never seen in a transcript on the owner's machine, and never drawn
+      // until the switch became exhaustive. Folded rather than hidden.
+      return <Collapsed label="Attached Context" text={block.text} />;
     case 'skill':
       return <SkillBlock block={block} />;
     case 'pasted': {
@@ -241,9 +249,29 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
           <LinkifiedText text={block.text} />
         </pre>
       );
-    default:
-      return null;
+    default: {
+      // Every kind has a case: a kind added without one is a type error here,
+      // not a block that silently draws nothing (`agent-message` was one).
+      const unhandled: never = block;
+      return unhandled;
+    }
   }
+}
+
+/**
+ * Another Claude session wrote to this one. It is an instruction this session
+ * acts on, so it reads in full like a prompt -- but under the sender's name,
+ * never as "You".
+ */
+function PeerMessage({ block }: { block: Extract<UserBlock, { kind: 'agent-message' }> }): ReactNode {
+  return (
+    <div className="tx-peer">
+      <div className="tx-peer-head">
+        From <span className="tx-peer-name">{block.name ?? 'another session'}</span>
+      </div>
+      <Markdown text={block.text} />
+    </div>
+  );
 }
 
 /** A subagent or background task finishing, in the same language as a tool chip. */

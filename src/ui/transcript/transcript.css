@@ -501,6 +501,26 @@
 /* A machine-generated envelope in a user row: no "you said" framing. */
 .tx-row-machine { margin: 2px 0; padding: 0; }
 
+/* A message from another Claude session: a landmark like your own messages,
+   so it gets their spacing, but not their box -- you did not write it. The
+   rule on the left marks it as quoted from elsewhere (--border-strong, a
+   load-bearing edge); the sender's name leads. Text sits on the pane's own
+   ground, so the token ratios hold as measured (--muted 5.89, --text 13.68). */
+.tx-row-machine:has(> .tx-content > .tx-peer) { margin: 12px 0 8px; }
+.tx-peer {
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+}
+.tx-peer-head {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.tx-peer-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* A slash command, shown as the command rather than as its XML. */
 .tx-cmd {
   display: inline-flex;
