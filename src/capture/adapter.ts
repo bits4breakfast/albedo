@@ -112,6 +112,20 @@ export function parseLine(raw: string, lineIndex: number): ParsedMessage[] {
 }
 
 /**
+ * A row's whole body: its stored `body` when that is complete, otherwise the
+ * same text read again from `raw_json` without the cut. A body longer than
+ * BODY_MAX_CHARS is stored cut, which drops the end of anything that has one
+ * -- a 38,000-character subagent report lost its closing `</agent-message>`
+ * and printed as raw tags under "You" (#126). Anything that parses a body's
+ * structure renders from this. Null when the row has no body.
+ */
+export function fullBodyOf(row: Pick<ParsedMessage, 'body' | 'rawJson' | 'seq'>): string | null {
+  if (row.body === null || !row.body.endsWith(TRUNCATION_MARKER)) return row.body;
+  const again = parseLineWithContext(row.rawJson, Math.floor(row.seq / SEQ_STRIDE), new Map(), false);
+  return again.find((r) => r.seq === row.seq)?.body ?? row.body;
+}
+
+/**
  * Parse a chunk of JSONL. `fromLineIndex` is the line index of the FIRST line
  * of `text` within its file, so the watcher can tail from a byte offset and
  * still produce seq values that continue where the previous chunk stopped.
@@ -1304,6 +1318,8 @@ function parseLineWithContext(
   raw: string,
   lineIndex: number,
   pairing: ToolUsePairing,
+  /** False only for fullBodyOf: the body as it is, not as it is stored. */
+  cut = true,
 ): ParsedMessage[] {
   const line = safeParse(raw);
   if (!line) return []; // truncated / malformed / not an object
@@ -1338,7 +1354,7 @@ function parseLineWithContext(
     role,
     toolName,
     targetPath,
-    body: body === null ? null : truncateBody(body),
+    body: body === null ? null : cut ? truncateBody(body) : body,
     rawJson: base.rawJson,
     agentId: base.agentId,
     ts: base.ts,

@@ -20,7 +20,7 @@ import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
-import { imageAt, imagesIn, isLocalCommandLine, peerMessageIdOf, senderTaskOf } from '../../capture';
+import { fullBodyOf, imageAt, imagesIn, isLocalCommandLine, peerMessageIdOf, senderTaskOf } from '../../capture';
 import { useTaskOpener } from '../openTask';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -108,7 +108,8 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
       if (blocks.length > 0) out.push({ kind: 'blocks', blocks });
     };
     for (const m of rows) {
-      const body = m.body ?? '';
+      // Whole, not as stored: a cut body loses an envelope's closing tag.
+      const body = fullBodyOf(m) ?? '';
       if (isImagePlaceholder(body)) {
         out.push({ kind: 'image', src: imageAt(m.rawJson, m.seq)?.src ?? null });
         continue;
@@ -440,11 +441,12 @@ function SkillBlock({ block }: { block: Extract<UserBlock, { kind: 'skill' }> })
 }
 
 function AssistantRow({ message }: { message: Message }): ReactNode {
+  const text = useMemo(() => fullBodyOf(message) ?? '', [message]);
   return (
     <div className="tx-row tx-row-assistant">
       <div className="tx-gutter" />
       <div className="tx-content">
-        <Markdown text={message.body ?? ''} />
+        <Markdown text={text} />
       </div>
     </div>
   );
@@ -460,7 +462,7 @@ function AssistantRow({ message }: { message: Message }): ReactNode {
  */
 function ThinkingRow({ message }: { message: Message }): ReactNode {
   const [open, setOpen] = useState(false);
-  const text = message.body ?? '';
+  const text = useMemo(() => fullBodyOf(message) ?? '', [message]);
   if (text.trim().length === 0) return null;
   const words = text.trim().split(/\s+/).length;
   return (
