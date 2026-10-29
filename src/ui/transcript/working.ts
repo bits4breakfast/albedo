@@ -14,7 +14,7 @@
  */
 
 import type { Message } from '../../types';
-import { outputTokensOf, turnEdgeOf } from '../../capture';
+import { isBackgroundNotice, outputTokensOf, turnEdgeOf } from '../../capture';
 import { basename, summaryOf, targetOf, toolUseId } from './ToolChip';
 import { formatDuration } from '../../lib/duration';
 import { isPromptRow } from './compaction';
@@ -112,7 +112,8 @@ export function workingState(
     const since = Math.min(...open.map((m) => m.ts));
     return { step: { kind: 'tools', count: open.length, agents }, since, turn };
   }
-  if (current.length > 0 && last && (last.role === 'tool_result' || last.role === 'user')) {
+  // A background task's end taken into the turn is input as much as a result.
+  if (current.length > 0 && last && (last.role === 'tool_result' || last.role === 'user' || isBackgroundNotice(last.rawJson))) {
     return { step: { kind: 'thinking' }, since: last.ts, turn };
   }
   return { step: { kind: 'working' }, since: lastTs, turn };

@@ -12,6 +12,8 @@
 import Database from '@tauri-apps/plugin-sql';
 import type { Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
 import {
+  backgroundFactsOf,
+  backgroundSqlPredicate,
   contextUsedSqlExpr,
   remoteControlSqlPredicate,
   remoteControlUrlOf,
@@ -686,6 +688,58 @@ export async function remoteControlUrlSince(sessionId: string, sinceTs: number):
     if (url !== null) return url;
   }
   return null;
+}
+
+/** Most preselected rows a background lookup reads; the newest win. */
+const BACKGROUND_ROWS_MAX = 1000;
+/** Most calls or results a background lookup fetches the other half of. */
+const BACKGROUND_PAIRS_MAX = 50;
+
+/**
+ * The session's main-thread rows written at or after `sinceTs` that may
+ * start, end or stop background work, oldest first, for
+ * `runningInBackground` (capture/background.ts). The caller passes when its
+ * pty was spawned: the work dies with the process, so nothing from before it
+ * can still run.
+ *
+ * Two reads. The first takes what `backgroundSqlPredicate` preselects. Some
+ * starts show on one half only -- an agent async by default has no flag on
+ * its call, a shell moved to the background by its timeout neither -- so the
+ * second fetches the other half of every call or result found alone, by its
+ * tool-use id.
+ */
+export async function backgroundRowsSince(sessionId: string, sinceTs: number): Promise<Message[]> {
+  const db = await getDb();
+  const first = await db.select<MessageRow[]>(
+    `SELECT ${MESSAGE_SELECT} FROM messages
+      WHERE session_id = $1 AND ts >= $2 AND +agent_id IS NULL AND ${backgroundSqlPredicate()}
+      ORDER BY ts DESC, id DESC LIMIT $3`,
+    [sessionId, sinceTs, BACKGROUND_ROWS_MAX],
+  );
+  const rows = (first ?? []).map(toMessage);
+
+  const calls = new Set<string>();
+  const results = new Set<string>();
+  for (const m of rows) {
+    for (const f of backgroundFactsOf(m)) {
+      if (f.fact === 'call') calls.add(f.toolUseId);
+      else if (f.fact === 'result') results.add(f.toolUseId);
+    }
+  }
+  const alone = [...calls].filter((id) => !results.has(id)).concat([...results].filter((id) => !calls.has(id)));
+  const ids = alone.slice(0, BACKGROUND_PAIRS_MAX);
+  if (ids.length > 0) {
+    const needles = ids.map((_, i) => `instr(raw_json, $${i + 3}) > 0`).join(' OR ');
+    const second = await db.select<MessageRow[]>(
+      `SELECT ${MESSAGE_SELECT} FROM messages
+        WHERE session_id = $1 AND ts >= $2 AND +agent_id IS NULL AND role IN ('tool_use', 'tool_result')
+          AND (${needles})`,
+      [sessionId, sinceTs, ...ids.map((id) => `"${id}"`)],
+    );
+    const held = new Set(rows.map((m) => m.id));
+    for (const m of (second ?? []).map(toMessage)) if (!held.has(m.id)) rows.push(m);
+  }
+  return rows.sort((a, b) => a.ts - b.ts || a.id - b.id);
 }
 
 /** A parsed row plus the task it was adopted by (null for terminal sessions). */

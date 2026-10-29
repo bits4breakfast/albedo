@@ -289,8 +289,11 @@ describe('absorbed mid-turn messages', () => {
   });
 
   it('are not invented from other origins or other attachments', () => {
+    // A background task's end is kept for the background fold (#122), as a
+    // system row with no text: nothing draws it, and it is no message of yours.
+    const notice = { type: 'queued_command', prompt: '<task-notification>…', origin: { kind: 'task-notification' } };
+    expect(parseLine(JSON.stringify(attachment(notice)), 0)).toMatchObject([{ role: 'system', body: null }]);
     for (const att of [
-      { type: 'queued_command', prompt: '<task-notification>…', origin: { kind: 'task-notification' } },
       { type: 'queued_command', prompt: 'peer says', origin: { kind: 'peer' } },
       { type: 'queued_command', prompt: 'no origin' },
       { type: 'prompt_snapshot', prompt: 'x', origin: { kind: 'human' } },
