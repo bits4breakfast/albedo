@@ -24,6 +24,9 @@ export type { TranscriptImage } from './adapter';
 /** A compaction's boundary and summary, and the notices Claude Code writes. */
 export { compactBoundaryOf, compactSummaryOf, isNoticeLine } from './adapter';
 
+/** A slash command Claude Code ran itself, recorded as a `system` line. */
+export { isLocalCommandLine } from './adapter';
+
 /** Which task sent a message from another session (`peers.ts`). */
 export { peerMessageIdOf } from './adapter';
 export { senderTaskOf } from './peers';

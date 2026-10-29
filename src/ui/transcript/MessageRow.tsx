@@ -20,7 +20,7 @@ import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
-import { imageAt, imagesIn, peerMessageIdOf, senderTaskOf } from '../../capture';
+import { imageAt, imagesIn, isLocalCommandLine, peerMessageIdOf, senderTaskOf } from '../../capture';
 import { useTaskOpener } from '../openTask';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -43,7 +43,7 @@ export function MessageRow({ message, result = null, extras = [] }: MessageRowPr
     case 'assistant':
       return message.toolName === 'thinking' ? <ThinkingRow message={message} /> : <AssistantRow message={message} />;
     case 'system':
-      return <SystemRow message={message} />;
+      return isLocalCommandLine(message.rawJson) ? <LocalCommandRow message={message} /> : <SystemRow message={message} />;
     case 'tool_use':
       return <ToolUseRow message={message} result={result} />;
     case 'tool_result':
@@ -484,6 +484,32 @@ function SystemRow({ message }: { message: Message }): ReactNode {
       <div className="tx-gutter">Sys</div>
       <div className="tx-content">
         <div className="tx-system-text">{text}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A slash command Claude Code ran itself (`/rc`, `/rename`), which it records
+ * as `system` lines: the command, then its output. They read as the user-row
+ * versions do -- the command is yours, so it is under "You"; the output is the
+ * terminal's, so it has no gutter label. Most output is empty and draws
+ * nothing. Before this the command printed as raw tags under "Sys" (#113).
+ */
+function LocalCommandRow({ message }: { message: Message }): ReactNode {
+  const blocks = useMemo(
+    () => parseUserBody(message.body ?? '').filter((b) => !(b.kind === 'output' && b.text.length === 0)),
+    [message.body],
+  );
+  if (blocks.length === 0) return null;
+  const typed = blocks.some((b) => b.kind === 'command');
+  return (
+    <div className={`tx-row ${typed ? 'tx-row-user' : 'tx-row-machine'}`}>
+      <div className="tx-gutter">{typed ? 'You' : ''}</div>
+      <div className="tx-content">
+        {blocks.map((b, i) => (
+          <UserBlockView key={i} block={b} />
+        ))}
       </div>
     </div>
   );

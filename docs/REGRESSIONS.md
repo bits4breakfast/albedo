@@ -22,6 +22,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - `seq` orders rows within one file only: one parent transcript, or one subagent's. Never compare or page on it across a session that has subagents.
   - "What is new since I last read" is `id`, which ingest assigns in insertion order (`getMessages({ afterId })`).
   - When the pane and the PTY disagree, check whether the row is in the DB before suspecting ingest.
+- **A local slash command showed as raw tags, and its echo stuck on "Sending".** Typing `/rc` showed `Sys <command-name>/remote-control</command-name> <command-message>…` in the transcript, and "You /rc · Sending · 7s" stayed at the bottom, below later rows, until its 30 s timeout (#113). Cause: Claude Code writes some slash commands it runs itself (`/remote-control`, `/rename`, `/resume`, `/context`, `/login`) as `system` lines with subtype `local_command` -- the envelope, then `<local-command-stdout>` -- not as the `user` line `/clear` or `/model` gets. The envelope rendering and the echo's "a prompt row arrived" check both looked at `user` rows only. **Rule:**
+  - The same thing can arrive as different line types. When rendering or matching a kind of row, check real transcripts for every line type that carries it (`grep -rh '"subtype":"local_command"'` over `~/.claude/projects`).
+  - Anything that waits for "the row for what I just sent" also accepts the rows a command writes instead of a prompt (`echoLanded` in `TranscriptPane.tsx`).
 - **Unverified claims about Claude Code.** A PR stated that `--append-system-prompt` applies on every spawn. Measured with `claude -p`: it applies when the session is created, persists across `--resume`, and is ignored when passed on resume. **Rule:** measure Claude Code behaviour (version noted) before writing it in code or a PR. Say what wasn't measured (interactive mode, `/clear`).
 
 ## Shared helpers and scope

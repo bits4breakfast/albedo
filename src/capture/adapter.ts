@@ -400,6 +400,24 @@ export function endsLocalCommand(rawJson: string): boolean {
 }
 
 /**
+ * True for a `system` line recording a slash command Claude Code ran itself:
+ * the command's envelope (`<command-name>/remote-control</command-name>…`),
+ * or its `<local-command-stdout>` (empty for most). Both are stored as
+ * `system` rows, so without this the pane printed the envelope under "Sys",
+ * and the "sending" echo of the command never cleared: no `user` row follows.
+ *
+ * Measured on Claude Code 2.1.288-2.1.312 for `/remote-control` (`/rc`),
+ * `/rename`, `/resume`, `/context` and `/login`: two lines with the same
+ * timestamp, command first. `/clear`, `/model`, `/compact` and `/mcp` were
+ * seen only as `user` lines (as was one `/remote-control`), which the pane
+ * reads as user rows already. The content is the same envelope either way.
+ */
+export function isLocalCommandLine(rawJson: string): boolean {
+  const line = safeParse(rawJson);
+  return line !== null && line['type'] === 'system' && line['subtype'] === 'local_command';
+}
+
+/**
  * Messages between sessions, and how the two ends find each other.
  *
  * The receiving line carries `origin: { kind: "peer", msg_id, name, ... }`.
