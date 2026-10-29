@@ -55,4 +55,13 @@ describe('TaskList: Remote Control', () => {
     expect(opened).toEqual([URL]);
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it('leaves it off the selected row, whose task bar shows it', async () => {
+    // Selecting a row scrolls it into view, which jsdom does not implement.
+    Element.prototype.scrollIntoView = () => {};
+    render(<TaskList tasks={[remote, local]} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
+    // Let the lookup settle, then check that nothing drew.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: 'Available through Remote Control. Open on claude.ai' })).toBeNull();
+  });
 });
