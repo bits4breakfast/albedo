@@ -23,6 +23,8 @@ export default function useDialogs() {
   const [moveTarget, setMoveTarget] = useState<Task | null>(null);
   /** Which verb the end-task dialog was opened with. */
   const [endIntent, setEndIntent] = useState<'archive' | 'delete'>('archive');
+  /** The task ⇧⌘R asked to make available remotely, while that asks to confirm. */
+  const [remoteConfirmFor, setRemoteConfirmFor] = useState<number | null>(null);
 
   return {
     newTaskOpen,
@@ -45,5 +47,7 @@ export default function useDialogs() {
     setMoveTarget,
     endIntent,
     setEndIntent,
+    remoteConfirmFor,
+    setRemoteConfirmFor,
   };
 }

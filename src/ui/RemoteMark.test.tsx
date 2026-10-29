@@ -69,7 +69,10 @@ vi.mock('./transcript/composerBridge', () => ({
   }),
 }));
 
-const { default: RemoteMark, REMOTE_CONTROL_COMMAND, REMOTE_TITLE, remoteControlItem } = await import('./RemoteMark');
+const { default: RemoteMark, REMOTE_CONTROL_COMMAND, REMOTE_CONTROL_KEYS, REMOTE_TITLE, remoteControlItem } = await import(
+  './RemoteMark'
+);
+const { default: RemoteControlDialog, REMOTE_CONFIRM_TITLE } = await import('./RemoteControlDialog');
 
 const task = { id: 1, sessionId: 's1', status: 'idle' } as Task;
 
@@ -188,6 +191,9 @@ describe('remoteControlItem', () => {
     expect(remoteControlItem(task, true, URL)).toBeNull();
     const item = remoteControlItem(task, true, null);
     expect(item?.label).toBe('Make Available Remotely');
+    // The ⋯ menu shows the shortcut that asks for the same thing.
+    expect(item?.aside).toBe(REMOTE_CONTROL_KEYS);
+    expect(REMOTE_CONTROL_KEYS).toBe('⇧⌘R');
   });
 
   it('sends /remote-control through the send gateway', async () => {
@@ -210,5 +216,92 @@ describe('remoteControlItem', () => {
     remoteControlItem({ ...task, status: 'blocked' }, true, null)?.onSelect();
     await waitFor(() => expect(composed).toEqual(['/remote-control']));
     expect(sent).toEqual([]);
+  });
+});
+
+describe('RemoteControlDialog (⇧⌘R)', () => {
+  const titled = { ...task, title: 'Fix the login page' };
+
+  function open(t: Task = titled, onClose = vi.fn()) {
+    const item = remoteControlItem(t, true, null)!;
+    render(<RemoteControlDialog task={t} onConfirm={item.onSelect} onClose={onClose} />);
+    return onClose;
+  }
+
+  it('asks, says what it sends and where it can be continued, on the task named', () => {
+    open();
+    const dialog = screen.getByRole('dialog', { name: REMOTE_CONFIRM_TITLE });
+    expect(dialog.textContent).toContain('/remote-control');
+    expect(dialog.textContent).toContain('phone');
+    expect(dialog.textContent).toContain('claude.ai');
+    expect(dialog.textContent).toContain('Fix the login page');
+    // Return confirms: the keyboard starts on the confirm button.
+    expect(document.activeElement?.textContent).toBe('Make Available Remotely');
+  });
+
+  it('confirming sends /remote-control as the ⋯ item does, then closes', async () => {
+    h.liveSince.set(1, 5_000);
+    const onClose = open();
+    fireEvent.click(screen.getByRole('button', { name: 'Make Available Remotely' }));
+    await waitFor(() => expect(sent).toEqual([[1, '/remote-control']]));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirming during a running turn holds it, and says so', async () => {
+    h.liveSince.set(1, 5_000);
+    h.holding = true;
+    open({ ...titled, status: 'running' });
+    expect(screen.getByRole('dialog').textContent).toContain('sent when it ends');
+    fireEvent.click(screen.getByRole('button', { name: 'Make Available Remotely' }));
+    await waitFor(() => expect(sent).toEqual([[1, '/remote-control']]));
+    expect(composed).toEqual([]);
+  });
+
+  it('on a waiting prompt it goes to the message box, and says so', async () => {
+    h.liveSince.set(1, 5_000);
+    open({ ...titled, status: 'blocked' });
+    expect(screen.getByRole('dialog').textContent).toContain('message box');
+    fireEvent.click(screen.getByRole('button', { name: 'Make Available Remotely' }));
+    await waitFor(() => expect(composed).toEqual(['/remote-control']));
+    expect(sent).toEqual([]);
+  });
+
+  it('Cancel, Escape and a click outside send nothing', async () => {
+    h.liveSince.set(1, 5_000);
+    const onClose = open();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.mouseDown(screen.getByRole('presentation'));
+    expect(onClose).toHaveBeenCalledTimes(3);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toEqual([]);
+    expect(composed).toEqual([]);
+  });
+
+  it('Escape is its own: a window listener behind it does not also hear it', () => {
+    const behind = vi.fn();
+    window.addEventListener('keydown', behind);
+    try {
+      open();
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(behind).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', behind);
+    }
+  });
+
+  it('gives the keyboard back to where ⇧⌘R was pressed when it goes', () => {
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    try {
+      field.focus();
+      const item = remoteControlItem(titled, true, null)!;
+      const { unmount } = render(<RemoteControlDialog task={titled} onConfirm={item.onSelect} onClose={() => {}} />);
+      expect(document.activeElement).not.toBe(field);
+      unmount();
+      expect(document.activeElement).toBe(field);
+    } finally {
+      field.remove();
+    }
   });
 });

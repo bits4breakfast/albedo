@@ -46,6 +46,17 @@
  * previous-command and kill-line keys -- and `⌥F12`
  * (the shell drawer, PhpStorm's Terminal) is read from `code` too.
  *
+ * ## ⇧⌘R: Remote Control, from anywhere
+ *
+ * Asks to make the selected task's session available remotely (#128). Same
+ * terms as ⇧⌘P: Command only (Ctrl+R is the terminal's reverse search) and
+ * read from `code`. Unlike every other combo it is heard in the capture phase
+ * (`phase: 'capture'`), so it works wherever focus is -- the terminal, the
+ * message box, the editor, any text field -- and nothing below the window
+ * can stop it on the way up. Nothing else binds it: not CodeMirror's default,
+ * history or search keymaps, not the editor's own keys, not the native menu
+ * (Tauri's default has no Reload), and WKWebView has no hard-reload key.
+ *
  * ## Project tabs: ⌥1–9 (⌥⌘1–9 too), and Alt+1–9 off a Mac
  *
  * The task jump is ⌘1–9; the project jump is the same digits on Option, the
@@ -93,6 +104,7 @@ export type Combo =
   | 'mod+alt+o'
   | 'mod+shift+f'
   | 'mod+shift+p'
+  | 'mod+shift+r'
   | 'mod+u'
   | 'alt+f12';
 
@@ -141,6 +153,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'shift shift', keys: '⇧⇧', description: 'Search Everywhere' },
   { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
+  { combo: 'mod+shift+r', keys: '⇧⌘R', description: 'Make the Selected Task Available Remotely (Asks First)' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
@@ -169,6 +182,12 @@ export interface Handler {
    * Defaults to firing regardless.
    */
   whenTyping?: 'ignore';
+  /**
+   * `'capture'` hears the key on the way down, before the focused element:
+   * for a binding that must work wherever focus is, even inside a component
+   * that stops the key's propagation. Defaults to the bubble phase.
+   */
+  phase?: 'capture';
 }
 
 export type Bindings = Partial<Record<Combo, Handler | ((e: KeyboardEvent, digit: number | null) => void)>>;
@@ -209,6 +228,10 @@ export function comboOf(
   // push, and Command only, because Ctrl+P belongs to the terminal.
   if (e.code === 'KeyP' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+p', digit: null };
+  }
+  // Remote Control, on the same terms: Ctrl+R is the terminal's reverse search.
+  if (e.code === 'KeyR' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+r', digit: null };
   }
   // Project step. Command only and read from `code`; see the module comment.
   if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
@@ -257,13 +280,14 @@ export function comboOf(
 }
 
 /** Combos the app takes from a focused terminal rather than sharing them. */
-const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit', 'mod+shift+[', 'mod+shift+]']);
+const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit', 'mod+shift+[', 'mod+shift+]', 'mod+shift+r']);
 
 /**
  * For xterm's `attachCustomKeyEventHandler`: false when the key is one of the
  * app's that the terminal must not also act on. The terminals treat Option as
  * Meta, so without this ⌥1 would switch project AND send `Esc 1` to the pty;
- * ⇧⌘[ / ⇧⌘] switch project too, so the pty does not get them either.
+ * ⇧⌘[ / ⇧⌘] switch project too, so the pty does not get them either, and
+ * ⇧⌘R opens a dialog over the terminal.
  */
 export function terminalTakesKey(e: KeyboardEvent): boolean {
   const hit = comboOf(e);
@@ -282,18 +306,25 @@ export function useShortcuts(bindings: Bindings): void {
   ref.current = bindings;
 
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
+    const listen = (phase: 'capture' | 'bubble') => (e: KeyboardEvent) => {
       const hit = comboOf(e);
       if (!hit) return;
       const entry = ref.current[hit.combo];
       if (!entry) return;
-      const handler = typeof entry === 'function' ? { run: entry } : entry;
+      const handler: Handler = typeof entry === 'function' ? { run: entry } : entry;
+      if ((handler.phase ?? 'bubble') !== phase) return;
       if (handler.whenTyping === 'ignore' && isTyping(e.target)) return;
       e.preventDefault();
       handler.run(e, hit.digit);
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    const onCapture = listen('capture');
+    const onBubble = listen('bubble');
+    window.addEventListener('keydown', onCapture, true);
+    window.addEventListener('keydown', onBubble);
+    return () => {
+      window.removeEventListener('keydown', onCapture, true);
+      window.removeEventListener('keydown', onBubble);
+    };
   }, []);
 }
 
