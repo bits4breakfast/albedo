@@ -23,6 +23,10 @@ export type { TranscriptImage } from './adapter';
 
 /** A compaction's boundary and summary, and the notices Claude Code writes. */
 export { compactBoundaryOf, compactSummaryOf, isNoticeLine } from './adapter';
+
+/** Which task sent a message from another session (`peers.ts`). */
+export { peerMessageIdOf } from './adapter';
+export { senderTaskOf } from './peers';
 export type { CompactBoundary, CompactSummary } from './adapter';
 
 export { usageSummary } from './usage';

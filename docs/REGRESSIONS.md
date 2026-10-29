@@ -74,6 +74,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 - **Two copies of the same thing on screen.** The file name showed three times in the editor (#57), and "Transcript" twice while the editor was open. **Rule:** before adding a label, check whether a parent row already shows it.
 
 - **Ages out of line in the task list.** In a group of 12 Idle rows, the first nine showed their age ("1h", "2d") about 30px left of the last three. Cause: the hidden ⌘1–9 hint shares the age's grid cell and is wider than the age, so on those nine rows the cell grew and the start-aligned age moved left. It showed once a list had more than nine rows. **Rule:** content that shares a cell with something hidden by `visibility` is aligned to the edge it should keep (`justify-self: end` for a right column); check a list longer than the shortcut range.
+- **A parsed block that nothing draws.** `envelopes.ts` parsed `<agent-message>` into a block, but `MessageRow`'s switch had no case for it and ended in `default: return null`. On this machine 6 messages from other sessions never appeared at all, and a newer `<cross-session-message>` showed as raw XML under "You" (#106). **Rule:**
+  - A switch over a union of things to draw is exhaustive (`const unhandled: never = block`), so a new kind without a case is a type error, not an empty row.
+  - Hiding a kind is written as its own case with the reason (as hand-backs are), never left to `default`.
 
 ## Shell scripts (for agents)
 

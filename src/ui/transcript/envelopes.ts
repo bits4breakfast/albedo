@@ -34,6 +34,15 @@
  * pattern must tolerate an attribute list. It was written without one, which
  * is why an agent-message rendered as a wall of raw XML: the tag was neither
  * in the allowlist nor matchable if it had been.
+ *
+ * ## Messages from another session
+ *
+ * Claude Code has two envelopes for one session writing to another. The older
+ * `<agent-message from="<id>">` also carries a subagent's final report (a
+ * "hand-back"). The newer `<cross-session-message from="uds:…"
+ * from-name="<session name>" from-mode="…">` is a peer's message, named. Both
+ * become one `agent-message` block, and both come bracketed by the same lead
+ * line and closing paragraph for the model (`FRAME_LEAD_RE`, `FRAME_TAIL_RE`).
  */
 
 export type UserBlock =
@@ -68,6 +77,8 @@ export type UserBlock =
       kind: 'agent-message';
       /** Sending session id, from `from="..."`. Null if the attribute is absent. */
       from: string | null;
+      /** The sending session's name (`from-name`), when the envelope gives one. */
+      name: string | null;
       /** True when the harness framed this as a subagent's *final report*. */
       handback: boolean;
       /** The message itself: framing removed, de-indented. Markdown. */
@@ -163,6 +174,7 @@ const KNOWN_TAGS = [
   'bash-stdout',
   'bash-stderr',
   'agent-message',
+  'cross-session-message',
   'context',
   'pasted_content',
   'albedo-action',
@@ -280,7 +292,7 @@ function parseAgentMessage(attrs: string, inner: string): UserBlock {
   const raw = unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, '');
   const handback = HANDBACK_FRAME_RE.test(raw);
   const text = dedent(handback ? raw.replace(HANDBACK_FRAME_RE, '') : raw).trim();
-  return { kind: 'agent-message', from: attr(attrs, 'from'), handback, text };
+  return { kind: 'agent-message', from: attr(attrs, 'from'), name: attr(attrs, 'from-name'), handback, text };
 }
 
 function pushText(out: UserBlock[], raw: string): void {
@@ -501,6 +513,7 @@ export function parseUserBody(body: string): UserBlock[] {
           out.push({ kind: 'system-reminder', text: unescapeXml(inner.trim()) });
           break;
         case 'agent-message':
+        case 'cross-session-message':
           out.push(parseAgentMessage(attrs, inner));
           break;
         case 'pasted_content': {
