@@ -28,6 +28,7 @@ import {
 } from './taskGroups';
 import { ChatIcon } from './icons';
 import RemoteMark from './RemoteMark';
+import { BackgroundMark } from './BackgroundWork';
 import { useDraftTaskIds } from './transcript/drafts';
 import './tasklist.css';
 
@@ -506,6 +507,11 @@ export default function TaskList({
                           claude.ai. Only while on (RemoteMark.tsx), and not on
                           the selected row: the task bar shows it there. */}
                       {task.id !== selectedId && <RemoteMark task={task} variant="row" />}
+                      {/* Idle, with work still running that will report back
+                          or wake it: "2 in background". The group says Idle.
+                          Not on the selected row: its Background band lists
+                          the same work above the composer. */}
+                      {task.status === 'idle' && task.id !== selectedId && <BackgroundMark task={task} />}
                       {/* A chat is told apart by a glyph, not a word: same
                           size, stroke and tier as the branch glyph. */}
                       {task.kind === 'chat' && (

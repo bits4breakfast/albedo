@@ -537,9 +537,10 @@ function OrphanResultRow({ message }: { message: Message }): ReactNode {
 function ToolUseRow({ message, result }: { message: Message; result: Message | null }): ReactNode {
   const rendered = useDiffsFor(message, result);
 
+  // `data-message-id`: what the Background band scrolls to.
   if (rendered && rendered.diffs.length > 0) {
     return (
-      <div className="tx-row tx-row-tool">
+      <div className="tx-row tx-row-tool" data-message-id={message.id}>
         <div className="tx-gutter" />
         <div className="tx-content">
           <ToolChip message={message} result={result} />
@@ -552,7 +553,7 @@ function ToolUseRow({ message, result }: { message: Message; result: Message | n
   }
 
   return (
-    <div className="tx-row tx-row-tool">
+    <div className="tx-row tx-row-tool" data-message-id={message.id}>
       <div className="tx-gutter" />
       <div className="tx-content">
         <ToolChip message={message} result={result} />

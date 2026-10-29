@@ -274,6 +274,39 @@
 }
 .tx-queued-edit:focus { outline: none; border-color: var(--border-strong); }
 
+/* --- background work -------------------------------------------------------- */
+
+/* What the session keeps running outside the turn (BackgroundStrip.tsx): the
+   Queued band's container and head, one line per item. The kind and the
+   clock are --muted, the description --text; a line is a button, so hover
+   takes --panel-hover. Measured, light | dark: --muted on --panel 7.15 |
+   7.74, on --panel-hover 6.22 | 6.91; --text on them 16.60 | 14.63 and
+   14.44 | 13.07. Both tiers are cleared on --panel-raised too (5.89 | 6.50,
+   13.68 | 12.29), which this band never uses. No --panel-active on press:
+   it carries --text-strong only. Never `opacity`. */
+.tx-background-item {
+  display: grid;
+  grid-template-columns: 4.5em minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 8px;
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 1px 4px 1px 8px;
+  border: 0;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.tx-background-item:hover { background: var(--panel-hover); }
+.tx-background-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.tx-background-kind { color: var(--muted); font-size: var(--fs-xs); }
+.tx-background-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-background-time { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* --- composer -------------------------------------------------------------- */
 
 /*

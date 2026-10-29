@@ -192,6 +192,12 @@
 /* An unsent draft in the composer: a word in the caption, --muted like the
    repo name (cleared against --panel-raised). */
 .task-draft { color: var(--muted); }
+/* Work still running in the background of an idle task (BackgroundWork.tsx):
+   --muted like Draft, on the row's own ground, which for an idle row is one
+   of three. Measured, light | dark: --panel-chrome (at rest) 6.50 | 7.31,
+   --panel-hover 6.22 | 6.91, --panel-raised (selected, menu open) 5.89 |
+   6.50. Never on --row-blocked: a blocked task is not idle. */
+.task-background { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on

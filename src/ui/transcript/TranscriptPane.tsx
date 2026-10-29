@@ -48,6 +48,8 @@ import { compactionAt, isPromptRow, type Compaction } from './compaction';
 import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
 import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
+import BackgroundStrip from './BackgroundStrip';
+import { backgroundShown, useBackgroundWork } from '../BackgroundWork';
 import { PermissionModeLabel } from './PermissionModeLabel';
 import { isSidechain, toolUseId } from './ToolChip';
 import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
@@ -164,6 +166,8 @@ export function TranscriptPane({
 
   const inactive = taskId === null && sessionId === null;
   const liveSince = usePtyLiveSince(taskId);
+  const backgroundTask = useMemo(() => (taskId === null ? null : { id: taskId, sessionId }), [taskId, sessionId]);
+  const background = backgroundShown(useBackgroundWork(backgroundTask));
 
   // Held messages go for every task, whichever one is on screen (outboxRelease.ts).
   useEffect(() => startOutboxRelease(), []);
@@ -372,6 +376,27 @@ export function TranscriptPane({
 
   const items = useMemo(() => groupRows(messages), [messages]);
 
+  // A Background line was clicked: bring its call's row into view. The row
+  // may be older than the window holds, so the window grows a page at a time
+  // until it is in, or there is nothing older; then this gives up quietly.
+  const [reveal, setReveal] = useState<number | null>(null);
+  useEffect(() => setReveal(null), [selectorKey]);
+  useEffect(() => {
+    if (reveal === null || loading) return;
+    const row = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${reveal}"]`) ?? null;
+    const step = revealStep(row !== null, messages.some((m) => m.id === reveal), hasMore);
+    if (step === 'grow') {
+      setLimit((l) => l + PAGE);
+      return;
+    }
+    if (step === 'scroll') {
+      row?.scrollIntoView?.({ block: 'center' });
+      followingRef.current = false;
+      setFollowing(false);
+    }
+    setReveal(null);
+  }, [reveal, messages, hasMore, loading]);
+
   /*
      Between Send and anything on screen there is a gap: Claude Code writes
      your message to the transcript a moment after it takes it, and its reply
@@ -492,6 +517,8 @@ export function TranscriptPane({
         ) : null}
       </div>
 
+      {/* Above Queued: what is queued goes next, so it sits by the composer. */}
+      <BackgroundStrip items={background} onReveal={setReveal} />
       <QueuedStrip sessionId={sessionId} taskId={taskId} liveSince={liveSince} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {taskId !== null ? <Composer taskId={taskId} sessionId={sessionId} status={status} onSent={onSent} accessory={composerAccessory} /> : null}
@@ -500,6 +527,17 @@ export function TranscriptPane({
 }
 
 export default TranscriptPane;
+
+/**
+ * The next step in bringing a row into view: scroll to it once it is drawn;
+ * load a page further back while it is not held and there is more; else give
+ * up -- a row held but not drawn on its own (inside a subagent's group) or
+ * not in the transcript at all has nowhere to scroll to.
+ */
+export function revealStep(drawn: boolean, held: boolean, hasMore: boolean): 'scroll' | 'grow' | 'give-up' {
+  if (drawn) return 'scroll';
+  return !held && hasMore ? 'grow' : 'give-up';
+}
 
 /** How long a sent message waits to appear in the transcript before its echo goes. */
 const ECHO_MAX_MS = 30_000;
