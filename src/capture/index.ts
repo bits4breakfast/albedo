@@ -19,6 +19,9 @@ export { deriveStatus } from './status';
 
 /** Attached images, recovered from a placeholder row's raw line. */
 export { imageAt, imagesIn, SEQ_STRIDE } from './adapter';
+
+/** A row's body without the storage cut (`fullBodyOf`). */
+export { fullBodyOf } from './adapter';
 export type { TranscriptImage } from './adapter';
 
 /** A compaction's boundary and summary, and the notices Claude Code writes. */
