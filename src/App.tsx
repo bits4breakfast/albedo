@@ -27,7 +27,8 @@ import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
-import Terminal, { focusPty } from './ui/Terminal';
+import Terminal, { focusPty, usePtyLiveSince } from './ui/Terminal';
+import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
 import BranchChip from './ui/BranchChip';
@@ -244,6 +245,10 @@ export default function App() {
   );
   /** Why Compact Now in the task's ⋯ menu cannot go now, or null. */
   const compactBlocker = useCommandBlocker(selected);
+  /** Remote Control on the selected task: the task bar's mark and the ⋯ item. */
+  const selectedLive = usePtyLiveSince(selected?.id ?? null) !== null;
+  const remoteUrl = useRemoteControlUrl(selected);
+  const remoteItem = selected ? remoteControlItem(selected, selectedLive, remoteUrl) : null;
 
   // The task on screen is seen: when it is opened, and when a turn ends while
   // it is open. Only a finish it has not covered yet is written.
@@ -1083,6 +1088,9 @@ export default function App() {
                           title: compactBlocker ?? COMPACT.hint,
                           onSelect: () => void sendToSession(selected.id, COMPACT.command),
                         },
+                        // Hidden, not disabled, while on or with no session:
+                        // the mark beside the title says the first.
+                        ...(remoteItem ? [remoteItem] : []),
                         {
                           id: 'copy-path',
                           label: 'Copy Worktree Path',
@@ -1131,6 +1139,9 @@ export default function App() {
                         },
                     ]}
                   />
+                  {/* Reachable through Remote Control, against the name: it
+                      is about the session, not the branch after it. */}
+                  <RemoteLink url={remoteUrl} variant="bar" />
                   {/* The branch and folder live here and nowhere else on screen:
                       the sidebar row repeats the branch only when it adds to
                       the title, the Files bar not at all. Icons say which is

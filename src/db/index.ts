@@ -13,6 +13,8 @@ import Database from '@tauri-apps/plugin-sql';
 import type { Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
 import {
   contextUsedSqlExpr,
+  remoteControlSqlPredicate,
+  remoteControlUrlOf,
   SEQ_STRIDE,
   usageSqlExpr,
   USAGE_PRESENCE_JSON_PATH,
@@ -662,6 +664,28 @@ export async function findToolResults(toolName: string, needle: string, limit = 
     [toolName, needle, Math.max(1, limit)],
   );
   return rows.map(toMessage);
+}
+
+/**
+ * The claude.ai link of the newest "Remote Control is active" row in the
+ * session written at or after `sinceTs`, or null. The caller passes when its
+ * pty was spawned: Remote Control ends with the process, so a row from before
+ * that describes a process that is gone.
+ */
+export async function remoteControlUrlSince(sessionId: string, sinceTs: number): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db.select<{ raw_json: string }[]>(
+    `SELECT raw_json FROM messages
+      WHERE session_id = $1 AND ts >= $2 AND role = 'system' AND +agent_id IS NULL
+        AND ${remoteControlSqlPredicate('raw_json')}
+      ORDER BY ts DESC, id DESC LIMIT 10`,
+    [sessionId, sinceTs],
+  );
+  for (const row of rows) {
+    const url = remoteControlUrlOf(row.raw_json);
+    if (url !== null) return url;
+  }
+  return null;
 }
 
 /** A parsed row plus the task it was adopted by (null for terminal sessions). */

@@ -30,6 +30,9 @@ export { turnEdgeOf, outputTokensOf } from './adapter';
 /** A slash command Claude Code ran itself, recorded as a `system` line. */
 export { isLocalCommandLine } from './adapter';
 
+/** The claude.ai link a "Remote Control is active" line carries. */
+export { remoteControlUrlOf } from './adapter';
+
 /** Which task sent a message from another session (`peers.ts`). */
 export { peerMessageIdOf } from './adapter';
 export { senderTaskOf } from './peers';
