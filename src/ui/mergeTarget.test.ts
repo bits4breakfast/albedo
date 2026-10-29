@@ -34,3 +34,21 @@ describe('branchTooltip', () => {
     expect(branchTooltip('fix-login', null, null)).toBe('Branch fix-login');
   });
 });
+
+describe('mergeTarget with what git shows', () => {
+  it('prefers the stack over the cut, and the PR over both', () => {
+    expect(mergeTarget(work, null, { base: 'add-export', how: 'on' })).toEqual({ base: 'add-export', from: 'stack' });
+    expect(mergeTarget(work, null, { base: 'add-export', how: 'older' })).toEqual({ base: 'add-export', from: 'older' });
+    expect(mergeTarget(work, pr('release'), { base: 'add-export', how: 'on' })).toEqual({ base: 'release', from: 'pr' });
+  });
+
+  it('says the branch needs rebasing when it sits on an older copy, and names the cut', () => {
+    expect(branchTooltip('fix-login', { base: 'add-export', from: 'older' }, null, 'main')).toBe(
+      'Branch fix-login, on an older copy of add-export: add-export was rewritten since, ' +
+        'so fix-login needs rebasing onto it (cut from main)',
+    );
+    expect(branchTooltip('fix-login', { base: 'add-export', from: 'stack' }, null, 'main')).toBe(
+      'Branch fix-login, stacked on add-export, as its history shows (cut from main)',
+    );
+  });
+});

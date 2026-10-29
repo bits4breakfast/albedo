@@ -419,7 +419,7 @@ export async function taskBase(worktreePath: string, baseBranch: string): Promis
  * against its base goes through here, so a stale local base cannot make one
  * place see 24 commits where another sees none (#82).
  */
-async function baseOrUpstream(cwd: string, baseBranch: string): Promise<string> {
+export async function baseOrUpstream(cwd: string, baseBranch: string): Promise<string> {
   try {
     const up = (await gitOk(['rev-parse', '--abbrev-ref', `${baseBranch}@{upstream}`], cwd)).trim();
     if (up) return up;
