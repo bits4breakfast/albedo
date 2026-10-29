@@ -6,7 +6,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, renderHook } from '@testing-library/react';
-import { AREA_ORDER, areaSequence, cycleKeyOf, shouldCycle, useFocusAreaCycle, type FocusArea } from './focusAreas';
+import {
+  AREA_ORDER,
+  areaSequence,
+  cycleKeyOf,
+  focusOnItsOwn,
+  shouldCycle,
+  useFocusAreaCycle,
+  type FocusArea,
+} from './focusAreas';
 import { terminalTakesKey } from './shortcuts';
 
 const all = new Set<FocusArea>(AREA_ORDER);
@@ -310,6 +318,57 @@ describe('the cycle in the DOM', () => {
     expect($('files').hasAttribute('data-focus-arrived')).toBe(true);
     $('toolbar').focus();
     expect($('files').hasAttribute('data-focus-arrived')).toBe(false);
+  });
+
+  describe('a terminal that took focus when its task was selected', () => {
+    // xterm's custom key handler, as Terminal.tsx installs it: a key it
+    // refuses bubbles on; one it takes is sent to the pty and stopped.
+    beforeEach(() => {
+      $('xterm').addEventListener('keydown', (e) => {
+        if (!terminalTakesKey(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    });
+
+    it('gives the first Tab, either direction, to the message box', () => {
+      focusOnItsOwn($('xterm'));
+      expect(active()).toBe('xterm');
+      press();
+      expect(active()).toBe('message');
+      focusOnItsOwn($('xterm'));
+      press({ shiftKey: true });
+      expect(active()).toBe('message');
+    });
+
+    it('keeps Tab once you type in it: autocomplete still works', () => {
+      focusOnItsOwn($('xterm'));
+      fireEvent.keyDown($('xterm'), { key: 'a', code: 'KeyA' });
+      expect(press()).toBe(false); // the terminal's handler took it
+      expect(active()).toBe('xterm');
+    });
+
+    it('a bare modifier is not typing', () => {
+      focusOnItsOwn($('xterm'));
+      fireEvent.keyDown($('xterm'), { key: 'Shift', code: 'ShiftLeft' });
+      press();
+      expect(active()).toBe('message');
+    });
+
+    it('keeps Tab once you click', () => {
+      focusOnItsOwn($('xterm'));
+      fireEvent.pointerDown($('terminal'));
+      press();
+      expect(active()).toBe('xterm');
+    });
+
+    it('keeps Tab when you reach it yourself', () => {
+      $('message').focus();
+      press();
+      expect(active()).toBe('xterm');
+      expect(press()).toBe(false);
+      expect(active()).toBe('xterm');
+    });
   });
 
   it('does not ring an area focused by a click', () => {

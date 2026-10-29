@@ -15,6 +15,7 @@ import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { terminalTakesKey } from './shortcuts';
+import { focusOnItsOwn } from './focusAreas';
 import './terminal.css';
 
 /**
@@ -847,7 +848,9 @@ export default function Terminal({
       if (!term) return;
       try {
         term.refresh(0, term.rows - 1);
-        term.focus();
+        // Focus for typing, marked so the first Tab still reaches the
+        // message box (focusAreas.ts).
+        focusOnItsOwn(term.textarea);
       } catch {
         /* ignore */
       }

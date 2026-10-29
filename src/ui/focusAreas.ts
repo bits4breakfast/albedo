@@ -20,6 +20,15 @@
  *    `shortcuts.ts` and the app menu bind neither.
  *  - Not Esc: Claude Code uses it to interrupt.
  *
+ * ## A terminal that took focus on its own
+ *
+ * Selecting a task focuses its terminal (Terminal.tsx), so typing goes
+ * straight to Claude Code. That focus is marked `data-focus-auto` until the
+ * person engages: any other key, a click anywhere, or focus moving away. While
+ * it is marked, Tab is not the terminal's yet, so the first Tab after
+ * selecting a task still lands in the message box. Typing first and then
+ * pressing Tab -- autocomplete -- reaches the terminal as before.
+ *
  * ## Who keeps Tab
  *
  * Anything inside a `[data-focus-keeps-tab]` element: the terminal (Claude
@@ -68,13 +77,40 @@ export function cycleKeyOf(e: KeyProbe): CycleKey | null {
   return { dir: e.shiftKey ? -1 : 1, leave: e.ctrlKey };
 }
 
+const AUTO_ATTR = 'data-focus-auto';
+
 /**
- * For the terminals' custom key handler: true for the key that leaves them.
- * Plain Tab and Shift+Tab stay with the terminal.
+ * For the terminals' custom key handler: true for a key the terminal hands to
+ * the cycle instead of sending it to the pty. Ctrl+Tab always; plain Tab and
+ * Shift+Tab only while the terminal holds focus it took on its own.
  */
-export function isLeaveKey(e: KeyProbe): boolean {
-  return cycleKeyOf(e)?.leave === true;
+export function terminalYieldsKey(e: KeyProbe & Pick<KeyboardEvent, 'target'>): boolean {
+  const key = cycleKeyOf(e);
+  if (key === null) return false;
+  return key.leave || isAutoFocused(e.target);
 }
+
+function isAutoFocused(el: EventTarget | null): boolean {
+  return el instanceof Element && el.hasAttribute(AUTO_ATTR);
+}
+
+/**
+ * Focus `el` on the app's own initiative (a task was selected), and mark it so
+ * the next Tab still goes to the message box. A no-op when focus did not land.
+ */
+export function focusOnItsOwn(el: HTMLElement | null | undefined): void {
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  if (el.ownerDocument.activeElement === el) el.setAttribute(AUTO_ATTR, '');
+}
+
+function clearAuto(doc: Document, keep: EventTarget | null = null): void {
+  for (const el of Array.from(doc.querySelectorAll(`[${AUTO_ATTR}]`))) {
+    if (el !== keep) el.removeAttribute(AUTO_ATTR);
+  }
+}
+
+const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn']);
 
 export interface CycleContext {
   /** An `aria-modal` dialog is open. */
@@ -200,12 +236,14 @@ export function handleCycleKey(e: KeyboardEvent, doc: Document = document): bool
   const inside = active !== null && active !== doc.body && active !== doc.documentElement ? active : null;
   const go = shouldCycle(key, {
     modalOpen: doc.querySelector('[aria-modal="true"]') !== null,
-    keepsTab: inside?.closest('[data-focus-keeps-tab]') != null,
+    keepsTab: inside?.closest('[data-focus-keeps-tab]') != null && !isAutoFocused(inside),
     handled: e.defaultPrevented,
   });
   if (!go) return false;
   const roots = visibleRoots(doc);
-  for (const area of areaSequence(areaOf(inside), new Set(roots.keys()), key.dir)) {
+  // Focus the app placed counts as no focus at all: the message box is next.
+  const from = isAutoFocused(inside) ? null : areaOf(inside);
+  for (const area of areaSequence(from, new Set(roots.keys()), key.dir)) {
     const root = roots.get(area);
     if (root && focusArea(root)) {
       e.preventDefault();
@@ -219,13 +257,26 @@ export function handleCycleKey(e: KeyboardEvent, doc: Document = document): bool
 export function useFocusAreaCycle(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => void handleCycleKey(e);
-    const onFocusIn = (e: FocusEvent) => clearArrived(document, e.target);
-    const onPointerDown = (e: PointerEvent) => clearArrived(document, e.target);
+    // Capture: xterm stops the keys it handles, so a bubbling listener would
+    // never learn that the person started typing in the terminal.
+    const onKeyFirst = (e: KeyboardEvent) => {
+      if (cycleKeyOf(e) === null && !MODIFIERS.has(e.key)) clearAuto(document);
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      clearArrived(document, e.target);
+      clearAuto(document, e.target);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      clearArrived(document, e.target);
+      clearAuto(document);
+    };
     window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKeyFirst, true);
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('pointerdown', onPointerDown);
     return () => {
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKeyFirst, true);
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('pointerdown', onPointerDown);
     };

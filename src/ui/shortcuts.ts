@@ -82,7 +82,7 @@
 
 import { useEffect, useRef } from 'react';
 import { detectPlatform, type Platform } from '../lib/platform';
-import { isLeaveKey } from './focusAreas';
+import { terminalYieldsKey } from './focusAreas';
 
 /** A combo, in the syntax `mod+<key>`; `mod+digit` matches 1 through 9. */
 export type Combo =
@@ -297,11 +297,11 @@ const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit', 'mod+s
  * Meta, so without this ⌥1 would switch project AND send `Esc 1` to the pty;
  * ⇧⌘[ / ⇧⌘] switch project too, so the pty does not get them either, and
  * ⇧⌘R opens a dialog over the terminal. Ctrl+Tab / Ctrl+Shift+Tab leave the
- * terminal for the next area (focusAreas.ts); xterm would otherwise send
- * them as a plain Tab.
+ * terminal for the next area (focusAreas.ts), as Tab does while the terminal
+ * holds focus it took on its own; xterm would otherwise send them to the pty.
  */
 export function terminalTakesKey(e: KeyboardEvent): boolean {
-  if (isLeaveKey(e)) return false;
+  if (terminalYieldsKey(e)) return false;
   const hit = comboOf(e);
   return hit === null || !TAKEN_FROM_TERMINAL.has(hit.combo);
 }
