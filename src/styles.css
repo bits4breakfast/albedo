@@ -817,7 +817,21 @@ button {
   align-items: center;
   gap: 4px;
 }
-.main-ident-branch { max-width: 28ch; flex-shrink: 4; }
+/* Room for the base too (`⑂ branch → base`); the branch name gives way
+   before the base does, which is the shorter and the less familiar. */
+.main-ident-branch { max-width: 44ch; flex-shrink: 4; }
+.main-ident-branch > .main-ident-text { flex: 0 3 auto; }
+.main-ident-base {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: 2px;
+}
+/* The arrow is a separator, not text: --faint, the hint tier (4.90). The base
+   is a ref like the branch, so it keeps the chip's --muted. */
+.main-ident-arrow { flex: none; color: var(--faint); font-family: var(--font-ui); }
 /* "Chat" is a word, not a ref: the UI face, same size and --muted tier. */
 .main-ident-branch[data-kind='chat'] { font-family: inherit; }
 .main-ident-path { flex-shrink: 8; }

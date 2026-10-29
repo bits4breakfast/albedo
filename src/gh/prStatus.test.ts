@@ -52,6 +52,11 @@ describe('parsePrView', () => {
     expect(prLabel(pr!)).toEqual({ glyph: '', text: 'Open', tone: 'quiet' });
   });
 
+  it('keeps the base the PR merges into, and reads a missing one as empty', () => {
+    expect(parsePrView(view({ baseRefName: 'add-export' }))?.baseRefName).toBe('add-export');
+    expect(parsePrView(view())?.baseRefName).toBe('');
+  });
+
   it('maps the four states, draft and merged included', () => {
     expect(parsePrView(view({ isDraft: true }))?.state).toBe('draft');
     expect(parsePrView(view({ state: 'CLOSED' }))?.state).toBe('closed');

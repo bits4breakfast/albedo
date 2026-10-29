@@ -25,7 +25,7 @@ function task(over: Partial<Task> = {}): Task {
 
 function pr(state: PrState, mergedAt: string | null = null): PrStatus {
   return {
-    number: 7, url: 'u', title: 'p', state, headRefName: 'b', mergedAt, review: null,
+    number: 7, url: 'u', title: 'p', state, headRefName: 'b', baseRefName: 'main', mergedAt, review: null,
     checks: { kind: 'none' }, lines: [],
   };
 }
