@@ -104,7 +104,7 @@ export async function gh(args: string[], cwd?: string): Promise<GhResult | null>
 }
 
 const PR_FIELDS =
-  'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,mergedAt,headRefName';
+  'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,mergedAt,headRefName,baseRefName';
 
 /**
  * Is there a PR for this task worth asking about? A resumed session often

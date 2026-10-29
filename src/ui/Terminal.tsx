@@ -4,6 +4,7 @@ import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
+import { openExternal } from '../lib/openUrl';
 import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
 import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
@@ -202,6 +203,23 @@ export function hasLivePty(taskId: number): boolean {
  */
 export function ptyLiveSince(taskId: number): number | null {
   return liveSince.get(taskId) ?? null;
+}
+
+/** {@link ptyLiveSince} for a component, kept current by presence events. */
+export function usePtyLiveSince(taskId: number | null): number | null {
+  const read = () => (taskId === null ? null : ptyLiveSince(taskId));
+  const [since, setSince] = useState(read);
+  useEffect(() => {
+    if (taskId === null) {
+      setSince(null);
+      return;
+    }
+    setSince(ptyLiveSince(taskId));
+    return onPtyPresenceChange((id) => {
+      if (id === taskId) setSince(ptyLiveSince(taskId));
+    });
+  }, [taskId]);
+  return since;
 }
 
 /**
@@ -474,7 +492,9 @@ export default function Terminal({
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     try {
-      term.loadAddon(new WebLinksAddon());
+      // The addon's default, `window.open`, does nothing in the app's webview:
+      // a web link goes to the browser, like every other link in Albedo.
+      term.loadAddon(new WebLinksAddon((_event, uri) => void openExternal(uri)));
     } catch {
       /* links are a nicety, not a requirement */
     }

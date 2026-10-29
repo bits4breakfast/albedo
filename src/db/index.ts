@@ -13,6 +13,8 @@ import Database from '@tauri-apps/plugin-sql';
 import type { Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
 import {
   contextUsedSqlExpr,
+  remoteControlSqlPredicate,
+  remoteControlUrlOf,
   SEQ_STRIDE,
   usageSqlExpr,
   USAGE_PRESENCE_JSON_PATH,
@@ -531,6 +533,13 @@ export interface GetMessagesOptions {
   taskId?: number;
   sessionId?: string;
   afterSeq?: number;
+  /**
+   * Only rows inserted after this id: "what is new since I last looked",
+   * across every file of the session at once. Ingest assigns ids in insertion
+   * order, so unlike `seq` it is one numbering for the parent and all its
+   * subagents. Pages forward like `afterSeq`, ordered by id.
+   */
+  afterId?: number;
   limit?: number;
   /**
    * Only the session's own conversation, not its subagents' rows. Subagent
@@ -561,6 +570,9 @@ export interface GetMessagesOptions {
  * would interleave the resumed session with the old one in the pane.
  */
 export function messageOrderKeys(opts: GetMessagesOptions): string[] {
+  // Paging on id must also be ordered by id, or a forward page could skip
+  // rows between the cursor and the page's first row.
+  if (opts.afterId !== undefined) return ['id'];
   const seqScoped = opts.taskId === undefined && opts.sessionId !== undefined;
   return seqScoped ? ['seq', 'ts', 'id'] : ['ts', 'seq', 'id'];
 }
@@ -571,10 +583,10 @@ export type PageDirection = 'head' | 'tail';
 /**
  * `limit` semantics depend on which way the caller is paging:
  *
- *   afterSeq ABSENT  -> 'tail', keep the MOST RECENT rows. deriveStatus needs
+ *   no cursor        -> 'tail', keep the MOST RECENT rows. deriveStatus needs
  *                       this; fed the oldest 400 rows of a long session it
  *                       would report a stale status forever.
- *   afterSeq PRESENT -> 'head', keep the OLDEST rows after that seq. The
+ *   afterSeq/afterId -> 'head', keep the OLDEST rows after the cursor. The
  *                       caller is paging FORWARD and will append the page to
  *                       what it already holds.
  *
@@ -586,7 +598,7 @@ export type PageDirection = 'head' | 'tail';
  * whatever limit the caller picks. Both directions return rows ascending.
  */
 export function messagePageDirection(opts: GetMessagesOptions): PageDirection {
-  return opts.afterSeq === undefined ? 'tail' : 'head';
+  return opts.afterSeq === undefined && opts.afterId === undefined ? 'tail' : 'head';
 }
 
 export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> {
@@ -613,6 +625,10 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
     binds.push(opts.afterSeq);
     where.push(`seq > $${binds.length}`);
   }
+  if (opts.afterId !== undefined) {
+    binds.push(opts.afterId);
+    where.push(`id > $${binds.length}`);
+  }
   binds.push(Math.max(1, opts.limit ?? DEFAULT_MESSAGE_LIMIT));
 
   const keys = messageOrderKeys(opts);
@@ -632,6 +648,44 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
   const db = await getDb();
   const rows = await db.select<MessageRow[]>(sql, binds);
   return rows.map(toMessage);
+}
+
+/**
+ * Tool results of one tool whose raw line contains `needle`, newest first.
+ * A scan: for a lookup made once per row on screen, not per keystroke.
+ * `instr`, not LIKE, so a needle needs no escaping.
+ */
+export async function findToolResults(toolName: string, needle: string, limit = 5): Promise<Message[]> {
+  const db = await getDb();
+  const rows = await db.select<MessageRow[]>(
+    `SELECT ${MESSAGE_SELECT} FROM messages
+      WHERE role = 'tool_result' AND tool_name = $1 AND instr(raw_json, $2) > 0
+      ORDER BY id DESC LIMIT $3`,
+    [toolName, needle, Math.max(1, limit)],
+  );
+  return rows.map(toMessage);
+}
+
+/**
+ * The claude.ai link of the newest "Remote Control is active" row in the
+ * session written at or after `sinceTs`, or null. The caller passes when its
+ * pty was spawned: Remote Control ends with the process, so a row from before
+ * that describes a process that is gone.
+ */
+export async function remoteControlUrlSince(sessionId: string, sinceTs: number): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db.select<{ raw_json: string }[]>(
+    `SELECT raw_json FROM messages
+      WHERE session_id = $1 AND ts >= $2 AND role = 'system' AND +agent_id IS NULL
+        AND ${remoteControlSqlPredicate('raw_json')}
+      ORDER BY ts DESC, id DESC LIMIT 10`,
+    [sessionId, sinceTs],
+  );
+  for (const row of rows) {
+    const url = remoteControlUrlOf(row.raw_json);
+    if (url !== null) return url;
+  }
+  return null;
 }
 
 /** A parsed row plus the task it was adopted by (null for terminal sessions). */

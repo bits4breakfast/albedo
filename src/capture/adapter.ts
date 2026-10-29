@@ -400,6 +400,65 @@ export function endsLocalCommand(rawJson: string): boolean {
 }
 
 /**
+ * True for a `system` line recording a slash command Claude Code ran itself:
+ * the command's envelope (`<command-name>/remote-control</command-name>…`),
+ * or its `<local-command-stdout>` (empty for most). Both are stored as
+ * `system` rows, so without this the pane printed the envelope under "Sys",
+ * and the "sending" echo of the command never cleared: no `user` row follows.
+ *
+ * Measured on Claude Code 2.1.288-2.1.312 for `/remote-control` (`/rc`),
+ * `/rename`, `/resume`, `/context` and `/login`: two lines with the same
+ * timestamp, command first. `/clear`, `/model`, `/compact` and `/mcp` were
+ * seen only as `user` lines (as was one `/remote-control`), which the pane
+ * reads as user rows already. The content is the same envelope either way.
+ */
+export function isLocalCommandLine(rawJson: string): boolean {
+  const line = safeParse(rawJson);
+  return line !== null && line['type'] === 'system' && line['subtype'] === 'local_command';
+}
+
+/**
+ * Messages between sessions, and how the two ends find each other.
+ *
+ * The receiving line carries `origin: { kind: "peer", msg_id, name, ... }`.
+ * The sender's transcript has a `SendMessage` tool_result whose text is JSON
+ * holding the same `msg_id` (measured on Claude Code 2.1.3xx). That pair is
+ * what says which session sent a message; the sender's name is only a label
+ * and can be renamed or shared.
+ */
+export const SEND_MESSAGE_TOOL = 'SendMessage';
+
+/** `origin.msg_id` of a line another session sent. Null for anything else. */
+export function peerMessageIdOf(rawJson: string): string | null {
+  const origin = safeParse(rawJson)?.['origin'];
+  if (!isRecord(origin) || origin['kind'] !== 'peer') return null;
+  const id = origin['msg_id'];
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/** The `msg_id` a `SendMessage` tool_result reports as delivered. */
+export function sentMessageIdOf(rawJson: string): string | null {
+  const message = safeParse(rawJson)?.['message'];
+  const content = isRecord(message) ? message['content'] : null;
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (!isRecord(block) || block['type'] !== 'tool_result') continue;
+    const inner = block['content'];
+    const texts =
+      typeof inner === 'string'
+        ? [inner]
+        : Array.isArray(inner)
+          ? inner.flatMap((b) => (isRecord(b) && typeof b['text'] === 'string' ? [b['text']] : []))
+          : [];
+    for (const text of texts) {
+      const id = safeParse(text)?.['msg_id'];
+      if (typeof id === 'string' && id.length > 0) return id;
+    }
+  }
+  return null;
+}
+
+/**
  * `isMeta` -- a line Claude Code adds beside a command or a prompt (the
  * "run directly in Claude Code" caveat), never something anyone typed.
  */
@@ -487,6 +546,42 @@ export function isNoticeLine(rawJson: string): boolean {
   if (!rawJson.includes('informational')) return false;
   const line = safeParse(rawJson);
   return line?.['type'] === 'system' && line['subtype'] === 'informational';
+}
+
+/**
+ * Remote Control turning on: `{type: "system", subtype: "bridge_status",
+ * content: "/remote-control is active · Continue here, on your phone, or at
+ * https://claude.ai/code/session_…", url: "https://claude.ai/code/session_…"}`.
+ * Stored as a `system` row; the `bridge-session` lines that follow are
+ * bookkeeping and are not.
+ *
+ * Measured on Claude Code 2.1.296-2.1.312: 11 such lines, all "is active", all
+ * with `url`. No line is written when it goes off -- it ends with the process
+ * -- so this says only that it came on, and when (the row's `ts`).
+ */
+export const REMOTE_CONTROL_SUBTYPE = 'bridge_status';
+
+/** The session's claude.ai link from a "Remote Control is active" line, else null. */
+export function remoteControlUrlOf(rawJson: string): string | null {
+  if (!rawJson.includes(REMOTE_CONTROL_SUBTYPE)) return null;
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'system' || line['subtype'] !== REMOTE_CONTROL_SUBTYPE) return null;
+  if (line['isSidechain'] === true) return null;
+  const content = typeof line['content'] === 'string' ? line['content'] : '';
+  if (!content.includes('is active')) return null;
+  const url = line['url'];
+  if (typeof url === 'string' && url.trim() !== '') return url.trim();
+  // A build that carries the link only in the text.
+  return /https?:\/\/\S+/.exec(content)?.[0] ?? null;
+}
+
+/**
+ * SQLite predicate preselecting rows that may be a Remote Control line, so a
+ * lookup parses a handful of rows instead of a session. `instr`, not LIKE: the
+ * needle's `_` would be a wildcard. Confirm each hit with `remoteControlUrlOf`.
+ */
+export function remoteControlSqlPredicate(column = 'raw_json'): string {
+  return `instr(${column}, '"subtype":"${REMOTE_CONTROL_SUBTYPE}"') > 0`;
 }
 
 /**
@@ -687,15 +782,7 @@ export function queueFactsIn(text: string): QueueFact[] {
     // `<local-command-stdout>…`) do count: they match no typed entry, and
     // reading one as a turn start only delays an idle clear, never forces one.
     if (obj['type'] !== 'user' || obj['isMeta'] === true || obj['isCompactSummary'] === true) continue;
-    // Text blocks only: an image's own block is not part of what was typed,
-    // which already says `[Image #N]`.
-    const blocks = contentBlocksOf(obj);
-    const message = obj['message'];
-    const body = blocks
-      ? blocks.flatMap((b) => (isRecord(b) && b['type'] === 'text' && typeof b['text'] === 'string' ? [b['text']] : [])).join('\n')
-      : isRecord(message) && typeof message['content'] === 'string'
-        ? message['content']
-        : '';
+    const body = userTextOf(obj);
     if (body.trim() !== '') out.push({ op: 'prompt', sessionId, text: body, ts });
     if (STOPPING_PROMPT.test(body.trimStart())) out.push({ op: 'turn-stop', sessionId, ts });
   }
@@ -703,12 +790,74 @@ export function queueFactsIn(text: string): QueueFact[] {
 }
 
 /**
+ * The text of a `user` line. Text blocks only: an image's own block is not
+ * part of what was typed, which already says `[Image #N]`.
+ */
+function userTextOf(obj: Record<string, unknown>): string {
+  const blocks = contentBlocksOf(obj);
+  const message = obj['message'];
+  return blocks
+    ? blocks.flatMap((b) => (isRecord(b) && b['type'] === 'text' && typeof b['text'] === 'string' ? [b['text']] : [])).join('\n')
+    : isRecord(message) && typeof message['content'] === 'string'
+      ? message['content']
+      : '';
+}
+
+/**
+ * What a line says about the turn it belongs to, for the transcript's
+ * working line (src/ui/transcript/working.ts):
+ *  - `prompt`: a `user` line someone typed, which always starts a turn. Not
+ *    a meta line, a compaction summary, a tool result, or text Claude Code
+ *    gave itself (`isInjectedQueueText`): those are written inside a turn or
+ *    may start none.
+ *  - `end`: the session is back at its prompt -- an assistant line whose
+ *    stop_reason ends the turn, `turn_duration` / `local_command`, or the
+ *    `[Request interrupted…]`-style user lines. The same lines `queueFactsIn`
+ *    reads as `turn-end` and `turn-stop`.
+ * Null for every other line. Read per line, so it says nothing about
+ * sidechain traffic: callers keep to the main session's rows.
+ */
+export function turnEdgeOf(rawJson: string): 'prompt' | 'end' | null {
+  const obj = safeParse(rawJson);
+  if (!obj) return null;
+  if (obj['type'] === 'system') {
+    return obj['subtype'] === 'turn_duration' || obj['subtype'] === 'local_command' ? 'end' : null;
+  }
+  if (obj['type'] === 'assistant') return TURN_ENDING_STOP_REASONS.has(stopReasonOf(rawJson) ?? '') ? 'end' : null;
+  if (obj['type'] !== 'user' || obj['isMeta'] === true || obj['isCompactSummary'] === true) return null;
+  const blocks = contentBlocksOf(obj);
+  if (blocks?.some((b) => isRecord(b) && b['type'] === 'tool_result')) return null;
+  const body = userTextOf(obj).trimStart();
+  if (STOPPING_PROMPT.test(body)) return 'end';
+  if (body === '' || isInjectedQueueText(body)) return null;
+  return 'prompt';
+}
+
+/**
+ * The API message an assistant line belongs to, and the output tokens its
+ * usage reports. Claude Code writes one line per content block, each
+ * repeating its message's `id` and `usage`, so a sum over a turn counts each
+ * id once (measured: per distinct id matched the terminal's "↓ 37.6k
+ * tokens", 37,527). Null for any other line, or one without both fields.
+ */
+export function outputTokensOf(rawJson: string): { messageId: string; outputTokens: number } | null {
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'assistant') return null;
+  const message = line['message'];
+  if (!isRecord(message)) return null;
+  const id = message['id'];
+  const usage = message['usage'];
+  if (typeof id !== 'string' || id.length === 0 || !isRecord(usage)) return null;
+  return { messageId: id, outputTokens: num(usage['output_tokens']) };
+}
+
+/**
  * Queue entries Claude Code puts there itself rather than the person typing:
- * a background task finishing, a subagent's message. They take part in the
+ * a background task finishing, a subagent's message, another session's. They take part in the
  * queue's order -- a `dequeue` can take one -- but are not "your message".
  */
 export function isInjectedQueueText(text: string): boolean {
-  return /^<(task-notification|agent-message)\b/.test(text.trimStart());
+  return /^<(task-notification|agent-message|cross-session-message)\b/.test(text.trimStart());
 }
 
 /**

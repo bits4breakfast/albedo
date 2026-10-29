@@ -38,6 +38,8 @@ export interface PrStatus {
   state: PrState;
   /** GitHub's own answer: the head ref the PR is from. */
   headRefName: string;
+  /** The branch the PR merges into. Empty when gh did not say. */
+  baseRefName: string;
   mergedAt: string | null;
   review: ReviewDecision;
   checks: ChecksSummary;
@@ -203,6 +205,7 @@ export function parsePrView(stdout: string): PrStatus | null {
     title: str(d.title) ?? '',
     state: stateOf(d.state, d.isDraft, mergedAt),
     headRefName: str(d.headRefName) ?? '',
+    baseRefName: str(d.baseRefName) ?? '',
     mergedAt,
     review: reviewOf(d.reviewDecision),
     checks: summarizeChecks(lines),

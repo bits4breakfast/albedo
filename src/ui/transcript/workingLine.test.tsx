@@ -16,17 +16,37 @@ afterEach(() => {
 });
 
 describe('WorkingLine', () => {
-  it('says Sending, then Working, and counts from the latest activity', () => {
+  it('says Sending, then the step, timed from its start', () => {
     vi.useFakeTimers();
     const t0 = new Date('2026-10-20T12:00:00Z').getTime();
     vi.setSystemTime(t0);
-    const { rerender } = render(<WorkingLine since={t0} sending />);
+    const { rerender } = render(<WorkingLine state={{ step: { kind: 'sending' }, since: t0, turn: null }} />);
     expect(screen.getByRole('status').textContent).toBe('Sending · 0s');
-    rerender(<WorkingLine since={t0} sending={false} />);
+    rerender(<WorkingLine state={{ step: { kind: 'thinking' }, since: t0, turn: null }} />);
     act(() => {
       vi.advanceTimersByTime(75_000);
     });
-    expect(screen.getByRole('status').textContent).toBe('Working · 1m 15s');
+    expect(screen.getByRole('status').textContent).toBe('Thinking · 1m 15s');
+  });
+
+  it('shows the running call and the turn totals, the call truncating on its own', () => {
+    vi.useFakeTimers();
+    const t0 = new Date('2026-10-20T12:00:00Z').getTime();
+    vi.setSystemTime(t0 + 468_000);
+    render(
+      <WorkingLine
+        state={{
+          step: { kind: 'tool', name: 'Bash', target: null, summary: 'git commit -q --amend' },
+          since: t0 + 459_000,
+          turn: { startedAt: t0, outputTokens: 37_640 },
+        }}
+      />,
+    );
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('Running Bash git commit -q --amend · 9s 7m 48s · ↓ 37.6k tokens');
+    const detail = status.querySelector('.tx-working-detail');
+    expect(detail?.getAttribute('title')).toBe('Bash git commit -q --amend');
+    expect(status.querySelector('.tx-working-totals')?.textContent).toBe('7m 48s · ↓ 37.6k tokens');
   });
 });
 

@@ -1,0 +1,43 @@
+/* --------------------------------------------------------------------------
+   "Remote" (RemoteMark.tsx): the session is reachable through Remote Control.
+
+   --accent text, the "live or chosen" colour, and a word, never colour
+   alone. Measured, light | dark:
+     --panel 6.46 | 7.88   --panel-raised (selected row, menu open) 5.32 | 6.62
+     --panel-hover 5.62 | 7.04   --panel-active 4.99 | 7.59
+     --row-blocked 6.05 | 7.44   --row-blocked-hover 5.74 | 6.97
+   No ground of its own on the row: it takes the row's, so every row state
+   above is a ground it was cleared on.
+   -------------------------------------------------------------------------- */
+
+.remote-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.remote-mark:hover { text-decoration: underline; text-underline-offset: 2px; }
+.remote-mark:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 3px; }
+
+/* In the row's caption: the caption's size, like "Draft". */
+.remote-mark-row { font-size: var(--fs-xs); }
+
+/* In the task bar: a chip of the PR badge's height and edge, so the two marks
+   after the title read as one kind of thing. Hover and press use the panel
+   tiers above (5.62 | 7.04, 4.99 | 7.59). */
+.remote-mark-bar {
+  height: 22px;
+  padding: 0 7px;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.remote-mark-bar:hover { text-decoration: none; background: var(--panel-hover); border-color: var(--border-strong); }
+.remote-mark-bar:active { background: var(--panel-active); }

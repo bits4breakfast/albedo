@@ -151,7 +151,26 @@
   font-size: var(--fs-sm);
   color: var(--muted);
 }
-.tx-working-time { font-variant-numeric: tabular-nums; }
+/* One line whatever the step: the detail (a command, an agent's description)
+   is the only part that gives way, truncating with an ellipsis, so the label,
+   the step's time and the turn's totals always show. All --muted, which
+   clears 5.89 (light) and 6.50 (dark) on --panel-raised; the tool's name is
+   --text, as on its chip. */
+.tx-working { white-space: nowrap; min-width: 0; }
+.tx-working-label,
+.tx-working-time,
+.tx-working-totals { flex: none; }
+.tx-working-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-working-tool { color: var(--text); font-weight: 600; }
+.tx-working-mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
+.tx-working-time,
+.tx-working-totals { font-variant-numeric: tabular-nums; }
+.tx-working-totals { margin-left: auto; padding-left: 8px; }
 /* Three dots that swell in turn. Scale, not opacity, so the dots keep the
    --muted they are drawn in. */
 .tx-working-dots { display: inline-flex; gap: 3px; }
@@ -500,6 +519,43 @@
 
 /* A machine-generated envelope in a user row: no "you said" framing. */
 .tx-row-machine { margin: 2px 0; padding: 0; }
+
+/* A message from another Claude session: a landmark like your own messages,
+   so it gets their spacing, but not their box -- you did not write it. The
+   rule on the left marks it as quoted from elsewhere (--border-strong, a
+   load-bearing edge); the sender's name leads. Text sits on the pane's own
+   ground, so the token ratios hold as measured (--muted 5.89, --text 13.68). */
+.tx-row-machine:has(> .tx-content > .tx-peer) { margin: 12px 0 8px; }
+.tx-peer {
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+}
+.tx-peer-head {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.tx-peer-name {
+  color: var(--text);
+  font-weight: 600;
+}
+/* The sender is a task Albedo has open: its name goes there. A text button,
+   so it reads as the name it is; --accent on the pane's ground is 5.32. */
+.tx-peer-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+.tx-peer-link:hover { text-decoration: underline; }
+.tx-peer-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 
 /* A slash command, shown as the command rather than as its XML. */
 .tx-cmd {

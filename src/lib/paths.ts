@@ -574,6 +574,33 @@ function trimTrailingPunctuation(p: string): string {
 }
 
 /**
+ * A bare file name in a code span, optionally with `:line[:col]`. The
+ * extension must be one {@link BARE_FILE_EXTENSIONS} knows, minus `log`:
+ * `console.log` in backticks is a call, far more often than a file.
+ */
+const BARE_FILE = /^([A-Za-z0-9_][\w.-]*\.([A-Za-z][A-Za-z0-9]{0,9}))(?::(\d{1,7})(?::\d{1,5})?)?$/;
+
+/**
+ * A file named without a folder, `Foo.php` or `Foo.php:12`: what a code span
+ * holds when the agent names a file it has been talking about. Only for a span
+ * that is nothing else -- in prose, `node.js` is not a file -- and only with a
+ * known extension. The caller still has to find which file it is.
+ */
+export function bareFileRef(text: string): PathRef | null {
+  const m = BARE_FILE.exec(text.trim());
+  if (!m) return null;
+  const ext = (m[2] ?? '').toLowerCase();
+  if (ext === 'log' || !BARE_FILE_EXTENSIONS.has(ext)) return null;
+  const line = m[3] === undefined ? null : Number(m[3]);
+  return { path: m[1] ?? '', line: line !== null && line > 0 && line <= MAX_LINE ? line : null };
+}
+
+/** True when a path names no folder: it has to be looked up in the worktree. */
+export function isBareName(path: string): boolean {
+  return !path.includes('/') && !path.startsWith('~');
+}
+
+/**
  * Pull `path:line` / `path:line:col` / `"path", line N` out of transcript text.
  *
  * Returns the first confident reference, or null when there is none. Line is

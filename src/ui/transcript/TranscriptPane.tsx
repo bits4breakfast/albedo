@@ -33,17 +33,20 @@ import { imageSourceNote, isImagePlaceholder } from './envelopes';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
-import { getMessages } from '../../db';
-import { onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
+import { getMessages, messageOrderKeys } from '../../db';
+import { mergeTail, tailCursor } from './tail';
+import { isLocalCommandLine, onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
 import { onConnectivityChange, useOffline, watchConnectivity } from '../../lib/connectivity';
-import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty } from '../Terminal';
+import { canResume, hasLivePty, onPtyPresenceChange, startPty, usePtyLiveSince } from '../Terminal';
 import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
 import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import CompactionRow from './CompactionRow';
 import { compactionAt, isPromptRow, type Compaction } from './compaction';
+import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
+import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
 import { PermissionModeLabel } from './PermissionModeLabel';
 import { isSidechain, toolUseId } from './ToolChip';
@@ -143,19 +146,15 @@ export function TranscriptPane({
   }, [taskId, sessionId]);
 
   /*
-     The tail is read session-scoped even when the window above is task-scoped,
-     and that is not an inconsistency.
+     The tail is read session-scoped even when the window above is task-scoped:
+     new rows only ever land in the session the task currently points at.
 
-     `seq` is `lineIndex * 100 + blockIndex` within ONE transcript file, so it
-     restarts at a fork. `afterSeq` therefore only means anything inside a
-     single session -- which is precisely what `messageOrderKeys` encodes when
-     it switches to seq-ordering only for a sessionId-without-taskId query. Ask
-     for the tail task-scoped after a fork and `seq > lastSeq` reads as a filter
-     against the OLD session's numbering: the page fills with already-held rows
-     from before the fork and the new ones never arrive.
-
-     Nothing is lost by scoping it: new rows only ever land in the session the
-     task currently points at.
+     It pages on row id, not `seq`. `seq` is `lineIndex * 100 + blockIndex`
+     within ONE transcript file: it restarts at a fork, and every subagent of
+     the session has a file and a numbering of its own. A seq cursor read
+     against the wrong numbering either refetched held rows or, once a
+     subagent's seq ran ahead of the parent's, skipped every parent row still
+     to come (#104). See tail.ts.
   */
   const tailQuery = useMemo(() => {
     if (sessionId !== null) return { sessionId };
@@ -207,17 +206,16 @@ export function TranscriptPane({
   // --- tail follow ----------------------------------------------------------
   // Driven by the capture watcher rather than a timer: rows land, we read the
   // new tail. Held in a ref so a new row does not re-subscribe.
-  // Highest seq *within the tail's scope* -- not simply the last row, which
-  // after a fork belongs to the new session while older rows carry higher seqs.
-  const lastSeqRef = useRef<number | null>(null);
+  // The cursor is the highest row id held, never a seq: seq is per file, and
+  // a subagent's file runs its own numbering under the same session (tail.ts).
+  const lastIdRef = useRef<number | null>(null);
   useEffect(() => {
-    let max: number | null = null;
-    for (const m of messages) {
-      if (sessionId !== null && m.sessionId !== sessionId) continue;
-      if (max === null || m.seq > max) max = m.seq;
-    }
-    lastSeqRef.current = max;
-  }, [messages, sessionId]);
+    lastIdRef.current = tailCursor(messages);
+  }, [messages]);
+  // Fresh rows go where a reload would put them.
+  const orderKeys = useMemo(() => messageOrderKeys(query), [query]);
+  const orderKeysRef = useRef(orderKeys);
+  orderKeysRef.current = orderKeys;
 
   useEffect(() => {
     if (inactive || tailQuery === null) return;
@@ -225,7 +223,7 @@ export function TranscriptPane({
     let timer = 0;
 
     const fetchTail = () => {
-      const after = lastSeqRef.current;
+      const after = lastIdRef.current;
       if (after === null) {
         // No rows in scope yet -- a session that has only just started writing,
         // or the first rows after a fork. Re-run the window query rather than
@@ -233,20 +231,19 @@ export function TranscriptPane({
         setReloadKey((k) => k + 1);
         return;
       }
-      void getMessages({ ...tailQuery, afterSeq: after, limit: TAIL_LIMIT })
+      void getMessages({ ...tailQuery, afterId: after, limit: TAIL_LIMIT })
         .then((rows) => {
           if (!live || rows.length === 0) return;
-          // With `afterSeq` set, `limit` keeps the OLDEST rows after it, so
+          // With `afterId` set, `limit` keeps the OLDEST rows after it, so
           // consecutive pages abut: appending can never leave a hole.
           // Advance the cursor here so a drain pass cannot re-read this page.
           const lastRow = rows[rows.length - 1];
-          if (lastRow) lastSeqRef.current = lastRow.seq;
+          if (lastRow) lastIdRef.current = lastRow.id;
           setMessages((prev) => {
-            const seen = new Set(prev.map((m) => m.id));
-            const fresh = rows.filter((r) => !seen.has(r.id));
-            if (fresh.length === 0) return prev;
+            const next = mergeTail(prev, rows, orderKeysRef.current);
+            if (next === null) return prev;
             if (followingRef.current) pendingScrollRef.current = 'bottom';
-            return [...prev, ...fresh];
+            return next;
           });
           // A full page means capture wrote more than one page since the last
           // update; keep draining rather than sitting on it until the next one.
@@ -398,7 +395,7 @@ export function TranscriptPane({
     if (!echo) return;
     // Clock skew between this machine's two clocks is nil, but a second of
     // slack keeps a row written in the same instant from being missed.
-    if (messages.some((m) => isPromptRow(m) && m.agentId === null && m.ts >= echo.at - 1000)) setEcho(null);
+    if (echoLanded(echo, messages)) setEcho(null);
   }, [messages, echo]);
   useEffect(() => {
     if (!echo) return;
@@ -426,8 +423,12 @@ export function TranscriptPane({
   // A turn running or a message on its way: if the connection is gone, now
   // is when it matters (connectivity.ts probes only while watched).
   useEffect(() => (working ? watchConnectivity() : undefined), [working]);
-  const lastTs = messages.length > 0 ? (messages[messages.length - 1] as Message).ts : 0;
-  const since = Math.max(lastTs, echo?.at ?? 0);
+  // A running turn is what is working, whatever was just sent.
+  const sending = echo !== null && status !== 'running';
+  const workingNow = useMemo(
+    () => (working ? workingState(messages, { sending, echoAt: echo?.at ?? null, complete: !hasMore }) : null),
+    [working, messages, sending, echo, hasMore],
+  );
   const onSent = useCallback(
     (body: string) => {
       setEcho({ text: body, at: Date.now() });
@@ -481,8 +482,7 @@ export function TranscriptPane({
               </div>
             </div>
           ) : null}
-          {/* A running turn is what is working, whatever was just sent. */}
-          {working ? <WorkingLine since={since} sending={echo !== null && status !== 'running'} /> : null}
+          {workingNow ? <WorkingLine state={workingNow} /> : null}
         </div>
 
         {!following ? (
@@ -505,6 +505,25 @@ export default TranscriptPane;
 const ECHO_MAX_MS = 30_000;
 
 /**
+ * Whether the transcript now has the message just sent: a row of the main
+ * session written no earlier than the send, with a second of slack for a row
+ * stamped in the same instant.
+ *
+ * A prompt arrives as a `user` row. A slash command Claude Code runs itself
+ * (`/rc`, `/rename`) writes none, only `system` lines for the command and its
+ * output; without them the echo of `/rc` sat below later rows as "Sending"
+ * until it timed out (#113). `isPromptRow` stays "a user row someone sent".
+ */
+export function echoLanded(echo: { at: number }, messages: readonly Message[]): boolean {
+  return messages.some(
+    (m) =>
+      m.agentId === null &&
+      m.ts >= echo.at - 1000 &&
+      (isPromptRow(m) || (m.role === 'system' && isLocalCommandLine(m.rawJson))),
+  );
+}
+
+/**
  * Whether the Queued band now shows the message just sent: one of its
  * entries (`shownQueue`) was queued no earlier than the send, with the same
  * second of slack as the user-row check. While the band would not show it
@@ -518,32 +537,20 @@ export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry
   return shownQueue(entries, liveSince).some((e) => e.ts >= echo.at - 1000);
 }
 
-/** When the task's live pty was spawned, or null with none; kept current by presence events. */
-function usePtyLiveSince(taskId: number | null): number | null {
-  const read = () => (taskId === null ? null : ptyLiveSince(taskId));
-  const [since, setSince] = useState(read);
-  useEffect(() => {
-    if (taskId === null) {
-      setSince(null);
-      return;
-    }
-    setSince(ptyLiveSince(taskId));
-    return onPtyPresenceChange((id) => {
-      if (id === taskId) setSince(ptyLiveSince(taskId));
-    });
-  }, [taskId]);
-  return since;
-}
-
-/** "Working · 14s", ticking: the session is busy and has not written yet. */
-export function WorkingLine({ since, sending }: { since: number; sending: boolean }): ReactNode {
+/**
+ * "Running Bash git status · 9s", ticking, with the turn's "7m 48s · ↓ 37.6k
+ * tokens" at the right (working.ts). The step's detail is the one part that
+ * gives way: it truncates on one line, and the label, the step's time and the
+ * totals keep their width.
+ */
+export function WorkingLine({ state }: { state: Working }): ReactNode {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
-  const s = Math.max(0, Math.round((now - since) / 1000));
-  const elapsed = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  const { step, since, turn } = state;
+  const detail = stepDetail(step);
   // A row like every other, so it starts in the text column, not the gutter.
   return (
     <div className="tx-row tx-row-working">
@@ -554,9 +561,30 @@ export function WorkingLine({ since, sending }: { since: number; sending: boolea
           <span />
           <span />
         </span>
-        {sending ? 'Sending' : 'Working'}
-        {/* Read aloud as two words; between flex items it draws nothing. */}{' '}
-        {since > 0 ? <span className="tx-working-time">· {elapsed}</span> : null}
+        <span className="tx-working-label">{stepLabel(step)}</span>
+        {/* The spaces are for reading aloud and copying; between flex items
+            they draw nothing. */}
+        {detail ? ' ' : null}
+        {detail ? (
+          // A tool reads as its chip does: the name, then the target and
+          // summary in the chip's mono.
+          <span className="tx-working-detail" title={detail}>
+            {step.kind === 'tool' ? (
+              <>
+                <span className="tx-working-tool">{step.name}</span>
+                {detail.length > step.name.length ? (
+                  <span className="tx-working-mono">{detail.slice(step.name.length)}</span>
+                ) : null}
+              </>
+            ) : (
+              detail
+            )}
+          </span>
+        ) : null}
+        {since > 0 ? ' ' : null}
+        {since > 0 ? <span className="tx-working-time">· {formatDuration(now - since)}</span> : null}
+        {turn ? ' ' : null}
+        {turn ? <span className="tx-working-totals">{formatTurnTotals(turn, now)}</span> : null}
       </div>
     </div>
   );

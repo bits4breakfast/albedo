@@ -10,6 +10,7 @@ import {
   invalidateCodeIndex,
   LANGUAGES,
   languageOf,
+  filesNamed,
   loadCodeIndex,
   parseGrepOutput,
   parseLsFilesZ,
@@ -355,3 +356,22 @@ describe('loadCodeIndex', () => {
     await expect(loadCodeIndex('/nope')).resolves.toMatchObject({ files: ['src/A.php', 'src/b.ts'] });
   });
 });
+
+describe('filesNamed', () => {
+  let restore: GitRunner | null = null;
+  afterEach(() => {
+    if (restore) setGitRunner(restore);
+    restore = null;
+    invalidateCodeIndex();
+  });
+
+  const files = (list: string[]): GitRunner => async (args) =>
+    args[0] === 'ls-files' ? { code: 0, stdout: list.map((f) => `${f}\0`).join(''), stderr: '' } : { code: 1, stdout: '', stderr: '' };
+
+  it('finds a file by its name, at any depth or at the root, and not by a longer name', async () => {
+    restore = setGitRunner(files(['src/Message/Factory.php', 'Factory.php', 'src/OtherFactory.php']));
+    expect(await filesNamed('/w', 'Factory.php')).toEqual(['src/Message/Factory.php', 'Factory.php']);
+    expect(await filesNamed('/w', 'Missing.php')).toEqual([]);
+  });
+});
+

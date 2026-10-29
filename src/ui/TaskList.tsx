@@ -27,6 +27,7 @@ import {
   type GroupKey,
 } from './taskGroups';
 import { ChatIcon } from './icons';
+import RemoteMark from './RemoteMark';
 import { useDraftTaskIds } from './transcript/drafts';
 import './tasklist.css';
 
@@ -501,6 +502,10 @@ export default function TaskList({
                           Draft
                         </span>
                       )}
+                      {/* Reachable through Remote Control: a click opens it on
+                          claude.ai. Only while on (RemoteMark.tsx), and not on
+                          the selected row: the task bar shows it there. */}
+                      {task.id !== selectedId && <RemoteMark task={task} variant="row" />}
                       {/* A chat is told apart by a glyph, not a word: same
                           size, stroke and tier as the branch glyph. */}
                       {task.kind === 'chat' && (

@@ -46,6 +46,7 @@ function row(o: {
   ts: number;
   taskId?: number | null;
   body?: string;
+  agentId?: string | null;
 }) {
   return {
     // `?? 1` would turn an explicit null into 1 — the same undefined-vs-null
@@ -58,7 +59,7 @@ function row(o: {
     targetPath: null,
     body: o.body ?? `row ${o.seq}`,
     rawJson: '{}',
-    agentId: null,
+    agentId: o.agentId ?? null,
     ts: o.ts,
   };
 }
@@ -299,5 +300,45 @@ describe('filters still apply while paging', () => {
     const page = await getMessages({ sessionId: 's1' });
     expect(page).toHaveLength(1);
     expect(page[0]?.taskId).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// afterId: one cursor for the parent and every subagent (#104)
+// ---------------------------------------------------------------------------
+
+describe('forward paging on afterId', () => {
+  it('returns a parent row inserted after a subagent row with a higher seq', async () => {
+    // The transcript pane stopped following here: with a seq cursor at the
+    // subagent's 108 900, the parent's 96 800 was never "after" it.
+    await insertMessages([row({ sessionId: 's1', seq: 108_900, ts: 1, agentId: 'a5' })]);
+    const [held] = await getMessages({ sessionId: 's1' });
+    await insertMessages([row({ sessionId: 's1', seq: 96_800, ts: 2, body: 'the reply' })]);
+
+    expect(await getMessages({ sessionId: 's1', afterSeq: held!.seq })).toEqual([]);
+    const page = await getMessages({ sessionId: 's1', afterId: held!.id });
+    expect(page.map((m) => m.body)).toEqual(['the reply']);
+  });
+
+  it('pages in id order and keeps the head, so consecutive pages abut', async () => {
+    await insertMessages([
+      row({ sessionId: 's1', seq: 500, ts: 1, agentId: 'a1' }),
+      row({ sessionId: 's1', seq: 100, ts: 2 }),
+      row({ sessionId: 's1', seq: 900, ts: 3, agentId: 'a2' }),
+      row({ sessionId: 's1', seq: 200, ts: 4 }),
+    ]);
+    const all = await getMessages({ sessionId: 's1' });
+    const first = Math.min(...all.map((m) => m.id));
+    const ids: number[] = [];
+    let cursor = first - 1;
+    for (;;) {
+      const page = await getMessages({ sessionId: 's1', afterId: cursor, limit: 1 });
+      if (page.length === 0) break;
+      ids.push(page[0]!.id);
+      cursor = page[0]!.id;
+    }
+    expect(ids).toEqual([first, first + 1, first + 2, first + 3]);
+    expect(messageOrderKeys({ sessionId: 's1', afterId: 0 })).toEqual(['id']);
+    expect(messagePageDirection({ sessionId: 's1', afterId: 0 })).toBe('head');
   });
 });

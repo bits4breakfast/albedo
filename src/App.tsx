@@ -33,9 +33,13 @@ import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
-import Terminal, { focusPty } from './ui/Terminal';
+import { filesNamed } from './git/codeIndex';
+import { isBareName } from './lib/paths';
+import Terminal, { focusPty, usePtyLiveSince } from './ui/Terminal';
+import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
-import { BranchIcon, ChatIcon, FolderIcon, homeRelative } from './ui/icons';
+import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
+import BranchChip from './ui/BranchChip';
 import OverflowMenu from './ui/OverflowMenu';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
@@ -47,6 +51,7 @@ import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
+import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
 import { COMPACT, ContextClear, useCommandBlocker } from './ui/ClearContextButton';
@@ -196,6 +201,8 @@ export default function App() {
   const [promptOverrides, setPromptOverrides] = useState<Map<number, string>>(() => new Map());
   /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
   const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
+  /** What Go to File starts from when a transcript name opened it. */
+  const [quickSeed, setQuickSeed] = useState<{ text: string } | null>(null);
   /**
    * Resume argv for tasks created in THIS run. A fork lands under a new
    * session id that the task does not yet know, so the args cannot be derived
@@ -246,6 +253,10 @@ export default function App() {
   );
   /** Why Compact Now in the task's ⋯ menu cannot go now, or null. */
   const compactBlocker = useCommandBlocker(selected);
+  /** Remote Control on the selected task: the task bar's mark and the ⋯ item. */
+  const selectedLive = usePtyLiveSince(selected?.id ?? null) !== null;
+  const remoteUrl = useRemoteControlUrl(selected);
+  const remoteItem = selected ? remoteControlItem(selected, selectedLive, remoteUrl) : null;
 
   // The task on screen is seen: when it is opened, and when a turn ends while
   // it is open. Only a finish it has not covered yet is written.
@@ -518,6 +529,15 @@ export default function App() {
   useEffect(() => watchFocus(), []);
   // A banner names one task; clicking it opens that task.
   useEffect(() => onNotificationClick(select), [select]);
+
+  // A transcript row that names a task (a message from another session) opens
+  // it through this. Stable, reading the list through a ref, like `select`.
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const taskOpener = useMemo<TaskOpener>(
+    () => ({ has: (id) => tasksRef.current.some((t) => t.id === id), open: select }),
+    [select],
+  );
   useMergeNotices(tasks);
 
   const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
@@ -534,11 +554,32 @@ export default function App() {
   const openFile = useCallback((request: OpenFileRequest, options?: OpenFileOptions) => {
     const taskId = selectedIdRef.current ?? browseTaskRef.current?.id ?? null;
     if (taskId === null) return;
-    setOpenRequest({ taskId, request, step: options?.step });
-    // A step keeps the Files tab on screen: the list is what is being walked.
-    setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
-    // The editor is useless behind a full-width terminal.
-    setMode((m) => (m === 'pty' ? 'split' : m));
+    // A bare name from the transcript (`Foo.php` in backticks) is looked up:
+    // one file by that name opens; none or several open Go to File with the
+    // name typed, rather than an empty new file at the worktree root.
+    const show = (req: OpenFileRequest) => {
+      setOpenRequest({ taskId, request: req, step: options?.step });
+      // A step keeps the Files tab on screen: the list is what is being walked.
+      setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
+      // The editor is useless behind a full-width terminal.
+      setMode((m) => (m === 'pty' ? 'split' : m));
+    };
+    const root = (selectedRef.current ?? browseTaskRef.current)?.worktreePath ?? null;
+    if (!options?.lookup || !isBareName(request.path) || root === null) {
+      show(request);
+      return;
+    }
+    void filesNamed(root, request.path)
+      .catch(() => [] as string[])
+      .then((found) => {
+        const only = found.length === 1 ? found[0] : undefined;
+        if (only !== undefined) {
+          show({ ...request, path: only });
+          return;
+        }
+        setQuickSeed({ text: request.path });
+        setQuickOpen('file');
+      });
   }, []);
 
   /**
@@ -877,6 +918,7 @@ export default function App() {
   return (
     <FileOpenContext.Provider value={openFile}>
     <FileTextContext.Provider value={readFileText}>
+    <TaskOpenContext.Provider value={taskOpener}>
     <div className="app" data-dragging={dragging !== null} data-drag={dragging ?? undefined}>
       <Header
         onReconcile={() => setReconcileOpen(true)}
@@ -1056,6 +1098,9 @@ export default function App() {
                           title: compactBlocker ?? COMPACT.hint,
                           onSelect: () => void sendToSession(selected.id, COMPACT.command),
                         },
+                        // Hidden, not disabled, while on or with no session:
+                        // the mark beside the title says the first.
+                        ...(remoteItem ? [remoteItem] : []),
                         {
                           id: 'copy-path',
                           label: 'Copy Worktree Path',
@@ -1104,6 +1149,9 @@ export default function App() {
                         },
                     ]}
                   />
+                  {/* Reachable through Remote Control, against the name: it
+                      is about the session, not the branch after it. */}
+                  <RemoteLink url={remoteUrl} variant="bar" />
                   {/* The branch and folder live here and nowhere else on screen:
                       the sidebar row repeats the branch only when it adds to
                       the title, the Files bar not at all. Icons say which is
@@ -1120,10 +1168,7 @@ export default function App() {
                       <span className="main-ident-text">Chat</span>
                     </span>
                   ) : selected.branch ? (
-                    <span className="main-ident-branch" title={`Branch ${selected.branch}, off ${selected.baseBranch}`}>
-                      <BranchIcon />
-                      <span className="main-ident-text">{selected.branch}</span>
-                    </span>
+                    <BranchChip task={selected} />
                   ) : null}
                   {/* The PR, beside the branch it belongs to: with the branch,
                       the one place git and GitHub state shows. It never
@@ -1566,6 +1611,7 @@ export default function App() {
           onMode={setQuickOpen}
           onClose={closeQuickOpen}
           onOpen={openFile}
+          seed={quickSeed}
         />
       </PaneErrorBoundary>
       <PaneErrorBoundary label="Find in Files">
@@ -1701,6 +1747,7 @@ export default function App() {
         />
       </PaneErrorBoundary>
     </div>
+    </TaskOpenContext.Provider>
     </FileTextContext.Provider>
     </FileOpenContext.Provider>
   );

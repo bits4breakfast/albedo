@@ -17,10 +17,11 @@ import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
 import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
-import { parsePathRef } from '../../lib/paths';
+import { bareFileRef, parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
-import { imageAt, imagesIn } from '../../capture';
+import { imageAt, imagesIn, isLocalCommandLine, peerMessageIdOf, senderTaskOf } from '../../capture';
+import { useTaskOpener } from '../openTask';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -42,7 +43,7 @@ export function MessageRow({ message, result = null, extras = [] }: MessageRowPr
     case 'assistant':
       return message.toolName === 'thinking' ? <ThinkingRow message={message} /> : <AssistantRow message={message} />;
     case 'system':
-      return <SystemRow message={message} />;
+      return isLocalCommandLine(message.rawJson) ? <LocalCommandRow message={message} /> : <SystemRow message={message} />;
     case 'tool_use':
       return <ToolUseRow message={message} result={result} />;
     case 'tool_result':
@@ -141,6 +142,9 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
     return out;
   }, [message, extras]);
 
+  // Set when another session sent this row: how its sender is found.
+  const msgId = useMemo(() => peerMessageIdOf(message.rawJson), [message.rawJson]);
+
   if (parts.length === 0) return null;
   // Nothing a human typed or attached: drop the "you said" framing rather than
   // attributing a harness notification to the user.
@@ -151,7 +155,7 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
       <div className="tx-content">
         {parts.map((p, i) =>
           p.kind === 'blocks' ? (
-            p.blocks.map((b, j) => <UserBlockView key={`${i}-${j}`} block={b} />)
+            p.blocks.map((b, j) => <UserBlockView key={`${i}-${j}`} block={b} msgId={msgId} />)
           ) : p.kind === 'image' ? (
             <AttachedImage key={i} src={p.src} />
           ) : (
@@ -197,12 +201,16 @@ function AttachedImage({ src }: { src: string | null }): ReactNode {
   );
 }
 
-function UserBlockView({ block }: { block: UserBlock }): ReactNode {
+function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: string | null }): ReactNode {
   switch (block.kind) {
     case 'text':
       return <Markdown text={block.text} />;
     case 'task-notification':
       return <NotificationChip block={block} />;
+    case 'agent-message':
+      // A hand-back is a subagent's final report to its parent: its group in
+      // the pane already shows that work, so it stays out of the row.
+      return block.handback ? null : <PeerMessage block={block} msgId={msgId} />;
     case 'command':
       return (
         <div className="tx-cmd">
@@ -229,6 +237,10 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
       );
     case 'system-reminder':
       return <Collapsed label="Injected Context" text={block.text} />;
+    case 'context':
+      // Never seen in a transcript on the owner's machine, and never drawn
+      // until the switch became exhaustive. Folded rather than hidden.
+      return <Collapsed label="Attached Context" text={block.text} />;
     case 'skill':
       return <SkillBlock block={block} />;
     case 'pasted': {
@@ -241,9 +253,56 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
           <LinkifiedText text={block.text} />
         </pre>
       );
-    default:
-      return null;
+    default: {
+      // Every kind has a case: a kind added without one is a type error here,
+      // not a block that silently draws nothing (`agent-message` was one).
+      const unhandled: never = block;
+      return unhandled;
+    }
   }
+}
+
+/**
+ * Another Claude session wrote to this one. It is an instruction this session
+ * acts on, so it reads in full like a prompt -- but under the sender's name,
+ * never as "You".
+ */
+function PeerMessage({ block, msgId }: { block: Extract<UserBlock, { kind: 'agent-message' }>; msgId: string | null }): ReactNode {
+  const tasks = useTaskOpener();
+  // The sender, found through the message's id (capture/peers.ts). Null until
+  // found, and for a sender no open task owns: then the name is plain text.
+  const [sender, setSender] = useState<number | null>(null);
+  useEffect(() => {
+    if (msgId === null) return;
+    let live = true;
+    void senderTaskOf(msgId)
+      .then((id) => {
+        if (live) setSender(id);
+      })
+      .catch(() => {
+        /* no link is the fallback */
+      });
+    return () => {
+      live = false;
+    };
+  }, [msgId]);
+  const label = block.name ?? 'another session';
+  const target = sender !== null && tasks.has(sender) ? sender : null;
+  return (
+    <div className="tx-peer">
+      <div className="tx-peer-head">
+        From{' '}
+        {target !== null ? (
+          <button type="button" className="tx-peer-name tx-peer-link" title={`Go to ${label}`} onClick={() => tasks.open(target)}>
+            {label}
+          </button>
+        ) : (
+          <span className="tx-peer-name">{label}</span>
+        )}
+      </div>
+      <Markdown text={block.text} />
+    </div>
+  );
 }
 
 /** A subagent or background task finishing, in the same language as a tool chip. */
@@ -425,6 +484,32 @@ function SystemRow({ message }: { message: Message }): ReactNode {
       <div className="tx-gutter">Sys</div>
       <div className="tx-content">
         <div className="tx-system-text">{text}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A slash command Claude Code ran itself (`/rc`, `/rename`), which it records
+ * as `system` lines: the command, then its output. They read as the user-row
+ * versions do -- the command is yours, so it is under "You"; the output is the
+ * terminal's, so it has no gutter label. Most output is empty and draws
+ * nothing. Before this the command printed as raw tags under "Sys" (#113).
+ */
+function LocalCommandRow({ message }: { message: Message }): ReactNode {
+  const blocks = useMemo(
+    () => parseUserBody(message.body ?? '').filter((b) => !(b.kind === 'output' && b.text.length === 0)),
+    [message.body],
+  );
+  if (blocks.length === 0) return null;
+  const typed = blocks.some((b) => b.kind === 'command');
+  return (
+    <div className={`tx-row ${typed ? 'tx-row-user' : 'tx-row-machine'}`}>
+      <div className="tx-gutter">{typed ? 'You' : ''}</div>
+      <div className="tx-content">
+        {blocks.map((b, i) => (
+          <UserBlockView key={i} block={b} />
+        ))}
       </div>
     </div>
   );
@@ -809,10 +894,18 @@ export function parseBlocks(src: string): Block[] {
  * span like `npm run build` may well contain something path-shaped, and
  * turning that into a link makes the pane feel unreliable -- a false positive
  * costs more than a missed link. Extraction itself stays in `parsePathRef`.
+ *
+ * Two shapes a code span has and prose does not:
+ *  - a line range, `src/a.php:64-75`, which opens at its first line;
+ *  - a bare file name, `Foo.php` or `Foo.php:12` (`bareFileRef`), which the
+ *    shell looks up in the worktree when clicked.
  */
-function codeSpanRef(text: string): { path: string; line: number | null } | null {
-  const trimmed = text.trim();
+export function codeSpanRef(text: string): { path: string; line: number | null; bare?: boolean } | null {
+  const range = /^(.*:\d{1,7})-\d{1,7}$/.exec(text.trim());
+  const trimmed = range ? (range[1] ?? '') : text.trim();
   if (trimmed.length === 0) return null;
+  const bare = bareFileRef(trimmed);
+  if (bare) return { ...bare, bare: true };
   let ref: { path: string; line: number | null } | null = null;
   try {
     ref = parsePathRef(trimmed);
@@ -858,7 +951,7 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
             {codeText}
           </ExternalLink>
         ) : ref ? (
-          <PathLink key={key++} path={ref.path} line={ref.line} className="tx-md-code tx-md-code-link">
+          <PathLink key={key++} path={ref.path} line={ref.line} lookup={ref.bare === true} className="tx-md-code tx-md-code-link">
             {codeText}
           </PathLink>
         ) : (
