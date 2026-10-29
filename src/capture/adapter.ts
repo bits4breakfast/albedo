@@ -400,6 +400,47 @@ export function endsLocalCommand(rawJson: string): boolean {
 }
 
 /**
+ * Messages between sessions, and how the two ends find each other.
+ *
+ * The receiving line carries `origin: { kind: "peer", msg_id, name, ... }`.
+ * The sender's transcript has a `SendMessage` tool_result whose text is JSON
+ * holding the same `msg_id` (measured on Claude Code 2.1.3xx). That pair is
+ * what says which session sent a message; the sender's name is only a label
+ * and can be renamed or shared.
+ */
+export const SEND_MESSAGE_TOOL = 'SendMessage';
+
+/** `origin.msg_id` of a line another session sent. Null for anything else. */
+export function peerMessageIdOf(rawJson: string): string | null {
+  const origin = safeParse(rawJson)?.['origin'];
+  if (!isRecord(origin) || origin['kind'] !== 'peer') return null;
+  const id = origin['msg_id'];
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/** The `msg_id` a `SendMessage` tool_result reports as delivered. */
+export function sentMessageIdOf(rawJson: string): string | null {
+  const message = safeParse(rawJson)?.['message'];
+  const content = isRecord(message) ? message['content'] : null;
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (!isRecord(block) || block['type'] !== 'tool_result') continue;
+    const inner = block['content'];
+    const texts =
+      typeof inner === 'string'
+        ? [inner]
+        : Array.isArray(inner)
+          ? inner.flatMap((b) => (isRecord(b) && typeof b['text'] === 'string' ? [b['text']] : []))
+          : [];
+    for (const text of texts) {
+      const id = safeParse(text)?.['msg_id'];
+      if (typeof id === 'string' && id.length > 0) return id;
+    }
+  }
+  return null;
+}
+
+/**
  * `isMeta` -- a line Claude Code adds beside a command or a prompt (the
  * "run directly in Claude Code" caveat), never something anyone typed.
  */

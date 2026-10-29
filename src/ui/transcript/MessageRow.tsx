@@ -20,7 +20,8 @@ import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
-import { imageAt, imagesIn } from '../../capture';
+import { imageAt, imagesIn, peerMessageIdOf, senderTaskOf } from '../../capture';
+import { useTaskOpener } from '../openTask';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -141,6 +142,9 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
     return out;
   }, [message, extras]);
 
+  // Set when another session sent this row: how its sender is found.
+  const msgId = useMemo(() => peerMessageIdOf(message.rawJson), [message.rawJson]);
+
   if (parts.length === 0) return null;
   // Nothing a human typed or attached: drop the "you said" framing rather than
   // attributing a harness notification to the user.
@@ -151,7 +155,7 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
       <div className="tx-content">
         {parts.map((p, i) =>
           p.kind === 'blocks' ? (
-            p.blocks.map((b, j) => <UserBlockView key={`${i}-${j}`} block={b} />)
+            p.blocks.map((b, j) => <UserBlockView key={`${i}-${j}`} block={b} msgId={msgId} />)
           ) : p.kind === 'image' ? (
             <AttachedImage key={i} src={p.src} />
           ) : (
@@ -197,7 +201,7 @@ function AttachedImage({ src }: { src: string | null }): ReactNode {
   );
 }
 
-function UserBlockView({ block }: { block: UserBlock }): ReactNode {
+function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: string | null }): ReactNode {
   switch (block.kind) {
     case 'text':
       return <Markdown text={block.text} />;
@@ -206,7 +210,7 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
     case 'agent-message':
       // A hand-back is a subagent's final report to its parent: its group in
       // the pane already shows that work, so it stays out of the row.
-      return block.handback ? null : <PeerMessage block={block} />;
+      return block.handback ? null : <PeerMessage block={block} msgId={msgId} />;
     case 'command':
       return (
         <div className="tx-cmd">
@@ -263,11 +267,38 @@ function UserBlockView({ block }: { block: UserBlock }): ReactNode {
  * acts on, so it reads in full like a prompt -- but under the sender's name,
  * never as "You".
  */
-function PeerMessage({ block }: { block: Extract<UserBlock, { kind: 'agent-message' }> }): ReactNode {
+function PeerMessage({ block, msgId }: { block: Extract<UserBlock, { kind: 'agent-message' }>; msgId: string | null }): ReactNode {
+  const tasks = useTaskOpener();
+  // The sender, found through the message's id (capture/peers.ts). Null until
+  // found, and for a sender no open task owns: then the name is plain text.
+  const [sender, setSender] = useState<number | null>(null);
+  useEffect(() => {
+    if (msgId === null) return;
+    let live = true;
+    void senderTaskOf(msgId)
+      .then((id) => {
+        if (live) setSender(id);
+      })
+      .catch(() => {
+        /* no link is the fallback */
+      });
+    return () => {
+      live = false;
+    };
+  }, [msgId]);
+  const label = block.name ?? 'another session';
+  const target = sender !== null && tasks.has(sender) ? sender : null;
   return (
     <div className="tx-peer">
       <div className="tx-peer-head">
-        From <span className="tx-peer-name">{block.name ?? 'another session'}</span>
+        From{' '}
+        {target !== null ? (
+          <button type="button" className="tx-peer-name tx-peer-link" title={`Go to ${label}`} onClick={() => tasks.open(target)}>
+            {label}
+          </button>
+        ) : (
+          <span className="tx-peer-name">{label}</span>
+        )}
       </div>
       <Markdown text={block.text} />
     </div>

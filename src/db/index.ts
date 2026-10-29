@@ -648,6 +648,22 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
   return rows.map(toMessage);
 }
 
+/**
+ * Tool results of one tool whose raw line contains `needle`, newest first.
+ * A scan: for a lookup made once per row on screen, not per keystroke.
+ * `instr`, not LIKE, so a needle needs no escaping.
+ */
+export async function findToolResults(toolName: string, needle: string, limit = 5): Promise<Message[]> {
+  const db = await getDb();
+  const rows = await db.select<MessageRow[]>(
+    `SELECT ${MESSAGE_SELECT} FROM messages
+      WHERE role = 'tool_result' AND tool_name = $1 AND instr(raw_json, $2) > 0
+      ORDER BY id DESC LIMIT $3`,
+    [toolName, needle, Math.max(1, limit)],
+  );
+  return rows.map(toMessage);
+}
+
 /** A parsed row plus the task it was adopted by (null for terminal sessions). */
 export type InsertableMessage = ParsedMessage & { taskId: number | null };
 
