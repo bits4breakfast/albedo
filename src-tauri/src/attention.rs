@@ -33,9 +33,12 @@
 //! `unsupported` and never touches the center.
 
 /// The event a banner click emits, carrying the task id (or null).
+#[cfg(target_os = "macos")]
 pub const CLICKED_EVENT: &str = "albedo://notification-clicked";
 
-/// How long a critical bounce lasts before it is cancelled.
+/// How long a critical bounce lasts before it is cancelled. Elsewhere the
+/// window's own request is all there is, and it cannot be cancelled.
+#[cfg(target_os = "macos")]
 pub const CRITICAL_BOUNCE: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[cfg(target_os = "macos")]
