@@ -27,7 +27,8 @@ import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import Terminal, { focusPty } from './ui/Terminal';
 import ModelPicker from './ui/ModelPicker';
-import { BranchIcon, ChatIcon, FolderIcon, homeRelative } from './ui/icons';
+import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
+import BranchChip from './ui/BranchChip';
 import OverflowMenu from './ui/OverflowMenu';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
@@ -1121,10 +1122,7 @@ export default function App() {
                       <span className="main-ident-text">Chat</span>
                     </span>
                   ) : selected.branch ? (
-                    <span className="main-ident-branch" title={`Branch ${selected.branch}, off ${selected.baseBranch}`}>
-                      <BranchIcon />
-                      <span className="main-ident-text">{selected.branch}</span>
-                    </span>
+                    <BranchChip task={selected} />
                   ) : null}
                   {/* The PR, beside the branch it belongs to: with the branch,
                       the one place git and GitHub state shows. It never

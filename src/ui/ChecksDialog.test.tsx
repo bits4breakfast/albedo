@@ -47,6 +47,7 @@ const pr: PrStatus = {
   title: 'Offline: keep queued messages visible',
   state: 'open',
   headRefName: '56-offline-outbox',
+  baseRefName: 'main',
   mergedAt: null,
   review: null,
   checks: { kind: 'failing', failing: 1, total: 2 },

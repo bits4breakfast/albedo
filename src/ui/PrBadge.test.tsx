@@ -77,6 +77,7 @@ describe('PrBadge with a PR', () => {
     title: 't',
     state: 'open',
     headRefName: 'feat',
+    baseRefName: 'main',
     mergedAt: null,
     review: null,
     checks: { kind: 'failing', failing: 1, total: 1 },
