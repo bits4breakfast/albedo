@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Task, TaskStatus } from '../types';
-import { listTasks, updateTask, archiveTask, getMessages, onTasksChanged, compactHistory } from '../db';
+import { listTasks, updateTask, archiveTask, renameTask, getMessages, onTasksChanged, compactHistory } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
 import { keepUserStatus, pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt, turnEndedAt } from '../capture/status';
@@ -91,6 +91,12 @@ export interface UseTasksResult {
   archive: (id: number) => Promise<void>;
   /** Mark as Done, or with false, Mark as Not Done. A task at rest only. */
   setDone: (id: number, done: boolean) => Promise<void>;
+  /**
+   * Albedo's title for the task, shown at once and then written. `title` is
+   * already clean (taskRename.ts `renamedTitle`). Resolves false when the
+   * write failed: the old title is back, and the banner says why.
+   */
+  rename: (id: number, title: string) => Promise<boolean>;
   /** The task was on screen at `at` (epoch ms); see `Task.seenAt`. */
   markSeen: (id: number, at: number) => void;
 }
@@ -380,6 +386,29 @@ export function useTasks(): UseTasksResult {
       applyTask(id, { status });
       const err = await persist(id, { status });
       if (err !== null && aliveRef.current) setLoadError(`Could not update task: ${message(err)}`);
+    },
+    [applyTask, persist],
+  );
+
+  const rename = useCallback(
+    async (id: number, title: string) => {
+      const task = tasksRef.current.find((t) => t.id === id);
+      if (!task) return false;
+      const was = task.title;
+      applyTask(id, { title });
+      const err = await persist(
+        id,
+        { title },
+        {
+          write: () => renameTask(id, title),
+          // Only if nothing renamed it again meanwhile.
+          rollback: () => {
+            if (tasksRef.current.find((t) => t.id === id)?.title === title) applyTask(id, { title: was });
+          },
+        },
+      );
+      if (err !== null && aliveRef.current) setLoadError(`Could not rename task: ${message(err)}`);
+      return err === null;
     },
     [applyTask, persist],
   );
@@ -722,6 +751,7 @@ export function useTasks(): UseTasksResult {
       upsertTask,
       archive,
       setDone,
+      rename,
       markSeen,
     }),
     [
@@ -736,6 +766,7 @@ export function useTasks(): UseTasksResult {
       upsertTask,
       archive,
       setDone,
+      rename,
       markSeen,
     ],
   );

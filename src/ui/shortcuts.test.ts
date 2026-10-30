@@ -96,6 +96,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
+      comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
     // The one gesture is reachable through its own detector.
@@ -125,6 +126,32 @@ describe('shell drawer key', () => {
     expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo).toBe('alt+f12');
     expect(comboOf(ev({ key: 'F12', code: 'F12' }))).toBeNull();
     expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true, metaKey: true }))).toBeNull();
+  });
+});
+
+describe('rename keys (#152)', () => {
+  it('maps ⇧F6 and bare F2, read from code', () => {
+    expect(comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo).toBe('shift+f6');
+    expect(comboOf(ev({ key: 'F2', code: 'F2' }))?.combo).toBe('f2');
+  });
+
+  it('leaves F6 alone, and every other modifier on either key', () => {
+    expect(comboOf(ev({ key: 'F6', code: 'F6' }))).toBeNull();
+    expect(comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true, metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true, ctrlKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F2', code: 'F2', shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F2', code: 'F2', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F2', code: 'F2', altKey: true }))).toBeNull();
+  });
+
+  it('stays with the terminal, which sends it to the pty as before', () => {
+    expect(terminalTakesKey(ev({ key: 'F6', code: 'F6', shiftKey: true }))).toBe(true);
+    expect(terminalTakesKey(ev({ key: 'F2', code: 'F2' }))).toBe(true);
+  });
+
+  it('is in the shortcuts help, both keys on one line', () => {
+    expect(SHORTCUTS.find((s) => s.combo === 'shift+f6')?.keys).toBe('⇧F6 / F2');
   });
 });
 

@@ -42,6 +42,8 @@ import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
 import BranchChip from './ui/BranchChip';
 import OverflowMenu from './ui/OverflowMenu';
+import TaskTitleEdit from './ui/TaskTitleEdit';
+import { RENAME_KEYS, renameMenuItem, renameTaskAndSession } from './ui/taskRename';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
 import WorktreeReconcile from './ui/WorktreeReconcile';
@@ -134,6 +136,7 @@ export default function App() {
     upsertTask,
     archive,
     setDone,
+    rename,
     markSeen,
   } = useTasks();
 
@@ -262,6 +265,16 @@ export default function App() {
   const selectedLive = usePtyLiveSince(selected?.id ?? null) !== null;
   const remoteUrl = useRemoteControlUrl(selected);
   const remoteItem = selected ? remoteControlItem(selected, selectedLive, remoteUrl) : null;
+  /**
+   * The task whose name is being edited in the task bar (#152): from the ⋯
+   * item, a double-click on the name, or ⇧F6 / F2. Only ever the selected
+   * task; the row menu edits on the row instead (TaskList).
+   */
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const saveTitle = useCallback(
+    (task: Task, title: string) => void renameTaskAndSession(task, title, rename),
+    [rename],
+  );
   /**
    * ⇧⌘R's confirmation shows only while it still has something to confirm:
    * on the task it was asked on, still selected, live and with Remote Control
@@ -859,6 +872,11 @@ export default function App() {
     }
   };
 
+  const startRename = () => {
+    if (!selected || document.querySelector('[aria-modal="true"]') !== null) return;
+    setRenamingId(selected.id);
+  };
+
   const stepProject = (delta: number) => {
     if (!showTabs) return;
     const key = stepProjectTab(tabs.map((t) => t.key), activeProjectTab?.key ?? null, delta);
@@ -915,6 +933,10 @@ export default function App() {
     // field, and this app has a composer, a title input and a code editor.
     'mod+arrowleft': { run: () => stepReadingTab(-1), whenTyping: 'ignore' },
     'mod+arrowright': { run: () => stepReadingTab(1), whenTyping: 'ignore' },
+    // PhpStorm's Rename, and F2. Not while typing: the terminal and the
+    // editor keep them (shortcuts.ts). Never over a dialog.
+    'shift+f6': { run: () => startRename(), whenTyping: 'ignore' },
+    f2: { run: () => startRename(), whenTyping: 'ignore' },
   });
 
   // --- render --------------------------------------------------------------
@@ -1068,6 +1090,7 @@ export default function App() {
             }}
             onFollowUp={(task) => void openFollowUp(task)}
             onSetDone={(task, done) => void setDone(task.id, done)}
+            onRename={saveTitle}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             signals={signals}
@@ -1112,9 +1135,25 @@ export default function App() {
                       <span className="main-ident-sep" aria-hidden="true">›</span>
                     </>
                   )}
-                  <span className="main-ident-title" title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}`}>
-                    {selected.title}
-                  </span>
+                  {renamingId === selected.id ? (
+                    <TaskTitleEdit
+                      className="main-ident-title-edit"
+                      title={selected.title}
+                      onSave={(title) => {
+                        setRenamingId(null);
+                        saveTitle(selected, title);
+                      }}
+                      onDone={() => setRenamingId(null)}
+                    />
+                  ) : (
+                    <span
+                      className="main-ident-title"
+                      title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
+                      onDoubleClick={() => setRenamingId(selected.id)}
+                    >
+                      {selected.title}
+                    </span>
+                  )}
                   {/* What acts on the task, right after its name; the ⋯ at
                       the bar's end keeps what acts on the panes. */}
                   <OverflowMenu
@@ -1122,6 +1161,7 @@ export default function App() {
                     title="Task actions"
                     trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
                     items={[
+                        renameMenuItem(() => setRenamingId(selected.id)),
                         // The same /compact as the button by the message box,
                         // which appears only past 70%; here at any fill.
                         {

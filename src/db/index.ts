@@ -290,6 +290,18 @@ export async function updateTask(id: number, patch: Partial<Task>): Promise<void
 }
 
 /**
+ * Rename a task: its `title`, and nothing else (#152). The branch, the
+ * worktree folder and the session id stay as they are; renaming the Claude
+ * Code session too is ui/taskRename.ts's job, through the send gateway. The
+ * caller cleans the title (`renamedTitle`); this only writes it.
+ */
+export async function renameTask(id: number, title: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE tasks SET title = $1 WHERE id = $2`, [title, id]);
+  emitTasksChanged();
+}
+
+/**
  * Delete a task AND its captured conversation.
  *
  * Claude Code's own transcript file is untouched, so the history is not lost

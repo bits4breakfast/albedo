@@ -45,6 +45,7 @@ import {
   resetDb,
   searchMessages,
   setTranscriptTitle,
+  renameTask,
   touchTaskActivity,
   updateTask,
 } from './index';
@@ -1324,6 +1325,34 @@ describe('touchTaskActivity — notifies only when the row moved', () => {
     } finally {
       off();
     }
+  });
+});
+
+describe('renameTask (#152) — the title, and nothing else', () => {
+  it('writes the title, keeps branch, folder and session, and notifies', async () => {
+    const task = await createTask({
+      title: 'Old name', projectId: null, repoPath: '/repo', baseBranch: 'main',
+      branch: 'feat/old-name', worktreePath: '/wt/old-name', ownsWorktree: true, createdBranch: true, kind: 'work',
+    });
+    await updateTask(task.id, { sessionId: 's-1' });
+    const other = await createTask({
+      title: 'Other', projectId: null, repoPath: '/repo', baseBranch: 'main',
+      branch: 'b2', worktreePath: '/wt/b2', ownsWorktree: true, createdBranch: true, kind: 'work',
+    });
+    const cb = vi.fn();
+    const off = onTasksChanged(cb);
+    try {
+      await renameTask(task.id, 'New name — it’s “quoted”');
+      expect(cb).toHaveBeenCalledTimes(1);
+    } finally {
+      off();
+    }
+    const row = await getTask(task.id);
+    expect(row?.title).toBe('New name — it’s “quoted”');
+    expect(row?.branch).toBe('feat/old-name');
+    expect(row?.worktreePath).toBe('/wt/old-name');
+    expect(row?.sessionId).toBe('s-1');
+    expect((await getTask(other.id))?.title).toBe('Other');
   });
 });
 

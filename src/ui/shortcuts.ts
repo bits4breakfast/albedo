@@ -76,6 +76,18 @@
  * which keep matching on `key` unchanged: a layout that types `[` with Shift
  * still steps tasks, because its `code` is not `BracketLeft`.
  *
+ * ## ⇧F6 / F2: Rename the selected task
+ *
+ * PhpStorm's Rename is ⇧F6; F2 is the Finder's and Windows Explorer's, and
+ * nothing here binds it. Read from `code` (`F6` / `F2`), no other modifier.
+ * Not while typing (`whenTyping: 'ignore'`): a text field, the message box,
+ * the terminal (xterm's input is a textarea) and the editor (CodeMirror is
+ * contenteditable) keep them, and the terminal sends them to the pty as
+ * before -- they are not in `TAKEN_FROM_TERMINAL`. Checked against
+ * CodeMirror's default, history and search keymaps, the editor's own keys
+ * (FileEditor.tsx, editorKeys.ts), focusAreas.ts and the native menu: none
+ * binds F2 or F6 with any modifier.
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
@@ -107,7 +119,9 @@ export type Combo =
   | 'mod+shift+p'
   | 'mod+shift+r'
   | 'mod+u'
-  | 'alt+f12';
+  | 'alt+f12'
+  | 'shift+f6'
+  | 'f2';
 
 /**
  * Bindings that are not one app-wide keystroke, documented alongside the
@@ -164,6 +178,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
   { combo: 'mod+shift+r', keys: '⇧⌘R', description: 'Make the Selected Task Available Remotely (Asks First)' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
+  {
+    combo: 'shift+f6',
+    keys: '⇧F6 / F2',
+    description: 'Rename the Selected Task (not while typing, in the Terminal or in the Editor)',
+  },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
   {
@@ -204,7 +223,9 @@ export type Bindings = Partial<Record<Combo, Handler | ((e: KeyboardEvent, digit
 /** True for the elements where a bare arrow or letter is the user's text. */
 function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
+  // The attribute too: CodeMirror's content is `contenteditable="true"`, and
+  // jsdom (the tests) does not implement `isContentEditable`.
+  if (target.isContentEditable || target.closest('[contenteditable="true"]') !== null) return true;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
@@ -255,6 +276,13 @@ export function comboOf(
   // the O family.
   if (e.code === 'F12' && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
     return { combo: 'alt+f12', digit: null };
+  }
+  // Rename. Function keys, read from `code`; see the module comment.
+  if (e.code === 'F6' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'shift+f6', digit: null };
+  }
+  if (e.code === 'F2' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'f2', digit: null };
   }
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
   const key = e.key.toLowerCase();
