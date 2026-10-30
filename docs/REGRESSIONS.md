@@ -113,6 +113,15 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - A switch over a union of things to draw is exhaustive (`const unhandled: never = block`), so a new kind without a case is a type error, not an empty row.
   - Hiding a kind is written as its own case with the reason (as hand-backs are), never left to `default`.
 
+- **Send stopped scrolling to the end.** Owner-reported (#142): after sending, the transcript stayed put and "↓ Latest ⌘↓" appeared; the message and the reply were below the fold. Cause, in two parts:
+  - `onSent` called `jumpToEnd()` before the echo row and the working line were drawn, and nothing pinned the transcript after they were: its follow logic ran only when `messages` changed. Old since the echo existed, but harmless while `following` stayed true -- the first transcript row then took the reader to the end.
+  - #136 made `grow()` collapse the dragged box to measure it, and put the transcript's `scrollTop` back afterwards. On send that put-back writes the pre-echo position, fires a scroll event, and `onScroll` reads "70px above the end" and turns following off. Confirmed by `sendScroll.test.tsx`: the "no Latest button" case passes at `2109f34^` and fails at `2109f34`.
+
+  **Rule:**
+  - Anything that writes `scrollTop` also fires a scroll event that decides `following`. Before writing it, the content must already be in its final state, or the event reads a stale distance.
+  - A row the pane draws from its own state (the echo, the working line) is content like any other: a following reader stays at the end after every commit, not only after `messages` changes.
+  - Scroll behaviour is tested with a layout model (heights, `scrollTop` clamping, scroll events and `requestAnimationFrame` in frame order), not by asserting a handler was called.
+
 ## Shell scripts (for agents)
 
 - **zsh `path` is `PATH`.** `while read path …` in zsh wipes the command search path, and every later command is "not found". Use another variable name.

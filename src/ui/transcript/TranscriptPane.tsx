@@ -302,14 +302,25 @@ export function TranscriptPane({
     if (el.scrollTop < LOAD_PX && hasMore && !loading) loadOlder();
   }, [hasMore, loading, loadOlder]);
 
+  /*
+     After every commit of the pane, not only when `messages` changes: the
+     echo of a sent message and the working line are rows too, drawn from
+     state of their own (#142). Sending used to scroll to the end *before*
+     the echo was drawn, so the echo and the working line landed below the
+     view, and a later scroll event (#136's put-back of scrollTop around
+     measuring the box) read "not at the end" and stopped following.
+
+     A reader who is following ends every commit at the end, whatever was
+     added. One reading further up is never moved, and a backwards page
+     restores its anchor instead. Rows that change height on their own (a
+     disclosure opened) are not a commit of the pane, so this leaves them be.
+  */
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const mode = pendingScrollRef.current;
-    if (mode === 'bottom') {
-      el.scrollTop = el.scrollHeight;
-      pendingScrollRef.current = null;
-    } else if (mode === 'anchor' && pageAppliedRef.current) {
+    if (mode === 'anchor') {
+      if (!pageAppliedRef.current) return;
       // Measured from the bottom, so rows appended since the anchor was taken
       // would skew it -- but no tail row can arrive between the page landing
       // and this effect, which runs in the same commit.
@@ -318,8 +329,18 @@ export function TranscriptPane({
       anchorRef.current = null;
       pendingScrollRef.current = null;
       pageAppliedRef.current = false;
+      return;
     }
-  }, [messages]);
+    if (mode === 'bottom') {
+      el.scrollTop = el.scrollHeight;
+      pendingScrollRef.current = null;
+      return;
+    }
+    // Hidden (another tab): nothing to scroll; the ResizeObserver below
+    // puts a following reader at the end when the pane comes back.
+    if (!followingRef.current || el.clientHeight === 0) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 0) el.scrollTop = el.scrollHeight;
+  });
 
   const jumpToEnd = useCallback(() => {
     const el = scrollRef.current;
@@ -1051,7 +1072,9 @@ export function Composer({
     // Measuring collapses the box for a moment, and the browser clamps the
     // transcript's scrollTop to the taller view. Put it back, so a reader
     // above the end keeps their place; one following the end is kept there by
-    // the transcript's ResizeObserver.
+    // the transcript's ResizeObserver. The put-back fires a scroll event, so
+    // the transcript must already be at its true end when this runs: the pane
+    // pins a following reader after every commit, the echo's included (#142).
     const scroll = pane?.querySelector<HTMLElement>('.tx-scroll');
     const top = scroll?.scrollTop;
     // A dragged box may grow past the CSS max-height; auto-grow stays under it.
