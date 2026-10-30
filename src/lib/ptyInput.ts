@@ -33,14 +33,19 @@ export interface PasteSegment {
  * paste IS the path. One paste holding text and a path together arrives as
  * text, and the picture never reaches the model. So each image path goes as a
  * paste of its own, and the text around it as the pastes between.
+ *
+ * Except inside `whole`: ranges that go as text, uncut. The composer passes
+ * its paste markers (#155): a path in a pasted log is part of what was
+ * pasted, and a cut there would also split the marker across two pastes.
  */
-export function pasteSegments(body: string): PasteSegment[] {
+export function pasteSegments(body: string, whole: ReadonlyArray<readonly [number, number]> = []): PasteSegment[] {
   const out: PasteSegment[] = [];
   let at = 0;
   for (const m of body.matchAll(IMAGE_PATH_TOKEN_RE)) {
     // The leading whitespace (group 1) stays with the text before the path.
     const path = m[2] as string;
     const start = (m.index ?? 0) + (m[1] as string).length;
+    if (whole.some(([a, b]) => start >= a && start < b)) continue;
     if (start > at) out.push({ text: body.slice(at, start), image: false });
     out.push({ text: path, image: true });
     at = start + path.length;

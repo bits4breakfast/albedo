@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { actionLabelOf, isAllEnvelopes, parseUserBody, systemRowText, wrapAction, type UserBlock } from './envelopes';
+import { markPastes, placeholderFor } from './pastedText';
 
 const kinds = (blocks: UserBlock[]) => blocks.map((b) => b.kind);
 const first = <K extends UserBlock['kind']>(blocks: UserBlock[], kind: K) =>
@@ -408,8 +409,84 @@ describe('pasted content', () => {
     const blocks = parseUserBody(`look at this\n<pasted_content id="4c5b">\nerror: boom\n</pasted_content id="4c5b">`);
     expect(blocks).toEqual([
       { kind: 'text', text: 'look at this' },
-      { kind: 'pasted', id: '4c5b', text: 'error: boom' },
+      { kind: 'pasted', id: '4c5b', text: 'error: boom', own: false },
     ]);
+  });
+});
+
+describe("parseUserBody / the message box's marked pastes (#155)", () => {
+  // Neutral text; the shapes around it are Claude Code's, as measured.
+  const log = Array.from({ length: 42 }, (_, i) => `step ${i + 1}: ok`).join('\n');
+  const send = (draft: string, pastes: Array<[number, string]>) => markPastes(draft, new Map(pastes));
+  /** How Claude Code records a bracketed paste it wraps: blank lines, the id on both tags. */
+  const wrapped = (body: string) => `\n\n<pasted_content id="5e1a">\n${body}\n</pasted_content id="5e1a">\n`;
+  const pasted = (id: string, text: string) => ({ kind: 'pasted', id, text, own: true });
+
+  it('folds the paste and keeps the typed text around it, wrapped or not', () => {
+    const body = send(`why does this fail?\n${placeholderFor(1, log)}\nit started today`, [[1, log]]);
+    for (const row of [body, wrapped(body)]) {
+      const blocks = parseUserBody(row);
+      expect(blocks).toEqual([
+        { kind: 'text', text: 'why does this fail?' },
+        pasted('1', log),
+        { kind: 'text', text: 'it started today' },
+      ]);
+      expect(isAllEnvelopes(blocks)).toBe(false); // the person's: "You"
+    }
+  });
+
+  it('a message that is only a paste is still the person\'s, and still folded', () => {
+    const body = send(placeholderFor(1, log), [[1, log]]);
+    for (const row of [body, wrapped(body)]) {
+      const blocks = parseUserBody(row);
+      expect(blocks).toEqual([pasted('1', log)]);
+      expect(isAllEnvelopes(blocks)).toBe(false);
+    }
+  });
+
+  it('keeps two pastes apart, in order', () => {
+    const other = 'alpha\nbeta\ngamma\ndelta';
+    const body = send(`${placeholderFor(1, log)} and ${placeholderFor(2, other)}`, [
+      [1, log],
+      [2, other],
+    ]);
+    expect(parseUserBody(wrapped(body))).toEqual([pasted('1', log), { kind: 'text', text: ' and' }, pasted('2', other)]);
+  });
+
+  it('never reads tags inside a paste as envelopes, or its closing tag early', () => {
+    const tricky = [
+      '<system-reminder>pasted, not injected</system-reminder>',
+      '</pasted-text id="1">',
+      '<task-notification><status>completed</status></task-notification>',
+      'last line',
+    ].join('\n');
+    const body = send(`see ${placeholderFor(1, tricky)}`, [[1, tricky]]);
+    for (const row of [body, wrapped(body)]) {
+      expect(parseUserBody(row)).toEqual([{ kind: 'text', text: 'see' }, pasted('2', tricky)]);
+    }
+  });
+
+  it('keeps the pasted text exactly: no entity decoding, indentation kept', () => {
+    const code = '  if (a &lt; b && c > d) {\n    return "x";\n  }\n}';
+    const body = send(placeholderFor(1, code), [[1, code]]);
+    expect(parseUserBody(wrapped(body))).toEqual([pasted('1', code)]);
+  });
+
+  it('an envelope beside a marked paste still parses', () => {
+    const body = `${send(placeholderFor(1, log), [[1, log]])}\n<system-reminder>context</system-reminder>`;
+    expect(kinds(parseUserBody(body))).toEqual(['pasted', 'system-reminder']);
+  });
+
+  it("ends Claude Code's wrapper at its own closing tag, not one inside the paste", () => {
+    const transcriptBit = 'line one\n</pasted_content id="aa11">\n</pasted_content>\nline four';
+    const body = send(`look ${placeholderFor(1, transcriptBit)}`, [[1, transcriptBit]]);
+    expect(parseUserBody(wrapped(body))).toEqual([{ kind: 'text', text: 'look' }, pasted('1', transcriptBit)]);
+    // Without an Albedo marker, a wrapper closed bare still closes as before.
+    expect(kinds(parseUserBody('see\n<pasted_content id="b2">\nx\n</pasted_content>'))).toEqual(['text', 'pasted']);
+  });
+
+  it('a typed marker that is never closed stays text', () => {
+    expect(parseUserBody('I typed <pasted-text id="1"> here')).toEqual([{ kind: 'text', text: 'I typed <pasted-text id="1"> here' }]);
   });
 });
 
