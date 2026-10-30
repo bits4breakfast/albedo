@@ -18,11 +18,16 @@ import '../findinfiles.css';
 /**
  * `note`, when set, is a line under the title saying what the search could
  * not see -- shown with an empty answer too, where it matters most.
+ * `textSearch` marks a list git grep answered without PHPantom: the header
+ * says so beside the title, since its rows may only share the name (#172).
  */
 export type SymbolResultsState =
   | { kind: 'loading'; title: string }
-  | { kind: 'list'; title: string; result: FindResult; note?: string }
+  | { kind: 'list'; title: string; result: FindResult; note?: string; textSearch?: boolean }
   | { kind: 'message'; title: string; message: string; note?: string };
+
+/** Said in the header of a list that text search answered alone. */
+export const TEXT_SEARCH_CAVEAT = 'Text search: may include false matches';
 
 export interface SymbolResultsProps {
   state: SymbolResultsState | null;
@@ -107,6 +112,11 @@ export default function SymbolResults({ state, onClose, onOpen }: SymbolResultsP
       <div className="qo-dialog ff-dialog" role="dialog" aria-modal="true" aria-label={state.title}>
         <div className="ff-head">
           <span className="ff-title">{state.title}</span>
+          {state.kind === 'list' && state.textSearch && (
+            <span className="ff-caveat" title={TEXT_SEARCH_CAVEAT}>
+              {TEXT_SEARCH_CAVEAT}
+            </span>
+          )}
         </div>
         {note && (
           <div className="qo-scope" title={note}>

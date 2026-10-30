@@ -21,6 +21,11 @@ export interface CheckLine {
   name: string;
   bucket: CheckBucket;
   url: string | null;
+  /**
+   * Why a `fail` line failed, when it was not a plain failure: "cancelled",
+   * "timed out", ... Absent for a plain failure and for every other bucket.
+   */
+  reason?: string;
 }
 
 export type ChecksSummary =
@@ -40,6 +45,11 @@ export interface PrStatus {
   headRefName: string;
   /** The branch the PR merges into. Empty when gh did not say. */
   baseRefName: string;
+  /**
+   * The head commit the checks ran on (`headRefOid`). Empty when gh did not
+   * say. A new one is a push: what was decided about the old checks is over.
+   */
+  headSha: string;
   mergedAt: string | null;
   review: ReviewDecision;
   checks: ChecksSummary;
@@ -103,6 +113,14 @@ function bucketOf(e: RawRollupEntry): CheckBucket {
   return 'fail';
 }
 
+/** The words for a failure that was not a plain one; see `CheckLine.reason`. */
+function reasonOf(e: RawRollupEntry): string | undefined {
+  const raw = str(e.conclusion) ?? (str(e.state)?.toUpperCase() === 'ERROR' ? 'ERROR' : null);
+  const c = raw?.toUpperCase();
+  if (!c || c === 'FAILURE' || c === 'SUCCESS' || SKIP_CONCLUSIONS.has(c)) return undefined;
+  return c.toLowerCase().replace(/_/g, ' ');
+}
+
 function nameOf(e: RawRollupEntry): string {
   const context = str(e.context);
   if (context) return context;
@@ -132,10 +150,11 @@ export function checkLines(rollup: unknown): CheckLine[] {
     // `>=`: with equal (or missing) timestamps the later array entry wins,
     // which is the order GitHub returns runs in.
     if (prev && at < prev.at) continue;
-    latest.set(name, {
-      at,
-      line: { name, bucket: bucketOf(e), url: str(e.detailsUrl) ?? str(e.targetUrl) },
-    });
+    const bucket = bucketOf(e);
+    const line: CheckLine = { name, bucket, url: str(e.detailsUrl) ?? str(e.targetUrl) };
+    const reason = bucket === 'fail' ? reasonOf(e) : undefined;
+    if (reason) line.reason = reason;
+    latest.set(name, { at, line });
   }
   return [...latest.values()]
     .map((v) => v.line)
@@ -184,8 +203,9 @@ function stateOf(state: unknown, isDraft: unknown, mergedAt: string | null): PrS
 
 /**
  * Parse `gh pr view --json number,url,state,isDraft,title,reviewDecision,
- * statusCheckRollup,mergedAt,headRefName`. Returns null for anything that is
- * not recognisably a PR -- the caller treats that exactly like "no PR".
+ * statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid`. Returns null
+ * for anything that is not recognisably a PR -- the caller treats that exactly
+ * like "no PR".
  */
 export function parsePrView(stdout: string): PrStatus | null {
   let data: unknown;
@@ -206,6 +226,7 @@ export function parsePrView(stdout: string): PrStatus | null {
     state: stateOf(d.state, d.isDraft, mergedAt),
     headRefName: str(d.headRefName) ?? '',
     baseRefName: str(d.baseRefName) ?? '',
+    headSha: str(d.headRefOid) ?? '',
     mergedAt,
     review: reviewOf(d.reviewDecision),
     checks: summarizeChecks(lines),

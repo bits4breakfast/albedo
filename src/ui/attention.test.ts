@@ -5,6 +5,7 @@ import {
   attentionFor,
   attentionMarks,
   clearAttention,
+  noteAgentBlocked,
   noteQuestion,
   noteStatusChange,
   notificationFor,
@@ -162,6 +163,21 @@ describe('system notifications', () => {
     noteQuestion(3, 'Audit', 'Shall I push?');
     expect(bounces).toEqual([false]);
     expect(posted).toEqual([{ title: 'Audit', body: 'Shall I push?', taskId: 3 }]);
+  });
+
+  it('a session that says it is blocked (#157): critical bounce, its own words in the banner', () => {
+    const bounces: boolean[] = [];
+    __setAttentionBackend((critical) => bounces.push(critical), false, (n) => posted.push(n));
+    noteAgentBlocked(6, 'Deploy', '  I need the staging password.  ');
+    expect(bounces).toEqual([true]);
+    expect(posted).toEqual([{ title: 'Deploy', body: 'I need the staging password.', taskId: 6 }]);
+    expect(attentionMarks().get(6)).toBe('blocked');
+  });
+
+  it('a hook "blocked" keeps its fixed wording: only a message replaces it', () => {
+    expect(notificationFor('blocked', 'T', 1).body).toMatch(/^Waiting on you/);
+    expect(notificationFor('blocked', 'T', 1, '   ').body).toMatch(/^Waiting on you/);
+    expect(notificationFor('blocked', 'T', 1, 'x'.repeat(400)).body).toHaveLength(160);
   });
 
   it('never lets a question replace a prompt that is waiting on you', () => {

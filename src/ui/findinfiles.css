@@ -24,6 +24,21 @@
   color: var(--text-strong);
 }
 
+/* "Text search: may include false matches" beside a symbol list's title
+   (#172). --muted at --fs-xs on the dialog's --panel: the measured worst
+   ground above is --panel-raised (6.17 light / 6.42 dark). No tint, no
+   opacity; it sits right, and gives way to the title before wrapping. */
+.ff-caveat {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* --- input and toggles ---------------------------------------------------- */
 
 .ff-bar {

@@ -8,6 +8,7 @@ import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { noteQuestion, noteStatusChange } from './attention';
+import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
 import { keepOutboxFor } from './transcript/outbox';
 import { noteTaskSessions } from './transcript/turn';
@@ -320,11 +321,12 @@ export function useTasks(): UseTasksResult {
         return { ...row, ...patch };
       });
       commit((prev) => reconcileTasks(prev, merged));
-      // The read holds every live task: an archived or deleted one's draft
-      // and held messages go.
+      // The read holds every live task: an archived or deleted one's draft,
+      // held messages and requests go.
       const live = merged.filter((t) => t.status !== 'archived').map((t) => t.id);
       keepDraftsFor(live);
       keepOutboxFor(live);
+      keepRequestsFor(live);
       setLoadError(null);
     } catch (err) {
       if (!aliveRef.current) return;

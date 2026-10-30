@@ -21,7 +21,7 @@ dependencies = [
 name = "albedo"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "block2",
  "glob",
  "libc",
@@ -40,6 +40,13 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-shell",
  "tauri-plugin-sql",
+]
+
+[[package]]
+name = "albedo-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

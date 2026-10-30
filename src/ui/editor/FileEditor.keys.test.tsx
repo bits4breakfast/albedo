@@ -26,7 +26,8 @@ vi.mock('../../lsp/phpantom', () => ({
   isPhpPath: () => false,
   warmPhpantom: vi.fn(),
   phpantomFailure: () => null,
-  subscribePhpantomFailure: () => () => {},
+  phpantomAvailability: () => null,
+  subscribePhpantom: () => () => {},
   dismissPhpantomFailure: vi.fn(),
 }));
 vi.mock('../../db/comments', () => ({

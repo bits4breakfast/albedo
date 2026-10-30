@@ -25,6 +25,13 @@ export interface NewTaskPrefill {
   prompt: string;
   /** True while the PR is still being looked up (archived tasks). */
   pending?: boolean;
+  /**
+   * Set when the prefill is a session's request, approved from Requests
+   * (#157). The prompt then becomes the new task's unsent draft unless the
+   * user ticks "send when the session starts", and the request leaves the
+   * queue once the task is created.
+   */
+  request?: { id: string };
 }
 
 /**

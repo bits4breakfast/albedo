@@ -8,6 +8,8 @@ import useTasks from './ui/useTasks';
 import useLayout, { type RightTab } from './ui/app/useLayout';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
+import useSessionRequests from './ui/app/useSessionRequests';
+import { resolveRequest } from './ui/requestQueue';
 import useProjectTabs from './ui/app/useProjectTabs';
 import ProjectTabs from './ui/app/ProjectTabs';
 import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
@@ -22,6 +24,7 @@ import {
   announcementFor,
   attentionMarks,
   clearAttention,
+  lastBannerFor,
   onAttention,
   onNotificationClick,
   watchFocus,
@@ -85,7 +88,8 @@ import {
   freeFollowUpTitle,
 } from './ui/followUp';
 import { useMergeNotices } from './ui/mergeNotice';
-import { getPrStatus } from './gh/prStore';
+import { getPrStatus, usePendingPrWatch } from './gh/prStore';
+import { requestChecks, useCiNotices, useCiNotifyEnabled } from './ui/ciNotice';
 import { fetchPrStatus } from './gh/gh';
 import type { PrStatus } from './gh/prStatus';
 
@@ -569,8 +573,16 @@ export default function App() {
     setAnnouncement(text);
   }, [attention]);
   useEffect(() => watchFocus(), []);
-  // A banner names one task; clicking it opens that task.
-  useEffect(() => onNotificationClick(select), [select]);
+  // A banner names one task; clicking it opens that task -- and, for the
+  // newest banner being "checks failed", its Checks dialog on the failing job.
+  useEffect(
+    () =>
+      onNotificationClick((id) => {
+        select(id);
+        if (lastBannerFor(id) === 'checks-fail') requestChecks(id);
+      }),
+    [select],
+  );
 
   // A transcript row that names a task (a message from another session) opens
   // it through this. Stable, reading the list through a ref, like `select`.
@@ -583,8 +595,29 @@ export default function App() {
   useMergeNotices(tasks);
   // What the message box's `@` list offers (#154).
   const mentionSource = useMemo<MentionSource>(() => ({ tasks, projects }), [tasks, projects]);
+  // Checks finishing is news wherever the task is: every task's running checks
+  // stay polled (the list polls only what it shows), and every answer is
+  // watched for the moment they finish (#159).
+  const prTasks = useMemo(() => tasks.filter((t) => t.kind !== 'chat'), [tasks]);
+  usePendingPrWatch(prTasks);
+  useCiNotices(tasks, selectedId);
+  const [ciNotify, setCiNotify] = useCiNotifyEnabled();
 
   const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
+
+  // What sessions asked for through Albedo's MCP server (#157). Approving a
+  // new session opens New Task filled in from it; nothing starts on its own.
+  const requests = useSessionRequests({
+    tasks,
+    loading,
+    projects,
+    select,
+    openNewTask: (prefill) => {
+      followUpSeq.current++;
+      setNewTaskPrefill(prefill);
+      setNewTaskOpen(true);
+    },
+  });
 
   // File-open entry point handed to every renderer via context. Reads the
   // selection through a ref so the context value stays referentially stable --
@@ -1000,8 +1033,11 @@ export default function App() {
         onShortcuts={() => setShortcutsOpen(true)}
         onWhatsNew={whatsNew.available ? whatsNew.reopen : undefined}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
+        requests={requests}
         theme={themeChoice}
         onThemeChange={setThemeChoice}
+        ciNotify={ciNotify}
+        onCiNotifyChange={setCiNotify}
         onWaitingClick={() => {
           // Most recently active first; from a waiting task, on to the next.
           const waiting = tasks
@@ -1669,6 +1705,8 @@ export default function App() {
             setNewTaskPrefill(null);
           }}
           onCreated={(task: Task, initialPrompt?: string) => {
+            // An approved session request is done once its task exists.
+            if (newTaskPrefill?.request) resolveRequest(newTaskPrefill.request.id);
             if (initialPrompt !== undefined) {
               setPromptOverrides((prev) => new Map(prev).set(task.id, initialPrompt));
             }

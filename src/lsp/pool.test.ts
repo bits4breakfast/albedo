@@ -12,6 +12,8 @@ let sidecarAvailable = true;
 let installed = true;
 /** Set to refuse the config write, as the fs scope did before #73. */
 let configError: Error | null = null;
+/** Set to make the installed copy refuse to spawn, though it exists. */
+let installedSpawnError: Error | null = null;
 
 class FakeCommand {
   private handlers = new Map<string, Handler[]>();
@@ -29,6 +31,7 @@ class FakeCommand {
   }
   async spawn() {
     if (this.sidecar && !sidecarAvailable) throw new Error('sidecar not allowed');
+    if (!this.sidecar && installedSpawnError) throw installedSpawnError;
     const record = { program: this.program, killed: false };
     spawned.push(record);
     const deframer = new Deframer();
@@ -69,8 +72,15 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 }));
 vi.mock('@tauri-apps/api/path', () => ({ homeDir: async () => '/home/me' }));
 
-const { phpantomFor, stopPhpantom, MAX_SERVERS, phpantomFailure, dismissPhpantomFailure, subscribePhpantomFailure } =
-  await import('./phpantom');
+const {
+  phpantomFor,
+  stopPhpantom,
+  MAX_SERVERS,
+  phpantomAvailability,
+  phpantomFailure,
+  dismissPhpantomFailure,
+  subscribePhpantom,
+} = await import('./phpantom');
 
 afterEach(async () => {
   for (const root of ['/wt/a', '/wt/b', '/wt/c']) await stopPhpantom(root);
@@ -78,9 +88,14 @@ afterEach(async () => {
   sidecarAvailable = true;
   installed = true;
   configError = null;
+  installedSpawnError = null;
 });
 
 describe('PHPantom pool', () => {
+  it('knows nothing of its availability before a start has looked', () => {
+    expect(phpantomAvailability()).toBeNull();
+  });
+
   it('starts a server and it becomes ready (no wait on itself)', async () => {
     const server = await phpantomFor('/wt/a');
     expect(server).not.toBeNull();
@@ -98,6 +113,28 @@ describe('PHPantom pool', () => {
     expect(spawned.map((s) => s.program)).toEqual(['phpantom']);
     installed = false;
     expect(await phpantomFor('/wt/b')).toBeNull();
+  });
+
+  it('says which: running, then not installed, then running again once it is (#172)', async () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribePhpantom(listener);
+    await phpantomFor('/wt/a');
+    expect(phpantomAvailability()).toBe('running');
+
+    sidecarAvailable = false;
+    installed = false;
+    listener.mockClear();
+    expect(await phpantomFor('/wt/b')).toBeNull();
+    expect(phpantomAvailability()).toBe('not-installed');
+    expect(listener).toHaveBeenCalledOnce();
+    // Not installed is not a failure: nothing to say about why.
+    expect(phpantomFailure()).toBeNull();
+
+    // Installed later (scripts/install-phpantom.sh): the next start finds it.
+    installed = true;
+    expect(await phpantomFor('/wt/b')).not.toBeNull();
+    expect(phpantomAvailability()).toBe('running');
+    unsubscribe();
   });
 
   it('shares one start per worktree', async () => {
@@ -158,10 +195,27 @@ describe('PHPantom pool, when a start fails (#73)', () => {
     expect(phpantomFailure()).toMatch(/forbidden path/);
 
     const listener = vi.fn();
-    const unsubscribe = subscribePhpantomFailure(listener);
+    const unsubscribe = subscribePhpantom(listener);
     dismissPhpantomFailure();
     unsubscribe();
     expect(listener).toHaveBeenCalledOnce();
     expect(phpantomFailure()).toBeNull();
+  });
+
+  it('stays failed for the run, even once a later start runs (#172)', async () => {
+    expect(phpantomAvailability()).toBe('failed');
+    expect(await phpantomFor('/wt/c')).not.toBeNull();
+    expect(phpantomAvailability()).toBe('failed');
+  });
+
+  it('an installed copy that will not spawn is a failure, not "not installed"', async () => {
+    // A failure is already on record by now, so the state alone cannot tell:
+    // the start must have gone the failure's way, warning with the cause.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sidecarAvailable = false;
+    installedSpawnError = new Error('permission denied');
+    expect(await phpantomFor('/wt/a')).toBeNull();
+    expect(phpantomAvailability()).toBe('failed');
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not start/), installedSpawnError);
   });
 });
