@@ -82,6 +82,7 @@
 
 import { useEffect, useRef } from 'react';
 import { detectPlatform, type Platform } from '../lib/platform';
+import { terminalYieldsKey } from './focusAreas';
 
 /** A combo, in the syntax `mod+<key>`; `mod+digit` matches 1 through 9. */
 export type Combo =
@@ -115,6 +116,8 @@ export type Combo =
  */
 export type Gesture =
   | 'shift shift'
+  | 'focus tab'
+  | 'focus ctrl+tab'
   | 'editor mod+b'
   | 'editor alt+f7'
   | 'editor mod+alt+b'
@@ -147,6 +150,12 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous Reading Tab' },
   { combo: 'mod+arrowright', keys: '⌘→', description: 'Next Reading Tab' },
   { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle PTY / Split / Transcript (not on the Editor tab)' },
+  {
+    combo: 'focus tab',
+    keys: 'Tab / ⇧Tab',
+    description: 'Next / Previous Area: Message Box, Terminal, Files, Tasks (the Terminal and Editor keep Tab)',
+  },
+  { combo: 'focus ctrl+tab', keys: '⌃Tab / ⌃⇧Tab', description: 'Next / Previous Area from Anywhere, Terminal and Editor Too' },
   { combo: 'mod+shift+o', keys: '⇧⌘O', description: 'Go to File' },
   { combo: 'mod+o', keys: '⌘O', description: 'Go to Class' },
   { combo: 'mod+alt+o', keys: '⌥⌘O', description: 'Go to Symbol' },
@@ -287,9 +296,12 @@ const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit', 'mod+s
  * app's that the terminal must not also act on. The terminals treat Option as
  * Meta, so without this ⌥1 would switch project AND send `Esc 1` to the pty;
  * ⇧⌘[ / ⇧⌘] switch project too, so the pty does not get them either, and
- * ⇧⌘R opens a dialog over the terminal.
+ * ⇧⌘R opens a dialog over the terminal. Ctrl+Tab / Ctrl+Shift+Tab leave the
+ * terminal for the next area (focusAreas.ts), as Tab does while the terminal
+ * holds focus it took on its own; xterm would otherwise send them to the pty.
  */
 export function terminalTakesKey(e: KeyboardEvent): boolean {
+  if (terminalYieldsKey(e)) return false;
   const hit = comboOf(e);
   return hit === null || !TAKEN_FROM_TERMINAL.has(hit.combo);
 }

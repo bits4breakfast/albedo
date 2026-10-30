@@ -15,6 +15,7 @@ import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { terminalTakesKey } from './shortcuts';
+import { focusOnItsOwn } from './focusAreas';
 import './terminal.css';
 
 /**
@@ -499,6 +500,9 @@ export default function Terminal({
       /* links are a nicety, not a requirement */
     }
     term.open(host);
+    // The Tab cycle's stop in the terminal, and Tab stays here (focusAreas.ts).
+    term.textarea?.setAttribute('data-focus-default', '');
+    term.textarea?.setAttribute('data-focus-keeps-tab', '');
 
     // Re-theme in place. Assigning `options.theme` repaints the screen and the
     // scrollback from the existing buffer -- it does not touch the pty, so a
@@ -844,7 +848,9 @@ export default function Terminal({
       if (!term) return;
       try {
         term.refresh(0, term.rows - 1);
-        term.focus();
+        // Focus for typing, marked so the first Tab still reaches the
+        // message box (focusAreas.ts).
+        focusOnItsOwn(term.textarea);
       } catch {
         /* ignore */
       }

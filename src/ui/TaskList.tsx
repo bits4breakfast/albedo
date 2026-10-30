@@ -360,7 +360,9 @@ export default function TaskList({
   const liveCount = tasks.filter((t) => t.status !== 'archived').length;
 
   return (
-    <div className="tasklist" tabIndex={0} onKeyDown={onKeyDown} role="listbox" aria-label="Tasks">
+    /* A stop of the Tab cycle (focusAreas.ts): the list itself takes focus,
+       since it is where ↑/↓ are handled, and the selected row shows which. */
+    <div className="tasklist" tabIndex={0} onKeyDown={onKeyDown} role="listbox" aria-label="Tasks" data-focus-area="tasks">
       <div className="tasklist-head" data-bare={!nameProject || undefined}>
         {/* Identity lives here because this strip is always visible, never
             scrolls, and is already the scope label for the list beneath it.

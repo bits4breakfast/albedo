@@ -754,6 +754,9 @@ export default function FileEditor({
         EditorState.allowMultipleSelections.of(true),
         EditorState.readOnly.of(readOnly),
         EditorView.editable.of(!readOnly),
+        // Where the Tab cycle lands in the editor, and where Tab stays to
+        // indent; Ctrl+Tab leaves (focusAreas.ts).
+        EditorView.contentAttributes.of({ 'data-focus-default': '', 'data-focus-keeps-tab': '' }),
         // No autocompletion, no linting, no LSP -- per spec. If you are about
         // to add `@codemirror/autocomplete` here, that is the line it breaks.
 
