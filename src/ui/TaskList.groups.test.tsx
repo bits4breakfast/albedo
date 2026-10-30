@@ -17,7 +17,7 @@ vi.mock('../gh/prStore', () => ({
   getPrStatus: (id: number): PrStatus | null => {
     const state = prs.get(id);
     return state
-      ? { number: id, url: 'u', title: 'p', state, headRefName: 'b', baseRefName: 'main', mergedAt: null, review: null, checks: { kind: 'none' }, lines: [] }
+      ? { number: id, url: 'u', title: 'p', state, headRefName: 'b', baseRefName: 'main', headSha: '', mergedAt: null, review: null, checks: { kind: 'none' }, lines: [] }
       : null;
   },
   usePrPolling: () => {},

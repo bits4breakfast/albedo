@@ -8,7 +8,10 @@
  * Three refresh triggers, one rule:
  *   - every {@link POLL_MS} for the tasks on screen -- every
  *     {@link POLL_PENDING_MS} for a PR whose checks are still running, which
- *     is when the answer changes and someone is waiting on it,
+ *     is when the answer changes and someone is waiting on it. That one also
+ *     holds off screen, in another project tab or with the window hidden
+ *     ({@link usePendingPrWatch}): the checks finishing is an event the owner
+ *     is told about (#159), wherever the task is,
  *   - on window focus -- coming back from the browser is exactly when the
  *     owner wants to know whether CI went green,
  *   - on demand, when a task is selected.
@@ -28,6 +31,22 @@ export const POLL_PENDING_MS = 15_000;
 export const MIN_AGE_MS = 15_000;
 /** gh is a network round trip each; ten tasks should not be ten at once. */
 const MAX_CONCURRENT = 3;
+/**
+ * The most `gh pr view` calls a minute that watching running checks may cost,
+ * whatever the number of PRs. Each is one GraphQL request against a budget of
+ * 5,000 an hour shared with everything else the owner runs through gh; 40 a
+ * minute is 2,400 an hour at worst, under half of it. Up to ten PRs with
+ * running checks are each still asked every {@link POLL_PENDING_MS}.
+ */
+export const PENDING_CALLS_PER_MIN = 40;
+
+/** See usePendingPrWatch. */
+const TICK_SLACK_MS = 2_000;
+
+/** How often each of `n` PRs with running checks is asked, within the budget. */
+export function pendingIntervalMs(n: number): number {
+  return Math.max(POLL_PENDING_MS, Math.ceil((n * 60_000) / PENDING_CALLS_PER_MIN));
+}
 
 type PrTask = Pick<Task, 'id' | 'branch' | 'baseBranch' | 'worktreePath' | 'repoPath' | 'status'>;
 
@@ -156,6 +175,48 @@ export function usePrStatus(task: PrTask | null): PrStatus | null {
 /** Subscribe to the whole cache, for a list that shows many tasks. */
 export function usePrStatusVersion(): number {
   return useSyncExternalStore(subscribePrStatus, () => version);
+}
+
+/** Whether the cached answer is an open PR whose checks are still running. */
+export function hasPendingChecks(taskId: number): boolean {
+  const pr = cache.get(taskId)?.pr;
+  return !!pr && (pr.state === 'open' || pr.state === 'draft') && pr.checks.kind === 'pending';
+}
+
+/**
+ * Keep every PR with running checks polled, on screen or not (#159).
+ *
+ * Handed ALL tasks, not the visible ones: a task in another project tab, or
+ * scrolled away, still has checks finishing, and that is now an event. Only
+ * a task whose last answer was "open, checks pending" is asked; it learned
+ * that while it was on screen or selected, so nothing here adds a call for a
+ * task that has never been looked at. Unlike {@link usePrPolling} it keeps
+ * going while the window is hidden -- that is exactly when a banner is the
+ * only way to hear about it. The gate still caps it at MAX_CONCURRENT, and
+ * {@link pendingIntervalMs} keeps many running PRs within the rate budget.
+ * A task on screen is asked by both loops; the in-flight and freshness checks
+ * make that one call.
+ */
+export function usePendingPrWatch(tasks: PrTask[]): void {
+  const ref = useRef(tasks);
+  ref.current = tasks;
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const due = ref.current.filter((t) => t.status !== 'archived' && hasPendingChecks(t.id));
+      const every = pendingIntervalMs(due.length);
+      for (const t of due) {
+        const e = cache.get(t.id);
+        // The slack: a tick lands a moment before the answer it follows is a
+        // full interval old (the fetch took that moment), and without it every
+        // other tick is skipped -- 30 s, not 15. Forced past MIN_AGE_MS for the
+        // same reason; an answer the on-screen loop just got is still skipped.
+        if (e && e.branch === t.branch && now() - e.fetchedAt >= every - TICK_SLACK_MS) {
+          void refreshPrStatus(t, { force: true });
+        }
+      }
+    }, POLL_PENDING_MS);
+    return () => clearInterval(timer);
+  }, []);
 }
 
 /**

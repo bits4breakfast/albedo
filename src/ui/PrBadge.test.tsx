@@ -5,7 +5,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
 
@@ -30,9 +30,13 @@ vi.mock('./ChecksDialog', () => ({
 const wt = await import('../git/worktree');
 const { openExternal } = await import('../lib/openUrl');
 const { PrBadge, opensChecks } = await import('./PrBadge');
+const ci = await import('./ciNotice');
+const { __setAttentionBackend } = await import('./attention');
 
 afterEach(() => {
   cleanup();
+  ci.resetCiNoticesForTests();
+  __setAttentionBackend(null);
   state.answered = true;
   state.pr = null;
   vi.clearAllMocks();
@@ -78,6 +82,7 @@ describe('PrBadge with a PR', () => {
     state: 'open',
     headRefName: 'feat',
     baseRefName: 'main',
+    headSha: '',
     mergedAt: null,
     review: null,
     checks: { kind: 'failing', failing: 1, total: 1 },
@@ -108,5 +113,48 @@ describe('PrBadge with a PR', () => {
     fireEvent.click(screen.getByRole('button', { name: /Open on GitHub/ }));
     expect(openExternal).toHaveBeenCalledWith('https://github.com/o/r/pull/6');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('PrBadge and finished checks (#159)', () => {
+  const pr = (failing: boolean, sha = 'a'): PrStatus => ({
+    number: 6, url: 'https://github.com/o/r/pull/6', title: 't', state: 'open', headRefName: 'feat', baseRefName: 'main',
+    headSha: sha, mergedAt: null, review: null,
+    checks: failing ? { kind: 'failing', failing: 1, total: 1 } : { kind: 'pending', pending: 1, total: 1 },
+    lines: [{ name: 'CI / linux', bucket: failing ? 'fail' : 'pending', url: null }],
+  });
+
+  it('opens the Checks dialog when a "checks failed" banner was clicked for this task', () => {
+    state.pr = pr(true);
+    ci.requestChecks(1);
+    render(<PrBadge task={task} />);
+    expect(screen.getByRole('dialog', { name: 'Checks' })).toBeTruthy();
+  });
+
+  it('leaves another task\'s request alone', () => {
+    state.pr = pr(true);
+    ci.requestChecks(2);
+    render(<PrBadge task={task} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('cues the badge when checks finish on the open task, then lets it go', () => {
+    vi.useFakeTimers();
+    __setAttentionBackend(() => {}, true, () => {});
+    state.pr = pr(true);
+    render(<PrBadge task={task} />);
+    const badge = screen.getByRole('button', { name: /Pull request 6/ });
+    expect(badge.getAttribute('data-cue')).toBeNull();
+    act(() => {
+      ci.observeCi(task, pr(false), 1);
+      ci.observeCi(task, pr(true), 1);
+    });
+    expect(badge.getAttribute('data-cue')).toBe('fail');
+    expect(screen.getByRole('status').textContent).toBe('Checks failed on pull request 6');
+    act(() => {
+      vi.advanceTimersByTime(ci.CI_CUE_MS);
+    });
+    expect(badge.getAttribute('data-cue')).toBeNull();
+    vi.useRealTimers();
   });
 });

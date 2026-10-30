@@ -24,6 +24,7 @@ import {
   announcementFor,
   attentionMarks,
   clearAttention,
+  lastBannerFor,
   onAttention,
   onNotificationClick,
   watchFocus,
@@ -86,7 +87,8 @@ import {
   freeFollowUpTitle,
 } from './ui/followUp';
 import { useMergeNotices } from './ui/mergeNotice';
-import { getPrStatus } from './gh/prStore';
+import { getPrStatus, usePendingPrWatch } from './gh/prStore';
+import { requestChecks, useCiNotices, useCiNotifyEnabled } from './ui/ciNotice';
 import { fetchPrStatus } from './gh/gh';
 import type { PrStatus } from './gh/prStatus';
 
@@ -570,8 +572,16 @@ export default function App() {
     setAnnouncement(text);
   }, [attention]);
   useEffect(() => watchFocus(), []);
-  // A banner names one task; clicking it opens that task.
-  useEffect(() => onNotificationClick(select), [select]);
+  // A banner names one task; clicking it opens that task -- and, for the
+  // newest banner being "checks failed", its Checks dialog on the failing job.
+  useEffect(
+    () =>
+      onNotificationClick((id) => {
+        select(id);
+        if (lastBannerFor(id) === 'checks-fail') requestChecks(id);
+      }),
+    [select],
+  );
 
   // A transcript row that names a task (a message from another session) opens
   // it through this. Stable, reading the list through a ref, like `select`.
@@ -582,6 +592,13 @@ export default function App() {
     [select],
   );
   useMergeNotices(tasks);
+  // Checks finishing is news wherever the task is: every task's running checks
+  // stay polled (the list polls only what it shows), and every answer is
+  // watched for the moment they finish (#159).
+  const prTasks = useMemo(() => tasks.filter((t) => t.kind !== 'chat'), [tasks]);
+  usePendingPrWatch(prTasks);
+  useCiNotices(tasks, selectedId);
+  const [ciNotify, setCiNotify] = useCiNotifyEnabled();
 
   const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
 
@@ -1015,6 +1032,8 @@ export default function App() {
         requests={requests}
         theme={themeChoice}
         onThemeChange={setThemeChoice}
+        ciNotify={ciNotify}
+        onCiNotifyChange={setCiNotify}
         onWaitingClick={() => {
           // Most recently active first; from a waiting task, on to the next.
           const waiting = tasks

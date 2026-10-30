@@ -48,6 +48,7 @@ const pr: PrStatus = {
   state: 'open',
   headRefName: '56-offline-outbox',
   baseRefName: 'main',
+  headSha: '',
   mergedAt: null,
   review: null,
   checks: { kind: 'failing', failing: 1, total: 2 },

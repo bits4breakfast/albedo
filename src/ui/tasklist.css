@@ -198,6 +198,16 @@
    --panel-hover 6.22 | 6.91, --panel-raised (selected, menu open) 5.89 |
    6.50. Never on --row-blocked: a blocked task is not idle. */
 .task-background { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* PR checks that finished unseen (ciNotice.ts): the badge's own tokens, a
+   glyph and a word, never colour alone. Measured light | dark on every ground
+   the row can have, worst first:
+     --add     --panel-active 5.55 | --panel-raised 8.50; --panel-raised 5.92
+               light; --panel-hover 6.25 | 9.03; --row-blocked-hover 6.38 | 8.94
+     --danger  --panel-active 5.39 | --panel-raised 7.03; --panel-raised 5.75
+               light; --panel-hover 6.07 | 7.48; --row-blocked-hover 6.20 | 7.40 */
+.task-ci { white-space: nowrap; font-weight: 600; }
+.task-ci[data-outcome='pass'] { color: var(--add); }
+.task-ci[data-outcome='fail'] { color: var(--danger); }
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on
