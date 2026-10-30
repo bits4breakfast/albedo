@@ -36,7 +36,16 @@ import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages, messageOrderKeys } from '../../db';
 import { mergeTail, tailCursor } from './tail';
-import { harnessInputOf, isLocalCommandLine, onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
+import {
+  harnessInputOf,
+  isLocalCommandLine,
+  onCaptureUpdate,
+  onQueueChange,
+  queuedFor,
+  queueSettlesAt,
+  skillSourceToolUseIdOf,
+  type QueuedEntry,
+} from '../../capture';
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
 import { onConnectivityChange, useOffline, watchConnectivity } from '../../lib/connectivity';
@@ -514,7 +523,7 @@ export function TranscriptPane({
 
           {items.map((item) =>
             item.kind === 'sidechain' ? (
-              <SidechainGroup key={item.key} rows={item.rows} results={item.results} />
+              <SidechainGroup key={item.key} rows={item.rows} results={item.results} extras={item.extras} />
             ) : item.kind === 'compaction' ? (
               <CompactionRow key={item.key} compaction={item.compaction} />
             ) : (
@@ -1717,14 +1726,24 @@ export function shellEscapePath(path: string): string {
 
 export type Item =
   | { kind: 'row'; key: string; message: Message; result: Message | null; extras?: Message[] }
-  | { kind: 'sidechain'; key: string; rows: Message[]; results: Map<number, Message | null> }
+  | {
+      kind: 'sidechain';
+      key: string;
+      rows: Message[];
+      results: Map<number, Message | null>;
+      /** A Skill call's text, by the call's row id (#150). */
+      extras: Map<number, Message[]>;
+    }
   | { kind: 'compaction'; key: string; compaction: Compaction };
 
 /**
  * Pair each `tool_use` with its `tool_result`, and fold runs of sidechain rows
  * into a single collapsible group. Subagent traffic is noise until you go
  * looking for it. A compaction's boundary, summary and notice become one
- * divider (compaction.ts), so the summary is never a "you" band.
+ * divider (compaction.ts), so the summary is never a "you" band. A skill's
+ * text, which Claude Code writes as a `user` row after the Skill call that
+ * loaded it, goes with that call as its `extras` (#150); with the call outside
+ * the loaded window it stays a row of its own.
  *
  * `foldSidechains: false` is for the subagent inspector, which IS going looking
  * for it: every row it shows is sidechain, so folding would hide the whole run
@@ -1739,18 +1758,38 @@ export function groupRows(messages: readonly Message[], { foldSidechains = true 
   }
 
   const consumed = new Set<number>();
+  const calls = new Set<string>();
   for (const m of messages) {
     if (m.role !== 'tool_use') continue;
     const id = toolUseId(m);
     if (!id) continue;
+    calls.add(id);
     const result = resultByCallId.get(id);
     if (result) consumed.add(result.id);
+  }
+
+  // A skill's text goes with the call that loaded it, by the line's
+  // `sourceToolUseID`, never by what the text says.
+  const skillByCallId = new Map<string, Message[]>();
+  for (const m of messages) {
+    if (m.role !== 'user') continue;
+    const id = skillSourceToolUseIdOf(m.rawJson);
+    if (id === null || !calls.has(id)) continue;
+    const rows = skillByCallId.get(id);
+    if (rows) rows.push(m);
+    else skillByCallId.set(id, [m]);
+    consumed.add(m.id);
   }
 
   const resultFor = (m: Message): Message | null => {
     if (m.role !== 'tool_use') return null;
     const id = toolUseId(m);
     return id ? (resultByCallId.get(id) ?? null) : null;
+  };
+  const extrasFor = (m: Message): Message[] | undefined => {
+    if (m.role !== 'tool_use') return undefined;
+    const id = toolUseId(m);
+    return id ? skillByCallId.get(id) : undefined;
   };
 
   const items: Item[] = [];
@@ -1761,16 +1800,19 @@ export function groupRows(messages: readonly Message[], { foldSidechains = true 
     if (foldSidechains && isSidechain(m)) {
       const rows: Message[] = [];
       const results = new Map<number, Message | null>();
+      const extras = new Map<number, Message[]>();
       while (i < messages.length) {
         const s = messages[i];
         if (!s || !isSidechain(s)) break;
         if (!consumed.has(s.id)) {
           rows.push(s);
           results.set(s.id, resultFor(s));
+          const more = extrasFor(s);
+          if (more) extras.set(s.id, more);
         }
         i++;
       }
-      if (rows.length > 0) items.push({ kind: 'sidechain', key: `sc-${rows[0]?.id ?? i}`, rows, results });
+      if (rows.length > 0) items.push({ kind: 'sidechain', key: `sc-${rows[0]?.id ?? i}`, rows, results, extras });
       continue;
     }
     if (!consumed.has(m.id)) {
@@ -1822,7 +1864,8 @@ export function groupRows(messages: readonly Message[], { foldSidechains = true 
         i = j;
         continue;
       }
-      items.push({ kind: 'row', key: `m-${m.id}`, message: m, result: resultFor(m) });
+      const more = extrasFor(m);
+      items.push({ kind: 'row', key: `m-${m.id}`, message: m, result: resultFor(m), ...(more ? { extras: more } : {}) });
     }
     i++;
   }
@@ -1832,9 +1875,11 @@ export function groupRows(messages: readonly Message[], { foldSidechains = true 
 function SidechainGroup({
   rows,
   results,
+  extras,
 }: {
   rows: readonly Message[];
   results: Map<number, Message | null>;
+  extras: Map<number, Message[]>;
 }): ReactNode {
   const [open, setOpen] = useState(false);
   const tools = rows.filter((r) => r.role === 'tool_use').length;
@@ -1849,7 +1894,7 @@ function SidechainGroup({
         {open ? (
           <div className="tx-sidechain-body">
             {rows.map((r) => (
-              <MessageRow key={r.id} message={r} result={results.get(r.id) ?? null} />
+              <MessageRow key={r.id} message={r} result={results.get(r.id) ?? null} extras={extras.get(r.id)} />
             ))}
           </div>
         ) : null}

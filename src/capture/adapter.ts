@@ -510,7 +510,8 @@ export function notMetaSqlPredicate(column = 'raw_json'): string {
  *    image's `[Image…` note, which belongs with the picture.
  *
  * By shape, not text, so a reworded note is still caught. Unchanged: a
- * skill's body (content is an array of blocks), a message from another
+ * skill's body (content is an array of blocks; `skillSourceToolUseIdOf`
+ * links it to its Skill call), a message from another
  * session or a coordinator, and a task notification (each has `origin`).
  *
  * Measured over the transcripts on this machine, Claude Code 2.1.27x-2.1.31x:
@@ -539,6 +540,38 @@ export function harnessInputOf(rawJson: string): HarnessInput | null {
   // checked too, so one without it never loses its sender.
   if (/<(agent-message|cross-session-message)\b/.test(text)) return null;
   return 'note';
+}
+
+/**
+ * The `Skill` tool call whose instructions this line carries, or null (#150).
+ *
+ * When Claude calls the Skill tool, Claude Code answers "Launching skill:
+ * <name>" as the tool's result, then writes the skill's text as a `user` line
+ * of its own: `isMeta: true`, `sourceToolUseID: <the tool_use id>`, and
+ * `message.content` an array of `text` blocks. A plugin or user skill's text
+ * begins "Base directory for this skill: <dir>"; a built-in one's does not,
+ * and was drawn as a message from "You".
+ *
+ * By shape only: the id links the text to its call. A string body with a
+ * `sourceToolUseID` ("Skill /x is already loaded above…") is a harness note
+ * (`harnessInputOf`), not a skill's text, and a skill the user typed as
+ * `/name` writes its text without `sourceToolUseID`.
+ *
+ * Measured over the transcripts on this machine, Claude Code 2.1.27x-2.1.31x:
+ * 83 such lines, every one a single `text` block, 1 in a subagent.
+ */
+export function skillSourceToolUseIdOf(rawJson: string): string | null {
+  // Cheap pre-filter: nearly every row is not one.
+  if (!rawJson.includes('sourceToolUseID')) return null;
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'user' || line['isMeta'] !== true || line['origin'] !== undefined) return null;
+  const id = line['sourceToolUseID'];
+  if (typeof id !== 'string' || id === '') return null;
+  const message = line['message'];
+  const content = isRecord(message) ? message['content'] : null;
+  if (!Array.isArray(content) || content.length === 0) return null;
+  if (!content.every((b) => isRecord(b) && b['type'] === 'text')) return null;
+  return id;
 }
 
 /**

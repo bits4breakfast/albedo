@@ -15,7 +15,7 @@
  */
 
 import type { Message } from '../../types';
-import { compactBoundaryOf, compactSummaryOf, harnessInputOf, isNoticeLine, type CompactBoundary } from '../../capture';
+import { compactBoundaryOf, compactSummaryOf, harnessInputOf, isNoticeLine, skillSourceToolUseIdOf, type CompactBoundary } from '../../capture';
 import { formatContextTokens } from '../StatusDot';
 import { formatDuration } from '../../lib/duration';
 
@@ -43,10 +43,17 @@ export function isCompactSummaryRow(m: Pick<Message, 'role' | 'rawJson'>): boole
  * before taking the next message, and must not count. Nor does input Claude
  * Code wrote itself (`harnessInputOf`): a `/loop` wake-up re-sends its prompt
  * as a `user` row, and one landing while a message is on its way would clear
- * that message's echo as if it had arrived (#138).
+ * that message's echo as if it had arrived (#138). Nor does a skill's text,
+ * which Claude Code writes as a `user` row after Claude's Skill call (#150):
+ * it is part of the running turn, never the start of one.
  */
 export function isPromptRow(m: Pick<Message, 'role' | 'rawJson'>): boolean {
-  return m.role === 'user' && !isCompactSummaryRow(m) && harnessInputOf(m.rawJson) === null;
+  return (
+    m.role === 'user' &&
+    !isCompactSummaryRow(m) &&
+    harnessInputOf(m.rawJson) === null &&
+    skillSourceToolUseIdOf(m.rawJson) === null
+  );
 }
 
 /**

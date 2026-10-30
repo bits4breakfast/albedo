@@ -19,8 +19,26 @@ import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLin
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
-import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
-import { fullBodyOf, harnessInputOf, imageAt, imagesIn, isLocalCommandLine, peerMessageIdOf, senderTaskOf } from '../../capture';
+import {
+  imageSourceNote,
+  isAllEnvelopes,
+  isImagePlaceholder,
+  parseUserBody,
+  skillTextOf,
+  systemRowText,
+  withoutImageMarkers,
+  type UserBlock,
+} from './envelopes';
+import {
+  fullBodyOf,
+  harnessInputOf,
+  imageAt,
+  imagesIn,
+  isLocalCommandLine,
+  peerMessageIdOf,
+  senderTaskOf,
+  skillSourceToolUseIdOf,
+} from '../../capture';
 import { useTaskOpener } from '../openTask';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -31,7 +49,8 @@ export interface MessageRowProps {
   result?: Message | null;
   /**
    * For a user row: the rest of the same message -- an attached image, the
-   * note naming its file -- so it renders as one band. See groupRows.
+   * note naming its file -- so it renders as one band. For a tool call: the
+   * skill's text Claude Code wrote after a Skill call (#150). See groupRows.
    */
   extras?: readonly Message[];
 }
@@ -42,6 +61,11 @@ export function MessageRow({ message, result = null, extras = [] }: MessageRowPr
   const harness = message.role === 'user' || message.role === 'system' ? harnessInputOf(message.rawJson) : null;
   if (harness === 'wakeup' || harness === 'scheduled-prompt') return <WakeupRow message={message} extras={extras} />;
   if (harness === 'note') return <SystemRow message={message} />;
+  // A skill's text whose Skill call is not among the loaded rows (#150):
+  // Claude Code wrote it, so it is never "You".
+  if (message.role === 'user' && skillSourceToolUseIdOf(message.rawJson) !== null) {
+    return <SkillTextRow message={message} extras={extras} />;
+  }
   switch (message.role) {
     case 'user':
       return <UserRow message={message} extras={extras} />;
@@ -50,7 +74,7 @@ export function MessageRow({ message, result = null, extras = [] }: MessageRowPr
     case 'system':
       return isLocalCommandLine(message.rawJson) ? <LocalCommandRow message={message} /> : <SystemRow message={message} />;
     case 'tool_use':
-      return <ToolUseRow message={message} result={result} />;
+      return <ToolUseRow message={message} result={result} extras={extras} />;
     case 'tool_result':
       // Normally consumed by its tool_use row; an orphan still deserves display.
       return <OrphanResultRow message={message} />;
@@ -248,7 +272,7 @@ function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: stri
       // until the switch became exhaustive. Folded rather than hidden.
       return <Collapsed label="Attached Context" text={block.text} />;
     case 'skill':
-      return <SkillBlock block={block} />;
+      return <SkillBlock skill={block} />;
     case 'pasted': {
       const lines = block.text.split('\n').length;
       return <Collapsed label={`Pasted Text · ${lines} Line${lines === 1 ? '' : 's'}`} text={block.text} />;
@@ -430,21 +454,73 @@ function Collapsed({ label, text, markdown = false }: { label: string; text: str
   );
 }
 
-/** A loaded skill: its name and where it lives, with the SKILL.md folded away. */
-function SkillBlock({ block }: { block: Extract<UserBlock, { kind: 'skill' }> }): ReactNode {
+type SkillText = ReturnType<typeof skillTextOf>;
+
+/**
+ * A loaded skill: its name and where it lives, with the SKILL.md folded away.
+ * A built-in skill's text names neither, and reads "Skill Loaded" alone.
+ */
+function SkillBlock({ skill }: { skill: SkillText }): ReactNode {
   const [open, setOpen] = useState(false);
   return (
     <div className="tx-collapsed">
       <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <Disclosure open={open} /> Skill Loaded · <span className="tx-cmd-name">{block.name}</span>
+        <Disclosure open={open} /> Skill Loaded
+        {skill.name ? (
+          <>
+            {' · '}
+            <span className="tx-cmd-name">{skill.name}</span>
+          </>
+        ) : null}
       </button>
       {open ? (
         <div className="tx-think-body">
-          <div className="tx-cmd-args">{block.dir}</div>
-          <Markdown text={block.text} />
+          {skill.dir ? <div className="tx-cmd-args">{skill.dir}</div> : null}
+          <Markdown text={skill.text} />
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** A skill's text, whole: every row of the line, each read past a cut. */
+function skillTextIn(rows: readonly Message[]): SkillText {
+  return skillTextOf(rows.map((m) => fullBodyOf(m) ?? '').join('\n\n'));
+}
+
+/**
+ * A skill's text on its own (#150): its Skill call is outside the loaded
+ * rows, so it cannot fold into that chip. Claude Code wrote it, so the row
+ * has no "You", and the text is folded as a typed `/skill` one is.
+ */
+function SkillTextRow({ message, extras }: { message: Message; extras: readonly Message[] }): ReactNode {
+  const skill = useMemo(() => skillTextIn([message, ...extras]), [message, extras]);
+  if (skill.text.length === 0) return null;
+  return (
+    <div className="tx-row tx-row-machine">
+      <div className="tx-gutter" />
+      <div className="tx-content">
+        <SkillBlock skill={skill} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The text a Skill call loaded, inside its open chip (#150): where the skill
+ * lives, when its text says, and its instructions as markdown.
+ */
+function SkillInstructions({ rows }: { rows: readonly Message[] }): ReactNode {
+  const skill = useMemo(() => skillTextIn(rows), [rows]);
+  if (skill.text.length === 0 && skill.dir === null) return null;
+  return (
+    <section className="tx-chip-section">
+      <h4 className="tx-chip-label">Instructions</h4>
+      {skill.dir ? <div className="tx-chip-desc">{skill.dir}</div> : null}
+      <div className="tx-report">
+        <Markdown text={skill.text} />
+      </div>
+    </section>
   );
 }
 
@@ -571,8 +647,17 @@ function OrphanResultRow({ message }: { message: Message }): ReactNode {
 // Tool calls
 // ---------------------------------------------------------------------------
 
-function ToolUseRow({ message, result }: { message: Message; result: Message | null }): ReactNode {
+function ToolUseRow({
+  message,
+  result,
+  extras,
+}: {
+  message: Message;
+  result: Message | null;
+  extras: readonly Message[];
+}): ReactNode {
   const rendered = useDiffsFor(message, result);
+  const more = extras.length > 0 ? <SkillInstructions rows={extras} /> : null;
 
   // `data-message-id`: what the Background band scrolls to.
   if (rendered && rendered.diffs.length > 0) {
@@ -580,7 +665,7 @@ function ToolUseRow({ message, result }: { message: Message; result: Message | n
       <div className="tx-row tx-row-tool" data-message-id={message.id}>
         <div className="tx-gutter" />
         <div className="tx-content">
-          <ToolChip message={message} result={result} />
+          <ToolChip message={message} result={result} more={more} />
           {rendered.diffs.map((d, i) => (
             <CollapsibleDiff key={i} diff={d} expand={rendered.expand[i] ?? null} absoluteLines={rendered.absoluteLines} />
           ))}
@@ -593,7 +678,7 @@ function ToolUseRow({ message, result }: { message: Message; result: Message | n
     <div className="tx-row tx-row-tool" data-message-id={message.id}>
       <div className="tx-gutter" />
       <div className="tx-content">
-        <ToolChip message={message} result={result} />
+        <ToolChip message={message} result={result} more={more} />
       </div>
     </div>
   );
