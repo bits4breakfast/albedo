@@ -92,6 +92,45 @@ Most of what Albedo does is observe another program's side effects, and the
 tests mock exactly that boundary. A green run is necessary, not sufficient:
 run the app and try the change.
 
+## Dependencies
+
+New dependency versions wait out an embargo: **7 days** after they were
+published, **14** for a new major (or a new 0.x minor, which npm and Cargo
+treat as breaking). A compromised release is usually caught and pulled within
+days, and the wait keeps it out of Albedo.
+
+- **Adding or upgrading an npm package:** `npm run deps:add -- <pkg>` (or
+  `deps:add-dev`). It runs `npm install --before=<a week ago>`, so npm picks
+  the newest version that is at least a week old. Avoid `npm install
+  <pkg>@latest`, `npm update` and `cargo update`: they take whatever was
+  published a minute ago. Cargo has no equivalent of `--before`, so after
+  any Rust update run `npm run deps:check` before pushing.
+- **The gate:** on every pull request that changes `package-lock.json` or
+  `src-tauri/Cargo.lock`, CI (`dependency-age` in
+  `.github/workflows/ci.yml`) runs `scripts/check-release-age.mjs`. It asks
+  the npm registry and crates.io when each *new or changed* version was
+  published and fails the PR if any is under the embargo. Unchanged entries
+  are never re-checked. If a registry cannot be reached, it fails rather than
+  let a version through. Git, `file:` and linked dependencies have no publish
+  time; they are listed as skipped, for a human to look at. Run it locally
+  with `npm run deps:check` (compares against `origin/main`).
+- **Dependabot** (`.github/dependabot.yml`) applies the same 7/14 days as its
+  `cooldown` for version updates. Security updates are not delayed by
+  Dependabot, but still meet the gate.
+- **Override, for an urgent fix:** add the exact version to
+  `.dependency-embargo-allow.json` in the same PR, with a reason. The entry
+  is part of the PR diff, so whoever reviews the PR approves the exception.
+
+  ```json
+  { "allow": [
+    { "ecosystem": "npm", "name": "some-package", "version": "1.2.4",
+      "reason": "fixes GHSA-xxxx-xxxx-xxxx, published yesterday" }
+  ] }
+  ```
+
+  `ecosystem` is `npm` or `cargo`. Remove the entry once the version is past
+  the embargo.
+
 ## Read before changing anything
 
 - [CLAUDE.md](CLAUDE.md): the architecture rules and why they exist. The one

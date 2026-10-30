@@ -1,0 +1,53 @@
+# Version updates, with a cooldown (#146): Dependabot proposes a version only
+# once it has been public for 7 days, 14 for a new major. A compromised
+# release is usually caught and pulled within days.
+#
+# `cooldown` applies to version updates only; security updates are not
+# delayed, which is what we want. Their PRs still meet the CI embargo gate
+# (scripts/check-release-age.mjs); an urgent one goes through
+# .dependency-embargo-allow.json, see CONTRIBUTING.md.
+#
+# Reference: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#cooldown
+#
+# Minor and patch updates are grouped into one PR per ecosystem per week;
+# majors come one PR each, since they are the ones that need reading.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      npm-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      cargo-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # GitHub Actions supports only default-days (versions come from git tags,
+    # not SemVer-aware), per the reference above.
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
