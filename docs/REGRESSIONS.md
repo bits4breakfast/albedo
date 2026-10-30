@@ -89,6 +89,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - A feature that reaches outside the app (OS attention, notifications, an external CLI) is checked once in the installed app, not only through its test seam.
   - Its failures are logged, not swallowed: "a nicety" may fail quietly to the user, never to the console.
   - A Tauri API call needs its permission in `capabilities/default.json`; `default` sets grant less than they sound.
+- **Green CI, a build that won't start: a one-sided Tauri bump.** After #160 (Dependabot's npm minor/patch group) the owner's `./build.sh` failed at once: "Found version mismatched Tauri packages ... tauri (v2.11.5) : @tauri-apps/api (v2.12.4)", and five plugins likewise. Dependabot bumps npm and cargo in separate groups, the embargo held the cargo group (#161) back, and CI never runs `tauri build` on a push, so nothing ran the CLI's major.minor check (#177). **Rule:**
+  - `@tauri-apps/*` and their crates move together, in one PR; `scripts/check-tauri-versions.mjs` runs on every push and fails a one-sided bump.
+  - A check the real build makes before compiling anything belongs in CI as its own fast step, when the build itself is not run per push.
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
 ## Cleanup paths
