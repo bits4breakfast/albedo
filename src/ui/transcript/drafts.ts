@@ -20,12 +20,18 @@ import { useSyncExternalStore } from 'react';
 import { KEYS, readPersisted, writePersisted } from '../persisted';
 import type { Codec } from '../persisted';
 import { pastesIn } from './pastedText';
+import { mentionsIn, type Mention, type MentionStore } from './mentions';
 
 export interface Draft {
   text: string;
   /** Placeholder id -> the pasted text it stands for. */
   pastes: ReadonlyArray<readonly [number, string]>;
   savedAt: number;
+  /**
+   * Token -> the task or file it stands for (#154, mentions.ts). Absent when
+   * the draft has none, and in drafts saved before references existed.
+   */
+  mentions?: ReadonlyArray<readonly [string, Mention]>;
   /**
    * A send that was held or waiting for a session when its task was left. The
    * hold is cancelled and the text kept here, so it says "not sent" on return.
@@ -50,6 +56,17 @@ function isDraft(value: unknown): value is Draft {
     typeof d.text === 'string' &&
     typeof d.savedAt === 'number' &&
     (d.notSent === undefined || typeof d.notSent === 'boolean') &&
+    (d.mentions === undefined ||
+      (Array.isArray(d.mentions) &&
+        d.mentions.every(
+          (m: unknown) =>
+            Array.isArray(m) &&
+            m.length === 2 &&
+            typeof m[0] === 'string' &&
+            typeof m[1] === 'object' &&
+            m[1] !== null &&
+            ((m[1] as { kind?: unknown }).kind === 'task' || (m[1] as { kind?: unknown }).kind === 'file'),
+        ))) &&
     Array.isArray(d.pastes) &&
     d.pastes.every(
       (p: unknown) => Array.isArray(p) && p.length === 2 && typeof p[0] === 'number' && typeof p[1] === 'string',
@@ -140,22 +157,46 @@ export function getDraft(taskId: number, now = Date.now()): Draft | null {
  * pastes whose tokens are still intact in the text are kept (`pastesIn`): a
  * paste whose token was deleted or edited is gone with it.
  */
-export function saveDraft(taskId: number, text: string, pastes: ReadonlyMap<number, string>, now = Date.now()): void {
+export function saveDraft(
+  taskId: number,
+  text: string,
+  pastes: ReadonlyMap<number, string>,
+  now = Date.now(),
+  mentions: MentionStore = new Map(),
+): void {
   if (isEmptyDraft(text)) {
     dropDraft(taskId);
     return;
   }
   const prev = current().get(taskId);
-  put(taskId, { text, pastes: [...pastesIn(text, pastes)], savedAt: now, ...(prev?.notSent && prev.text === text ? { notSent: true } : {}) });
+  put(taskId, {
+    text,
+    pastes: [...pastesIn(text, pastes)],
+    ...usedMentions(text, mentions),
+    savedAt: now,
+    ...(prev?.notSent && prev.text === text ? { notSent: true } : {}),
+  });
+}
+
+/** The references whose tokens are still intact, as a draft keeps them; nothing when none. */
+function usedMentions(text: string, mentions: MentionStore): Pick<Draft, 'mentions'> {
+  const used = mentionsIn(text, mentions);
+  return used.size > 0 ? { mentions: [...used] } : {};
 }
 
 /**
  * Keep the text of a send that was cancelled because its task was left. The
  * caller must have cancelled the send first: text is never both pending and a draft.
  */
-export function keepUnsent(taskId: number, text: string, pastes: ReadonlyMap<number, string>, now = Date.now()): void {
+export function keepUnsent(
+  taskId: number,
+  text: string,
+  pastes: ReadonlyMap<number, string>,
+  now = Date.now(),
+  mentions: MentionStore = new Map(),
+): void {
   if (isEmptyDraft(text)) return;
-  put(taskId, { text, pastes: [...pastesIn(text, pastes)], savedAt: now, notSent: true });
+  put(taskId, { text, pastes: [...pastesIn(text, pastes)], ...usedMentions(text, mentions), savedAt: now, notSent: true });
 }
 
 function put(taskId: number, draft: Draft): void {

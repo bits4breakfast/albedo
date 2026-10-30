@@ -62,6 +62,7 @@ import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge'
 import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
 import { markUserActivated } from './ui/editor/outsideFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
+import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
 import { COMPACT, ContextClear, useCommandBlocker } from './ui/ClearContextButton';
@@ -592,6 +593,8 @@ export default function App() {
     [select],
   );
   useMergeNotices(tasks);
+  // What the message box's `@` list offers (#154).
+  const mentionSource = useMemo<MentionSource>(() => ({ tasks, projects }), [tasks, projects]);
   // Checks finishing is news wherever the task is: every task's running checks
   // stay polled (the list polls only what it shows), and every answer is
   // watched for the moment they finish (#159).
@@ -1021,6 +1024,7 @@ export default function App() {
     <FileOpenContext.Provider value={openFile}>
     <FileTextContext.Provider value={readFileText}>
     <TaskOpenContext.Provider value={taskOpener}>
+    <MentionSourceContext.Provider value={mentionSource}>
     <div className="app" data-dragging={dragging !== null} data-drag={dragging ?? undefined}>
       <Header
         onReconcile={() => setReconcileOpen(true)}
@@ -1894,6 +1898,7 @@ export default function App() {
         />
       </PaneErrorBoundary>
     </div>
+    </MentionSourceContext.Provider>
     </TaskOpenContext.Provider>
     </FileTextContext.Provider>
     </FileOpenContext.Provider>

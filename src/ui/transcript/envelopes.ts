@@ -53,10 +53,16 @@
  * `<pasted_content>` alike, since the whole message often arrives in one.
  */
 
-import { findMarker, splitMarkers, type Marker } from './albedoMarkers';
+import { BLOCK_TAGS, findMarker, splitMarkers, type Marker } from './albedoMarkers';
+import { inlineMentions, mentionOfMarker, type Mention } from './mentions';
 
 export type UserBlock =
-  | { kind: 'text'; text: string }
+  /**
+   * What the person wrote. `mentions`: the references in it (#154) -- an
+   * Albedo `<task-ref>`/`<file-ref>` marker, already replaced by its label in
+   * `text`, or a bare `@path` -- for MessageRow to draw as chips.
+   */
+  | { kind: 'text'; text: string; mentions?: Mention[] }
   /** A subagent or background task finished. */
   | {
       kind: 'task-notification';
@@ -319,10 +325,16 @@ function parseAgentMessage(attrs: string, inner: string): UserBlock {
   return { kind: 'agent-message', from: attr(attrs, 'from'), name: attr(attrs, 'from-name'), handback, text };
 }
 
-function pushText(out: UserBlock[], raw: string): void {
-  const text = raw.replace(/^\n+/, '').replace(/\s+$/, '');
+/**
+ * Text the person wrote, with its references (#154) as labels and listed:
+ * a reference sits inside a sentence, so it never splits the text into
+ * blocks. `unescape` applies to the text around the markers only.
+ */
+function pushText(out: UserBlock[], raw: string, unescape?: (s: string) => string): void {
+  const { text: whole, mentions } = inlineMentions(raw, unescape);
+  const text = whole.replace(/^\n+/, '').replace(/\s+$/, '');
   if (text.length === 0) return;
-  out.push({ kind: 'text', text });
+  out.push(mentions.length > 0 ? { kind: 'text', text, mentions } : { kind: 'text', text });
 }
 
 /**
@@ -463,7 +475,9 @@ function stripAgentFrame(blocks: UserBlock[]): UserBlock[] {
  */
 function unwrapSoleStreamedPaste(blocks: UserBlock[]): UserBlock[] {
   const only = blocks.length === 1 ? blocks[0] : undefined;
-  return only && only.kind === 'pasted' && !only.own ? [{ kind: 'text', text: only.text }] : blocks;
+  if (!only || only.kind !== 'pasted' || only.own) return blocks;
+  const { mentions } = inlineMentions(only.text);
+  return [mentions.length > 0 ? { kind: 'text', text: only.text, mentions } : { kind: 'text', text: only.text }];
 }
 
 /** The block an Albedo marker draws as. */
@@ -471,6 +485,13 @@ function markerBlock(m: Marker): UserBlock {
   switch (m.tag) {
     case 'pasted-text':
       return { kind: 'pasted', id: m.attrs.id ?? null, text: m.content, own: true };
+    case 'task-ref':
+    case 'file-ref': {
+      // Found with the text around it (`pushText`), never as a block; drawn
+      // the same way should one ever stand alone.
+      const mention = mentionOfMarker(m);
+      return mention ? { kind: 'text', text: mention.label, mentions: [mention] } : { kind: 'text', text: m.content };
+    }
     default: {
       const unhandled: never = m.tag;
       return unhandled;
@@ -484,12 +505,11 @@ function markerBlock(m: Marker): UserBlock {
  * the typed text around them as text. Null when it holds none.
  */
 function pastedWithMarkers(inner: string): UserBlock[] | null {
-  const parts = splitMarkers(inner);
-  if (!parts.some((p) => p.kind === 'marker')) return null;
+  if (!splitMarkers(inner).some((p) => p.kind === 'marker')) return null;
   const out: UserBlock[] = [];
-  for (const p of parts) {
+  for (const p of splitMarkers(inner, BLOCK_TAGS)) {
     if (p.kind === 'marker') out.push(markerBlock(p.marker));
-    else pushText(out, unescapeXml(p.text));
+    else pushText(out, p.text, unescapeXml);
   }
   return out;
 }
@@ -575,7 +595,8 @@ export function parseUserBody(body: string): UserBlock[] {
       m = ENVELOPE_RE.exec(body);
       // An Albedo marker before the next envelope is taken first, whole: what
       // it wraps is the person's paste, and an envelope-like tag in it is text.
-      if (marker === undefined || (marker !== null && marker.start < last)) marker = findMarker(body, last);
+      // A paste only: a reference is part of the text around it (`pushText`).
+      if (marker === undefined || (marker !== null && marker.start < last)) marker = findMarker(body, last, BLOCK_TAGS);
       if (marker !== null && (m === null || marker.start < m.index)) {
         if (marker.start > last) pushText(out, body.slice(last, marker.start));
         out.push(markerBlock(marker));

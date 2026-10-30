@@ -18,6 +18,7 @@
 
 import { encodeMarker, freeMarkerId, splitMarkers, type Marker } from './albedoMarkers';
 import { actionLabelOf } from './envelopes';
+import { mentionLabelOf } from './mentions';
 
 /*
    Claude Code's own threshold, read from its bundle (2.1.314, the prompt
@@ -153,13 +154,21 @@ export function pasteMention(text: string): string {
 }
 
 /**
- * The message with each paste marker as its mention: what the "Sending" echo
- * and the Queued band show, so a paste reads as it did in the box and not as
- * forty lines of log under your sentence.
+ * The message with each paste marker as its mention, and each reference as
+ * its label: what the "Sending" echo and the Queued band show, so a paste
+ * reads as it did in the box and not as forty lines of log under your
+ * sentence, and a reference as `@Title`, not as its tag.
  */
 export function foldPastes(text: string): string {
   return splitMarkers(text)
-    .map((p) => (p.kind === 'text' ? p.text : isPaste(p.marker) ? pasteMention(p.marker.content) : text.slice(p.marker.start, p.marker.end)))
+    .map((p) =>
+      p.kind === 'text'
+        ? p.text
+        : isPaste(p.marker)
+          ? pasteMention(p.marker.content)
+          : // A reference (#154) as its label: `@Fix login retry`, `@src/foo.ts`.
+            (mentionLabelOf(p.marker) ?? text.slice(p.marker.start, p.marker.end)),
+    )
     .join('');
 }
 

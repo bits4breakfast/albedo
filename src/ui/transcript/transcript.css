@@ -365,6 +365,8 @@
    row inside it. The box carries the edge and the focus ring; the textarea
    inside is bare. */
 .tx-composer-box {
+  /* The `@` list (mentions.css) hangs above the box. */
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--panel-inset);
