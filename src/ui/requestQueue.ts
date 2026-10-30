@@ -8,8 +8,9 @@
  *   - `request_session`: Approve opens New Task filled in from the request;
  *     the request leaves the queue only once that task is created. Deny drops
  *     it. Nothing starts without the click -- the queue never creates a task.
- *   - `create_reminder`: handed to {@link handleCreateReminder}. Until the
- *     reminders of #156 exist it is kept here, saying so, until dismissed.
+ *   - `create_reminder`: set at once by {@link handleCreateReminder}, as a
+ *     reminder on the asking task (#156); it never waits here. Only one Albedo
+ *     could not set -- its task gone, say -- is kept, saying so, until dismissed.
  *   - `notify_blocked`: the task is marked and the user cued (attention.ts),
  *     and the message is kept here until dismissed: opening the task clears
  *     its mark, but the message is only here, so it stays until read. A newer
@@ -24,6 +25,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { decodeStoredRequest, encodeRequest, type InboxRequest } from '../capture/inbox';
+import { createReminder, listPendingReminders } from '../reminders';
 import { noteAgentBlocked } from './attention';
 import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
 
@@ -131,23 +133,32 @@ export function withoutExpired(state: QueueState, now: number): QueueState {
 // create_reminder: the one adapter to #156
 // ---------------------------------------------------------------------------
 
-export type ReminderOutcome =
-  /** Albedo set the reminder; the request is done. */
-  | 'created'
-  /** Not set (yet): the request stays in the queue for the user to see. */
-  | 'pending';
-
 /**
- * Turn a session's reminder request into a reminder. The only place that
- * will call #156's `createReminder`.
- *
- * #156 (reminders) is not merged yet, so for now nothing is set: the request
- * is kept in the queue, where the user sees what was asked and when for, and
- * can dismiss it. Once #156 lands this calls `createReminder({ taskId, text,
- * dueAt: dueMs, summary })` and answers 'created'.
+ * Turn a session's reminder request into a reminder on the task that asked.
+ * The only place that calls #156's `createReminder`. Resolves false, with the
+ * reason logged, when it could not be set -- or when the task already has
+ * {@link MAX_PENDING_PER_TASK} still to come: nothing is in the way of a
+ * session setting one, so a session in a loop must not set hundreds.
  */
-export function handleCreateReminder(_req: ReminderRequest): ReminderOutcome {
-  return 'pending';
+export async function handleCreateReminder(req: ReminderRequest): Promise<boolean> {
+  try {
+    const waiting = await listPendingReminders(req.taskId);
+    if (waiting.length >= MAX_PENDING_PER_TASK) {
+      console.warn(`[requests] reminder from task ${req.taskId} not set: ${waiting.length} already to come`);
+      return false;
+    }
+    await createReminder({
+      taskId: req.taskId,
+      text: req.text,
+      dueAt: req.dueMs,
+      createdBy: 'session',
+      summary: req.summary,
+    });
+    return true;
+  } catch (e) {
+    console.warn(`[requests] reminder from task ${req.taskId} not set:`, e);
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -178,8 +189,14 @@ export function receiveRequest(req: QueuedRequest, task: TaskInfo, now = Date.no
   const prev = current();
   const a = admit(prev, req, task, now);
   if (!a.add && a.why !== 'seen') console.warn(`[requests] ${req.tool} from task ${req.taskId} not queued: ${a.why}`);
-  if (a.add && req.tool === 'create_reminder' && handleCreateReminder(req) === 'created') {
+  if (a.add && req.tool === 'create_reminder') {
+    // Handled before it is set, so a line handed on twice is never set twice;
+    // queued only if it could not be.
     commit({ ...prev, handled: remember(prev.handled, [req.id]) });
+    void handleCreateReminder(req).then((ok) => {
+      // Already in `handled`, so appended as is: withRequest would see it as seen.
+      if (!ok) commit({ ...current(), items: [...current().items, req] });
+    });
     return;
   }
   commit(withRequest(prev, req, task, now));

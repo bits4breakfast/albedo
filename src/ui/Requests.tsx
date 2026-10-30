@@ -235,7 +235,7 @@ function RequestBody({
           <div className="requests-title">{r.text}</div>
           <div className="requests-text">Due {when(r.dueMs)}</div>
           <div className="requests-note">
-            Not set: reminders are not in Albedo yet (#156). Kept here so you can see what was asked.
+            Albedo couldn't set this reminder. Kept here so you can see what was asked.
           </div>
           <div className="requests-actions">
             <button type="button" className="btn btn-ghost" onClick={() => onDismiss(r.id)}>

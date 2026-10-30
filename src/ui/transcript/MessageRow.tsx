@@ -41,6 +41,8 @@ import {
   skillSourceToolUseIdOf,
 } from '../../capture';
 import { useTaskOpener } from '../openTask';
+import { dateText } from '../../reminders/when';
+import { ReminderGlyph } from '../reminders/ReminderGlyph';
 import { MentionChip } from './MentionChip';
 import type { Mention } from './mentions';
 
@@ -253,6 +255,8 @@ function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: stri
       );
     case 'action':
       return <ActionBlock block={block} />;
+    case 'reminder':
+      return <ReminderBlock block={block} />;
     case 'shell-input':
       return (
         <div className="tx-cmd tx-shell-in" title="Run in Claude Code's shell mode">
@@ -397,6 +401,30 @@ function ActionBlock({ block }: { block: Extract<UserBlock, { kind: 'action' }> 
           <Markdown text={block.text} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * A reminder Albedo sent from its card (#156): its own container and label,
+ * like the card it came from, so it never reads as something you typed. The
+ * brief a replacement task sent with it stays folded.
+ */
+function ReminderBlock({ block }: { block: Extract<UserBlock, { kind: 'reminder' }> }): ReactNode {
+  const who = block.by === 'session' ? 'by Claude' : block.by === 'user' ? 'by you' : null;
+  const when = block.setAt !== null ? `set ${dateText(block.setAt, new Date())}` : null;
+  const meta = [when, who].filter(Boolean).join(' ');
+  return (
+    <div className="tx-reminder" role="note" aria-label="Reminder">
+      <div className="tx-reminder-head">
+        <span className="tx-reminder-tag">
+          <ReminderGlyph />
+          Reminder
+        </span>
+        {meta ? <span className="tx-reminder-meta">· {meta}</span> : null}
+      </div>
+      <Markdown text={block.text} />
+      {block.brief ? <Collapsed label="Brief Sent with It" text={block.brief} markdown /> : null}
     </div>
   );
 }
