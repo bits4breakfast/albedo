@@ -122,6 +122,18 @@ jobs:
         with:
           node-version: 26
 
+      # The gate runs as the BASE branch has it, so a PR cannot weaken the
+      # check in the same diff that needs it. The PR's own copy runs only
+      # when the base has none yet (the PR that adds it). The allow file is
+      # still read from the PR: an override is meant to be reviewed there.
       - name: Check release age of new dependency versions
         if: steps.lockfiles.outputs.changed == 'true'
-        run: node scripts/check-release-age.mjs --base HEAD^1
+        run: |
+          gate="$RUNNER_TEMP/check-release-age.mjs"
+          if git show HEAD^1:scripts/check-release-age.mjs > "$gate" 2>/dev/null; then
+            echo "Running the gate from the base branch."
+          else
+            echo "The base branch has no gate yet; running the PR's copy."
+            cp scripts/check-release-age.mjs "$gate"
+          fi
+          node "$gate" --base HEAD^1
