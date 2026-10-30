@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build Albedo for this machine.
 #
-#   ./build.sh                 checks + release build (.app/.dmg on macOS, .deb/.AppImage on Linux)
+#   ./build.sh                 checks + release build (.app/.dmg on macOS, .deb/.AppImage on Linux),
+#                              with Albedo's MCP server bundled (scripts/build-mcp.sh)
 #   ./build.sh --skip-checks   build only (no typecheck, no tests)
 #   ./build.sh --install       also install it (macOS: /Applications; Linux: the .deb, via sudo apt)
 #   ./build.sh --with-phpantom bundle PHPantom (~48 MB) for type-aware PHP navigation
@@ -24,7 +25,7 @@ for arg in "$@"; do
     --install) install=1 ;;
     --with-phpantom) with_phpantom=1 ;;
     -h | --help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -135,20 +136,31 @@ if [ "$skip_checks" -eq 0 ]; then
   npx vitest run
 fi
 
-# --- PHPantom (optional) --------------------------------------------------------
-# Bundled as a Tauri sidecar: the binary sits next to Albedo's own inside the
-# app, named with the target triple as Tauri requires. The externalBin entry is
-# passed for this build only, so a build without the flag is unchanged and no
-# config file has to be edited back. scripts/install-phpantom.sh does the
-# pinned download and the checksum check.
-tauri_config=()
+# --- sidecars --------------------------------------------------------------------
+# Bundled as Tauri sidecars: each binary sits next to Albedo's own inside the
+# app, named with the target triple as Tauri requires. The externalBin list is
+# passed for this build only, so no config file has to be edited back, and
+# `cargo`/`tauri dev` never need the binaries to exist.
+external_bins=()
+
+# Albedo's MCP server (#157), always: built from this repository, a few
+# hundred KB. Without it sessions start as they did before it existed.
+step "Building the MCP server"
+scripts/build-mcp.sh
+external_bins+=("binaries/albedo-mcp")
+
+# PHPantom (optional). scripts/install-phpantom.sh does the pinned download and
+# the checksum check.
 if [ "$with_phpantom" -eq 1 ]; then
   step "Fetching PHPantom to bundle"
   triple=$(rustc -vV | sed -n 's/^host: //p')
   [ -n "$triple" ] || fail "could not read the Rust host triple from rustc -vV"
   scripts/install-phpantom.sh --to "src-tauri/binaries/phpantom_lsp-$triple"
-  tauri_config=(--config '{"bundle":{"externalBin":["binaries/phpantom_lsp"]}}')
+  external_bins+=("binaries/phpantom_lsp")
 fi
+
+bins_json=$(printf '"%s",' "${external_bins[@]}")
+tauri_config=(--config "{\"bundle\":{\"externalBin\":[${bins_json%,}]}}")
 
 # --- signing (macOS) -------------------------------------------------------------
 # macOS refuses notifications to an ad-hoc signed app ("Notifications are not

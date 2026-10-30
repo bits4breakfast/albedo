@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CHAT_SYSTEM_PROMPT, isResumePlan, kindFlags, planSpawn, type SpawnInput } from './sessionSpawn';
+import {
+  CHAT_SYSTEM_PROMPT,
+  isResumePlan,
+  kindFlags,
+  mcpConfigArg,
+  MCP_TOOLS,
+  planSpawn,
+  withMcpConfig,
+  type SpawnInput,
+} from './sessionSpawn';
 
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -116,5 +125,47 @@ describe('chat tasks', () => {
 
   it('is still a resume plan when it resumes', () => {
     expect(isResumePlan(planSpawn({ kind: 'chat', sessionId: A, transcriptExists: true, newId }))).toBe(true);
+  });
+});
+
+describe('Albedo MCP server (#157)', () => {
+  const server = '/Applications/Albedo.app/Contents/MacOS/albedo-mcp';
+
+  it('names the server, its absolute path and the task id in its environment', () => {
+    expect(JSON.parse(mcpConfigArg(42, server))).toEqual({
+      mcpServers: { albedo: { type: 'stdio', command: server, args: [], env: { ALBEDO_TASK_ID: '42' } } },
+    });
+  });
+
+  it('goes in front, followed by a flag, and never strict', () => {
+    const args = withMcpConfig(['--settings', '{}', '--session-id', 'abc', 'Fix the bug'], 7, server);
+    expect(args.slice(0, 4)).toEqual(['--mcp-config', mcpConfigArg(7, server), '--allowedTools', MCP_TOOLS.join(',')]);
+    expect(args.slice(4)).toEqual(['--settings', '{}', '--session-id', 'abc', 'Fix the bug']);
+    expect(args).not.toContain('--strict-mcp-config');
+  });
+
+  it('ends the options before a bare prompt, so the prompt is not read as a config', () => {
+    expect(withMcpConfig(['Fix the bug'], 7, server).slice(4)).toEqual(['--', 'Fix the bug']);
+    expect(withMcpConfig([], 7, server).slice(4)).toEqual(['--']);
+  });
+
+  it('allows exactly the three tools', () => {
+    expect(MCP_TOOLS).toEqual([
+      'mcp__albedo__create_reminder',
+      'mcp__albedo__request_session',
+      'mcp__albedo__notify_blocked',
+    ]);
+  });
+
+  it('keeps every planned flag for every spawn mode', () => {
+    for (const input of [
+      { kind: 'work', sessionId: null, transcriptExists: null },
+      { kind: 'chat', sessionId: 's1', transcriptExists: true },
+      { kind: 'work', sessionId: 's1', transcriptExists: false },
+    ] as const) {
+      const plan = planSpawn({ ...input, newId: () => 'new' });
+      const args = withMcpConfig(plan.args, 3, server);
+      expect(args.slice(4)).toEqual(plan.args);
+    }
   });
 });

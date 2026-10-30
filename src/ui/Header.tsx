@@ -6,7 +6,8 @@ import './header.css';
 
 /**
  * Title bar strip. Carries the macOS overlay drag region, the project tabs,
- * the count of sessions waiting on the user, History and ⋯.
+ * the requests sessions made of Albedo, the count of sessions waiting on
+ * the user, History and ⋯.
  *
  * No usage figure. A "Burn" rate used to sit here, the same quantity as the
  * Usage panel's Spend/h but divided by a flat 5h instead of the time actually
@@ -45,6 +46,11 @@ export interface HeaderProps {
   tabs?: ReactNode;
   /** Select a task that is waiting on you (the next one, on repeat clicks). */
   onWaitingClick?: () => void;
+  /**
+   * What sessions asked for through Albedo's MCP server (`Requests.tsx`),
+   * before the waiting count; renders nothing when no request waits.
+   */
+  requests?: ReactNode;
 }
 
 const THEME_ITEMS: { choice: ThemeChoice; label: string; title: string }[] = [
@@ -64,6 +70,7 @@ export default function Header({
   tabs,
   onWaitingClick,
   blockedCount,
+  requests,
 }: HeaderProps) {
   return (
     <header className="header" data-tauri-drag-region>
@@ -72,6 +79,8 @@ export default function Header({
       {tabs}
 
       <span className="header-spacer" data-tauri-drag-region />
+
+      {requests}
 
       {blockedCount > 0 && (
         <>

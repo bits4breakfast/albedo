@@ -1,0 +1,114 @@
+/* --------------------------------------------------------------------------
+   Requests (#157): what sessions asked Albedo for, in the header.
+   Every ground here is an existing token (--panel for the panel, as the row
+   menus; --panel-hover for hover), and text uses --text / --muted only, both
+   cleared on --panel and --panel-raised. No tints, no opacity.
+   -------------------------------------------------------------------------- */
+
+/* Shares the "N Waiting" button's shape and hover (header.css). */
+.requests-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.requests-panel {
+  position: fixed;
+  z-index: 40;
+  width: 400px;
+  max-width: calc(100vw - 16px);
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+}
+
+.requests-head {
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.requests-list { list-style: none; margin: 0; padding: 0; }
+
+.requests-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 10px;
+  border-radius: var(--radius-sm);
+}
+.requests-item + .requests-item { border-top: 1px solid var(--border); border-radius: 0; }
+
+.requests-kind {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.requests-kind > span:first-child { color: var(--text); font-weight: 600; }
+.requests-from { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The requesting task, as a link: the same text color, underlined on hover. */
+.requests-link {
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.requests-link:hover { text-decoration: underline; color: var(--text-strong); }
+
+.requests-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+.requests-message { font-weight: 500; white-space: pre-wrap; }
+
+.requests-text {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The prompt, as it would be sent: monospace, kept short, edge on the left. */
+.requests-prompt {
+  margin: 2px 0 0;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--border-mid);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.requests-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.requests-note { font-size: var(--fs-xs); color: var(--muted); }
+
+.requests-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+.requests-actions .btn { height: 26px; }

@@ -122,3 +122,46 @@ function planSession(o: SpawnInput): SpawnPlan {
 export function isResumePlan(plan: SpawnPlan): boolean {
   return plan.mode === 'resume' || plan.mode === 'continue' || plan.mode === 'fork';
 }
+
+// ---------------------------------------------------------------------------
+// Albedo's MCP server (#157)
+// ---------------------------------------------------------------------------
+
+/** The server's name in `--mcp-config`; Claude Code names its tools `mcp__albedo__<tool>`. */
+export const MCP_SERVER_NAME = 'albedo';
+
+/**
+ * Its three tools, allowed without a permission prompt. Each only hands
+ * Albedo a request -- a new session still waits for the user's Approve -- so
+ * a prompt in the terminal first would ask the user twice for one thing.
+ */
+export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked'].map(
+  (t) => `mcp__${MCP_SERVER_NAME}__${t}`,
+);
+
+/**
+ * The `--mcp-config` value: Albedo's server, told which task it speaks for.
+ * The task id is the caller's whole identity, and it is Albedo's to set.
+ */
+export function mcpConfigArg(taskId: number, serverPath: string): string {
+  return JSON.stringify({
+    mcpServers: {
+      [MCP_SERVER_NAME]: { type: 'stdio', command: serverPath, args: [], env: { ALBEDO_TASK_ID: String(taskId) } },
+    },
+  });
+}
+
+/**
+ * `args` with the server added in front.
+ *
+ * Additive: no `--strict-mcp-config`, so the user's own MCP servers load as
+ * they always do. Both flags take several values (`<configs...>`,
+ * `<tools...>`), so each must be followed by another flag or Claude Code
+ * would read the next word -- the opening prompt -- as one more config. The
+ * plan's own flags always come next; with none, `--` ends the options.
+ */
+export function withMcpConfig(args: readonly string[], taskId: number, serverPath: string): string[] {
+  const mcp = ['--mcp-config', mcpConfigArg(taskId, serverPath), '--allowedTools', MCP_TOOLS.join(',')];
+  const next = args[0];
+  return next !== undefined && next.startsWith('-') ? [...mcp, ...args] : [...mcp, '--', ...args];
+}

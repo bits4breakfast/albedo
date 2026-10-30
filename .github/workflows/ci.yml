@@ -70,19 +70,22 @@ jobs:
       - run: npx vitest run
 
       - name: cargo fmt
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       # generate_context! wants frontendDist to exist; `tauri build` below
       # creates the real one.
       - name: cargo clippy
         run: |
           mkdir -p dist
-          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
       - name: cargo test
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path src-tauri/Cargo.toml --workspace
 
       - name: Build .deb and .AppImage
         if: github.event_name == 'workflow_dispatch'
-        run: npm run tauri build -- --bundles deb,appimage
+        # The MCP server as a sidecar, as build.sh bundles it (#157).
+        run: |
+          scripts/build-mcp.sh
+          npm run tauri build -- --bundles deb,appimage --config '{"bundle":{"externalBin":["binaries/albedo-mcp"]}}'
 
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'

@@ -8,6 +8,8 @@ import useTasks from './ui/useTasks';
 import useLayout, { type RightTab } from './ui/app/useLayout';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
+import useSessionRequests from './ui/app/useSessionRequests';
+import { resolveRequest } from './ui/requestQueue';
 import useProjectTabs from './ui/app/useProjectTabs';
 import ProjectTabs from './ui/app/ProjectTabs';
 import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
@@ -583,6 +585,20 @@ export default function App() {
 
   const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
 
+  // What sessions asked for through Albedo's MCP server (#157). Approving a
+  // new session opens New Task filled in from it; nothing starts on its own.
+  const requests = useSessionRequests({
+    tasks,
+    loading,
+    projects,
+    select,
+    openNewTask: (prefill) => {
+      followUpSeq.current++;
+      setNewTaskPrefill(prefill);
+      setNewTaskOpen(true);
+    },
+  });
+
   // File-open entry point handed to every renderer via context. Reads the
   // selection through a ref so the context value stays referentially stable --
   // transcript rows subscribe to it and should not re-render on every select.
@@ -996,6 +1012,7 @@ export default function App() {
         onShortcuts={() => setShortcutsOpen(true)}
         onWhatsNew={whatsNew.available ? whatsNew.reopen : undefined}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
+        requests={requests}
         theme={themeChoice}
         onThemeChange={setThemeChoice}
         onWaitingClick={() => {
@@ -1665,6 +1682,8 @@ export default function App() {
             setNewTaskPrefill(null);
           }}
           onCreated={(task: Task, initialPrompt?: string) => {
+            // An approved session request is done once its task exists.
+            if (newTaskPrefill?.request) resolveRequest(newTaskPrefill.request.id);
             if (initialPrompt !== undefined) {
               setPromptOverrides((prev) => new Map(prev).set(task.id, initialPrompt));
             }

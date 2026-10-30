@@ -141,7 +141,10 @@ export function notificationFor(
   kind: AttentionKind,
   title: string | null,
   taskId: number,
-  /** The PR's number, for `merged`; the question itself, for `question`. */
+  /**
+   * The PR's number, for `merged`; the question itself, for `question`; the
+   * session's own words, for a `blocked` it reported through Albedo's MCP server.
+   */
   detail: number | string | null = null,
 ): {
   title: string;
@@ -158,6 +161,12 @@ export function notificationFor(
       title: name,
       body: q ? (q.length > QUESTION_BODY_MAX ? `${q.slice(0, QUESTION_BODY_MAX - 1)}…` : q) : 'Asks you a question.',
     };
+  }
+  // A "blocked" with a message is the session saying so itself (#157,
+  // `noteAgentBlocked`); the hooks' own "blocked" carries none.
+  if (kind === 'blocked' && typeof detail === 'string' && detail.trim()) {
+    const m = detail.trim();
+    return { title: name, body: m.length > QUESTION_BODY_MAX ? `${m.slice(0, QUESTION_BODY_MAX - 1)}…` : m };
   }
   return kind === 'blocked'
     ? { title: name, body: 'Waiting on you — Claude is asking for permission or has a question.' }
@@ -366,6 +375,17 @@ export function noteQuestion(taskId: number, title: string | null, question: str
   // A prompt waiting on you outranks a question that can wait.
   if (marked.get(taskId) === 'blocked') return;
   raise(taskId, 'question', title, question);
+}
+
+/**
+ * The session said, through Albedo's MCP server (`notify_blocked`, #157), that
+ * it cannot go on without the user. Same cue as a prompt waiting on you -- the
+ * mark, and the critical bounce and a banner while unfocused -- with the
+ * session's own words in the banner. It does not change the task's status:
+ * that stays what the transcript and the hooks say.
+ */
+export function noteAgentBlocked(taskId: number, title: string | null, message: string): void {
+  raise(taskId, 'blocked', title, message);
 }
 
 /** The mark always; the bounce and the banner only while unfocused. */
