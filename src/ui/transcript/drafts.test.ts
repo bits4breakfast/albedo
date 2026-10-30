@@ -88,6 +88,19 @@ describe('the store', () => {
     expect(getDraft(1)?.pastes).toEqual([[2, 'x\ny\nz']]);
   });
 
+  it('keeps no paste whose token was deleted or edited', () => {
+    const store = new Map([
+      [1, 'a\nb\nc\nd'],
+      [2, 'x\ny\nz'],
+      [3, 'p\nq\nr\ns'],
+    ]);
+    // #1 deleted, #2 intact, #3's line count edited.
+    saveDraft(1, 'see [Pasted text #2 +3 lines] and [Pasted text #3 +5 lines]', store);
+    expect(getDraft(1)?.pastes).toEqual([[2, 'x\ny\nz']]);
+    keepUnsent(2, 'only words', store);
+    expect(getDraft(2)?.pastes).toEqual([]);
+  });
+
   it('treats an empty or whitespace-only draft as none', () => {
     saveDraft(1, 'something', new Map());
     saveDraft(1, '  \n', new Map());
@@ -95,13 +108,13 @@ describe('the store', () => {
   });
 
   it('survives a restart, written after the delay rather than on every keystroke', () => {
-    saveDraft(1, 'typed', new Map([[1, 'pasted']]));
+    saveDraft(1, 'typed [Pasted text #1 +1 line]', new Map([[1, 'pasted']]));
     expect(window.localStorage.getItem(KEYS.composerDrafts)).toBeNull();
     vi.advanceTimersByTime(DRAFT_WRITE_DELAY_MS);
     expect(window.localStorage.getItem(KEYS.composerDrafts)).not.toBeNull();
 
     __resetDrafts();
-    expect(getDraft(1)).toEqual({ text: 'typed', pastes: [[1, 'pasted']], savedAt: T0 });
+    expect(getDraft(1)).toEqual({ text: 'typed [Pasted text #1 +1 line]', pastes: [[1, 'pasted']], savedAt: T0 });
   });
 
   it('drops a dropped draft from storage too', () => {
@@ -128,10 +141,11 @@ describe('the store', () => {
   });
 
   it('marks a cancelled send as not sent, until its text changes', () => {
-    keepUnsent(1, 'held', new Map([[1, 'p']]));
-    expect(getDraft(1)).toEqual({ text: 'held', pastes: [[1, 'p']], savedAt: T0, notSent: true });
+    const held = 'held [Pasted text #1 +1 line]';
+    keepUnsent(1, held, new Map([[1, 'p']]));
+    expect(getDraft(1)).toEqual({ text: held, pastes: [[1, 'p']], savedAt: T0, notSent: true });
     restart();
-    saveDraft(1, 'held', new Map([[1, 'p']])); // the restore writing it back
+    saveDraft(1, held, new Map([[1, 'p']])); // the restore writing it back
     expect(getDraft(1)?.notSent).toBe(true);
     saveDraft(1, 'held, edited', new Map());
     expect(getDraft(1)?.notSent).toBeUndefined();

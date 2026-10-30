@@ -8,7 +8,8 @@
  * scrolling up to read is never interrupted.
  */
 
-import { expandPastes, placeholderFor, queuedLabel, shouldCollapse } from './pastedText';
+import { expandPastes, pastesIn, placeholderFor, queuedLabel, replaceRanges, shouldCollapse, tokenRanges } from './pastedText';
+import { PastedTexts } from './PastedTexts';
 import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
 import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
 import { editHeld, holdMessage, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
@@ -1388,6 +1389,43 @@ export function Composer({
     [insertPaths, grow],
   );
 
+  /*
+     A collapsed paste's chip or inspector asked to take it out, or to put
+     its text back as ordinary text (PastedTexts.tsx). Done as an edit of the
+     textarea -- select the token, type over it -- so it lands on the undo
+     stack like any typing and ⌘Z brings the token back. The paste itself
+     stays in the store until the draft is saved without it (drafts.ts keeps
+     only what the text uses), so the token ⌘Z restores still stands for it.
+  */
+  const editPaste = useCallback(
+    (id: number, mode: 'remove' | 'insert') => {
+      const el = ref.current;
+      const content = pastesRef.current.get(id);
+      if (!el || content === undefined || el.readOnly || inFlightRef.current) return;
+      const ranges = tokenRanges(el.value, pastesRef.current, id);
+      if (ranges.length === 0) return;
+      const insert = mode === 'insert' ? content : '';
+      el.focus();
+      // From the last token back, so the earlier offsets stay true.
+      let native = typeof document.execCommand === 'function';
+      for (const r of [...ranges].reverse()) {
+        if (!native) break;
+        el.setSelectionRange(r.start, r.end);
+        native = insert === '' ? document.execCommand('delete') : document.execCommand('insertText', false, insert);
+      }
+      if (!native) {
+        // jsdom and older engines: splice the value, as a paste does. Read
+        // afresh, in case an engine took some of the edits before refusing.
+        const left = tokenRanges(el.value, pastesRef.current, id);
+        const first = left[0]?.start ?? 0;
+        setText(replaceRanges(el.value, left, insert));
+        requestAnimationFrame(() => ref.current?.setSelectionRange(first + insert.length, first + insert.length));
+      }
+      requestAnimationFrame(grow);
+    },
+    [grow],
+  );
+
   /**
    * Attach files from a picker -- the button, or ⌘U. They go in as paths, as
    * a drop does; the picker puts the chosen files in the fs scope.
@@ -1567,6 +1605,8 @@ export function Composer({
         ref={ref}
         className="tx-composer-input"
         data-focus-default=""
+        /* Tab from here walks the paste chips' buttons before leaving the box. */
+        data-focus-stop=""
         rows={1}
         value={text}
         /*
@@ -1592,6 +1632,12 @@ export function Composer({
             void send();
           }
         }}
+      />
+      <PastedTexts
+        pastes={pastesIn(text, pastesRef.current)}
+        frozen={busy || awaiting || held}
+        onRemove={(id) => editPaste(id, 'remove')}
+        onInsert={(id) => editPaste(id, 'insert')}
       />
       <div className="tx-composer-foot">
         <button

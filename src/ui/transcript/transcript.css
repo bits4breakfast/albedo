@@ -472,6 +472,62 @@
 /* A lower tier, never `opacity` (CLAUDE.md, Contrast rule 2). */
 .tx-composer-send:disabled { color: var(--faint); background: var(--panel-raised); cursor: default; }
 
+/* Collapsed pastes (#134): one chip each, under the text and inside the
+   box, so Tab from the text reaches them. Grounds: the chip is --panel-chrome,
+   a hovered button --panel-hover. Measured, light / dark, on chrome then
+   hover: --text 15.09 / 13.81 and 14.44 / 13.07; --muted 6.50 / 7.31 and
+   6.22 / 6.91; a disabled Remove's --faint 5.40 / 5.69 (no hover). Never
+   opacity. The edge is decorative: the words identify the chip. */
+.tx-pastes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 10px 0 12px;
+}
+.tx-paste {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+  background: var(--panel-chrome);
+  font-size: var(--fs-xs);
+}
+.tx-paste-label {
+  min-width: 0;
+  margin-right: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.tx-paste-act {
+  flex: none;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+.tx-paste-act:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
+.tx-paste-act:disabled { color: var(--faint); }
+/* The inspector's text: the code block's face on the inset ground, as tall
+   as the dialog allows rather than .tx-pre's transcript cap. */
+.tx-paste-view {
+  max-height: min(60vh, 640px);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-inset);
+}
+.tx-paste-view:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
 /* --- rows ----------------------------------------------------------------- */
 
 /* One content column for everything: prose, chips, collapsed lines and your

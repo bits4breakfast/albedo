@@ -52,6 +52,14 @@
  *    tabbable element.
  *  - `data-focus-arrived` is set on the root the cycle moved into and cleared
  *    when focus leaves it: the ring that says where the keyboard went.
+ *  - `data-focus-stop` on elements an area walks through before Tab leaves
+ *    it. From a stop, Tab goes to the next usable stop in document order and
+ *    Shift+Tab to the previous one; past the last (or before the first) the
+ *    cycle moves to the next area as usual. Focus on anything that is not a
+ *    stop leaves the area at once, as before, and Ctrl+Tab always moves to
+ *    the next area. The message box marks its text
+ *    and its paste chips' buttons (#134), so Tab from the text reaches the
+ *    chips and Tab from the last chip goes on to the terminal.
  *
  * The decisions are pure functions (`cycleKeyOf`, `shouldCycle`,
  * `areaSequence`) so they are tested without a DOM; the hook only wires them.
@@ -232,6 +240,23 @@ function clearArrived(doc: Document, target: EventTarget | null): void {
   }
 }
 
+const STOP_ATTR = 'data-focus-stop';
+
+/**
+ * The next stop within `active`'s area in direction `dir`, or null when
+ * `active` is not a stop or is the last one that way.
+ */
+export function nextStopInArea(active: Element | null, dir: 1 | -1): HTMLElement | null {
+  const stop = active?.closest<HTMLElement>(`[${STOP_ATTR}]`) ?? null;
+  const root = stop?.closest<HTMLElement>(`[${AREA_ATTR}]`) ?? null;
+  if (!stop || !root) return null;
+  const stops = Array.from(root.querySelectorAll<HTMLElement>(`[${STOP_ATTR}]`)).filter(
+    (el) => el === stop || (usable(el) && el.closest(`[${AREA_ATTR}]`) === root),
+  );
+  const i = stops.indexOf(stop);
+  return stops[i + dir] ?? null;
+}
+
 /**
  * The window's keydown handler. Returns true when it moved focus (and then
  * prevented the key's default); false leaves the key to the browser.
@@ -247,6 +272,15 @@ export function handleCycleKey(e: KeyboardEvent, doc: Document = document): bool
     handled: e.defaultPrevented,
   });
   if (!go) return false;
+  // Plain Tab walks the area's stops first; Ctrl+Tab always moves areas.
+  const stop = key.leave || freshTab(key, inside) ? null : nextStopInArea(inside, key.dir);
+  if (stop) {
+    stop.focus();
+    if (doc.activeElement === stop) {
+      e.preventDefault();
+      return true;
+    }
+  }
   const roots = visibleRoots(doc);
   // Focus the app placed counts as no focus at all: the message box is next.
   const from = freshTab(key, inside) ? null : areaOf(inside);

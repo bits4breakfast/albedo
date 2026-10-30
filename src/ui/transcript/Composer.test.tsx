@@ -662,11 +662,132 @@ describe('collapsing a large text paste', () => {
     await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `why does this fail? ${log}`));
   });
 
-  it('leaves a short paste to the browser', () => {
+  it('leaves a short paste to the browser: up to two line breaks, as in Claude Code', () => {
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    const notPrevented = fireEvent.paste(box(), { clipboardData: clip('two\nlines') });
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip('three\nshort\nlines') });
     expect(notPrevented).toBe(true);
     expect(box().value).toBe('');
+    expect(screen.queryByRole('group', { name: 'Pasted text' })).toBeNull();
+  });
+
+  it('leaves a pasted path to the browser, however it looks', () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    const notPrevented = fireEvent.paste(box(), { clipboardData: clip('/Users/me/project/src/app.ts') });
+    expect(notPrevented).toBe(true);
+    expect(screen.queryByRole('group', { name: 'Pasted text' })).toBeNull();
+  });
+
+  it('shows a chip for the paste, and View opens the whole text; Escape closes and returns focus', async () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    expect(screen.getByText('Pasted #1 · 4 lines')).toBeTruthy();
+
+    const view = screen.getByRole('button', { name: 'View pasted text #1' });
+    fireEvent.click(view);
+    const dialog = screen.getByRole('dialog', { name: 'Pasted Text #1' });
+    const shown = screen.getByLabelText('Pasted text #1');
+    expect(shown.textContent).toBe(log);
+    await waitFor(() => expect(document.activeElement).toBe(shown));
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'View pasted text #1' })));
+    // Closing changes nothing in the draft.
+    expect(box().value).toBe('[Pasted text #1 +4 lines]');
+  });
+
+  it('Remove on the chip takes the token and its text out of the message', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('before ');
+    box().setSelectionRange(box().value.length, box().value.length);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    expect(box().value).toBe('before [Pasted text #1 +4 lines]');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove pasted text #1' }));
+    expect(box().value).toBe('before ');
+    expect(screen.queryByRole('group', { name: 'Pasted text' })).toBeNull();
+    type('before and after');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, 'before and after'));
+  });
+
+  it('Insert as Text in the inspector puts the paste in the box as ordinary text', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('see: ');
+    box().setSelectionRange(box().value.length, box().value.length);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    fireEvent.click(screen.getByRole('button', { name: 'View pasted text #1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Insert as Text' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(box().value).toBe(`see: ${log}`);
+    expect(screen.queryByRole('group', { name: 'Pasted text' })).toBeNull();
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `see: ${log}`));
+  });
+
+  it('Remove in the inspector closes it and drops the paste', () => {
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    fireEvent.click(screen.getByRole('button', { name: 'View pasted text #1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(box().value).toBe('');
+  });
+
+  it('a token broken by editing loses its paste: the chip goes, and only the typed text is sent', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    type('[Pasted text #1 +4 line]');
+    expect(screen.queryByRole('group', { name: 'Pasted text' })).toBeNull();
+    // Not kept with the draft either.
+    expect(getDraft(1)?.pastes).toEqual([]);
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, '[Pasted text #1 +4 line]'));
+  });
+
+  it('a token restored whole (an undo) stands for its paste again', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    type('');
+    type('[Pasted text #1 +4 lines]');
+    expect(screen.getByRole('button', { name: 'View pasted text #1' })).toBeTruthy();
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, log));
+  });
+
+  it('Tab from the text reaches the chip, and goes on past it; Shift+Tab comes back (focusAreas)', async () => {
+    const { useFocusAreaCycle } = await import('../focusAreas');
+    renderHook(() => useFocusAreaCycle());
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    box().focus();
+    const tab = (shiftKey = false) => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab', shiftKey });
+    tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'View pasted text #1' }));
+    tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove pasted text #1' }));
+    tab(true);
+    tab(true);
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('while a send is held, the paste can be viewed but not removed', async () => {
+    render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    pressEnter();
+    await waitFor(() => expect(box().readOnly).toBe(true));
+    expect((screen.getByRole('button', { name: 'Remove pasted text #1' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'View pasted text #1' }));
+    expect((screen.getByRole('button', { name: 'Insert as Text' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('drops the text when its placeholder was deleted', async () => {
@@ -750,11 +871,14 @@ describe('(d) each task keeps its own draft', () => {
 
     // A new paste does not reuse the restored placeholder's number.
     box().setSelectionRange(box().value.length, box().value.length);
-    fireEvent.paste(box(), { clipboardData: clip('second\nlong\npaste') });
-    expect(box().value).toBe('[Pasted text #1 +4 lines][Pasted text #2 +3 lines]');
+    fireEvent.paste(box(), { clipboardData: clip('second\nlong\npaste\nhere') });
+    expect(box().value).toBe('[Pasted text #1 +4 lines][Pasted text #2 +4 lines]');
+    // Both have their chip, restored one included.
+    expect(screen.getByRole('button', { name: 'View pasted text #1' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View pasted text #2' })).toBeTruthy();
 
     pressEnter();
-    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `${log}second\nlong\npaste`));
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `${log}second\nlong\npaste\nhere`));
   });
 
   it('a sent draft is gone', async () => {
