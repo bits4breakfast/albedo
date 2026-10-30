@@ -1,14 +1,29 @@
 /**
  * What build is running: the commit, whether the tree was dirty, and when it
- * was built. Injected by vite.config.ts; absent under vitest, which does not
- * use that config.
+ * was built -- plus the recent history What's New lists. Injected by
+ * vite.config.ts (computed in buildEmbed.ts); absent under vitest, which does
+ * not use that config.
  */
 
-interface BuildInfo {
+/** One first-parent commit, newest first in `history`. */
+export interface BuildCommit {
+  /** Abbreviated, as `git rev-parse --short` gives `sha`. */
+  sha: string;
+  /** The subject without its trailing `(#123)`. */
+  subject: string;
+  /** The PR it was merged as, from that trailing `(#123)`; null for a direct commit. */
+  pr: number | null;
+}
+
+export interface BuildInfo {
   sha: string;
   dirty: boolean;
   /** ISO time of the build. */
   at: string;
+  /** `https://github.com/<owner>/<repo>`, or null when origin is not GitHub. Absent in builds before #147. */
+  repo?: string | null;
+  /** The last few hundred first-parent commits, HEAD first. Empty when git could not list them. */
+  history?: BuildCommit[];
 }
 
 declare const __ALBEDO_BUILD__: BuildInfo | null | undefined;

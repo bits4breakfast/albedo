@@ -1,0 +1,86 @@
+/* What's New (WhatsNewDialog.tsx), inside the shared wt-modal shell.
+
+   Existing tokens only, no tint, no alpha, no opacity. The rows sit on the
+   dialog's --panel and nothing in them changes ground on hover, so each pair
+   was measured against --panel and, per the contrast rule, against
+   --panel-raised (light / dark, WCAG 2.x):
+     --text    16.60 / 14.63 on --panel,  13.68 / 12.29 on --panel-raised
+     --muted    7.15 /  7.74,              5.89 /  6.50
+     --accent   6.46 /  7.88,              5.32 /  6.62
+   --accent-line is the hover underline only (non-text). */
+
+/* The subtitle can be long ("Built Oct 30 · 12 changes since ..."), so it
+   gets its own line under the title rather than squeezing beside it. */
+.wn-head {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.wn-body {
+  padding-top: 8px;
+  padding-bottom: 12px;
+}
+
+.wn-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Title first, its number after it: the title is what is read, the number is
+   the way to the PR. Baseline-aligned so the two read as one line. */
+.wn-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: var(--fs-md);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.wn-item:last-child {
+  border-bottom: none;
+}
+
+.wn-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A link, drawn as one: --accent text, an underline on hover. A button so it
+   is reachable by Tab and Enter; nothing navigates the webview. */
+.wn-pr {
+  flex: none;
+  padding: 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer; /* a link: the pointing hand, as .tx-link */
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+}
+.wn-pr:hover {
+  text-decoration-color: var(--accent-line);
+}
+.wn-pr:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A PR number with no GitHub repository to link it to. */
+.wn-pr-plain {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.wn-dirty {
+  padding-top: 8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
