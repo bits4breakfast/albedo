@@ -53,6 +53,7 @@ import { backgroundShown, useBackgroundWork } from '../BackgroundWork';
 import { PermissionModeLabel } from './PermissionModeLabel';
 import { isSidechain, toolUseId } from './ToolChip';
 import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
+import { COMPOSER_MIN_PX, TRANSCRIPT_MIN_PX, composerHeight } from './composerHeight';
 import './transcript.css';
 
 /** Rows in the initial window, and the size of each step backwards. */
@@ -920,12 +921,6 @@ export function commentsHeldIn(body: string, watchers: readonly InsertWatcher[])
   return { ids, left };
 }
 
-/** Auto-grow ceiling. Past this the composer scrolls instead of eating the pane. */
-const COMPOSER_MAX_PX = 140;
-
-/** Smallest a dragged composer can be: one line of text. */
-const COMPOSER_MIN_PX = 28;
-
 /** Whole pixels; auto-grow (null) removes the key. */
 const composerPxCodec: Codec<number | null> = {
   decode: (raw) => {
@@ -1030,8 +1025,9 @@ export function Composer({
   const draftOwnerRef = useRef<number | null>(null);
 
   /**
-   * A height the user dragged the composer to. While set it is the height --
-   * typing no longer auto-grows it -- and double-clicking the grip clears it.
+   * A height the user dragged the composer to. While set it is the resting
+   * height -- content grows it up to 150% of that, then it scrolls (#135) --
+   * and double-clicking the grip clears it.
    */
   const [userPx, setUserPx] = useState<number | null>(storedComposerPx);
   const userPxRef = useRef(userPx);
@@ -1043,16 +1039,32 @@ export function Composer({
   const grow = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    const fixed = userPxRef.current;
-    if (fixed !== null) {
-      el.style.maxHeight = 'none';
-      el.style.height = `${fixed}px`;
-      return;
-    }
-    el.style.maxHeight = '';
+    const resting = userPxRef.current;
+    // The box and the transcript share the pane: the room the box may take is
+    // its own height plus the transcript's, less a strip of transcript that
+    // always stays. Hidden or unmeasurable (another tab, tests): no cap.
+    const pane = el.closest('.tx-pane');
+    const wrap = pane?.querySelector<HTMLElement>('.tx-scroll-wrap');
+    const available =
+      pane && wrap && pane.clientHeight > 0 ? el.offsetHeight + wrap.offsetHeight - TRANSCRIPT_MIN_PX : Infinity;
+    // Measuring collapses the box for a moment, and the browser clamps the
+    // transcript's scrollTop to the taller view. Put it back, so a reader
+    // above the end keeps their place; one following the end is kept there by
+    // the transcript's ResizeObserver.
+    const scroll = pane?.querySelector<HTMLElement>('.tx-scroll');
+    const top = scroll?.scrollTop;
+    // A dragged box may grow past the CSS max-height; auto-grow stays under it.
+    el.style.maxHeight = resting === null ? '' : 'none';
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
+    el.style.height = `${composerHeight({ content: el.scrollHeight, resting, available })}px`;
+    if (scroll && top !== undefined && scroll.scrollTop !== top) scroll.scrollTop = top;
   }, []);
+
+  // A smaller window leaves less room: take the cap again.
+  useEffect(() => {
+    window.addEventListener('resize', grow);
+    return () => window.removeEventListener('resize', grow);
+  }, [grow]);
 
   useEffect(() => {
     grow();

@@ -510,6 +510,86 @@ describe('resizable composer', () => {
     render(<Composer taskId={1} onSent={() => {}} />);
     expect(box().style.height).toBe('96px');
   });
+
+  /** jsdom lays nothing out: give the box a content height to grow to. */
+  function contentHeight(px: number) {
+    Object.defineProperty(box(), 'scrollHeight', { configurable: true, get: () => px });
+  }
+
+  it('grows a dragged box with its content up to 150%, then shrinks back to it (#135)', () => {
+    window.localStorage.setItem('albedo.composerPx', '100');
+    render(<Composer taskId={1} onSent={() => {}} />);
+
+    contentHeight(130);
+    type('a\nb\nc\nd');
+    expect(box().style.height).toBe('130px');
+    expect(box().style.maxHeight).toBe('none');
+
+    contentHeight(400);
+    type('a\nb\nc\nd\ne\nf\ng\nh\ni\nj');
+    expect(box().style.height).toBe('150px');
+
+    contentHeight(20);
+    type('a');
+    expect(box().style.height).toBe('100px');
+  });
+
+  it('a new drag sets the height it grows from', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+    fireEvent.pointerDown(grip(), { clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(grip(), { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(grip(), { clientY: 120, pointerId: 1 });
+
+    contentHeight(400);
+    type('long');
+    expect(box().style.height).toBe('120px');
+  });
+
+  it('never takes more than the pane leaves it, and keeps the transcript where it was', () => {
+    window.localStorage.setItem('albedo.composerPx', '200');
+    const { container } = render(
+      <div className="tx-pane">
+        <div className="tx-scroll-wrap">
+          <div className="tx-scroll" />
+        </div>
+        <Composer taskId={1} onSent={() => {}} />
+      </div>,
+    );
+    const pane = container.querySelector('.tx-pane') as HTMLElement;
+    const wrap = container.querySelector('.tx-scroll-wrap') as HTMLElement;
+    const scroll = container.querySelector('.tx-scroll') as HTMLElement;
+    Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => 500 });
+    // The box is 200px and the transcript has 200px: 400 - 120 kept for it.
+    Object.defineProperty(wrap, 'offsetHeight', { configurable: true, get: () => 200 });
+    Object.defineProperty(box(), 'offsetHeight', { configurable: true, get: () => 200 });
+    scroll.scrollTop = 333;
+    // Reading the collapsed box's scrollHeight lays the pane out with a taller
+    // transcript view, and the browser clamps its scrollTop.
+    Object.defineProperty(box(), 'scrollHeight', {
+      configurable: true,
+      get: () => {
+        scroll.scrollTop = 250;
+        return 900;
+      },
+    });
+    type('long');
+
+    expect(box().style.height).toBe('280px');
+    expect(scroll.scrollTop).toBe(333);
+  });
+
+  it('with no dragged height, auto-grows up to 140px as before', () => {
+    render(<Composer taskId={1} onSent={() => {}} />);
+
+    contentHeight(90);
+    type('a\nb\nc');
+    expect(box().style.height).toBe('90px');
+    expect(box().style.maxHeight).toBe('');
+
+    contentHeight(400);
+    type('a\nb\nc\nd\ne\nf\ng\nh\ni\nj');
+    expect(box().style.height).toBe('140px');
+  });
 });
 
 describe('pasting a screenshot', () => {
