@@ -379,3 +379,81 @@ describe('the cycle in the DOM', () => {
     expect($('composer').hasAttribute('data-focus-arrived')).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stops within an area (#134: the message box's paste chips)
+// ---------------------------------------------------------------------------
+
+describe('stops within an area', () => {
+  beforeEach(() => {
+    document.body.innerHTML = FIXTURE;
+    // The message box as the composer draws it with two pastes: the text and
+    // each chip's View and Remove are stops; the second Remove is disabled.
+    $('message').setAttribute('data-focus-stop', '');
+    $('send').insertAdjacentHTML(
+      'beforebegin',
+      `<div role="group">
+         <button id="view-1" data-focus-stop="">View</button>
+         <button id="remove-1" data-focus-stop="">Remove</button>
+         <button id="view-2" data-focus-stop="">View</button>
+         <button id="remove-2" data-focus-stop="" disabled>Remove</button>
+       </div>`,
+    );
+    renderHook(() => useFocusAreaCycle());
+  });
+  afterEach(() => {
+    cleanup();
+    document.body.innerHTML = '';
+  });
+
+  it('Tab walks the stops in order, skips a disabled one, then leaves for the next area', () => {
+    $('message').focus();
+    const order: (string | null)[] = [];
+    for (let i = 0; i < 4; i++) {
+      press();
+      order.push(active());
+    }
+    expect(order).toEqual(['view-1', 'remove-1', 'view-2', 'xterm']);
+  });
+
+  it('Shift+Tab walks them back to the text, then leaves for the previous area', () => {
+    $('view-2').focus();
+    const order: (string | null)[] = [];
+    for (let i = 0; i < 4; i++) {
+      press({ shiftKey: true });
+      order.push(active());
+    }
+    expect(order).toEqual(['remove-1', 'view-1', 'message', 'tasks']);
+  });
+
+  it('with no stops but the text, Tab leaves the area at once, as before', () => {
+    for (const id of ['view-1', 'remove-1', 'view-2', 'remove-2']) $(id).remove();
+    $('message').focus();
+    press();
+    expect(active()).toBe('xterm');
+  });
+
+  it('a control that is not a stop still leaves the area at once', () => {
+    $('send').focus();
+    press();
+    expect(active()).toBe('xterm');
+  });
+
+  it('entering the area still lands on its default, either direction', () => {
+    $('tasks').focus();
+    press();
+    expect(active()).toBe('message');
+    $('xterm').focus();
+    press({ ctrlKey: true, shiftKey: true });
+    expect(active()).toBe('message');
+  });
+
+  it('Ctrl+Tab moves between areas, never through the stops', () => {
+    $('message').focus();
+    press({ ctrlKey: true });
+    expect(active()).toBe('xterm');
+    $('view-1').focus();
+    press({ ctrlKey: true, shiftKey: true });
+    expect(active()).toBe('tasks');
+  });
+});

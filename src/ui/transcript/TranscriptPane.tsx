@@ -1593,6 +1593,8 @@ export function Composer({
         ref={ref}
         className="tx-composer-input"
         data-focus-default=""
+        /* Tab from here walks the paste chips' buttons before leaving the box. */
+        data-focus-stop=""
         rows={1}
         value={text}
         /*

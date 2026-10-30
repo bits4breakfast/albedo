@@ -684,6 +684,22 @@ describe('collapsing a large text paste', () => {
     await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, log));
   });
 
+  it('Tab from the text reaches the chip, and goes on past it; Shift+Tab comes back (focusAreas)', async () => {
+    const { useFocusAreaCycle } = await import('../focusAreas');
+    renderHook(() => useFocusAreaCycle());
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    box().focus();
+    const tab = (shiftKey = false) => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab', shiftKey });
+    tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'View pasted text #1' }));
+    tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove pasted text #1' }));
+    tab(true);
+    tab(true);
+    expect(document.activeElement).toBe(box());
+  });
+
   it('while a send is held, the paste can be viewed but not removed', async () => {
     render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
     fireEvent.paste(box(), { clipboardData: clip(log) });

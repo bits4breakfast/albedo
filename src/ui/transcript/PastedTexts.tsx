@@ -8,8 +8,10 @@
  * scrollable, with Remove and Insert as Text. Escape closes it and puts focus
  * back on the View that opened it.
  *
- * The chips are after the textarea in tab order, so Tab from the box reaches
- * them: that is the keyboard path to a paste.
+ * The keyboard path: Tab from the text goes to the first chip's View, on
+ * through the chips' buttons, then to the next area (the terminal); Shift+Tab
+ * walks back to the text. The buttons are `data-focus-stop`s of the message
+ * box's area (focusAreas.ts), as is the textarea.
  *
  * This component only shows and asks. Changing the draft is the composer's,
  * which edits the textarea so ⌘Z can take a removal back.
@@ -69,6 +71,7 @@ export function PastedTexts({ pastes, frozen, onRemove, onInsert }: PastedTextsP
                 else viewButtons.current.delete(id);
               }}
               onClick={() => setViewing(id)}
+              data-focus-stop=""
               aria-label={`View pasted text #${id}`}
             >
               View
@@ -78,6 +81,7 @@ export function PastedTexts({ pastes, frozen, onRemove, onInsert }: PastedTextsP
               className="tx-paste-act"
               onClick={() => onRemove(id)}
               disabled={frozen}
+              data-focus-stop=""
               aria-label={`Remove pasted text #${id}`}
             >
               Remove
