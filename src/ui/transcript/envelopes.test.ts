@@ -394,6 +394,16 @@ describe('pasted content', () => {
     expect(parseUserBody(`<pasted_content id="bc88">\n${body}\n</pasted_content>`)).toEqual([{ kind: 'text', text: body }]);
   });
 
+  it("reads the message box's send of typed text with an expanded paste (#134) as one text block", () => {
+    // The composer sends the whole message as one bracketed paste, its
+    // collapsed paste already expanded, so Claude Code wraps all of it once.
+    const sent = 'why does this fail?\nError: boom\n  at a (x.ts:1)\n  at b (y.ts:2)\n  at c (z.ts:3)';
+    expect(parseUserBody(`<pasted_content id="9f2e">\n${sent}\n</pasted_content id="9f2e">`)).toEqual([
+      { kind: 'text', text: sent },
+    ]);
+    expect(parseUserBody(sent)).toEqual([{ kind: 'text', text: sent }]);
+  });
+
   it('keeps a paste beside typed text as its own block', () => {
     const blocks = parseUserBody(`look at this\n<pasted_content id="4c5b">\nerror: boom\n</pasted_content id="4c5b">`);
     expect(blocks).toEqual([

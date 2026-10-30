@@ -19,6 +19,7 @@
 import { useSyncExternalStore } from 'react';
 import { KEYS, readPersisted, writePersisted } from '../persisted';
 import type { Codec } from '../persisted';
+import { pastesIn } from './pastedText';
 
 export interface Draft {
   text: string;
@@ -135,7 +136,9 @@ export function getDraft(taskId: number, now = Date.now()): Draft | null {
 
 /**
  * Keep the task's draft. Empty text removes it instead. A "not sent" mark
- * stays only while the text is still exactly what was not sent.
+ * stays only while the text is still exactly what was not sent. Only the
+ * pastes whose tokens are still intact in the text are kept (`pastesIn`): a
+ * paste whose token was deleted or edited is gone with it.
  */
 export function saveDraft(taskId: number, text: string, pastes: ReadonlyMap<number, string>, now = Date.now()): void {
   if (isEmptyDraft(text)) {
@@ -143,7 +146,7 @@ export function saveDraft(taskId: number, text: string, pastes: ReadonlyMap<numb
     return;
   }
   const prev = current().get(taskId);
-  put(taskId, { text, pastes: [...pastes], savedAt: now, ...(prev?.notSent && prev.text === text ? { notSent: true } : {}) });
+  put(taskId, { text, pastes: [...pastesIn(text, pastes)], savedAt: now, ...(prev?.notSent && prev.text === text ? { notSent: true } : {}) });
 }
 
 /**
@@ -152,7 +155,7 @@ export function saveDraft(taskId: number, text: string, pastes: ReadonlyMap<numb
  */
 export function keepUnsent(taskId: number, text: string, pastes: ReadonlyMap<number, string>, now = Date.now()): void {
   if (isEmptyDraft(text)) return;
-  put(taskId, { text, pastes: [...pastes], savedAt: now, notSent: true });
+  put(taskId, { text, pastes: [...pastesIn(text, pastes)], savedAt: now, notSent: true });
 }
 
 function put(taskId: number, draft: Draft): void {
