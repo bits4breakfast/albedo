@@ -65,6 +65,10 @@ jobs:
 
       - run: npm ci
       - run: npm run typecheck
+      # What `tauri build` checks first: each @tauri-apps package on its crate's
+      # major.minor. The build is on demand, so without this a one-sided bump
+      # passes here and fails on the next local build (#177).
+      - run: node scripts/check-tauri-versions.mjs
       # The hook-script tests run the real HOOK_SCRIPT under /bin/sh, which is
       # dash here, not the macOS sh -- that is half the point of running them.
       - run: npx vitest run
