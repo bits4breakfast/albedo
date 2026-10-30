@@ -14,6 +14,7 @@ import { prLookupBranch } from '../gh/gh';
 import { commitsOnBranch } from '../git/worktree';
 import { prLabel, prTooltip, type PrStatus } from '../gh/prStatus';
 import ChecksDialog from './ChecksDialog';
+import { ciCueFor, takeChecksRequest, useCiVersion } from './ciNotice';
 import './pr.css';
 
 export interface PrBadgeProps {
@@ -59,6 +60,12 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
   const badgeRef = useRef<HTMLButtonElement>(null);
   // Another task's PR is another dialog: never carry one over a switch.
   useEffect(() => setChecksOpen(false), [task?.id]);
+  // A click on a "checks failed" banner opens the task, then this (#159).
+  // After the reset above, which a switch to that task also runs.
+  const ciVersion = useCiVersion();
+  useEffect(() => {
+    if (task && pr && opensChecks(pr) && takeChecksRequest(task.id)) setChecksOpen(true);
+  }, [task?.id, pr, ciVersion]);
   // `undefined` is "gh has not answered yet": no button that a PR already
   // opened would make wrong. usePrStatus maps both to null, so its snapshot
   // does not change when gh answers "none" -- the version does, and is what
@@ -113,6 +120,9 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
   if (!task || !pr) return null;
   const label = prLabel(pr);
   const checks = opensChecks(pr);
+  // Checks finished while this task was open: a brief ring, and words for a
+  // screen reader (ciNotice.ts). The badge itself already shows the result.
+  const cue = ciCueFor(task.id);
   return (
     <span className="pr-badge-wrap">
       <button
@@ -120,6 +130,7 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
         type="button"
         className="pr-badge"
         data-tone={label.tone}
+        data-cue={cue ?? undefined}
         title={checks ? `${prTooltip(pr)}\nClick to see the checks` : prTooltip(pr, { clickable: true })}
         aria-label={`Pull request ${pr.number}, ${label.text}. ${checks ? 'Show the checks' : 'Open on GitHub'}`}
         aria-haspopup={checks ? 'dialog' : undefined}
@@ -133,6 +144,9 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
         )}
         <span>{label.text}</span>
       </button>
+      <span className="sr-only" role="status">
+        {cue ? `Checks ${cue === 'pass' ? 'passed' : 'failed'} on pull request ${pr.number}` : ''}
+      </span>
       {checksOpen && checks && (
         <ChecksDialog
           task={task}

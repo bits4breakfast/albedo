@@ -39,6 +39,13 @@ export interface HeaderProps {
   theme: ThemeChoice;
   onThemeChange: (next: ThemeChoice) => void;
   /**
+   * "Notify When CI Finishes" (ui/ciNotice.ts): the banner and Dock bounce
+   * when a task's PR checks pass or fail while Albedo is in the background.
+   * Optional so the header renders without it; absent, the item is not shown.
+   */
+  ciNotify?: boolean;
+  onCiNotifyChange?: (on: boolean) => void;
+  /**
    * The project tabs, when there are two or more projects. They lead the
    * bar: the tabs are the level above everything below it.
    */
@@ -61,6 +68,8 @@ export default function Header({
   onWhatsNew,
   theme,
   onThemeChange,
+  ciNotify,
+  onCiNotifyChange,
   tabs,
   onWaitingClick,
   blockedCount,
@@ -103,7 +112,7 @@ export default function Header({
         </button>
         <OverflowMenu
           label="More"
-          title="Projects, worktrees, theme, keyboard shortcuts, what's new"
+          title="Projects, worktrees, theme, notifications, keyboard shortcuts, what's new"
           items={[
             { id: 'projects', label: 'Projects…', onSelect: onProjects, title: 'Manage projects' },
             { id: 'worktrees', label: 'Worktrees…', onSelect: onReconcile, title: 'Reconcile git worktrees' },
@@ -116,6 +125,21 @@ export default function Header({
               group: i === 0,
               onSelect: () => onThemeChange(t.choice),
             })),
+            // The one notification preference with a switch: the others
+            // (waiting on you, finished, merged) are what Albedo is for.
+            ...(onCiNotifyChange && ciNotify !== undefined
+              ? [
+                  {
+                    id: 'ci-notify',
+                    label: 'Notify When CI Finishes',
+                    title:
+                      "A banner and a Dock bounce when a task's PR checks pass or fail while Albedo is in the background. The task's row is marked either way.",
+                    checked: ciNotify,
+                    group: true,
+                    onSelect: () => onCiNotifyChange(!ciNotify),
+                  },
+                ]
+              : []),
             {
               id: 'shortcuts',
               label: 'Keyboard Shortcuts',

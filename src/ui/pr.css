@@ -54,6 +54,23 @@
 .pr-badge[data-tone='pass'] { color: var(--add); }
 .pr-badge[data-tone='fail'] { color: var(--danger); }
 .pr-badge[data-tone='pending'] { color: var(--warn); }
+/*
+ * Checks just finished on the open task (ciNotice.ts, #159): a ring in the
+ * result's own token, three beats, then gone. A ring, not a fill: the badge's
+ * text tokens were cleared against the pane ground and stay on it. Text is
+ * never dimmed; only the ring blinks, and with reduced motion it just stays
+ * for the cue's few seconds.
+ */
+@keyframes pr-cue {
+  50% { box-shadow: 0 0 0 2px transparent; }
+}
+.pr-badge[data-cue] { animation: pr-cue 1.2s steps(1, end) 3; }
+.pr-badge[data-cue='pass'] { box-shadow: 0 0 0 2px var(--add); }
+.pr-badge[data-cue='fail'] { box-shadow: 0 0 0 2px var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  .pr-badge[data-cue] { animation: none; }
+}
+
 .pr-badge[data-tone='merged'] {
   color: var(--on-accent-soft);
   background: var(--accent-soft);

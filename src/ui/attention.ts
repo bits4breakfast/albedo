@@ -120,6 +120,32 @@ const notificationsCodec: Codec<boolean> = {
 const lastNotified = new Map<string, number>();
 
 /**
+ * What a banner was about. The session's own kinds, and a PR's checks
+ * finishing (`ui/ciNotice.ts`).
+ */
+export type BannerKind = AttentionKind | 'checks-pass' | 'checks-fail';
+
+/**
+ * The kind of the last banner posted for each task. A click carries only the
+ * task id (`attention.rs`), so this is how a click on a "checks failed" banner
+ * knows to open the checks as well as the task: when it is the newest banner
+ * that task has. An older banner clicked in Notification Center after a newer
+ * one opens just the task.
+ */
+const lastBanner = new Map<number, BannerKind>();
+
+/** The kind of the newest banner posted for a task this run, if any. */
+export function lastBannerFor(taskId: number): BannerKind | undefined {
+  return lastBanner.get(taskId);
+}
+
+/** Post, and remember what the task's newest banner was about. */
+function postFor(taskId: number, kind: BannerKind, n: { title: string; body: string }): void {
+  lastBanner.set(taskId, kind);
+  postNotification({ ...n, taskId });
+}
+
+/**
  * Whether a notification may go out now, and records it if so. Pure apart
  * from the map it is handed, so the rate limit is testable without a clock.
  */
@@ -270,6 +296,7 @@ export function __setAttentionBackend(
   marked.clear();
   listeners.clear();
   lastNotified.clear();
+  lastBanner.clear();
 }
 
 function emit(): void {
@@ -379,7 +406,7 @@ function raise(taskId: number, kind: AttentionKind, title: string | null, detail
     // the same noise the dock bounce already avoids.
     if (notificationsEnabled() && shouldNotify(lastNotified, taskId, kind, Date.now())) {
       try {
-        postNotification({ ...notificationFor(kind, title, taskId, detail), taskId });
+        postFor(taskId, kind, notificationFor(kind, title, taskId, detail));
       } catch {
         /* never let a notification take the status update down */
       }
@@ -411,13 +438,40 @@ export function noteMerged(
     requestOsAttention(false);
     if (notificationsEnabled() && shouldNotify(lastNotified, taskId, 'merged', Date.now())) {
       try {
-        postNotification({ ...notificationFor('merged', title, taskId, prNumber), taskId });
+        postFor(taskId, 'merged', notificationFor('merged', title, taskId, prNumber));
       } catch {
         /* as in noteStatusChange */
       }
     }
   }
   emit();
+}
+
+/**
+ * A task's PR checks finished (`ui/ciNotice.ts` has decided it is news, and
+ * that this kind of news is wanted). Only while unfocused, like every other
+ * cue here: one informational bounce for a pass and a failure alike -- nothing
+ * is stuck, there is a result -- and the banner, unless banners are off.
+ * Focused, it does nothing and says so: the caller marks the row instead.
+ *
+ * No rate limit: the caller already announces each outcome once per head
+ * commit, which is a stricter rule than a minute.
+ */
+export function noteChecksFinished(
+  taskId: number,
+  outcome: 'pass' | 'fail',
+  banner: { title: string; body: string },
+): boolean {
+  if (focused) return false;
+  requestOsAttention(false);
+  if (notificationsEnabled()) {
+    try {
+      postFor(taskId, outcome === 'pass' ? 'checks-pass' : 'checks-fail', banner);
+    } catch {
+      /* as in noteStatusChange */
+    }
+  }
+  return true;
 }
 
 /**
