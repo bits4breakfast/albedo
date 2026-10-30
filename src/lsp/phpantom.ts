@@ -17,7 +17,8 @@
  * installed at `~/.albedo/bin/phpantom_lsp` by `scripts/install-phpantom.sh`;
  * the bundled copy is tried first. Albedo never downloads it. Absent, broken or
  * too slow, every caller gets null and `symbolNav.ts` answers with git grep,
- * which needs nothing installed.
+ * which needs nothing installed. `phpantomAvailability` says which of those it
+ * was, so the editor can say that navigation is text search, and why (#172).
  *
  * ## Lifecycle: only for PHP, only on demand
  *
@@ -357,24 +358,56 @@ const settled = new WeakMap<Promise<PhpServer | null>, PhpServer | null>();
 let home: string | null = null;
 
 // ---------------------------------------------------------------------------
-// Start failures, said once
+// Availability, and start failures said once
 // ---------------------------------------------------------------------------
 
 /**
- * Why the first start that failed did, until the user has seen it. Not installed is not
- * a failure: the server is optional and git grep is the expected answer then.
- * Anything else used to be a `console.warn` only, and navigation fell back to
- * git grep for months without anyone knowing (docs/REGRESSIONS.md, "Cleanup
- * paths"). One per run: the cause is the same for every worktree.
+ * Whether PHPantom is answering, as the last start found it. The UI shows
+ * this rather than inferring it: navigation answers either way, and only
+ * this says whether that answer came from PHPantom or from git grep.
+ *
+ * - `running`: a start reached a working server.
+ * - `failed`: a start went wrong (see `phpantomFailure` for why). Kept for the
+ *   rest of the run once seen, like the reason: the cause is the same for
+ *   every worktree, and a later success elsewhere does not unsay it.
+ * - `not-installed`: neither the bundled nor the installed copy exists. Not a
+ *   failure -- the server is optional -- but every answer is text search.
+ *
+ * Null until a PHP file has asked for a server: nothing is known before.
+ */
+export type PhpantomAvailability = 'running' | 'failed' | 'not-installed';
+
+let lastOutcome: 'running' | 'not-installed' | null = null;
+
+/**
+ * Why the first start that failed did, until the user has seen it. Anything
+ * that went wrong used to be a `console.warn` only, and navigation fell back
+ * to git grep for months without anyone knowing (docs/REGRESSIONS.md,
+ * "Cleanup paths"). One per run: the cause is the same for every worktree.
  */
 let startFailure: string | null = null;
 let failureDismissed = false;
-const failureListeners = new Set<() => void>();
+const listeners = new Set<() => void>();
+
+function changed(): void {
+  for (const l of listeners) l();
+}
 
 function noteStartFailure(err: unknown): void {
   if (startFailure !== null) return;
   startFailure = err instanceof Error ? err.message : String(err);
-  for (const l of failureListeners) l();
+  changed();
+}
+
+function noteOutcome(outcome: 'running' | 'not-installed'): void {
+  if (lastOutcome === outcome) return;
+  lastOutcome = outcome;
+  changed();
+}
+
+/** What the last start found; a failure, once there was one this run. Null before any start. */
+export function phpantomAvailability(): PhpantomAvailability | null {
+  return startFailure !== null ? 'failed' : lastOutcome;
 }
 
 /** Why PHPantom couldn't start, while that is still to be said; else null. */
@@ -382,16 +415,17 @@ export function phpantomFailure(): string | null {
   return failureDismissed ? null : startFailure;
 }
 
-export function subscribePhpantomFailure(listener: () => void): () => void {
-  failureListeners.add(listener);
-  return () => failureListeners.delete(listener);
+/** Called whenever the availability or the failure to say changes. */
+export function subscribePhpantom(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 /** Seen: not shown again this run. */
 export function dismissPhpantomFailure(): void {
   if (failureDismissed) return;
   failureDismissed = true;
-  for (const l of failureListeners) l();
+  changed();
 }
 
 async function homeDir(): Promise<string> {
@@ -444,7 +478,8 @@ async function start(root: string): Promise<PhpServer | null> {
   // user installed. A build without the bundled copy refuses the sidecar
   // spawn at once, which is how its absence shows.
   const candidates: Array<() => Command<Uint8Array>> = [() => Command.sidecar(SIDECAR_NAME, ['--stdio'], options)];
-  if (await phpantomInstalled()) candidates.push(() => Command.create(SCOPE_NAME, ['--stdio'], options));
+  const installed = await phpantomInstalled();
+  if (installed) candidates.push(() => Command.create(SCOPE_NAME, ['--stdio'], options));
 
   let server: PhpServer | null = null;
   let child: Child | null = null;
@@ -464,6 +499,7 @@ async function start(root: string): Promise<PhpServer | null> {
       if (method === '$/progress' && p?.token === 'phpantom/full-index' && p.value?.kind === 'end') server?.markReady();
     },
   );
+  let spawnError: unknown = null;
   for (const make of candidates) {
     const command = make();
     command.stdout.on('data', (chunk) => conn.receive(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)));
@@ -475,12 +511,20 @@ async function start(root: string): Promise<PhpServer | null> {
     try {
       child = await command.spawn();
       break;
-    } catch {
-      /* not this one: try the next */
+    } catch (err) {
+      // Not this one: try the next. The sidecar's refusal is how a build
+      // without it shows, so only the installed copy's is worth keeping.
+      spawnError = err;
     }
   }
-  // Neither bundled nor installed: git grep answers, as it always could.
-  if (!child) return null;
+  if (!child) {
+    // Installed, and still would not run: that is a failure, said as one.
+    if (installed) throw spawnError instanceof Error ? spawnError : new Error(String(spawnError));
+    // Neither bundled nor installed: git grep answers, as it always could,
+    // and the editor says so (#172).
+    noteOutcome('not-installed');
+    return null;
+  }
   await evictToFit(root);
   server = new PhpServer(root, child, conn, (s) => {
     if (servers.get(s.root) && s === server) servers.delete(s.root);
@@ -516,7 +560,9 @@ async function start(root: string): Promise<PhpServer | null> {
   }
   server.touch();
   await server.startWatching();
-  return server.stopped ? null : server;
+  if (server.stopped) return null;
+  noteOutcome('running');
+  return server;
 }
 
 /**

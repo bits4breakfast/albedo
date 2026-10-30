@@ -40,10 +40,14 @@ import {
 
 export type NavAction = 'declaration' | 'usages' | 'implementations';
 
-/** `note`: how the answer was found, when that limits what it can contain. */
+/**
+ * `note`: how the answer was found, when that limits what it can contain.
+ * `textSearch`: a PHP list git grep answered alone, without PHPantom, so it
+ * can hold rows that only share the name (#172). The list's header says so.
+ */
 export type NavOutcome =
   | { kind: 'open'; path: string; line: number }
-  | { kind: 'list'; title: string; result: FindResult; note?: string }
+  | { kind: 'list'; title: string; result: FindResult; note?: string; textSearch?: boolean }
   | { kind: 'none'; message: string; note?: string };
 
 export interface NavContext {
@@ -88,7 +92,7 @@ function pick(symbols: readonly CodeSymbol[], title: string, empty: string): Nav
 async function phpUsages(root: string, fqcn: string): Promise<NavOutcome> {
   const result = await findPhpUsages(root, fqcn);
   if (result.count === 0) return { kind: 'none', message: `No usages of ${fqcn}` };
-  return { kind: 'list', title: `Usages of ${fqcn}`, result };
+  return { kind: 'list', title: `Usages of ${fqcn}`, result, textSearch: true };
 }
 
 /**
@@ -180,13 +184,16 @@ function implementationQuestion(kind: SupertypeKind, name: string): { title: str
 
 /**
  * What the list can hold, said under its title after the type's full name.
+ * `listed`: a grep-only answer that is a list says "Text search" in its
+ * header already, so the note leaves that out rather than saying it twice; an
+ * empty answer has no such header, and keeps it.
  * With PHPantom the list is the union of both engines: PHPantom's answer is
  * transitive and multi-line-proof but leaves abstract types out (measured,
  * see `PhpServer.implementation`); grep adds the direct ones it skipped. So
  * an abstract type or an extending interface is there when it names the
  * target itself, and missed only further down.
  */
-function implementationNote(engines: 'both' | 'grep', kind: SupertypeKind): string {
+function implementationNote(engines: 'both' | 'grep', kind: SupertypeKind, listed: boolean): string {
   if (engines === 'both') {
     switch (kind) {
       case 'interface':
@@ -199,15 +206,16 @@ function implementationNote(engines: 'both' | 'grep', kind: SupertypeKind): stri
         return 'Not declared in this worktree · what PHPantom resolves, and declarations naming it in extends or implements';
     }
   }
+  const how = listed ? '' : ', by text search';
   switch (kind) {
     case 'interface':
-      return 'Direct implementers and extending interfaces, by text search · an implements list split across lines is missed';
+      return `Direct implementers and extending interfaces${how} · an implements list split across lines is missed`;
     case 'class':
-      return 'Direct subclasses, by text search · an extends split across lines is missed';
+      return `Direct subclasses${how} · an extends split across lines is missed`;
     case 'trait':
-      return 'Direct users, by text search · a use split across lines is missed';
+      return `Direct users${how} · a use split across lines is missed`;
     case 'any':
-      return 'Not declared in this worktree · direct extends and implements, by text search · a list split across lines is missed';
+      return `Not declared in this worktree · direct extends and implements${how} · a list split across lines is missed`;
   }
 }
 
@@ -253,12 +261,13 @@ async function implementations(ctx: NavContext, line: string, col: number, numbe
   }
   const grepped = await findPhpSubtypes(ctx.root, target.fqcn, kind);
   const result = found ? mergeResults(found, grepped) : grepped;
-  const note = `${target.fqcn} · ${implementationNote(found ? 'both' : 'grep', kind)}`;
+  const engines = found ? 'both' : 'grep';
+  const note = (listed: boolean) => `${target.fqcn} · ${implementationNote(engines, kind, listed)}`;
 
-  if (result.count === 0) return { kind: 'none', message: empty, note };
+  if (result.count === 0) return { kind: 'none', message: empty, note: note(false) };
   const only = result.count === 1 ? result.groups[0]!.matches[0]! : null;
   if (only) return { kind: 'open', path: only.path, line: only.line };
-  return { kind: 'list', title, result, note };
+  return { kind: 'list', title, result, note: note(true), textSearch: engines === 'grep' };
 }
 
 /** Rows that are declarations, re-marked on the name each one declares. */

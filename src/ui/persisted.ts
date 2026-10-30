@@ -43,6 +43,8 @@ export const KEYS = {
   touchedMode: 'albedo.touched.mode',
   /** The Files pane: the change set, or the whole worktree as a tree. */
   touchedView: 'albedo.touched.view',
+  /** The editor's "PHPantom isn't installed" notice was dismissed (editor/phpantomNotice.ts). */
+  phpantomMissingDismissed: 'albedo.editor.phpantomMissingDismissed',
   composerPx: 'albedo.composerPx',
   /** Unsent composer drafts, one per task (transcript/drafts.ts owns the shape). */
   composerDrafts: 'albedo.composerDrafts',
