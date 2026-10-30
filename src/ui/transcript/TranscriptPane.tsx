@@ -8,7 +8,17 @@
  * scrolling up to read is never interrupted.
  */
 
-import { expandPastes, pastesIn, placeholderFor, queuedLabel, replaceRanges, shouldCollapse, tokenRanges } from './pastedText';
+import {
+  draftOf,
+  foldPastes,
+  markPastes,
+  pastesIn,
+  placeholderFor,
+  queuedLabel,
+  replaceRanges,
+  shouldCollapse,
+  tokenRanges,
+} from './pastedText';
 import { PastedTexts } from './PastedTexts';
 import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
 import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
@@ -536,7 +546,8 @@ export function TranscriptPane({
             <div className="tx-row tx-row-user tx-row-echo" aria-live="polite">
               <div className="tx-gutter">You</div>
               <div className="tx-content">
-                <div className="tx-echo-text">{echo.text}</div>
+                {/* A paste reads as its mention, as in the box and the Queued band. */}
+                <div className="tx-echo-text">{foldPastes(echo.text)}</div>
               </div>
             </div>
           ) : null}
@@ -748,7 +759,7 @@ export function QueuedStrip({
             <span className="tx-queued-hint">sent when Claude Code finishes its current step</span>
           </div>
           {mine.map((e, i) => (
-            <div key={`${e.ts}-${i}`} className="tx-queued-item" title={e.text}>
+            <div key={`${e.ts}-${i}`} className="tx-queued-item" title={foldPastes(e.text)}>
               {queuedLabel(e.text)}
             </div>
           ))}
@@ -836,10 +847,14 @@ function HeldRow({
   }, [notNow]);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // A paste is edited as the box shows it, a token standing for its text,
+  // and goes back in its marker on save (pastedText.ts).
+  const pastesRef = useRef<ReadonlyMap<number, string>>(new Map());
+  const openedRef = useRef('');
   // Left open (a task switch): what was typed is kept, not thrown away.
   useEffect(
     () => () => {
-      if (draftRef.current !== null) editHeld(taskId, held.id, draftRef.current);
+      if (draftRef.current !== null) editHeld(taskId, held.id, markPastes(draftRef.current, pastesRef.current));
       setEditing(taskId, held.id, false);
     },
     [taskId, held.id],
@@ -847,10 +862,13 @@ function HeldRow({
 
   const open = () => {
     setEditing(taskId, held.id, true);
-    setDraft(held.text);
+    const d = draftOf(held.text);
+    pastesRef.current = d.pastes;
+    openedRef.current = d.text;
+    setDraft(d.text);
   };
   const close = (save: boolean) => {
-    if (save && draft !== null && draft !== held.text) editHeld(taskId, held.id, draft);
+    if (save && draft !== null && draft !== openedRef.current) editHeld(taskId, held.id, markPastes(draft, pastesRef.current));
     setDraft(null);
     setEditing(taskId, held.id, false);
   };
@@ -889,7 +907,7 @@ function HeldRow({
   const sending = held.sending === true;
   return (
     <div className="tx-queued-row">
-      <div className="tx-queued-item" title={held.text}>
+      <div className="tx-queued-item" title={foldPastes(held.text)}>
         {queuedLabel(held.text)}
       </div>
       {held.maybeSent ? (
@@ -1280,8 +1298,9 @@ export function Composer({
       threw = true;
     }
     // Left while it was being written: the box and its state are another
-    // task's now (see `leftDuringSend`).
-    if (leftDuringSend(owner, ok, body, new Map())) return;
+    // task's now (see `leftDuringSend`). It comes back with its pastes folded.
+    const back = draftOf(body);
+    if (leftDuringSend(owner, ok, back.text, back.pastes)) return;
     if (ok) succeeded(owner, body);
     else if (threw) setNotice('Could not send your message. It is still here — press Send to retry.');
     else setNotice('Could not deliver your message. It is still here — press Send to retry.');
@@ -1499,8 +1518,9 @@ export function Composer({
     // A ref, because two Enters in one tick both see stale `busy` state.
     if (inFlightRef.current) return;
     if (text.trim().length === 0) return;
-    // What Claude Code receives: the draft with its paste placeholders filled.
-    const body = expandPastes(text, pastesRef.current);
+    // What Claude Code receives: the draft with its paste placeholders filled,
+    // each paste in its marker so the transcript can fold it again (#155).
+    const body = markPastes(text, pastesRef.current);
     /*
        It waits in the outbox (outbox.ts) rather than in Claude Code's queue
        while offline (Claude Code retries, and may drop it), behind messages

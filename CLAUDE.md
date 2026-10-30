@@ -57,6 +57,23 @@ says the answer is in the terminal. Anything it cannot read means "unknown",
 and unknown shows nothing. `src/capture/workspaceTrust.ts` is the only file
 that knows this.
 
+A fifth, by the owner's decision (issue #157): every session Albedo starts
+also gets Albedo's own MCP server through `--mcp-config` (additive, never
+`--strict-mcp-config`, so the user's servers still load). It is a small Rust
+binary bundled beside the app (`src-tauri/mcp`, a sidecar; no Node, no
+network, no port), and Albedo sets `ALBEDO_TASK_ID` in its environment: that
+id, set at spawn, is the caller's whole identity, and nothing in a request
+can name another task. It offers three tools and nothing else --
+`create_reminder`, `request_session`, `notify_blocked` -- for things only the
+agent starts; whatever the user starts goes through Albedo directly. A call
+that passes its checks is appended as one JSON line to
+`~/.albedo/inbox/task-<id>.jsonl`, and the app checks every line again (known
+tool, size caps, the task id in the line equal to the file's). A session
+request is never acted on without the user: it waits in Requests until they
+approve it, and approving only opens New Task filled in from it. Nothing
+flows back to the session. `src/capture/inbox.ts` is the only file in the app
+that knows the line's shape.
+
 ## Which session a task is on
 
 A restart resumes `tasks.session_id`, so that value is a fact, never a guess.
@@ -152,6 +169,7 @@ src/lsp/       PHPantom client: JSON-RPC framing and the server pool
 src/ui/        React shell, task list, xterm pane                  (M2)
 src/ui/transcript/  transcript renderer and diff component         (M4)
 src-tauri/     Tauri shell; src/pty.rs plus small fs and scope helpers
+src-tauri/mcp/ Albedo's MCP server: stdio, Rust, bundled as a sidecar (#157)
 ```
 
 ## Past regressions
@@ -192,7 +210,8 @@ npm run tauri dev     # run the app
 npm test              # vitest
 npm run typecheck     # tsc --noEmit
 npm run deps:check    # dependency embargo against origin/main
-cargo fmt && cargo clippy --manifest-path src-tauri/Cargo.toml
+cargo fmt --all && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets
+npm run build:mcp     # the MCP server, beside a dev build's binary (tauri dev runs it)
 ```
 
 ## Foreign keys are not enforced

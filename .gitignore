@@ -9,5 +9,6 @@ src-tauri/target
 .claude/*
 !.claude/settings.json
 
-# PHPantom binaries fetched by build.sh --with-phpantom
+# Sidecars build.sh puts there: the MCP server (scripts/build-mcp.sh) and
+# PHPantom (--with-phpantom)
 src-tauri/binaries/

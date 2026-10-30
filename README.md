@@ -297,12 +297,19 @@ Find Usages and Go to Implementation and nothing else: no completion, no
 diagnostics, and its linters are switched off. It starts only when you open a PHP file. Without
 it, the same commands use git grep.
 
+**Sessions can ask Albedo for three things.** Every session Albedo starts
+gets a small MCP server of Albedo's own, next to your own servers: a session
+can ask for a reminder, ask you to start a new session, or tell you it is
+blocked on you. A new session is never started for it: the request waits
+under Requests in the title bar until you approve it, and approving opens New
+Task filled in from it.
+
 **Where things live.**
 
 | What | Where |
 | --- | --- |
 | Albedo's database (tasks, captured conversations, comments) | `~/Library/Application Support/com.bits4breakfast.albedo/` on macOS, `~/.local/share/com.bits4breakfast.albedo/` on Linux |
-| Hook events, logs, PHPantom | `~/.albedo/` |
+| Hook events, session requests (`inbox/`), logs, PHPantom | `~/.albedo/` |
 | Claude Code's own sessions, read only | `~/.claude/projects/` |
 | Task worktrees | Each project's worktree root, `~/agents/<project>` by default |
 

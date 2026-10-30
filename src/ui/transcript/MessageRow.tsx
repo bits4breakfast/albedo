@@ -18,6 +18,7 @@ import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
 import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
+import { lineCount } from './pastedText';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import {
   imageSourceNote,
@@ -278,7 +279,9 @@ function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: stri
     case 'skill':
       return <SkillBlock skill={block} />;
     case 'pasted': {
-      const lines = block.text.split('\n').length;
+      // Counted as the message box's token counts them (a trailing line break
+      // starts no line), so "+42 lines" in the box is "42 Lines" here (#155).
+      const lines = lineCount(block.text);
       return <Collapsed label={`Pasted Text · ${lines} Line${lines === 1 ? '' : 's'}`} text={block.text} />;
     }
     case 'output':

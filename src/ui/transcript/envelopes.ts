@@ -43,7 +43,17 @@
  * from-name="<session name>" from-mode="…">` is a peer's message, named. Both
  * become one `agent-message` block, and both come bracketed by the same lead
  * line and closing paragraph for the model (`FRAME_LEAD_RE`, `FRAME_TAIL_RE`).
+ *
+ * ## Albedo's own markers
+ *
+ * What the message box sends carries markers Albedo writes itself -- a paste
+ * is `<pasted-text id="1" lines="42">…</pasted-text id="1">` (#155). Their
+ * shape lives in `albedoMarkers.ts`, which writes and finds them; this file
+ * turns them into blocks, at the top level of a body and inside Claude Code's
+ * `<pasted_content>` alike, since the whole message often arrives in one.
  */
+
+import { findMarker, splitMarkers, type Marker } from './albedoMarkers';
 
 export type UserBlock =
   | { kind: 'text'; text: string }
@@ -102,12 +112,14 @@ export type UserBlock =
   /** Output of a local command, and similar side-channel text. */
   | { kind: 'output'; tag: string; text: string }
   /**
-   * Text Claude Code marked as pasted, in `<pasted_content id="...">`. Only
-   * appears as its own block when there is typed text beside it; a message that
-   * is nothing but one pasted block is reduced to plain text (see
-   * {@link unwrapSolepaste}).
+   * Pasted text. `own` when Albedo's message box marked it (`<pasted-text>`):
+   * the person pasted it there, so it is theirs and folds like the box shows
+   * it. Otherwise Claude Code marked it, in `<pasted_content id="...">`, and
+   * it only appears as its own block when there is typed text beside it; a
+   * message that is nothing but one such block is reduced to plain text (see
+   * {@link unwrapSoleStreamedPaste}).
    */
-  | { kind: 'pasted'; id: string | null; text: string }
+  | { kind: 'pasted'; id: string | null; text: string; own: boolean }
   /** A skill's SKILL.md, loaded into context when it was invoked. */
   | { kind: 'skill'; name: string; dir: string; text: string };
 
@@ -498,7 +510,35 @@ function stripAgentFrame(blocks: UserBlock[]): UserBlock[] {
  */
 function unwrapSoleStreamedPaste(blocks: UserBlock[]): UserBlock[] {
   const only = blocks.length === 1 ? blocks[0] : undefined;
-  return only && only.kind === 'pasted' ? [{ kind: 'text', text: only.text }] : blocks;
+  return only && only.kind === 'pasted' && !only.own ? [{ kind: 'text', text: only.text }] : blocks;
+}
+
+/** The block an Albedo marker draws as. */
+function markerBlock(m: Marker): UserBlock {
+  switch (m.tag) {
+    case 'pasted-text':
+      return { kind: 'pasted', id: m.attrs.id ?? null, text: m.content, own: true };
+    default: {
+      const unhandled: never = m.tag;
+      return unhandled;
+    }
+  }
+}
+
+/**
+ * The inside of Claude Code's `<pasted_content>` when it holds Albedo's
+ * markers: the message from the box, with its pastes as their own blocks and
+ * the typed text around them as text. Null when it holds none.
+ */
+function pastedWithMarkers(inner: string): UserBlock[] | null {
+  const parts = splitMarkers(inner);
+  if (!parts.some((p) => p.kind === 'marker')) return null;
+  const out: UserBlock[] = [];
+  for (const p of parts) {
+    if (p.kind === 'marker') out.push(markerBlock(p.marker));
+    else pushText(out, unescapeXml(p.text));
+  }
+  return out;
 }
 
 /**
@@ -538,6 +578,26 @@ export function isImagePlaceholder(body: string | null): boolean {
 }
 
 /**
+ * Claude Code repeats a paste wrapper's id on its closing tag
+ * (`</pasted_content id="5e1a">`, every one measured on 2.1.314). A message
+ * whose pasted text itself holds a closing tag of that name -- a pasted
+ * transcript, or this file -- would end at the first one. When the match ended
+ * on a closing tag that is not the wrapper's own and its own comes later,
+ * this is where the wrapper really ends. Null when the match stands.
+ */
+function ownPastedClose(body: string, m: RegExpExecArray, tag: string, attrs: string): { inner: string; end: number } | null {
+  if (tag !== 'pasted_content') return null;
+  const id = /\bid="([^"]*)"/.exec(attrs)?.[1];
+  if (id === undefined) return null;
+  const close = `</pasted_content id="${id}">`;
+  if (m[0].endsWith(close)) return null;
+  const from = m.index + m[0].indexOf('>') + 1;
+  const at = body.indexOf(close, from);
+  if (at < 0) return null;
+  return { inner: body.slice(from, at), end: at + close.length };
+}
+
+/**
  * Split a user row's body into renderable blocks.
  *
  * Always returns at least one block for non-empty input, and never throws: a
@@ -555,12 +615,32 @@ export function parseUserBody(body: string): UserBlock[] {
     let m: RegExpExecArray | null;
     let matched = false;
 
-    while ((m = ENVELOPE_RE.exec(body)) !== null) {
+    // The next Albedo marker at or after `last`; null once there is none.
+    let marker: Marker | null | undefined;
+    for (;;) {
+      ENVELOPE_RE.lastIndex = last;
+      m = ENVELOPE_RE.exec(body);
+      // An Albedo marker before the next envelope is taken first, whole: what
+      // it wraps is the person's paste, and an envelope-like tag in it is text.
+      if (marker === undefined || (marker !== null && marker.start < last)) marker = findMarker(body, last);
+      if (marker !== null && (m === null || marker.start < m.index)) {
+        if (marker.start > last) pushText(out, body.slice(last, marker.start));
+        out.push(markerBlock(marker));
+        last = marker.end;
+        matched = true;
+        continue;
+      }
+      if (m === null) break;
       const tag = m[1] ?? '';
       const attrs = m[2] ?? '';
-      const inner = m[3] ?? '';
+      let inner = m[3] ?? '';
       if (m.index > last) pushText(out, body.slice(last, m.index));
       last = m.index + m[0].length;
+      const own = ownPastedClose(body, m, tag, attrs);
+      if (own !== null) {
+        inner = own.inner;
+        last = own.end;
+      }
       matched = true;
       if (MODEL_ONLY_TAGS.has(tag)) continue;
 
@@ -580,13 +660,22 @@ export function parseUserBody(body: string): UserBlock[] {
           // sends everything as a bracketed paste.
           const sole = SOLE_ACTION_RE.exec(inner);
           const action = sole ? parseAction(sole[1] ?? '', sole[2] ?? '') : null;
-          out.push(
-            action ?? {
-              kind: 'pasted',
-              id: attr(attrs, 'id'),
-              text: unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, ''),
-            },
-          );
+          if (action) {
+            out.push(action);
+            break;
+          }
+          // The message box's own pastes, marked inside the wrapper (#155).
+          const marked = pastedWithMarkers(inner);
+          if (marked) {
+            out.push(...marked);
+            break;
+          }
+          out.push({
+            kind: 'pasted',
+            id: attr(attrs, 'id'),
+            text: unescapeXml(inner).replace(/^\n+/, '').replace(/\s+$/, ''),
+            own: false,
+          });
           break;
         }
         case 'albedo-action':
@@ -636,10 +725,19 @@ export function parseUserBody(body: string): UserBlock[] {
  * a slash command and an Albedo action arrive in envelopes too, but the user
  * started them: every `<command-name>` on a non-meta line in local transcripts
  * was one the user typed. A bare `/clear` is `cleared` by now, the divider.
+ * So is a paste from the message box: a message that is only a paste is still
+ * the person's.
  */
 export function isAllEnvelopes(blocks: readonly UserBlock[]): boolean {
   return (
     blocks.length > 0 &&
-    blocks.every((b) => b.kind !== 'text' && b.kind !== 'shell-input' && b.kind !== 'action' && b.kind !== 'command')
+    blocks.every(
+      (b) =>
+        b.kind !== 'text' &&
+        b.kind !== 'shell-input' &&
+        b.kind !== 'action' &&
+        b.kind !== 'command' &&
+        !(b.kind === 'pasted' && b.own),
+    )
   );
 }

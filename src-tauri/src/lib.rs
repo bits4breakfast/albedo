@@ -1,6 +1,7 @@
 mod attention;
 mod fsscope;
 mod fsx;
+mod mcp;
 mod pty;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -247,6 +248,7 @@ pub fn run() {
             attention::notify_post,
             set_busy_tasks,
             quit_app,
+            mcp::mcp_server_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running albedo");

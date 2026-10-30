@@ -1,0 +1,4 @@
+{"args":{"due":"2026-11-03T10:30:00+01:00","dueMs":1793698200000,"summary":"Deployed build 41.\nNext: smoke test /checkout, then close the PR.","text":"Check the staging deploy"},"at":1793692800000,"id":"fixture-1","task":12,"tool":"create_reminder","v":1}
+{"args":{"branch":"fix/flaky-export","project":"albedo","prompt":"ExportTest::testCsv fails about one run in five.\n\nFind out why and fix it.","reason":"Unrelated to this task.","title":"Fix the flaky export test"},"at":1793692800000,"id":"fixture-2","task":12,"tool":"request_session","v":1}
+{"args":{"prompt":"Do it.","reason":"Because.","title":"Short one"},"at":1793692800000,"id":"fixture-3","task":12,"tool":"request_session","v":1}
+{"args":{"message":"I need the staging database password to go on."},"at":1793692800000,"id":"fixture-4","task":12,"tool":"notify_blocked","v":1}

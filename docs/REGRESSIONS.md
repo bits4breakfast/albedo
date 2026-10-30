@@ -44,6 +44,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - What the parent was told about a subagent (resumed, stopped, stopped for now) settles its state; its own rows decide only after that. Read through `subagentMarksOf` (adapter.ts).
   - Anything derived from a recency window carries when it expires, and something re-asks then (`statusExpiresAt`), or it is stale the moment the session goes quiet.
   - A clock across resumes counts the current run.
+- **What the composer sends is read in more places than the transcript.** #155 wraps each paste in a `<pasted-text>` marker. The transcript row was the obvious reader, but the sent body is also shown or reused by the "Sending" echo, the Queued band (Claude Code's queue entries are the body, bare, 1306 of 1310 long ones here), the held-message editor, the draft a failed send comes back as (`flushPending`), and `pasteSegments`, which cut a paste in two at any image path inside it. Each would have shown raw tags, or split a marker across two pastes. Caught before merge. **Rule:**
+  - Before changing the shape of what `send` produces, `git grep` every use of the body, `held.text` and queue `text`, and say in the PR what each now shows.
+  - A message from the box arrives both bare and inside Claude Code's `<pasted_content id="…">` (measured 2.1.314: the whole message, id repeated on the closing tag, content verbatim). Test both shapes.
 - **Unverified claims about Claude Code.** A PR stated that `--append-system-prompt` applies on every spawn. Measured with `claude -p`: it applies when the session is created, persists across `--resume`, and is ignored when passed on resume. **Rule:** measure Claude Code behaviour (version noted) before writing it in code or a PR. Say what wasn't measured (interactive mode, `/clear`).
 
 ## Shared helpers and scope
@@ -91,6 +94,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Cleanup of an optional component (language server, watcher, probe) never throws into the action it is part of: catch, log, carry on.
   - Dot-files are covered by the fs scope's globs only because `requireLiteralLeadingDot` is off (#93); see "Shared helpers and scope".
   - An optional feature that fails to start says so somewhere visible, instead of silently falling back for months.
+- **Not installed looked like broken.** After #73 said "couldn't start", an absent PHPantom still fell back to git grep in silence; the owner took the approximate lists (same-named methods, nothing through inheritance) for broken navigation (#172). **Rule:**
+  - An optional component reports its availability (running / failed / not installed) from the module that owns it, and the UI shows that state rather than guessing it.
+  - A fallback answer says so where it is listed ("Text search: may include false matches"), not only in a notice that may have been dismissed.
 
 ## Data and contracts
 

@@ -6,7 +6,8 @@ import './header.css';
 
 /**
  * Title bar strip. Carries the macOS overlay drag region, the project tabs,
- * the count of sessions waiting on the user, History and ⋯.
+ * the requests sessions made of Albedo, the count of sessions waiting on
+ * the user, History and ⋯.
  *
  * No usage figure. A "Burn" rate used to sit here, the same quantity as the
  * Usage panel's Spend/h but divided by a flat 5h instead of the time actually
@@ -39,12 +40,24 @@ export interface HeaderProps {
   theme: ThemeChoice;
   onThemeChange: (next: ThemeChoice) => void;
   /**
+   * "Notify When CI Finishes" (ui/ciNotice.ts): the banner and Dock bounce
+   * when a task's PR checks pass or fail while Albedo is in the background.
+   * Optional so the header renders without it; absent, the item is not shown.
+   */
+  ciNotify?: boolean;
+  onCiNotifyChange?: (on: boolean) => void;
+  /**
    * The project tabs, when there are two or more projects. They lead the
    * bar: the tabs are the level above everything below it.
    */
   tabs?: ReactNode;
   /** Select a task that is waiting on you (the next one, on repeat clicks). */
   onWaitingClick?: () => void;
+  /**
+   * What sessions asked for through Albedo's MCP server (`Requests.tsx`),
+   * before the waiting count; renders nothing when no request waits.
+   */
+  requests?: ReactNode;
 }
 
 const THEME_ITEMS: { choice: ThemeChoice; label: string; title: string }[] = [
@@ -61,9 +74,12 @@ export default function Header({
   onWhatsNew,
   theme,
   onThemeChange,
+  ciNotify,
+  onCiNotifyChange,
   tabs,
   onWaitingClick,
   blockedCount,
+  requests,
 }: HeaderProps) {
   return (
     <header className="header" data-tauri-drag-region>
@@ -72,6 +88,8 @@ export default function Header({
       {tabs}
 
       <span className="header-spacer" data-tauri-drag-region />
+
+      {requests}
 
       {blockedCount > 0 && (
         <>
@@ -103,7 +121,7 @@ export default function Header({
         </button>
         <OverflowMenu
           label="More"
-          title="Projects, worktrees, theme, keyboard shortcuts, what's new"
+          title="Projects, worktrees, theme, notifications, keyboard shortcuts, what's new"
           items={[
             { id: 'projects', label: 'Projects…', onSelect: onProjects, title: 'Manage projects' },
             { id: 'worktrees', label: 'Worktrees…', onSelect: onReconcile, title: 'Reconcile git worktrees' },
@@ -116,6 +134,21 @@ export default function Header({
               group: i === 0,
               onSelect: () => onThemeChange(t.choice),
             })),
+            // The one notification preference with a switch: the others
+            // (waiting on you, finished, merged) are what Albedo is for.
+            ...(onCiNotifyChange && ciNotify !== undefined
+              ? [
+                  {
+                    id: 'ci-notify',
+                    label: 'Notify When CI Finishes',
+                    title:
+                      "A banner and a Dock bounce when a task's PR checks pass or fail while Albedo is in the background. The task's row is marked either way.",
+                    checked: ciNotify,
+                    group: true,
+                    onSelect: () => onCiNotifyChange(!ciNotify),
+                  },
+                ]
+              : []),
             {
               id: 'shortcuts',
               label: 'Keyboard Shortcuts',

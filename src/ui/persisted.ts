@@ -43,13 +43,19 @@ export const KEYS = {
   touchedMode: 'albedo.touched.mode',
   /** The Files pane: the change set, or the whole worktree as a tree. */
   touchedView: 'albedo.touched.view',
+  /** The editor's "PHPantom isn't installed" notice was dismissed (editor/phpantomNotice.ts). */
+  phpantomMissingDismissed: 'albedo.editor.phpantomMissingDismissed',
   composerPx: 'albedo.composerPx',
   /** Unsent composer drafts, one per task (transcript/drafts.ts owns the shape). */
   composerDrafts: 'albedo.composerDrafts',
   /** Messages held back while offline, per task (transcript/outbox.ts owns the shape). */
   composerOutbox: 'albedo.composerOutbox',
+  /** What sessions asked for through Albedo's MCP server (ui/requestQueue.ts owns the shape). */
+  requestQueue: 'albedo.requests',
   /** Absent means on. */
   notifications: 'albedo.notifications',
+  /** "Notify When CI Finishes" (ui/ciNotice.ts). Absent means on. */
+  ciNotifications: 'albedo.notifications.ci',
   commentsIntro: 'albedo.comments.intro',
   /** The build last run here, for What's New (ui/whatsNew.ts owns the shape). */
   whatsNewSeen: 'albedo.whatsNew.seen',

@@ -6,6 +6,12 @@ description = "Personal desktop cockpit for running multiple Claude Code session
 edition = "2021"
 rust-version = "1.77"
 
+# The app, and the MCP server it bundles beside itself (mcp/, #157). One
+# workspace so both share Cargo.lock and target/: `cargo build -p albedo-mcp`
+# puts the server next to the app's own binary, where a dev build finds it.
+[workspace]
+members = [".", "mcp"]
+
 [lib]
 name = "albedo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -29,7 +35,7 @@ tauri-plugin-notification = "~2.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 portable-pty = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 parking_lot = "0.12"
 # killpg/poll/dup for the pty bridge. Already in the tree via portable-pty.
 libc = "0.2"

@@ -9,9 +9,11 @@ import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startH
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
 import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
 import { getTaskModel } from './taskModel';
-import { isResumePlan, planSpawn } from './sessionSpawn';
+import { isResumePlan, planSpawn, withMcpConfig } from './sessionSpawn';
+import { mcpServerPath } from '../capture/inbox';
 import { displayName } from './text';
 import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment } from '../lib/ptyInput';
+import { markerSpans } from './transcript/albedoMarkers';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { TASK_TERMINAL_ATTR, taskTerminalTakesKey } from './shortcuts';
@@ -163,7 +165,8 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
     // so the pause is a fixed, generous one.
     // One paste per image path, or Claude Code takes the path as text and the
     // picture never reaches the model (see pasteSegments).
-    const segments = pasteSegments(body);
+    // A paste from the message box goes whole, path or not (albedoMarkers.ts).
+    const segments = pasteSegments(body, markerSpans(body));
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i] as PasteSegment;
       await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`);
@@ -651,6 +654,13 @@ export default function Terminal({
       } catch (err) {
         console.warn('[terminal] hooks unavailable, starting without them', err);
       }
+
+      // Albedo's MCP server (#157): how the session asks for a reminder, a new
+      // session or the user's attention. Optional like the hooks: without the
+      // binary (a dev build before `npm run build:mcp`) it starts as before.
+      const server = await mcpServerPath();
+      if (disposed) return;
+      if (server) spawnArgs = withMcpConfig(spawnArgs, task.id, server);
 
       // A folder Claude Code has never trusted opens on its trust dialog, before
       // any hook runs and before there is a transcript, so neither channel can

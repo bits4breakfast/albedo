@@ -38,7 +38,8 @@ vi.mock('../../lsp/phpantom', () => ({
   isPhpPath: (p: string) => p.endsWith('.php'),
   warmPhpantom,
   phpantomFailure: () => null,
-  subscribePhpantomFailure: () => () => {},
+  phpantomAvailability: () => null,
+  subscribePhpantom: () => () => {},
   dismissPhpantomFailure: vi.fn(),
 }));
 const listComments = vi.fn(async () => []);

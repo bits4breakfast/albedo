@@ -141,6 +141,8 @@ async function pressOn(path: string, name: string, openFile = vi.fn()) {
   return openFile;
 }
 
+const CAVEAT = 'Text search: may include false matches';
+
 const rows = () => screen.getAllByRole('option').map((o) => o.textContent);
 
 describe('⌥⌘B in the editor', { timeout: 15_000 }, () => {
@@ -152,8 +154,11 @@ describe('⌥⌘B in the editor', { timeout: 15_000 }, () => {
       '4class Square extends Polygon implements Shape {}',
       '6final class Circle implements Shape {}',
     ]);
-    // The full name leads the note, the title keeps the short one.
-    expect(screen.getByText(/^App\\Model\\Shape · Direct implementers .*by text search · an implements list split across lines is missed$/)).toBeTruthy();
+    // The full name leads the note, the title keeps the short one. Text
+    // search is said once, in the header (#172), not again in the note.
+    expect(screen.getByText(/^App\\Model\\Shape · Direct implementers and extending interfaces · an implements list split across lines is missed$/)).toBeTruthy();
+    expect(screen.getByText(CAVEAT)).toBeTruthy();
+    expect(screen.getAllByText(/text search/i)).toHaveLength(1);
   });
 
   it('on a class with one subclass: opens it, with no list', async () => {
@@ -167,6 +172,8 @@ describe('⌥⌘B in the editor', { timeout: 15_000 }, () => {
     expect(await screen.findByText('No classes use Loggable')).toBeTruthy();
     expect(screen.getByRole('dialog', { name: 'Go to Implementation' })).toBeTruthy();
     expect(screen.getByText(/Direct users, by text search/)).toBeTruthy();
+    // No list, so nothing for "may include false matches" to be about.
+    expect(screen.queryByText(CAVEAT)).toBeNull();
   });
 
   it('with PHPantom running: its answer and grep’s as one list, abstract implementers included', async () => {
@@ -189,6 +196,8 @@ describe('⌥⌘B in the editor', { timeout: 15_000 }, () => {
     // The declared name is the one marked, whichever engine found the row.
     expect([...document.querySelectorAll('.ff-row mark')].map((m) => m.textContent)).toEqual(['Polygon', 'Square', 'Circle', 'Tiny']);
     expect(screen.getByText(/Classes implementing it at any depth, and the abstract classes and interfaces that name it directly/)).toBeTruthy();
+    // PHPantom resolved this list: not a text search.
+    expect(screen.queryByText(CAVEAT)).toBeNull();
   });
 
   it('with PHPantom answering nothing: grep’s list, with grep’s limits', async () => {
@@ -196,14 +205,15 @@ describe('⌥⌘B in the editor', { timeout: 15_000 }, () => {
     await pressOn('src/Model/Shape.php', 'Shape');
     expect(await screen.findByRole('dialog', { name: 'Classes Implementing Shape' })).toBeTruthy();
     expect(rows()).toHaveLength(3);
-    expect(screen.getByText(/by text search/)).toBeTruthy();
+    expect(screen.getByText(CAVEAT)).toBeTruthy();
   });
 
   it('on a type this worktree does not declare: what extends or implements it', async () => {
     await pressOn('src/Other/Panel.php', 'Widget;');
     expect(await screen.findByRole('dialog', { name: 'Implementations of Widget' })).toBeTruthy();
     expect(rows()).toEqual(['6class Panel extends Widget', '4final class Sheet implements \\Vendor\\Kit\\Widget {}']);
-    expect(screen.getByText(/^Vendor\\Kit\\Widget · Not declared in this worktree · direct extends and implements, by text search/)).toBeTruthy();
+    expect(screen.getByText(/^Vendor\\Kit\\Widget · Not declared in this worktree · direct extends and implements · a list split/)).toBeTruthy();
+    expect(screen.getByText(CAVEAT)).toBeTruthy();
   });
 
   it('on an undeclared type PHPantom resolves: still asked, and its answer joins the list', async () => {
@@ -220,6 +230,20 @@ describe('⌥⌘B in the editor', { timeout: 15_000 }, () => {
     await pressOn('src/Other/Panel.php', 'Canvas');
     expect(await screen.findByText('No implementations of Canvas')).toBeTruthy();
     expect(lsp.asked).toHaveLength(1);
+  });
+
+  it('⌥F7 without PHPantom: usages by git grep, and the header says it is text search (#172)', async () => {
+    render(<FileEditor task={task()} request={{ path: 'src/Model/Shape.php' }} onClose={() => {}} />);
+    const content = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('.cm-content');
+      if (!el) throw new Error('editor not mounted yet');
+      return el;
+    });
+    const view = EditorView.findFromDOM(content)!;
+    view.dispatch({ selection: { anchor: view.state.doc.toString().lastIndexOf('Shape') + 1 } });
+    fireEvent.keyDown(content, { key: 'F7', code: 'F7', keyCode: 118, altKey: true });
+    const dialog = await screen.findByRole('dialog', { name: 'Usages of App\\Model\\Shape' });
+    expect(dialog.querySelector('.ff-head')?.textContent).toContain(CAVEAT);
   });
 
   it('off a type name: says where to put the cursor', async () => {

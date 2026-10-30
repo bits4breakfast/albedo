@@ -32,13 +32,13 @@ import { looksBinary } from '../../git/fileDiff';
 import FileDiffView from './FileDiffView';
 import SymbolResults, { type SymbolResultsState } from './SymbolResults';
 import { navigate, type NavAction } from './symbolNav';
+import { isPhpPath, warmPhpantom } from '../../lsp/phpantom';
 import {
-  dismissPhpantomFailure,
-  isPhpPath,
-  phpantomFailure,
-  subscribePhpantomFailure,
-  warmPhpantom,
-} from '../../lsp/phpantom';
+  dismissPhpantomNotice,
+  PHPANTOM_INSTALL_COMMAND,
+  PHPANTOM_INSTALL_HELP,
+  usePhpantomNotice,
+} from './phpantomNotice';
 import {
   addComment,
   deleteComment,
@@ -59,7 +59,7 @@ import {
   type CommentActions,
   type PlacedComment,
 } from './comments';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Compartment,
   EditorState,
@@ -1057,10 +1057,16 @@ export default function FileEditor({
   useEffect(() => {
     if (current !== null && isPhpPath(current)) warmPhpantom(worktree);
   }, [current, worktree]);
-  // When it could not start, lookups quietly answer by text search instead.
-  // Said on a PHP file, the only place it matters, and once per run.
-  const phpantomDown = useSyncExternalStore(subscribePhpantomFailure, phpantomFailure);
-  const showPhpantomDown = phpantomDown !== null && current !== null && isPhpPath(current);
+  // When it could not start, or is not installed, lookups quietly answer by
+  // text search instead. Said on a PHP file, the only place it matters, until
+  // OK (phpantomNotice.ts says for how long).
+  const phpantomNotice = usePhpantomNotice(current);
+  const [commandCopied, setCommandCopied] = useState<'ok' | 'failed' | null>(null);
+  useEffect(() => {
+    if (commandCopied === null) return;
+    const t = setTimeout(() => setCommandCopied(null), 1400);
+    return () => clearTimeout(t);
+  }, [commandCopied]);
 
   // Like stepping, a jump to another file is blocked while there are unsaved
   // edits; a jump within this file is not, since nothing is reloaded.
@@ -1102,7 +1108,9 @@ export default function FileEditor({
       .then((out) => {
         if (navSeq.current !== mine) return;
         if (out.kind === 'open') jump(out.path, out.line);
-        else if (out.kind === 'list') setNav({ kind: 'list', title: out.title, result: out.result, note: out.note });
+        else if (out.kind === 'list') {
+          setNav({ kind: 'list', title: out.title, result: out.result, note: out.note, textSearch: out.textSearch });
+        }
         else setNav({ kind: 'message', title, message: out.message, note: out.note });
       })
       .catch((err: unknown) => {
@@ -1436,10 +1444,26 @@ export default function FileEditor({
         </div>
       )}
 
-      {showPhpantomDown && (
+      {phpantomNotice?.kind === 'failed' && (
         <div className="ed-notice" data-tone="muted">
-          <span title={phpantomDown}>PHP navigation is using text search: PHPantom couldn’t start.</span>
-          <button type="button" className="ed-btn" onClick={dismissPhpantomFailure}>
+          <span title={phpantomNotice.reason}>PHP navigation is using text search: PHPantom couldn’t start.</span>
+          <button type="button" className="ed-btn" onClick={() => dismissPhpantomNotice(phpantomNotice)}>
+            OK
+          </button>
+        </div>
+      )}
+      {phpantomNotice?.kind === 'missing' && (
+        <div className="ed-notice" data-tone="muted">
+          <span title={PHPANTOM_INSTALL_HELP}>PHP navigation is using text search: PHPantom isn’t installed.</span>
+          <button
+            type="button"
+            className="ed-btn"
+            title={`Copy “${PHPANTOM_INSTALL_COMMAND}”`}
+            onClick={() => void copyText(PHPANTOM_INSTALL_COMMAND).then((ok) => setCommandCopied(ok ? 'ok' : 'failed'))}
+          >
+            {commandCopied === 'ok' ? 'Copied' : commandCopied === 'failed' ? 'Copy Failed' : 'Copy Command'}
+          </button>
+          <button type="button" className="ed-btn" onClick={() => dismissPhpantomNotice(phpantomNotice)}>
             OK
           </button>
         </div>

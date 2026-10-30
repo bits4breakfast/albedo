@@ -12,6 +12,7 @@ import type { AttentionKind } from './attention';
 import { useShortcuts } from './shortcuts';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
+import { ciMarkFor, useCiVersion } from './ciNotice';
 import { useBranchSync } from '../git/branchSync';
 import { getReviewWork, useReviewWorkProbes, useReviewWorkVersion } from '../git/reviewWork';
 import {
@@ -202,6 +203,8 @@ export default function TaskList({
   const branchTasks = useMemo(() => tasks.filter((t) => t.kind !== 'chat'), [tasks]);
   usePrPolling(branchTasks);
   const prVersion = usePrStatusVersion();
+  // Unseen check results (ciNotice.ts); rows read the marks directly.
+  useCiVersion();
   const workVersion = useReviewWorkVersion();
   // The stored branch goes stale when a checkout is switched under a task, and
   // the PR lookup above keys on it. A change reloads the tasks, which re-arms it.
@@ -527,10 +530,18 @@ export default function TaskList({
                         <span className="task-sep">/</span>
                       </>
                     )}
-                    {/* No branch and no PR mark here: the task bar is the one
+                    {/* No branch and no PR state here: the task bar is the one
                         place git and GitHub state is shown, for the selected
-                        task. Rows identify the task; the title does that. */}
+                        task. Rows identify the task; the title does that. The
+                        one exception is news, not state: checks that finished
+                        since the task was last open (CiRowMark). */}
                     <span className="task-meta-tail">
+                      {/* PR checks that finished since the task was last
+                          open: ✓ or ✗ and the word, until it is opened
+                          (ciNotice.ts). First in the tail: it is news, the
+                          rest is state. Never on the selected row -- it is
+                          being looked at, and its PR badge carries a cue. */}
+                      {task.id !== selectedId && <CiRowMark taskId={task.id} />}
                       {/* An unsent message waiting in this task's composer, so a
                           forgotten one can be found. Not on the selected row:
                           its draft is in the box right below. */}
@@ -733,5 +744,26 @@ export default function TaskList({
         </div>
       )}
     </div>
+  );
+}
+
+/** An unseen pass or failure of the task's PR checks; nothing when there is none. */
+function CiRowMark({ taskId }: { taskId: number }) {
+  const mark = ciMarkFor(taskId);
+  if (!mark) return null;
+  const passed = mark.outcome === 'pass';
+  const what = passed
+    ? `Checks passed on PR #${mark.prNumber}`
+    : `Checks failed on PR #${mark.prNumber}${mark.job ? `: ${mark.job}` : ''}`;
+  return (
+    <span
+      className="task-ci"
+      data-outcome={mark.outcome}
+      role="img"
+      aria-label={`${what}, not seen yet`}
+      title={`${what}. Not seen yet: opening the task clears this.`}
+    >
+      <span aria-hidden="true">{passed ? '✓' : '✗'}</span> Checks
+    </span>
   );
 }

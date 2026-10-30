@@ -81,7 +81,7 @@ npm run tauri dev   # run the app
 ```sh
 npm test            # vitest
 npm run typecheck   # tsc --noEmit
-cargo fmt && cargo clippy --manifest-path src-tauri/Cargo.toml
+cargo fmt --all && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets
 ```
 
 CI (`.github/workflows/ci.yml`) runs them on every push, and builds the Linux

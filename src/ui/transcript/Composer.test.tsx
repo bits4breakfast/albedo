@@ -641,6 +641,12 @@ describe('shellEscapePath', () => {
   });
 });
 
+/** A paste as the composer sends it: in its marker (pastedText.ts, #155). */
+function marked(id: string, text: string): string {
+  const lines = text.replace(/\n+$/, '').split('\n').length;
+  return `<pasted-text id="${id}" lines="${lines}">\n${text}\n</pasted-text id="${id}">`;
+}
+
 describe('collapsing a large text paste', () => {
   const clip = (text: string) => ({
     items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }],
@@ -659,7 +665,25 @@ describe('collapsing a large text paste', () => {
     expect(box().value).toBe('why does this fail? [Pasted text #1 +4 lines]');
 
     pressEnter();
-    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `why does this fail? ${log}`));
+    // The paste goes in Albedo's marker, so the transcript can fold it (#155).
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `why does this fail? ${marked('1', log)}`));
+  });
+
+  it('a send that fails once the session is up, after a switch, comes back with its paste folded', async () => {
+    deadPty();
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.paste(box(), { clipboardData: clip(log) });
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1)); // no session yet: it waits for one
+    let land: (ok: boolean) => void = () => {};
+    vi.mocked(submitPty).mockImplementation(() => new Promise<boolean>((r) => (land = r)));
+    act(() => term.__emitPresence(1, true));
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(submitPty).mock.calls[1]).toEqual([1, marked('1', log)]);
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    await act(async () => land(false));
+    // Not the marker's tags in the box: the token, standing for its paste.
+    expect(getDraft(1)).toMatchObject({ text: '[Pasted text #1 +4 lines]', pastes: [[1, log]], notSent: true });
   });
 
   it('leaves a short paste to the browser: up to two line breaks, as in Claude Code', () => {
@@ -761,7 +785,7 @@ describe('collapsing a large text paste', () => {
     type('[Pasted text #1 +4 lines]');
     expect(screen.getByRole('button', { name: 'View pasted text #1' })).toBeTruthy();
     pressEnter();
-    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, log));
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, marked('1', log)));
   });
 
   it('Tab from the text reaches the chip, and goes on past it; Shift+Tab comes back (focusAreas)', async () => {
@@ -878,7 +902,9 @@ describe('(d) each task keeps its own draft', () => {
     expect(screen.getByRole('button', { name: 'View pasted text #2' })).toBeTruthy();
 
     pressEnter();
-    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, `${log}second\nlong\npaste\nhere`));
+    await waitFor(() =>
+      expect(submitPty).toHaveBeenCalledWith(1, `${marked('1', log)}${marked('2', 'second\nlong\npaste\nhere')}`),
+    );
   });
 
   it('a sent draft is gone', async () => {
@@ -931,7 +957,7 @@ describe('(d) each task keeps its own draft', () => {
 
     pressEnter();
     await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(submitPty).mock.calls[0]).toEqual([5, `look: ${log}`]);
+    expect(vi.mocked(submitPty).mock.calls[0]).toEqual([5, `look: ${marked('1', log)}`]);
     await waitFor(() => expect(box().value).toBe(''));
     expect(getDraft(5)).toBeNull();
   });
@@ -1017,7 +1043,7 @@ describe('(o) offline, a send waits in the outbox', () => {
       clipboardData: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }], getData: () => log },
     });
     pressEnter();
-    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([log]));
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([marked('1', log)]));
   });
 
   it('keeps held messages across a task switch and a restart', async () => {
