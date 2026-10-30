@@ -120,6 +120,8 @@ const M0007_COMMENTS: &str = include_str!("../../src/db/migrations/0007_comments
 const M0008_TASK_KIND: &str = include_str!("../../src/db/migrations/0008_task_kind.sql");
 /// v9: tasks.seen_at -- when the task was last open, for Ready to Review.
 const M0009_SEEN_AT: &str = include_str!("../../src/db/migrations/0009_seen_at.sql");
+/// v10: reminders -- set on a task, back at their time as a card (#156).
+const M0010_REMINDERS: &str = include_str!("../../src/db/migrations/0010_reminders.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -175,6 +177,12 @@ pub fn run() {
             version: 9,
             description: "tasks.seen_at",
             sql: M0009_SEEN_AT,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 10,
+            description: "reminders",
+            sql: M0010_REMINDERS,
             kind: MigrationKind::Up,
         },
     ];

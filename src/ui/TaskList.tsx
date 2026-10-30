@@ -30,6 +30,8 @@ import { ChatIcon } from './icons';
 import RemoteMark from './RemoteMark';
 import { BackgroundMark } from './BackgroundWork';
 import { useDraftTaskIds } from './transcript/drafts';
+import { useReminderTaskIds } from './reminders/useReminders';
+import { ReminderGlyph } from './reminders/ReminderGlyph';
 import TaskTitleEdit from './TaskTitleEdit';
 import { RENAME_HINT } from './taskRename';
 import './tasklist.css';
@@ -188,6 +190,7 @@ export default function TaskList({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const drafts = useDraftTaskIds();
+  const reminderIds = useReminderTaskIds();
 
   /*
    * PR status for the rows on screen. The list owns the polling because it
@@ -534,6 +537,15 @@ export default function TaskList({
                       {drafts.has(task.id) && task.id !== selectedId && (
                         <span className="task-draft" title="An unsent message is waiting in this task's message box">
                           Draft
+                        </span>
+                      )}
+                      {/* A reminder came back and its card is waiting on this
+                          task (#156). Not on the selected row: the card is
+                          right there above the message box. */}
+                      {reminderIds.has(task.id) && task.id !== selectedId && (
+                        <span className="task-reminder" title="A reminder is back: its card is on this task">
+                          <ReminderGlyph size={12} />
+                          Reminder
                         </span>
                       )}
                       {/* Reachable through Remote Control: a click opens it on

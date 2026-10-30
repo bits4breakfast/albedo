@@ -331,3 +331,43 @@ export interface OpenFileRequest {
   /** 1-based line to reveal, when the source had one. */
   line?: number | null;
 }
+
+// ---------------------------------------------------------------------------
+// Reminders (migration v10, issue #156)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a reminder is. `pending` and `snoozed` wait for `dueAt`; `fired`
+ * shows its card; `sent` and `dismissed` are done.
+ */
+export type ReminderState = 'pending' | 'snoozed' | 'fired' | 'sent' | 'dismissed';
+
+/** Who set it: the person, or a session through Albedo's MCP (#157). */
+export type ReminderAuthor = 'user' | 'session';
+
+/** A note on a task that comes back at its time as a card. Columns: 0010_reminders.sql. */
+export interface Reminder {
+  id: number;
+  /** The task it was set on. May no longer exist. */
+  taskId: number;
+  projectId: number | null;
+  text: string;
+  dueAt: number;
+  createdAt: number;
+  updatedAt: number;
+  createdBy: ReminderAuthor;
+  /** The task's session and transcript file when it was set. */
+  sessionId: string | null;
+  transcriptPath: string | null;
+  repoPath: string;
+  worktreePath: string;
+  /** '' for a chat; null on a detached HEAD or when git could not say. */
+  branch: string | null;
+  headSha: string | null;
+  /** The session's own summary, when a session set it. */
+  brief: string | null;
+  state: ReminderState;
+  firedAt: number | null;
+  /** The task whose card shows it, once fired. */
+  cardTaskId: number | null;
+}

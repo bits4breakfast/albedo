@@ -64,7 +64,12 @@ export type AttentionKind =
    * `gh` (see `mergeNotice`) -- but it asks the same question of the owner:
    * archive this, or follow it up.
    */
-  | 'merged';
+  | 'merged'
+  /**
+   * A reminder came back (#156): its card is on the task. Nothing is stuck,
+   * so it bounces once, like `finished`; the banner quotes the reminder.
+   */
+  | 'reminder';
 
 /** Task ids currently asking for attention, newest-set last. */
 const marked = new Map<number, AttentionKind>();
@@ -151,6 +156,11 @@ export function notificationFor(
   if (kind === 'merged') {
     const pr = typeof detail === 'number' ? `PR #${detail}` : 'PR';
     return { title: name, body: `${pr} merged — archive or follow up.` };
+  }
+  if (kind === 'reminder') {
+    const text = typeof detail === 'string' ? detail.trim().replace(/\s+/g, ' ') : '';
+    const cut = text.length > QUESTION_BODY_MAX ? `${text.slice(0, QUESTION_BODY_MAX - 1)}…` : text;
+    return { title: name, body: cut ? `Reminder: ${cut}` : 'A reminder is back.' };
   }
   if (kind === 'question') {
     const q = typeof detail === 'string' ? detail.trim() : '';
@@ -421,6 +431,17 @@ export function noteMerged(
 }
 
 /**
+ * A reminder came back on this task (#156). The caller passes only one that
+ * fired now. The mark always; unfocused, one bounce and a banner quoting it
+ * (rate-limited per task like every other kind). A "blocked" mark is kept:
+ * a prompt waiting on you outranks a reminder, whose card stays anyway.
+ */
+export function noteReminder(taskId: number, title: string | null, text: string): void {
+  if (marked.get(taskId) === 'blocked') return;
+  raise(taskId, 'reminder', title, text);
+}
+
+/**
  * The transition table, kept separate so it can be tested without a window.
  *
  * `running -> idle` is the "it finished" signal. It is deliberately NOT
@@ -465,7 +486,9 @@ export function announcementFor(
           ? `${title}: pull request merged.`
           : kind === 'question'
             ? `${title} asks you a question.`
-            : `${title} finished.`,
+            : kind === 'reminder'
+              ? `${title}: a reminder is back.`
+              : `${title} finished.`,
     );
   }
   return parts.join(' ');

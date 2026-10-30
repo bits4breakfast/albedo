@@ -66,6 +66,19 @@ export type UserBlock =
    * `text` is the prompt Claude received; the row shows `label` and folds it.
    */
   | { kind: 'action'; action: AlbedoAction; label: string; text: string }
+  /**
+   * A reminder (#156) Albedo sent from its card. Not something typed: it is
+   * drawn as the reminder it was, with who set it and when, never as "You".
+   */
+  | {
+      kind: 'reminder';
+      /** When it was set (epoch ms), from `set="…"`. */
+      setAt: number | null;
+      by: 'user' | 'session' | null;
+      text: string;
+      /** The brief sent with it from a replacement task, if any. */
+      brief: string | null;
+    }
   /** A `!` command the user ran in Claude Code's shell mode. Typed by the user. */
   | { kind: 'shell-input'; command: string }
   /** What that command printed. Either side may be empty, never both. */
@@ -127,7 +140,40 @@ export function wrapAction(action: AlbedoAction, prompt: string): string {
 export function actionLabelOf(text: string): string | null {
   const blocks = parseUserBody(text);
   const only = blocks.length === 1 ? blocks[0] : undefined;
+  if (only?.kind === 'reminder') return 'Reminder';
   return only && only.kind === 'action' ? only.label : null;
+}
+
+/**
+ * A reminder sent from its card (#156), in Albedo's action envelope:
+ * `<albedo-action kind="reminder" set="<ms>" by="user">text</albedo-action>`.
+ * The text inside stays plain prose for Claude. A closing tag inside it would
+ * end the envelope early, so it is written `<\/albedo-action` and read back.
+ *
+ * The same envelope as the buttons' actions, so it is recognised inside
+ * Claude Code's paste wrapper too. Local for now: it moves onto the shared
+ * Albedo marker module (#155) once that lands.
+ */
+export function wrapReminder(r: { text: string; setAt: number; by: 'user' | 'session' }): string {
+  const text = r.text.replace(/<\/albedo-action/g, '<\\/albedo-action');
+  return `<albedo-action kind="reminder" set="${Math.round(r.setAt)}" by="${r.by}">\n${text}\n</albedo-action>`;
+}
+
+/** Where a sent reminder's brief starts (src/reminders/brief.ts `withBrief`). */
+const REMINDER_BRIEF_RE = /\n\n---\nBrief from the session that set this reminder\b/;
+
+function parseReminder(attrs: string, inner: string): UserBlock {
+  const text = unescapeXml(inner).replace(/<\\\/albedo-action/g, '</albedo-action').trim();
+  const set = Number(attr(attrs, 'set'));
+  const by = attr(attrs, 'by');
+  const cut = REMINDER_BRIEF_RE.exec(text);
+  return {
+    kind: 'reminder',
+    setAt: Number.isFinite(set) && set > 0 ? set : null,
+    by: by === 'user' || by === 'session' ? by : null,
+    text: cut ? text.slice(0, cut.index).trim() : text,
+    brief: cut ? text.slice(cut.index).replace(/^\s*---\s*/, '').trim() : null,
+  };
 }
 
 /** `<albedo-action>` filling the whole of a string, as Claude Code's paste wrapper leaves it. */
@@ -135,6 +181,7 @@ const SOLE_ACTION_RE = /^\s*<albedo-action\b([^<>]*)>([\s\S]*?)<\/albedo-action>
 
 function parseAction(attrs: string, inner: string): UserBlock | null {
   const action = attr(attrs, 'kind');
+  if (action === 'reminder') return parseReminder(attrs, inner);
   if (!isAction(action)) return null; // an unknown kind degrades to text
   return { kind: 'action', action, label: ACTION_LABEL[action], text: unescapeXml(inner).trim() };
 }

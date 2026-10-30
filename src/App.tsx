@@ -22,6 +22,7 @@ import {
   announcementFor,
   attentionMarks,
   clearAttention,
+  noteReminder,
   onAttention,
   onNotificationClick,
   watchFocus,
@@ -50,6 +51,12 @@ import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import RemoteControlDialog from './ui/RemoteControlDialog';
+import RemindDialog from './ui/reminders/RemindDialog';
+import { usePendingReminders } from './ui/reminders/useReminders';
+import { remindMenuItem } from './ui/reminders/menuItem';
+import { sessionResumable, startReminders } from './reminders';
+import { openReplacementTask } from './reminders/replacement';
+
 import WhatsNewDialog from './ui/WhatsNewDialog';
 import useWhatsNew from './ui/app/useWhatsNew';
 import { PrBadge } from './ui/PrBadge';
@@ -67,7 +74,7 @@ import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
 import { archiveProject } from './db/projects';
-import { deleteTask } from './db';
+import { deleteTask, getTask } from './db';
 import { endTaskEvents } from './capture/hookEvents';
 import { composeWorktreePath, listBranches, listWorktrees, probePath, unmergedCommits } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
@@ -580,6 +587,27 @@ export default function App() {
     [select],
   );
   useMergeNotices(tasks);
+
+  /*
+   * Reminders (#156): checked at launch -- so one due while Albedo was closed
+   * fires now, showing its original time -- and every minute after. A card
+   * goes to its task, or a new one when that task is gone (src/reminders).
+   */
+  useEffect(
+    () =>
+      startReminders(
+        {
+          getTask,
+          resumable: (task) => sessionResumable(task, hasLivePty),
+          openReplacement: openReplacementTask,
+        },
+        (r, task) => noteReminder(task.id, task.title, r.text),
+      ),
+    [],
+  );
+  /** The task "Remind Me…" was opened on; null when the dialog is closed. */
+  const [remindFor, setRemindFor] = useState<Task | null>(null);
+  const selectedPendingReminders = usePendingReminders(selected?.id ?? null).length;
 
   const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
 
@@ -1194,6 +1222,8 @@ export default function App() {
                         // Hidden, not disabled, while on or with no session:
                         // the mark beside the title says the first.
                         ...(remoteItem ? [remoteItem] : []),
+                        // Set one, and see or change the ones to come (#156).
+                        remindMenuItem(selectedPendingReminders, () => setRemindFor(selected)),
                         {
                           id: 'copy-path',
                           label: 'Copy Worktree Path',
@@ -1802,6 +1832,12 @@ export default function App() {
             onConfirm={remoteConfirm.onSelect}
             onClose={() => setRemoteConfirmFor(null)}
           />
+        </PaneErrorBoundary>
+      )}
+
+      {remindFor && (
+        <PaneErrorBoundary label="Reminders">
+          <RemindDialog task={remindFor} onClose={() => setRemindFor(null)} />
         </PaneErrorBoundary>
       )}
 

@@ -1,0 +1,111 @@
+/* Reminders (#156): the card above the message box, and the dialog's list.
+
+   The card's ground is --panel-inset (white / #0c0d0f), opaque, with no tint,
+   no alpha and no opacity: every text tier clears more on it than on
+   --panel-raised, where the tokens are cleared. Measured, light / dark:
+     --text-strong 19.92 / 18.16   --text 17.02 / 15.45   --muted 7.33 / 8.17
+     --faint 6.09 / 6.36           --accent 6.63 / 8.32   --danger 7.15 / 8.84
+   Edges: --border-strong 4.11 / 4.11 against it (non-text, 3:1), and a 3px
+   --accent rule on the left, the reminder's colour (also the row's mark).
+   What tells it apart from the amber "waiting on you" card: the accent, the
+   glyph and the word "Reminder", never colour alone. */
+
+.rm-card {
+  flex: none;
+  margin: 8px 14px 0;
+  padding: 10px 14px 10px 13px;
+  background: var(--panel-inset);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  max-height: 40%;
+  overflow: auto;
+}
+
+.rm-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--fs-xs);
+}
+.rm-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.rm-meta { color: var(--muted); }
+
+.rm-text {
+  margin-top: 4px;
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.rm-where {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--faint);
+}
+
+.rm-note { margin-top: 6px; font-size: var(--fs-sm); color: var(--muted); }
+.rm-note[data-tone='error'] { color: var(--danger); }
+
+.rm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.rm-spacer { flex: 1 1 auto; }
+
+.rm-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.rm-custom-words { flex: 1 1 180px; width: auto; }
+.rm-custom-picker { flex: 0 1 210px; width: auto; }
+.rm-custom-when { font-size: var(--fs-sm); color: var(--muted); min-width: 0; }
+
+/* The dialog (RemindDialog.tsx), on the modal's --panel. Measured on --panel
+   (#fcfcfd / #131417), light / dark: --text 16.60 / 14.63, --muted 7.15 /
+   7.74, --faint 5.94 / 6.02, --accent 6.46 / 7.88, --danger 6.98 / 8.37. */
+.rm-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.rm-when-row { display: flex; gap: 8px; align-items: center; }
+.rm-when-row .wt-input:first-child { flex: 1 1 auto; }
+.rm-when-row .rm-picker { flex: 0 0 210px; width: auto; }
+.rm-when-read { margin-top: 6px; font-size: var(--fs-sm); color: var(--muted); }
+.rm-when-read[data-bad='true'] { color: var(--danger); }
+
+.rm-list { margin: 0; padding: 0; list-style: none; }
+.rm-list-head {
+  margin: 18px 0 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.rm-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.rm-item-body { flex: 1 1 auto; min-width: 0; }
+.rm-item-text {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.rm-item-due { font-size: var(--fs-xs); color: var(--muted); }
+.rm-item[data-editing='true'] .rm-item-text { color: var(--accent); }
+.rm-empty { font-size: var(--fs-sm); color: var(--faint); }

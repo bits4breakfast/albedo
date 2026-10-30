@@ -58,6 +58,7 @@ import { compactionAt, isPromptRow, type Compaction } from './compaction';
 import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
 import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
+import ReminderCards from '../reminders/ReminderCard';
 import BackgroundStrip from './BackgroundStrip';
 import { backgroundShown, useBackgroundWork } from '../BackgroundWork';
 import { PermissionModeLabel } from './PermissionModeLabel';
@@ -553,6 +554,8 @@ export function TranscriptPane({
       <BackgroundStrip items={background} onReveal={setReveal} />
       <QueuedStrip sessionId={sessionId} taskId={taskId} liveSince={liveSince} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
+      {/* A reminder that came back (#156): its own card, never text in the box. */}
+      {taskId !== null ? <ReminderCards taskId={taskId} status={status} /> : null}
       {taskId !== null ? <Composer taskId={taskId} sessionId={sessionId} status={status} onSent={onSent} accessory={composerAccessory} /> : null}
     </div>
   );
