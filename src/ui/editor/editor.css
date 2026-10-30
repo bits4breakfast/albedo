@@ -168,6 +168,27 @@
 .ed-notice[data-tone='error'] { border-left: 2px solid var(--danger); color: var(--danger); }
 .ed-notice[data-tone='muted'] { border-left: 2px solid var(--faint); color: var(--muted); }
 
+/* A file outside the task's worktree (#143). The label takes the warn tone
+   from the notice (--warn: 6.26 light / 8.38 dark on --panel-raised, more on
+   this --panel ground); the path is --text, mono, and wraps anywhere rather
+   than pushing the pane wider. No opacity, no tint: the notice's own ground. */
+.ed-outside-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 0;
+}
+.ed-outside-label { font-weight: 600; }
+.ed-outside-path {
+  min-width: 0;
+  font-family: var(--font-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 /* --- body ---------------------------------------------------------------- */
 
 .ed-body {
@@ -249,6 +270,8 @@
   font-size: var(--fs-sm);
   line-height: 1.5;
 }
+
+.ed-message-actions { margin-top: 12px; }
 
 .ed-message code {
   font-family: var(--font-mono);

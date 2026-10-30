@@ -38,7 +38,7 @@ describe('a path link and the selection', () => {
     const { open, link } = setup();
     select(document.getElementById('prose')!);
     fireEvent.click(link);
-    expect(open).toHaveBeenCalledWith({ path: 'src/Factory.php', line: 12 }, undefined);
+    expect(open).toHaveBeenCalledWith({ path: 'src/Factory.php', line: 12 }, { activated: true });
   });
 
   it('does not open when the click ends a selection of the link itself', () => {
@@ -51,6 +51,6 @@ describe('a path link and the selection', () => {
   it('asks for a lookup when the link holds a bare name', () => {
     const { open, link } = setup(true);
     fireEvent.click(link);
-    expect(open).toHaveBeenCalledWith({ path: 'Factory.php', line: 12 }, { lookup: true });
+    expect(open).toHaveBeenCalledWith({ path: 'Factory.php', line: 12 }, { lookup: true, activated: true });
   });
 });

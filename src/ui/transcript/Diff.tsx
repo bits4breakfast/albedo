@@ -68,6 +68,10 @@ const MAX_LINKIFY_CHARS = 400_000;
  *
  * Opening is best-effort. If no provider is mounted, or the editor throws, the
  * link quietly does nothing rather than taking the pane down with it.
+ *
+ * Call the returned function ONLY from a click or a key on the path: it tells
+ * the app a person asked (`activated`), which is what lets a file outside the
+ * worktree open (src/ui/editor/outsideFile.ts). Never from an effect.
  */
 export function useOpenPath(): (path: string, line?: number | null, lookup?: boolean) => void {
   let open: ((req: OpenFileRequest, options?: OpenFileOptions) => void) | null = null;
@@ -81,7 +85,9 @@ export function useOpenPath(): (path: string, line?: number | null, lookup?: boo
       if (typeof open !== 'function') return;
       if (typeof path !== 'string' || path.trim().length === 0) return;
       try {
-        open({ path, line }, lookup ? { lookup: true } : undefined);
+        // Every call comes from a click or a key on a PathLink: the one ask
+        // that may open a file outside the worktree (outsideFile.ts).
+        open({ path, line }, lookup ? { lookup: true, activated: true } : { activated: true });
       } catch {
         /* the editor is not allowed to break rendering */
       }

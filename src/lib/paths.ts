@@ -8,6 +8,10 @@
  * transcript path to a filesystem path -- if you are about to write
  * `${worktreePath}/${something}`, call `resolveInWorktree` instead.
  *
+ * The one way past it is a person's click on a path, for that one file, which
+ * src/ui/editor/outsideFile.ts handles and src-tauri/src/fsscope.rs grants.
+ * Nothing changes here: an outside path still resolves to null.
+ *
  * Two layers, both required:
  *
  * 1. **Lexical.** Reject the obviously hostile shapes (URLs, Windows drive

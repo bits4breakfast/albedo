@@ -233,6 +233,7 @@ pub fn run() {
             pty::pty_kill_stale,
             fsx::canonicalize_path,
             fsscope::allow_project_dir,
+            fsscope::allow_outside_file,
             attention::attention_bounce,
             attention::notify_permission,
             attention::notify_post,
