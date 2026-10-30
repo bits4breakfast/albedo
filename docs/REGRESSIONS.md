@@ -91,6 +91,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Cleanup of an optional component (language server, watcher, probe) never throws into the action it is part of: catch, log, carry on.
   - Dot-files are covered by the fs scope's globs only because `requireLiteralLeadingDot` is off (#93); see "Shared helpers and scope".
   - An optional feature that fails to start says so somewhere visible, instead of silently falling back for months.
+- **Not installed looked like broken.** After #73 said "couldn't start", an absent PHPantom still fell back to git grep in silence; the owner took the approximate lists (same-named methods, nothing through inheritance) for broken navigation (#172). **Rule:**
+  - An optional component reports its availability (running / failed / not installed) from the module that owns it, and the UI shows that state rather than guessing it.
+  - A fallback answer says so where it is listed ("Text search: may include false matches"), not only in a notice that may have been dismissed.
 
 ## Data and contracts
 
