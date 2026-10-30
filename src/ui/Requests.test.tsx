@@ -71,7 +71,7 @@ describe('Requests', () => {
     expect(panel.textContent).toContain('Login rewrite');
     expect(panel.textContent).toContain('Task 4'); // a task without a title is still named
     expect(panel.textContent).toContain('I need the VPN on.');
-    expect(panel.textContent).toContain('reminders are not in Albedo yet');
+    expect(panel.textContent).toContain("Albedo couldn't set this reminder");
   });
 
   it('Approve hands the request on and closes; Deny dismisses it', () => {

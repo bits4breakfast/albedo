@@ -9,8 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('./attention', () => ({ noteAgentBlocked: vi.fn() }));
+vi.mock('../reminders', () => ({ createReminder: vi.fn(), listPendingReminders: vi.fn() }));
 
 const attention = await import('./attention');
+const reminders = await import('../reminders');
 const { KEYS } = await import('./persisted');
 const q = await import('./requestQueue');
 type Req = import('./requestQueue').QueuedRequest;
@@ -111,10 +113,45 @@ describe('the store', () => {
     expect(q.pendingRequests().map((r) => r.id)).toEqual(['n1', 'n2']);
   });
 
-  it('keeps a reminder request pending until #156 can set it', () => {
-    expect(q.handleCreateReminder(reminder('r') as never)).toBe('pending');
-    q.receiveRequest(reminder('r'), known, NOW);
-    expect(q.pendingRequests().map((r) => r.id)).toEqual(['r']);
+  describe('a reminder request (#156)', () => {
+    beforeEach(() => {
+      vi.mocked(reminders.listPendingReminders).mockResolvedValue([]);
+      vi.mocked(reminders.createReminder).mockResolvedValue({} as never);
+    });
+
+    it('is set at once on the asking task, by the session, and never queued', async () => {
+      const r = reminder('r') as import('./requestQueue').ReminderRequest;
+      q.receiveRequest(r, known, NOW);
+      await vi.waitFor(() => expect(reminders.createReminder).toHaveBeenCalled());
+      expect(reminders.createReminder).toHaveBeenCalledWith({
+        taskId: r.taskId,
+        text: r.text,
+        dueAt: r.dueMs,
+        createdBy: 'session',
+        summary: r.summary,
+      });
+      await Promise.resolve();
+      expect(q.pendingRequests()).toEqual([]);
+    });
+
+    it('is set once when the inbox hands the same line on twice', async () => {
+      q.receiveRequest(reminder('r'), known, NOW);
+      q.receiveRequest(reminder('r'), known, NOW);
+      await vi.waitFor(() => expect(reminders.createReminder).toHaveBeenCalledTimes(1));
+    });
+
+    it('stays in the queue, saying so, when it could not be set', async () => {
+      vi.mocked(reminders.createReminder).mockRejectedValue(new Error('There is no task 3.'));
+      q.receiveRequest(reminder('r'), known, NOW);
+      await vi.waitFor(() => expect(q.pendingRequests().map((x) => x.id)).toEqual(['r']));
+    });
+
+    it('is not set when the task already has the most still to come', async () => {
+      vi.mocked(reminders.listPendingReminders).mockResolvedValue(new Array(q.MAX_PENDING_PER_TASK).fill({}));
+      q.receiveRequest(reminder('r'), known, NOW);
+      await vi.waitFor(() => expect(q.pendingRequests().map((x) => x.id)).toEqual(['r']));
+      expect(reminders.createReminder).not.toHaveBeenCalled();
+    });
   });
 
   it('a dismissed or resolved request leaves and does not come back', () => {
