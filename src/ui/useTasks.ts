@@ -433,7 +433,9 @@ export function useTasks(): UseTasksResult {
         asked = status !== 'blocked' ? pendingQuestion(messages) : null;
         // Background agents report back to the session when they finish, and
         // it carries on by itself: a turn handed back while they work is not
-        // idle. Same liveness as the "Agents Running" strip.
+        // idle. Same liveness as the "Agents Running" strip: an agent waiting
+        // on its own background work is not live, so it does not hold the
+        // task Running (#139).
         if (status !== 'blocked') {
           agents = liveRuns(await listSubagents(sessionId).catch(() => [])).length;
           if (agents > 0 && status === 'idle') {

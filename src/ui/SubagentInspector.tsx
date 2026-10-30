@@ -24,7 +24,7 @@ import StatusDot from './StatusDot';
 import MessageRow from './transcript/MessageRow';
 import CompactionRow from './transcript/CompactionRow';
 import { groupRows } from './transcript/TranscriptPane';
-import { agentLabel, agentStatusWord, elapsedMs, formatElapsed } from './subagentView';
+import { agentLabel, agentState, agentStatusDetail, agentStatusWord, elapsedMs, formatElapsed } from './subagentView';
 
 /** Rows in the initial window, and the size of each step backwards. */
 const PAGE = 200;
@@ -259,9 +259,9 @@ export default function SubagentInspector({
           {label}
         </div>
         <div className="sa-inspector-meta">
-          <span className="sa-status" data-status={run.status}>
+          <span className="sa-status" data-status={run.status} data-state={agentState(run)} title={agentStatusDetail(run)}>
             <StatusDot status={run.status} />
-            <span className="sa-status-word">{agentStatusWord(run.status)}</span>
+            <span className="sa-status-word">{agentStatusWord(run)}</span>
           </span>
           <span className="sa-elapsed">{formatElapsed(elapsedMs(run, now))}</span>
           <span className="sa-readonly">Read-only · the agent reports back to {parent}</span>
