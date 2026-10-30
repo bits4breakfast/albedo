@@ -75,6 +75,12 @@ export interface TaskListProps {
    * menu as "Rename Task…", which edits the title in place on the row.
    */
   onRename?: (task: Task, title: string) => void;
+  /**
+   * Where focus goes once the row's name field closes on its own key or
+   * leaving the window (the selected task's terminal, in App): the menu it
+   * was started from is gone.
+   */
+  onRenameClosed?: () => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
   /** Running agents and a pending question, per task (useTasks). */
   signals?: Map<number, TaskSignals>;
@@ -166,6 +172,7 @@ export default function TaskList({
   onFollowUp,
   onSetDone,
   onRename,
+  onRenameClosed,
   contextBySession,
   signals,
   onManageProjects,
@@ -480,6 +487,8 @@ export default function TaskList({
                     <TaskTitleEdit
                       className="task-row-title-edit"
                       title={task.title}
+                      returnFocus="fallback"
+                      fallbackFocus={onRenameClosed}
                       onSave={(title) => {
                         setRenamingId(null);
                         onRename(task, title);

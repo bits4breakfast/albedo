@@ -7,6 +7,18 @@
  * `renamedTitle`'s: one line, trimmed, capped; empty or unchanged saves
  * nothing, which is the same as cancelling.
  *
+ * ## Where focus goes after
+ *
+ * Closed from the field itself -- Return, Escape, or a blur that did not
+ * move focus anywhere (the window was left) -- focus goes back to where the
+ * rename started, as RemoteControlDialog does: the element that held it
+ * (`returnFocus: 'previous'`, a key such as ⇧F6 pressed in the task
+ * terminal), else `fallbackFocus` (the task's terminal while it is live).
+ * A rename started from a menu or a double-click has nothing worth going
+ * back to (the menu is gone), so it uses the fallback directly. Closed
+ * because focus moved -- a click elsewhere, ⌘1–9 to another task -- it stays
+ * where it went.
+ *
  * Its keys stop here, apart from ⌘/Ctrl chords and Tab. On a task row the
  * list reads bare j / k / arrows as moves, and Escape would reach whatever
  * is behind; none of them should see a key typed into a name.
@@ -24,9 +36,24 @@ export interface TaskTitleEditProps {
   /** Called once when nothing is saved: Escape, or nothing to save. */
   onDone: () => void;
   className?: string;
+  /** `'previous'`: back to the element focused when the field opened. Default. */
+  returnFocus?: 'previous' | 'fallback';
+  /** Where focus goes when there is nothing to go back to. Leaves it as is when absent. */
+  fallbackFocus?: () => void;
 }
 
-export default function TaskTitleEdit({ title, onSave, onDone, className }: TaskTitleEditProps) {
+export default function TaskTitleEdit({
+  title,
+  onSave,
+  onDone,
+  className,
+  returnFocus = 'previous',
+  fallbackFocus,
+}: TaskTitleEditProps) {
+  // Read while rendering, before the field takes focus.
+  const [from] = useState(() => (typeof document === 'undefined' ? null : document.activeElement));
+  /** A press outside the field since it opened: a blur after it is focus moving, not ours to undo. */
+  const pressedElsewhere = useRef(false);
   const [value, setValue] = useState(title);
   const ref = useRef<HTMLInputElement | null>(null);
   // Return then unmount would blur and save a second time.
@@ -57,12 +84,35 @@ export default function TaskTitleEdit({ title, onSave, onDone, className }: Task
     };
   }, []);
 
-  const finish = (save: boolean) => {
+  useEffect(() => {
+    const onPress = (e: PointerEvent) => {
+      if (e.target !== ref.current) pressedElsewhere.current = true;
+    };
+    document.addEventListener('pointerdown', onPress, true);
+    return () => document.removeEventListener('pointerdown', onPress, true);
+  }, []);
+
+  const giveFocusBack = () => {
+    if (
+      returnFocus === 'previous' &&
+      from instanceof HTMLElement &&
+      from.isConnected &&
+      from !== from.ownerDocument.body &&
+      from !== ref.current
+    ) {
+      from.focus({ preventScroll: true });
+      if (from.ownerDocument.activeElement === from) return;
+    }
+    fallbackFocus?.();
+  };
+
+  const finish = (save: boolean, refocus: boolean) => {
     if (finished.current) return;
     finished.current = true;
     const next = save ? renamedTitle(ref.current?.value ?? value, title) : null;
     if (next !== null) onSave(next);
     else onDone();
+    if (refocus) giveFocusBack();
   };
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -71,10 +121,10 @@ export default function TaskTitleEdit({ title, onSave, onDone, className }: Task
     if (e.nativeEvent.isComposing) return;
     if (e.key === 'Enter') {
       e.preventDefault();
-      finish(true);
+      finish(true, true);
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      finish(false);
+      finish(false, true);
     }
   };
 
@@ -92,7 +142,9 @@ export default function TaskTitleEdit({ title, onSave, onDone, className }: Task
       title={RENAME_HINT}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={onKeyDown}
-      onBlur={() => finish(true)}
+      // Focus went somewhere (relatedTarget), or a press elsewhere is taking
+      // it: leave it there. Otherwise (the window was left) it comes back.
+      onBlur={(e) => finish(true, e.relatedTarget === null && !pressedElsewhere.current)}
       // On a row: clicking into the field is not selecting the task again.
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}

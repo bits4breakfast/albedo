@@ -161,3 +161,112 @@ describe('the task bar ⋯: Rename Task…', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 });
+
+describe('TaskTitleEdit: where focus goes after', () => {
+  function Stage({ show, ...props }: { show: boolean } & Partial<Parameters<typeof TaskTitleEdit>[0]>) {
+    return (
+      <div>
+        {/* Stands in for the task terminal's xterm textarea. */}
+        <textarea aria-label="terminal" />
+        <button type="button">elsewhere</button>
+        {show && <TaskTitleEdit title="Fix login" onSave={() => {}} onDone={() => {}} {...props} />}
+      </div>
+    );
+  }
+
+  function startFromTerminal(props: Partial<Parameters<typeof TaskTitleEdit>[0]> = {}) {
+    const view = render(<Stage show={false} {...props} />);
+    const terminal = screen.getByLabelText('terminal');
+    terminal.focus();
+    view.rerender(<Stage show {...props} />);
+    expect(document.activeElement).toBe(field());
+    return { ...view, terminal };
+  }
+
+  it('Return and Escape go back to where the rename started (⇧F6 in the terminal)', () => {
+    const fallback = vi.fn();
+    const a = startFromTerminal({ fallbackFocus: fallback });
+    fireEvent.change(field(), { target: { value: 'Renamed' } });
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    expect(document.activeElement).toBe(a.terminal);
+    a.unmount();
+
+    const b = startFromTerminal({ fallbackFocus: fallback });
+    fireEvent.keyDown(field(), { key: 'Escape' });
+    expect(document.activeElement).toBe(b.terminal);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('a blur that moved nowhere (the window was left) comes back too', () => {
+    const { terminal } = startFromTerminal();
+    fireEvent.blur(field(), { relatedTarget: null });
+    expect(document.activeElement).toBe(terminal);
+  });
+
+  it('focus moved to something else: it stays there', () => {
+    const fallback = vi.fn();
+    startFromTerminal({ fallbackFocus: fallback });
+    const other = screen.getByRole('button', { name: 'elsewhere' });
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('a click elsewhere that takes no focus: not stolen back', () => {
+    const fallback = vi.fn();
+    const { terminal } = startFromTerminal({ fallbackFocus: fallback });
+    fireEvent.pointerDown(document.body);
+    fireEvent.blur(field(), { relatedTarget: null });
+    expect(document.activeElement).not.toBe(terminal);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('removed by a task switch (⌘1–9): nothing is refocused', () => {
+    const fallback = vi.fn();
+    const { rerender, terminal } = startFromTerminal({ fallbackFocus: fallback });
+    rerender(<Stage show={false} fallbackFocus={fallback} />);
+    expect(document.activeElement).not.toBe(terminal);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('from a menu or a double-click: the fallback (the task terminal), not the element before', () => {
+    const fallback = vi.fn();
+    const { terminal } = startFromTerminal({ returnFocus: 'fallback', fallbackFocus: fallback });
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).not.toBe(terminal);
+  });
+
+  it('the element before is gone (the ⋯ item it was chosen from): the fallback', () => {
+    const fallback = vi.fn();
+    const view = render(
+      <div>
+        <button type="button">menu item</button>
+      </div>,
+    );
+    screen.getByRole('button', { name: 'menu item' }).focus();
+    view.rerender(
+      <div>
+        <TaskTitleEdit title="Fix login" onSave={() => {}} onDone={() => {}} fallbackFocus={fallback} />
+      </div>,
+    );
+    fireEvent.keyDown(field(), { key: 'Escape' });
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('the task row: closing its field goes to onRenameClosed', () => {
+    const closed = vi.fn();
+    const task: Task = {
+      id: 8, title: 'Fix login', projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: 'fix-login',
+      worktreePath: '/w/fix-login', sessionId: 's8', ownsWorktree: true, createdBranch: true, kind: 'work',
+      status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null,
+    };
+    const { container } = render(
+      <TaskList tasks={[task]} selectedId={null} onSelect={() => {}} onNew={() => {}} onRename={() => {}} onRenameClosed={closed} />,
+    );
+    fireEvent.contextMenu(container.querySelector('[data-task-id="8"]') as HTMLElement);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Rename Task…/ }));
+    fireEvent.keyDown(field(), { key: 'Escape' });
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+});

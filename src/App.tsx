@@ -35,7 +35,7 @@ import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
-import Terminal, { focusPty, usePtyLiveSince } from './ui/Terminal';
+import Terminal, { focusPty, hasLivePty, usePtyLiveSince } from './ui/Terminal';
 import { useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
@@ -270,7 +270,11 @@ export default function App() {
    * item, a double-click on the name, or ⇧F6 / F2. Only ever the selected
    * task; the row menu edits on the row instead (TaskList).
    */
-  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renaming, setRenaming] = useState<{ id: number; by: 'key' | 'pointer' } | null>(null);
+  /** After a rename started from a menu or a double-click: the task's terminal, if it runs. */
+  const focusLiveTerminal = useCallback((taskId: number) => {
+    if (hasLivePty(taskId)) focusPty(taskId);
+  }, []);
   const saveTitle = useCallback(
     (task: Task, title: string) => void renameTaskAndSession(task, title, rename),
     [rename],
@@ -874,7 +878,7 @@ export default function App() {
 
   const startRename = () => {
     if (!selected || document.querySelector('[aria-modal="true"]') !== null) return;
-    setRenamingId(selected.id);
+    setRenaming({ id: selected.id, by: 'key' });
   };
 
   const stepProject = (delta: number) => {
@@ -1092,6 +1096,9 @@ export default function App() {
             onFollowUp={(task) => void openFollowUp(task)}
             onSetDone={(task, done) => void setDone(task.id, done)}
             onRename={saveTitle}
+            onRenameClosed={() => {
+              if (selected) focusLiveTerminal(selected.id);
+            }}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             signals={signals}
@@ -1136,21 +1143,23 @@ export default function App() {
                       <span className="main-ident-sep" aria-hidden="true">›</span>
                     </>
                   )}
-                  {renamingId === selected.id ? (
+                  {renaming?.id === selected.id ? (
                     <TaskTitleEdit
                       className="main-ident-title-edit"
                       title={selected.title}
+                      returnFocus={renaming.by === 'key' ? 'previous' : 'fallback'}
+                      fallbackFocus={() => focusLiveTerminal(selected.id)}
                       onSave={(title) => {
-                        setRenamingId(null);
+                        setRenaming(null);
                         saveTitle(selected, title);
                       }}
-                      onDone={() => setRenamingId(null)}
+                      onDone={() => setRenaming(null)}
                     />
                   ) : (
                     <span
                       className="main-ident-title"
                       title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
-                      onDoubleClick={() => setRenamingId(selected.id)}
+                      onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
                     >
                       {selected.title}
                     </span>
@@ -1162,7 +1171,7 @@ export default function App() {
                     title="Task actions"
                     trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
                     items={[
-                        renameMenuItem(() => setRenamingId(selected.id)),
+                        renameMenuItem(() => setRenaming({ id: selected.id, by: 'pointer' })),
                         // The same /compact as the button by the message box,
                         // which appears only past 70%; here at any fill.
                         {
