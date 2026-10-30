@@ -36,6 +36,12 @@ export interface OpenFileOptions {
    * sets this -- a root-level `README.md` from the Files tree is a path.
    */
   lookup?: boolean;
+  /**
+   * A click or a key on the path itself. The only thing that lets the editor
+   * grant access to a file outside the worktree (outsideFile.ts); set by
+   * `PathLink` alone, never by anything that opens a file on its own.
+   */
+  activated?: boolean;
 }
 
 export type OpenFile = (req: OpenFileRequest, options?: OpenFileOptions) => void;

@@ -53,6 +53,7 @@ import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
+import { markUserActivated } from './ui/editor/outsideFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
@@ -572,6 +573,9 @@ export default function App() {
     // one file by that name opens; none or several open Go to File with the
     // name typed, rather than an empty new file at the worktree root.
     const show = (req: OpenFileRequest) => {
+      // The exact object the editor gets: only it may grant a file outside
+      // the worktree, and only because a person clicked (outsideFile.ts).
+      if (options?.activated) markUserActivated(req);
       setOpenRequest({ taskId, request: req, step: options?.step });
       // A step keeps the Files tab on screen: the list is what is being walked.
       setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));

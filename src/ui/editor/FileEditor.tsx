@@ -13,7 +13,10 @@
  *    `src/lib/highlight.ts` singleton the diff view uses, which is what makes
  *    a file look identical whether you are reading it in a diff or editing it.
  * 2. **Path resolution goes through `resolveInWorktree` and nothing else.**
- *    This component never joins a path itself.
+ *    This component never joins a path itself. A file outside the worktree
+ *    opens only through `decideOpen` (outsideFile.ts): granted for that one
+ *    file, from a click on its path, and with every task feature (diff,
+ *    comments, navigation, the change set) off for it.
  * 3. **The agent is editing these files at the same time you are.** Saving
  *    re-reads the file and refuses to overwrite a version that moved under us.
  */
@@ -87,6 +90,14 @@ import type { DualToken } from '../../lib/highlight';
 import type { OpenFileRequest, Task } from '../../types';
 import type { ResolvedPath } from '../../lib/paths';
 import { resolveInWorktree } from '../../lib/paths';
+import { revealInFileManager, revealLabel } from '../../lib/openUrl';
+import {
+  decideOpen,
+  grantOutsideFile,
+  isUserActivated,
+  refusalText,
+  type OutsideRefusal,
+} from './outsideFile';
 import { highlightToTokens, peekTokens, styleToCss } from '../../lib/highlight';
 import { langForPath } from '../../lib/diff';
 import { markHandEdited } from '../../lib/handEdited';
@@ -374,7 +385,10 @@ function themeExtension(theme: ResolvedTheme): Extension {
 type Phase =
   | { kind: 'idle' }
   | { kind: 'loading' }
+  /** Outside the worktree and not clicked (a restored tab): offer Open. */
   | { kind: 'outside'; path: string }
+  /** Outside the worktree, asked for, and refused: missing, a folder, denied… */
+  | { kind: 'refused'; refusal: OutsideRefusal }
   | { kind: 'error'; message: string }
   | { kind: 'ready' }
   /** Not text: shown as a picture or described, never put in the editor. */
@@ -434,6 +448,13 @@ const NAV_TITLES: Record<NavAction, string> = {
   implementations: 'Go to Implementation',
 };
 
+/**
+ * The file the editor has open. Outside the worktree, `relative` is the
+ * absolute path too (there is nothing to be relative to) and `outside` turns
+ * off everything that belongs to the task's branch.
+ */
+type Target = ResolvedPath & { outside: boolean };
+
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -458,7 +479,7 @@ export default function FileEditor({
   const baselineRef = useRef<string>('');
   /** Did the file exist when we opened it? A deletion is a conflict too. */
   const existedRef = useRef(false);
-  const resolvedRef = useRef<ResolvedPath | null>(null);
+  const resolvedRef = useRef<Target | null>(null);
   /** Armed by the conflict bar's "overwrite" button, for one save only. */
   const overwriteRef = useRef(false);
   /** The live save handler, so the Cmd+S keymap never closes over stale state. */
@@ -471,7 +492,12 @@ export default function FileEditor({
   const startCommentRef = useRef<() => void>(() => {});
 
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
-  const [resolved, setResolved] = useState<ResolvedPath | null>(null);
+  const [resolved, setResolved] = useState<Target | null>(null);
+  /** Bumped by the Open button once it has granted the file: read it again. */
+  const [granted, setGranted] = useState(0);
+  /** The request object, read by the resolve effect without re-running on it. */
+  const requestRef = useRef(request);
+  requestRef.current = request;
   const [doc, setDoc] = useState<{ text: string; key: number } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
@@ -537,14 +563,25 @@ export default function FileEditor({
     setPhase({ kind: 'loading' });
 
     void (async () => {
-      const target = await resolveInWorktree(task.worktreePath, requestPath);
+      // Inside the worktree as ever; outside only when granted, and granted
+      // only for a request that carries a click (outsideFile.ts).
+      const decision = await decideOpen(task.worktreePath, requestPath, isUserActivated(requestRef.current), {
+        resolveInside: resolveInWorktree,
+        grant: grantOutsideFile,
+      });
       if (cancelled) return;
-      if (!target) {
-        // Not an error dialog: a transcript can legitimately mention a path
-        // that has nothing to do with this checkout.
+      if (decision.kind === 'ask') {
         setPhase({ kind: 'outside', path: requestPath });
         return;
       }
+      if (decision.kind === 'refused') {
+        setPhase({ kind: 'refused', refusal: decision.refusal });
+        return;
+      }
+      const target: Target =
+        decision.kind === 'inside'
+          ? { ...decision.target, outside: false }
+          : { absolute: decision.absolute, relative: decision.absolute, outside: true };
       resolvedRef.current = target;
       setResolved(target);
 
@@ -577,6 +614,12 @@ export default function FileEditor({
           setPhase({ kind: 'error', message: message(err) });
           return;
         }
+        // Outside the worktree nothing is about to be created: a file granted
+        // earlier and since deleted is gone, not a new empty buffer.
+        if (target.outside) {
+          setPhase({ kind: 'refused', refusal: { kind: 'missing', path: target.absolute, message: 'does not exist' } });
+          return;
+        }
         text = '';
         existedRef.current = false;
       }
@@ -598,7 +641,29 @@ export default function FileEditor({
       cancelled = true;
       if (imageUrl) URL.revokeObjectURL(imageUrl);
     };
-  }, [task.id, task.worktreePath, requestPath]);
+  }, [task.id, task.worktreePath, requestPath, granted]);
+
+  /** The Open button on an outside file nobody had clicked yet: this click is the ask. */
+  const [granting, setGranting] = useState(false);
+  const openOutside = useCallback(
+    (path: string) => {
+      setGranting(true);
+      void grantOutsideFile(task.worktreePath, path).then((result) => {
+        setGranting(false);
+        if (result.ok) setGranted((n) => n + 1);
+        else setPhase({ kind: 'refused', refusal: result.refusal });
+      });
+    },
+    [task.worktreePath],
+  );
+  // A tab already asking (restored), and the person clicks the same path in
+  // the transcript again: that click is the ask. The resolve effect above does
+  // not re-run for it, since the path did not change.
+  useEffect(() => {
+    if (phase.kind === 'outside' && !granting && isUserActivated(request)) openOutside(phase.path);
+    // Only a new request object is a new click; the phase changing is not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
 
   // --- save ----------------------------------------------------------------
   const readOnlyRef = useRef(readOnly);
@@ -658,8 +723,9 @@ export default function FileEditor({
     setDirty(false);
     setSavedKey((k) => k + 1);
 
-    // Order matters and is fixed by the spec: write, mark, then note.
-    markHandEdited(task.id, target.relative);
+    // Order matters and is fixed by the spec: write, mark, then note. A file
+    // outside the worktree is not one of the task's files to mark.
+    if (!target.outside) markHandEdited(task.id, target.relative);
 
     // One line, no newline. `notePty` places it in the input unsent, because
     // the agent may be mid-turn and sending has to stay a human decision.
@@ -765,7 +831,8 @@ export default function FileEditor({
         shikiHighlighting(langForPath(resolved.relative)),
         flashField,
         // Review comments: not on a main checkout, which has no task to send them to.
-        ...(readOnly ? [] : [commentsExtension(() => commentActionsRef.current)]),
+        // Nor outside the worktree: a comment belongs to the task's branch.
+        ...(readOnly || resolved.outside ? [] : [commentsExtension(() => commentActionsRef.current)]),
         ...(language ? [language] : []),
         themeCompartment.of(themeExtension(resolvedTheme())),
         EditorView.lineWrapping,
@@ -848,7 +915,8 @@ export default function FileEditor({
   // mounted behind the Transcript tab must not take a key it cannot show the
   // result of, nor overwrite the clipboard with a path nobody is looking at.
   // A main checkout has no task base to diff against.
-  const canDiff = !readOnly && resolved !== null && phase.kind === 'ready';
+  const outside = resolved?.outside ?? false;
+  const canDiff = !readOnly && !outside && resolved !== null && phase.kind === 'ready';
   /** A choice the person made, which the tabs remember for the next file. */
   const chooseMode = useCallback(
     (next: 'file' | 'diff') => {
@@ -953,7 +1021,10 @@ export default function FileEditor({
     setOrder(touchedOrder(task.id));
     return onTouchedOrderChange(() => setOrder(touchedOrder(task.id)));
   }, [task.id]);
-  const current = resolved?.relative ?? null;
+  // Null for a file outside the worktree: the change set, PHPantom,
+  // navigation and comments all belong to the task's branch, and none of
+  // them applies to it.
+  const current = resolved !== null && !resolved.outside ? resolved.relative : null;
   const position = current === null ? -1 : order.indexOf(current);
   const step = useCallback(
     (dir: 1 | -1) => {
@@ -1015,6 +1086,11 @@ export default function FileEditor({
   );
   navRef.current = (action: NavAction) => {
     const view = viewRef.current;
+    if (view && outside) {
+      // Said, not silently dropped: ⌘B on this file is a key that does nothing.
+      setNav({ kind: 'message', title: NAV_TITLES[action], message: 'Not available for a file outside this worktree' });
+      return;
+    }
     if (!view || current === null) return;
     const mine = ++navSeq.current;
     const title = NAV_TITLES[action];
@@ -1161,7 +1237,8 @@ export default function FileEditor({
   const fileName = title.slice(title.lastIndexOf('/') + 1);
 
   const menu: OverflowItem[] = [
-    ...(readOnly
+    // No Diff outside the worktree: the file is not on the task's branch.
+    ...(readOnly || outside
       ? []
       : [
           {
@@ -1184,14 +1261,27 @@ export default function FileEditor({
         if (view) openSearchPanel(view);
       },
     },
-    { id: 'copy-path', label: 'Copy Path', aside: '⌥⇧⌘C', title, group: true, onSelect: () => copyPath(false) },
+    // Outside the worktree there is no relative path: only the full one.
+    ...(outside
+      ? []
+      : [{ id: 'copy-path', label: 'Copy Path', aside: '⌥⇧⌘C', title, group: true, onSelect: () => copyPath(false) }]),
     {
       id: 'copy-full-path',
       label: 'Copy Full Path',
       aside: '⇧⌘C',
       title: absolute ?? undefined,
+      group: outside,
       disabled: absolute === null,
       onSelect: () => copyPath(true),
+    },
+    {
+      id: 'reveal',
+      label: revealLabel(),
+      title: absolute ?? undefined,
+      disabled: absolute === null,
+      onSelect: () => {
+        if (absolute !== null) void revealInFileManager(absolute);
+      },
     },
   ];
 
@@ -1263,7 +1353,7 @@ export default function FileEditor({
           className="btn btn-primary"
           onClick={() => saveRef.current()}
           disabled={saveState.kind === 'saving'}
-          title="Save to the worktree (⌘S)"
+          title={outside ? 'Save the file (⌘S)' : 'Save to the worktree (⌘S)'}
         >
           Save
         </button>
@@ -1275,6 +1365,17 @@ export default function FileEditor({
   return (
     <div ref={rootRef} className="ed-root" role="dialog" aria-label={`Editing ${title}`}>
       {active && controlsSlot ? createPortal(controls, controlsSlot) : null}
+
+      {/* Always on screen while the file is: everything else in the pane is
+          the task's, and this one is not. */}
+      {outside && absolute !== null && (
+        <div className="ed-notice ed-outside" data-tone="warn" role="note">
+          <span className="ed-outside-text">
+            <span className="ed-outside-label">Outside this worktree: not part of the task’s branch</span>
+            <span className="ed-outside-path">{absolute}</span>
+          </span>
+        </div>
+      )}
 
       {saveState.kind === 'conflict' && (
         <div className="ed-notice" data-tone="warn">
@@ -1387,9 +1488,19 @@ export default function FileEditor({
           <div className="ed-message">
             <strong>{phase.path}</strong> is outside this worktree.
             <div className="ed-message-sub">
-              Albedo only opens files inside <code>{task.worktreePath}</code>. A path in the
-              transcript that points elsewhere is shown, never opened.
+              It is not part of the task’s branch. Albedo opens a file outside{' '}
+              <code>{task.worktreePath}</code> only when you ask, and only that one file.
             </div>
+            <div className="ed-message-actions">
+              <button type="button" className="btn btn-primary" disabled={granting} onClick={() => openOutside(phase.path)}>
+                Open File
+              </button>
+            </div>
+          </div>
+        )}
+        {phase.kind === 'refused' && (
+          <div className="ed-message" data-tone={phase.refusal.kind === 'missing' ? undefined : 'error'}>
+            {refusalText(phase.refusal)}
           </div>
         )}
         {phase.kind === 'error' && (

@@ -96,11 +96,12 @@ describe('FileEditor keys', () => {
     expect(copyText).not.toHaveBeenCalled();
   });
 
-  it('lists Diff, Find and both copies in ⋯, with their keys', async () => {
+  it('lists Diff, Find, both copies and Reveal in ⋯, with their keys', async () => {
     await open();
     fireEvent.click(screen.getByRole('button', { name: 'File Actions' }));
     const items = Array.from(document.querySelectorAll('[role^="menuitem"]'), (i) => i.textContent);
-    expect(items).toEqual(['Diff⇧⌘D', 'Find⌘F', 'Copy Path⌥⇧⌘C', 'Copy Full Path⇧⌘C']);
+    // jsdom's user agent is not a Mac's, so Reveal goes by its portable name.
+    expect(items).toEqual(['Diff⇧⌘D', 'Find⌘F', 'Copy Path⌥⇧⌘C', 'Copy Full Path⇧⌘C', 'Show in Folder']);
     fireEvent.click(screen.getByRole('menuitem', { name: /Copy Full Path/ }));
     await waitFor(() => expect(copyText).toHaveBeenLastCalledWith('/wt/src/a.ts'));
   });
