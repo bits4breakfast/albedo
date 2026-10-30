@@ -33,6 +33,10 @@ export { turnEdgeOf, outputTokensOf } from './adapter';
 /** A slash command Claude Code ran itself, recorded as a `system` line. */
 export { isLocalCommandLine } from './adapter';
 
+/** Input Claude Code wrote itself: a /loop wake-up, its prompt, a harness note (#138). */
+export { harnessInputOf } from './adapter';
+export type { HarnessInput } from './adapter';
+
 /** The claude.ai link a "Remote Control is active" line carries. */
 export { remoteControlUrlOf } from './adapter';
 

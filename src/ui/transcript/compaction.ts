@@ -15,7 +15,7 @@
  */
 
 import type { Message } from '../../types';
-import { compactBoundaryOf, compactSummaryOf, isNoticeLine, type CompactBoundary } from '../../capture';
+import { compactBoundaryOf, compactSummaryOf, harnessInputOf, isNoticeLine, type CompactBoundary } from '../../capture';
 import { formatContextTokens } from '../StatusDot';
 import { formatDuration } from '../../lib/duration';
 
@@ -40,10 +40,13 @@ export function isCompactSummaryRow(m: Pick<Message, 'role' | 'rawJson'>): boole
 /**
  * A `user` row someone sent: what clears the "sending" echo. A compaction
  * summary is a `user` row too, written when Claude Code compacts on its own
- * before taking the next message, and must not count.
+ * before taking the next message, and must not count. Nor does input Claude
+ * Code wrote itself (`harnessInputOf`): a `/loop` wake-up re-sends its prompt
+ * as a `user` row, and one landing while a message is on its way would clear
+ * that message's echo as if it had arrived (#138).
  */
 export function isPromptRow(m: Pick<Message, 'role' | 'rawJson'>): boolean {
-  return m.role === 'user' && !isCompactSummaryRow(m);
+  return m.role === 'user' && !isCompactSummaryRow(m) && harnessInputOf(m.rawJson) === null;
 }
 
 /**

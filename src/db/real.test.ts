@@ -557,6 +557,23 @@ describe('branch and first prompt — the discriminators', () => {
     expect((await listPastSessions())[0]?.firstPrompt).toBe('help me investigate this ticket');
   });
 
+  it('skips a line Claude Code wrote itself, such as a /loop prompt it re-sent (#138)', async () => {
+    const meta = JSON.stringify({
+      type: 'user', isMeta: true, promptSource: 'system', turnOrigin: 'scheduled',
+      sessionId: 's1', timestamp: new Date(1).toISOString(), cwd: '/w', gitBranch: 'master',
+      message: { role: 'user', content: 'Check the build and report what changed.' },
+    });
+    db.raw
+      .prepare(
+        `INSERT INTO messages (task_id, session_id, agent_id, seq, role, tool_name, target_path, body, raw_json, ts)
+         VALUES (NULL, 's1', NULL, 0, 'user', NULL, NULL, ?, ?, 1)`,
+      )
+      .run('Check the build and report what changed.', meta);
+    seedBranchedTurn('s1', 1, 2, 'master', 'the human question');
+    seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w' });
+    expect((await listPastSessions())[0]?.firstPrompt).toBe('the human question');
+  });
+
   it("reports the main thread's branch, not a later subagent's (#74)", async () => {
     // A subagent run in a worktree records that worktree's branch, and its
     // seq can exceed the main thread's last.

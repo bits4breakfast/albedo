@@ -11,7 +11,7 @@
  */
 
 import type { Message } from '../types';
-import { gitBranchSqlExpr, prosePromptSqlPredicate } from '../capture/adapter';
+import { gitBranchSqlExpr, notMetaSqlPredicate, prosePromptSqlPredicate } from '../capture/adapter';
 import { WRITING_TOOLS } from './touched';
 import { getDb, toFtsQuery } from './index';
 
@@ -230,6 +230,9 @@ export async function listPastSessions(opts?: {
               WHERE y.session_id = m.session_id AND ${mainThreadSql('y')}
                 AND y.role = 'user'
                 AND ${prosePromptSqlPredicate('y.body')}
+                -- Not a line Claude Code wrote itself: a /loop wake-up's
+                -- re-sent prompt or a skill's body is nobody's first prompt.
+                AND ${notMetaSqlPredicate('y.raw_json')}
               ORDER BY y.seq ASC LIMIT 1)   AS first_prompt,
             -- count and path per line, parsed and re-sorted in TypeScript so
             -- the result never depends on GROUP_CONCAT preserving subquery
