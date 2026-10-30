@@ -20,6 +20,9 @@ import {
   tokenRanges,
 } from './pastedText';
 import { PastedTexts } from './PastedTexts';
+import { markMentions, unmarkMentions, type Mention } from './mentions';
+import { MentionPopover, mentionOptionId } from './MentionPopover';
+import { useMentions } from './useMentions';
 import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
 import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
 import { editHeld, holdMessage, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
@@ -41,7 +44,7 @@ import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages, messageOrderKeys } from '../../db';
@@ -847,11 +850,16 @@ function HeldRow({
   // A paste is edited as the box shows it, a token standing for its text,
   // and goes back in its marker on save (pastedText.ts).
   const pastesRef = useRef<ReadonlyMap<number, string>>(new Map());
+  // References too: `@[Title]` in the field, its marker on save (mentions.ts).
+  const mentionsRef = useRef<ReadonlyMap<string, Mention>>(new Map());
   const openedRef = useRef('');
+  const bodyOf = (draft: string) => markPastes(markMentions(draft, mentionsRef.current), pastesRef.current);
+  const bodyOfRef = useRef(bodyOf);
+  bodyOfRef.current = bodyOf;
   // Left open (a task switch): what was typed is kept, not thrown away.
   useEffect(
     () => () => {
-      if (draftRef.current !== null) editHeld(taskId, held.id, markPastes(draftRef.current, pastesRef.current));
+      if (draftRef.current !== null) editHeld(taskId, held.id, bodyOfRef.current(draftRef.current));
       setEditing(taskId, held.id, false);
     },
     [taskId, held.id],
@@ -860,12 +868,14 @@ function HeldRow({
   const open = () => {
     setEditing(taskId, held.id, true);
     const d = draftOf(held.text);
+    const u = unmarkMentions(d.text);
     pastesRef.current = d.pastes;
-    openedRef.current = d.text;
-    setDraft(d.text);
+    mentionsRef.current = u.mentions;
+    openedRef.current = u.text;
+    setDraft(u.text);
   };
   const close = (save: boolean) => {
-    if (save && draft !== null && draft !== openedRef.current) editHeld(taskId, held.id, markPastes(draft, pastesRef.current));
+    if (save && draft !== null && draft !== openedRef.current) editHeld(taskId, held.id, bodyOf(draft));
     setDraft(null);
     setEditing(taskId, held.id, false);
   };
@@ -1052,6 +1062,8 @@ export function Composer({
   /** Large text pastes kept aside; the draft holds their placeholders. */
   const pastesRef = useRef(new Map<number, string>());
   const pasteSeqRef = useRef(0);
+  /** Tasks and files picked from the `@` list; the draft holds their tokens (#154). */
+  const mentionsRef = useRef(new Map<string, Mention>());
   const [busy, setBusy] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   /** Held because the session is on a permission prompt. See `send`. */
@@ -1159,6 +1171,7 @@ export function Composer({
       setText('');
       pastesRef.current = new Map();
       pasteSeqRef.current = 0;
+      mentionsRef.current = new Map();
       setNotice(null);
       requestAnimationFrame(grow);
       // A watcher that recognises its text in what was sent is done.
@@ -1197,7 +1210,7 @@ export function Composer({
   useEffect(() => {
     if (draftOwnerRef.current !== taskId) return;
     if (busy || awaiting || held) dropDraft(taskId);
-    else saveDraft(taskId, text, pastesRef.current);
+    else saveDraft(taskId, text, pastesRef.current, Date.now(), mentionsRef.current);
   }, [taskId, text, busy, awaiting, held]);
 
   /*
@@ -1211,12 +1224,13 @@ export function Composer({
     const left = draftOwnerRef.current;
     if (left !== null && left !== taskId && pendingRef.current !== null) {
       pendingRef.current = null;
-      keepUnsent(left, textRef.current, pastesRef.current);
+      keepUnsent(left, textRef.current, pastesRef.current, Date.now(), mentionsRef.current);
     }
     const draft = getDraft(taskId);
     draftOwnerRef.current = taskId;
     setText(draft?.text ?? '');
     pastesRef.current = new Map(draft?.pastes);
+    mentionsRef.current = new Map(draft?.mentions);
     pasteSeqRef.current = draft ? Math.max(0, ...draft.pastes.map(([id]) => id)) : 0;
     if (draft) {
       requestAnimationFrame(() => {
@@ -1247,6 +1261,7 @@ export function Composer({
       setText('');
       pastesRef.current = new Map();
       pasteSeqRef.current = 0;
+      mentionsRef.current = new Map();
       setNotice(null);
       requestAnimationFrame(grow);
     },
@@ -1260,9 +1275,15 @@ export function Composer({
      `owner`'s draft, marked not sent, as a send cancelled by a switch does.
   */
   const leftDuringSend = useCallback(
-    (owner: number, ok: boolean, text: string, pastes: ReadonlyMap<number, string>): boolean => {
+    (
+      owner: number,
+      ok: boolean,
+      text: string,
+      pastes: ReadonlyMap<number, string>,
+      mentions: ReadonlyMap<string, Mention>,
+    ): boolean => {
       if (draftOwnerRef.current === owner) return false;
-      if (!ok) keepUnsent(owner, text, pastes);
+      if (!ok) keepUnsent(owner, text, pastes, Date.now(), mentions);
       return true;
     },
     [],
@@ -1295,9 +1316,11 @@ export function Composer({
       threw = true;
     }
     // Left while it was being written: the box and its state are another
-    // task's now (see `leftDuringSend`). It comes back with its pastes folded.
+    // task's now (see `leftDuringSend`). It comes back with its pastes folded
+    // and its references as tokens.
     const back = draftOf(body);
-    if (leftDuringSend(owner, ok, back.text, back.pastes)) return;
+    const refs = unmarkMentions(back.text);
+    if (leftDuringSend(owner, ok, refs.text, back.pastes, refs.mentions)) return;
     if (ok) succeeded(owner, body);
     else if (threw) setNotice('Could not send your message. It is still here — press Send to retry.');
     else setNotice('Could not deliver your message. It is still here — press Send to retry.');
@@ -1477,6 +1500,35 @@ export function Composer({
     [grow],
   );
 
+  /*
+     A pick from the `@` list (useMentions.ts) replaces what was typed after
+     the `@` with its token. An edit of the textarea, like `editPaste`, so ⌘Z
+     takes the token out again.
+  */
+  const replaceDraft = useCallback(
+    (start: number, end: number, insert: string) => {
+      const el = ref.current;
+      if (!el || el.readOnly || inFlightRef.current) return;
+      el.focus();
+      el.setSelectionRange(start, end);
+      const native = typeof document.execCommand === 'function' && document.execCommand('insertText', false, insert);
+      if (!native) {
+        setText(el.value.slice(0, start) + insert + el.value.slice(end));
+        requestAnimationFrame(() => ref.current?.setSelectionRange(start + insert.length, start + insert.length));
+      }
+      requestAnimationFrame(grow);
+    },
+    [grow],
+  );
+  const mention = useMentions({
+    taskId,
+    inputRef: ref,
+    storeRef: mentionsRef,
+    frozen: busy || awaiting || held,
+    replace: replaceDraft,
+  });
+  const mentionListId = useId();
+
   /**
    * Attach files from a picker -- the button, or ⌘U. They go in as paths, as
    * a drop does; the picker puts the chosen files in the fs scope.
@@ -1516,8 +1568,10 @@ export function Composer({
     if (inFlightRef.current) return;
     if (text.trim().length === 0) return;
     // What Claude Code receives: the draft with its paste placeholders filled,
-    // each paste in its marker so the transcript can fold it again (#155).
-    const body = markPastes(text, pastesRef.current);
+    // each paste in its marker so the transcript can fold it again (#155),
+    // and each picked reference in its own (#154). References first: a
+    // paste's text is never read for tokens.
+    const body = markPastes(markMentions(text, mentionsRef.current), pastesRef.current);
     /*
        It waits in the outbox (outbox.ts) rather than in Claude Code's queue
        while offline (Claude Code retries, and may drop it), behind messages
@@ -1555,12 +1609,13 @@ export function Composer({
     const owner = taskId;
     // What the box held, for `leftDuringSend`: by then the box is another task's.
     const pastes = new Map(pastesRef.current);
+    const mentions = new Map(mentionsRef.current);
     try {
       // submitPty owns the bracketed-paste wrapper and the submitting \r (see
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
       const ok = await submitLocked(owner, body);
-      if (leftDuringSend(owner, ok, text, pastes)) return;
+      if (leftDuringSend(owner, ok, text, pastes, mentions)) return;
       if (ok) {
         succeeded(owner, body);
         inFlightRef.current = false;
@@ -1587,7 +1642,7 @@ export function Composer({
       setNotice('This task\u2019s session isn\u2019t running, so there is nowhere to send this. Select the task in the list to start it, then press Send. Your message is still here.');
       inFlightRef.current = false;
     } catch {
-      if (leftDuringSend(owner, false, text, pastes)) return;
+      if (leftDuringSend(owner, false, text, pastes, mentions)) return;
       setNotice('Could not send your message. It is still here — press Send to retry.');
       inFlightRef.current = false;
     } finally {
@@ -1674,9 +1729,19 @@ export function Composer({
         onChange={(e) => {
           setText(e.target.value);
           grow();
+          mention.sync();
         }}
+        /* The `@` list follows the caret: a click or an arrow key moves it. */
+        onSelect={mention.sync}
+        onBlur={mention.close}
+        aria-autocomplete="list"
+        aria-controls={mention.open ? mentionListId : undefined}
+        aria-activedescendant={mention.open ? mentionOptionId(mentionListId, mention.active) : undefined}
         onPaste={onPaste}
         onKeyDown={(e) => {
+          // The `@` list first: ↑↓, Return and Tab pick, Esc closes. It
+          // prevents what it takes, so Tab never reaches the area cycle.
+          if (mention.onKeyDown(e)) return;
           // Match the TUI: Enter sends, Shift+Enter is a newline. `isComposing`
           // keeps an IME's Enter from submitting a half-typed word.
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -1685,6 +1750,7 @@ export function Composer({
           }
         }}
       />
+      <MentionPopover list={mention} listId={mentionListId} />
       <PastedTexts
         pastes={pastesIn(text, pastesRef.current)}
         frozen={busy || awaiting || held}

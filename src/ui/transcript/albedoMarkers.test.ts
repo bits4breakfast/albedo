@@ -91,3 +91,16 @@ describe('Albedo markers', () => {
     }
   });
 });
+
+describe('inline markers (#154)', () => {
+  it('are written on one line, without an id, and found only among the tags asked for', async () => {
+    const { BLOCK_TAGS, INLINE_TAGS, encodeInlineMarker } = await import('./albedoMarkers');
+    const ref = encodeInlineMarker('file-ref', { path: 'src/a.ts' }, ' @src/a.ts ');
+    expect(ref).toBe('<file-ref path="src/a.ts"> @src/a.ts </file-ref>');
+    const text = `see ${ref} and ${encodeMarker('pasted-text', { id: '1', lines: '1' }, 'x')}`;
+    expect(findMarker(text)?.tag).toBe('file-ref');
+    expect(findMarker(text, 0, BLOCK_TAGS)?.tag).toBe('pasted-text');
+    expect(findMarker(text, 0, INLINE_TAGS)?.content).toBe(' @src/a.ts ');
+    expect(splitMarkers(text, BLOCK_TAGS)[0]).toEqual({ kind: 'text', text: `see ${ref} and ` });
+  });
+});

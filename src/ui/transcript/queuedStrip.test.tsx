@@ -300,3 +300,42 @@ describe('a paste from the message box (#155)', () => {
     expect(heldFor(1).map((h) => h.text)).toEqual([seven]);
   });
 });
+
+describe('references from the message box (#154)', () => {
+  const fix = {
+    kind: 'task' as const,
+    label: '@Fix login retry',
+    title: 'Fix login retry',
+    taskId: 2,
+    session: 'Fix login retry',
+    sessionId: 'sid-2',
+    worktree: '/code/wt/2',
+    transcript: null,
+  };
+  const marked = async () => {
+    const { encodeMention, fileMention } = await import('./mentions');
+    return `ask ${encodeMention(fix)} about ${encodeMention(fileMention('src/a.ts'))}`;
+  };
+
+  it("read as @Title and @path in Claude Code's queue, never as tags", async () => {
+    queue.entries = [{ text: await marked(), ts: T, injected: false }];
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const band = screen.getByRole('status');
+    expect(band.textContent).toContain('ask @Fix login retry about @src/a.ts');
+    expect(band.textContent).not.toContain('-ref');
+  });
+
+  it('held: edits as tokens, and keeps its markers on save', async () => {
+    turnRunning();
+    const body = await marked();
+    holdMessage(1, body);
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.getByRole('status').textContent).toContain('ask @Fix login retry about @src/a.ts');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByRole('textbox', { name: 'Edit held message' }) as HTMLTextAreaElement;
+    expect(field.value).toBe('ask @[Fix login retry] about @src/a.ts');
+    fireEvent.change(field, { target: { value: 'please ask @[Fix login retry] about @src/a.ts' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(heldFor(1).map((h) => h.text)).toEqual([`please ${body}`]);
+  });
+});
