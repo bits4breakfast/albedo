@@ -51,6 +51,8 @@ export const KEYS = {
   /** Absent means on. */
   notifications: 'albedo.notifications',
   commentsIntro: 'albedo.comments.intro',
+  /** The build last run here, for What's New (ui/whatsNew.ts owns the shape). */
+  whatsNewSeen: 'albedo.whatsNew.seen',
   /** One per task: the model its session is launched on. */
   taskModel: (taskId: number) => `albedo.taskModel.${taskId}`,
 } as const;

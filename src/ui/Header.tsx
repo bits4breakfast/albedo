@@ -29,6 +29,8 @@ export interface HeaderProps {
   onSessions: () => void;
   /** Opens the keyboard shortcuts list. */
   onShortcuts: () => void;
+  /** Shows What's New again; absent when this build has no history to list. */
+  onWhatsNew?: () => void;
   blockedCount: number;
   /**
    * The appearance choice. A per-viewer preference set once, so it lives in
@@ -56,6 +58,7 @@ export default function Header({
   onProjects,
   onSessions,
   onShortcuts,
+  onWhatsNew,
   theme,
   onThemeChange,
   tabs,
@@ -100,7 +103,7 @@ export default function Header({
         </button>
         <OverflowMenu
           label="More"
-          title="Projects, worktrees, theme, keyboard shortcuts"
+          title="Projects, worktrees, theme, keyboard shortcuts, what's new"
           items={[
             { id: 'projects', label: 'Projects…', onSelect: onProjects, title: 'Manage projects' },
             { id: 'worktrees', label: 'Worktrees…', onSelect: onReconcile, title: 'Reconcile git worktrees' },
@@ -122,11 +125,21 @@ export default function Header({
               group: true,
             },
             {
+              // The list shown after an update (#147), again. Beside the
+              // build it describes; disabled when this build carries no
+              // history (outside git, or a build from before #147).
+              id: 'whats-new',
+              label: "What's New…",
+              group: true,
+              title: onWhatsNew ? 'The changes since the build you last ran' : 'No change history in this build',
+              disabled: !onWhatsNew,
+              onSelect: () => onWhatsNew?.(),
+            },
+            {
               // What is running: the commit it was built from ("+": with
               // uncommitted changes). A click copies it.
               id: 'build',
               label: `Build ${buildLabel()}`,
-              group: true,
               title: BUILD
                 ? `Built from ${BUILD.sha}${BUILD.dirty ? ' with uncommitted changes' : ''}. Click to copy`
                 : 'Built outside a git checkout',

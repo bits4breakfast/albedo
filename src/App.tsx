@@ -48,6 +48,8 @@ import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import RemoteControlDialog from './ui/RemoteControlDialog';
+import WhatsNewDialog from './ui/WhatsNewDialog';
+import useWhatsNew from './ui/app/useWhatsNew';
 import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
@@ -256,6 +258,13 @@ export default function App() {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+  /**
+   * What's New after an update (#147). It waits while another dialog or the
+   * "waiting on you" card is on screen (checked in the DOM), and while the
+   * selected task is waiting on you even where no card is drawn (the
+   * terminal-only view shows that question in the terminal).
+   */
+  const whatsNew = useWhatsNew({ hold: selected?.status === 'blocked' });
   /** Why Compact Now in the task's ⋯ menu cannot go now, or null. */
   const compactBlocker = useCommandBlocker(selected);
   /** Remote Control on the selected task: the task bar's mark and the ⋯ item. */
@@ -958,6 +967,7 @@ export default function App() {
         onProjects={() => setProjectsOpen(true)}
         onSessions={() => setSessionsOpen(true)}
         onShortcuts={() => setShortcutsOpen(true)}
+        onWhatsNew={whatsNew.available ? whatsNew.reopen : undefined}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
         theme={themeChoice}
         onThemeChange={setThemeChoice}
@@ -1728,6 +1738,12 @@ export default function App() {
           }}
         />
       </PaneErrorBoundary>
+
+      {whatsNew.open && (
+        <PaneErrorBoundary label="What's New">
+          <WhatsNewDialog list={whatsNew.open} onClose={whatsNew.dismiss} />
+        </PaneErrorBoundary>
+      )}
 
       {remoteConfirm && selected && (
         <PaneErrorBoundary label="Remote Control">
