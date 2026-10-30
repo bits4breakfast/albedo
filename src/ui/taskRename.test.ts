@@ -6,6 +6,7 @@
  * pty and the prompt gate stood in.
  */
 
+import { displayName } from './text';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -110,6 +111,13 @@ describe('renameCommand', () => {
   it('is one line, and never a bare /rename (which makes a name up)', () => {
     expect(renameCommand('Fix\nlogin ')).toBe('/rename Fix login');
     expect(renameCommand('  ')).toBeNull();
+  });
+
+  it('shortens a long title the way the first spawn names the session', () => {
+    const long = 'Make the retry logic for the login flow survive a dropped connection and a slow token refresh';
+    const cmd = renameCommand(long);
+    expect(cmd).toBe(`/rename ${displayName(long)}`);
+    expect(cmd!.length - '/rename '.length).toBeLessThanOrEqual(72);
     expect(oneLine('a\r\nb')).toBe('a b');
   });
 });

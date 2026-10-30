@@ -28,13 +28,32 @@
  * A marker without an id closes with a bare `</tag>`; that form is for short
  * content Albedo writes itself, never for something pasted.
  *
+ * ## Inline markers: references (#154)
+ *
+ * A reference picked from the message box's `@` list is a few words inside a
+ * sentence, so it is written inline, with no line breaks around it
+ * (`encodeInlineMarker`), and has no id:
+ *
+ *     <task-ref session="Fix login retry" session-id="…" task="Fix login retry"
+ *       worktree="/…" transcript="~/.claude/projects/…/….jsonl">@Fix login retry</task-ref>
+ *     <file-ref path="src/foo.ts"> @src/foo.ts </file-ref>
+ *
+ * The spaces inside `<file-ref>` are load-bearing: Claude Code attaches an
+ * `@path` only when whitespace stands on both sides of it (measured on
+ * 2.1.314, see mentions.ts). `mentions.ts` owns what goes into these two.
+ *
  * Conservative like the envelopes: only the tags in `MARKER_TAGS`, only when
  * closed, and an opening tag that is never closed is left as text.
  */
 
 /** Every tag Albedo writes into a message. */
-export const MARKER_TAGS = ['pasted-text'] as const;
+export const MARKER_TAGS = ['pasted-text', 'task-ref', 'file-ref'] as const;
 export type MarkerTag = (typeof MARKER_TAGS)[number];
+
+/** The markers that stand for a whole block of the message (a paste). */
+export const BLOCK_TAGS: readonly MarkerTag[] = ['pasted-text'];
+/** The markers that sit inside a sentence: references (#154). */
+export const INLINE_TAGS: readonly MarkerTag[] = ['task-ref', 'file-ref'];
 
 export interface Marker {
   tag: MarkerTag;
@@ -49,7 +68,19 @@ export interface Marker {
 
 export type MarkerPart = { kind: 'text'; text: string } | { kind: 'marker'; marker: Marker };
 
-const OPEN_RE = new RegExp(`<(${MARKER_TAGS.join('|')})((?:\\s[^<>]*)?)>`, 'g');
+function openRe(tags: readonly MarkerTag[]): RegExp {
+  return new RegExp(`<(${tags.join('|')})((?:\\s[^<>]*)?)>`, 'g');
+}
+const OPEN_RES = new Map<string, RegExp>();
+function openReFor(tags: readonly MarkerTag[]): RegExp {
+  const key = tags.join('|');
+  let re = OPEN_RES.get(key);
+  if (!re) {
+    re = openRe(tags);
+    OPEN_RES.set(key, re);
+  }
+  return re;
+}
 const ATTR_RE = /([A-Za-z][\w-]*)="([^"]*)"/g;
 
 function escapeAttr(v: string): string {
@@ -81,6 +112,16 @@ export function encodeMarker(tag: MarkerTag, attrs: Readonly<Record<string, stri
 }
 
 /**
+ * A marker that sits inside a line of text: no line breaks around `content`,
+ * no id, closed by a bare `</tag>`. For short content Albedo writes itself
+ * (a reference's label), which never holds its own closing tag.
+ */
+export function encodeInlineMarker(tag: MarkerTag, attrs: Readonly<Record<string, string>>, content: string): string {
+  const list = Object.entries(attrs).map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join('');
+  return `<${tag}${list}>${content}</${tag}>`;
+}
+
+/**
  * An id for a `tag` marker whose tags appear nowhere in `message` (everything
  * the message will hold: what was typed and every part to be wrapped), so the
  * marker's closing tag cannot be met early and no typed or pasted text can
@@ -93,9 +134,10 @@ export function freeMarkerId(tag: MarkerTag, message: string, preferred = 1): st
   }
 }
 
-/** The first complete marker at or after `from`, or null. */
-export function findMarker(text: string, from = 0): Marker | null {
+/** The first complete marker at or after `from`, or null. Only `tags`, when given. */
+export function findMarker(text: string, from = 0, tags: readonly MarkerTag[] = MARKER_TAGS): Marker | null {
   if (!text.includes('<', from)) return null;
+  const OPEN_RE = openReFor(tags);
   OPEN_RE.lastIndex = from;
   let m: RegExpExecArray | null;
   while ((m = OPEN_RE.exec(text)) !== null) {
@@ -113,11 +155,11 @@ export function findMarker(text: string, from = 0): Marker | null {
   return null;
 }
 
-/** The text cut into what is plain and what is a marker, in order. */
-export function splitMarkers(text: string): MarkerPart[] {
+/** The text cut into what is plain and what is a marker, in order. Only `tags`, when given. */
+export function splitMarkers(text: string, tags: readonly MarkerTag[] = MARKER_TAGS): MarkerPart[] {
   const out: MarkerPart[] = [];
   let at = 0;
-  for (let mk = findMarker(text, 0); mk !== null; mk = findMarker(text, at)) {
+  for (let mk = findMarker(text, 0, tags); mk !== null; mk = findMarker(text, at, tags)) {
     if (mk.start > at) out.push({ kind: 'text', text: text.slice(at, mk.start) });
     out.push({ kind: 'marker', marker: mk });
     at = mk.end;

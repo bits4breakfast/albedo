@@ -39,7 +39,7 @@
  * buttons (the "waiting on you" card, a held message being edited, the review
  * comments' opening text). Anything that already handled Tab
  * (`defaultPrevented`: the QuickOpen, Find in Files and symbol-results lists,
- * CodeMirror's indent) keeps it too. An open `aria-modal` dialog keeps both
+ * the message box's open `@` list, CodeMirror's indent) keeps it too. An open `aria-modal` dialog keeps both
  * keys, so focus never slips behind it.
  *
  * ## The DOM contract

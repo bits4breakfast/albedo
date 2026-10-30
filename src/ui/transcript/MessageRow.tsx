@@ -43,6 +43,8 @@ import {
 import { useTaskOpener } from '../openTask';
 import { dateText } from '../../reminders/when';
 import { ReminderGlyph } from '../reminders/ReminderGlyph';
+import { MentionChip } from './MentionChip';
+import type { Mention } from './mentions';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -237,7 +239,7 @@ function AttachedImage({ src }: { src: string | null }): ReactNode {
 function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: string | null }): ReactNode {
   switch (block.kind) {
     case 'text':
-      return <Markdown text={block.text} />;
+      return <Markdown text={block.text} mentions={block.mentions} />;
     case 'task-notification':
       return <NotificationChip block={block} />;
     case 'agent-message':
@@ -1075,8 +1077,24 @@ export function codeSpanRef(text: string): { path: string; line: number | null; 
 const INLINE_RE =
   /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|(?<![\p{L}\p{N}_])__([\s\S]+?)__(?![\p{L}\p{N}_])|\*([^*\n]+?)\*|(?<![\p{L}\p{N}_])_([^_\n]+?)_(?![\p{L}\p{N}_])|~~([\s\S]+?)~~|\[([^\]\n]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/gu;
 
-/** Inline markdown to React nodes. Never produces raw HTML. */
-export function parseInline(text: string, depth = 0): ReactNode[] {
+/**
+ * Where each reference's label (`@Fix login retry`, `@src/foo.ts`) stands in
+ * a run of plain text: on its own, as `bareFileMentions` and the composer's
+ * tokens require. Longest label first, so `@a.tsx` is not cut at `@a.ts`.
+ */
+function mentionRe(mentions: readonly Mention[]): RegExp | null {
+  if (mentions.length === 0) return null;
+  const labels = [...new Set(mentions.map((m) => m.label))].sort((a, b) => b.length - a.length);
+  const alt = labels.map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return new RegExp(`(?<=^|[\\s(\\["'])(?:${alt})(?=$|[\\s.,;:!?)\\]}'"])`, 'g');
+}
+
+/**
+ * Inline markdown to React nodes. Never produces raw HTML. `mentions`: the
+ * references in a message you wrote (#154), drawn as chips where their label
+ * stands in plain text -- never inside code.
+ */
+export function parseInline(text: string, depth = 0, mentions: readonly Mention[] = []): ReactNode[] {
   if (depth > 3) return [text];
   const out: ReactNode[] = [];
   const re = new RegExp(INLINE_RE.source, 'gu');
@@ -1085,11 +1103,28 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
   let key = 0;
 
   /** Plain text between markup, with any web URL in it made a link. */
-  const pushPlain = (chunk: string): void => {
+  const pushUrls = (chunk: string): void => {
     for (const part of splitUrls(chunk)) {
       if (typeof part === 'string') out.push(part);
       else out.push(<ExternalLink key={key++} url={part.url} />);
     }
+  };
+  const refs = mentionRe(mentions);
+  /** ...and each reference's label a chip. */
+  const pushPlain = (chunk: string): void => {
+    if (refs === null || !chunk.includes('@')) {
+      pushUrls(chunk);
+      return;
+    }
+    let at = 0;
+    for (const m of chunk.matchAll(refs)) {
+      const mention = mentions.find((x) => x.label === m[0]);
+      if (!mention) continue;
+      if (m.index > at) pushUrls(chunk.slice(at, m.index));
+      out.push(<MentionChip key={key++} mention={mention} />);
+      at = m.index + m[0].length;
+    }
+    if (at < chunk.length) pushUrls(chunk.slice(at));
   };
 
   while ((m = re.exec(text)) !== null) {
@@ -1115,11 +1150,11 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
         ),
       );
     } else if (strongA !== undefined || strongB !== undefined) {
-      out.push(<strong key={key++}>{parseInline(strongA ?? strongB ?? '', depth + 1)}</strong>);
+      out.push(<strong key={key++}>{parseInline(strongA ?? strongB ?? '', depth + 1, mentions)}</strong>);
     } else if (emA !== undefined || emB !== undefined) {
-      out.push(<em key={key++}>{parseInline(emA ?? emB ?? '', depth + 1)}</em>);
+      out.push(<em key={key++}>{parseInline(emA ?? emB ?? '', depth + 1, mentions)}</em>);
     } else if (strike !== undefined) {
-      out.push(<s key={key++}>{parseInline(strike, depth + 1)}</s>);
+      out.push(<s key={key++}>{parseInline(strike, depth + 1, mentions)}</s>);
     } else if (linkText !== undefined) {
       const target = linkUrl ? safeHttpUrl(linkUrl) : null;
       const label = linkText.length > 0 ? linkText : (linkUrl ?? '');
@@ -1152,7 +1187,9 @@ export function parseInline(text: string, depth = 0): ReactNode[] {
   return out;
 }
 
-export function Markdown({ text }: { text: string }): ReactNode {
+const NO_MENTIONS: readonly Mention[] = [];
+
+export function Markdown({ text, mentions = NO_MENTIONS }: { text: string; mentions?: readonly Mention[] }): ReactNode {
   const blocks = useMemo(() => parseBlocks(text), [text]);
   if (text.trim().length === 0) return null;
   return (
@@ -1165,7 +1202,7 @@ export function Markdown({ text }: { text: string }): ReactNode {
             const level = Math.min(4, Math.max(1, b.level));
             return (
               <div key={i} className={`tx-md-h tx-md-h${level}`}>
-                {parseInline(b.text)}
+                {parseInline(b.text, 0, mentions)}
               </div>
             );
           }
@@ -1180,7 +1217,7 @@ export function Markdown({ text }: { text: string }): ReactNode {
                     <tr>
                       {b.head.map((cell, j) => (
                         <th key={j} style={b.align[j] ? { textAlign: b.align[j] } : undefined}>
-                          {parseInline(cell)}
+                          {parseInline(cell, 0, mentions)}
                         </th>
                       ))}
                     </tr>
@@ -1190,7 +1227,7 @@ export function Markdown({ text }: { text: string }): ReactNode {
                       <tr key={r}>
                         {row.map((cell, j) => (
                           <td key={j} style={b.align[j] ? { textAlign: b.align[j] } : undefined}>
-                            {parseInline(cell)}
+                            {parseInline(cell, 0, mentions)}
                           </td>
                         ))}
                       </tr>
@@ -1202,16 +1239,16 @@ export function Markdown({ text }: { text: string }): ReactNode {
           case 'quote':
             return (
               <blockquote key={i} className="tx-md-quote">
-                {parseInline(b.text)}
+                {parseInline(b.text, 0, mentions)}
               </blockquote>
             );
           case 'list':
-            return <MdList key={i} list={b} />;
+            return <MdList key={i} list={b} mentions={mentions} />;
           case 'p':
           default:
             return (
               <p key={i} className="tx-md-p">
-                {parseInline(b.text)}
+                {parseInline(b.text, 0, mentions)}
               </p>
             );
         }
@@ -1221,11 +1258,11 @@ export function Markdown({ text }: { text: string }): ReactNode {
 }
 
 /** A list and, inside each item, the lists nested under it. */
-function MdList({ list }: { list: Extract<Block, { t: 'list' }> }): ReactNode {
+function MdList({ list, mentions }: { list: Extract<Block, { t: 'list' }>; mentions: readonly Mention[] }): ReactNode {
   const items = list.items.map((it, j) => (
     <li key={j}>
-      {parseInline(it.text)}
-      {it.children.map((c, k) => (c.t === 'list' ? <MdList key={k} list={c} /> : null))}
+      {parseInline(it.text, 0, mentions)}
+      {it.children.map((c, k) => (c.t === 'list' ? <MdList key={k} list={c} mentions={mentions} /> : null))}
     </li>
   ));
   return list.ordered ? (
