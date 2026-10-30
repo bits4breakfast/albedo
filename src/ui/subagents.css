@@ -74,7 +74,9 @@
 /* A whole row is the click target (HIG: generous hit areas in lists). */
 .sa-row {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) auto;
+  /* Wide enough for the longest word, "In Background" (about 88px at
+     --fs-xs semibold in SF, a little more in Inter), beside its dot. */
+  grid-template-columns: 112px minmax(0, 1fr) auto;
   align-items: start;
   gap: 10px;
   width: 100%;
@@ -104,6 +106,13 @@
 .sa-row[data-status='blocked'] .sa-status-word { color: var(--status-blocked); }
 .sa-status[data-status='idle'] .sa-status-word,
 .sa-row[data-status='idle'] .sa-status-word { color: var(--muted); }
+/* Waiting on its own background work (#139): at rest, so the idle ring and
+   --muted, as the task list's "N in background" (.task-background) -- not
+   --status-running, which would say it is at work. The word tells it from
+   Finished. Spelled out, not left to the idle rule above, so a change there
+   is a decision about this state too. */
+.sa-status[data-state='waiting'] .sa-status-word,
+.sa-row[data-state='waiting'] .sa-status-word { color: var(--muted); }
 
 .sa-label {
   display: -webkit-box;

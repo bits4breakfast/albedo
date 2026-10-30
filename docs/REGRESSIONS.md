@@ -28,6 +28,14 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Anything that waits for "the row for what I just sent" also accepts the rows a command writes instead of a prompt (`echoLanded` in `TranscriptPane.tsx`).
   - Again in #122: a background task's end comes as a `user` line when the session is idle, and as a `queued_command` attachment, with no user line, when a turn is running (415 of 662 here). Reading only the user lines would have kept most finished work "running".
 - **A new kind of stored row, read as the session's last word.** #122 keeps those attachments as `system` rows. `deriveStatus` reads a `system` row at the tail as idle, so mid-turn, between the notification and Claude's next line, the task would have read Idle while it worked, for as long as Claude took to answer it. Caught before merge. **Rule:** before storing a new kind of row, check every reader of "the newest row": `deriveStatus`, `workingState`, `echoLanded`, the compaction grouping, the subagent tail.
+- **A subagent waiting on its own background work read "Running · 324h".** The Agents strip showed an async agent, spawned two weeks earlier and resumed seven times with `SendMessage`, as Running with its clock counting from the first spawn (#139). Two causes:
+  - Status came from the agent's own rows only. Its last row was its hand-back, a tool result, which reads as activity for `RUNNING_WINDOW_MS`, and the strip re-derived only on a new row, so once the session went quiet it stayed Running for good. Meanwhile the parent had been told, by a `<task-notification>` with `status: completed` and the summary `Agent "…" is waiting on its own background work`, that the agent had stopped and might resume on its own.
+  - Elapsed was `now - firstTs`: across resumes, the first spawn.
+
+  **Rule:**
+  - What the parent was told about a subagent (resumed, stopped, stopped for now) settles its state; its own rows decide only after that. Read through `subagentMarksOf` (adapter.ts).
+  - Anything derived from a recency window carries when it expires, and something re-asks then (`statusExpiresAt`), or it is stale the moment the session goes quiet.
+  - A clock across resumes counts the current run.
 - **Unverified claims about Claude Code.** A PR stated that `--append-system-prompt` applies on every spawn. Measured with `claude -p`: it applies when the session is created, persists across `--resume`, and is ignored when passed on resume. **Rule:** measure Claude Code behaviour (version noted) before writing it in code or a PR. Say what wasn't measured (interactive mode, `/clear`).
 
 ## Shared helpers and scope

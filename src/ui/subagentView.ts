@@ -4,8 +4,7 @@
  * split `db/subagents.ts` makes with `buildRuns`.
  */
 
-import type { TaskStatus } from '../types';
-import type { SubagentRun } from '../db/subagents';
+import { liveRuns, type SubagentRun } from '../db/subagents';
 
 /**
  * Past this many live agents the strip collapses to one summary line.
@@ -22,38 +21,68 @@ export function shouldCollapse(liveCount: number): boolean {
 }
 
 /**
+ * What a row says, one step finer than `TaskStatus`: `waiting` is an agent
+ * that stopped with background work of its own still running (#139). Its
+ * status is `idle`, so nothing counts it as at work; this is only what it is
+ * called.
+ */
+export type AgentState = 'running' | 'blocked' | 'waiting' | 'finished' | 'archived';
+
+export function agentState(run: Pick<SubagentRun, 'status' | 'waiting'>): AgentState {
+  switch (run.status) {
+    case 'running':
+      return 'running';
+    case 'blocked':
+      return 'blocked';
+    case 'archived':
+      return 'archived';
+    default:
+      return run.waiting ? 'waiting' : 'finished';
+  }
+}
+
+/**
  * The status word shown beside the dot. Colour alone is not a status mark
  * (HIG: never rely on colour by itself), so every row carries the word too.
  *
  * `idle` reads "Finished" here, not the task list's "Idle": a subagent does
  * not wait for another prompt the way a session does -- when its turn ends it
- * has handed its result back and is done.
+ * has handed its result back and is done. Unless it said it is waiting on its
+ * own background work: then "In Background", the task list's words for work
+ * that goes on after a turn (#123).
  */
-export function agentStatusWord(status: TaskStatus): string {
-  switch (status) {
+export function agentStatusWord(run: Pick<SubagentRun, 'status' | 'waiting'>): string {
+  switch (agentState(run)) {
     case 'running':
       return 'Running';
     case 'blocked':
       return 'Needs You';
-    case 'idle':
-    case 'done':
+    case 'waiting':
+      return 'In Background';
+    case 'finished':
       return 'Finished';
     case 'archived':
       return 'Archived';
-    default:
-      return status;
   }
 }
 
+/** The longer form, for a tooltip and assistive tech. */
+export function agentStatusDetail(run: Pick<SubagentRun, 'status' | 'waiting'>): string {
+  return agentState(run) === 'waiting'
+    ? 'Waiting on its own background work. It may resume on its own when that work reports'
+    : agentStatusWord(run);
+}
+
 /**
- * How long the agent has been at it. A live agent counts up to `now`; one that
- * has finished stops at its last row, so the inspector does not keep a
- * finished run's clock ticking.
+ * How long the agent has been at it, in its current run: since it started or
+ * was last resumed, not since it was first spawned. A live agent counts up to
+ * `now`; one that has stopped -- finished, or waiting on its own background
+ * work -- stops at its last row, so its clock does not keep ticking.
  */
-export function elapsedMs(run: Pick<SubagentRun, 'firstTs' | 'lastTs' | 'status'>, now: number): number {
+export function elapsedMs(run: Pick<SubagentRun, 'runStartTs' | 'lastTs' | 'status'>, now: number): number {
   const live = run.status === 'running' || run.status === 'blocked';
   const end = live ? Math.max(now, run.lastTs) : run.lastTs;
-  return Math.max(0, end - run.firstTs);
+  return Math.max(0, end - run.runStartTs);
 }
 
 /** `42s`, `3m 05s`, `1h 02m`. Seconds stop mattering once it is hours. */
@@ -82,14 +111,36 @@ export function spokenElapsed(ms: number): string {
 
 /**
  * The strip's one-line summary: "5 Agents Running · 1 Needs You". Blocked is the only
- * count worth calling out separately -- it is the one that will sit there
- * until you act.
+ * live count worth calling out separately -- it is the one that will sit there
+ * until you act. Agents waiting on their own background work are not running;
+ * when listed, they are named after the count ("· 1 In Background").
  */
-export function stripSummary(live: readonly Pick<SubagentRun, 'status'>[]): string {
+export function stripSummary(live: readonly Pick<SubagentRun, 'status'>[], waiting = 0): string {
   const n = live.length;
   const blocked = live.filter((r) => r.status === 'blocked').length;
-  const head = `${n} Agent${n === 1 ? '' : 's'} Running`;
-  return blocked > 0 ? `${head} · ${blocked} Need${blocked === 1 ? 's' : ''} You` : head;
+  let out = `${n} Agent${n === 1 ? '' : 's'} Running`;
+  if (blocked > 0) out += ` · ${blocked} Need${blocked === 1 ? 's' : ''} You`;
+  if (waiting > 0) out += ` · ${waiting} In Background`;
+  return out;
+}
+
+/**
+ * The rows the strip lists: every live agent, then those waiting on their own
+ * background work. Waiting ones are listed only beside live ones -- they
+ * never open the strip on their own, since nothing is at work -- and are
+ * named so they are not mistaken for finished.
+ */
+export function stripRuns(runs: readonly SubagentRun[]): { live: SubagentRun[]; waiting: SubagentRun[] } {
+  const live = liveRuns(runs);
+  const waiting = live.length === 0 ? [] : runs.filter((r) => agentState(r) === 'waiting');
+  return { live, waiting };
+}
+
+/** The earliest moment any run's status goes stale with no new row, or null. */
+export function nextExpiry(runs: readonly Pick<SubagentRun, 'expiresAt'>[]): number | null {
+  let at: number | null = null;
+  for (const r of runs) if (r.expiresAt !== null && (at === null || r.expiresAt < at)) at = r.expiresAt;
+  return at;
 }
 
 /** What a row is called when the agent has not said anything yet. */

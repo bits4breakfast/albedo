@@ -128,3 +128,58 @@ export function taskStop(id: string, taskId: string, ts: number): Line[] {
     resultLine(id, { message: `Successfully stopped task: ${taskId}`, task_id: taskId, task_type: 'local_bash', command: 'sleep 300' }, ts + 50),
   ];
 }
+
+// --- a subagent's runs (#139), as 2.1.314 writes them ----------------------
+
+/**
+ * The notification that an async agent stopped. `waiting` is the shape for
+ * one that stopped with background work of its own still running.
+ */
+export function agentNotification(o: {
+  agentId: string;
+  toolUseId?: string;
+  status?: string;
+  description?: string;
+  waiting?: boolean;
+}): string {
+  const d = o.description ?? 'Review the diff for regressions';
+  const parts = ['<task-notification>', `<task-id>${o.agentId}</task-id>`];
+  if (o.toolUseId) parts.push(`<tool-use-id>${o.toolUseId}</tool-use-id>`);
+  parts.push(`<output-file>/tmp/${o.agentId}.output</output-file>`);
+  parts.push(`<status>${o.status ?? 'completed'}</status>`);
+  if (o.waiting) {
+    parts.push(`<summary>Agent "${d}" is waiting on its own background work</summary>`);
+    parts.push(
+      '<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>',
+    );
+  } else {
+    parts.push(`<summary>Agent "${d}" completed</summary>`);
+  }
+  parts.push('<result>Looked at the diff; nothing to report yet.</result>');
+  parts.push('<usage><subagent_tokens>1200</subagent_tokens><tool_uses>3</tool_uses><duration_ms>42000</duration_ms></usage>');
+  parts.push('</task-notification>');
+  return parts.join('\n');
+}
+
+/** A notification as the `user` line 2.1.314 writes when the session is idle. */
+export function systemNoticeUserLine(text: string, ts: number): Line {
+  return {
+    ...noticeUserLine(text, ts),
+    origin: { kind: 'task-notification', producer: 'session-task', runId: 'run-1' },
+    promptSource: 'system',
+    queueSkipAttachments: true,
+  };
+}
+
+/** `SendMessage` to an agent that had stopped, and the result that resumed it. */
+export function sendMessageResume(id: string, agentId: string, ts: number): Line[] {
+  return [
+    callLine(id, 'SendMessage', { to: agentId, message: 'Carry on with the second half' }, ts),
+    resultLine(
+      id,
+      { success: true, message: `Resuming agent ${agentId.slice(0, 7)}`, resumedAgentId: agentId, revivedAgentId: agentId },
+      ts + 50,
+      { text: JSON.stringify({ success: true, message: `Resuming agent ${agentId.slice(0, 7)}`, resumedAgentId: agentId }) },
+    ),
+  ];
+}

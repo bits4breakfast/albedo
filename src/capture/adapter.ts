@@ -722,14 +722,8 @@ export function isBackgroundNotice(rawJson: string): boolean {
 export function backgroundFactsOf(m: Pick<Message, 'role' | 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
   if (m.role === 'tool_use') return backgroundCallFacts(m);
   if (m.role === 'tool_result') return backgroundResultFacts(m);
-  if (m.role !== 'user' && m.role !== 'system') return [];
-  if (!m.rawJson.includes('<task-notification>')) return [];
-  const line = safeParse(m.rawJson);
-  if (!line) return [];
-  let text = '';
-  if (line['type'] === 'user') text = userTextOf(line);
-  else if (isBackgroundNoticeLine(line)) text = String((line['attachment'] as Record<string, unknown>)['prompt']);
-  if (!/^<task-notification>/.test(text.trimStart())) return [];
+  const text = notificationTextOf(m);
+  if (text === null) return [];
   const out: BackgroundFact[] = [];
   for (const block of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
     const body = block[1] ?? '';
@@ -738,6 +732,22 @@ export function backgroundFactsOf(m: Pick<Message, 'role' | 'seq' | 'rawJson' | 
     out.push({ fact: 'end', toolUseIds: tagValues(body, 'tool-use-id'), taskIds: tagValues(body, 'task-id') });
   }
   return out;
+}
+
+/**
+ * The text of a row that is a `<task-notification>`: a `user` line, or a
+ * notification delivered into a running turn ({@link isBackgroundNoticeLine}).
+ * Null for every other row, including a prompt that only quotes one.
+ */
+function notificationTextOf(m: Pick<Message, 'role' | 'rawJson'>): string | null {
+  if (m.role !== 'user' && m.role !== 'system') return null;
+  if (!m.rawJson.includes('<task-notification>')) return null;
+  const line = safeParse(m.rawJson);
+  if (!line) return null;
+  let text = '';
+  if (line['type'] === 'user') text = userTextOf(line);
+  else if (isBackgroundNoticeLine(line)) text = String((line['attachment'] as Record<string, unknown>)['prompt']);
+  return /^<task-notification>/.test(text.trimStart()) ? text : null;
 }
 
 function backgroundCallFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
@@ -821,6 +831,81 @@ export function backgroundSqlPredicate(): string {
     OR (role = 'tool_use' AND tool_name IN ('Bash', 'Agent', 'Task') AND ${has('"run_in_background":true')})
     OR (role = 'tool_result' AND (${resultKeys.map(has).join(' OR ')}))
     OR (role IN ('user', 'system') AND ${has('<task-notification>')})
+  )`;
+}
+
+// ---------------------------------------------------------------------------
+// A subagent's runs: what resumes one and what ends one (#139)
+// ---------------------------------------------------------------------------
+
+/**
+ * Measured on Claude Code 2.1.314, in the PARENT's transcript (a subagent's
+ * own file says nothing about how it is seen from outside):
+ *
+ *  - **Resumed by the session.** `SendMessage` to an agent that had stopped
+ *    answers with `toolUseResult` `{ success: true, message: "Resuming agent
+ *    …", resumedAgentId: "<agent id>", … }`. One agent here was resumed this
+ *    way seven times over two weeks.
+ *  - **Stopped.** The `<task-notification>` naming the agent's id in
+ *    `<task-id>`, with a `<status>` (as background work ends, above). A plain
+ *    completion's summary reads `Agent "<description>" completed`.
+ *  - **Stopped, but waiting on its own background work.** Status
+ *    `completed`, summary `Agent "<description>" is waiting on its own
+ *    background work`, and a `<note>` that it "stopped with background work
+ *    of its own still running", may resume on its own when that work reports,
+ *    and that "the same task-id notifies again if it does". It did: its own
+ *    file went on (a notification from its own monitor, its answer) with no
+ *    `SendMessage`, and a new notification followed. Both as a `user` line
+ *    (`origin.kind: "task-notification"`, `promptSource: "system"`) and as a
+ *    `queued_command` attachment.
+ */
+export type SubagentMark =
+  /** `SendMessage` woke the agent up. */
+  | { mark: 'resumed'; agentId: string }
+  /** A notification said the agent stopped; `waiting` when only for now. */
+  | { mark: 'stopped'; agentId: string; waiting: boolean };
+
+/** The words that tell "stopped for now" from "finished". Summary or note. */
+const WAITING_ON_OWN_WORK = /\bis waiting on its own background work\b|\bwith background work of its own still running\b/i;
+
+/**
+ * What one row says about a subagent's runs: resumed, or stopped (and
+ * whether only for now). Empty for every other row. A notification for a
+ * shell or a monitor is read the same way; its id never matches an agent's.
+ */
+export function subagentMarksOf(m: Pick<Message, 'role' | 'rawJson'>): SubagentMark[] {
+  if (m.role === 'tool_result') {
+    if (!m.rawJson.includes('"resumedAgentId"')) return [];
+    const line = safeParse(m.rawJson);
+    const r = line !== null && isRecord(line['toolUseResult']) ? line['toolUseResult'] : null;
+    const id = r?.['resumedAgentId'];
+    if (r === null || r['success'] === false || typeof id !== 'string' || id === '') return [];
+    return [{ mark: 'resumed', agentId: id }];
+  }
+  const text = notificationTextOf(m);
+  if (text === null) return [];
+  const out: SubagentMark[] = [];
+  for (const block of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+    const body = block[1] ?? '';
+    const status = tagValues(body, 'status')[0];
+    // An event has no status: the agent did not stop.
+    if (status === undefined) continue;
+    const said = [...tagValues(body, 'summary'), ...tagValues(body, 'note')].join('\n');
+    const waiting = status === 'completed' && WAITING_ON_OWN_WORK.test(said);
+    for (const agentId of tagValues(body, 'task-id')) out.push({ mark: 'stopped', agentId, waiting });
+  }
+  return out;
+}
+
+/**
+ * SQLite predicate preselecting the rows {@link subagentMarksOf} may find
+ * something in, over `role` and `raw_json`. `instr`, not LIKE. Confirm each
+ * hit with the parser.
+ */
+export function subagentMarkSqlPredicate(): string {
+  return `(
+    (role = 'tool_result' AND instr(raw_json, '"resumedAgentId":"') > 0)
+    OR (role IN ('user', 'system') AND instr(raw_json, '<task-notification>') > 0)
   )`;
 }
 

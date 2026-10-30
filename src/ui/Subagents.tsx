@@ -29,21 +29,29 @@
  * survive. See SubagentInspector.tsx.
  *
  * Status is derived from transcript rows (`db/subagents.ts` -> `deriveStatus`),
- * never from the pty, exactly as the task list does it.
+ * never from the pty, exactly as the task list does it -- and settled by the
+ * parent's notification that the agent stopped. One that stopped with its own
+ * background work still running reads "In Background" (#139): listed after
+ * the live rows while the strip is open, never opening it, never counted as
+ * running, and timed by its last run, not counting up.
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { listSubagents, liveRuns, type SubagentRun } from '../db/subagents';
+import { listSubagents, type SubagentRun } from '../db/subagents';
 import { onCaptureUpdate } from '../capture';
 import StatusDot from './StatusDot';
 import SubagentInspector from './SubagentInspector';
 import {
   agentLabel,
+  agentState,
+  agentStatusDetail,
   agentStatusWord,
   elapsedMs,
   formatElapsed,
+  nextExpiry,
   shouldCollapse,
   spokenElapsed,
+  stripRuns,
   stripSummary,
 } from './subagentView';
 import './subagents.css';
@@ -119,8 +127,18 @@ export default function Subagents({ sessionId, taskTitle = null }: SubagentsProp
     };
   }, [sessionId]);
 
-  const live = liveRuns(runs);
+  const { live, waiting } = stripRuns(runs);
   const ticking = live.length > 0 || inspecting !== null;
+
+  // A status read from a recency window goes stale with no new row: an agent
+  // whose last line was a tool result reads Running until the window closes,
+  // and nothing else re-asks (#139). Re-read when the earliest one closes.
+  const expiry = nextExpiry(runs);
+  useEffect(() => {
+    if (expiry === null) return;
+    const id = window.setTimeout(() => setReloadKey((k) => k + 1), Math.max(0, expiry - Date.now()) + 50);
+    return () => window.clearTimeout(id);
+  }, [expiry]);
 
   useEffect(() => {
     if (!ticking) return;
@@ -156,14 +174,15 @@ export default function Subagents({ sessionId, taskTitle = null }: SubagentsProp
   const collapsible = shouldCollapse(live.length);
   const showAll = !collapsible || expanded;
   // Collapsed, a blocked agent still gets its row: it is the one that will sit
-  // there until somebody acts, which is the whole point of the strip.
-  const shown = showAll ? live : live.filter((r) => r.status === 'blocked');
+  // there until somebody acts, which is the whole point of the strip. Agents
+  // waiting on their own background work come after the live ones.
+  const shown = showAll ? [...live, ...waiting] : live.filter((r) => r.status === 'blocked');
 
   const strip =
     live.length === 0 ? null : (
       <div className="sa-bar" ref={stripRef} role="group" aria-label="Subagents running in parallel">
         <div className="sa-head">
-          <span className="sa-lede">{stripSummary(live)}</span>
+          <span className="sa-lede">{stripSummary(live, waiting.length)}</span>
           {collapsible ? (
             <button
               type="button"
@@ -180,21 +199,28 @@ export default function Subagents({ sessionId, taskTitle = null }: SubagentsProp
             {shown.map((run) => {
               const label = agentLabel(run);
               const ms = elapsedMs(run, now);
+              const state = agentState(run);
+              const atWork = state === 'running' || state === 'blocked';
               return (
                 <li key={run.agentId}>
                   <button
                     type="button"
                     className="sa-row"
                     data-status={run.status}
+                    data-state={state}
                     data-agent-id={run.agentId}
                     aria-current={inspecting?.agentId === run.agentId ? 'true' : undefined}
-                    aria-label={`${label}. ${agentStatusWord(run.status)} for ${spokenElapsed(ms)}. Open its transcript.`}
+                    aria-label={`${label}. ${
+                      atWork
+                        ? `${agentStatusWord(run)} for ${spokenElapsed(ms)}`
+                        : `${agentStatusDetail(run)}. Its last run took ${spokenElapsed(ms)}`
+                    }. Open its transcript.`}
                     title={label}
                     onClick={() => setInspecting(run)}
                   >
-                    <span className="sa-status">
+                    <span className="sa-status" title={agentStatusDetail(run)}>
                       <StatusDot status={run.status} />
-                      <span className="sa-status-word">{agentStatusWord(run.status)}</span>
+                      <span className="sa-status-word">{agentStatusWord(run)}</span>
                     </span>
                     <span className="sa-label">{label}</span>
                     <span className="sa-elapsed">{formatElapsed(ms)}</span>
