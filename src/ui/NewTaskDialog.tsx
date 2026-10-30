@@ -52,6 +52,7 @@ import ProjectsDialog from './ProjectsDialog';
 import { readLastProjectId, writeLastProjectId } from './projectPrefs';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { setTaskModel } from './taskModel';
+import { saveDraft } from './transcript/drafts';
 import { nameFollowUp, type NewTaskPrefill } from './followUp';
 import { BranchPicker } from './BranchPicker';
 import { orderBranches } from './branchPickerModel';
@@ -139,6 +140,11 @@ export function NewTaskDialog({
   const [title, setTitle] = useState('');
   /** Shown, and sent, only when a prefill brought one. */
   const [prompt, setPrompt] = useState('');
+  /**
+   * A session's request (#157): send the prompt when the session starts,
+   * rather than leaving it as the new task's unsent draft. Off by default.
+   */
+  const [sendNow, setSendNow] = useState(false);
   /** The prompt last put there by a prefill, to tell it from the user's edit. */
   const appliedPrompt = useRef<string | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -241,6 +247,7 @@ export function NewTaskDialog({
     if (open) return;
     setTitle('');
     setPrompt('');
+    setSendNow(false);
     appliedPrompt.current = null;
     setError(null);
     setBusy(false);
@@ -562,6 +569,21 @@ export function NewTaskDialog({
         ? `${mainCheckout.path} has ${mainCheckout.dirty} uncommitted change(s): commit or stash them to work there.`
         : `${mainCheckout.path}, on ${mainCheckout.current ?? 'a detached HEAD'}.`;
 
+  /**
+   * A request's prompt (#157), at creation: the opening prompt when the user
+   * chose to send it, otherwise kept as the task's unsent draft -- saved
+   * before onCreated mounts the composer that reads it -- and no prompt.
+   */
+  const requestPrompt = useCallback(
+    (taskId: number): string => {
+      const text = prompt.trim();
+      if (sendNow) return text;
+      saveDraft(taskId, text, new Map());
+      return '';
+    },
+    [prompt, sendNow],
+  );
+
   /** `useExistingBranch`: the retry after git said a new branch already exists. */
   const submit = useCallback(
     async (useExistingBranch: boolean) => {
@@ -681,11 +703,11 @@ export function NewTaskDialog({
       writeLastProjectId(project.id);
       // Before onCreated: that is what mounts the terminal, which reads it.
       setTaskModel(task.id, model || null);
-      onCreated(task, prefill ? prompt.trim() : undefined);
+      onCreated(task, prefill?.request ? requestPrompt(task.id) : prefill ? prompt.trim() : undefined);
     },
     [
       busy, project, source, checkout, baseBranch, branch, worktreePath, onMain, alreadyThere,
-      taskTitle, model, onCreated, prefill, prompt, isChat, title,
+      taskTitle, model, onCreated, prefill, prompt, isChat, title, requestPrompt,
     ],
   );
 
@@ -719,7 +741,7 @@ export function NewTaskDialog({
         >
           <div className="wt-modal-head">
             <h2 className="wt-modal-title" id="wt-newtask-title">
-              {prefill ? 'New Follow-Up Task' : 'New Task'}
+              {prefill?.request ? 'New Task from Request' : prefill ? 'New Follow-Up Task' : 'New Task'}
             </h2>
             <span className="wt-modal-sub">
               {!project
@@ -1050,11 +1072,30 @@ export function NewTaskDialog({
                       disabled={busy}
                       onChange={(e) => setPrompt(e.target.value)}
                     />
-                    <div className="wt-hint">
-                      {prefill.pending
-                        ? 'Looking up the pull request…'
-                        : 'Sent once, when the session starts. Describe the bug under “What is wrong”.'}
-                    </div>
+                    {prefill.request ? (
+                      <>
+                        <label className="wt-check">
+                          <input
+                            type="checkbox"
+                            checked={sendNow}
+                            disabled={busy}
+                            onChange={(e) => setSendNow(e.target.checked)}
+                          />
+                          Send it when the session starts
+                        </label>
+                        <div className="wt-hint">
+                          {sendNow
+                            ? 'Sent once, when the session starts.'
+                            : 'Left unsent in the new task’s message box, for you to edit and send.'}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="wt-hint">
+                        {prefill.pending
+                          ? 'Looking up the pull request…'
+                          : 'Sent once, when the session starts. Describe the bug under “What is wrong”.'}
+                      </div>
+                    )}
                   </div>
                 )}
 

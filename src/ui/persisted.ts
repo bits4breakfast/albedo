@@ -48,6 +48,8 @@ export const KEYS = {
   composerDrafts: 'albedo.composerDrafts',
   /** Messages held back while offline, per task (transcript/outbox.ts owns the shape). */
   composerOutbox: 'albedo.composerOutbox',
+  /** What sessions asked for through Albedo's MCP server (ui/requestQueue.ts owns the shape). */
+  requestQueue: 'albedo.requests',
   /** Absent means on. */
   notifications: 'albedo.notifications',
   commentsIntro: 'albedo.comments.intro',

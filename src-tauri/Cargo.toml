@@ -6,6 +6,12 @@ description = "Personal desktop cockpit for running multiple Claude Code session
 edition = "2021"
 rust-version = "1.77"
 
+# The app, and the MCP server it bundles beside itself (mcp/, #157). One
+# workspace so both share Cargo.lock and target/: `cargo build -p albedo-mcp`
+# puts the server next to the app's own binary, where a dev build finds it.
+[workspace]
+members = [".", "mcp"]
+
 [lib]
 name = "albedo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

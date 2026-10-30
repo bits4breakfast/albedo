@@ -9,7 +9,8 @@ import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startH
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
 import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
 import { getTaskModel } from './taskModel';
-import { isResumePlan, planSpawn } from './sessionSpawn';
+import { isResumePlan, planSpawn, withMcpConfig } from './sessionSpawn';
+import { mcpServerPath } from '../capture/inbox';
 import { displayName } from './text';
 import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment } from '../lib/ptyInput';
 import type { Task } from '../types';
@@ -651,6 +652,13 @@ export default function Terminal({
       } catch (err) {
         console.warn('[terminal] hooks unavailable, starting without them', err);
       }
+
+      // Albedo's MCP server (#157): how the session asks for a reminder, a new
+      // session or the user's attention. Optional like the hooks: without the
+      // binary (a dev build before `npm run build:mcp`) it starts as before.
+      const server = await mcpServerPath();
+      if (disposed) return;
+      if (server) spawnArgs = withMcpConfig(spawnArgs, task.id, server);
 
       // A folder Claude Code has never trusted opens on its trust dialog, before
       // any hook runs and before there is a transcript, so neither channel can
