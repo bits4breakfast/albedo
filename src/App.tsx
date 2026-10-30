@@ -27,7 +27,7 @@ import {
   watchFocus,
   type AttentionKind,
 } from './ui/attention';
-import { useDoubleShift, useShortcuts } from './ui/shortcuts';
+import { TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
 import { stepProjectTab } from './ui/projectStep';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
@@ -933,10 +933,11 @@ export default function App() {
     // field, and this app has a composer, a title input and a code editor.
     'mod+arrowleft': { run: () => stepReadingTab(-1), whenTyping: 'ignore' },
     'mod+arrowright': { run: () => stepReadingTab(1), whenTyping: 'ignore' },
-    // PhpStorm's Rename, and F2. Not while typing: the terminal and the
-    // editor keep them (shortcuts.ts). Never over a dialog.
-    'shift+f6': { run: () => startRename(), whenTyping: 'ignore' },
-    f2: { run: () => startRename(), whenTyping: 'ignore' },
+    // PhpStorm's Rename, and F2. Live in the task terminal, which gives them
+    // up; not in a text field, the editor or the shell drawer (shortcuts.ts).
+    // Never over a dialog.
+    'shift+f6': { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
+    f2: { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
   });
 
   // --- render --------------------------------------------------------------

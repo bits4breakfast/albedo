@@ -80,13 +80,20 @@
  *
  * PhpStorm's Rename is ⇧F6; F2 is the Finder's and Windows Explorer's, and
  * nothing here binds it. Read from `code` (`F6` / `F2`), no other modifier.
- * Not while typing (`whenTyping: 'ignore'`): a text field, the message box,
- * the terminal (xterm's input is a textarea) and the editor (CodeMirror is
- * contenteditable) keep them, and the terminal sends them to the pty as
- * before -- they are not in `TAKEN_FROM_TERMINAL`. Checked against
- * CodeMirror's default, history and search keymaps, the editor's own keys
- * (FileEditor.tsx, editorKeys.ts), focusAreas.ts and the native menu: none
- * binds F2 or F6 with any modifier.
+ *
+ * Live in the TASK terminal, because that is where focus is right after a
+ * task is selected (Terminal.tsx focuses it). Claude Code binds neither key,
+ * so the task terminal gives both up (`taskTerminalTakesKey`): xterm never
+ * sends them to the pty, and the key goes on to the window, where the
+ * binding hears it -- its `typingExcept` names the task terminal's input
+ * (`[data-task-terminal]`). Everywhere else that takes typing keeps them
+ * (`whenTyping: 'ignore'`): a text field, the message box, the editor
+ * (CodeMirror is contenteditable) and the shell drawer, whose terminal uses
+ * the plain `terminalTakesKey` and still sends them to the shell -- a real
+ * shell program may use F-keys. Checked against CodeMirror's default,
+ * history and search keymaps, the editor's own keys (FileEditor.tsx,
+ * editorKeys.ts), focusAreas.ts and the native menu: none binds F2 or F6
+ * with any modifier.
  *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
@@ -181,7 +188,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   {
     combo: 'shift+f6',
     keys: '⇧F6 / F2',
-    description: 'Rename the Selected Task (not while typing, in the Terminal or in the Editor)',
+    description: 'Rename the Selected Task (in its Terminal too; not in a Text Field, the Editor or the Shell)',
   },
   { combo: 'editor mod+b', keys: '⌘B / ⌘-click', description: 'In the Editor: Go to Declaration (on one: its usages)' },
   { combo: 'editor alt+f7', keys: '⌥F7', description: 'In the Editor: Find Usages' },
@@ -211,6 +218,11 @@ export interface Handler {
    */
   whenTyping?: 'ignore';
   /**
+   * With `whenTyping: 'ignore'`: a selector for editable elements that do NOT
+   * count as typing for this binding (the task terminal, for Rename).
+   */
+  typingExcept?: string;
+  /**
    * `'capture'` hears the key on the way down, before the focused element:
    * for a binding that must work wherever focus is, even inside a component
    * that stops the key's propagation. Defaults to the bubble phase.
@@ -228,6 +240,10 @@ function isTyping(target: EventTarget | null): boolean {
   if (target.isContentEditable || target.closest('[contenteditable="true"]') !== null) return true;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+function matches(target: EventTarget | null, selector: string | undefined): boolean {
+  return selector !== undefined && target instanceof Element && target.closest(selector) !== null;
 }
 
 /** The combo a keyboard event represents, or null when it is not one of ours. */
@@ -334,6 +350,24 @@ export function terminalTakesKey(e: KeyboardEvent): boolean {
   return hit === null || !TAKEN_FROM_TERMINAL.has(hit.combo);
 }
 
+/** Combos the Claude Code task terminal gives up as well; the shell drawer keeps them. */
+const TAKEN_FROM_TASK_TERMINAL: ReadonlySet<Combo> = new Set(['shift+f6', 'f2']);
+
+/** Marks the input of a task's Claude Code terminal (Terminal.tsx), not the shell drawer's. */
+export const TASK_TERMINAL_ATTR = 'data-task-terminal';
+export const TASK_TERMINAL_INPUT = `[${TASK_TERMINAL_ATTR}]`;
+
+/**
+ * {@link terminalTakesKey} for a task's Claude Code terminal: also false for
+ * ⇧F6 and F2 (Rename), which Claude Code does not use. The shell drawer
+ * keeps using `terminalTakesKey`, so its shell still gets them.
+ */
+export function taskTerminalTakesKey(e: KeyboardEvent): boolean {
+  if (!terminalTakesKey(e)) return false;
+  const hit = comboOf(e);
+  return hit === null || !TAKEN_FROM_TASK_TERMINAL.has(hit.combo);
+}
+
 /**
  * Register shortcut handlers for the lifetime of the component.
  *
@@ -353,7 +387,7 @@ export function useShortcuts(bindings: Bindings): void {
       if (!entry) return;
       const handler: Handler = typeof entry === 'function' ? { run: entry } : entry;
       if ((handler.phase ?? 'bubble') !== phase) return;
-      if (handler.whenTyping === 'ignore' && isTyping(e.target)) return;
+      if (handler.whenTyping === 'ignore' && isTyping(e.target) && !matches(e.target, handler.typingExcept)) return;
       e.preventDefault();
       handler.run(e, hit.digit);
     };

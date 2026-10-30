@@ -14,7 +14,7 @@ import { displayName } from './text';
 import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment } from '../lib/ptyInput';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
-import { terminalTakesKey } from './shortcuts';
+import { TASK_TERMINAL_ATTR, taskTerminalTakesKey } from './shortcuts';
 import { focusOnItsOwn } from './focusAreas';
 import './terminal.css';
 
@@ -487,8 +487,9 @@ export default function Terminal({
       theme: terminalTheme(),
     });
     termRef.current = term;
-    // App shortcuts on Option (the project jump) must not reach the pty too.
-    term.attachCustomKeyEventHandler(terminalTakesKey);
+    // App shortcuts on Option (the project jump) must not reach the pty too,
+    // nor ⇧F6 / F2, Rename, which this terminal gives up (shortcuts.ts).
+    term.attachCustomKeyEventHandler(taskTerminalTakesKey);
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -503,6 +504,8 @@ export default function Terminal({
     // The Tab cycle's stop in the terminal, and Tab stays here (focusAreas.ts).
     term.textarea?.setAttribute('data-focus-default', '');
     term.textarea?.setAttribute('data-focus-keeps-tab', '');
+    // Rename's keys work here and not in the shell drawer (shortcuts.ts).
+    term.textarea?.setAttribute(TASK_TERMINAL_ATTR, '');
 
     // Re-theme in place. Assigning `options.theme` repaints the screen and the
     // scrollback from the existing buffer -- it does not touch the pty, so a

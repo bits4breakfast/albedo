@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS, terminalTakesKey } from './shortcuts';
+import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS, taskTerminalTakesKey, terminalTakesKey } from './shortcuts';
 
 const ev = (init: Partial<KeyboardEvent> & { key: string }) =>
   ({ altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, code: '', ...init }) as KeyboardEvent;
@@ -145,7 +145,14 @@ describe('rename keys (#152)', () => {
     expect(comboOf(ev({ key: 'F2', code: 'F2', altKey: true }))).toBeNull();
   });
 
-  it('stays with the terminal, which sends it to the pty as before', () => {
+  it('is taken from the task terminal (Claude Code binds neither), and left to the shell drawer', () => {
+    // Task terminal: Terminal.tsx.
+    expect(taskTerminalTakesKey(ev({ key: 'F6', code: 'F6', shiftKey: true }))).toBe(false);
+    expect(taskTerminalTakesKey(ev({ key: 'F2', code: 'F2' }))).toBe(false);
+    expect(taskTerminalTakesKey(ev({ key: 'F6', code: 'F6' }))).toBe(true);
+    expect(taskTerminalTakesKey(ev({ key: 'R', code: 'KeyR', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(taskTerminalTakesKey(ev({ key: 'a', code: 'KeyA' }))).toBe(true);
+    // Shell drawer: ShellTerminal.tsx.
     expect(terminalTakesKey(ev({ key: 'F6', code: 'F6', shiftKey: true }))).toBe(true);
     expect(terminalTakesKey(ev({ key: 'F2', code: 'F2' }))).toBe(true);
   });
