@@ -22,7 +22,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { useFocusAreaCycle } from '../focusAreas';
 
 import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty, submitPty } from '../Terminal';
 import { Composer } from './TranscriptPane';
@@ -413,11 +414,17 @@ describe('placeholder when no terminal is running', () => {
   });
 });
 
+/*
+ * The cycle itself is tested in ui/focusAreas.test.tsx; this checks the
+ * composer's half of the contract -- that its textarea is the stop -- with the
+ * real component, as App mounts it.
+ */
 describe('Tab with nothing focused', () => {
   const tab = (init: KeyboardEventInit = {}) =>
-    fireEvent.keyDown(window, { key: 'Tab', ...init });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab', ...init });
 
   it('focuses the composer when nothing holds focus', () => {
+    renderHook(() => useFocusAreaCycle());
     render(<Composer taskId={1} onSent={() => {}} />);
     (document.activeElement as HTMLElement | null)?.blur();
     expect(document.activeElement).toBe(document.body);
@@ -427,7 +434,8 @@ describe('Tab with nothing focused', () => {
     expect(document.activeElement).toBe(box());
   });
 
-  it('leaves Tab alone when something else has focus', () => {
+  it('focuses the composer from a control outside every area', () => {
+    renderHook(() => useFocusAreaCycle());
     render(
       <>
         <button>other</button>
@@ -438,20 +446,11 @@ describe('Tab with nothing focused', () => {
 
     tab();
 
-    expect(document.activeElement).toBe(screen.getByText('other'));
-  });
-
-  it('leaves Shift+Tab and modified Tab alone', () => {
-    render(<Composer taskId={1} onSent={() => {}} />);
-    (document.activeElement as HTMLElement | null)?.blur();
-
-    tab({ shiftKey: true });
-    tab({ metaKey: true });
-
-    expect(document.activeElement).toBe(document.body);
+    expect(document.activeElement).toBe(box());
   });
 
   it('does not steal focus from behind an open dialog', () => {
+    renderHook(() => useFocusAreaCycle());
     render(
       <>
         <div aria-modal="true" role="dialog" />

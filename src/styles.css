@@ -480,6 +480,17 @@ button {
   outline-offset: -2px;
 }
 
+/* The area the Tab cycle just moved into (focusAreas.ts): the same ring, round
+   the whole area, until focus leaves it -- the message box, the terminal, the
+   Files pane, the task list, the editor. Only on arrival by keyboard, so a
+   click into the terminal does not frame it. --focus is 5.32 (light) / 6.62
+   (dark) on --panel-raised. Two attributes, so it outranks a root's own
+   `outline: none` (.tasklist). */
+[data-focus-area][data-focus-arrived] {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {

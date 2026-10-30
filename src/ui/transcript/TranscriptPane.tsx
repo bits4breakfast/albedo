@@ -823,7 +823,8 @@ function HeldRow({
 
   if (draft !== null) {
     return (
-      <div className="tx-queued-row">
+      /* A field and its Save / Cancel: Tab walks between them. */
+      <div className="tx-queued-row" data-focus-keeps-tab="">
         <textarea
           className="tx-queued-edit"
           aria-label="Edit held message"
@@ -1276,29 +1277,6 @@ export function Composer({
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
   /*
-     Tab with nothing focused lands in the composer. Only then: if anything at
-     all holds focus (the terminal, a list row, a button) Tab keeps its normal
-     meaning, and an open dialog keeps it too, so focus never slips behind one.
-     "Nothing focused" is `document.body` being the active element, which is
-     what the page reports after a click on bare background or a closed dialog.
-  */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab' || e.defaultPrevented) return;
-      if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
-      const active = document.activeElement;
-      if (active !== null && active !== document.body && active !== document.documentElement) return;
-      if (document.querySelector('[aria-modal="true"]') !== null) return;
-      const el = ref.current;
-      if (!el || el.disabled) return;
-      e.preventDefault();
-      el.focus();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  /*
      Drop files on the window and their paths land in the message box. That is
      how Claude Code itself takes a picture dragged into a terminal: it sees an
      image path in the input and attaches the file, so nothing here reads or
@@ -1609,10 +1587,12 @@ export function Composer({
       {/* claude.ai's shape: one rounded box holding the text and, under it,
           the controls -- the model and Send at the bottom right. Beside a
           tall box they floated at its foot; inside it they move with it. */}
-      <div className="tx-composer-box">
+      {/* The message box is the first stop of the Tab cycle (focusAreas.ts). */}
+      <div className="tx-composer-box" data-focus-area="composer">
       <textarea
         ref={ref}
         className="tx-composer-input"
+        data-focus-default=""
         rows={1}
         value={text}
         /*

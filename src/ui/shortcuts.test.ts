@@ -103,10 +103,10 @@ describe('SHORTCUTS', () => {
     shift(sh(0));
     if (shift(sh(100))) reachable.add('shift shift');
     // `editor …` entries are bound in CodeMirror's keymap (FileEditor.tsx),
-    // `transcript …` ones in the transcript pane and `new-task …` in its
-    // dialog, none of which this matcher sees.
+    // `transcript …` ones in the transcript pane, `new-task …` in its
+    // dialog and `focus …` in focusAreas.ts, none of which this matcher sees.
     for (const s of SHORTCUTS) {
-      if (s.combo.startsWith('editor ') || s.combo.startsWith('transcript ') || s.combo.startsWith('new-task ')) continue;
+      if (['editor ', 'transcript ', 'new-task ', 'focus '].some((p) => s.combo.startsWith(p))) continue;
       expect(reachable).toContain(s.combo);
     }
   });

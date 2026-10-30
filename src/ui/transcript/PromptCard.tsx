@@ -129,7 +129,8 @@ function PromptBody({
   };
 
   return (
-    <div className="tx-prompt" role="status" aria-label="Waiting on You">
+    /* Options, a text field and buttons: Tab walks between them. */
+    <div className="tx-prompt" role="status" aria-label="Waiting on You" data-focus-keeps-tab="">
       <div className="tx-prompt-head">
         <span className="tx-prompt-tag">
           <span className="status-dot" data-status="blocked" aria-hidden="true" />
