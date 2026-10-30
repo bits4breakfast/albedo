@@ -4,8 +4,9 @@
  * place, so a log or a stack trace does not bury what you are typing around
  * it. Unlike Claude Code's, the paste can be looked at, removed, or put back
  * as ordinary text before sending (PastedTexts.tsx). The real text goes back
- * in when the message is sent -- `expandPastes`, called from the composer's
- * `send` and nowhere else.
+ * in when the message is sent -- `markPastes`, called from the composer's
+ * `send` and nowhere else -- wrapped in Albedo's `<pasted-text>` marker
+ * (albedoMarkers.ts), so the transcript can show it folded too (#155).
  *
  * A token stands for its paste only while it is intact: exactly the text
  * `placeholderFor` wrote, id and line count alike. Edit a character of it and
@@ -15,6 +16,7 @@
  * Pure: the composer owns the store and the textarea.
  */
 
+import { encodeMarker, freeMarkerId, splitMarkers, type Marker } from './albedoMarkers';
 import { actionLabelOf } from './envelopes';
 
 /*
@@ -82,20 +84,83 @@ export function intactTokens(draft: string, store: ReadonlyMap<number, string>):
 }
 
 /**
- * The draft with every intact token replaced by its paste. A token the user
- * edited is no longer intact and stays as typed; one they deleted is simply
- * gone, and so is its text -- deleting the token is how you drop it.
+ * What the composer sends: the draft with every intact token replaced by its
+ * paste, each wrapped in a `<pasted-text>` marker. A token the user edited is
+ * no longer intact and stays as typed; one they deleted is simply gone, and
+ * so is its text -- deleting the token is how you drop it.
+ *
+ * Each paste's id is its token's number unless that id's tags already occur
+ * somewhere in the message (a pasted Albedo transcript, say): then the next
+ * free one (`freeMarkerId`). The pasted text itself is never altered.
  */
-export function expandPastes(draft: string, store: ReadonlyMap<number, string>): string {
+export function markPastes(draft: string, store: ReadonlyMap<number, string>): string {
   const tokens = intactTokens(draft, store);
   if (tokens.length === 0) return draft;
+  const whole = [draft, ...tokens.map((t) => store.get(t.id) ?? '')].join('\n');
+  const ids = new Map<number, string>();
   let out = '';
   let at = 0;
   for (const t of tokens) {
-    out += draft.slice(at, t.start) + (store.get(t.id) ?? '');
+    const text = store.get(t.id) ?? '';
+    let id = ids.get(t.id);
+    if (id === undefined) {
+      // Not one another paste of this message already took.
+      const taken = [...ids.values()].map((v) => `<pasted-text id="${v}"`).join('\n');
+      id = freeMarkerId('pasted-text', `${whole}\n${taken}`, t.id);
+      ids.set(t.id, id);
+    }
+    out += draft.slice(at, t.start) + encodeMarker('pasted-text', { id, lines: String(lineCount(text)) }, text);
     at = t.end;
   }
   return out + draft.slice(at);
+}
+
+function isPaste(m: Marker): boolean {
+  return m.tag === 'pasted-text';
+}
+
+/**
+ * A sent message back as a draft: each paste marker becomes a token again,
+ * with its text in the store. For a message that comes back to the box (a
+ * send that failed after a task switch) or is edited in the Queued band, so
+ * the paste stays folded there too. The inverse of `markPastes`.
+ */
+export function draftOf(body: string): { text: string; pastes: Map<number, string> } {
+  const pastes = new Map<number, string>();
+  const byText = new Map<string, number>();
+  let text = '';
+  for (const p of splitMarkers(body)) {
+    if (p.kind === 'text' || !isPaste(p.marker)) {
+      text += p.kind === 'text' ? p.text : body.slice(p.marker.start, p.marker.end);
+      continue;
+    }
+    const content = p.marker.content;
+    let id = byText.get(content);
+    if (id === undefined) {
+      id = pastes.size + 1;
+      pastes.set(id, content);
+      byText.set(content, id);
+    }
+    text += placeholderFor(id, content);
+  }
+  return { text, pastes };
+}
+
+/** A paste as one short mention: `[Pasted text · 42 lines]`. */
+export function pasteMention(text: string): string {
+  const n = lineCount(text);
+  return `[Pasted text · ${n} line${n === 1 ? '' : 's'}]`;
+}
+
+/**
+ * The message with each paste marker as its mention: what the "Sending" echo
+ * and the Queued band show, so a paste reads as it did in the box and not as
+ * forty lines of log under your sentence.
+ */
+export function foldPastes(text: string): string {
+  return splitMarkers(text)
+    .map((p) => (p.kind === 'text' ? p.text : isPaste(p.marker) ? pasteMention(p.marker.content) : text.slice(p.marker.start, p.marker.end)))
+    .join('');
 }
 
 /**
@@ -124,9 +189,18 @@ export function replaceRanges(draft: string, ranges: readonly PasteToken[], inse
   return out;
 }
 
-/** A queued message as one short line: a pasted block reads as a mention of it. */
+/**
+ * A queued message as one short line: a pasted block reads as a mention of it.
+ * Claude Code's `<pasted_content>` around a message from Albedo's box (it has
+ * paste markers inside) is only the way it arrived, so its text shows, with
+ * each paste as its mention.
+ */
 export function queuedLabel(text: string): string {
   const action = actionLabelOf(text);
   if (action !== null) return action;
-  return text.replace(/<pasted_content\b[^>]*>[\s\S]*?<\/pasted_content\b[^>]*>/g, '[pasted text]').trim();
+  return foldPastes(
+    text.replace(/<pasted_content\b[^>]*>([\s\S]*?)<\/pasted_content\b[^>]*>/g, (_whole, inner: string) =>
+      splitMarkers(inner).some((p) => p.kind === 'marker') ? inner.trim() : '[pasted text]',
+    ),
+  ).trim();
 }

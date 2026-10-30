@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { pasteSegments, SUBMIT_DELAY_IMAGE_MS, SUBMIT_DELAY_MS, submitDelayFor } from './ptyInput';
+import { markerSpans } from '../ui/transcript/albedoMarkers';
+import { markPastes, placeholderFor } from '../ui/transcript/pastedText';
 
 describe('submitDelayFor', () => {
   it('waits longer when the message carries an image path', () => {
@@ -26,5 +28,14 @@ describe('pasteSegments', () => {
     expect(pasteSegments('no pictures here, just src/app.tsx')).toEqual([
       { text: 'no pictures here, just src/app.tsx', image: false },
     ]);
+  });
+
+  it('keeps a paste from the message box whole, image path or not (#155)', () => {
+    const log = 'build failed\nsaved /tmp/out/diff.png\nsee above\nexit 1';
+    const body = markPastes(`~/shot.png and ${placeholderFor(1, log)}`, new Map([[1, log]]));
+    const segments = pasteSegments(body, markerSpans(body));
+    // The typed path still goes alone; the one in the paste stays in it.
+    expect(segments.map((s) => s.image)).toEqual([true, false]);
+    expect(segments[1]?.text).toBe(body.slice('~/shot.png'.length));
   });
 });

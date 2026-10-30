@@ -29,6 +29,7 @@ const { __resetConnectivity } = await import('../../lib/connectivity');
 const { hasLivePty, ptyLiveSince, submitPty } = await import('../Terminal');
 const { __resetTurns, noteTaskSessions } = await import('./turn');
 const { recordQueueOperations, seedQueue } = await import('../../capture/queue');
+const { markPastes, placeholderFor } = await import('./pastedText');
 
 let online = true;
 
@@ -258,5 +259,44 @@ describe('held messages', () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'draft, finished' } });
     unmount();
     expect(heldFor(1).map((h) => h.text)).toEqual(['draft, finished']);
+  });
+});
+
+describe('a paste from the message box (#155)', () => {
+  const log = Array.from({ length: 42 }, (_, i) => `step ${i + 1}: ok`).join('\n');
+  const body = markPastes(`why does this fail?\n${placeholderFor(1, log)}`, new Map([[1, log]]));
+
+  it("reads as its mention in Claude Code's queue, never as tags or forty lines", () => {
+    queue.entries = [{ text: body, ts: T, injected: false }];
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const band = screen.getByRole('status');
+    expect(band.textContent).toContain('why does this fail?\n[Pasted text · 42 lines]');
+    expect(band.textContent).not.toContain('pasted-text');
+    expect(band.textContent).not.toContain('step 42');
+    expect(band.querySelector('.tx-queued-item')?.getAttribute('title')).toBe('why does this fail?\n[Pasted text · 42 lines]');
+  });
+
+  it('held: reads as its mention, edits as the box shows it, and keeps its marker on save', () => {
+    turnRunning();
+    holdMessage(1, body);
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.getByRole('status').textContent).toContain('[Pasted text · 42 lines]');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByRole('textbox', { name: 'Edit held message' }) as HTMLTextAreaElement;
+    expect(field.value).toBe(`why does this fail?\n${placeholderFor(1, log)}`);
+    fireEvent.change(field, { target: { value: `why does this still fail?\n${placeholderFor(1, log)}` } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(heldFor(1).map((h) => h.text)).toEqual([markPastes(`why does this still fail?\n${placeholderFor(1, log)}`, new Map([[1, log]]))]);
+  });
+
+  it('held: saving it unchanged leaves it as it was', () => {
+    turnRunning();
+    // Its marker id is not the one a fresh token would get.
+    const seven = markPastes(placeholderFor(7, log), new Map([[7, log]]));
+    holdMessage(1, seven);
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Edit held message' }), { key: 'Enter' });
+    expect(heldFor(1).map((h) => h.text)).toEqual([seven]);
   });
 });
