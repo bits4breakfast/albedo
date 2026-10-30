@@ -20,7 +20,7 @@ import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import { imageSourceNote, isAllEnvelopes, isImagePlaceholder, parseUserBody, systemRowText, withoutImageMarkers, type UserBlock } from './envelopes';
-import { fullBodyOf, imageAt, imagesIn, isLocalCommandLine, peerMessageIdOf, senderTaskOf } from '../../capture';
+import { fullBodyOf, harnessInputOf, imageAt, imagesIn, isLocalCommandLine, peerMessageIdOf, senderTaskOf } from '../../capture';
 import { useTaskOpener } from '../openTask';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -37,6 +37,11 @@ export interface MessageRowProps {
 }
 
 export function MessageRow({ message, result = null, extras = [] }: MessageRowProps): ReactNode {
+  // Input Claude Code wrote itself is nobody's message (#138): a /loop
+  // wake-up with its re-sent prompt, or a note the harness gives the model.
+  const harness = message.role === 'user' || message.role === 'system' ? harnessInputOf(message.rawJson) : null;
+  if (harness === 'wakeup' || harness === 'scheduled-prompt') return <WakeupRow message={message} extras={extras} />;
+  if (harness === 'note') return <SystemRow message={message} />;
   switch (message.role) {
     case 'user':
       return <UserRow message={message} extras={extras} />;
@@ -408,8 +413,11 @@ function ShellOutput({ stdout, stderr }: { stdout: string; stderr: string }): Re
   );
 }
 
-/** De-emphasised and folded away, the way thinking blocks are. */
-function Collapsed({ label, text }: { label: string; text: string }): ReactNode {
+/**
+ * De-emphasised and folded away, the way thinking blocks are. `markdown` for
+ * a prompt Claude was given, which reads as the action prompt does.
+ */
+function Collapsed({ label, text, markdown = false }: { label: string; text: string; markdown?: boolean }): ReactNode {
   const [open, setOpen] = useState(false);
   if (text.trim().length === 0) return null;
   return (
@@ -417,7 +425,7 @@ function Collapsed({ label, text }: { label: string; text: string }): ReactNode 
       <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <Disclosure open={open} /> {label}
       </button>
-      {open ? <div className="tx-think-body">{text}</div> : null}
+      {open ? <div className="tx-think-body">{markdown ? <Markdown text={text} /> : text}</div> : null}
     </div>
   );
 }
@@ -486,6 +494,33 @@ function SystemRow({ message }: { message: Message }): ReactNode {
       <div className="tx-gutter">Sys</div>
       <div className="tx-content">
         <div className="tx-system-text">{text}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A `/loop` wake-up (#138): Claude Code's "resuming /loop wakeup" line, with
+ * the loop's prompt folded under it. Claude Code re-sends that prompt in full
+ * on every wake-up, as a `user` line, and writes "[N prior /loop wakeups found
+ * nothing actionable…]" before it; both used to read as "You". The note says
+ * what the line's "N no-op ticks" already says, so it is dropped. A prompt
+ * whose wake-up line is not right before it (the wake-up fired while a turn
+ * was still running) is the same row without the line.
+ */
+function WakeupRow({ message, extras }: { message: Message; extras: readonly Message[] }): ReactNode {
+  const rows = [message, ...extras];
+  const fire = rows.find((m) => harnessInputOf(m.rawJson) === 'wakeup') ?? null;
+  const prompt = rows.find((m) => harnessInputOf(m.rawJson) === 'scheduled-prompt') ?? null;
+  const text = fire ? systemRowText(fire.body) : '';
+  const promptText = prompt ? (fullBodyOf(prompt) ?? '') : '';
+  if (text.length === 0 && promptText.trim().length === 0) return null;
+  return (
+    <div className="tx-row tx-row-system">
+      <div className="tx-gutter">Sys</div>
+      <div className="tx-content">
+        {text.length > 0 ? <div className="tx-system-text">{text}</div> : null}
+        <Collapsed label="Scheduled Prompt" text={promptText} markdown />
       </div>
     </div>
   );

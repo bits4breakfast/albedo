@@ -14,7 +14,7 @@
  */
 
 import type { Message } from '../../types';
-import { isBackgroundNotice, outputTokensOf, turnEdgeOf } from '../../capture';
+import { harnessInputOf, isBackgroundNotice, outputTokensOf, turnEdgeOf } from '../../capture';
 import { basename, summaryOf, targetOf, toolUseId } from './ToolChip';
 import { formatDuration } from '../../lib/duration';
 import { isPromptRow } from './compaction';
@@ -119,6 +119,15 @@ export function workingState(
   return { step: { kind: 'working' }, since: lastTs, turn };
 }
 
+/**
+ * A row a turn can start from: a prompt someone sent, or input Claude Code
+ * wrote itself -- a `/loop` wake-up and the prompt it re-sends (#138), which
+ * `isPromptRow` leaves out because nobody sent them.
+ */
+function opensTurn(m: Message): boolean {
+  return isPromptRow(m) || harnessInputOf(m.rawJson) !== null;
+}
+
 function turnTotals(main: readonly Message[], endAt: number, complete: boolean): TurnTotals | null {
   // The first user row after the latest end; with no end loaded, only when
   // the rows start at the conversation's beginning. Not a compaction's
@@ -127,7 +136,7 @@ function turnTotals(main: readonly Message[], endAt: number, complete: boolean):
   // ahead of the terminal's.
   let start = -1;
   if (endAt >= 0 || complete) {
-    start = main.findIndex((m, i) => i > endAt && isPromptRow(m));
+    start = main.findIndex((m, i) => i > endAt && opensTurn(m));
   }
   // A prompt before the latest end began a turn that is over.
   for (let i = main.length - 1; i > Math.max(start, endAt); i--) {

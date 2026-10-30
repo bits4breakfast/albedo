@@ -35,7 +35,7 @@ import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages, messageOrderKeys } from '../../db';
 import { mergeTail, tailCursor } from './tail';
-import { isLocalCommandLine, onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
+import { harnessInputOf, isLocalCommandLine, onCaptureUpdate, onQueueChange, queuedFor, queueSettlesAt, type QueuedEntry } from '../../capture';
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
 import { onConnectivityChange, useOffline, watchConnectivity } from '../../lib/connectivity';
@@ -1698,6 +1698,25 @@ export function groupRows(messages: readonly Message[], { foldSidechains = true 
         const first = compacted.compaction.boundary ?? m;
         items.push({ kind: 'compaction', key: `c-${first.id}`, compaction: compacted.compaction });
         i = compacted.next;
+        continue;
+      }
+      if (harnessInputOf(m.rawJson) === 'wakeup') {
+        // A /loop wake-up is one row: the "resuming" line, with the note and
+        // the re-sent prompt Claude Code writes right after it folded in
+        // (#138). Not "you": nobody typed them.
+        const extras: Message[] = [];
+        let j = i + 1;
+        while (j < messages.length) {
+          const n = messages[j];
+          if (!n || consumed.has(n.id) || n.sessionId !== m.sessionId || n.agentId !== m.agentId) break;
+          const part = harnessInputOf(n.rawJson);
+          if (part !== 'note' && part !== 'scheduled-prompt') break;
+          extras.push(n);
+          j++;
+          if (part === 'scheduled-prompt') break;
+        }
+        items.push({ kind: 'row', key: `m-${m.id}`, message: m, result: null, extras });
+        i = j;
         continue;
       }
       if (m.role === 'user') {

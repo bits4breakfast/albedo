@@ -481,6 +481,67 @@ export function isMetaLine(rawJson: string): boolean {
 }
 
 /**
+ * SQLite predicate: the row's raw line is not an `isMeta` line. Claude Code
+ * writes compact JSON, and a `"isMeta":true` inside a string is escaped, so
+ * the substring occurs only as the key.
+ */
+export function notMetaSqlPredicate(column = 'raw_json'): string {
+  return `instr(${column}, '"isMeta":true') = 0`;
+}
+
+/**
+ * Input Claude Code wrote itself, for the model, that is nobody's message
+ * (#138). The `user` lines stay `user` rows, so status, the queue and the
+ * turn edges read them as they always have; this only says who wrote them.
+ *
+ *  - `wakeup`: the `system` line `subtype: "scheduled_task_fire"` ("Claude
+ *    resuming /loop wakeup (…) · N no-op ticks since …"), written as a
+ *    `/loop` wake-up fires.
+ *  - `scheduled-prompt`: the loop's stored prompt, re-sent in full on every
+ *    wake-up: `isMeta`, `promptSource: "system"`, `turnOrigin: "scheduled"`.
+ *  - `note`: an `isMeta` `user` line with no `origin`, string content, and no
+ *    `promptSource` other than `"system"` -- a note the harness gives the
+ *    model: "[2 prior /loop wakeups found nothing actionable; loop is
+ *    healthy.]" between a wake-up and its prompt, "[handback-send-enforce]
+ *    Your report has not been delivered…" in a subagent, "[Your previous
+ *    response had no visible output…]", "Skill /review is already loaded
+ *    above…", "[Cross-session idle notice] …". Not an envelope (`<…`, which
+ *    the envelope parser already draws as the harness's), and not an
+ *    image's `[Image…` note, which belongs with the picture.
+ *
+ * By shape, not text, so a reworded note is still caught. Unchanged: a
+ * skill's body (content is an array of blocks), a message from another
+ * session or a coordinator, and a task notification (each has `origin`).
+ *
+ * Measured over the transcripts on this machine, Claude Code 2.1.27x-2.1.31x:
+ * 17 scheduled prompts, all with `promptSource: "system"`; 5 loop notes, each
+ * the child of a `scheduled_task_fire` line; 14 hand-back reminders, all in
+ * subagent transcripts.
+ */
+export type HarnessInput = 'wakeup' | 'scheduled-prompt' | 'note';
+
+export function harnessInputOf(rawJson: string): HarnessInput | null {
+  // Cheap pre-filter: nearly every row is neither.
+  if (!rawJson.includes('isMeta') && !rawJson.includes('scheduled_task_fire')) return null;
+  const line = safeParse(rawJson);
+  if (!line) return null;
+  if (line['type'] === 'system') return line['subtype'] === 'scheduled_task_fire' ? 'wakeup' : null;
+  if (line['type'] !== 'user' || line['isMeta'] !== true || line['origin'] !== undefined) return null;
+  const source = line['promptSource'];
+  if (source !== undefined && source !== 'system') return null;
+  const message = line['message'];
+  const content = isRecord(message) ? message['content'] : null;
+  if (typeof content !== 'string') return null;
+  if (line['turnOrigin'] === 'scheduled') return 'scheduled-prompt';
+  const text = content.trimStart();
+  if (text === '' || text.startsWith('<') || text.startsWith('[Image')) return null;
+  // Another session's message always carried `origin` here; its frame is
+  // checked too, so one without it never loses its sender.
+  if (/<(agent-message|cross-session-message)\b/.test(text)) return null;
+  return 'note';
+}
+
+/**
  * What a compaction's boundary line records about it. Null fields were absent
  * or of a shape this build does not know, and are shown as nothing.
  */
