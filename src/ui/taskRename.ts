@@ -42,6 +42,7 @@ import { mustHold, sendToSession } from './transcript/send';
 import { hasLivePty, onPtyPresenceChange } from './Terminal';
 import type { Task } from '../types';
 import type { OverflowItem } from './OverflowMenu';
+import { displayName } from './text';
 
 /** Longest title a rename saves. A title made from a prompt can be longer; it is kept until edited. */
 export const MAX_TITLE = 200;
@@ -77,10 +78,16 @@ export function renamedTitle(raw: string, old: string): string | null {
   return title === old ? null : title;
 }
 
-/** The slash command that names the session `title`; null when it is empty (a bare `/rename` makes one up). */
+/**
+ * The slash command that names the session `title`; null when it is empty (a
+ * bare `/rename` makes one up). Shortened exactly as the first spawn's
+ * `--name` is (App `sessionNameFor`, `displayName`), so the session's name is
+ * one function of the task title however it was set -- an @-mention's
+ * `session` attribute (#154) relies on that.
+ */
 export function renameCommand(title: string): string | null {
   const line = oneLine(title);
-  return line === '' ? null : `/rename ${line}`;
+  return line === '' ? null : `/rename ${displayName(line)}`;
 }
 
 /**
