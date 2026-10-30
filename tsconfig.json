@@ -14,7 +14,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src"]
+  "include": ["src", "scripts"]
 }

@@ -170,12 +170,28 @@ cause or the fix is found. A `UserPromptSubmit` hook
 reminder when a message reads like such a report; the rule applies whether or
 not it fires.
 
+## Dependencies
+
+New versions wait 7 days after publishing (14 for a new major) before Albedo
+takes them (#146); CONTRIBUTING.md, "Dependencies", has the details.
+
+- Add or upgrade npm packages with `npm run deps:add -- <pkg>` (or
+  `deps:add-dev`), which installs with `--before=<a week ago>`.
+- Never run `npm install <pkg>@latest`, `npm update` or `cargo update` to
+  take new versions: they ignore the embargo. If a lockfile changes anyway,
+  run `npm run deps:check` before pushing.
+- The CI job `dependency-age` (`scripts/check-release-age.mjs`) fails a PR
+  that brings in a younger version. The only override is an entry with a
+  reason in `.dependency-embargo-allow.json`; agents never add one on their
+  own -- the owner decides.
+
 ## Commands
 
 ```
 npm run tauri dev     # run the app
 npm test              # vitest
 npm run typecheck     # tsc --noEmit
+npm run deps:check    # dependency embargo against origin/main
 cargo fmt && cargo clippy --manifest-path src-tauri/Cargo.toml
 ```
 

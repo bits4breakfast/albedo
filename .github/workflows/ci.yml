@@ -12,6 +12,10 @@
 # on the PR anyway. A fork's push runs in the fork, so its PR needs this one.
 # GitHub holds a first-time contributor's run until a maintainer approves it,
 # and the token is read-only either way.
+#
+# The one exception is the `dependency-age` job, which runs on every pull
+# request (it needs the PR's base to diff against) and does real work only
+# when package-lock.json or src-tauri/Cargo.lock changed (#146).
 name: CI
 
 on:
@@ -88,3 +92,48 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
+
+  # Dependency embargo (#146): a lockfile change may not bring in a version
+  # published less than 7 days ago (14 for a new major). See CONTRIBUTING.md,
+  # "Dependencies". On a pull_request, HEAD is GitHub's merge commit and
+  # HEAD^1 the base branch, so a depth of 2 is all the history it needs. No
+  # npm ci: the script has no dependencies. Every other job is untouched.
+  dependency-age:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Did a lockfile change?
+        id: lockfiles
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- package-lock.json src-tauri/Cargo.lock; then
+            echo "No lockfile changes; nothing to check."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.lockfiles.outputs.changed == 'true'
+        with:
+          node-version: 26
+
+      # The gate runs as the BASE branch has it, so a PR cannot weaken the
+      # check in the same diff that needs it. The PR's own copy runs only
+      # when the base has none yet (the PR that adds it). The allow file is
+      # still read from the PR: an override is meant to be reviewed there.
+      - name: Check release age of new dependency versions
+        if: steps.lockfiles.outputs.changed == 'true'
+        run: |
+          gate="$RUNNER_TEMP/check-release-age.mjs"
+          if git show HEAD^1:scripts/check-release-age.mjs > "$gate" 2>/dev/null; then
+            echo "Running the gate from the base branch."
+          else
+            echo "The base branch has no gate yet; running the PR's copy."
+            cp scripts/check-release-age.mjs "$gate"
+          fi
+          node "$gate" --base HEAD^1
