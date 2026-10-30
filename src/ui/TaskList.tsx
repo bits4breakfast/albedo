@@ -30,6 +30,8 @@ import { ChatIcon } from './icons';
 import RemoteMark from './RemoteMark';
 import { BackgroundMark } from './BackgroundWork';
 import { useDraftTaskIds } from './transcript/drafts';
+import TaskTitleEdit from './TaskTitleEdit';
+import { RENAME_HINT } from './taskRename';
 import './tasklist.css';
 
 /** The row's word for a chat, in its tooltip where a branch would be. */
@@ -68,6 +70,17 @@ export interface TaskListProps {
    * where it can hold (`canMarkDone` / `canMarkNotDone`).
    */
   onSetDone?: (task: Task, done: boolean) => void;
+  /**
+   * Saves a new title (already cleaned, and different). Offered in the row
+   * menu as "Rename Task…", which edits the title in place on the row.
+   */
+  onRename?: (task: Task, title: string) => void;
+  /**
+   * Where focus goes once the row's name field closes on its own key or
+   * leaving the window (the selected task's terminal, in App): the menu it
+   * was started from is gone.
+   */
+  onRenameClosed?: () => void;
   /** Context-window usage keyed by sessionId, fetched once for the whole list. */
   /** Running agents and a pending question, per task (useTasks). */
   signals?: Map<number, TaskSignals>;
@@ -158,6 +171,8 @@ export default function TaskList({
   onDelete,
   onFollowUp,
   onSetDone,
+  onRename,
+  onRenameClosed,
   contextBySession,
   signals,
   onManageProjects,
@@ -168,6 +183,8 @@ export default function TaskList({
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
+  /** The row whose title is being edited in place (#152). */
+  const [renamingId, setRenamingId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const drafts = useDraftTaskIds();
@@ -466,6 +483,19 @@ export default function TaskList({
                       as its own chip down the left edge instead of being the
                       first few characters of a sentence. Identifier, not a
                       sort axis -- grouping stays status-first. */}
+                  {renamingId === task.id && onRename ? (
+                    <TaskTitleEdit
+                      className="task-row-title-edit"
+                      title={task.title}
+                      returnFocus="fallback"
+                      fallbackFocus={onRenameClosed}
+                      onSave={(title) => {
+                        setRenamingId(null);
+                        onRename(task, title);
+                      }}
+                      onDone={() => setRenamingId(null)}
+                    />
+                  ) : (
                   <span className="task-title">
                     {issue ? (
                       <>
@@ -476,6 +506,7 @@ export default function TaskList({
                       task.title
                     )}
                   </span>
+                  )}
                   <span className="task-age">{relativeTime(task.lastActivityAt, now)}</span>
                   {/* Shares the age's spot and swaps in on hover: reserving
                       its own width hid on every row cut titles short. */}
@@ -575,6 +606,24 @@ export default function TaskList({
           <div className="row-menu-head" title={wrapForTooltip(menu.task.title)}>
             {menu.task.title}
           </div>
+          {/* Edits the title here on the row, where it was right-clicked,
+              without selecting the task: selecting would move focus to its
+              terminal, and that blur would save the field the moment it opened. */}
+          {onRename && (
+            <button
+              className="row-menu-item"
+              role="menuitem"
+              title={RENAME_HINT}
+              onClick={() => {
+                const task = menu.task;
+                setMenu(null);
+                setRenamingId(task.id);
+              }}
+            >
+              Rename Task…
+              <span className="row-menu-hint">branch and folder kept</span>
+            </button>
+          )}
           <button
             className="row-menu-item"
             role="menuitem"

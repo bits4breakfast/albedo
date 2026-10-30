@@ -27,7 +27,7 @@ import {
   watchFocus,
   type AttentionKind,
 } from './ui/attention';
-import { useDoubleShift, useShortcuts } from './ui/shortcuts';
+import { TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
 import { stepProjectTab } from './ui/projectStep';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
@@ -35,13 +35,15 @@ import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
-import Terminal, { focusPty, usePtyLiveSince } from './ui/Terminal';
+import Terminal, { focusPty, hasLivePty, usePtyLiveSince } from './ui/Terminal';
 import { useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
 import BranchChip from './ui/BranchChip';
 import OverflowMenu from './ui/OverflowMenu';
+import TaskTitleEdit from './ui/TaskTitleEdit';
+import { RENAME_KEYS, renameMenuItem, renameTaskAndSession } from './ui/taskRename';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
 import WorktreeReconcile from './ui/WorktreeReconcile';
@@ -136,6 +138,7 @@ export default function App() {
     upsertTask,
     archive,
     setDone,
+    rename,
     markSeen,
   } = useTasks();
 
@@ -271,6 +274,20 @@ export default function App() {
   const selectedLive = usePtyLiveSince(selected?.id ?? null) !== null;
   const remoteUrl = useRemoteControlUrl(selected);
   const remoteItem = selected ? remoteControlItem(selected, selectedLive, remoteUrl) : null;
+  /**
+   * The task whose name is being edited in the task bar (#152): from the ⋯
+   * item, a double-click on the name, or ⇧F6 / F2. Only ever the selected
+   * task; the row menu edits on the row instead (TaskList).
+   */
+  const [renaming, setRenaming] = useState<{ id: number; by: 'key' | 'pointer' } | null>(null);
+  /** After a rename started from a menu or a double-click: the task's terminal, if it runs. */
+  const focusLiveTerminal = useCallback((taskId: number) => {
+    if (hasLivePty(taskId)) focusPty(taskId);
+  }, []);
+  const saveTitle = useCallback(
+    (task: Task, title: string) => void renameTaskAndSession(task, title, rename),
+    [rename],
+  );
   /**
    * ⇧⌘R's confirmation shows only while it still has something to confirm:
    * on the task it was asked on, still selected, live and with Remote Control
@@ -868,6 +885,11 @@ export default function App() {
     }
   };
 
+  const startRename = () => {
+    if (!selected || document.querySelector('[aria-modal="true"]') !== null) return;
+    setRenaming({ id: selected.id, by: 'key' });
+  };
+
   const stepProject = (delta: number) => {
     if (!showTabs) return;
     const key = stepProjectTab(tabs.map((t) => t.key), activeProjectTab?.key ?? null, delta);
@@ -924,6 +946,11 @@ export default function App() {
     // field, and this app has a composer, a title input and a code editor.
     'mod+arrowleft': { run: () => stepReadingTab(-1), whenTyping: 'ignore' },
     'mod+arrowright': { run: () => stepReadingTab(1), whenTyping: 'ignore' },
+    // PhpStorm's Rename, and F2. Live in the task terminal, which gives them
+    // up; not in a text field, the editor or the shell drawer (shortcuts.ts).
+    // Never over a dialog.
+    'shift+f6': { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
+    f2: { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
   });
 
   // --- render --------------------------------------------------------------
@@ -1078,6 +1105,10 @@ export default function App() {
             }}
             onFollowUp={(task) => void openFollowUp(task)}
             onSetDone={(task, done) => void setDone(task.id, done)}
+            onRename={saveTitle}
+            onRenameClosed={() => {
+              if (selected) focusLiveTerminal(selected.id);
+            }}
             onManageProjects={() => setProjectsOpen(true)}
             contextBySession={contextBySession}
             signals={signals}
@@ -1122,9 +1153,27 @@ export default function App() {
                       <span className="main-ident-sep" aria-hidden="true">›</span>
                     </>
                   )}
-                  <span className="main-ident-title" title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}`}>
-                    {selected.title}
-                  </span>
+                  {renaming?.id === selected.id ? (
+                    <TaskTitleEdit
+                      className="main-ident-title-edit"
+                      title={selected.title}
+                      returnFocus={renaming.by === 'key' ? 'previous' : 'fallback'}
+                      fallbackFocus={() => focusLiveTerminal(selected.id)}
+                      onSave={(title) => {
+                        setRenaming(null);
+                        saveTitle(selected, title);
+                      }}
+                      onDone={() => setRenaming(null)}
+                    />
+                  ) : (
+                    <span
+                      className="main-ident-title"
+                      title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
+                      onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
+                    >
+                      {selected.title}
+                    </span>
+                  )}
                   {/* What acts on the task, right after its name; the ⋯ at
                       the bar's end keeps what acts on the panes. */}
                   <OverflowMenu
@@ -1132,6 +1181,7 @@ export default function App() {
                     title="Task actions"
                     trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
                     items={[
+                        renameMenuItem(() => setRenaming({ id: selected.id, by: 'pointer' })),
                         // The same /compact as the button by the message box,
                         // which appears only past 70%; here at any fill.
                         {

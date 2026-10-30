@@ -1,0 +1,48 @@
+/*
+ * The task's name, being renamed (TaskTitleEdit.tsx), in the task bar and on
+ * a task row. Existing tokens only:
+ *
+ *   ground  --panel-inset   the inputs' well; lifts the field off the bar
+ *                           and off a selected or hovered row
+ *   text    --text-strong   light 19.92 / dark 18.16 on --panel-inset (the
+ *                           title it replaces is --text-strong too)
+ *   edge    --focus, 2px    the field always holds focus while it is shown;
+ *                           5.32 light / 6.62 dark on --panel-raised, the
+ *                           row ground it sits on when selected
+ *   select  ::selection --accent-soft (global); --text-strong on it 17.0 light / 14.9 dark
+ *
+ * The same size and weight as the title it replaces, so the text does not
+ * jump when the field opens.
+ */
+.task-title-edit {
+  min-width: 0;
+  margin: 0;
+  padding: 1px 6px;
+  font: inherit;
+  color: var(--text-strong);
+  background: var(--panel-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+
+.task-title-edit:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+
+/* Task bar: takes the room the title had, and as much again as the bar has. */
+.main-ident-title-edit {
+  flex: 1 1 24ch;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+/* Task row: the title's own grid cell. */
+.task-row-title-edit {
+  grid-column: 2;
+  width: 100%;
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
