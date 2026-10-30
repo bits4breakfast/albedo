@@ -37,6 +37,9 @@ export { isLocalCommandLine } from './adapter';
 export { harnessInputOf } from './adapter';
 export type { HarnessInput } from './adapter';
 
+/** A skill's text, written after the Skill call that loaded it (#150). */
+export { skillSourceToolUseIdOf } from './adapter';
+
 /** The claude.ai link a "Remote Control is active" line carries. */
 export { remoteControlUrlOf } from './adapter';
 

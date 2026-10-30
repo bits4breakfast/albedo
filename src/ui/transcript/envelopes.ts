@@ -157,6 +157,18 @@ function parseSkill(body: string): UserBlock | null {
 }
 
 /**
+ * A skill's text as it was loaded (#150): where it lives and its SKILL.md
+ * when it begins with the base-directory line, otherwise the whole text, as a
+ * built-in skill's is. The body is the skill's, never envelopes: a skill that
+ * documents a tag must not have it parsed out of its own instructions.
+ */
+export function skillTextOf(body: string): { name: string | null; dir: string | null; text: string } {
+  const skill = parseSkill(body);
+  if (skill?.kind === 'skill') return { name: skill.name, dir: skill.dir, text: skill.text };
+  return { name: null, dir: null, text: body.trim() };
+}
+
+/**
  * Envelopes recognised at the top level of a user body. Anything not in this
  * list is left as text on purpose.
  */

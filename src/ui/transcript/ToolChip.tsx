@@ -137,6 +137,14 @@ export function summaryOf(message: Message): string | null {
       const content = str(input.content);
       return content === null ? null : `${content.split('\n').length} lines`;
     }
+    case 'Skill': {
+      // Which skill, and what it was asked to do (#150): "claude-in-chrome",
+      // "pdf · report.pdf". The chip's own ellipsis cuts long args.
+      const skill = str(input.skill);
+      if (!skill) return null;
+      const args = firstLine(str(input.args) ?? '');
+      return args ? `${skill} · ${args}` : skill;
+    }
     default: {
       const command = str(input.command);
       if (command) return firstLine(command);
@@ -163,9 +171,14 @@ export interface ToolChipProps {
   /** The paired `tool_result` row, when one has arrived. */
   result?: Message | null;
   defaultOpen?: boolean;
+  /**
+   * More of the call, shown last when the chip is open: a skill's text, which
+   * Claude Code writes on a line of its own after the call (#150).
+   */
+  more?: ReactNode;
 }
 
-export function ToolChip({ message, result = null, defaultOpen = false }: ToolChipProps): ReactNode {
+export function ToolChip({ message, result = null, defaultOpen = false, more = null }: ToolChipProps): ReactNode {
   const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
 
@@ -268,6 +281,7 @@ export function ToolChip({ message, result = null, defaultOpen = false }: ToolCh
               </pre>
             )}
           </section>
+          {more}
         </div>
       ) : null}
     </div>
