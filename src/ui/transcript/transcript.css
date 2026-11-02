@@ -1386,6 +1386,27 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-picking { box-shadow: inset 2px 0 0 var(--accent); }
 .tx-d-annot { padding: 2px 0 4px; font-size: var(--fs-sm); }
 
+/* Select lines, then comment (#222): a small bar under the selection, on
+   the diff's --panel-inset, with the button's text in --text and the note
+   in --muted (commentsContrast.test.ts). */
+.tx-d:has(.tx-d-selcmt) { position: relative; }
+.tx-d-selcmt {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-menu);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+}
+.tx-d-selcmt-btn { color: var(--text); }
+.tx-d-selcmt-note { color: var(--muted); }
+
 /* A selection stays on the side it started on (set on mousedown in Diff.tsx). */
 .tx-d-split[data-select='old'] .tx-d-half:last-child,
 .tx-d-split[data-select='new'] .tx-d-half:first-child {
