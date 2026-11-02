@@ -316,7 +316,7 @@ describe('Reviewed moves you on (#201)', () => {
     expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
   });
 
-  it('arrives at the first file still to read, not a reviewed one picked earlier', async () => {
+  it('a group opens at the last file opened in it, even one reviewed since', async () => {
     await written();
     fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
     fireEvent.click(right().getByRole('checkbox', { name: 'Reviewed' })); // b.ts, on to a.ts
@@ -324,6 +324,28 @@ describe('Reviewed moves you on (#201)', () => {
     key('ArrowDown', true);
     key('Enter', true); // Wiring, on to Unsorted
     key('Enter', true); // Unsorted, wraps to Foundations
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
+    expect(left().getByRole('button', { name: /b\.ts/ }).getAttribute('aria-current')).toBe('true');
+  });
+
+  it('on a first visit, a group opens at its first file still to read', async () => {
+    await written();
+    fireEvent.click(right().getByRole('checkbox', { name: 'Reviewed' })); // a.ts
+    cleanup();
+    resetGuideStoreForTests(); // a restart: no place kept, the marks are
+    pane();
+    expect(await screen.findByRole('heading', { name: 'Foundations' })).toBeTruthy();
+    expect(left().getByRole('button', { name: /b\.ts/ }).getAttribute('aria-current')).toBe('true');
+  });
+
+  it('with every file reviewed and none opened, a group opens at its first file', async () => {
+    await written();
+    fireEvent.click(left().getByRole('checkbox', { name: 'Reviewed' })); // all of Foundations
+    cleanup();
+    resetGuideStoreForTests(); // a restart: nothing opened is remembered
+    pane();
+    expect(await screen.findByRole('heading', { name: 'Wiring' })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Groups' })).getAllByRole('button')[0]!);
     expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
     expect(left().getByRole('button', { name: /a\.ts/ }).getAttribute('aria-current')).toBe('true');
   });

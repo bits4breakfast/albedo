@@ -333,7 +333,23 @@ function GuideBody({
   };
   const setPicked = (next: (p: Readonly<Record<string, string>>) => Record<string, string>) =>
     setPlace((p) => ({ ...p, picked: next(p.picked) }));
-  const file = group ? (group.files.find((f) => f.path === picked[group.key]) ?? group.files[0] ?? null) : null;
+  // A group opens at the last file opened in it; on a first visit, at its
+  // first file still to read; with none, at its first file. However you
+  // arrive: a move, a review, or the rail.
+  const file = group
+    ? (group.files.find((f) => f.path === picked[group.key]) ??
+      group.files.find((f) => !isFileReviewed(f)) ??
+      group.files[0] ??
+      null)
+    : null;
+  // What is on screen is what was opened, so coming back finds it even when
+  // its marks have changed since.
+  const shownKey = group && file && picked[group.key] !== file.path ? `${group.key}\n${file.path}` : null;
+  useEffect(() => {
+    if (shownKey === null) return;
+    const [g, path] = shownKey.split('\n') as [string, string];
+    setPlace((p) => ({ ...p, picked: { ...p.picked, [g]: path } }));
+  }, [shownKey]);
   const reviewedCount = groups.filter(isGroupReviewed).length;
 
   // The keys work once focus is in the guide. Take it when the tab comes on
@@ -355,8 +371,8 @@ function GuideBody({
   );
 
   // Reviewing moves you on (#201): to the next group still to review, after
-  // this one first and then any skipped before it, opened at its first file
-  // still to read. With none left it stays, and the header says so.
+  // this one first and then any skipped before it. With none left it stays,
+  // and the header says so.
   const advance = () => {
     const now = loadReviewed(task.id);
     const unread = (f: GroupFile) => !now.has(reviewedKey(f.path, f.blocks));
@@ -366,9 +382,7 @@ function GuideBody({
       return;
     }
     const g = groups[i]!;
-    const kept = g.files.find((f) => f.path === picked[g.key]);
-    const first = kept && unread(kept) ? kept : g.files.find(unread);
-    setPlace((p) => ({ ...p, group: g.key, picked: first ? { ...p.picked, [g.key]: first.path } : p.picked }));
+    setPlace((p) => ({ ...p, group: g.key }));
     setSaid(`Group ${i + 1} of ${groups.length}: ${g.title}`);
   };
 
