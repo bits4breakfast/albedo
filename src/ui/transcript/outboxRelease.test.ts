@@ -26,7 +26,13 @@ vi.mock('../Terminal', () => {
   };
 });
 
-vi.mock('../../db/comments', () => ({ markCommentsSent: vi.fn(async () => {}) }));
+vi.mock('../../db/comments', async () => ({
+  ...(await vi.importActual<typeof import('../../db/comments')>('../../db/comments')),
+  markCommentsSent: vi.fn(async () => {}),
+  // No code comments wait in the queue here (#222).
+  listComments: vi.fn(async () => []),
+  onCommentsChanged: vi.fn(() => () => {}),
+}));
 
 vi.mock('../../capture/hookEvents', () => {
   const listeners = new Set<(taskId: number, prompt: unknown) => void>();

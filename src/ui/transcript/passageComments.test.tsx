@@ -26,7 +26,13 @@ vi.mock('../../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../db')>()),
   getMessages: vi.fn(async () => rows),
 }));
-vi.mock('../../db/comments', () => ({ markCommentsSent: vi.fn(async () => {}) }));
+vi.mock('../../db/comments', async () => ({
+  ...(await vi.importActual<typeof import('../../db/comments')>('../../db/comments')),
+  markCommentsSent: vi.fn(async () => {}),
+  // No code comments wait in the queue here (#222).
+  listComments: vi.fn(async () => []),
+  onCommentsChanged: vi.fn(() => () => {}),
+}));
 
 const { TranscriptPane } = await import('./TranscriptPane');
 const { __resetDrafts, addComment, commentsOf } = await import('./drafts');
