@@ -11,7 +11,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import type { BuildCommit, BuildInfo } from './build';
+import type { BuildCommit, BuildInfo } from './build.ts';
 
 /** Runs `git <args>` and returns its trimmed stdout; throws when git fails or is missing. */
 export type GitRunner = (args: string[]) => string;

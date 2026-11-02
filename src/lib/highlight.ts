@@ -20,7 +20,11 @@
  * tokens. Syntax colour is a nicety; the transcript must render regardless.
  */
 
-import { createHighlighterCore, createOnigurumaEngine } from 'shiki/core';
+import { createHighlighterCore } from 'shiki/core';
+// Shiki 3 took the engines out of `shiki/core`; each has its own entry point.
+// Oniguruma (WASM) is the engine the grammars are written for, and the one
+// Albedo has always used, so tokens stay what they were.
+import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import type { HighlighterCore, ThemedTokenWithVariants, TokenStyles } from 'shiki/core';
 
 /**
@@ -86,6 +90,9 @@ const LANGS: Record<string, () => Promise<unknown>> = {
   r: () => import('shiki/langs/r.mjs'),
   powershell: () => import('shiki/langs/powershell.mjs'),
 };
+
+/** The bounded set, for tests: every name here must load a grammar. */
+export const SUPPORTED_LANGS: readonly string[] = Object.keys(LANGS);
 
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 const loaded = new Set<string>();

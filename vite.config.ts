@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { buildInfo } from './src/lib/buildEmbed';
+import { buildInfo } from './src/lib/buildEmbed.ts';
 
 /*
  * Which commit this build is, so the app can say what is running, and the
