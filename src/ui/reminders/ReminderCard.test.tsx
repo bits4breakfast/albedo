@@ -5,7 +5,7 @@
  * button does to the session and the row. Real SQLite underneath; the send
  * gateway and the pty are stand-ins, so "sent now" and "held" are observable.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createTestDb } from '../../db/testkit';
 
@@ -116,6 +116,11 @@ describe('sendReminderText: the send gateway, never the message box', () => {
 
 describe('the card', () => {
   it('shows who set it and when, the text, and where HEAD is now', async () => {
+    // "today" is relative to the clock: pin it to the reminder's day. Only
+    // Date is faked, so findBy's polling still runs on real timers.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0 + 60 * 60 * 1000);
+    onTestFinished(() => void vi.useRealTimers());
     const { task } = await firedOn();
     head = 'ffffffffffffffffffffffffffffffffffffffff';
     render(<ReminderCards taskId={task.id} status="idle" />);
