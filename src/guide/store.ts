@@ -10,7 +10,8 @@
  *  - **Reviewed**, per task, as keys of "this file's blocks in this group"
  *    (`reviewedKey`). The key is made of the block ids, which follow the
  *    content, so a file changed after it was ticked is simply not ticked any
- *    more: Reviewed is kept per task AND per diff, with nothing to expire.
+ *    more: Reviewed is kept per task AND per diff. A task's marks go once its
+ *    guide has (`setReviewed` prunes them), so this stays bounded too.
  *  - **A write in progress**, in memory only: which task it is for, and how
  *    far it got. It belongs to the task that started it -- the result is
  *    saved for that task whatever is on screen when it lands.
@@ -130,7 +131,11 @@ export function setReviewed(taskId: number, keys: readonly string[], on: boolean
     else mine.delete(k);
   }
   const list = [...mine].slice(-MAX_REVIEWED);
-  const next = { ...all };
+  // Bounded like the guides: marks are kept only for tasks that still have a
+  // guide, so a task whose guide aged out (or was deleted) takes its own along.
+  const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
+  const next: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(all)) if (k in guides) next[k] = v;
   if (list.length === 0) delete next[String(taskId)];
   else next[String(taskId)] = list;
   writePersisted(KEYS.reviewGuideReviewed, reviewedCodec, next);

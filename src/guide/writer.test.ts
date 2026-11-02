@@ -151,7 +151,8 @@ describe('writeGuide over budget', () => {
     const calls = useRunner((req) => {
       const ids = [...req.prompt.matchAll(/\[([a-z0-9]+)\]/g)].map((m) => m[1]!);
       if (JSON.parse(req.jsonSchema).required[0] === 'blocks') {
-        return ok({ blocks: ids.map((id) => ({ id, line: `changes ${id}` })) });
+        // Ids as a model sometimes writes them, bracketed: still matched.
+        return ok({ blocks: ids.map((id) => ({ id: `[${id}]`, line: `changes ${id}` })) });
       }
       return ok({ groups: [{ title: 'All', summary: 'S', blocks: ids }] });
     });

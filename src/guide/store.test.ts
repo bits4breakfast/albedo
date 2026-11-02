@@ -76,6 +76,16 @@ describe('Reviewed', () => {
     expect(loadReviewed(1).size).toBe(0);
     expect(data.has(KEYS.reviewGuideReviewed)).toBe(false);
   });
+
+  it('stays bounded: a task whose guide is gone loses its marks at the next change', () => {
+    saveGuide(1, guide(10));
+    setReviewed(1, ['a.ts#aaaa'], true);
+    setReviewed(2, ['b.ts#bbbb'], true); // no guide for task 2 yet: its own marks stay
+    expect(loadReviewed(2).size).toBe(1);
+    setReviewed(1, ['a.ts#cccc'], true);
+    expect(loadReviewed(1).size).toBe(2);
+    expect(loadReviewed(2).size).toBe(0);
+  });
 });
 
 describe('startWrite', () => {

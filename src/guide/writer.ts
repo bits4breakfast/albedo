@@ -24,7 +24,7 @@
 
 import type { BranchDiff } from './blocks';
 import { estimateTokens, groupByFolder, INPUT_BUDGET_TOKENS, planInput, renderBlock } from './budget';
-import { validateProposal, type Guide, type GuideGroup, type Proposal } from './validate';
+import { normalizeId, validateProposal, type Guide, type GuideGroup, type Proposal } from './validate';
 import { fileBlockIndex } from './blocks';
 
 /**
@@ -235,7 +235,7 @@ function asLines(v: unknown): Map<string, string> | null {
   for (const b of blocks) {
     if (typeof b !== 'object' || b === null) continue;
     const { id, line } = b as { id?: unknown; line?: unknown };
-    if (typeof id === 'string' && typeof line === 'string') out.set(id.trim().toLowerCase(), line.trim());
+    if (typeof id === 'string' && typeof line === 'string') out.set(normalizeId(id), line.trim());
   }
   return out;
 }
