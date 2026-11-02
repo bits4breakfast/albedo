@@ -95,6 +95,13 @@
   --accent: #4650c0;                          /* 5.32 | 5.56 on --accent-soft */
   --accent-soft: #e9eafb;                     /* chosen / active ground (opaque) */
   --accent-soft-strong: #dde0f8;              /* the same, hovered */
+  /* Text selection (#195). Its own fill, not --accent-soft: a chosen-row
+     ground sits close to the pane by design, and as a selection it measured
+     1.04 on a selected row. Against the grounds text is selected on:
+     --panel 1.81, --panel-inset 1.85, --bg 1.71, --panel-hover 1.57,
+     --panel-raised 1.49. Selected text is --text-strong on it, 10.76: the
+     dim tiers would not clear 4.5 here (--faint 3.29). */
+  --selection: #b4bbf3;
   --accent-line: #9ba1e0;                     /* splitters, link underlines, picked edges */
   --on-accent-soft: #3a43a8;                  /* 6.32 on --accent-soft-strong, 6.92 on --accent-soft */
   /* Filled primary button. Its own pair: --on-accent on --accent-btn 6.63. */
@@ -268,6 +275,10 @@
     --accent: #9aa2ff;                          /* 6.62 | 6.82 on --accent-soft */
     --accent-soft: #1f2130;
     --accent-soft-strong: #272a3d;
+    /* Text selection (#195): --panel 2.49, --panel-inset 2.63, --bg 2.59,
+       --panel-hover 2.22, --panel-raised 2.09 (was 1.03). --text-strong on
+       it 6.92; --faint would be 2.42, hence one text tier for a selection. */
+    --selection: #465094;
     --accent-line: #5560d0;
     --on-accent-soft: #bcc1ff;                  /* 8.22 on --accent-soft-strong, 9.26 on --accent-soft */
     --accent-btn: #5560d0;                      /* --on-accent on it 5.29 */
@@ -367,6 +378,10 @@
   --accent: #9aa2ff;                          /* 6.62 | 6.82 on --accent-soft */
   --accent-soft: #1f2130;
   --accent-soft-strong: #272a3d;
+  /* Text selection (#195): --panel 2.49, --panel-inset 2.63, --bg 2.59,
+     --panel-hover 2.22, --panel-raised 2.09 (was 1.03). --text-strong on
+     it 6.92; --faint would be 2.42, hence one text tier for a selection. */
+  --selection: #465094;
   --accent-line: #5560d0;
   --on-accent-soft: #bcc1ff;                  /* 8.22 on --accent-soft-strong, 9.26 on --accent-soft */
   --accent-btn: #5560d0;                      /* --on-accent on it 5.29 */
@@ -471,7 +486,9 @@ button {
   cursor: default;
 }
 
-::selection { background: var(--accent-soft); }
+/* Selected text carries its own tier (#195; tokens above): the fill has to
+   be strong enough to see, and a dim tier on it would not stay legible. */
+::selection { background: var(--selection); color: var(--text-strong); }
 
 /* 2px, not 1px: a hairline ring on a dark ground is easy to lose, and this is
    the only way round the app without a mouse. */
