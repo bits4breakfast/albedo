@@ -19,7 +19,7 @@ vi.mock('../ui/editor/diffComments', () => ({
   useDiffComments: () => ({ annotations: null, notice: null, clearNotice: () => {} }),
 }));
 
-const { default: GuidePane } = await import('./GuidePane');
+const { default: GuidePane, nextToReview } = await import('./GuidePane');
 const { resetGuideStoreForTests, saveGuide } = await import('./store');
 const { setOneshotRunner } = await import('./writer');
 
@@ -146,9 +146,10 @@ describe('GuidePane', () => {
     expect((left().getByRole('checkbox', { name: 'Reviewed' }) as HTMLInputElement).checked).toBe(true);
     // A reviewed file folds its diff away.
     expect(right().getByText('Reviewed.')).toBeTruthy();
-    // Unticking the group unticks its files.
+    // Unticking the group unticks its files, and never moves.
     fireEvent.click(left().getByRole('checkbox', { name: 'Reviewed' }));
     expect((left().getByRole('checkbox', { name: 'Reviewed' }) as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
   });
 
   it('ticks a file Reviewed from its diff and moves to the next file to read', async () => {
@@ -171,7 +172,8 @@ describe('GuidePane', () => {
     loaded = { ...loaded, diff: moved };
     pane();
     // The news leads, so a narrow pane cuts the base, not it; only the text is announced.
-    const notice = await screen.findByRole('status');
+    await screen.findByRole('heading', { name: 'Everything' });
+    const notice = screen.getAllByRole('status').find((s) => s.classList.contains('gd-meta-text'))!;
     expect(notice.textContent).toMatch(/^1 file changed since it was written .* · new changes are under Unsorted · branch vs main$/);
     expect(within(notice).queryByRole('button')).toBeNull();
     const marks = within(screen.getByRole('navigation', { name: 'Groups' })).getAllByRole('button');
@@ -265,3 +267,72 @@ describe('GuidePane keeps your place (#199)', () => {
   });
 });
 
+describe('Reviewed moves you on (#201)', () => {
+  const rail = () => within(screen.getByRole('navigation', { name: 'Groups' }));
+  const said = () =>
+    screen
+      .getAllByRole('status')
+      .map((s) => s.textContent)
+      .join('|');
+
+  it('picks the next group not yet reviewed: after this one, then any skipped before it', () => {
+    const done = [true, false, true, false];
+    const at = (i: number) => nextToReview([0, 1, 2, 3], i, (g) => done[g]!);
+    expect(at(1)).toBe(3);
+    expect(at(3)).toBe(1);
+    expect(at(0)).toBe(1);
+    expect(nextToReview([0, 1], 0, () => true)).toBeNull();
+    expect(nextToReview([0], 0, () => false)).toBeNull();
+  });
+
+  it('⌥⏎ skips groups already reviewed, wraps to one skipped, and stays once all are done', async () => {
+    await written();
+    key('ArrowDown', true); // skip Foundations
+    key('Enter', true);
+    expect(screen.getByRole('heading', { name: 'Unsorted' })).toBeTruthy();
+    expect(said()).toContain('Group 3 of 3: Unsorted');
+    key('Enter', true);
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
+    expect(rail().getByText('2 of 3 groups reviewed')).toBeTruthy();
+    key('Enter', true);
+    // Nothing left: it stays, and says so.
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
+    expect(left().getByText('All 3 groups reviewed')).toBeTruthy();
+    expect(said()).toContain('All 3 groups reviewed');
+  });
+
+  it('ticking the last file still to read finishes the group and moves to the next', async () => {
+    await written();
+    fireEvent.click(right().getByRole('checkbox', { name: 'Reviewed' })); // a.ts, on to b.ts
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
+    fireEvent.click(right().getByRole('checkbox', { name: 'Reviewed' })); // b.ts, the last
+    expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
+    expect(rail().getAllByRole('button')[0]!.getAttribute('aria-label')).toBe('01 Foundations, reviewed');
+  });
+
+  it('the group’s own Reviewed box moves on too', async () => {
+    await written();
+    fireEvent.click(left().getByRole('checkbox', { name: 'Reviewed' }));
+    expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
+  });
+
+  it('arrives at the first file still to read, not a reviewed one picked earlier', async () => {
+    await written();
+    fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
+    fireEvent.click(right().getByRole('checkbox', { name: 'Reviewed' })); // b.ts, on to a.ts
+    fireEvent.click(left().getByRole('button', { name: /b\.ts/ })); // back on the reviewed one
+    key('ArrowDown', true);
+    key('Enter', true); // Wiring, on to Unsorted
+    key('Enter', true); // Unsorted, wraps to Foundations
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
+    expect(left().getByRole('button', { name: /a\.ts/ }).getAttribute('aria-current')).toBe('true');
+  });
+
+  it('a click on the rail says nothing more than the button it is', async () => {
+    await written();
+    fireEvent.click(rail().getAllByRole('button')[1]!);
+    expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
+    expect(said()).not.toContain('Group 2 of 3');
+    expect(rail().getAllByRole('button')[1]!.getAttribute('title')).toBe('02 Wiring');
+  });
+});
