@@ -32,6 +32,14 @@
   font-size: var(--fs-sm);
   color: var(--muted);
 }
+/* Out of date (#197): the row itself is the notice, on the banner's ground.
+   On --banner-bg: --banner-text 7.65 | 11.27, --muted 6.49 | 6.60 (the
+   filter), light | dark; the button keeps its own --panel-raised ground. */
+.gd-meta[data-stale] {
+  background: var(--banner-bg);
+  border-bottom-color: var(--banner-border);
+  color: var(--banner-text);
+}
 .gd-meta-text {
   margin-right: auto;
   min-width: 0;

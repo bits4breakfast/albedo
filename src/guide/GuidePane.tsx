@@ -264,6 +264,10 @@ function GuideBody({
       .filter((g) => g.files.length > 0);
   }, [view, onlyUncommitted, uncommitted]);
 
+  const staleText = view.stale
+    ? `${view.changedFiles.length === 1 ? '1 file' : `${view.changedFiles.length} files`} changed since; new changes are under Unsorted`
+    : null;
+
   const reviewed = loadReviewed(task.id);
   const isFileReviewed = (f: GroupFile) => reviewed.has(reviewedKey(f.path, f.blocks));
   const isGroupReviewed = (g: GroupView) => g.files.length > 0 && g.files.every(isFileReviewed);
@@ -339,9 +343,13 @@ function GuideBody({
   return (
     // A focus stop of its own, so its keys work from a click anywhere in it.
     <div className="gd" ref={rootRef} tabIndex={-1} onKeyDown={onKeyDown} aria-label="Review Guide">
-      <div className="gd-meta">
-        <span className="gd-meta-text" title={new Date(guide.writtenAt).toLocaleString()}>
+      {/* One row, one Rewrite (#197): a guide the branch has moved on from
+          says so here, on the banner's ground, rather than in a second row
+          with a second button. */}
+      <div className="gd-meta" data-stale={view.stale || undefined} role={view.stale ? 'status' : undefined}>
+        <span className="gd-meta-text" title={`Written ${new Date(guide.writtenAt).toLocaleString()}${staleText ? `. ${staleText}` : ''}`}>
           Written {writtenAgo(guide.writtenAt)} · branch vs {guide.base}
+          {staleText ? <span className="gd-meta-stale"> · {staleText}</span> : null}
         </span>
         <label className="gd-filter">
           <input type="checkbox" checked={onlyUncommitted} onChange={(e) => setOnlyUncommitted(e.target.checked)} />
@@ -357,17 +365,6 @@ function GuideBody({
           {write?.kind === 'writing' ? 'Rewriting…' : 'Rewrite'}
         </button>
       </div>
-      {view.stale ? (
-        <div className="gd-banner" role="status">
-          <span>
-            {view.changedFiles.length === 1 ? '1 file changed' : `${view.changedFiles.length} files changed`} since this was
-            written. Changes it does not know are under Unsorted.
-          </span>
-          <button type="button" className="gd-btn" onClick={onRewrite} disabled={write?.kind === 'writing'}>
-            Rewrite
-          </button>
-        </div>
-      ) : null}
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
       {write?.kind === 'error' ? <WriteStatus taskId={task.id} write={write} onRetry={onRewrite} /> : null}
 
