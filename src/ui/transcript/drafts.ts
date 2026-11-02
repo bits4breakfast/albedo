@@ -217,11 +217,16 @@ export function dropDraft(taskId: number): void {
  * Keep only the drafts of these tasks -- the live ones, from a fresh read of
  * the database -- and none older than a week. An archived or deleted task's
  * draft goes here.
+ *
+ * `readStartedAt`: when that read began. A draft saved since is kept whatever
+ * the read says: the read cannot know a task created after it began, and New
+ * Task saves a request's prompt as the new task's draft the moment the row
+ * exists (#184). Without it, the list alone decides.
  */
-export function keepDraftsFor(taskIds: Iterable<number>, now = Date.now()): void {
+export function keepDraftsFor(taskIds: Iterable<number>, now = Date.now(), readStartedAt = Infinity): void {
   const live = new Set(taskIds);
   const prev = current();
-  const kept = [...withoutExpired(prev, now)].filter(([id]) => live.has(id));
+  const kept = [...withoutExpired(prev, now)].filter(([id, d]) => live.has(id) || d.savedAt >= readStartedAt);
   commit(kept.length === prev.size ? prev : new Map(kept));
 }
 

@@ -105,6 +105,10 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - An optional component reports its availability (running / failed / not installed) from the module that owns it, and the UI shows that state rather than guessing it.
   - A fallback answer says so where it is listed ("Text search: may include false matches"), not only in a notice that may have been dismissed.
 
+- **A cleanup judged a task newer than its own read.** An approved session request's prompt never reached the new task (#184): New Task saved it as the task's draft, and a `refresh()` whose `listTasks()` began before the row existed landed a moment later and ran `keepDraftsFor(live)`, deleting it as "a draft of a gone task". The message box reads its draft once, on mount, and opened empty. **Rule:**
+  - Pruning by "not in the list I just read" keeps anything written since the read began (`readStartedAt`); a read cannot speak for what is newer than itself.
+  - The same applies to every store pruned against the task list that can hold something for a task just made (drafts, outbox).
+
 ## Data and contracts
 
 - **`schema.sql` is migration v1 and is never edited.** tauri-plugin-sql checksums applied migrations. New columns go in a new numbered migration, registered in `src-tauri/src/lib.rs`.

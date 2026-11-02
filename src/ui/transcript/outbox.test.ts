@@ -102,6 +102,14 @@ describe('holding', () => {
     expect(window.localStorage.getItem(KEYS.composerOutbox)).toBeNull();
   });
 
+  it('keepOutboxFor keeps a message held after the read began (#184)', () => {
+    const readStartedAt = 1_000_000;
+    holdMessage(2, 'archived', readStartedAt - 1);
+    holdMessage(42, 'for a task the read has not seen', readStartedAt);
+    keepOutboxFor([1], readStartedAt);
+    expect(tasksWithHeld()).toEqual([42]);
+  });
+
   it('keepOutboxFor drops archived and deleted tasks only', () => {
     holdMessage(1, 'live');
     holdMessage(2, 'archived');

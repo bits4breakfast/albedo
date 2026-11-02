@@ -305,6 +305,8 @@ export function useTasks(): UseTasksResult {
   const refresh = useCallback(async () => {
     try {
       const startedAt = writeClockRef.current;
+      // Wall time, for what the pruning below must not judge (#184).
+      const readStartedAt = Date.now();
       const rows = await listTasks();
       if (!aliveRef.current) return;
       const pending = pendingRef.current;
@@ -324,8 +326,10 @@ export function useTasks(): UseTasksResult {
       // The read holds every live task: an archived or deleted one's draft,
       // held messages and requests go.
       const live = merged.filter((t) => t.status !== 'archived').map((t) => t.id);
-      keepDraftsFor(live);
-      keepOutboxFor(live);
+      // A task created while the read was under way is not in it: what was
+      // saved for it since (a request's prompt as its draft) stays.
+      keepDraftsFor(live, Date.now(), readStartedAt);
+      keepOutboxFor(live, readStartedAt);
       keepRequestsFor(live);
       setLoadError(null);
     } catch (err) {

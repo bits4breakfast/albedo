@@ -279,13 +279,40 @@ describe('composer drafts follow the task list', () => {
     expect(getDraft(2)?.text).toBe('also unsent');
   });
 
+  it("keeps the draft of a task created while a reload's read was under way (#184)", async () => {
+    const { saveDraft, getDraft } = await import('./transcript/drafts');
+    h.rows = [task()];
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    // The read starts and returns the list as it was before task 42 existed;
+    // New Task saves 42's draft while the read is still under way.
+    let finishRead: () => void = () => {};
+    const gate = new Promise<void>((r) => (finishRead = r));
+    const listed = h.rows;
+    h.listTasks = async () => {
+      await gate;
+      return listed;
+    };
+    let reload: Promise<void> = Promise.resolve();
+    act(() => {
+      reload = result.current.refresh();
+    });
+    saveDraft(42, "the request's prompt", new Map());
+    await act(async () => {
+      finishRead();
+      await reload;
+    });
+    expect(getDraft(42)?.text).toBe("the request's prompt");
+  });
+
   it('a reload without the task (deleted, or archived elsewhere) drops its draft', async () => {
     const { saveDraft, getDraft } = await import('./transcript/drafts');
     h.rows = [task(), task({ id: 2, sessionId: 's2', worktreePath: '/wt/2' })];
     const { result } = renderHook(() => useTasks());
     await tick();
-    saveDraft(1, 'unsent', new Map());
-    saveDraft(2, 'deleted with its task', new Map());
+    // Saved before the reload's read began: one saved during it is kept (#184).
+    saveDraft(1, 'unsent', new Map(), Date.now() - 1000);
+    saveDraft(2, 'deleted with its task', new Map(), Date.now() - 1000);
 
     h.rows = [h.rows[0]!];
     await act(async () => {
