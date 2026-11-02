@@ -32,7 +32,7 @@ import {
   watchFocus,
   type AttentionKind,
 } from './ui/attention';
-import { TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
+import { GUIDE_KEY_EXCEPT, TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
 import { stepProjectTab } from './ui/projectStep';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
@@ -1038,6 +1038,18 @@ export default function App() {
         setRemoteConfirmFor(selected.id);
       },
     },
+    // The selected task's Review Guide (#207), as its ⋯ item. Not for a chat,
+    // which has no branch to guide; not over a dialog; and not in the editor,
+    // where ⇧⌘G is Find Previous (shortcuts.ts).
+    'mod+shift+g': {
+      whenTyping: 'ignore',
+      typingExcept: GUIDE_KEY_EXCEPT,
+      run: () => {
+        if (!selected || selected.kind === 'chat') return;
+        if (document.querySelector('[aria-modal="true"]') !== null) return;
+        requestGuide(selected.id);
+      },
+    },
     // The message box is in the transcript: show it, then ask it to attach.
     'mod+u': () => {
       if (!selected) return;
@@ -1330,6 +1342,7 @@ export default function App() {
                         ...(selected.kind === 'chat' ? [] : [{
                           id: 'guide',
                           label: 'Review Guide',
+                          aside: '⇧⌘G',
                           title: 'This branch’s changes against its base, grouped by what they do',
                           onSelect: () => requestGuide(selected.id),
                         }]),

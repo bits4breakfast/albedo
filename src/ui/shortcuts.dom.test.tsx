@@ -11,10 +11,17 @@ import { cleanup, render } from '@testing-library/react';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { search, searchKeymap } from '@codemirror/search';
+import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 
 import { Terminal as XTerm } from '@xterm/xterm';
-import { TASK_TERMINAL_ATTR, TASK_TERMINAL_INPUT, taskTerminalTakesKey, terminalTakesKey, useShortcuts } from './shortcuts';
+import {
+  GUIDE_KEY_EXCEPT,
+  TASK_TERMINAL_ATTR,
+  TASK_TERMINAL_INPUT,
+  taskTerminalTakesKey,
+  terminalTakesKey,
+  useShortcuts,
+} from './shortcuts';
 
 afterEach(cleanup);
 
@@ -221,5 +228,85 @@ describe('⇧F6 / F2, Rename (#152): the task terminal and the page, nowhere els
       host.remove();
     }
     expect(n).toBe(0);
+  });
+});
+
+describe('⇧⌘G, the Review Guide (#207): everywhere but the code editor', () => {
+  const G = { key: 'G', code: 'KeyG', metaKey: true, shiftKey: true, bubbles: true, cancelable: true };
+
+  // As App binds it.
+  function GuideHarness({ onGuide }: { onGuide: () => void }) {
+    useShortcuts({ 'mod+shift+g': { run: onGuide, whenTyping: 'ignore', typingExcept: GUIDE_KEY_EXCEPT } });
+    return (
+      <div>
+        <input aria-label="title" />
+        <textarea aria-label="message" />
+      </div>
+    );
+  }
+
+  if (typeof window.matchMedia !== 'function') {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }),
+    });
+  }
+
+  it('fires from the page, a text field, the message box and the task terminal; the pty gets nothing', () => {
+    let n = 0;
+    const { getByLabelText } = render(<GuideHarness onGuide={() => n++} />);
+    expect(press(document.body, G).defaultPrevented).toBe(true);
+    for (const label of ['title', 'message']) {
+      const field = getByLabelText(label);
+      field.focus();
+      press(field, G);
+    }
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const term = new XTerm();
+    const pty: string[] = [];
+    term.onData((d) => void pty.push(d));
+    term.attachCustomKeyEventHandler(taskTerminalTakesKey);
+    term.open(host);
+    try {
+      const input = term.textarea as HTMLTextAreaElement;
+      input.focus();
+      press(input, G);
+      expect(pty).toEqual([]);
+    } finally {
+      term.dispose();
+      host.remove();
+    }
+    expect(n).toBe(4);
+  });
+
+  it('leaves it to the code editor, as Find Previous, and to its search field', () => {
+    let n = 0;
+    render(<GuideHarness onGuide={() => n++} />);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: 'hello hello',
+        extensions: [history(), search({ top: true }), keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab])],
+      }),
+    });
+    try {
+      view.focus();
+      press(view.contentDOM, G);
+      expect(n).toBe(0);
+      // Its search field too. (jsdom is no Mac, so CodeMirror reads Mod as
+      // Ctrl here and the panel is opened directly.)
+      openSearchPanel(view);
+      const field = host.querySelector<HTMLInputElement>('.cm-search input');
+      expect(field).not.toBeNull();
+      field!.focus();
+      press(field!, G);
+      expect(n).toBe(0);
+    } finally {
+      view.destroy();
+      host.remove();
+    }
   });
 });

@@ -206,7 +206,7 @@ function GuideButton({ onGuide }: { onGuide: () => void }): ReactNode {
       type="button"
       className="icon-btn"
       aria-label="Review Guide"
-      title="Review Guide: this branch’s changes grouped by what they do, with a summary of each"
+      title="Review Guide (⇧⌘G): this branch’s changes grouped by what they do, with a summary of each"
       onClick={onGuide}
     >
       <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">

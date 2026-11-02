@@ -92,6 +92,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'P', code: 'KeyP', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'R', code: 'KeyR', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'G', code: 'KeyG', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'u', code: 'KeyU', metaKey: true }))?.combo,
       comboOf(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo,
@@ -243,6 +244,26 @@ describe('remote control', () => {
 
   it('is in the shortcuts help', () => {
     expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+r')?.keys).toBe('⇧⌘R');
+  });
+});
+
+describe('Review Guide (#207)', () => {
+  it('maps ⇧⌘G by physical key', () => {
+    expect(comboOf(ev({ key: 'G', code: 'KeyG', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+g');
+    expect(comboOf(ev({ key: 'I', code: 'KeyG', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+g');
+  });
+
+  it('leaves Ctrl+G to the terminal, and ⌘G and ⌥⇧⌘G unbound', () => {
+    expect(comboOf(ev({ key: 'G', code: 'KeyG', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'g', code: 'KeyG', ctrlKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'g', code: 'KeyG', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '˝', code: 'KeyG', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('is kept from the terminal, and in the shortcuts help', () => {
+    expect(terminalTakesKey(ev({ key: 'G', code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: 'g', code: 'KeyG', ctrlKey: true }))).toBe(true);
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+g')?.keys).toBe('⇧⌘G');
   });
 });
 

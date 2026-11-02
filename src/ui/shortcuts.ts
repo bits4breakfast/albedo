@@ -95,6 +95,17 @@
  * editorKeys.ts), focusAreas.ts and the native menu: none binds F2 or F6
  * with any modifier.
  *
+ * ## ⇧⌘G: the Review Guide
+ *
+ * Opens the selected task's guide, from `code` (`KeyG`), Command only. It is
+ * Find Previous in CodeMirror's search keymap (and across macOS, beside ⌘G),
+ * so the editor keeps it: its binding passes over the editor's content and
+ * its search panel (`GUIDE_KEY_EXCEPT`), and is live in every other field,
+ * the terminals included, which take it from the pty. Checked against
+ * CodeMirror's default, history and search keymaps, editorKeys.ts,
+ * focusAreas.ts, the native menu (only ⌘Q and ⌘W) and GuidePane's own keys:
+ * nothing else binds G.
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
@@ -125,6 +136,7 @@ export type Combo =
   | 'mod+shift+f'
   | 'mod+shift+p'
   | 'mod+shift+r'
+  | 'mod+shift+g'
   | 'mod+u'
   | 'alt+f12'
   | 'shift+f6'
@@ -188,6 +200,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
   { combo: 'mod+shift+r', keys: '⇧⌘R', description: 'Make the Selected Task Available Remotely (Asks First)' },
+  { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   {
     combo: 'shift+f6',
@@ -287,6 +300,10 @@ export function comboOf(
   if (e.code === 'KeyR' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+r', digit: null };
   }
+  // The Review Guide (#207), on the same terms: Ctrl+G belongs to the terminal.
+  if (e.code === 'KeyG' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+g', digit: null };
+  }
   // Project step. Command only and read from `code`; see the module comment.
   if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: e.code === 'BracketLeft' ? 'mod+shift+[' : 'mod+shift+]', digit: null };
@@ -341,7 +358,13 @@ export function comboOf(
 }
 
 /** Combos the app takes from a focused terminal rather than sharing them. */
-const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit', 'mod+shift+[', 'mod+shift+]', 'mod+shift+r']);
+const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set([
+  'mod+alt+digit',
+  'mod+shift+[',
+  'mod+shift+]',
+  'mod+shift+r',
+  'mod+shift+g',
+]);
 
 /**
  * For xterm's `attachCustomKeyEventHandler`: false when the key is one of the
@@ -360,6 +383,12 @@ export function terminalTakesKey(e: KeyboardEvent): boolean {
 
 /** Combos the Claude Code task terminal gives up as well; the shell drawer keeps them. */
 const TAKEN_FROM_TASK_TERMINAL: ReadonlySet<Combo> = new Set(['shift+f6', 'f2']);
+
+/**
+ * For ⇧⌘G's `typingExcept`: every field counts as not typing, except inside
+ * the code editor, where the key is Find Previous.
+ */
+export const GUIDE_KEY_EXCEPT = ':is(input, textarea, select):not(.cm-editor *)';
 
 /** Marks the input of a task's Claude Code terminal (Terminal.tsx), not the shell drawer's. */
 export const TASK_TERMINAL_ATTR = 'data-task-terminal';
