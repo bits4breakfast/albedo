@@ -6,6 +6,9 @@ import {
   canMarkDone,
   canMarkNotDone,
   compareInGroup,
+  GROUP_GLYPH,
+  GROUP_ORDER,
+  GROUP_TITLE,
   groupOf,
   hasWorkToReview,
   seenUpdate,
@@ -188,5 +191,32 @@ describe('Mark as Done / Mark as Not Done', () => {
     expect(canMarkDone(task(), pr('merged'))).toBe(false);
     expect(canMarkNotDone(task({ status: 'done' }), pr('merged'))).toBe(false);
     expect(canMarkNotDone(task({ status: 'done' }), pr('open'))).toBe(true);
+  });
+});
+
+describe('In Review (#219)', () => {
+  const reviewing = (over: Partial<GroupFacts> = {}) => facts({ reviewing: true, ...over });
+
+  it('a task you have started reviewing, at rest', () => {
+    expect(groupOf(task(), reviewing())).toBe('reviewing');
+    expect(groupOf(task(), facts())).toBe('quiet');
+    expect(GROUP_TITLE.reviewing).toBe('In Review');
+    expect(GROUP_GLYPH.reviewing).toBe('reviewing');
+  });
+
+  it('gives way to what matters more: blocked, running, done, merged, and a new finish with work', () => {
+    expect(groupOf(task({ status: 'blocked' }), reviewing())).toBe('blocked');
+    expect(groupOf(task({ status: 'running' }), reviewing())).toBe('active');
+    expect(groupOf(task({ status: 'done' }), reviewing())).toBe('done');
+    expect(groupOf(task(), reviewing({ pr: pr('merged') }))).toBe('done');
+    expect(groupOf(task({ seenAt: 1_000 }), reviewing({ finishedAt: 2_000, work: true }))).toBe('review');
+    // Once that finish has been seen, back to In Review.
+    expect(groupOf(task({ seenAt: 3_000 }), reviewing({ finishedAt: 2_000, work: true }))).toBe('reviewing');
+  });
+
+  it('never a chat, and sits between Ready to Review and Idle', () => {
+    expect(groupOf(task({ kind: 'chat' }), reviewing())).toBe('quiet');
+    expect(GROUP_ORDER.indexOf('reviewing')).toBe(GROUP_ORDER.indexOf('review') + 1);
+    expect(GROUP_ORDER.indexOf('quiet')).toBe(GROUP_ORDER.indexOf('reviewing') + 1);
   });
 });

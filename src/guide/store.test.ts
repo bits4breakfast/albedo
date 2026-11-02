@@ -15,6 +15,7 @@ import {
   loadReviewed,
   resetGuideStoreForTests,
   reviewedKey,
+  reviewingTaskIds,
   saveGuide,
   setReviewed,
   startWrite,
@@ -139,3 +140,33 @@ describe('the last read of the branch (#199)', () => {
   });
 });
 
+describe('which tasks are being reviewed (#219)', () => {
+  it('a task with a guide and a mark that still names its blocks', () => {
+    saveGuide(1, guide(10));
+    saveGuide(2, guide(20));
+    setReviewed(1, [reviewedKey('a.ts', ['aaaa'])], true);
+    expect([...reviewingTaskIds()]).toEqual([1]);
+  });
+
+  it('not once the blocks a mark names are gone from the guide (rewritten after the branch moved)', () => {
+    saveGuide(1, guide(10));
+    setReviewed(1, [reviewedKey('a.ts', ['aaaa'])], true);
+    saveGuide(1, { ...guide(30, 'moved'), files: { 'a.ts': ['bbbb'] } });
+    expect(reviewingTaskIds().size).toBe(0);
+  });
+
+  it('not with no mark left, and not for a mark naming a file the guide has not got', () => {
+    saveGuide(1, guide(10));
+    setReviewed(1, [reviewedKey('a.ts', ['aaaa'])], true);
+    setReviewed(1, [reviewedKey('a.ts', ['aaaa'])], false);
+    expect(reviewingTaskIds().size).toBe(0);
+    setReviewed(1, [reviewedKey('other.ts', ['aaaa'])], true);
+    expect(reviewingTaskIds().size).toBe(0);
+  });
+
+  it('reads a path with # in it', () => {
+    saveGuide(1, { ...guide(10), files: { 'docs/c#/a.md': ['aaaa'] } });
+    setReviewed(1, [reviewedKey('docs/c#/a.md', ['aaaa'])], true);
+    expect([...reviewingTaskIds()]).toEqual([1]);
+  });
+});

@@ -29,6 +29,7 @@ import {
   type GroupFacts,
   type GroupKey,
 } from './taskGroups';
+import { reviewingTaskIds, useGuideStoreVersion } from '../guide/store';
 import { ChatIcon } from './icons';
 import RemoteMark from './RemoteMark';
 import { BackgroundMark } from './BackgroundWork';
@@ -259,7 +260,9 @@ export default function TaskList({
    * OUT into one triage group pinned above every project, carrying their
    * project name on the row; the project groups hold everything else.
    */
+  const guideVersion = useGuideStoreVersion();
   const facts = useMemo(() => {
+    const reviewing = reviewingTaskIds();
     const byId = new Map<number, GroupFacts>();
     for (const task of tasks) {
       const finishedAt = signals?.get(task.id)?.finishedAt ?? null;
@@ -267,11 +270,13 @@ export default function TaskList({
         finishedAt,
         pr: task.kind === 'chat' ? null : getPrStatus(task.id),
         work: getReviewWork(task.id, finishedAt),
+        reviewing: reviewing.has(task.id),
       });
     }
     return byId;
-    // The versions stand for the caches read through getPrStatus/getReviewWork.
-  }, [tasks, signals, prVersion, workVersion]);
+    // The versions stand for the caches read through getPrStatus/getReviewWork
+    // and the guide store's Reviewed marks.
+  }, [tasks, signals, prVersion, workVersion, guideVersion]);
 
   // Whether a finish left work on the branch is asked once per unseen finish.
   const probes = useMemo(

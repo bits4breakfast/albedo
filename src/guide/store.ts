@@ -124,6 +124,30 @@ export function loadReviewed(taskId: number): ReadonlySet<string> {
   return new Set(readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>)[String(taskId)] ?? []);
 }
 
+/**
+ * The tasks being reviewed (#219): a guide, and at least one Reviewed mark
+ * that still names blocks in it. A mark is `path#id,id` (reviewedKey); once
+ * the blocks it names are gone from the guide (a rewrite after the branch
+ * moved), it no longer counts. Two reads of storage, whatever the task count.
+ */
+export function reviewingTaskIds(): ReadonlySet<number> {
+  const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
+  const marks = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
+  const out = new Set<number>();
+  for (const [id, keys] of Object.entries(marks)) {
+    const guide = guides[id];
+    if (!guide) continue;
+    const current = keys.some((k) => {
+      const at = k.lastIndexOf('#');
+      const known = at > 0 ? guide.files[k.slice(0, at)] : undefined;
+      const blocks = at > 0 ? k.slice(at + 1).split(',').filter(Boolean) : [];
+      return known !== undefined && blocks.length > 0 && blocks.every((b) => known.includes(b));
+    });
+    if (current) out.add(Number(id));
+  }
+  return out;
+}
+
 export function setReviewed(taskId: number, keys: readonly string[], on: boolean): void {
   const all = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
   const mine = new Set(all[String(taskId)] ?? []);
