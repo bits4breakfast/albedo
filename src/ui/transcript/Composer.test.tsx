@@ -27,7 +27,8 @@ import { useFocusAreaCycle } from '../focusAreas';
 
 import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty, submitPty } from '../Terminal';
 import { Composer } from './TranscriptPane';
-import { __resetDrafts, getDraft, saveDraft } from './drafts';
+import { __resetDrafts, addComment, commentsOf, flushDrafts, getDraft, saveDraft } from './drafts';
+import type { TranscriptComment } from './transcriptQuotes';
 import { __resetOutbox, heldFor, holdMessage, removeHeld } from './outbox';
 import { startOutboxRelease } from './outboxRelease';
 import { __resetTurns, noteTaskSessions } from './turn';
@@ -1296,5 +1297,182 @@ describe('(t) during a running turn, a message waits in the outbox', () => {
     term.__emitPresence(1, true);
     expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'when you are done']]);
     stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (q) comments on transcript passages go with the next message (#187)
+// ---------------------------------------------------------------------------
+
+describe('(q) waiting comments on transcript passages', () => {
+  const c = (id: string, over: Partial<TranscriptComment> = {}): TranscriptComment => ({
+    id,
+    messageId: 4,
+    quote: 'Production already runs 8.2.35.',
+    code: false,
+    comment: 'How do you know?',
+    at: 100,
+    offset: 0,
+    addedAt: 1,
+    ...over,
+  });
+  const QUOTE_A = '<transcript-quote id="1" message="4">\n> Production already runs 8.2.35.\n</transcript-quote id="1">\n\nHow do you know?';
+
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    __resetDrafts();
+    __resetConnectivity(async () => true);
+    __resetOutbox();
+    __resetTurns();
+    seedQueue(['s1', 's2', 's5'], []);
+  });
+  afterEach(() => {
+    __resetTurns();
+    __resetOutbox();
+    __resetConnectivity();
+    vi.mocked(ptyLiveSince).mockReturnValue(null);
+    vi.mocked(hasLivePty).mockReturnValue(false);
+  });
+
+  it('shows how many wait above the box, and opens to the list', () => {
+    addComment(1, c('a'));
+    addComment(1, c('b', { quote: 'line one\nline two\nline three', comment: 'and this', at: 200 }));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /2 Comments/ }));
+    const items = document.querySelectorAll('.tx-waiting-item');
+    expect(items[0]?.textContent).toContain('Production already runs 8.2.35.');
+    expect(items[1]?.querySelector('.tx-waiting-quote')?.textContent).toBe('line one +2 lines');
+    expect(items[1]?.textContent).toContain('and this');
+  });
+
+  it('Send sends them with an empty box: exactly the quotes and comments, in transcript order', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    addComment(1, c('late', { at: 300, messageId: 9, quote: 'later passage', comment: 'second' }));
+    addComment(1, c('a'));
+    const onSent = vi.fn();
+    render(<Composer taskId={1} onSent={onSent} />);
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(send.hasAttribute('disabled')).toBe(false);
+    expect(box().placeholder).toBe('Add a message, or send the comments as they are…');
+    fireEvent.click(send);
+    const expected = `${QUOTE_A}\n\n<transcript-quote id="2" message="9">\n> later passage\n</transcript-quote id="2">\n\nsecond`;
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, expected]]));
+    await waitFor(() => expect(onSent).toHaveBeenCalledWith(expected));
+    // Sent: they leave the list, and the strip goes.
+    expect(commentsOf(1)).toEqual([]);
+    expect(screen.queryByRole('button', { name: /Comment/ })).toBeNull();
+  });
+
+  it("the box's text goes last", async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    addComment(1, c('a'));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('Then deploy.');
+    pressEnter();
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, `${QUOTE_A}\n\nThen deploy.`]]));
+  });
+
+  it('a failed send leaves them waiting', async () => {
+    vi.mocked(submitPty).mockResolvedValue(false);
+    vi.mocked(startPty).mockReturnValue(false);
+    addComment(1, c('a'));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('Then deploy.');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByText(/isn’t running/)).toBeTruthy());
+    expect(commentsOf(1).map((x) => x.id)).toEqual(['a']);
+    expect(box().value).toBe('Then deploy.');
+  });
+
+  it('a command goes alone, and leaves them waiting: after a quote it would not be a command', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    addComment(1, c('a'));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('/compact');
+    pressEnter();
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, '/compact']]));
+    expect(commentsOf(1).map((x) => x.id)).toEqual(['a']);
+  });
+
+  it('held while a turn runs, like any message; they leave the list then, and one added meanwhile stays', async () => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(ptyLiveSince).mockReturnValue(Date.now() - 60_000);
+    noteTaskSessions([{ id: 1, sessionId: 's1' }]);
+    recordQueueOperations([{ op: 'prompt', sessionId: 's1', text: 'p', ts: Date.now() - 1_000 }]);
+    addComment(1, c('a'));
+    render(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    pressEnter();
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([QUOTE_A]));
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(commentsOf(1)).toEqual([]);
+    act(() => addComment(1, c('next')));
+    expect(commentsOf(1).map((x) => x.id)).toEqual(['next']);
+  });
+
+  it('survive a restart and a task switch: they belong to their task', () => {
+    addComment(1, c('a'));
+    const { rerender, unmount } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /1 Comment/ })).toBeNull();
+    unmount();
+    flushDrafts();
+    __resetDrafts(); // the restart: memory gone, storage kept
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /1 Comment/ })).toBeTruthy();
+  });
+
+  it('a send that fails once the session is up, after a switch: the box text comes back alone, the comments still wait', async () => {
+    deadPty();
+    addComment(1, c('a'));
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    type('Then deploy.');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1)); // no session yet: it waits for one
+    let land: (ok: boolean) => void = () => {};
+    vi.mocked(submitPty).mockImplementation(() => new Promise<boolean>((r) => (land = r)));
+    act(() => term.__emitPresence(1, true));
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(submitPty).mock.calls[1]).toEqual([1, `${QUOTE_A}\n\nThen deploy.`]);
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    await act(async () => land(false));
+    expect(getDraft(1)).toMatchObject({ text: 'Then deploy.', notSent: true });
+    expect(commentsOf(1).map((x) => x.id)).toEqual(['a']);
+  });
+
+  it('a send that lands after a switch still takes its comments off the list', async () => {
+    let land: (ok: boolean) => void = () => {};
+    vi.mocked(submitPty).mockImplementation(() => new Promise<boolean>((r) => (land = r)));
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    addComment(1, c('a'));
+    const { rerender } = render(<Composer taskId={1} onSent={vi.fn()} />);
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    rerender(<Composer taskId={2} onSent={vi.fn()} />);
+    await act(async () => land(true));
+    expect(commentsOf(1)).toEqual([]);
+  });
+
+  it('edit and remove from the list', () => {
+    addComment(1, c('a'));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /1 Comment/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByRole('textbox', { name: 'Edit comment' });
+    fireEvent.change(field, { target: { value: 'Which tag, exactly?' } });
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    expect(commentsOf(1)[0]?.comment).toBe('Which tag, exactly?');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(commentsOf(1)).toEqual([]);
   });
 });

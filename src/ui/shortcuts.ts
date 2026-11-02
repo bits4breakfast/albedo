@@ -147,6 +147,7 @@ export type Gesture =
   | 'editor mod+alt+shift+c'
   | 'editor mod+alt+m'
   | 'transcript mod+arrowdown'
+  | "transcript mod+'"
   | 'new-task mod+enter';
 
 export interface ShortcutDoc {
@@ -202,6 +203,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'editor mod+alt+shift+c', keys: '⌥⇧⌘C', description: 'In the Editor: Copy Path (from the Worktree)' },
   { combo: 'editor mod+alt+m', keys: '⌥⌘M', description: 'In the Editor: Comment on the Selected Lines' },
   { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
+  { combo: "transcript mod+'", keys: '⌘\'', description: 'Transcript: Comment on the Selected Text (inside one message)' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger Text' },

@@ -31,6 +31,9 @@
 }
 
 .tx-scroll {
+  /* The comment bar and field (#187) are placed in its content, so they
+     scroll with the passage they belong to. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -1731,4 +1734,218 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-composer[data-drop='true'] .tx-composer-box {
   border-color: var(--accent);
   border-style: dashed;
+}
+
+/* --- comments on transcript passages (#187) ---------------------------------
+
+   Select text in one message: Comment and Copy by the selection; the field
+   under the passage; the passage stays marked while a comment waits, and the
+   row's gutter carries the count. Grounds and the ratios measured on them,
+   light / dark:
+   - the bar and the field are --panel: --text 16.60 / 14.63, --faint (the
+     key hint) 5.94 / 6.02; a hovered bar button --panel-hover, --text 14.44 /
+     13.07. The field's input is --panel-inset: --text 17.02 / 15.45.
+   - a marked passage is --accent-soft-strong, and its text is drawn
+     --text-strong whatever it was (15.26 / 13.21): the mark sits on prose,
+     on your own --user-row and on highlighted code alike, and a syntax
+     colour cleared on --panel-inset is not cleared here (Contrast rule 4).
+     The underline (--accent-line) tells it from --user-row, which is nearly
+     the same hue in light.
+   - the count is --on-accent-soft on --accent-soft (6.92 / 9.26).
+   - a sent quote is --muted on --user-row (6.46 / 7.13), --panel-hover when
+     hovered (6.22 / 6.91); "+N lines" is --accent there (5.84 / 7.26, and
+     5.62 / 7.04 hovered).
+   No opacity, no alpha, no color-mix: every ground is a token. */
+::highlight(albedo-comment),
+::highlight(albedo-comment-pending),
+::highlight(albedo-comment-flash) {
+  background-color: var(--accent-soft-strong);
+  color: var(--text-strong);
+  text-decoration: underline 2px var(--accent-line);
+  text-underline-offset: 3px;
+}
+
+.tx-row[data-comments] > .tx-gutter::after {
+  content: attr(data-comments);
+  display: block;
+  width: fit-content;
+  min-width: 18px;
+  margin: 4px 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--on-accent-soft);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* A row jumped to from a quote: an outline, so no ratio changes under it. */
+.tx-row-flash {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.tx-sel-bar {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  transform: translateX(-100%);
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-menu);
+}
+.tx-sel-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.tx-sel-btn:hover { background: var(--panel-hover); }
+.tx-sel-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+.tx-cmt-field {
+  position: absolute;
+  z-index: 3;
+  width: min(560px, calc(100% - 72px));
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+}
+.tx-cmt-input {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  resize: vertical;
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--panel-inset);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+}
+.tx-cmt-input:focus { outline: none; border-color: var(--border-strong); }
+.tx-cmt-input::placeholder { color: var(--faint); }
+.tx-cmt-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+.tx-cmt-add { color: var(--text); }
+.tx-cmt-key { margin-left: 4px; color: var(--faint); }
+
+/* A quote in a message you sent: compact, above your comment. */
+.tx-quote {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0 2px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border-strong);
+  font-size: var(--fs-sm);
+}
+.tx-quote + .tx-md,
+.tx-quote + .tx-user-text { margin-top: 2px; }
+.tx-md + .tx-quote { margin-top: 12px; }
+.tx-quote-text {
+  min-width: 0;
+  padding: 1px 4px;
+  margin-left: -4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+button.tx-quote-text { cursor: pointer; }
+button.tx-quote-text:hover { background: var(--panel-hover); }
+button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.tx-quote-code { font-family: var(--font-mono); font-size: 0.95em; }
+.tx-quote-more {
+  flex: none;
+  padding: 1px 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.tx-quote-more:hover { background: var(--panel-hover); }
+
+/* "That passage is not here any more": where ↓ Latest sits, for a moment. */
+.tx-reveal-note {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  padding: 4px 11px;
+  border: 1px solid var(--border-mid);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  border-radius: 999px;
+  box-shadow: var(--shadow-menu);
+}
+
+/* The comments waiting above the message box: on the composer's --panel,
+   the head and each comment --text (16.60 / 14.63; hovered head 14.44 /
+   13.07), the hint and each quote --muted (7.15 / 7.74), a hairline marking
+   each as waiting, as in Queued. */
+.tx-waiting { margin-bottom: 6px; font-size: var(--fs-sm); }
+.tx-waiting-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.tx-waiting-head:hover { background: var(--panel-hover); }
+.tx-waiting-hint { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); font-weight: 400; }
+.tx-waiting-list { list-style: none; margin: 4px 0 0; padding: 0; max-height: 30vh; overflow-y: auto; }
+.tx-waiting-item {
+  margin: 0 0 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
+}
+.tx-waiting-quote {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-waiting-quote::before { content: '> '; }
+.tx-waiting-more { font-size: var(--fs-xs); }
+.tx-waiting-row { display: flex; align-items: flex-start; gap: 6px; }
+.tx-waiting-comment {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
