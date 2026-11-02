@@ -140,3 +140,38 @@ describe('Mark as Done in the row menu', () => {
     }
   });
 });
+
+describe('In Review (#219), rendered', () => {
+  it('a task with a Reviewed mark in its guide gets its own group, glyph and word', async () => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    const store = await import('../guide/store');
+    store.resetGuideStoreForTests();
+    store.saveGuide(4, {
+      diffHash: 'h', writtenAt: 1, base: 'main', groups: [{ title: 'T', summary: '', blocks: ['aaaa'] }],
+      files: { 'a.ts': ['aaaa'] }, fallback: null,
+    });
+    const { container } = await renderList();
+    expect(groups(container).map(([g]) => g)).not.toContain('In Review');
+    // The first Reviewed tick moves it, with no reload.
+    act(() => store.setReviewed(4, [store.reviewedKey('a.ts', ['aaaa'])], true));
+    expect(groups(container)).toEqual([
+      ['Needs You', ['1']],
+      ['Running', ['2']],
+      ['Ready to Review', ['7', '3']],
+      ['In Review', ['4']],
+      ['Idle', ['8']],
+      ['Done', ['6', '5']],
+    ]);
+    const dot = container.querySelector('[data-task-id="4"] .status-dot');
+    expect(dot?.getAttribute('data-status')).toBe('reviewing');
+    expect(dot?.getAttribute('aria-label')).toBe('In Review');
+  });
+});

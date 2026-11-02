@@ -5,12 +5,14 @@
  * status of their own: the derived status (`capture/status.ts`), when the
  * session last handed control back, when the task was last open
  * (`Task.seenAt`), its PR as the PR store last saw it, and whether a finished
- * turn left work on the branch (`git/reviewWork.ts`). No new channel, and
- * nothing read from the terminal.
+ * turn left work on the branch (`git/reviewWork.ts`), and whether you have
+ * started reviewing it in the Review Guide (`guide/store.ts`). No new
+ * channel, and nothing read from the terminal.
  *
  *   Needs You        blocked
  *   Running          running
  *   Ready to Review  an unseen finish, with work to review
+ *   In Review        a Reviewed mark in its guide that still matches (#219)
  *   Idle             everything else that is live
  *   Done             marked done, or its PR merged
  *   Archived
@@ -19,14 +21,15 @@
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
 
-export type GroupKey = 'blocked' | 'active' | 'review' | 'quiet' | 'done' | 'archived';
+export type GroupKey = 'blocked' | 'active' | 'review' | 'reviewing' | 'quiet' | 'done' | 'archived';
 
-export const GROUP_ORDER: readonly GroupKey[] = ['blocked', 'active', 'review', 'quiet', 'done', 'archived'];
+export const GROUP_ORDER: readonly GroupKey[] = ['blocked', 'active', 'review', 'reviewing', 'quiet', 'done', 'archived'];
 
 export const GROUP_TITLE: Record<GroupKey, string> = {
   blocked: 'Needs You',
   active: 'Running',
   review: 'Ready to Review',
+  reviewing: 'In Review',
   quiet: 'Idle',
   done: 'Done',
   archived: 'Archived',
@@ -42,6 +45,7 @@ export const GROUP_GLYPH: Record<GroupKey, string> = {
   blocked: 'blocked',
   active: 'running',
   review: 'review',
+  reviewing: 'reviewing',
   quiet: 'idle',
   done: 'done',
   archived: 'archived',
@@ -59,6 +63,11 @@ export interface GroupFacts {
    * say -- both read as no work, so an unknown never claims your attention.
    */
   work: boolean | null | undefined;
+  /**
+   * A Reviewed mark in the task's guide still matches its blocks (#219).
+   * Absent reads as not reviewing.
+   */
+  reviewing?: boolean;
 }
 
 /** A turn ended after the task was last open. Never opened: any finish. */
@@ -100,6 +109,9 @@ export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt'>, facts: G
   if (task.status === 'running') return 'active';
   if (task.status === 'done' || prMerged(facts.pr)) return 'done';
   if (unseenFinish(facts.finishedAt, task.seenAt) && hasWorkToReview(task, facts)) return 'review';
+  // Below Ready to Review: a new finish is news about the branch you were
+  // reviewing, so it is shown as such until you look.
+  if (facts.reviewing === true && task.kind !== 'chat') return 'reviewing';
   return 'quiet';
 }
 
