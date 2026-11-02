@@ -1,0 +1,258 @@
+/* ==========================================================================
+   Review Guide (#186). Imported by GuidePane.tsx.
+
+   No new surfaces and no new colours: every ground and text tier here is a
+   token from styles.css, used on the ground it was measured against there.
+   - Text sits on --panel; the picked file row on --accent-soft carries
+     --on-accent-soft (6.92) and the hovered one on --panel-hover carries
+     --text. A reviewed file reads quieter through --muted, never through
+     opacity. Measured for this pane, light / dark: --faint 5.12 / 5.21 on
+     --accent-soft, 5.17 / 5.38 on --panel-hover; --muted, --add and --del
+     6.01 or more on both, either theme.
+   - The banner is the app's banner: --banner-text on --banner-bg.
+   - The diff is `.tx-d`, on its own --panel-inset well, as in the editor.
+   ========================================================================== */
+
+.gd {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  outline: none;
+}
+
+.gd-meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.gd-meta-text {
+  margin-right: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gd-filter,
+.gd-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gd-filter { color: var(--muted); }
+
+.gd-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  cursor: pointer;
+}
+.gd-btn:hover:not(:disabled) { color: var(--text-strong); border-color: var(--accent-line); }
+.gd-btn:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+.gd-btn:disabled { color: var(--faint); cursor: default; }
+.gd-btn-primary { color: var(--on-accent); background: var(--accent-btn); border-color: var(--accent-btn); }
+.gd-btn-primary:hover:not(:disabled) { color: var(--on-accent); background: var(--accent-btn-hover); }
+.gd-btn-primary:disabled { color: var(--faint); background: var(--panel-raised); border-color: var(--border-mid); }
+
+.gd-link {
+  flex: none;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.gd-link:hover { text-decoration: underline; text-decoration-color: var(--accent-line); }
+.gd-link:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+
+.gd-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--banner-bg);
+  border-bottom: 1px solid var(--banner-border);
+  color: var(--banner-text);
+  font-size: var(--fs-sm);
+}
+.gd-banner > span { margin-right: auto; }
+
+.gd-message {
+  padding: 24px;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.gd-message[data-tone='error'] { color: var(--danger); }
+.gd-message-sub { margin: 6px 0 12px; color: var(--muted); font-size: var(--fs-sm); white-space: pre-wrap; }
+
+/* --- No guide yet ------------------------------------------------------- */
+
+.gd-intro {
+  max-width: 560px;
+  overflow: auto;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.gd-intro-title { margin: 0; font-size: var(--fs-title); font-weight: 600; color: var(--text-strong); }
+.gd-intro-text { margin: 0; font-size: var(--fs-lg); color: var(--text); line-height: 1.5; }
+.gd-intro-facts { margin: 0 0 6px; font-size: var(--fs-sm); color: var(--muted); }
+.gd-intro-note { margin: 8px 0 0; font-size: var(--fs-xs); color: var(--faint); }
+
+.gd-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.gd-status[data-tone='error'] {
+  border-left: 2px solid var(--danger);
+  background: var(--panel);
+}
+.gd-status-title { color: var(--danger); font-weight: 600; }
+.gd-status-sub { color: var(--muted); }
+.gd-status-actions { display: inline-flex; gap: 8px; }
+.gd-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--track);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: gd-spin 0.9s linear infinite;
+}
+@keyframes gd-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gd-spinner { animation: none; } }
+
+/* --- The two columns ---------------------------------------------------- */
+
+.gd-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.gd-left {
+  flex: 0 0 clamp(260px, 32%, 420px);
+  min-width: 0;
+  overflow: auto;
+  padding: 16px 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gd-title { margin: 0; font-size: var(--fs-heading); font-weight: 600; color: var(--text-strong); line-height: 1.35; }
+.gd-count-row { display: flex; align-items: center; gap: 14px; }
+.gd-count { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); }
+.gd-summary { margin: 4px 0 6px; font-size: var(--fs-lg); line-height: 1.5; color: var(--text); }
+
+.gd-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.gd-file {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 12px 16px minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.gd-file:hover { background: var(--panel-hover); }
+.gd-file[aria-current='true'] { background: var(--accent-soft); color: var(--on-accent-soft); }
+.gd-file:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+.gd-file[data-reviewed] .gd-file-name { color: var(--muted); }
+.gd-file-mark { color: var(--add); font-size: var(--fs-xs); }
+.gd-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gd-file-part { color: var(--muted); }
+.gd-file-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--fs-xs); }
+
+.gd-counts { display: inline-flex; gap: 6px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+.gd-add { color: var(--add); }
+.gd-del { color: var(--del); }
+
+.gd-nav { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.gd-nav-hint { margin-left: auto; font-size: var(--fs-xs); color: var(--faint); }
+
+/* The rail: one mark per group, where you are and what is done. Marks are
+   UI, not text: each has its label for assistive tech and a tooltip. */
+.gd-rail {
+  flex: none;
+  width: 14px;
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.gd-rail-mark {
+  flex: 0 1 22px;
+  min-height: 6px;
+  width: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: var(--track);
+  cursor: pointer;
+}
+.gd-rail-mark[data-reviewed] { background: var(--status-done); }
+.gd-rail-mark[aria-current='true'] { background: var(--accent); width: 6px; }
+.gd-rail-mark:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
+
+.gd-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.gd-diff { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.gd-diff-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.gd-diff-name { color: var(--text-strong); font-weight: 600; white-space: nowrap; }
+.gd-diff-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); margin-right: auto; }
+.gd-diff-check { margin-left: 4px; }
+.gd-diff-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--panel-inset);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.gd-diff-scroll .tx-d { margin: 0; border: none; border-radius: 0; }
+.gd-diff-scroll .tx-d-body { font-size: var(--fs-md); }
+.gd-collapsed { display: flex; gap: 10px; align-items: center; padding: 16px; color: var(--muted); font-size: var(--fs-sm); }

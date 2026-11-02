@@ -74,6 +74,20 @@ approve it, and approving only opens New Task filled in from it. Nothing
 flows back to the session. `src/capture/inbox.ts` is the only file in the app
 that knows the line's shape.
 
+A sixth, by the owner's decision (2026-11-02, issue #186): for the Review
+Guide only, Albedo may run `claude -p` itself -- one-shot, never in a pty and
+never the task's own session, `--model haiku`, no tools (`--tools ""`), no MCP
+servers, no hooks, no session persistence, a timeout, `ANTHROPIC_API_KEY`
+stripped as for every spawn. It runs on demand only ("Write Guide" /
+"Rewrite"), in `~/.albedo/guide` (so no project's CLAUDE.md or hooks reach
+it), with the change described on stdin; its answer is the one JSON result
+`--output-format json` prints on stdout, parsed -- never terminal bytes. The
+model only proposes groups of block ids and their words; the diff, the ids and
+every count come from git, and Albedo checks the answer against them.
+`src-tauri/src/oneshot.rs` fixes the flags, and `src/guide/writer.ts` is the
+only file that knows that output's shape. Nothing else may be built on this
+run without the same decision.
+
 ## Which session a task is on
 
 A restart resumes `tasks.session_id`, so that value is a fact, never a guess.
@@ -165,6 +179,7 @@ read it. Three rules came out of the fix:
 src/capture/   transcript watcher + adapter + status derivation   (M1, M2)
 src/db/        SQLite access layer and schema
 src/git/       worktree create/remove/reconcile                    (M3)
+src/guide/     Review Guide: blocks, budget, writer (claude -p), pane (#186)
 src/lsp/       PHPantom client: JSON-RPC framing and the server pool
 src/ui/        React shell, task list, xterm pane                  (M2)
 src/ui/transcript/  transcript renderer and diff component         (M4)

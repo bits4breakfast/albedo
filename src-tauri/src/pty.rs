@@ -111,7 +111,7 @@ const READER_GRACE: Duration = Duration::from_millis(250);
 /// the variable after layer 1 has already run, and the billing bug is silently
 /// back. Verified: with only layer 1, a key exported from `.zshrc` reaches the
 /// child; with layer 2, it does not.
-const STRIPPED_ENV: [&str; 3] = [
+pub(crate) const STRIPPED_ENV: [&str; 3] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
@@ -261,7 +261,7 @@ impl Sink for Channel<PtyEvent> {
 
 /// The user's login shell, which is what actually gets exec'd. See
 /// [`shell_script`] for why we go through a shell at all.
-fn login_shell() -> String {
+pub(crate) fn login_shell() -> String {
     match std::env::var("SHELL") {
         Ok(s) if !s.trim().is_empty() => s,
         _ => FALLBACK_SHELL.to_string(),
@@ -303,7 +303,7 @@ fn shell_quote(s: &str) -> String {
 ///    forking under it. That leaves no extra process between Albedo and Claude
 ///    Code: Claude Code is the session leader whose group `pty_kill` signals,
 ///    and the exit code reported is the command's own rather than a shell's.
-fn shell_script(shell: &str, opts: &SpawnOptions) -> String {
+pub(crate) fn shell_script(shell: &str, opts: &SpawnOptions) -> String {
     let names = STRIPPED_ENV.join(" ");
     // fish has no `unset`; every other shell we could plausibly land in (sh,
     // bash, zsh, ksh, dash) takes the POSIX spelling. Getting this wrong in
