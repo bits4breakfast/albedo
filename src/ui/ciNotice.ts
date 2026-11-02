@@ -17,8 +17,10 @@
  *   - **The task already open:** no mark (it is being looked at, so it would
  *     be seen the moment it appeared); a brief cue on its PR badge instead.
  *
- * "Notify When CI Finishes" (the ⋯ menu) turns the banner and the bounce
- * off; the row mark and the cue stay, as they are quiet. The app-wide banner
+ * "Notify About PRs: Checks and Reviews" (the ⋯ menu) turns the banner and
+ * the bounce off; the row mark and the cue stay, as they are quiet. The same
+ * switch silences review banners (`reviewNotice.ts`, #180): one setting for
+ * news about a task's PR, as the owner decided. The app-wide banner
  * switch (`notificationsEnabled`) is respected too.
  *
  * Everything is in memory: the PR store is (see there), and so is "seen" for
@@ -73,7 +75,7 @@ const onOff: Codec<boolean> = {
   encode: (on) => (on ? null : 'off'),
 };
 
-/** "Notify When CI Finishes". Never throws: no storage reads as "on". */
+/** "Notify About PRs: Checks and Reviews". Never throws: no storage reads as "on". */
 export function ciNotifyEnabled(): boolean {
   return readPersisted(KEYS.ciNotifications, onOff, true);
 }

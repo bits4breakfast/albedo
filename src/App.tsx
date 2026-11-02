@@ -102,6 +102,7 @@ import {
 import { useMergeNotices } from './ui/mergeNotice';
 import { getPrStatus, usePendingPrWatch } from './gh/prStore';
 import { requestChecks, useCiNotices, useCiNotifyEnabled } from './ui/ciNotice';
+import { useReviewNotices } from './ui/reviewNotice';
 import { fetchPrStatus } from './gh/gh';
 import type { PrStatus } from './gh/prStatus';
 
@@ -625,6 +626,7 @@ export default function App() {
   const prTasks = useMemo(() => tasks.filter((t) => t.kind !== 'chat'), [tasks]);
   usePendingPrWatch(prTasks);
   useCiNotices(tasks, selectedId);
+  useReviewNotices(tasks, selectedId);
   const [ciNotify, setCiNotify] = useCiNotifyEnabled();
 
   /*

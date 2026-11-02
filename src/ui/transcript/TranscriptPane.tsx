@@ -24,7 +24,11 @@ import { markMentions, unmarkMentions, type Mention } from './mentions';
 import { MentionPopover, mentionOptionId } from './MentionPopover';
 import { useMentions } from './useMentions';
 import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
-import { dropDraft, getDraft, keepUnsent, saveDraft } from './drafts';
+import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, takeComments, useComments } from './drafts';
+import { composeWithComments, markQuotes, unmarkQuotes } from './transcriptQuotes';
+import { PassageRevealContext, revealPassageIn, type RevealPassage } from './passages';
+import { PassageComments } from './PassageComments';
+import { WaitingComments } from './WaitingComments';
 import { editHeld, holdMessage, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
 import {
   conditionsFor,
@@ -80,6 +84,8 @@ import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
 import { COMPOSER_MIN_PX, TRANSCRIPT_MIN_PX, composerHeight } from './composerHeight';
 import './transcript.css';
 
+/** How long "that passage is not here any more" stays up. */
+const REVEAL_NOTE_MS = 4_000;
 /** Rows in the initial window, and the size of each step backwards. */
 const PAGE = 200;
 /** Capture fires per batch of rows; coalesce bursts into one read. */
@@ -426,7 +432,20 @@ export function TranscriptPane({
   // may be older than the window holds, so the window grows a page at a time
   // until it is in, or there is nothing older; then this gives up quietly.
   const [reveal, setReveal] = useState<number | null>(null);
-  useEffect(() => setReveal(null), [selectorKey]);
+  /** A quoted passage to flash once its row is in view (#187). */
+  const passageRef = useRef<{ messageId: number; quote: string; offset?: number } | null>(null);
+  /** Said when a passage asked for is not in this conversation any more. */
+  const [revealNote, setRevealNote] = useState<string | null>(null);
+  useEffect(() => {
+    setReveal(null);
+    passageRef.current = null;
+    setRevealNote(null);
+  }, [selectorKey]);
+  useEffect(() => {
+    if (revealNote === null) return;
+    const t = window.setTimeout(() => setRevealNote(null), REVEAL_NOTE_MS);
+    return () => window.clearTimeout(t);
+  }, [revealNote]);
   useEffect(() => {
     if (reveal === null || loading) return;
     const row = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${reveal}"]`) ?? null;
@@ -435,13 +454,26 @@ export function TranscriptPane({
       setLimit((l) => l + PAGE);
       return;
     }
+    const passage = passageRef.current?.messageId === reveal ? passageRef.current : null;
+    passageRef.current = null;
     if (step === 'scroll') {
-      row?.scrollIntoView?.({ block: 'center' });
+      const scroller = scrollRef.current;
+      if (passage && row && scroller) revealPassageIn(scroller, row, passage.quote, passage.offset);
+      else row?.scrollIntoView?.({ block: 'center' });
       followingRef.current = false;
       setFollowing(false);
+    } else if (passage) {
+      // A quote whose row is gone (a subagent's folded group, history that
+      // was cleared): say so, rather than a click that does nothing.
+      setRevealNote('That passage is not in this conversation’s transcript any more.');
     }
     setReveal(null);
   }, [reveal, messages, hasMore, loading]);
+  const revealPassage = useCallback<RevealPassage>((target) => {
+    passageRef.current = target;
+    setRevealNote(null);
+    setReveal(target.messageId);
+  }, []);
 
   /*
      Between Send and anything on screen there is a gap: Claude Code writes
@@ -535,15 +567,17 @@ export function TranscriptPane({
             <div className="tx-pane-empty">No messages in this conversation yet</div>
           ) : null}
 
-          {items.map((item) =>
-            item.kind === 'sidechain' ? (
-              <SidechainGroup key={item.key} rows={item.rows} results={item.results} extras={item.extras} />
-            ) : item.kind === 'compaction' ? (
-              <CompactionRow key={item.key} compaction={item.compaction} />
-            ) : (
-              <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
-            ),
-          )}
+          <PassageRevealContext.Provider value={revealPassage}>
+            {items.map((item) =>
+              item.kind === 'sidechain' ? (
+                <SidechainGroup key={item.key} rows={item.rows} results={item.results} extras={item.extras} />
+              ) : item.kind === 'compaction' ? (
+                <CompactionRow key={item.key} compaction={item.compaction} />
+              ) : (
+                <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
+              ),
+            )}
+          </PassageRevealContext.Provider>
 
           {echo ? (
             <div className="tx-row tx-row-user tx-row-echo" aria-live="polite">
@@ -555,7 +589,14 @@ export function TranscriptPane({
             </div>
           ) : null}
           {workingNow ? <WorkingLine state={workingNow} /> : null}
+          {/* Comment on a selected passage (#187): drawn in the scroller, so it scrolls with the text. */}
+          <PassageComments taskId={taskId} scrollRef={scrollRef} messages={messages} />
         </div>
+        {revealNote ? (
+          <div className="tx-reveal-note" role="status">
+            {revealNote}
+          </div>
+        ) : null}
 
         {!following ? (
           <button type="button" className="tx-jump" onClick={jumpToEnd} title="Jump to the latest message (⌘↓)">
@@ -570,7 +611,16 @@ export function TranscriptPane({
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {/* A reminder that came back (#156): its own card, never text in the box. */}
       {taskId !== null ? <ReminderCards taskId={taskId} status={status} /> : null}
-      {taskId !== null ? <Composer taskId={taskId} sessionId={sessionId} status={status} onSent={onSent} accessory={composerAccessory} /> : null}
+      {taskId !== null ? (
+        <Composer
+          taskId={taskId}
+          sessionId={sessionId}
+          status={status}
+          onSent={onSent}
+          accessory={composerAccessory}
+          onJump={revealPassage}
+        />
+      ) : null}
     </div>
   );
 }
@@ -855,8 +905,11 @@ function HeldRow({
   const pastesRef = useRef<ReadonlyMap<number, string>>(new Map());
   // References too: `@[Title]` in the field, its marker on save (mentions.ts).
   const mentionsRef = useRef<ReadonlyMap<string, Mention>>(new Map());
+  // And a quoted passage (#187): `[Quote #1: …]` in the field, its marker on save.
+  const quotesRef = useRef<ReadonlyMap<number, string>>(new Map());
   const openedRef = useRef('');
-  const bodyOf = (draft: string) => markPastes(markMentions(draft, mentionsRef.current), pastesRef.current);
+  const bodyOf = (draft: string) =>
+    markPastes(markQuotes(markMentions(draft, mentionsRef.current), quotesRef.current), pastesRef.current);
   const bodyOfRef = useRef(bodyOf);
   bodyOfRef.current = bodyOf;
   // Left open (a task switch): what was typed is kept, not thrown away.
@@ -871,8 +924,10 @@ function HeldRow({
   const open = () => {
     setEditing(taskId, held.id, true);
     const d = draftOf(held.text);
-    const u = unmarkMentions(d.text);
+    const q = unmarkQuotes(d.text);
+    const u = unmarkMentions(q.text);
     pastesRef.current = d.pastes;
+    quotesRef.current = q.quotes;
     mentionsRef.current = u.mentions;
     openedRef.current = u.text;
     setDraft(u.text);
@@ -1051,6 +1106,7 @@ export function Composer({
   status = null,
   accessory,
   sessionId = null,
+  onJump,
 }: {
   taskId: number;
   /** Called with what Claude Code was sent. */
@@ -1060,8 +1116,12 @@ export function Composer({
   accessory?: ReactNode;
   /** The task's session, for the permission mode beside +. */
   sessionId?: string | null;
+  /** Take the reader to a waiting comment's passage (#187). */
+  onJump?: RevealPassage;
 }): ReactNode {
   const [text, setText] = useState('');
+  /** Comments on transcript passages, waiting to go with the next message (#187). */
+  const waiting = useComments(taskId);
   /** Large text pastes kept aside; the draft holds their placeholders. */
   const pastesRef = useRef(new Map<number, string>());
   const pasteSeqRef = useRef(0);
@@ -1080,6 +1140,13 @@ export function Composer({
   const ref = useRef<HTMLTextAreaElement>(null);
   /** The body waiting for a session. Taken, not read, so it can only fire once. */
   const pendingRef = useRef<string | null>(null);
+  /**
+   * With it: the box's part of that body (what comes back as the draft if it
+   * fails after a switch) and the waiting comments it carries, which leave
+   * the list only once it is delivered or held.
+   */
+  const pendingBoxRef = useRef<string | null>(null);
+  const pendingCommentsRef = useRef<readonly string[]>([]);
   const inFlightRef = useRef(false);
   const timerRef = useRef(0);
   /**
@@ -1212,7 +1279,8 @@ export function Composer({
   */
   useEffect(() => {
     if (draftOwnerRef.current !== taskId) return;
-    if (busy || awaiting || held) dropDraft(taskId);
+    // The comments stay: they leave only with a message that carried them.
+    if (busy || awaiting || held) dropDraftText(taskId);
     else saveDraft(taskId, text, pastesRef.current, Date.now(), mentionsRef.current);
   }, [taskId, text, busy, awaiting, held]);
 
@@ -1254,12 +1322,15 @@ export function Composer({
 
   /**
      Put the body in the outbox (outbox.ts), with the ids of the review
-     comments it carries, and empty the box: it is no longer a draft.
+     comments it carries, and empty the box: it is no longer a draft. The
+     transcript comments it carries leave the waiting list: the outbox has
+     them now, in the body, and its editor shows them (#187).
   */
   const holdBody = useCallback(
-    (body: string) => {
+    (body: string, transcriptComments: readonly string[] = []) => {
       const { ids, left } = commentsHeldIn(body, insertWatchersRef.current);
       holdMessage(taskId, body, Date.now(), ids);
+      takeComments(taskId, transcriptComments);
       insertWatchersRef.current = left;
       setText('');
       pastesRef.current = new Map();
@@ -1297,6 +1368,10 @@ export function Composer({
     const body = pendingRef.current;
     if (body === null) return;
     pendingRef.current = null; // taken: a repeat presence event finds nothing
+    const box = pendingBoxRef.current ?? body;
+    const commentIds = pendingCommentsRef.current;
+    pendingBoxRef.current = null;
+    pendingCommentsRef.current = [];
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
     const owner = taskId;
@@ -1307,7 +1382,7 @@ export function Composer({
       // (after an answer, the turn goes on): it joins the outbox. The band
       // shows it from now, so it is not sent as far as the box is concerned
       // -- no echo, no `onSent` -- or it would be on screen twice.
-      holdBody(body);
+      holdBody(body, commentIds);
       setAwaiting(false);
       setHeld(false);
       inFlightRef.current = false;
@@ -1318,10 +1393,12 @@ export function Composer({
     } catch {
       threw = true;
     }
+    // Delivered: the comments it carried are sent, whichever task is on screen.
+    if (ok) takeComments(owner, commentIds);
     // Left while it was being written: the box and its state are another
     // task's now (see `leftDuringSend`). It comes back with its pastes folded
-    // and its references as tokens.
-    const back = draftOf(body);
+    // and its references as tokens; its comments never left the list.
+    const back = draftOf(box);
     const refs = unmarkMentions(back.text);
     if (leftDuringSend(owner, ok, refs.text, back.pastes, refs.mentions)) return;
     if (ok) succeeded(owner, body);
@@ -1569,12 +1646,18 @@ export function Composer({
   const send = useCallback(async () => {
     // A ref, because two Enters in one tick both see stale `busy` state.
     if (inFlightRef.current) return;
-    if (text.trim().length === 0) return;
+    // Waiting comments go with the message, before the box's text (#187) --
+    // unless the box is a command, which goes alone and leaves them waiting:
+    // after a quote it would no longer be a command.
+    const comments = isSlashCommand(text) ? [] : commentsOf(taskId);
+    if (text.trim().length === 0 && comments.length === 0) return;
     // What Claude Code receives: the draft with its paste placeholders filled,
     // each paste in its marker so the transcript can fold it again (#155),
     // and each picked reference in its own (#154). References first: a
     // paste's text is never read for tokens.
-    const body = markPastes(markMentions(text, mentionsRef.current), pastesRef.current);
+    const box = markPastes(markMentions(text, mentionsRef.current), pastesRef.current);
+    const body = composeWithComments(comments, box);
+    const commentIds = comments.map((c) => c.id);
     /*
        It waits in the outbox (outbox.ts) rather than in Claude Code's queue
        while offline (Claude Code retries, and may drop it), behind messages
@@ -1584,7 +1667,7 @@ export function Composer({
        session (send.ts).
     */
     if (mustHold(taskId)) {
-      holdBody(body);
+      holdBody(body, commentIds);
       return;
     }
     /*
@@ -1602,6 +1685,8 @@ export function Composer({
         return;
       }
       pendingRef.current = body;
+      pendingBoxRef.current = box;
+      pendingCommentsRef.current = commentIds;
       inFlightRef.current = true;
       setHeld(true);
       setNotice('Waiting — Claude is asking you something. Answer it in the terminal and your message sends itself.');
@@ -1618,6 +1703,7 @@ export function Composer({
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
       const ok = await submitLocked(owner, body);
+      if (ok) takeComments(owner, commentIds);
       if (leftDuringSend(owner, ok, text, pastes, mentions)) return;
       if (ok) {
         succeeded(owner, body);
@@ -1627,6 +1713,8 @@ export function Composer({
       if (startPty(taskId)) {
         // Coming up. Hold the body and let the presence event send it.
         pendingRef.current = body;
+        pendingBoxRef.current = box;
+        pendingCommentsRef.current = commentIds;
         setAwaiting(true);
         setNotice('Starting the session — your message sends as soon as it is ready.');
         timerRef.current = window.setTimeout(() => {
@@ -1668,7 +1756,9 @@ export function Composer({
     : awaiting
     ? 'Starting the terminal…'
     : live
-      ? 'Message this conversation…'
+      ? waiting.length > 0
+        ? 'Add a message, or send the comments as they are…'
+        : 'Message this conversation…'
       : canResume(taskId)
         ? 'Terminal not running — send to pick this conversation back up.'
         : 'Terminal not running — your conversation is saved. Send to start a new session.';
@@ -1706,6 +1796,7 @@ export function Composer({
           ) : null}
         </div>
       ) : null}
+      <WaitingComments taskId={taskId} frozen={busy || awaiting || held} onJump={onJump} />
       {/* claude.ai's shape: one rounded box holding the text and, under it,
           the controls -- the model and Send at the bottom right. Beside a
           tall box they floated at its foot; inside it they move with it. */}
@@ -1779,7 +1870,7 @@ export function Composer({
           type="button"
           className="tx-composer-send"
           onClick={() => void send()}
-          disabled={busy || awaiting || held || text.trim().length === 0}
+          disabled={busy || awaiting || held || (text.trim().length === 0 && waiting.length === 0)}
           title="Send (Enter). Shift+Enter for a newline"
           aria-label="Send"
         >

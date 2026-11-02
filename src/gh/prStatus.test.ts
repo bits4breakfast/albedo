@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { checkLines, parsePrView, prLabel, prTooltip, summarizeChecks } from './prStatus';
+import {
+  checkLines,
+  parsePrView,
+  prLabel,
+  prTooltip,
+  reviewChip,
+  reviewTooltip,
+  summarizeChecks,
+  type PrStatus,
+} from './prStatus';
 
 /** `gh pr view --json ...` as gh prints it, with overrides. */
 function view(over: Record<string, unknown> = {}): string {
@@ -188,6 +197,121 @@ describe('labels', () => {
       '✗ CI / bad',
       '✓ CI / ok',
       'Click to open on GitHub',
+    ]);
+  });
+});
+
+/** `latestReviews` entries as gh prints them (id empty, body kept). */
+const rev = (login: string, state: string, submittedAt = '2026-10-30T18:23:44Z') => ({
+  id: '',
+  author: { login },
+  authorAssociation: 'MEMBER',
+  body: 'a long review body nobody needs here',
+  submittedAt,
+  includesCreatedEdit: false,
+  reactionGroups: [],
+  state,
+  commit: { oid: '' },
+});
+
+describe('parsePrView: reviews (#180)', () => {
+  it('keeps approvals and change requests, the requested reviewers and the author', () => {
+    const p = parsePrView(
+      view({
+        reviewDecision: 'APPROVED',
+        latestReviews: [rev('copilot-pull-request-reviewer', 'COMMENTED'), rev('alice', 'APPROVED')],
+        reviewRequests: [
+          { __typename: 'User', login: 'bob' },
+          { __typename: 'Team', name: 'acme-core', slug: 'acme-core' },
+        ],
+        author: { id: 'x', is_bot: false, login: 'octo', name: 'Octo Cat' },
+      }),
+    )!;
+    expect(p.review).toBe('approved');
+    expect(p.reviews).toEqual([{ author: 'alice', state: 'approved', submittedAt: '2026-10-30T18:23:44Z' }]);
+    expect(p.reviewRequests).toEqual(['bob', 'acme-core']);
+    expect(p.author).toBe('octo');
+  });
+
+  it('with no decision from GitHub, falls back to the latest reviews: changes outrank approvals', () => {
+    const decide = (...reviews: ReturnType<typeof rev>[]) =>
+      parsePrView(view({ reviewDecision: '', latestReviews: reviews }))!.review;
+    expect(decide(rev('alice', 'APPROVED'), rev('carol', 'CHANGES_REQUESTED'))).toBe('changes-requested');
+    expect(decide(rev('alice', 'APPROVED'), rev('bot', 'COMMENTED'))).toBe('approved');
+    expect(decide(rev('bot', 'COMMENTED'), rev('erin', 'DISMISSED'))).toBeNull();
+    expect(decide()).toBeNull();
+  });
+
+  it("GitHub's decision wins over the reviews when it has one", () => {
+    const p = parsePrView(view({ reviewDecision: 'REVIEW_REQUIRED', latestReviews: [rev('alice', 'APPROVED')] }))!;
+    expect(p.review).toBe('review-required');
+  });
+
+  it('tolerates a gh that does not send the fields at all', () => {
+    const p = parsePrView(view())!;
+    expect(p.reviews).toEqual([]);
+    expect(p.reviewRequests).toEqual([]);
+    expect(p.author).toBe('');
+  });
+});
+
+describe('reviewChip (#180)', () => {
+  const base = (over: Partial<PrStatus> = {}): PrStatus => ({ ...parsePrView(view())!, author: 'octo', ...over });
+
+  it('maps the three states to a glyph, the words and a tone', () => {
+    expect(reviewChip(base({ review: 'approved' }), null)).toMatchObject({ glyph: '✓', text: 'Approved', tone: 'pass' });
+    expect(reviewChip(base({ review: 'changes-requested' }), null)).toMatchObject({
+      glyph: '✎',
+      text: 'Changes Requested',
+      tone: 'warn',
+    });
+    expect(reviewChip(base({ review: 'review-required' }), null)).toMatchObject({
+      glyph: '◷',
+      text: 'Awaiting Review',
+      tone: 'quiet',
+    });
+  });
+
+  it('shows nothing unless the PR is open', () => {
+    for (const state of ['draft', 'merged', 'closed'] as const) {
+      expect(reviewChip(base({ state, review: 'approved' }), null)).toBeNull();
+    }
+  });
+
+  it('no decision and nobody asked is no chip; a reviewer asked is Awaiting Review', () => {
+    expect(reviewChip(base(), null)).toBeNull();
+    expect(reviewChip(base({ reviewRequests: ['bob'] }), null)?.kind).toBe('awaiting');
+  });
+
+  it("hides Awaiting Review on the viewer's own PR with nobody asked, and only then", () => {
+    const own = base({ review: 'review-required', author: 'Octo' });
+    expect(reviewChip(own, 'octo')).toBeNull();
+    // Unknown login: hide nothing.
+    expect(reviewChip(own, null)?.kind).toBe('awaiting');
+    // Someone else's PR.
+    expect(reviewChip(own, 'alice')?.kind).toBe('awaiting');
+    // A reviewer was asked: it is a real wait.
+    expect(reviewChip({ ...own, reviewRequests: ['bob'] }, 'octo')?.kind).toBe('awaiting');
+    // Approved stays, whoever the author is.
+    expect(reviewChip({ ...own, review: 'approved' }, 'octo')?.kind).toBe('approved');
+  });
+
+  it('the tooltip names who approved, who asked for changes and who is asked', () => {
+    const t = reviewTooltip(
+      base({
+        reviews: [
+          { author: 'alice', state: 'approved', submittedAt: '' },
+          { author: 'bob', state: 'approved', submittedAt: '' },
+          { author: 'carol', state: 'changes-requested', submittedAt: '' },
+        ],
+        reviewRequests: ['dave', 'erin', 'frank'],
+      }),
+    );
+    expect(t.split('\n')).toEqual([
+      'Changes requested by carol',
+      'Approved by alice and bob',
+      'Review requested from dave, erin and frank',
+      'Click to open the reviews on GitHub',
     ]);
   });
 });

@@ -57,7 +57,11 @@ export const KEYS = {
   requestQueue: 'albedo.requests',
   /** Absent means on. */
   notifications: 'albedo.notifications',
-  /** "Notify When CI Finishes" (ui/ciNotice.ts). Absent means on. */
+  /**
+   * "Notify About PRs: Checks and Reviews" (ui/ciNotice.ts, ui/reviewNotice.ts).
+   * The key predates reviews (#180) and is kept so the choice survives.
+   * Absent means on.
+   */
   ciNotifications: 'albedo.notifications.ci',
   commentsIntro: 'albedo.comments.intro',
   /** The build last run here, for What's New (ui/whatsNew.ts owns the shape). */

@@ -42,16 +42,31 @@
  * `@path` only when whitespace stands on both sides of it (measured on
  * 2.1.314, see mentions.ts). `mentions.ts` owns what goes into these two.
  *
+ * ## Quotes: a comment on a passage of the transcript (#187)
+ *
+ * A passage selected in the transcript and commented on is sent as a
+ * Markdown quote, wrapped in a block marker that names the row it came from,
+ * so the transcript can draw it as a quote and take you back to it:
+ *
+ *     <transcript-quote id="1" message="4512">
+ *     > Production already runs 8.2.35, from our own build.
+ *     </transcript-quote id="1">
+ *
+ *     How do you know? Which image tag did you check?
+ *
+ * The comment follows the marker as plain text. `transcriptQuotes.ts` owns
+ * what goes inside.
+ *
  * Conservative like the envelopes: only the tags in `MARKER_TAGS`, only when
  * closed, and an opening tag that is never closed is left as text.
  */
 
 /** Every tag Albedo writes into a message. */
-export const MARKER_TAGS = ['pasted-text', 'task-ref', 'file-ref'] as const;
+export const MARKER_TAGS = ['pasted-text', 'task-ref', 'file-ref', 'transcript-quote'] as const;
 export type MarkerTag = (typeof MARKER_TAGS)[number];
 
-/** The markers that stand for a whole block of the message (a paste). */
-export const BLOCK_TAGS: readonly MarkerTag[] = ['pasted-text'];
+/** The markers that stand for a whole block of the message: a paste, a quote. */
+export const BLOCK_TAGS: readonly MarkerTag[] = ['pasted-text', 'transcript-quote'];
 /** The markers that sit inside a sentence: references (#154). */
 export const INLINE_TAGS: readonly MarkerTag[] = ['task-ref', 'file-ref'];
 

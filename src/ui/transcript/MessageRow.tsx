@@ -11,7 +11,7 @@
  * chose.
  */
 
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
 import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
@@ -19,6 +19,8 @@ import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLin
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
 import { lineCount } from './pastedText';
+import { PassageRevealContext } from './passages';
+import { foldQuote } from './transcriptQuotes';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
 import {
   imageSourceNote,
@@ -185,7 +187,7 @@ function UserRow({ message, extras }: { message: Message; extras: readonly Messa
   // attributing a harness notification to the user.
   const machine = parts.every((p) => p.kind === 'blocks' && isAllEnvelopes(p.blocks));
   return (
-    <div className={`tx-row ${machine ? 'tx-row-machine' : 'tx-row-user'}`}>
+    <div className={`tx-row ${machine ? 'tx-row-machine' : 'tx-row-user'}`} data-message-id={message.id}>
       <div className="tx-gutter">{machine ? '' : 'You'}</div>
       <div className="tx-content">
         {parts.map((p, i) =>
@@ -286,6 +288,8 @@ function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: stri
       const lines = lineCount(block.text);
       return <Collapsed label={`Pasted Text · ${lines} Line${lines === 1 ? '' : 's'}`} text={block.text} />;
     }
+    case 'quote':
+      return <QuoteBlock block={block} />;
     case 'output':
       return (
         <pre className="tx-pre tx-output">
@@ -299,6 +303,42 @@ function UserBlockView({ block, msgId = null }: { block: UserBlock; msgId?: stri
       return unhandled;
     }
   }
+}
+
+/**
+ * A passage you quoted to comment on it (#187): a compact quote above your
+ * comment. A long one shows its first line and "+N lines", which opens it in
+ * place; the quote itself takes you to the passage it came from and flashes
+ * it there, when the pane can (`PassageRevealContext`).
+ */
+function QuoteBlock({ block }: { block: Extract<UserBlock, { kind: 'quote' }> }): ReactNode {
+  const reveal = useContext(PassageRevealContext);
+  const [open, setOpen] = useState(false);
+  const { first, more } = foldQuote(block.text);
+  const shown = open || more === 0 ? block.text : first;
+  const text = <span className={block.code ? 'tx-quote-code' : undefined}>{shown}</span>;
+  const messageId = block.messageId;
+  return (
+    <div className="tx-quote">
+      {reveal && messageId !== null ? (
+        <button
+          type="button"
+          className="tx-quote-text"
+          title="Show this passage in the transcript"
+          onClick={() => reveal({ messageId, quote: block.text })}
+        >
+          {text}
+        </button>
+      ) : (
+        <div className="tx-quote-text">{text}</div>
+      )}
+      {more > 0 ? (
+        <button type="button" className="tx-quote-more" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? 'Show Less' : `+${more} line${more === 1 ? '' : 's'}`}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -530,7 +570,7 @@ function SkillTextRow({ message, extras }: { message: Message; extras: readonly 
   const skill = useMemo(() => skillTextIn([message, ...extras]), [message, extras]);
   if (skill.text.length === 0) return null;
   return (
-    <div className="tx-row tx-row-machine">
+    <div className="tx-row tx-row-machine" data-message-id={message.id}>
       <div className="tx-gutter" />
       <div className="tx-content">
         <SkillBlock skill={skill} />
@@ -560,7 +600,7 @@ function SkillInstructions({ rows }: { rows: readonly Message[] }): ReactNode {
 function AssistantRow({ message }: { message: Message }): ReactNode {
   const text = useMemo(() => fullBodyOf(message) ?? '', [message]);
   return (
-    <div className="tx-row tx-row-assistant">
+    <div className="tx-row tx-row-assistant" data-message-id={message.id}>
       <div className="tx-gutter" />
       <div className="tx-content">
         <Markdown text={text} />
@@ -583,7 +623,7 @@ function ThinkingRow({ message }: { message: Message }): ReactNode {
   if (text.trim().length === 0) return null;
   const words = text.trim().split(/\s+/).length;
   return (
-    <div className="tx-row tx-row-thinking">
+    <div className="tx-row tx-row-thinking" data-message-id={message.id}>
       <div className="tx-gutter" />
       <div className="tx-content">
         <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -599,7 +639,7 @@ function SystemRow({ message }: { message: Message }): ReactNode {
   const text = systemRowText(message.body);
   if (text.length === 0) return null;
   return (
-    <div className="tx-row tx-row-system">
+    <div className="tx-row tx-row-system" data-message-id={message.id}>
       <div className="tx-gutter">Sys</div>
       <div className="tx-content">
         <div className="tx-system-text">{text}</div>
@@ -625,7 +665,7 @@ function WakeupRow({ message, extras }: { message: Message; extras: readonly Mes
   const promptText = prompt ? (fullBodyOf(prompt) ?? '') : '';
   if (text.length === 0 && promptText.trim().length === 0) return null;
   return (
-    <div className="tx-row tx-row-system">
+    <div className="tx-row tx-row-system" data-message-id={message.id}>
       <div className="tx-gutter">Sys</div>
       <div className="tx-content">
         {text.length > 0 ? <div className="tx-system-text">{text}</div> : null}
@@ -650,7 +690,7 @@ function LocalCommandRow({ message }: { message: Message }): ReactNode {
   if (blocks.length === 0) return null;
   const typed = blocks.some((b) => b.kind === 'command');
   return (
-    <div className={`tx-row ${typed ? 'tx-row-user' : 'tx-row-machine'}`}>
+    <div className={`tx-row ${typed ? 'tx-row-user' : 'tx-row-machine'}`} data-message-id={message.id}>
       <div className="tx-gutter">{typed ? 'You' : ''}</div>
       <div className="tx-content">
         {blocks.map((b, i) => (
@@ -665,7 +705,7 @@ function OrphanResultRow({ message }: { message: Message }): ReactNode {
   const text = toolResultText(message);
   if (text.trim().length === 0) return null;
   return (
-    <div className="tx-row tx-row-tool">
+    <div className="tx-row tx-row-tool" data-message-id={message.id}>
       <div className="tx-gutter" />
       <div className="tx-content">
         <pre className="tx-pre">
@@ -692,7 +732,8 @@ function ToolUseRow({
   const rendered = useDiffsFor(message, result);
   const more = extras.length > 0 ? <SkillInstructions rows={extras} /> : null;
 
-  // `data-message-id`: what the Background band scrolls to.
+  // `data-message-id`, as on every row: what the Background band scrolls to,
+  // and what a comment on a passage names as its source (#187).
   if (rendered && rendered.diffs.length > 0) {
     return (
       <div className="tx-row tx-row-tool" data-message-id={message.id}>

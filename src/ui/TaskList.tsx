@@ -13,6 +13,8 @@ import { useShortcuts } from './shortcuts';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { ciMarkFor, useCiVersion } from './ciNotice';
+import { reviewMarkFor, useReviewVersion } from './reviewNotice';
+import { reviewerNames } from '../gh/prStatus';
 import { useBranchSync } from '../git/branchSync';
 import { getReviewWork, useReviewWorkProbes, useReviewWorkVersion } from '../git/reviewWork';
 import {
@@ -205,6 +207,8 @@ export default function TaskList({
   const prVersion = usePrStatusVersion();
   // Unseen check results (ciNotice.ts); rows read the marks directly.
   useCiVersion();
+  // Unseen reviews (reviewNotice.ts), likewise.
+  useReviewVersion();
   const workVersion = useReviewWorkVersion();
   // The stored branch goes stale when a checkout is switched under a task, and
   // the PR lookup above keys on it. A change reloads the tasks, which re-arms it.
@@ -533,8 +537,9 @@ export default function TaskList({
                     {/* No branch and no PR state here: the task bar is the one
                         place git and GitHub state is shown, for the selected
                         task. Rows identify the task; the title does that. The
-                        one exception is news, not state: checks that finished
-                        since the task was last open (CiRowMark). */}
+                        one exception is news, not state: checks that finished,
+                        or a review that landed, since the task was last open
+                        (CiRowMark, ReviewRowMark). */}
                     <span className="task-meta-tail">
                       {/* PR checks that finished since the task was last
                           open: ✓ or ✗ and the word, until it is opened
@@ -542,6 +547,9 @@ export default function TaskList({
                           rest is state. Never on the selected row -- it is
                           being looked at, and its PR badge carries a cue. */}
                       {task.id !== selectedId && <CiRowMark taskId={task.id} />}
+                      {/* A review that landed since: Approved or Changes,
+                          beside the checks (reviewNotice.ts, #180). */}
+                      {task.id !== selectedId && <ReviewRowMark taskId={task.id} />}
                       {/* An unsent message waiting in this task's composer, so a
                           forgotten one can be found. Not on the selected row:
                           its draft is in the box right below. */}
@@ -764,6 +772,32 @@ function CiRowMark({ taskId }: { taskId: number }) {
       title={`${what}. Not seen yet: opening the task clears this.`}
     >
       <span aria-hidden="true">{passed ? '✓' : '✗'}</span> Checks
+    </span>
+  );
+}
+
+/**
+ * An unseen review on the task's PR: Approved (ready to merge) or Changes
+ * (asked to change). Awaiting Review never marks a row. Glyph and word, as
+ * the checks' mark; the reviewers are in the tooltip.
+ */
+function ReviewRowMark({ taskId }: { taskId: number }) {
+  const mark = reviewMarkFor(taskId);
+  if (!mark) return null;
+  const approved = mark.outcome === 'approved';
+  const who = reviewerNames(mark.reviewers);
+  const what = approved
+    ? `PR #${mark.prNumber} approved by ${who}`
+    : `Changes requested on PR #${mark.prNumber} by ${who}`;
+  return (
+    <span
+      className="task-review"
+      data-outcome={mark.outcome}
+      role="img"
+      aria-label={`${what}, not seen yet`}
+      title={`${what}. Not seen yet: opening the task clears this.`}
+    >
+      <span aria-hidden="true">{approved ? '✓' : '✎'}</span> {approved ? 'Approved' : 'Changes'}
     </span>
   );
 }

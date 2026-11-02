@@ -339,3 +339,50 @@ describe('references from the message box (#154)', () => {
     expect(heldFor(1).map((h) => h.text)).toEqual([`please ${body}`]);
   });
 });
+
+describe('comments on transcript passages (#187)', () => {
+  const body = async () => {
+    const { composeWithComments } = await import('./transcriptQuotes');
+    return composeWithComments(
+      [
+        {
+          id: 'a',
+          messageId: 4,
+          quote: 'Production already runs 8.2.35.\nFrom our own build.',
+          code: false,
+          comment: 'How do you know?',
+          at: 1,
+          offset: 0,
+          addedAt: 1,
+        },
+      ],
+      'Then deploy.',
+    );
+  };
+
+  it("read as a quote over its comment in Claude Code's queue, bare or in <pasted_content>, never as tags", async () => {
+    const b = await body();
+    for (const text of [b, `<pasted_content id="ab12">\n${b}\n</pasted_content id="ab12">`]) {
+      cleanup();
+      queue.entries = [{ text, ts: T, injected: false }];
+      render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+      const item = screen.getByRole('status').querySelector('.tx-queued-item');
+      expect(item?.textContent).toBe('> Production already runs 8.2.35. +1 line\nHow do you know?\n\nThen deploy.');
+      expect(screen.getByRole('status').textContent).not.toMatch(/transcript-quote|pasted_content/);
+    }
+  });
+
+  it('held: the quote is a token in the editor, and goes back whole on save', async () => {
+    turnRunning();
+    const b = await body();
+    holdMessage(1, b);
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.getByRole('status').textContent).toContain('> Production already runs 8.2.35. +1 line');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByRole('textbox', { name: 'Edit held message' }) as HTMLTextAreaElement;
+    expect(field.value).toBe('[Quote #1: Production already runs 8.2.35. +1 line]\n\nHow do you know?\n\nThen deploy.');
+    fireEvent.change(field, { target: { value: field.value.replace('Then deploy.', 'Then deploy to staging.') } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(heldFor(1).map((h) => h.text)).toEqual([b.replace('Then deploy.', 'Then deploy to staging.')]);
+  });
+});

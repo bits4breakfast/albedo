@@ -19,6 +19,7 @@
 import { encodeMarker, freeMarkerId, splitMarkers, type Marker } from './albedoMarkers';
 import { actionLabelOf } from './envelopes';
 import { mentionLabelOf } from './mentions';
+import { isQuoteMarker, quoteMention } from './transcriptQuotes';
 
 /*
    Claude Code's own threshold, read from its bundle (2.1.314, the prompt
@@ -154,21 +155,26 @@ export function pasteMention(text: string): string {
 }
 
 /**
- * The message with each paste marker as its mention, and each reference as
- * its label: what the "Sending" echo and the Queued band show, so a paste
- * reads as it did in the box and not as forty lines of log under your
- * sentence, and a reference as `@Title`, not as its tag.
+ * The message with each paste marker as its mention, each reference as its
+ * label, and each quoted passage (#187) as its first line: what the
+ * "Sending" echo and the Queued band show, so a paste reads as it did in the
+ * box and not as forty lines of log under your sentence, a reference as
+ * `@Title`, not as its tag, and a comment as `> the passage` over what you
+ * wrote about it, with no blank line between.
  */
 export function foldPastes(text: string): string {
-  return splitMarkers(text)
-    .map((p) =>
-      p.kind === 'text'
-        ? p.text
-        : isPaste(p.marker)
-          ? pasteMention(p.marker.content)
-          : // A reference (#154) as its label: `@Fix login retry`, `@src/foo.ts`.
-            (mentionLabelOf(p.marker) ?? text.slice(p.marker.start, p.marker.end)),
-    )
+  const parts = splitMarkers(text);
+  return parts
+    .map((p, i) => {
+      if (p.kind === 'text') {
+        const prev = parts[i - 1];
+        return prev?.kind === 'marker' && isQuoteMarker(prev.marker) ? p.text.replace(/^\n{2,}/, '\n') : p.text;
+      }
+      if (isPaste(p.marker)) return pasteMention(p.marker.content);
+      if (isQuoteMarker(p.marker)) return quoteMention(p.marker);
+      // A reference (#154) as its label: `@Fix login retry`, `@src/foo.ts`.
+      return mentionLabelOf(p.marker) ?? text.slice(p.marker.start, p.marker.end);
+    })
     .join('');
 }
 

@@ -19,9 +19,9 @@
  * and a result younger than {@link MIN_AGE_MS} is reused rather than refetched.
  */
 
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
-import { fetchPrStatus } from './gh';
+import { fetchPrStatus, loadViewerLogin, viewerLogin } from './gh';
 import type { PrStatus } from './prStatus';
 
 export const POLL_MS = 60_000;
@@ -257,4 +257,25 @@ export function usePrPolling(tasks: PrTask[]): void {
       window.removeEventListener('focus', sweep);
     };
   }, [key]);
+}
+
+/**
+ * The signed-in gh user's login, or null while unknown (#180). Asked when
+ * `ask` is true and the login is not known yet -- and again when `key`
+ * changes (another task), so a launch while offline catches up; gh.ts keeps
+ * a failure from being asked more than every few minutes.
+ */
+export function useViewerLogin(ask: boolean, key: unknown): string | null {
+  const [login, setLogin] = useState<string | null>(viewerLogin);
+  useEffect(() => {
+    if (!ask || login !== null) return;
+    let live = true;
+    void loadViewerLogin().then((l) => {
+      if (live && l) setLogin(l);
+    });
+    return () => {
+      live = false;
+    };
+  }, [ask, key, login]);
+  return login;
 }
