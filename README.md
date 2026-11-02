@@ -124,21 +124,29 @@ Albedo.
 ![The main window with numbered areas](docs/screenshots/window-areas.png)
 
 1. **Project tabs.** One per repository, with a count of tasks waiting on you.
-   **⌥1–9** switches. Tabs appear once there are two projects; a closed tab
-   comes back from the closed-projects menu.
+   Each tab lists its own project's tasks and remembers where you were in it.
+   **⌥1–9** switches, **⇧⌘[** / **⇧⌘]** step through them. Tabs appear once
+   there are two projects; a closed tab comes back from the closed-projects
+   menu. Click the active tab, or the project name in the task header, for
+   the **project view**: the main checkout's files, read only, with **New
+   Task**.
 2. **Title bar actions.** **N Waiting** jumps to the next task that needs you.
+   **N Requests** lists what sessions asked for (see "Good to know").
    **History** opens past sessions. **⋯** holds Projects, Worktrees, the theme
-   (System, Light or Dark) and Keyboard Shortcuts.
+   (Auto, Light or Dark), Notify When CI Finishes, Keyboard Shortcuts and
+   What's New.
 3. **Task list.** Tasks grouped as **Needs You**, **Running**, **Ready to
    Review** (a finished turn you have not opened, with commits, changes or an
    open PR on its branch), **Idle** and **Done** (marked done, or its PR
    merged), with the time since their last activity. **⌘1–9** jumps to a task
-   and **⌘[** / **⌘]** steps through them. Each row's menu marks the task done
-   or not done, copies the worktree path or session ID, moves, archives or
-   deletes the task.
+   and **⌘[** / **⌘]** step through them. Each row's menu renames the task,
+   marks it done or not done, copies the worktree path or session ID, moves,
+   archives or deletes it.
 4. **Task header.** Project, task title, the task's own menu (**⋯**), its
    branch, and the next step for the branch: Push, Create PR, or the open
-   pull request.
+   pull request. The menu holds **Rename Task…** (**⇧F6** or **F2**, or
+   double-click the title), **Remind Me…**, **Make Available Remotely**
+   (**⇧⌘R**) and **Compact Now**.
 5. **Layout.** **PTY** shows only the terminal, **Transcript** only the
    reading pane, **Split** both, side by side or stacked. **⌘\\** cycles
    through them. The icon next to it opens a shell in the main checkout (**⌥F12**).
@@ -148,7 +156,9 @@ Albedo.
    the branch. It can be a tab next to Transcript or, as here, a pinned
    column.
 8. **Composer.** Write to Claude without going to the terminal. **+** or
-   **⌘U** attaches files, and the menu on the right changes the task's model.
+   **⌘U** attaches files, **⌘V** pastes a screenshot, and **@** mentions
+   another task or a file. The word after **+** is the session's permission
+   mode (Ask, Auto, Plan…), and the menu on the right changes the model.
 9. **Status strip.** Your plan's **Session** (five-hour) and **Week** usage,
    with the time each one resets.
 
@@ -180,12 +190,42 @@ Tool calls are compact rows, thinking folds away, and edits open into diffs
 with word-level highlighting. Click any file path to open the file. **⌘↓**
 jumps to the latest message.
 
-When Claude starts subagents, a strip above the transcript shows them, and
-clicking one opens that agent's own transcript. **Esc** goes back.
+While a turn runs, the line under it says what Claude is doing right now
+("Running Bash npm test", "Thinking") with the turn's time and tokens.
 
-From the composer you can also **Clear** or **Compact** the task's context.
+When Claude starts subagents, a strip above the transcript shows them, and
+clicking one opens that agent's own transcript. **Esc** goes back. Work left
+running in the background (shells, async agents, wake-up timers) is listed
+above the message box while it runs; click a line to find the call that
+started it.
+
+From the composer you can also **Clear** or **Compact Now** the task's
+context. A compaction shows as one divider with its summary folded under it,
+and the context reading turns to "compacts soon" from 90%.
 
 ![The transcript in dark theme: a task that finished its turn by asking which behaviour to pick](docs/screenshots/dark-question.png)
+
+### Write to Claude from the message box
+
+- **@** opens "Mention a task or a file": another open task, or a file or
+  folder in this worktree. It is sent as a reference Claude can follow, and
+  shows as a chip in the transcript that opens the task or the file.
+- A long paste folds into a token, `[Pasted text #1 +42 lines]`, with
+  **View** and **Remove** under the box, as Claude Code does it.
+- **Messages wait for the turn.** Anything sent while Claude is working (a
+  message, a slash command, Push, the model picker) is held and goes in when
+  the turn ends, in order, so it can never land in a question Claude asks
+  next. Held messages show in the Queued band with **Send Now**, **Edit**
+  and **Remove**. Offline, they are kept and sent when the connection is
+  back.
+
+### Reminders
+
+**⋯ › Remind Me…** on a task sets a reminder: some text and a time ("tomorrow
+9:00"). At that time it comes back on the task as a card, with a banner if
+Albedo is in the background: **Snooze**, **Dismiss**, **Edit…** or **Send to
+Claude**. A reminder due while Albedo was closed comes back on the next
+launch. Sessions can set one too (see "Good to know").
 
 ### Worktrees without the cleanup
 
@@ -215,6 +255,13 @@ From the composer you can also **Clear** or **Compact** the task's context.
 - The button at the top of Files moves the branch along: **Push**, then
   **Create PR**, then the pull request with its checks. **⇧⌘P** pushes,
   committing first if needed. **Squash & Rebase…** is in the menu next to it.
+- Click the pull request badge for **Checks**: every check, failing first,
+  an Actions job's steps, and for a failed step the end of its log and its
+  annotations, which open the file at that line. **Ask Claude to Fix…** puts
+  a prompt in the message box for you to read and send.
+- When a pull request's checks finish while you are elsewhere, a banner says
+  whether they passed, and the task row is marked until you open it. **⋯ ›
+  Notify When CI Finishes** turns the banner off.
 - When the pull request is merged, the task offers a follow-up task, archiving
   and deleting.
 
@@ -299,10 +346,18 @@ it, the same commands use git grep.
 
 **Sessions can ask Albedo for three things.** Every session Albedo starts
 gets a small MCP server of Albedo's own, next to your own servers: a session
-can ask for a reminder, ask you to start a new session, or tell you it is
-blocked on you. A new session is never started for it: the request waits
-under Requests in the title bar until you approve it, and approving opens New
-Task filled in from it.
+can set a reminder on its task, ask you to start a new session, or tell you
+it is blocked on you. A new session is never started for it: the request
+waits under **N Requests** in the title bar until you approve it, and
+approving opens New Task filled in from it, set to send its prompt when the
+session starts.
+
+**Remote Control.** **⇧⌘R**, or **⋯ › Make Available Remotely**, asks first
+and then turns on Claude Code's Remote Control for the task, so you can carry
+on from claude.ai or your phone. A **Remote** mark on the task says it is on.
+
+**What's New.** The first launch of a new build lists the changes since the
+build you last ran. **⋯ › What's New…** shows it again.
 
 **Where things live.**
 
@@ -327,12 +382,17 @@ you resume or import from History.
 | ⌘1…9 | Jump to the Nth task |
 | ⌥1…9 | Jump to the Nth project |
 | ⌘[ / ⌘] | Previous / next task |
+| ⇧⌘[ / ⇧⌘] | Previous / next project |
 | ⌘← / ⌘→ | Previous / next reading tab |
 | ⌘\\ | Cycle PTY / Split / Transcript (not on the Editor tab) |
+| Tab / ⇧Tab | Next / previous area: message box, terminal, Files, tasks (the terminal and editor keep Tab) |
+| ⌃Tab / ⌃⇧Tab | Next / previous area from anywhere |
 | ⇧⇧ | Search Everywhere |
 | ⇧⌘O / ⌘O / ⌥⌘O | Go to File / Class / Symbol |
 | ⇧⌘F | Find in Files |
 | ⇧⌘P | Push the selected task (commits first) |
+| ⇧⌘R | Make the selected task available remotely (asks first) |
+| ⇧F6 or F2 | Rename the selected task |
 | ⌘U | Attach files to the message |
 | ⌘↓ | Jump to the latest message |
 | ⌘B or ⌘-click | Go to Declaration (in the editor) |
@@ -371,8 +431,9 @@ Want to work on Albedo itself? Pull requests from forks are welcome: see
 [CONTRIBUTING.md](CONTRIBUTING.md) for what to expect. Albedo is released
 under the [MIT license](LICENSE).
 
-The screenshots come from a sandboxed copy of the app with made-up projects
-and conversations.
+The screenshots come from Albedo's demo profile, a copy of the app with
+made-up projects and conversations (see
+[CONTRIBUTING.md](CONTRIBUTING.md#screenshots-the-demo-profile)).
 
 Named after Edoardo and Alberto (ALB + EDO). Albedo is the fraction of
 incident light a surface reflects rather than absorbs. The app generates

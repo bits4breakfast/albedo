@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "deps:add": "node scripts/deps-add.mjs",
     "deps:add-dev": "node scripts/deps-add.mjs --save-dev",
-    "deps:check": "node scripts/check-release-age.mjs --base origin/main"
+    "deps:check": "node scripts/check-release-age.mjs --base origin/main",
+    "demo": "node scripts/demo/demo.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
