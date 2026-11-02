@@ -413,7 +413,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           />
         ) : (
           <>
-        <CommentsSection task={task} onOpen={(path, line) => openFile({ path, line })} />
+        <CommentsSection task={task} onOpen={(path, line) => openFile({ path, line })} reloadKey={reloadKey} />
         {mode === 'commit' ? (
           <>
             {view.uncommitted.length > 0 ? (

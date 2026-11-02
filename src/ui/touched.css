@@ -568,8 +568,26 @@ button.tf-section-head:hover .disc { color: var(--text); }
   white-space: nowrap;
   color: var(--text);
 }
-.tf-comment-sent { flex: none; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
-.tf-comment-sent::before { content: '✓ '; }
+/* Grouped by state (#222): Waiting, ↗ Sent, and Resolved folded away. The
+   labels are text in --muted, cleared on --panel and --panel-hover
+   (commentsContrast.test.ts). No ✓ here: in this list ✓ is Resolve only. */
+.tf-comments-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 8px 2px 11px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+.tf-comments-fold { cursor: pointer; }
+.tf-comments-fold:hover { color: var(--text); }
+.tf-comments-fold:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* A resolved comment and its reason, in the tier below an open one. */
+.tf-comment-resolved .tf-comment-body,
+.tf-comment-why { color: var(--muted); }
+.tf-comment-reopen { flex: none; align-self: center; margin-right: 6px; }
 .tf-comment-resolve {
   flex: none;
   width: 28px;
