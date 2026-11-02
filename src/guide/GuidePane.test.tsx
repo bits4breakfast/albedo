@@ -379,3 +379,76 @@ describe('file notes (#202)', () => {
     expect(left().queryByText('registers it')).toBeNull();
   });
 });
+
+describe('⇧⌘G puts focus in the guide (#217)', () => {
+  let typing: HTMLTextAreaElement;
+  beforeEach(async () => {
+    const { resetGuideFocusForTests } = await import('./openGuide');
+    resetGuideFocusForTests();
+    typing = document.createElement('textarea');
+    typing.setAttribute('aria-label', 'message');
+    document.body.appendChild(typing);
+    typing.focus();
+  });
+  afterEach(() => typing.remove());
+
+  const saved = () =>
+    saveGuide(task.id, {
+      diffHash: diff.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [{ title: 'Everything', summary: 'All of it.', blocks: [...diff.order] }],
+      files: fileBlockIndex(diff),
+      fallback: null,
+    });
+
+  it('without the key, the guide leaves focus where someone is typing', async () => {
+    saved();
+    pane();
+    await screen.findByRole('heading', { name: 'Everything' });
+    expect(document.activeElement).toBe(typing);
+  });
+
+  it('the key takes focus from the message box into the guide, once the branch is read', async () => {
+    const { requestGuide } = await import('./openGuide');
+    saved();
+    requestGuide(task.id, { focus: true });
+    pane();
+    await screen.findByRole('heading', { name: 'Everything' });
+    await waitFor(() => expect(document.activeElement).toBe(root()));
+    // Its keys now work: ↓ to the next file, sent where focus now is.
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown', code: 'ArrowDown' });
+    expect(left().getByRole('button', { name: /b\.ts/ }).getAttribute('aria-current')).toBe('true');
+  });
+
+  it('pressed again with the guide already open, it focuses it again', async () => {
+    const { requestGuide } = await import('./openGuide');
+    saved();
+    pane();
+    await screen.findByRole('heading', { name: 'Everything' });
+    typing.focus();
+    act(() => void requestGuide(task.id, { focus: true }));
+    expect(document.activeElement).toBe(root());
+  });
+
+  it('with no guide yet, focus goes to Write Guide', async () => {
+    const { requestGuide } = await import('./openGuide');
+    requestGuide(task.id, { focus: true });
+    pane();
+    const write = await screen.findByRole('button', { name: 'Write Guide' });
+    await waitFor(() => expect(document.activeElement).toBe(write));
+  });
+
+  it('another task’s request, or one that waited too long, takes nothing', async () => {
+    const { requestGuide, takeGuideFocus, FOCUS_WINDOW_MS } = await import('./openGuide');
+    saved();
+    requestGuide(task.id + 1, { focus: true });
+    pane();
+    await screen.findByRole('heading', { name: 'Everything' });
+    expect(document.activeElement).toBe(typing);
+    requestGuide(task.id, { focus: true });
+    expect(takeGuideFocus(task.id, Date.now() + FOCUS_WINDOW_MS + 1)).toBe(false);
+    // Taken (and lapsed) once: nothing left to take.
+    expect(takeGuideFocus(task.id)).toBe(false);
+  });
+});

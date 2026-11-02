@@ -46,6 +46,7 @@ import { useDiffComments } from '../ui/editor/diffComments';
 import { useOpenFile } from '../ui/editor/openFile';
 import { relativeTime } from '../ui/TaskList';
 import { FileIcon } from '../ui/fileIcons';
+import { takeGuideFocus, useGuideFocusRequests } from './openGuide';
 import './guide.css';
 
 /** The working-tree side of one file; null when it does not exist. */
@@ -151,7 +152,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   };
 
   if (guide === null) {
-    return <GuideIntro task={task} diff={diff} write={write} onWrite={writeNow} />;
+    return <GuideIntro task={task} diff={diff} write={write} onWrite={writeNow} active={active} />;
   }
   return (
     <GuideBody
@@ -213,15 +214,27 @@ function GuideIntro({
   diff,
   write,
   onWrite,
+  active,
 }: {
   task: Task;
   diff: BranchDiff;
   write: WriteState | null;
   onWrite: () => void;
+  active: boolean;
 }): ReactNode {
   const empty = diff.order.length === 0;
+  // ⇧⌘G with no guide yet (#217): to Write Guide, or the intro itself when
+  // there is nothing to write or it is being written.
+  const introRef = useRef<HTMLDivElement>(null);
+  const writeRef = useRef<HTMLButtonElement>(null);
+  const focusAsked = useGuideFocusRequests();
+  useEffect(() => {
+    if (!active || !takeGuideFocus(task.id)) return;
+    const button = writeRef.current;
+    (button && !button.disabled ? button : introRef.current)?.focus({ preventScroll: true });
+  }, [active, focusAsked, task.id]);
   return (
-    <div className="gd-intro">
+    <div className="gd-intro" ref={introRef} tabIndex={-1}>
       <h2 className="gd-intro-title">Review Guide</h2>
       <p className="gd-intro-text">
         This branch’s changes, grouped by what they do and put in reading order, with a summary of each group beside its
@@ -235,7 +248,7 @@ function GuideIntro({
             } · against ${task.baseBranch}, committed and uncommitted`}
       </p>
       {write === null ? (
-        <button type="button" className="gd-btn gd-btn-primary" onClick={onWrite} disabled={empty}>
+        <button type="button" ref={writeRef} className="gd-btn gd-btn-primary" onClick={onWrite} disabled={empty}>
           Write Guide
         </button>
       ) : null}
@@ -354,7 +367,8 @@ function GuideBody({
 
   // The keys work once focus is in the guide. Take it when the tab comes on
   // screen, but never from someone typing (a guide finishing in the
-  // background must not pull focus out of the message box or the terminal).
+  // background must not pull focus out of the message box or the terminal)
+  // -- unless ⇧⌘G asked for it (#217).
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!active) return;
@@ -362,6 +376,10 @@ function GuideBody({
     if (now && now !== document.body && now.closest('textarea, input, select, [contenteditable="true"], .xterm')) return;
     rootRef.current?.focus({ preventScroll: true });
   }, [active]);
+  const focusAsked = useGuideFocusRequests();
+  useEffect(() => {
+    if (active && takeGuideFocus(task.id)) rootRef.current?.focus({ preventScroll: true });
+  }, [active, focusAsked, task.id]);
 
   const pickFile = useCallback(
     (path: string) => {
