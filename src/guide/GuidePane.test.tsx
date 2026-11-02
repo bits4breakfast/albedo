@@ -167,11 +167,15 @@ describe('GuidePane', () => {
     const moved = makeDiff(20);
     loaded = { ...loaded, diff: moved };
     pane();
-    expect(await screen.findByText(/1 file changed since; new changes are under Unsorted/)).toBeTruthy();
+    // The news leads, so a narrow pane cuts the base, not it; only the text is announced.
+    const notice = await screen.findByRole('status');
+    expect(notice.textContent).toMatch(/^1 file changed since it was written .* · new changes are under Unsorted · branch vs main$/);
+    expect(within(notice).queryByRole('button')).toBeNull();
     const marks = within(screen.getByRole('navigation', { name: 'Groups' })).getAllByRole('button');
     expect(marks.map((m) => m.getAttribute('aria-label'))).toEqual(['01 Everything', '02 Unsorted']);
     // One Rewrite, in the one row that says the guide is out of date (#197).
     expect(screen.getAllByRole('button', { name: 'Rewrite' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Rewrite' }).className).toContain('gd-btn-primary');
   });
 
   it('a failed write says why, keeps nothing, and offers Try Again', async () => {
