@@ -133,8 +133,8 @@ Albedo.
 2. **Title bar actions.** **N Waiting** jumps to the next task that needs you.
    **N Requests** lists what sessions asked for (see "Good to know").
    **History** opens past sessions. **⋯** holds Projects, Worktrees, the theme
-   (Auto, Light or Dark), Notify When CI Finishes, Keyboard Shortcuts and
-   What's New.
+   (Auto, Light or Dark), Notify About PRs, Keyboard Shortcuts and What's
+   New.
 3. **Task list.** Tasks grouped as **Needs You**, **Running**, **Ready to
    Review** (a finished turn you have not opened, with commits, changes or an
    open PR on its branch), **Idle** and **Done** (marked done, or its PR
@@ -219,6 +219,14 @@ and the context reading turns to "compacts soon" from 90%.
   and **Remove**. Offline, they are kept and sent when the connection is
   back.
 
+### Comment on the conversation, then answer in one go
+
+Select a passage anywhere in the transcript (Claude's reply, your own
+message, a tool's output) and click **Comment**, or press **⌘'**. Comments
+collect above the message box ("3 Comments") while you read on, and **Send**
+sends them all, each quoting its passage, followed by whatever is in the box.
+In the transcript, a quote opens the passage it came from.
+
 ### Reminders
 
 **⋯ › Remind Me…** on a task sets a reminder: some text and a time ("tomorrow
@@ -259,9 +267,11 @@ launch. Sessions can set one too (see "Good to know").
   an Actions job's steps, and for a failed step the end of its log and its
   annotations, which open the file at that line. **Ask Claude to Fix…** puts
   a prompt in the message box for you to read and send.
-- When a pull request's checks finish while you are elsewhere, a banner says
-  whether they passed, and the task row is marked until you open it. **⋯ ›
-  Notify When CI Finishes** turns the banner off.
+- Beside the badge, the review state: **Approved**, **Changes Requested** or
+  **Awaiting Review**; hover for who said what.
+- When a pull request's checks finish or a review lands while you are
+  elsewhere, a banner says so, and the task row is marked until you open it.
+  **⋯ › Notify About PRs: Checks and Reviews** turns the banners off.
 - When the pull request is merged, the task offers a follow-up task, archiving
   and deleting.
 
@@ -399,6 +409,7 @@ you resume or import from History.
 | ⌥F7 | Find Usages (in the editor) |
 | ⌥⌘B | Go to Implementation: implementers, subclasses or trait users (in the editor, PHP) |
 | ⌥⌘M | Comment on the selected lines (in the editor); send them all from the Files panel |
+| ⌘' | Comment on the selected text (in the transcript) |
 | ⇧⌘D | File / this task's change (in the editor) |
 | ⇧⌘C / ⌥⇧⌘C | Copy the file's full path / its path in the worktree (in the editor) |
 | ⌥F12 | Shell in the main checkout |

@@ -161,7 +161,7 @@ tasks in every state the task list has:
 | Add dark mode to settings | Waiting on you: Allow or Deny `npm test -- src/settings` |
 | Import recipes from a link | Running |
 | Search recipes by ingredient | Running |
-| Round amounts to kitchen fractions | Ready to Review, PR #14 open with green checks |
+| Round amounts to kitchen fractions | Ready to Review, PR #14 open, approved, checks green |
 | Show cooking time on recipe cards | Done |
 | Add an RSS feed (`blog`) | Idle, finished on a question |
 
@@ -172,7 +172,7 @@ appends the transcript lines and runs the hooks Albedo passed it, so the
 waiting card, Running and the plan meters come through the real pipe. Allow
 or Deny on the card is answered by the real hook script, and the session
 carries on accordingly. Its terminal says it is a stand-in. `gh` answers the
-PR badge and the Checks dialog for the one made-up pull request.
+PR badge, its review state and the Checks dialog for the one made-up pull request.
 
 **A reset** rebuilds everything from the scenario, timed from now, and keeps
 the app's own preferences (zoom, theme, layout, the selected task), which

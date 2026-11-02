@@ -6,7 +6,7 @@
 //   recipe-app  Add dark mode to settings        waiting on you (Allow / Deny)
 //               Import recipes from a link       working
 //               Search recipes by ingredient     working
-//               Round amounts to kitchen …       PR open, checks green
+//               Round amounts to kitchen …       PR open, approved, checks green
 //               Show cooking time on recipe …    done
 //   blog        Add an RSS feed                  finished on a question
 //
@@ -310,6 +310,7 @@ export function searchRecipes(recipes: Recipe[], query: string): Recipe[] {
       number: 14,
       title: 'Round scaled amounts to kitchen fractions',
       checks: ['test', 'lint', 'build'],
+      reviewer: 'alex-morgan',
     },
     play: (w) =>
       w

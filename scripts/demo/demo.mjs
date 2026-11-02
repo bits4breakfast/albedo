@@ -181,6 +181,7 @@ export function setup(home, now = Date.now()) {
         url: `https://github.com/example/${t.project}/pull/${t.pr.number}`,
         base: 'main',
         checks: t.pr.checks,
+        reviewer: t.pr.reviewer,
       };
     }
   });

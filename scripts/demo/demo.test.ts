@@ -268,7 +268,7 @@ describe('the stand-in gh', () => {
     });
   });
 
-  it('answers the PR badge and the checks with an open PR, all green', async () => {
+  it('answers the PR badge and the checks with an open, approved PR, all green', async () => {
     setGhRunner(async (_program, args, cwd) => {
       const r = spawnSync(process.execPath, [FAKE_GH, ...args], { cwd, env: demoEnv(home), encoding: 'utf8' });
       return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
@@ -276,7 +276,7 @@ describe('the stand-in gh', () => {
     const t = task('fractions');
     const where = { branch: t.branch, baseBranch: 'main', worktreePath: t.worktree, repoPath: scenario.projects[0]!.repo };
     const pr = await fetchPrStatus(where);
-    expect(pr).toMatchObject({ number: 14, state: 'open', headRefName: 'kitchen-fractions' });
+    expect(pr).toMatchObject({ number: 14, state: 'open', headRefName: 'kitchen-fractions', review: 'approved' });
     expect(pr!.headSha).toMatch(/^[0-9a-f]{40}$/);
     expect(pr!.lines.length).toBe(3);
     expect(pr!.lines.every((l) => l.bucket === 'pass')).toBe(true);

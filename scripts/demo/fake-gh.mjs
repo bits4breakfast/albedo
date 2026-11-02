@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// The demo profile's `gh`: answers `gh pr view` and `gh pr checks` for the
+// The demo profile's `gh`: answers `gh pr view`, `gh pr checks` and
+// `gh api user` for the
 // made-up pull requests in ~/.albedo-demo/prs.json, so a task can show an
-// open PR with green checks without a GitHub repository. Anything else fails
+// open, approved PR with green checks without a GitHub repository. Anything else fails
 // the way gh does when there is no PR, which Albedo reads as "no badge".
 
 import { execFileSync } from 'node:child_process';
@@ -54,7 +55,10 @@ if (args[0] === 'pr' && args[1] === 'view') {
     state: 'OPEN',
     isDraft: false,
     title: pr.title,
-    reviewDecision: '',
+    reviewDecision: 'APPROVED',
+    latestReviews: [{ author: { login: pr.reviewer }, state: 'APPROVED', submittedAt: new Date(Date.now() - 20 * 60_000).toISOString() }],
+    reviewRequests: [],
+    author: { login: 'sam-rivera' },
     mergedAt: null,
     headRefName: branch,
     baseRefName: pr.base,
@@ -76,6 +80,9 @@ if (args[0] === 'pr' && args[1] === 'view') {
   if (!pr) fail(`no pull request found for #${args[2]}`);
   const rows = checksOf(pr).map((c) => pick({ ...c, bucket: 'pass', description: '' }, fieldsArg()));
   process.stdout.write(`${JSON.stringify(rows)}\n`);
+} else if (args[0] === 'api' && args[1] === 'user') {
+  // Who is signed in: the made-up author of the made-up pull request.
+  process.stdout.write('sam-rivera\n');
 } else {
-  fail(`The demo profile's gh only answers "gh pr view" and "gh pr checks" (asked: gh ${args.join(' ')}).`);
+  fail(`The demo profile's gh only answers "gh pr view", "gh pr checks" and "gh api user" (asked: gh ${args.join(' ')}).`);
 }
