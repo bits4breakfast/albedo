@@ -5,8 +5,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildBranchDiff, type BranchDiff } from './blocks';
 import { estimateTokens, renderBlock, statReason, SUMMARY_LINE_TOKENS } from './budget';
-import { edited } from './fixtures';
-import { CALL_OVERHEAD_TOKENS, findResult, GuideError, setOneshotRunner, writeGuide, type OneshotOutput, type OneshotRequest } from './writer';
+import { changed, edited, lines, text } from './fixtures';
+import {
+  CALL_OVERHEAD_TOKENS,
+  findResult,
+  GuideError,
+  MAX_NOTED_FILES,
+  notedFiles,
+  setOneshotRunner,
+  writeGuide,
+  type OneshotOutput,
+  type OneshotRequest,
+} from './writer';
 
 const ok = (structured: unknown, extra: Record<string, unknown> = {}): OneshotOutput => ({
   code: 0,
@@ -168,6 +178,9 @@ describe('writeGuide over budget', () => {
     // Pass two reads the lines, not the code.
     expect(calls.at(-1)!.prompt).toContain(`[${diff.order[0]}] a.ts +18 -18: changes ${diff.order[0]}`);
     expect(calls.at(-1)!.prompt).not.toContain('+line 3 edited');
+    // And the files to note: pass one's lines are what the notes come from.
+    expect(calls.at(-1)!.prompt).toContain('Files to note:\n- a.ts\n- b.ts\n- c.ts\n- d.ts');
+    expect(pass1.every((c) => !c.prompt.includes('Files to note'))).toBe(true);
     expect(guide.groups[0]!.blocks).toEqual(diff.order);
     expect(progress.at(-1)).toBe(`${pass1.length + 1}/${pass1.length + 1}`);
   });
@@ -190,5 +203,86 @@ describe('writeGuide over budget', () => {
     const e = await failure(writeGuide(buildBranchDiff([], statReason), { base: 'main' }));
     expect(e.kind).toBe('invalid');
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('file notes (#202)', () => {
+  // a.ts and c.ts change 3 lines each (+3 -3); b.ts one (+1 -1); the lockfile is a stat line.
+  const diff = buildBranchDiff(
+    [
+      edited('src/a.ts', [3, 4, 5]),
+      edited('src/b.ts', [5]),
+      edited('src/c.ts', [10, 11, 12]),
+      changed('package-lock.json', text(lines(40)), text(lines(40).map((l, i) => (i < 5 ? `${l} x` : l)))),
+    ],
+    statReason,
+  );
+
+  it('offers files with at least 5 changed lines whose lines the model sees', () => {
+    expect(notedFiles(diff)).toEqual(['src/a.ts', 'src/c.ts']);
+    // One such file alone can only be in a one-file group, or beside small ones: no note asked for.
+    expect(notedFiles(buildBranchDiff([edited('src/a.ts', [3, 4, 5]), edited('src/b.ts', [5])], statReason))).toEqual([]);
+  });
+
+  it('offers at most MAX_NOTED_FILES, the most changed, in path order', () => {
+    const many = buildBranchDiff(
+      Array.from({ length: MAX_NOTED_FILES + 5 }, (_, i) => edited(`src/f${String(i).padStart(3, '0')}.ts`, i < 5 ? [3, 4, 5] : [3, 4, 5, 6])),
+      statReason,
+    );
+    const got = notedFiles(many);
+    expect(got).toHaveLength(MAX_NOTED_FILES);
+    expect(got[0]).toBe('src/f005.ts');
+    expect([...got].sort()).toEqual(got);
+  });
+
+  it('asks for notes in the same call, on those files only, and keeps them on the guide', async () => {
+    const [a, b, c, lock] = diff.order as [string, string, string, string];
+    const calls = useRunner(() =>
+      ok({
+        groups: [
+          {
+            title: 'Paging',
+            summary: 'S',
+            blocks: [a, b, c, lock],
+            notes: [
+              { path: 'src/a.ts', note: 'the value object' },
+              { path: 'src/c.ts', note: 'reads it' },
+              { path: 'src/elsewhere.ts', note: 'dropped' },
+              { bad: true },
+            ],
+          },
+        ],
+      }),
+    );
+    const guide = await writeGuide(diff, { base: 'main' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.prompt.endsWith('Files to note:\n- src/a.ts\n- src/c.ts')).toBe(true);
+    const schema = JSON.parse(calls[0]!.jsonSchema);
+    expect(Object.keys(schema.properties.groups.items.properties)).toContain('notes');
+    expect(schema.properties.groups.items.required).toEqual(['title', 'summary', 'blocks']);
+    expect(guide.groups[0]!.notes).toEqual({ 'src/a.ts': 'the value object', 'src/c.ts': 'reads it' });
+  });
+
+  it('counts the list against the grouping call only: what fits only without it is one batch, then grouping', async () => {
+    // Blocks big enough that two summary lines fit where the blocks do not.
+    const span = Array.from({ length: 18 }, (_, i) => i + 3);
+    const two = buildBranchDiff([edited('src/a.ts', span), edited('src/c.ts', span)], statReason);
+    const total = two.order.reduce((n, id) => n + estimateTokens(renderBlock(two.blocks.get(id)!, two)) + 1, 0);
+    const calls = useRunner((req) => {
+      const ids = [...req.prompt.matchAll(/\[([a-z0-9]+)\]/g)].map((m) => m[1]!);
+      if (JSON.parse(req.jsonSchema).required[0] === 'blocks') return ok({ blocks: ids.map((id) => ({ id, line: `changes ${id}` })) });
+      return ok({ groups: [{ title: 'All', summary: 'S', blocks: ids }] });
+    });
+    await writeGuide(two, { base: 'main', budget: CALL_OVERHEAD_TOKENS + total + 1 });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.prompt).not.toContain('Files to note');
+    expect(calls[1]!.prompt).toContain('Files to note:\n- src/a.ts\n- src/c.ts');
+  });
+
+  it('a change with nothing to note asks for none', async () => {
+    const small = diffOf('src/a.ts', 'src/b.ts');
+    const calls = useRunner(() => ok({ groups: [{ title: 'T', summary: 'S', blocks: [...small.order] }] }));
+    await writeGuide(small, { base: 'main' });
+    expect(calls[0]!.prompt).not.toContain('Files to note');
   });
 });

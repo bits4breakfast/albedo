@@ -13,11 +13,25 @@
 
 import { fnv1a, type BranchDiff, type StatReason } from './blocks';
 
+/**
+ * A file's note in a group (#202) is shown only when the group has more than
+ * one file and the file has at least this many changed lines in it (added
+ * plus removed, Albedo's counts): a `+1 −1` registration reads faster as its
+ * diff than as a sentence. The owner's threshold.
+ */
+export const NOTE_MIN_LINES = 5;
+
 /** A group as the model proposed it, after validation. */
 export interface GuideGroup {
   title: string;
   summary: string;
   blocks: string[];
+  /**
+   * path -> one line on what the file does in this group (#202), for paths
+   * among the group's blocks only. Absent when there are none, and on guides
+   * written before notes existed.
+   */
+  notes?: Record<string, string>;
 }
 
 /** A written guide, as cached (store.ts). */
@@ -39,8 +53,11 @@ export interface Guide {
 
 /** What the model returned, before anything is trusted. */
 export interface Proposal {
-  groups: Array<{ title: string; summary: string; blocks: string[] }>;
+  groups: Array<{ title: string; summary: string; blocks: string[]; notes?: Array<{ path: string; note: string }> }>;
 }
+
+/** A note longer than this is cut: it is one line under a file name. */
+export const NOTE_MAX_CHARS = 160;
 
 export interface Validated {
   groups: GuideGroup[];
@@ -61,7 +78,15 @@ export function normalizeId(raw: string): string {
   return m ? (m[1] as string).toLowerCase() : '';
 }
 
-export function validateProposal(proposal: Proposal, known: readonly string[]): Validated {
+/**
+ * `pathOf` is each known block's file. With it, a group keeps notes only for
+ * files among its own blocks, the first note per file; without it, none.
+ */
+export function validateProposal(
+  proposal: Proposal,
+  known: readonly string[],
+  pathOf?: ReadonlyMap<string, string>,
+): Validated {
   const knownSet = new Set(known);
   const placed = new Set<string>();
   const unknown: string[] = [];
@@ -84,7 +109,17 @@ export function validateProposal(proposal: Proposal, known: readonly string[]): 
       blocks.push(id);
     }
     // A group left with no blocks has nothing to show its words against.
-    if (blocks.length > 0) groups.push({ title: g.title.trim() || 'Untitled', summary: g.summary.trim(), blocks });
+    if (blocks.length === 0) continue;
+    const group: GuideGroup = { title: g.title.trim() || 'Untitled', summary: g.summary.trim(), blocks };
+    const paths = new Set(pathOf ? blocks.map((id) => pathOf.get(id)) : []);
+    const notes: Record<string, string> = {};
+    for (const n of g.notes ?? []) {
+      const note = n.note.replace(/\s+/g, ' ').trim();
+      if (!note || !paths.has(n.path) || n.path in notes) continue;
+      notes[n.path] = note.length > NOTE_MAX_CHARS ? `${note.slice(0, NOTE_MAX_CHARS - 1).trimEnd()}…` : note;
+    }
+    if (Object.keys(notes).length > 0) group.notes = notes;
+    groups.push(group);
   }
   const missing = known.filter((id) => !placed.has(id));
   return { groups, unknown, duplicates, missing };
@@ -104,6 +139,8 @@ export interface GroupFile {
   added: number;
   removed: number;
   stat: StatReason | null;
+  /** What the file does in this group (#202), when the rule allows one. */
+  note: string | null;
 }
 
 export interface GroupView {
@@ -145,9 +182,23 @@ function filesOf(blockIds: readonly string[], diff: BranchDiff): GroupFile[] {
       added += b?.added ?? 0;
       removed += b?.removed ?? 0;
     }
-    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat });
+    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat, note: null });
   }
   return out;
+}
+
+/**
+ * The group's files with their notes, held to the rule against the diff as it
+ * is now: more than one file in the group, at least {@link NOTE_MIN_LINES}
+ * changed lines of the file in it, and lines the model was shown.
+ */
+function withNotes(files: GroupFile[], notes: unknown): GroupFile[] {
+  if (files.length < 2 || typeof notes !== 'object' || notes === null) return files;
+  const by = notes as Record<string, unknown>;
+  return files.map((f) => {
+    const note = Object.hasOwn(by, f.path) ? by[f.path] : undefined;
+    return typeof note === 'string' && note && f.stat === null && f.added + f.removed >= NOTE_MIN_LINES ? { ...f, note } : f;
+  });
 }
 
 /** Paths whose block ids are not what the guide recorded. */
@@ -177,7 +228,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
       summary: g.summary,
       unsorted: false,
       blocks,
-      files: filesOf(blocks, diff),
+      files: withNotes(filesOf(blocks, diff), g.notes),
     });
   });
   const rest = diff.order.filter((id) => !placed.has(id));

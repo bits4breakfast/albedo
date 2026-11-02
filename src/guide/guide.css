@@ -205,6 +205,18 @@
 .gd-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gd-file-part { color: var(--muted); }
 .gd-file-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--fs-xs); }
+/* A file's note (#202): under the name, wrapping, in --muted -- on --panel,
+   on --panel-hover and on the current row's --accent-soft alike
+   (fileNoteContrast in railContrast.test.ts). */
+.gd-file-note {
+  grid-column: 3 / -1;
+  margin-top: -2px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 .gd-counts { display: inline-flex; gap: 6px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
 .gd-add { color: var(--add); }

@@ -358,3 +358,24 @@ describe('Reviewed moves you on (#201)', () => {
     expect(rail().getAllByRole('button')[1]!.getAttribute('title')).toBe('02 Wiring');
   });
 });
+
+describe('file notes (#202)', () => {
+  it('shows what each file does in the group, under its name, when it changes 5 lines or more', async () => {
+    const both = buildBranchDiff([edited('src/a.ts', [3, 4, 5], 'alpha'), edited('src/b.ts', [5], 'beta')], statReason);
+    loaded = { ...loaded, diff: both };
+    saveGuide(task.id, {
+      diffHash: both.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [{ title: 'Both', summary: 'S.', blocks: [...both.order], notes: { 'src/a.ts': 'the value object', 'src/b.ts': 'registers it' } }],
+      files: fileBlockIndex(both),
+      fallback: null,
+    });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    const a = left().getByRole('button', { name: /a\.ts/ });
+    expect(within(a).getByText('the value object').className).toBe('gd-file-note');
+    // b.ts is +1 -1: no note, its diff says it.
+    expect(left().queryByText('registers it')).toBeNull();
+  });
+});
