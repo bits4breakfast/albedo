@@ -555,7 +555,7 @@ function gapBefore(hunk: HunkModel | undefined, prev: HunkModel | undefined): Ga
 // Layout
 // ---------------------------------------------------------------------------
 
-function useContainerWidth(): [RefObject<HTMLDivElement>, number] {
+function useContainerWidth(): [RefObject<HTMLDivElement | null>, number] {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
