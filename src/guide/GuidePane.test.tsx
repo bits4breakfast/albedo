@@ -248,5 +248,15 @@ describe('GuidePane keeps your place (#199)', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Uncommitted Only' }));
     expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
   });
+
+  it('Rewrite writes for the branch as it is now, not the read on screen', async () => {
+    const { loadGuide } = await import('./store');
+    await written();
+    // The branch moves on while the pane still shows the earlier read.
+    const moved = makeDiff(20);
+    loaded = { ...loaded, diff: moved };
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await waitFor(() => expect(loadGuide(task.id)?.diffHash).toBe(moved.hash));
+  });
 });
 

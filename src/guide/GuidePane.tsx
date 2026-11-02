@@ -81,6 +81,9 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     return last ? { kind: 'ready', data: last, taskId: task.id } : { kind: 'loading' };
   });
   const [again, setAgain] = useState(0);
+  /** Write or Rewrite was pressed and the branch is being read again first. */
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
 
   useEffect(() => {
     if (!active) return;
@@ -102,7 +105,9 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   }, [task.id, task.worktreePath, task.baseBranch, active, again]);
 
   const guide = loadGuide(task.id);
-  const write = writeStateOf(task.id);
+  const stored = writeStateOf(task.id);
+  // Reading the branch before a write already counts as writing: one press.
+  const write: WriteState | null = starting && stored?.kind !== 'writing' ? { kind: 'writing', progress: null } : stored;
   // Another task's read is never shown for this one.
   const load: Load = read.kind !== 'loading' && read.taskId !== task.id ? { kind: 'loading' } : read;
 
@@ -121,9 +126,28 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
 
   const { diff } = load.data;
   const writeNow = () => {
-    // A guide is written for the diff as it is now; the result is saved for
-    // this task even if another is on screen when it lands (store.ts).
-    void startWrite(task.id, diff, task.baseBranch);
+    if (startingRef.current || stored?.kind === 'writing') return;
+    startingRef.current = true;
+    setStarting(true);
+    // A guide is written for the branch as it is now, not as the pane last
+    // read it (that read may be from an earlier visit, #199). The result is
+    // saved for this task even if another is on screen when it lands.
+    const id = task.id;
+    const base = task.baseBranch;
+    void loadBranchDiff(task.worktreePath, base, (rel) => readWorking(task.worktreePath, rel))
+      .then((fresh) => {
+        keepLastRead(id, fresh);
+        setLoad({ kind: 'ready', data: fresh, taskId: id });
+        return fresh.diff;
+      })
+      // The branch cannot be read just now: write for what is on screen.
+      .catch(() => diff)
+      .then((d) => {
+        const run = startWrite(id, d, base);
+        startingRef.current = false;
+        setStarting(false);
+        return run;
+      });
   };
 
   if (guide === null) {

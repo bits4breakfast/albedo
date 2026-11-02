@@ -8,7 +8,10 @@ import {
   capGuides,
   clearWriteError,
   guidesCodec,
+  keepLastRead,
+  lastReadOf,
   loadGuide,
+  MAX_LAST_READS,
   loadReviewed,
   resetGuideStoreForTests,
   reviewedKey,
@@ -123,3 +126,16 @@ describe('startWrite', () => {
     warn.mockRestore();
   });
 });
+
+describe('the last read of the branch (#199)', () => {
+  it('keeps only the most recently read few tasks: a read holds both sides of every file', () => {
+    const read = (n: number) => ({ diff: buildBranchDiff([], statReason), base: `b${n}`, fromMergeBase: true, uncommitted: new Set<string>() });
+    for (let id = 1; id <= MAX_LAST_READS; id++) keepLastRead(id, read(id));
+    keepLastRead(1, read(1)); // 1 read again: now the newest
+    keepLastRead(99, read(99));
+    expect(lastReadOf(2)).toBeNull();
+    expect(lastReadOf(1)?.base).toBe('b1');
+    expect(lastReadOf(99)?.base).toBe('b99');
+  });
+});
+

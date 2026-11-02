@@ -224,9 +224,12 @@ export function keepPlace(taskId: number, place: GuidePlace): void {
 }
 
 /**
- * The branch as last read for each task, shown at once when the pane comes
- * back while it is read again. In memory; never a guide's facts.
+ * The branch as last read, shown at once when the pane comes back while it is
+ * read again. In memory; never a guide's facts. A read holds both sides of
+ * every changed file, so only the last few tasks' are kept: going back and
+ * forth between a couple of tasks is what this is for.
  */
+export const MAX_LAST_READS = 3;
 const lastReads = new Map<number, LoadedBranchDiff>();
 
 export function lastReadOf(taskId: number): LoadedBranchDiff | null {
@@ -234,7 +237,13 @@ export function lastReadOf(taskId: number): LoadedBranchDiff | null {
 }
 
 export function keepLastRead(taskId: number, data: LoadedBranchDiff): void {
+  // Re-inserted, so the Map's order is least recently read first.
+  lastReads.delete(taskId);
   lastReads.set(taskId, data);
+  while (lastReads.size > MAX_LAST_READS) {
+    const oldest = lastReads.keys().next().value as number;
+    lastReads.delete(oldest);
+  }
 }
 
 /** Tests only. */
