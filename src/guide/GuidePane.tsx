@@ -530,6 +530,8 @@ function GuideBody({
                       </span>
                       <span className="gd-file-dir">{dir}</span>
                       <Counts file={f} />
+                      {/* What the file does in this group (#202), under its name. */}
+                      {f.note ? <span className="gd-file-note">{f.note}</span> : null}
                     </button>
                   </li>
                 );

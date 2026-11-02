@@ -61,4 +61,13 @@ describe('the guide rail (#201)', () => {
       }
     });
   }
+
+  it('a file’s note (#202) is --muted, and clears 4.5 on every ground its row takes', () => {
+    expect(rail).toMatch(/\.gd-file-note \{[^}]*color: var\(--muted\)/);
+    for (const [name, t] of Object.entries(themes)) {
+      for (const g of ['--panel', '--panel-hover', '--accent-soft']) {
+        expect(ratio(t.get('--muted')!, t.get(g)!), `${name} ${g}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
 });

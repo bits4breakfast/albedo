@@ -24,7 +24,7 @@
 
 import type { BranchDiff } from './blocks';
 import { estimateTokens, groupByFolder, INPUT_BUDGET_TOKENS, planInput, renderBlock } from './budget';
-import { normalizeId, validateProposal, type Guide, type GuideGroup, type Proposal } from './validate';
+import { NOTE_MIN_LINES, normalizeId, validateProposal, type Guide, type GuideGroup, type Proposal } from './validate';
 import { fileBlockIndex } from './blocks';
 
 /**
@@ -167,6 +167,14 @@ const GROUPS_SCHEMA = {
           title: { type: 'string' },
           summary: { type: 'string' },
           blocks: { type: 'array', items: { type: 'string' } },
+          notes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { path: { type: 'string' }, note: { type: 'string' } },
+              required: ['path', 'note'],
+            },
+          },
         },
         required: ['title', 'summary', 'blocks'],
       },
@@ -198,7 +206,39 @@ export const GROUP_SYSTEM = [
   'sentence case) and a summary of one or two sentences saying what the group changes and why.',
   'Put every block id in exactly one group. Use the ids exactly as given, bare (for example "a1b2"),',
   'with nothing added. Do not invent ids. Write plainly; do not praise or judge the code.',
+  'The prompt may end with a list of files to note. For each listed file, in each group that has its',
+  'blocks and blocks of at least one other file, add a note: the file path exactly as listed and one line',
+  '(under 100 characters) saying what that file does in that group. Describe it; do not judge it.',
+  'Write no notes for files not listed, and none in a group whose blocks are all from one file.',
 ].join(' ');
+
+/**
+ * At most this many files are offered for a note, the most changed first, so
+ * the notes' share of the answer stays small: about 30 tokens each.
+ */
+export const MAX_NOTED_FILES = 60;
+
+/**
+ * The files the model may write a note on (#202): at least NOTE_MIN_LINES
+ * changed lines in all, and lines it is shown (a stat-only file's note would
+ * be a guess). Whether a note is shown is settled again per group, from
+ * Albedo's counts (validate.ts); the model never judges size.
+ */
+export function notedFiles(diff: BranchDiff): string[] {
+  const eligible = diff.files.filter((f) => f.stat === null && f.added + f.removed >= NOTE_MIN_LINES);
+  if (eligible.length < 2) return [];
+  const keep = new Set(
+    [...eligible]
+      .sort((a, b) => b.added + b.removed - (a.added + a.removed))
+      .slice(0, MAX_NOTED_FILES)
+      .map((f) => f.path),
+  );
+  return eligible.filter((f) => keep.has(f.path)).map((f) => f.path);
+}
+
+function noteList(paths: readonly string[]): string {
+  return paths.length === 0 ? '' : `\n\nFiles to note:\n${paths.map((p) => `- ${p}`).join('\n')}`;
+}
 
 export const LINES_SYSTEM = [
   'You summarise the blocks of a code change, one line each. Each block starts with its id in square',
@@ -216,12 +256,19 @@ function asProposal(v: unknown): Proposal | null {
   const out: Proposal['groups'] = [];
   for (const g of groups) {
     if (typeof g !== 'object' || g === null) return null;
-    const { title, summary, blocks } = g as { title?: unknown; summary?: unknown; blocks?: unknown };
+    const { title, summary, blocks, notes } = g as { title?: unknown; summary?: unknown; blocks?: unknown; notes?: unknown };
     if (typeof title !== 'string' || !Array.isArray(blocks)) return null;
     out.push({
       title,
       summary: typeof summary === 'string' ? summary : '',
       blocks: blocks.filter((b): b is string => typeof b === 'string'),
+      // A malformed note is dropped, never the group.
+      notes: Array.isArray(notes)
+        ? notes.flatMap((n) => {
+            const { path, note } = (typeof n === 'object' && n !== null ? n : {}) as { path?: unknown; note?: unknown };
+            return typeof path === 'string' && typeof note === 'string' ? [{ path, note }] : [];
+          })
+        : [],
     });
   }
   return { groups: out };
@@ -277,7 +324,7 @@ function guideFrom(diff: BranchDiff, groups: GuideGroup[], o: WriteOptions, fall
 /** The validated groups, or an error when the reply placed nothing at all. */
 function accept(diff: BranchDiff, proposal: Proposal | null): GuideGroup[] {
   if (proposal === null) throw new GuideError('invalid', 'The reply did not have the groups Albedo asked for.');
-  const v = validateProposal(proposal, diff.order);
+  const v = validateProposal(proposal, diff.order, new Map([...diff.blocks].map(([id, b]) => [id, b.path])));
   if (v.groups.length === 0) {
     throw new GuideError('invalid', 'The reply named none of the changed blocks, so there is no guide to show.');
   }
@@ -294,23 +341,29 @@ export async function writeGuide(diff: BranchDiff, o: WriteOptions): Promise<Gui
   if (diff.order.length === 0) throw new GuideError('invalid', 'This branch has no changes to guide.');
   const budget = o.budget ?? INPUT_BUDGET_TOKENS;
   const texts = new Map(diff.order.map((id) => [id, renderBlock(diff.blocks.get(id)!, diff)] as const));
+  // The files to note go with the grouping call (one call, or pass two),
+  // never with pass one's batches, so only those calls count them.
+  const notes = noteList(notedFiles(diff));
   const overhead = CALL_OVERHEAD_TOKENS;
-  const plan = planInput(diff.order, texts, budget, overhead);
+  const plan = planInput(diff.order, texts, budget, overhead + estimateTokens(notes));
 
   if (plan.kind === 'folders') return folderGuide(diff, o, plan.reason);
 
   if (plan.kind === 'single') {
     o.onProgress?.({ step: 1, of: 1, label: 'Grouping the changes' });
-    const prompt = intro(diff) + plan.ids.map((id) => texts.get(id)).join('\n\n');
+    const prompt = intro(diff) + plan.ids.map((id) => texts.get(id)).join('\n\n') + notes;
     return guideFrom(diff, accept(diff, asProposal(await call(GROUP_SYSTEM, GROUPS_SCHEMA, prompt))), o, null);
   }
 
-  // Pass one: a line per block, batch by batch.
-  const of = plan.batches.length + 1;
+  // Pass one: a line per block, batch by batch, sized without the notes.
+  // (What fits one call only without them is one batch.)
+  const sized = planInput(diff.order, texts, budget, overhead);
+  const batches = sized.kind === 'two-pass' ? sized.batches : [[...diff.order]];
+  const of = batches.length + 1;
   const lines = new Map<string, string>();
-  for (let i = 0; i < plan.batches.length; i++) {
-    const batch = plan.batches[i] ?? [];
-    o.onProgress?.({ step: i + 1, of, label: `Summarising batch ${i + 1} of ${plan.batches.length}` });
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i] ?? [];
+    o.onProgress?.({ step: i + 1, of, label: `Summarising batch ${i + 1} of ${batches.length}` });
     const got = asLines(await call(LINES_SYSTEM, LINES_SCHEMA, batch.map((id) => texts.get(id)).join('\n\n')));
     if (got === null) throw new GuideError('invalid', `The summaries for batch ${i + 1} were not in the shape asked for.`);
     for (const id of batch) {
@@ -324,7 +377,7 @@ export async function writeGuide(diff: BranchDiff, o: WriteOptions): Promise<Gui
     const b = diff.blocks.get(id)!;
     return `[${id}] ${b.path} +${b.added} -${b.removed}: ${lines.get(id) ?? '(no summary)'}`;
   });
-  const prompt = intro(diff) + summary.join('\n');
+  const prompt = intro(diff) + summary.join('\n') + notes;
   if (estimateTokens(prompt) + overhead > budget) {
     return folderGuide(diff, o, `${diff.order.length} changed blocks are too many to group in one call, even as one line each.`);
   }
