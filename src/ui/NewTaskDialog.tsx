@@ -142,9 +142,10 @@ export function NewTaskDialog({
   const [prompt, setPrompt] = useState('');
   /**
    * A session's request (#157): send the prompt when the session starts,
-   * rather than leaving it as the new task's unsent draft. Off by default.
+   * rather than leaving it as the new task's unsent draft. On by default (#188):
+   * the prompt was read in this dialog, and approving it means starting on it.
    */
-  const [sendNow, setSendNow] = useState(false);
+  const [sendNow, setSendNow] = useState(true);
   /** The prompt last put there by a prefill, to tell it from the user's edit. */
   const appliedPrompt = useRef<string | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -247,7 +248,7 @@ export function NewTaskDialog({
     if (open) return;
     setTitle('');
     setPrompt('');
-    setSendNow(false);
+    setSendNow(true);
     appliedPrompt.current = null;
     setError(null);
     setBusy(false);
