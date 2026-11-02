@@ -1104,6 +1104,80 @@ mod tests {
         );
     }
 
+    // The next three pin what portable-pty does for us on spawn and resize,
+    // so a version bump that changes it fails here (#206: 0.8 -> 0.9).
+
+    #[test]
+    fn a_resize_reaches_the_child() {
+        let sessions = Sessions::default();
+        let (pgid, rx) = launch_sh(&sessions, "a", "p", "echo up; read x; stty size");
+        until_output(&rx, "up");
+        {
+            let sessions = sessions.lock();
+            let session = &sessions["a"];
+            session.master.resize(pty_size(101, 33)).expect("resize");
+            session.input.send(b"\n".to_vec()).unwrap();
+        }
+        let (out, code) = until_exit(&rx, Duration::from_secs(5));
+        assert!(out.contains("33 101"), "{out:?}");
+        assert_eq!(code, Some(0));
+        signal_group(pgid, libc::SIGKILL);
+    }
+
+    #[test]
+    fn the_child_leads_its_own_group_on_the_pty() {
+        // `pty_kill` signals the group whose id is the child's pid, so the child
+        // must be a session (and group) leader with the pty as its terminal.
+        let sessions = Sessions::default();
+        let (pgid, rx) = launch_sh(
+            &sessions,
+            "a",
+            "p",
+            "echo \"pgid:$(ps -o pgid= -p $$ | tr -d ' ')\"; test -t 0 && echo tty:yes",
+        );
+        let (out, code) = until_exit(&rx, Duration::from_secs(5));
+        assert!(out.contains(&format!("pgid:{pgid}")), "{pgid} {out:?}");
+        assert!(out.contains("tty:yes"), "{out:?}");
+        assert_eq!(code, Some(0));
+    }
+
+    #[test]
+    fn the_api_key_never_reaches_the_child() {
+        let mut o = opts(
+            "/bin/sh",
+            &["-c", "echo \"key:${ANTHROPIC_API_KEY-none}\""],
+            "/tmp",
+        );
+        o.env = Some(HashMap::from([(
+            "ANTHROPIC_API_KEY".to_string(),
+            "sk-from-the-caller".to_string(),
+        )]));
+        let cmd = build_command("/bin/sh", &o);
+        // Layer 1 alone: the builder no longer carries it.
+        assert!(cmd.get_env("ANTHROPIC_API_KEY").is_none());
+
+        let sessions = Sessions::default();
+        let (tx, rx) = mpsc::channel();
+        let owner = Owner {
+            webview: "main".into(),
+            page: "p".into(),
+        };
+        launch(
+            &sessions,
+            "a".into(),
+            owner,
+            cmd,
+            pty_size(80, 24),
+            "sh",
+            TestSink(tx),
+        )
+        .expect("launch");
+        let (out, code) = until_exit(&rx, Duration::from_secs(10));
+        assert!(out.contains("key:none"), "{out:?}");
+        assert!(!out.contains("sk-from-the-caller"), "{out:?}");
+        assert_eq!(code, Some(0));
+    }
+
     #[test]
     fn the_stale_sweep_spares_the_calling_page() {
         let sessions = Sessions::default();
