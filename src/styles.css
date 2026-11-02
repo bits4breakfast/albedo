@@ -57,6 +57,15 @@
      measured against it first (CLAUDE.md, Contrast rule 1). Also code spans
      and pressed-in chips. */
   --panel-raised: #e6e6ea;
+  /* The selected TASK row (#203): an indigo tint, ringed in --accent
+     (tasklist.css). --panel-raised was 1.10 on the sidebar, too close to
+     see; a fill alone cannot go much further before --faint fails, so the
+     ring carries the separation (5.87 on --panel-chrome) and the tint stays
+     a step. Tint: 1.15 on --panel-chrome, 1.10 on --panel-hover. On it:
+     --text 13.15, --text-strong 15.39, --muted 5.67, --faint 4.71, --add
+     5.69, --warn 6.02, --danger 5.53, --accent 5.12, --status-idle 3.77
+     and --status-archived 3.05 (UI). */
+  --row-selected: #dfe1f5;
   /* Your own messages in the transcript. A flat ground, measured, not a tint:
      on it --text 14.99, --text-strong 17.54, --muted 6.46, --faint 5.37,
      --accent 5.84, --add 6.49, --del 6.30. */
@@ -237,6 +246,13 @@
     /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
        worst ground for every text tier. */
     --panel-raised: #23242a;
+    /* The selected task row (#203): was --panel-raised, 1.12 on the
+       sidebar. Tint 1.22 on --panel-chrome, 1.16 on --panel-hover; the
+       --accent ring 7.44 on the sidebar, 6.08 on the tint. On it: --text
+       11.28, --text-strong 13.26, --muted 5.97, --faint 4.64, --add 7.80,
+       --warn 7.69, --danger 6.46, --accent 6.08, --status-idle 3.76 (UI);
+       --status-archived 2.79, so that glyph takes --status-idle there. */
+    --row-selected: #262a3c;
     /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
        --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
     --user-row: #1a1c26;
@@ -336,6 +352,13 @@
   /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
      worst ground for every text tier. */
   --panel-raised: #23242a;
+  /* The selected task row (#203): was --panel-raised, 1.12 on the
+     sidebar. Tint 1.22 on --panel-chrome, 1.16 on --panel-hover; the
+     --accent ring 7.44 on the sidebar, 6.08 on the tint. On it: --text
+     11.28, --text-strong 13.26, --muted 5.97, --faint 4.64, --add 7.80,
+     --warn 7.69, --danger 6.46, --accent 6.08, --status-idle 3.76 (UI);
+     --status-archived 2.79, so that glyph takes --status-idle there. */
+  --row-selected: #262a3c;
   /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
      --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
   --user-row: #1a1c26;
