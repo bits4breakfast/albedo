@@ -36,6 +36,19 @@ export type ChecksSummary =
 
 export type ReviewDecision = 'approved' | 'changes-requested' | 'review-required' | null;
 
+/**
+ * One reviewer's latest say (`latestReviews`), kept only when it decides
+ * something: an approval or a request for changes. A comment-only review, a
+ * dismissed one or a pending draft says nothing about whether to merge.
+ */
+export interface PrReview {
+  /** The reviewer's login. */
+  author: string;
+  state: 'approved' | 'changes-requested';
+  /** When it was submitted (ISO). With the author and state, what makes it one review. */
+  submittedAt: string;
+}
+
 export interface PrStatus {
   number: number;
   url: string;
@@ -51,7 +64,21 @@ export interface PrStatus {
    */
   headSha: string;
   mergedAt: string | null;
+  /**
+   * GitHub's `reviewDecision`, or -- where no branch rule asks for reviews and
+   * GitHub gives none -- what the latest reviews say (see `reviewOf`).
+   */
   review: ReviewDecision;
+  /**
+   * The approvals and change requests that stand, one per reviewer. Optional
+   * so a hand-built status (tests) need not spell it out; `parsePrView`
+   * always sets it.
+   */
+  reviews?: PrReview[];
+  /** Who is asked to review and has not yet: logins, or a team's name. */
+  reviewRequests?: string[];
+  /** The PR author's login. Empty when gh did not say. */
+  author?: string;
   checks: ChecksSummary;
   /** Every check after dedupe, failing first; the tooltip lists them. */
   lines: CheckLine[];
@@ -180,7 +207,7 @@ export function summarizeChecks(lines: CheckLine[]): ChecksSummary {
 // The whole PR
 // ---------------------------------------------------------------------------
 
-function reviewOf(v: unknown): ReviewDecision {
+function decisionOf(v: unknown): ReviewDecision {
   switch (str(v)?.toUpperCase()) {
     case 'APPROVED':
       return 'approved';
@@ -194,6 +221,54 @@ function reviewOf(v: unknown): ReviewDecision {
   }
 }
 
+/** `latestReviews`, keeping the approvals and change requests. Exported for tests. */
+export function reviewsOf(v: unknown): PrReview[] {
+  if (!Array.isArray(v)) return [];
+  const out: PrReview[] = [];
+  for (const raw of v) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    const s = str(r.state)?.toUpperCase();
+    const state = s === 'APPROVED' ? 'approved' : s === 'CHANGES_REQUESTED' ? 'changes-requested' : null;
+    const author = loginOf(r.author);
+    if (!state || !author) continue;
+    out.push({ author, state, submittedAt: str(r.submittedAt) ?? '' });
+  }
+  return out;
+}
+
+function loginOf(v: unknown): string | null {
+  if (!v || typeof v !== 'object') return null;
+  return str((v as Record<string, unknown>).login);
+}
+
+/** `reviewRequests`: a user by login, a team by its name (or slug). */
+function requestsOf(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const raw of v) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    const who = str(r.login) ?? str(r.name) ?? str(r.slug);
+    if (who) out.push(who);
+  }
+  return out;
+}
+
+/**
+ * `reviewDecision` is set only when a branch rule requires reviews. Without
+ * one GitHub says nothing, even after a reviewer asked for changes -- so then
+ * the latest reviews decide: any change request outranks any approval, and
+ * no review at all is no decision.
+ */
+function reviewOf(decision: unknown, reviews: PrReview[]): ReviewDecision {
+  const d = decisionOf(decision);
+  if (d !== null) return d;
+  if (reviews.some((r) => r.state === 'changes-requested')) return 'changes-requested';
+  if (reviews.some((r) => r.state === 'approved')) return 'approved';
+  return null;
+}
+
 function stateOf(state: unknown, isDraft: unknown, mergedAt: string | null): PrState {
   const s = str(state)?.toUpperCase();
   if (s === 'MERGED' || mergedAt) return 'merged';
@@ -203,7 +278,8 @@ function stateOf(state: unknown, isDraft: unknown, mergedAt: string | null): PrS
 
 /**
  * Parse `gh pr view --json number,url,state,isDraft,title,reviewDecision,
- * statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid`. Returns null
+ * statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,
+ * latestReviews,reviewRequests,author`. Returns null
  * for anything that is not recognisably a PR -- the caller treats that exactly
  * like "no PR".
  */
@@ -219,6 +295,7 @@ export function parsePrView(stdout: string): PrStatus | null {
   if (typeof d.number !== 'number' || !Number.isFinite(d.number)) return null;
   const mergedAt = str(d.mergedAt);
   const lines = checkLines(d.statusCheckRollup);
+  const reviews = reviewsOf(d.latestReviews);
   return {
     number: d.number,
     url: str(d.url) ?? '',
@@ -228,7 +305,10 @@ export function parsePrView(stdout: string): PrStatus | null {
     baseRefName: str(d.baseRefName) ?? '',
     headSha: str(d.headRefOid) ?? '',
     mergedAt,
-    review: reviewOf(d.reviewDecision),
+    review: reviewOf(d.reviewDecision, reviews),
+    reviews,
+    reviewRequests: requestsOf(d.reviewRequests),
+    author: loginOf(d.author) ?? '',
     checks: summarizeChecks(lines),
     lines,
   };
@@ -289,3 +369,66 @@ export function prTooltip(pr: PrStatus, opts: { clickable?: boolean; maxLines?: 
   if (opts.clickable) out.push('Click to open on GitHub');
   return out.join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Review (#180)
+// ---------------------------------------------------------------------------
+
+export type ReviewTone = 'pass' | 'warn' | 'quiet';
+
+export interface ReviewChip {
+  kind: 'awaiting' | 'approved' | 'changes-requested';
+  glyph: string;
+  text: string;
+  tone: ReviewTone;
+}
+
+const sameLogin = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+/**
+ * The review chip beside the PR badge, or null for none.
+ *
+ *   - Open PRs only: a draft is not up for review, and once merged or closed
+ *     the question is over.
+ *   - Approved and Changes Requested are what GitHub (or the latest reviews)
+ *     say. Awaiting Review is GitHub's REVIEW_REQUIRED, or a reviewer asked
+ *     for where no rule requires one.
+ *   - No decision and nobody asked: no chip. Most repos without review rules.
+ *   - The owner's own PR with nobody asked (`viewer` is the signed-in gh
+ *     user): no Awaiting Review. On a repo they merge themselves it would
+ *     never go away. `viewer` null is "not known", and hides nothing.
+ */
+export function reviewChip(pr: PrStatus, viewer: string | null): ReviewChip | null {
+  if (pr.state !== 'open') return null;
+  if (pr.review === 'approved') return { kind: 'approved', glyph: '✓', text: 'Approved', tone: 'pass' };
+  if (pr.review === 'changes-requested') {
+    return { kind: 'changes-requested', glyph: '✎', text: 'Changes Requested', tone: 'warn' };
+  }
+  const asked = (pr.reviewRequests ?? []).length > 0;
+  if (pr.review !== 'review-required' && !asked) return null;
+  if (!asked && viewer && pr.author && sameLogin(pr.author, viewer)) return null;
+  return { kind: 'awaiting', glyph: '◷', text: 'Awaiting Review', tone: 'quiet' };
+}
+
+function names(list: string[]): string {
+  if (list.length <= 2) return list.join(' and ');
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+
+/** Who approved, who asked for changes, who is still asked: the chip's tooltip. */
+export function reviewTooltip(pr: PrStatus): string {
+  const reviews = pr.reviews ?? [];
+  const approved = reviews.filter((r) => r.state === 'approved').map((r) => r.author);
+  const changes = reviews.filter((r) => r.state === 'changes-requested').map((r) => r.author);
+  const asked = pr.reviewRequests ?? [];
+  const out: string[] = [];
+  if (changes.length) out.push(`Changes requested by ${names(changes)}`);
+  if (approved.length) out.push(`Approved by ${names(approved)}`);
+  if (asked.length) out.push(`Review requested from ${names(asked)}`);
+  if (!out.length) out.push(pr.review === 'review-required' ? 'A review is required' : 'Awaiting review');
+  out.push('Click to open the reviews on GitHub');
+  return out.join('\n');
+}
+
+/** Exported for the banner: "alice", "alice and bob", "alice, bob and carol". */
+export const reviewerNames = names;

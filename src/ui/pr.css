@@ -71,6 +71,18 @@
   .pr-badge[data-cue] { animation: none; }
 }
 
+/*
+ * The review chip (#180) is a .pr-badge with its own tones, on the same
+ * ground as the badge. Measured against --panel-raised, light | dark:
+ *   --add (Approved)            5.92 | 8.50
+ *   --warn (Changes Requested)  6.26 | 8.38
+ *   --muted (Awaiting Review)   5.89 | 6.50
+ * and on the pressed --panel-active, the worst ground it takes: 5.55 | 9.74,
+ * 5.86 | 9.61, 5.52 | 7.46. Glyph and words carry the state; colour only
+ * repeats it.
+ */
+.pr-badge[data-tone='warn'] { color: var(--warn); }
+
 .pr-badge[data-tone='merged'] {
   color: var(--on-accent-soft);
   background: var(--accent-soft);

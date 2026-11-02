@@ -103,8 +103,56 @@ export async function gh(args: string[], cwd?: string): Promise<GhResult | null>
   return null;
 }
 
+/**
+ * The signed-in gh user's login, asked once per run (#180): the review chip
+ * hides "Awaiting Review" on the owner's own PRs nobody was asked to review.
+ * Null is "not known" -- no gh, not logged in, offline -- and hides nothing.
+ * A login is kept for the run; a failure is asked again, at most every
+ * {@link VIEWER_RETRY_MS}, so a launch while offline is not stuck with it.
+ */
+export const VIEWER_RETRY_MS = 5 * 60_000;
+let viewer: string | null = null;
+let viewerAsked: Promise<string | null> | null = null;
+let viewerFailedAt = -Infinity;
+
+/** The login, once known; null before that or when it cannot be known. */
+export function viewerLogin(): string | null {
+  return viewer;
+}
+
+/** Ask gh for the login, unless it is known or was just asked. */
+export function loadViewerLogin(): Promise<string | null> {
+  if (viewer !== null) return Promise.resolve(viewer);
+  if (viewerAsked) return viewerAsked;
+  if (Date.now() - viewerFailedAt < VIEWER_RETRY_MS) return Promise.resolve(null);
+  viewerAsked = gh(['api', 'user', '--jq', '.login'])
+    .then((r) => {
+      const login = r && r.code === 0 ? r.stdout.trim() : '';
+      // A login has no spaces or slashes; anything else is not one.
+      if (login && /^[A-Za-z0-9-]+(\[bot\])?$/.test(login)) viewer = login;
+      else viewerFailedAt = Date.now();
+      return viewer;
+    })
+    .catch(() => {
+      viewerFailedAt = Date.now();
+      return null;
+    })
+    .finally(() => {
+      viewerAsked = null;
+    });
+  return viewerAsked;
+}
+
+/** @internal for tests */
+export function resetViewerLoginForTests(login: string | null = null): void {
+  viewer = login;
+  viewerAsked = null;
+  viewerFailedAt = -Infinity;
+}
+
 const PR_FIELDS =
-  'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid';
+  'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,' +
+  'latestReviews,reviewRequests,author';
 
 /**
  * Is there a PR for this task worth asking about? A resumed session often

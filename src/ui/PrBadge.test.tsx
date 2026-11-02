@@ -9,11 +9,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
 
-const state = { answered: true, pr: null as unknown };
+const state = { answered: true, pr: null as unknown, viewer: null as string | null };
 vi.mock('../gh/prStore', () => ({
   getPrStatus: () => (state.answered ? state.pr : undefined),
   usePrStatus: () => state.pr,
   usePrStatusVersion: () => 0,
+  useViewerLogin: () => state.viewer,
 }));
 vi.mock('../git/worktree', () => ({ commitsOnBranch: vi.fn(async () => 3) }));
 vi.mock('../lib/openUrl', () => ({ openExternal: vi.fn(async () => {}) }));
@@ -39,6 +40,7 @@ afterEach(() => {
   __setAttentionBackend(null);
   state.answered = true;
   state.pr = null;
+  state.viewer = null;
   vi.clearAllMocks();
 });
 
@@ -156,5 +158,79 @@ describe('PrBadge and finished checks (#159)', () => {
     });
     expect(badge.getAttribute('data-cue')).toBeNull();
     vi.useRealTimers();
+  });
+});
+
+describe('PrBadge: the review chip (#180)', () => {
+  const pr = (over: Partial<PrStatus>): PrStatus => ({
+    number: 6,
+    url: 'https://github.com/o/r/pull/6',
+    title: 't',
+    state: 'open',
+    headRefName: 'feat',
+    baseRefName: 'main',
+    headSha: '',
+    mergedAt: null,
+    review: null,
+    reviews: [],
+    reviewRequests: [],
+    author: 'octo',
+    checks: { kind: 'passing', total: 1 },
+    lines: [{ name: 'CI / linux', bucket: 'pass', url: null }],
+    ...over,
+  });
+  const chip = () => screen.queryByRole('button', { name: /^Review:/ });
+
+  it('says Approved in the pass tone, names the reviewer, and opens the PR on GitHub', () => {
+    state.pr = pr({ review: 'approved', reviews: [{ author: 'alice', state: 'approved', submittedAt: 't1' }] });
+    render(<PrBadge task={task} />);
+    const c = chip()!;
+    expect(c.textContent).toBe('✓Approved');
+    expect(c.getAttribute('data-tone')).toBe('pass');
+    expect(c.getAttribute('title')).toContain('Approved by alice');
+    fireEvent.click(c);
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/o/r/pull/6');
+    // A second fact beside the badge, not folded into it.
+    expect(screen.getByRole('button', { name: /Pull request 6/ })).not.toBe(c);
+  });
+
+  it('says Changes Requested in the warn tone', () => {
+    state.pr = pr({
+      review: 'changes-requested',
+      reviews: [{ author: 'carol', state: 'changes-requested', submittedAt: 't1' }],
+    });
+    render(<PrBadge task={task} />);
+    expect(chip()!.textContent).toBe('✎Changes Requested');
+    expect(chip()!.getAttribute('data-tone')).toBe('warn');
+    expect(chip()!.getAttribute('title')).toContain('Changes requested by carol');
+  });
+
+  it('says Awaiting Review quietly, and names who is asked', () => {
+    state.pr = pr({ review: 'review-required', reviewRequests: ['dave'] });
+    render(<PrBadge task={task} />);
+    expect(chip()!.textContent).toBe('◷Awaiting Review');
+    expect(chip()!.getAttribute('data-tone')).toBe('quiet');
+    expect(chip()!.getAttribute('title')).toContain('Review requested from dave');
+  });
+
+  it('shows nothing for a draft, merged or closed PR', () => {
+    for (const st of ['draft', 'merged', 'closed'] as const) {
+      state.pr = pr({ state: st, review: 'approved' });
+      render(<PrBadge task={task} />);
+      expect(chip()).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("hides Awaiting Review on the owner's own PR with no reviewer asked, but not when the login is unknown", () => {
+    state.pr = pr({ review: 'review-required', author: 'Octo' });
+    state.viewer = 'octo';
+    render(<PrBadge task={task} />);
+    expect(chip()).toBeNull();
+    cleanup();
+
+    state.viewer = null;
+    render(<PrBadge task={task} />);
+    expect(chip()!.textContent).toBe('◷Awaiting Review');
   });
 });
