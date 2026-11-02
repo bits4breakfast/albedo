@@ -176,7 +176,7 @@
   gap: 8px;
 }
 .gd-title { margin: 0; font-size: var(--fs-heading); font-weight: 600; color: var(--text-strong); line-height: 1.35; }
-.gd-count-row { display: flex; align-items: center; gap: 14px; }
+.gd-count-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
 .gd-count { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); }
 .gd-summary { margin: 4px 0 6px; font-size: var(--fs-lg); line-height: 1.5; color: var(--text); }
 
@@ -213,32 +213,77 @@
 .gd-nav { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .gd-nav-hint { margin-left: auto; font-size: var(--fs-xs); color: var(--faint); }
 
-/* The rail: one mark per group, where you are and what is done. Marks are
-   UI, not text: each has its label for assistive tech and a tooltip. */
+/* The rail (#201): a count of what is done, then one mark per group. Each
+   mark is the rail's full width and the gap to its neighbour, so it is easy
+   to hit; what it draws is ::before. One look per state, each a shape as
+   well as a colour, all on --panel:
+     still to do  hollow, --muted           (7.2 light, 7.7 dark; --border-strong
+                  at 3.9 was hard to find in dark, owner-reported)
+     Unsorted     hollow and dashed, the same
+     Reviewed     filled, --status-done     (7.2 light, 10.1 dark)
+     current      wider, with an --accent ring (6.5, 7.9) around whichever
+                  of those it is, a --panel gap between
+   Marks are UI, not text: each has its label for assistive tech and a
+   tooltip. railContrast.test.ts holds these to 3:1. */
 .gd-rail {
   flex: none;
-  width: 14px;
-  padding: 16px 0;
+  width: 34px;
+  padding: 12px 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
+  gap: 8px;
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
 }
+.gd-rail-count {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.25;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.gd-rail-of { display: block; color: var(--muted); }
+.gd-rail-marks {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto; /* a long guide scrolls its marks rather than spilling */
+  padding: 2px 0; /* room for the current mark's ring at either end */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
 .gd-rail-mark {
-  flex: 0 1 22px;
-  min-height: 6px;
-  width: 4px;
-  padding: 0;
+  flex: 0 1 28px;
+  min-height: 10px;
+  padding: 3px 0;
   border: none;
-  border-radius: 2px;
-  background: var(--track);
+  border-radius: 4px;
+  background: transparent;
+  display: flex;
+  justify-content: center;
   cursor: pointer;
 }
-.gd-rail-mark[data-reviewed] { background: var(--status-done); }
-.gd-rail-mark[aria-current='true'] { background: var(--accent); width: 6px; }
-.gd-rail-mark:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
+.gd-rail-mark::before {
+  content: '';
+  width: 8px;
+  box-sizing: border-box;
+  border: 2px solid var(--muted);
+  border-radius: 3px;
+  background: transparent;
+}
+.gd-rail-mark[data-unsorted]::before { border-style: dashed; }
+.gd-rail-mark:hover::before { border-color: var(--text); }
+.gd-rail-mark[data-reviewed]::before { border-color: var(--status-done); background: var(--status-done); }
+.gd-rail-mark[aria-current='true']::before {
+  width: 12px;
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+}
+.gd-rail-mark:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+
+.gd-all-done { font-size: var(--fs-sm); color: var(--status-done); }
 
 .gd-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .gd-diff { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

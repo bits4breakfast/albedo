@@ -321,13 +321,36 @@ function GuideBody({
   const found = groups.findIndex((g) => g.key === place.group);
   const at = found >= 0 ? found : 0;
   const group = groups[at] ?? null;
-  const goTo = (i: number) => {
-    const g = groups[Math.max(0, Math.min(groups.length - 1, i))];
-    if (g) setPlace((p) => ({ ...p, group: g.key }));
+  // What a screen reader hears when the group changes under it (#201): the
+  // rail's own buttons say it already, so a click on one says nothing.
+  const [said, setSaid] = useState('');
+  const goTo = (i: number, announce = true) => {
+    const n = Math.max(0, Math.min(groups.length - 1, i));
+    const g = groups[n];
+    if (!g) return;
+    setPlace((p) => ({ ...p, group: g.key }));
+    if (announce && n !== at) setSaid(`Group ${n + 1} of ${groups.length}: ${g.title}`);
   };
   const setPicked = (next: (p: Readonly<Record<string, string>>) => Record<string, string>) =>
     setPlace((p) => ({ ...p, picked: next(p.picked) }));
-  const file = group ? (group.files.find((f) => f.path === picked[group.key]) ?? group.files[0] ?? null) : null;
+  // A group opens at the last file opened in it; on a first visit, at its
+  // first file still to read; with none, at its first file. However you
+  // arrive: a move, a review, or the rail.
+  const file = group
+    ? (group.files.find((f) => f.path === picked[group.key]) ??
+      group.files.find((f) => !isFileReviewed(f)) ??
+      group.files[0] ??
+      null)
+    : null;
+  // What is on screen is what was opened, so coming back finds it even when
+  // its marks have changed since.
+  const shownKey = group && file && picked[group.key] !== file.path ? `${group.key}\n${file.path}` : null;
+  useEffect(() => {
+    if (shownKey === null) return;
+    const [g, path] = shownKey.split('\n') as [string, string];
+    setPlace((p) => ({ ...p, picked: { ...p.picked, [g]: path } }));
+  }, [shownKey]);
+  const reviewedCount = groups.filter(isGroupReviewed).length;
 
   // The keys work once focus is in the guide. Take it when the tab comes on
   // screen, but never from someone typing (a guide finishing in the
@@ -347,23 +370,43 @@ function GuideBody({
     [group],
   );
 
+  // Reviewing moves you on (#201): to the next group still to review, after
+  // this one first and then any skipped before it. With none left it stays,
+  // and the header says so.
+  const advance = () => {
+    const now = loadReviewed(task.id);
+    const unread = (f: GroupFile) => !now.has(reviewedKey(f.path, f.blocks));
+    const i = nextToReview(groups, at, (g) => !g.files.some(unread));
+    if (i === null) {
+      setSaid(`All ${groups.length} groups reviewed`);
+      return;
+    }
+    const g = groups[i]!;
+    setPlace((p) => ({ ...p, group: g.key }));
+    setSaid(`Group ${i + 1} of ${groups.length}: ${g.title}`);
+  };
+
   const toggleFile = (f: GroupFile) => {
     const on = !isFileReviewed(f);
     setReviewed(task.id, [reviewedKey(f.path, f.blocks)], on);
-    // Ticking a file moves on to the next one still to read, as a reviewer would.
+    // Ticking a file moves on to the next one still to read, as a reviewer
+    // would; the last one finishes the group, and that moves to the next group.
     if (on && group) {
       const i = group.files.indexOf(f);
       const next = [...group.files.slice(i + 1), ...group.files.slice(0, i)].find((x) => x !== f && !isFileReviewed(x));
       if (next) pickFile(next.path);
+      else advance();
     }
   };
 
+  // Unticking never moves.
   const toggleGroup = (g: GroupView, on = !isGroupReviewed(g)) => {
     setReviewed(
       task.id,
       g.files.map((f) => reviewedKey(f.path, f.blocks)),
       on,
     );
+    if (on) advance();
   };
 
   const stepGroup = (delta: number) => goTo(at + delta);
@@ -380,7 +423,6 @@ function GuideBody({
     if (e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
       e.preventDefault();
       if (group) toggleGroup(group, true);
-      stepGroup(1);
       return;
     }
     if (!e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && group && file) {
@@ -431,6 +473,9 @@ function GuideBody({
         </button>
       </div>
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {said}
+      </div>
       {write?.kind === 'error' ? <WriteStatus taskId={task.id} write={write} onRetry={onRewrite} /> : null}
 
       {group === null ? (
@@ -449,6 +494,11 @@ function GuideBody({
                 <input type="checkbox" checked={isGroupReviewed(group)} onChange={() => toggleGroup(group)} />
                 Reviewed
               </label>
+              {reviewedCount === groups.length ? (
+                <span className="gd-all-done">
+                  All {groups.length} {groups.length === 1 ? 'group' : 'groups'} reviewed
+                </span>
+              ) : null}
             </div>
             {group.summary ? <p className="gd-summary">{group.summary}</p> : null}
             <ul className="gd-files" aria-label="Files in this group">
@@ -503,19 +553,30 @@ function GuideBody({
           </section>
 
           <nav className="gd-rail" aria-label="Groups">
-            {groups.map((g, i) => (
-              <button
-                key={g.key}
-                type="button"
-                className="gd-rail-mark"
-                aria-current={i === at ? 'true' : undefined}
-                data-reviewed={isGroupReviewed(g) || undefined}
-                data-unsorted={g.unsorted || undefined}
-                onClick={() => goTo(i)}
-                aria-label={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}`}
-                title={g.title}
-              />
-            ))}
+            <p className="gd-rail-count" title={`${reviewedCount} of ${groups.length} groups reviewed`}>
+              <span aria-hidden="true">
+                {reviewedCount}
+                <span className="gd-rail-of">/{groups.length}</span>
+              </span>
+              <span className="sr-only">
+                {reviewedCount} of {groups.length} groups reviewed
+              </span>
+            </p>
+            <div className="gd-rail-marks">
+              {groups.map((g, i) => (
+                <button
+                  key={g.key}
+                  type="button"
+                  className="gd-rail-mark"
+                  aria-current={i === at ? 'true' : undefined}
+                  data-reviewed={isGroupReviewed(g) || undefined}
+                  data-unsorted={g.unsorted || undefined}
+                  onClick={() => goTo(i, false)}
+                  aria-label={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}`}
+                  title={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}`}
+                />
+              ))}
+            </div>
           </nav>
 
           <section className="gd-right" aria-label="Diff">
@@ -534,6 +595,18 @@ function GuideBody({
       )}
     </div>
   );
+}
+
+/**
+ * The next group still to review after `at`, wrapping to any skipped before
+ * it; null when every other group is done. Pure.
+ */
+export function nextToReview<T>(groups: readonly T[], at: number, done: (g: T) => boolean): number | null {
+  for (let k = 1; k < groups.length; k++) {
+    const i = (at + k) % groups.length;
+    if (!done(groups[i]!)) return i;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
