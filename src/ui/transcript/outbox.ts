@@ -324,10 +324,20 @@ export function isReleasing(taskId: number): boolean {
   return releasing.has(taskId);
 }
 
-/** Keep only these tasks' outboxes: the live ones, from a fresh read of the database. */
-export function keepOutboxFor(taskIds: Iterable<number>): void {
+/**
+ * Keep only these tasks' outboxes: the live ones, from a fresh read of the
+ * database.
+ *
+ * `readStartedAt`: when that read began. A task created since is not in it,
+ * so its messages held since are kept (#184). Without it, the list alone
+ * decides.
+ */
+export function keepOutboxFor(taskIds: Iterable<number>, readStartedAt = Infinity): void {
   const live = new Set(taskIds);
-  for (const id of [...current().keys()]) if (!live.has(id)) commit(id, NONE);
+  for (const [id, held] of [...current()]) {
+    if (live.has(id) || held.some((h) => h.heldAt >= readStartedAt)) continue;
+    commit(id, NONE);
+  }
 }
 
 /** Called with the task whose held messages changed. */

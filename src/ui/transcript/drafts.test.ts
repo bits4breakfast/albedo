@@ -161,6 +161,17 @@ describe('the store', () => {
     expect(getDraft(3)).toBeNull();
   });
 
+  it("keepDraftsFor keeps a draft saved after the read began: the read can't know that task (#184)", () => {
+    // A refresh reads the task list; New Task creates a task and saves its
+    // draft; the read lands without the new task.
+    const readStartedAt = Date.now();
+    saveDraft(42, 'the request\'s prompt', new Map());
+    saveDraft(2, 'archived', new Map(), readStartedAt - 1);
+    keepDraftsFor([1], Date.now(), readStartedAt);
+    expect(getDraft(42)?.text).toBe("the request's prompt");
+    expect(getDraft(2)).toBeNull();
+  });
+
   it('still keeps drafts within the session when storage throws', () => {
     const denied = () => {
       throw new Error('denied');
