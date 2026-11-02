@@ -264,6 +264,8 @@ function GuideBody({
       .filter((g) => g.files.length > 0);
   }, [view, onlyUncommitted, uncommitted]);
 
+  const changed = view.changedFiles.length === 1 ? '1 file' : `${view.changedFiles.length} files`;
+
   const reviewed = loadReviewed(task.id);
   const isFileReviewed = (f: GroupFile) => reviewed.has(reviewedKey(f.path, f.blocks));
   const isGroupReviewed = (g: GroupView) => g.files.length > 0 && g.files.every(isFileReviewed);
@@ -339,17 +341,35 @@ function GuideBody({
   return (
     // A focus stop of its own, so its keys work from a click anywhere in it.
     <div className="gd" ref={rootRef} tabIndex={-1} onKeyDown={onKeyDown} aria-label="Review Guide">
-      <div className="gd-meta">
-        <span className="gd-meta-text" title={new Date(guide.writtenAt).toLocaleString()}>
-          Written {writtenAgo(guide.writtenAt)} · branch vs {guide.base}
-        </span>
+      {/* One row, one Rewrite (#197): a guide the branch has moved on from
+          says so here, on the banner's ground, rather than in a second row
+          with a second button. */}
+      <div className="gd-meta" data-stale={view.stale || undefined}>
+        {/* Out of date, what matters leads: a narrow pane cuts from the end,
+            so the base goes before the news does. Only the text is a live
+            region, never the controls beside it. */}
+        {view.stale ? (
+          <span
+            className="gd-meta-text"
+            role="status"
+            title={`${changed} changed since this guide was written (${new Date(guide.writtenAt).toLocaleString()}). New changes are under Unsorted. Branch vs ${guide.base}.`}
+          >
+            {changed} changed since it was written {writtenAgo(guide.writtenAt)} · new changes are under Unsorted · branch vs{' '}
+            {guide.base}
+          </span>
+        ) : (
+          <span className="gd-meta-text" title={new Date(guide.writtenAt).toLocaleString()}>
+            Written {writtenAgo(guide.writtenAt)} · branch vs {guide.base}
+          </span>
+        )}
         <label className="gd-filter">
           <input type="checkbox" checked={onlyUncommitted} onChange={(e) => setOnlyUncommitted(e.target.checked)} />
           Uncommitted Only
         </label>
         <button
           type="button"
-          className="gd-btn"
+          // The one thing to do about an out-of-date guide: the primary action then.
+          className={view.stale ? 'gd-btn gd-btn-primary' : 'gd-btn'}
           onClick={onRewrite}
           disabled={write?.kind === 'writing'}
           title="Ask Claude Haiku for a new guide of the branch as it is now"
@@ -357,17 +377,6 @@ function GuideBody({
           {write?.kind === 'writing' ? 'Rewriting…' : 'Rewrite'}
         </button>
       </div>
-      {view.stale ? (
-        <div className="gd-banner" role="status">
-          <span>
-            {view.changedFiles.length === 1 ? '1 file changed' : `${view.changedFiles.length} files changed`} since this was
-            written. Changes it does not know are under Unsorted.
-          </span>
-          <button type="button" className="gd-btn" onClick={onRewrite} disabled={write?.kind === 'writing'}>
-            Rewrite
-          </button>
-        </div>
-      ) : null}
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
       {write?.kind === 'error' ? <WriteStatus taskId={task.id} write={write} onRetry={onRewrite} /> : null}
 
