@@ -69,6 +69,8 @@ import ProjectFiles from './ui/ProjectFiles';
 import ProjectBar from './ui/ProjectBar';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
+import GuidePane from './guide/GuidePane';
+import { onGuideRequest, requestGuide } from './guide/openGuide';
 import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
 import { markUserActivated } from './ui/editor/outsideFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
@@ -794,6 +796,22 @@ export default function App() {
     [],
   );
 
+  /** Tasks whose Review Guide tab is open (#186): opened from Files or ⋯. */
+  const [guideIds, setGuideIds] = useState<ReadonlySet<number>>(() => new Set());
+  useEffect(
+    () =>
+      onGuideRequest((taskId) => {
+        setGuideIds((prev) => (prev.has(taskId) ? prev : new Set([...prev, taskId])));
+        setRightTab('guide');
+        setMode((m) => (m === 'pty' ? 'split' : m));
+      }),
+    [],
+  );
+  const closeGuide = useCallback((taskId: number) => {
+    setGuideIds((prev) => new Set([...prev].filter((id) => id !== taskId)));
+    setRightTab((t) => (t === 'guide' ? 'transcript' : t));
+  }, []);
+
   /** Bumped by ⌘W: the editor closes its active tab. */
   const [editorCloseSignal, setEditorCloseSignal] = useState(0);
   /** The active tab's file, for the files list and Quick Open. */
@@ -838,6 +856,8 @@ export default function App() {
   // The project view has no transcript: Files, or the editor once a file is
   // open. With Files pinned as a column and nothing open, its 'transcript'
   // slot says how to open one.
+  /** The guide only exists for the selected task, once it was asked for. */
+  const guideTask = selected && guideIds.has(selected.id) ? selected : null;
   const activeTab: RightTab = projectView
     ? rightTab === 'editor' && editorTask
       ? 'editor'
@@ -846,7 +866,7 @@ export default function App() {
         : editorTask
           ? 'editor'
           : 'transcript'
-    : rightTab === 'editor' && !editorTask
+    : (rightTab === 'editor' && !editorTask) || (rightTab === 'guide' && !guideTask)
       ? 'transcript'
       : rightTab === 'files' && filesColumnShown
         ? 'transcript'
@@ -871,9 +891,10 @@ export default function App() {
     () => [
       ...(projectView ? [] : (['transcript'] as const)),
       ...(filesColumnShown ? [] : (['files'] as const)),
+      ...(guideTask && !projectView ? (['guide'] as const) : []),
       ...(editorTask ? (['editor'] as const) : []),
     ],
-    [projectView, filesColumnShown, editorTask],
+    [projectView, filesColumnShown, editorTask, guideTask],
   );
 
   // ⌘Q and the window's close button ask first while tasks are busy.
@@ -1304,6 +1325,14 @@ export default function App() {
                         ...(remoteItem ? [remoteItem] : []),
                         // Set one, and see or change the ones to come (#156).
                         remindMenuItem(selectedPendingReminders, () => setRemindFor(selected)),
+                        // A branch's changes, grouped by what they do (#186).
+                        // A chat has no branch of its own to guide.
+                        ...(selected.kind === 'chat' ? [] : [{
+                          id: 'guide',
+                          label: 'Review Guide',
+                          title: 'This branch’s changes against its base, grouped by what they do',
+                          onSelect: () => requestGuide(selected.id),
+                        }]),
                         {
                           id: 'copy-path',
                           label: 'Copy Worktree Path',
@@ -1570,6 +1599,16 @@ export default function App() {
                       {filesPinned && <span className="tab-pin-hint" title="Pinned as a column — not enough room at this width, so it is a tab for now">·</span>}
                     </button>
                   )}
+                  {guideTask && !projectView && (
+                    <button
+                      role="tab"
+                      aria-selected={activeTab === 'guide'}
+                      onClick={() => setRightTab('guide')}
+                      title="This branch’s changes, grouped by what they do"
+                    >
+                      Guide
+                    </button>
+                  )}
                   {editorTask && (
                     <button
                       role="tab"
@@ -1590,6 +1629,16 @@ export default function App() {
                 )}
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
+                    ✕
+                  </button>
+                )}
+                {activeTab === 'guide' && guideTask && (
+                  <button
+                    className="pane-head-close"
+                    onClick={() => closeGuide(guideTask.id)}
+                    title="Close the guide"
+                    aria-label="Close the guide"
+                  >
                     ✕
                   </button>
                 )}
@@ -1667,6 +1716,14 @@ export default function App() {
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
+                  )}
+                </div>
+
+                <div className="tabpanel tabpanel-col" hidden={activeTab !== 'guide'}>
+                  {guideTask && !projectView && (
+                    <PaneErrorBoundary key={`gd-${guideTask.id}`} label="Review Guide">
+                      <GuidePane task={guideTask} active={activeTab === 'guide' && showTranscript} />
+                    </PaneErrorBoundary>
                   )}
                 </div>
 

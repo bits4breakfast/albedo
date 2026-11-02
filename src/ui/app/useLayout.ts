@@ -11,8 +11,8 @@ import { flagCodec, KEYS, oneOfCodec, usePersisted, type Codec } from '../persis
 
 export type PaneMode = 'pty' | 'split' | 'transcript';
 export type Orientation = 'row' | 'column';
-/** Tabs of the right-hand reading pane. `editor` appears on demand. */
-export type RightTab = 'transcript' | 'files' | 'editor';
+/** Tabs of the right-hand reading pane. `editor` and `guide` appear on demand. */
+export type RightTab = 'transcript' | 'files' | 'editor' | 'guide';
 export type Dragging = null | 'sidebar' | 'split' | 'files' | 'shell';
 
 const SIDEBAR_MIN = 200;
@@ -62,10 +62,10 @@ const shellHeightCodec: Codec<number> = {
 };
 const modeCodec = oneOfCodec<PaneMode>(['pty', 'split', 'transcript']);
 const orientationCodec = oneOfCodec<Orientation>(['row', 'column']);
-/** `editor` is never remembered: no file is open after a restart. */
+/** `editor` and `guide` are never remembered: neither is open after a restart. */
 const rightTabCodec: Codec<RightTab> = {
   ...oneOfCodec<RightTab>(['transcript', 'files', 'editor']),
-  encode: (tab) => (tab === 'editor' ? undefined : tab),
+  encode: (tab) => (tab === 'editor' || tab === 'guide' ? undefined : tab),
 };
 
 export default function useLayout() {

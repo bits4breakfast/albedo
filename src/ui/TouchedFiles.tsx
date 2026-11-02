@@ -31,6 +31,7 @@ import {
 import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
+import { requestGuide } from '../guide/openGuide';
 import ProjectTree from './ProjectTree';
 import { Disclosure } from './Disclosure';
 import { FileIcon } from './fileIcons';
@@ -538,6 +539,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           onView={(v) => setFilesView(writeView(v))}
           menuSlot={menuSlot}
           actionSlot={actionSlot}
+          onGuide={() => requestGuide(task.id)}
         />
       ) : null}
     </div>

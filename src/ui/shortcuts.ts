@@ -148,7 +148,10 @@ export type Gesture =
   | 'editor mod+alt+m'
   | 'transcript mod+arrowdown'
   | "transcript mod+'"
-  | 'new-task mod+enter';
+  | 'new-task mod+enter'
+  | 'guide alt+arrows'
+  | 'guide arrows'
+  | 'guide alt+enter';
 
 export interface ShortcutDoc {
   combo: Combo | Gesture;
@@ -204,6 +207,9 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'editor mod+alt+m', keys: '⌥⌘M', description: 'In the Editor: Comment on the Selected Lines' },
   { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
   { combo: "transcript mod+'", keys: '⌘\'', description: 'Transcript: Comment on the Selected Text (inside one message)' },
+  { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
+  { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
+  { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger Text' },

@@ -2,6 +2,7 @@ mod attention;
 mod fsscope;
 mod fsx;
 mod mcp;
+mod oneshot;
 mod pty;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -249,6 +250,7 @@ pub fn run() {
             set_busy_tasks,
             quit_app,
             mcp::mcp_server_path,
+            oneshot::claude_oneshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running albedo");
