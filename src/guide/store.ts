@@ -21,6 +21,7 @@ import { useSyncExternalStore } from 'react';
 import { KEYS, readPersisted, writePersisted, type Codec } from '../ui/persisted';
 import type { Guide } from './validate';
 import type { BranchDiff } from './blocks';
+import type { LoadedBranchDiff } from './branchDiff';
 import { GuideError, writeGuide, type GuideErrorKind, type Progress } from './writer';
 
 export const MAX_GUIDES = 40;
@@ -193,8 +194,53 @@ export function useGuideStoreVersion(): number {
   return useSyncExternalStore(subscribe, () => version);
 }
 
+// ---------------------------------------------------------------------------
+// Where you are, and the last read of the branch (#199)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a reader is in a task's guide: the group, by its key, and the file
+ * picked in each group. Kept here, not in the pane, because the pane goes
+ * whenever another task or the project view is selected. In memory only: a
+ * restart, like a rewritten guide (another `writtenAt`), starts at the first
+ * group not yet Reviewed.
+ */
+export interface GuidePlace {
+  writtenAt: number;
+  group: string | null;
+  picked: Readonly<Record<string, string>>;
+}
+
+const places = new Map<number, GuidePlace>();
+
+/** The place kept for this guide of the task, or null. */
+export function placeOf(taskId: number, writtenAt: number): GuidePlace | null {
+  const p = places.get(taskId);
+  return p && p.writtenAt === writtenAt ? p : null;
+}
+
+export function keepPlace(taskId: number, place: GuidePlace): void {
+  places.set(taskId, place);
+}
+
+/**
+ * The branch as last read for each task, shown at once when the pane comes
+ * back while it is read again. In memory; never a guide's facts.
+ */
+const lastReads = new Map<number, LoadedBranchDiff>();
+
+export function lastReadOf(taskId: number): LoadedBranchDiff | null {
+  return lastReads.get(taskId) ?? null;
+}
+
+export function keepLastRead(taskId: number, data: LoadedBranchDiff): void {
+  lastReads.set(taskId, data);
+}
+
 /** Tests only. */
 export function resetGuideStoreForTests(): void {
+  places.clear();
+  lastReads.clear();
   writes.clear();
   changed();
 }
