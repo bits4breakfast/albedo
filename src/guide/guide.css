@@ -217,7 +217,8 @@
    mark is the rail's full width and the gap to its neighbour, so it is easy
    to hit; what it draws is ::before. One look per state, each a shape as
    well as a colour, all on --panel:
-     still to do  hollow, --border-strong   (4.0 light, 3.9 dark)
+     still to do  hollow, --muted           (7.2 light, 7.7 dark; --border-strong
+                  at 3.9 was hard to find in dark, owner-reported)
      Unsorted     hollow and dashed, the same
      Reviewed     filled, --status-done     (7.2 light, 10.1 dark)
      current      wider, with an --accent ring (6.5, 7.9) around whichever
@@ -267,18 +268,18 @@
 }
 .gd-rail-mark::before {
   content: '';
-  width: 6px;
+  width: 8px;
   box-sizing: border-box;
-  border: 1.5px solid var(--border-strong);
+  border: 2px solid var(--muted);
   border-radius: 3px;
   background: transparent;
 }
 .gd-rail-mark[data-unsorted]::before { border-style: dashed; }
-.gd-rail-mark:hover::before { border-color: var(--muted); }
+.gd-rail-mark:hover::before { border-color: var(--text); }
 .gd-rail-mark[data-reviewed]::before { border-color: var(--status-done); background: var(--status-done); }
 .gd-rail-mark[aria-current='true']::before {
-  width: 10px;
-  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent);
+  width: 12px;
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
 }
 .gd-rail-mark:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 

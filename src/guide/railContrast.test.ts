@@ -41,7 +41,7 @@ const themes = {
 
 describe('the guide rail (#201)', () => {
   it('draws each state with its token', () => {
-    expect(rail).toMatch(/\.gd-rail-mark::before \{[^}]*border: 1\.5px solid var\(--border-strong\)/);
+    expect(rail).toMatch(/\.gd-rail-mark::before \{[^}]*border: 2px solid var\(--muted\)/);
     expect(rail).toMatch(/\.gd-rail-mark\[data-unsorted\]::before \{ border-style: dashed; \}/);
     expect(rail).toMatch(/\.gd-rail-mark\[data-reviewed\]::before \{ border-color: var\(--status-done\); background: var\(--status-done\); \}/);
     expect(rail).toMatch(/\.gd-rail-mark\[aria-current='true'\]::before \{[^}]*var\(--accent\)/);
@@ -53,7 +53,7 @@ describe('the guide rail (#201)', () => {
   for (const [name, t] of Object.entries(themes)) {
     it(`${name}: every state clears 3:1 on the pane, the count 4.5`, () => {
       const pane = t.get('--panel')!;
-      for (const k of ['--border-strong', '--status-done', '--accent', '--muted']) {
+      for (const k of ['--muted', '--status-done', '--accent', '--text']) {
         expect(ratio(t.get(k)!, pane), `${name} ${k}`).toBeGreaterThanOrEqual(3);
       }
       for (const k of ['--text', '--muted', '--status-done']) {
