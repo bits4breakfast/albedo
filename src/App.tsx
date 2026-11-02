@@ -1047,7 +1047,8 @@ export default function App() {
       run: () => {
         if (!selected || selected.kind === 'chat') return;
         if (document.querySelector('[aria-modal="true"]') !== null) return;
-        requestGuide(selected.id);
+        // The key, unlike a click, takes focus into the guide (#217).
+        requestGuide(selected.id, { focus: true });
       },
     },
     // The message box is in the transcript: show it, then ask it to attach.
