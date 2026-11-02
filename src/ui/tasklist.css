@@ -221,6 +221,15 @@
 .task-ci { white-space: nowrap; font-weight: 600; }
 .task-ci[data-outcome='pass'] { color: var(--add); }
 .task-ci[data-outcome='fail'] { color: var(--danger); }
+/* A review that landed unseen (reviewNotice.ts, #180): the review chip's own
+   tokens, a glyph and a word. Measured light | dark on every ground the row
+   can have, worst first:
+     --add   as .task-ci above
+     --warn  --panel-active 5.86 | --panel-raised 8.38; --panel-raised 6.26
+             light; --panel-hover 6.60 | 8.91; --row-blocked-hover 6.75 | 8.82 */
+.task-review { white-space: nowrap; font-weight: 600; }
+.task-review[data-outcome='approved'] { color: var(--add); }
+.task-review[data-outcome='changes-requested'] { color: var(--warn); }
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on

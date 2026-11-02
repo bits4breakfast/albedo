@@ -9,10 +9,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { OpenFileRequest, Task } from '../types';
 import { openExternal } from '../lib/openUrl';
-import { getPrStatus, refreshPrStatus, usePrStatus, usePrStatusVersion } from '../gh/prStore';
+import { getPrStatus, refreshPrStatus, usePrStatus, usePrStatusVersion, useViewerLogin } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
 import { commitsOnBranch } from '../git/worktree';
-import { prLabel, prTooltip, type PrStatus } from '../gh/prStatus';
+import { prLabel, prTooltip, reviewChip, reviewTooltip, type PrStatus } from '../gh/prStatus';
 import ChecksDialog from './ChecksDialog';
 import { ciCueFor, takeChecksRequest, useCiVersion } from './ciNotice';
 import './pr.css';
@@ -71,6 +71,9 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
   // does not change when gh answers "none" -- the version does, and is what
   // re-renders this when it does.
   usePrStatusVersion();
+  // Whose PR this is decides whether "Awaiting Review" is worth showing.
+  // Asked only once there is an open PR to show a chip for.
+  const viewer = useViewerLogin(pr?.state === 'open', task?.id ?? null);
 
   // A turn that just ended is when a Create PR or a Push has just finished:
   // ask GitHub then, and again shortly after -- a push's checks are only
@@ -144,6 +147,7 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
         )}
         <span>{label.text}</span>
       </button>
+      {pr.state === 'open' && <ReviewChip pr={pr} viewer={viewer} />}
       <span className="sr-only" role="status">
         {cue ? `Checks ${cue === 'pass' ? 'passed' : 'failed'} on pull request ${pr.number}` : ''}
       </span>
@@ -194,5 +198,35 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
         </>
       )}
     </span>
+  );
+}
+
+/**
+ * The review chip beside the PR badge (#180): a second fact, so checks and
+ * review never share one label. Approved in the pass tone, Changes Requested
+ * in the warn tone, Awaiting Review quiet; each with a glyph and the words, as
+ * the badge. Nothing for a draft, merged or closed PR, for a PR nobody needs
+ * to review, or for the owner's own PR when nobody was asked (`reviewChip`).
+ * A click opens the PR on GitHub, where the reviews are; the tooltip names
+ * the reviewers.
+ */
+function ReviewChip({ pr, viewer }: { pr: PrStatus; viewer: string | null }) {
+  const chip = reviewChip(pr, viewer);
+  if (!chip) return null;
+  return (
+    <button
+      type="button"
+      className="pr-badge pr-review"
+      data-tone={chip.tone}
+      data-review={chip.kind}
+      title={reviewTooltip(pr)}
+      aria-label={`Review: ${chip.text}. Open the reviews on GitHub`}
+      onClick={() => void openExternal(pr.url)}
+    >
+      <span className="pr-glyph" aria-hidden="true">
+        {chip.glyph}
+      </span>
+      <span>{chip.text}</span>
+    </button>
   );
 }

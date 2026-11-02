@@ -1,7 +1,19 @@
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { urlOpener } from '../lib/platform';
-import { GH_PROGRAMS, fetchPrStatus, gh, parsePrBase, prLookupBranch, setGhRunner, type GhRunner, type GhProgram } from './gh';
+import {
+  GH_PROGRAMS,
+  fetchPrStatus,
+  gh,
+  loadViewerLogin,
+  parsePrBase,
+  prLookupBranch,
+  resetViewerLoginForTests,
+  setGhRunner,
+  viewerLogin,
+  type GhRunner,
+  type GhProgram,
+} from './gh';
 
 const task = {
   branch: 'feat/x',
@@ -132,5 +144,48 @@ describe('parsePrBase', () => {
     expect(parsePrBase(out, 'anna/fix-tz')).toBeNull();
     expect(parsePrBase('not json', 'b')).toBeNull();
     expect(parsePrBase('{"number":1}', 'b')).toBeNull();
+  });
+});
+
+describe('viewerLogin (#180)', () => {
+  afterEach(() => {
+    resetViewerLoginForTests();
+    vi.useRealTimers();
+  });
+
+  it('asks gh once per run, and asks for the PR fields it needs', async () => {
+    resetViewerLoginForTests();
+    const calls = install(async () => ({ code: 0, stdout: 'octo\n', stderr: '' }));
+    expect(viewerLogin()).toBeNull();
+    const [a, b] = await Promise.all([loadViewerLogin(), loadViewerLogin()]);
+    expect([a, b]).toEqual(['octo', 'octo']);
+    expect(await loadViewerLogin()).toBe('octo');
+    expect(viewerLogin()).toBe('octo');
+    expect(calls.map((c) => c[1])).toEqual([['api', 'user', '--jq', '.login']]);
+  });
+
+  it('a failure is unknown, and is not asked again for a while', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    resetViewerLoginForTests();
+    const calls = install(async () => ({ code: 1, stdout: '', stderr: 'not logged in' }));
+    expect(await loadViewerLogin()).toBeNull();
+    expect(await loadViewerLogin()).toBeNull();
+    expect(calls.length).toBe(1);
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    expect(await loadViewerLogin()).toBeNull();
+    expect(calls.length).toBe(2);
+  });
+
+  it("takes an Enterprise managed user's login, which has an underscore", async () => {
+    resetViewerLoginForTests();
+    install(async () => ({ code: 0, stdout: 'alice_acme\n', stderr: '' }));
+    expect(await loadViewerLogin()).toBe('alice_acme');
+  });
+
+  it('the PR view asks for reviews, requests and the author', async () => {
+    const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
+    await fetchPrStatus(task);
+    const fields = calls[0]![1][calls[0]![1].indexOf('--json') + 1]!.split(',');
+    expect(fields).toEqual(expect.arrayContaining(['reviewDecision', 'latestReviews', 'reviewRequests', 'author']));
   });
 });

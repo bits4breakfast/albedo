@@ -40,8 +40,9 @@ export interface HeaderProps {
   theme: ThemeChoice;
   onThemeChange: (next: ThemeChoice) => void;
   /**
-   * "Notify When CI Finishes" (ui/ciNotice.ts): the banner and Dock bounce
-   * when a task's PR checks pass or fail while Albedo is in the background.
+   * "Notify About PRs: Checks and Reviews" (ui/ciNotice.ts, ui/reviewNotice.ts):
+   * the banner and Dock bounce when a task's PR checks pass or fail, or a
+   * review lands on it, while Albedo is in the background.
    * Optional so the header renders without it; absent, the item is not shown.
    */
   ciNotify?: boolean;
@@ -140,9 +141,9 @@ export default function Header({
               ? [
                   {
                     id: 'ci-notify',
-                    label: 'Notify When CI Finishes',
+                    label: 'Notify About PRs: Checks and Reviews',
                     title:
-                      "A banner and a Dock bounce when a task's PR checks pass or fail while Albedo is in the background. The task's row is marked either way.",
+                      "A banner and a Dock bounce when a task's PR checks pass or fail, or its PR is approved or gets changes requested, while Albedo is in the background. The task's row is marked either way.",
                     checked: ciNotify,
                     group: true,
                     onSelect: () => onCiNotifyChange(!ciNotify),

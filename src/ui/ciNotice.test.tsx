@@ -119,7 +119,7 @@ describe('observeCi', () => {
     expect(ciMarkFor(7)).toBeUndefined();
   });
 
-  it('"Notify When CI Finishes" off: no banner, no bounce; the mark stays', () => {
+  it('the PR notifications switch off: no banner, no bounce; the mark stays', () => {
     setCiNotifyEnabled(false);
     expect(ciNotifyEnabled()).toBe(false);
     observeCi(T, running(), null);

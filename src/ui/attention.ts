@@ -125,10 +125,15 @@ const notificationsCodec: Codec<boolean> = {
 const lastNotified = new Map<string, number>();
 
 /**
- * What a banner was about. The session's own kinds, and a PR's checks
- * finishing (`ui/ciNotice.ts`).
+ * What a banner was about. The session's own kinds, a PR's checks finishing
+ * (`ui/ciNotice.ts`), and a review landing on it (`ui/reviewNotice.ts`).
  */
-export type BannerKind = AttentionKind | 'checks-pass' | 'checks-fail';
+export type BannerKind =
+  | AttentionKind
+  | 'checks-pass'
+  | 'checks-fail'
+  | 'review-approved'
+  | 'review-changes-requested';
 
 /**
  * The kind of the last banner posted for each task. A click carries only the
@@ -508,6 +513,30 @@ export function noteChecksFinished(
   if (notificationsEnabled()) {
     try {
       postFor(taskId, outcome === 'pass' ? 'checks-pass' : 'checks-fail', banner);
+    } catch {
+      /* as in noteStatusChange */
+    }
+  }
+  return true;
+}
+
+/**
+ * A review landed on a task's PR (#180; `ui/reviewNotice.ts` has decided it
+ * is news, and that this kind of news is wanted). Same rules as
+ * {@link noteChecksFinished}: unfocused only, one informational bounce and the
+ * banner unless banners are off; focused, it does nothing and says so. No
+ * rate limit: the caller announces each review once.
+ */
+export function noteReviewLanded(
+  taskId: number,
+  outcome: 'approved' | 'changes-requested',
+  banner: { title: string; body: string },
+): boolean {
+  if (focused) return false;
+  requestOsAttention(false);
+  if (notificationsEnabled()) {
+    try {
+      postFor(taskId, outcome === 'approved' ? 'review-approved' : 'review-changes-requested', banner);
     } catch {
       /* as in noteStatusChange */
     }
