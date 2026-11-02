@@ -16,7 +16,7 @@ import type { LoadedBranchDiff } from './branchDiff';
 let loaded: LoadedBranchDiff;
 vi.mock('./branchDiff', () => ({ loadBranchDiff: async () => loaded }));
 vi.mock('../ui/editor/diffComments', () => ({
-  useDiffComments: () => ({ annotations: null, notice: null, clearNotice: () => {} }),
+  useDiffComments: () => ({ annotations: null, notice: null, clearNotice: () => {}, bar: null }),
 }));
 
 const { default: GuidePane, nextToReview } = await import('./GuidePane');

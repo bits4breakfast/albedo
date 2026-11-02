@@ -147,6 +147,7 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
           </button>
         </div>
       ) : null}
+      {comments.bar}
       <div className="ed-diff-scroll">
         <DiffAnnotationsContext.Provider value={comments.annotations}>
           <DiffBody data={load.data} />

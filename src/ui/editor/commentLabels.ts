@@ -1,0 +1,49 @@
+/**
+ * What a review comment's card says about its state (#222), shared by the
+ * File mode's CodeMirror widget (comments.ts) and the Diff mode's React card
+ * (CommentViews.tsx), so the two read the same. Pure.
+ *
+ * The state is a chip, never a ✓: the ✓ is Resolve, and "✓ Sent" read as
+ * done. Waiting says where it goes; Sent says when it went.
+ */
+
+import type { ReviewComment } from '../../db/comments';
+
+/** "just now", "4 min ago", "2 h ago", "on 3 Nov". */
+export function ago(at: number, now: number): string {
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h ago`;
+  return `on ${new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+}
+
+export interface CardState {
+  /** For `data-state` on the card and its chip. */
+  state: 'waiting' | 'sent';
+  chip: string;
+  /** The one action on the card's row; the others are under ⋯. */
+  main: 'edit' | 'resolve';
+  more: ReadonlyArray<'edit' | 'resolve' | 'delete'>;
+}
+
+export function cardState(c: Pick<ReviewComment, 'sentAt'>, now = Date.now()): CardState {
+  if (c.sentAt === null) {
+    return { state: 'waiting', chip: 'Waiting · goes with your next message', main: 'edit', more: ['resolve', 'delete'] };
+  }
+  return { state: 'sent', chip: `↗ Sent ${ago(c.sentAt, now)}`, main: 'resolve', more: ['edit', 'delete'] };
+}
+
+export const ACTION_LABEL: Record<'edit' | 'resolve' | 'delete', string> = {
+  edit: 'Edit',
+  resolve: '✓ Resolve',
+  delete: 'Delete',
+};
+
+/** The trace a comment resolved on its own leaves on the file (#222). */
+export function resolvedTrace(c: Pick<ReviewComment, 'lineStart' | 'lineEnd'>): string {
+  const where = c.lineStart === c.lineEnd ? `Line ${c.lineStart}` : `Lines ${c.lineStart}–${c.lineEnd}`;
+  return `${where} changed after it was sent`;
+}

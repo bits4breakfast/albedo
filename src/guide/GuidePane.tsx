@@ -697,6 +697,7 @@ function GuideFileDiff({
           </button>
         </div>
       ) : null}
+      {comments.bar}
       <div className="gd-diff-scroll">
         {reviewed && !showAnyway ? (
           <div className="gd-collapsed">
