@@ -9,7 +9,7 @@
  *   edge    --focus, 2px    the field always holds focus while it is shown;
  *                           5.32 light / 6.62 dark on --panel-raised, the
  *                           row ground it sits on when selected
- *   select  ::selection --accent-soft (global); --text-strong on it 17.0 light / 14.9 dark
+ *   select  ::selection --selection (global); --text-strong on it 10.76 light / 6.92 dark
  *
  * The same size and weight as the title it replaces, so the text does not
  * jump when the field opens.
