@@ -11,11 +11,11 @@ function pr(reviews: ReturnType<typeof rev>[], over: Record<string, unknown> = {
 }
 
 /** Feed answers in order; collect the events. */
-function run(answers: (PrStatus | null)[], viewer: string | null = null) {
+function run(answers: (PrStatus | null)[], viewer: string | null | (string | null)[] = 'me') {
   let watch: ReviewWatch | undefined;
   const events = [];
-  for (const a of answers) {
-    const step = reviewStep(watch, a, viewer);
+  for (const [i, a] of answers.entries()) {
+    const step = reviewStep(watch, a, Array.isArray(viewer) ? (viewer[i] ?? null) : viewer);
     watch = step.watch;
     if (step.event) events.push(step.event);
   }
@@ -75,7 +75,13 @@ describe('reviewStep', () => {
 
   it("the signed-in user's own review is not news to them", () => {
     expect(run([pr([]), pr([rev('Octo', 'APPROVED', 't1')])], 'octo')).toEqual([]);
-    expect(run([pr([]), pr([rev('Octo', 'APPROVED', 't1')])], null).length).toBe(1);
+  });
+
+  it('while the signed-in user is unknown, a new review waits, then is judged once they are known', () => {
+    const own = [pr([]), pr([rev('Octo', 'APPROVED', 't1')]), pr([rev('Octo', 'APPROVED', 't1')])];
+    expect(run(own, ['octo', null, 'octo'])).toEqual([]);
+    const theirs = [pr([]), pr([rev('alice', 'APPROVED', 't1')]), pr([rev('alice', 'APPROVED', 't1')])];
+    expect(run(theirs, ['octo', null, 'octo']).map((e) => e.reviewers)).toEqual([['alice']]);
   });
 });
 

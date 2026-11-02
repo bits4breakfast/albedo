@@ -53,7 +53,8 @@ beforeEach(() => {
     },
   });
   resetReviewNoticesForTests();
-  resetViewerLoginForTests();
+  // Signed in as someone who is not the reviewer: unknown holds reviews back.
+  resetViewerLoginForTests('me');
   backend(false);
 });
 afterEach(() => {

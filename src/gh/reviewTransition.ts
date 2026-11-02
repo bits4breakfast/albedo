@@ -63,6 +63,10 @@ export function reviewStep(prev: ReviewWatch | undefined, pr: PrStatus | null, v
   const reviews = pr.reviews ?? [];
   const seen = new Set(reviews.map(reviewKey));
   if (!prev || prev.prNumber !== pr.number) return { watch: { prNumber: pr.number, seen }, event: null };
+  // Who "you" are is not known yet (`gh api user` still out, or failed): a
+  // new review cannot be told from your own, so it waits, unseen, and is
+  // judged once the login is known -- never announced as someone else's.
+  if (viewer === null) return { watch: prev, event: null };
   // Keep what was seen before as well: a review that drops out of
   // `latestReviews` and comes back (dismissed, then restored) is not new.
   for (const k of prev.seen) seen.add(k);

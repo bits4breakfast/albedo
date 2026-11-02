@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetViewerLoginForTests } from '../gh/gh';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import type { Task } from '../types';
 import { parsePrView, type PrStatus } from '../gh/prStatus';
@@ -46,6 +47,8 @@ const tasks = [row(1, 'Fix login'), row(2, 'Write docs')];
 
 beforeEach(() => {
   rn.resetReviewNoticesForTests();
+  // Signed in as someone who is not the reviewer: unknown holds reviews back.
+  resetViewerLoginForTests('me');
   ci.resetCiNoticesForTests();
   __setAttentionBackend(() => {}, true, () => {});
 });
