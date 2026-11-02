@@ -65,7 +65,7 @@ afterEach(() => {
 
 const prompt = 'ExportTest fails one run in five.\nFind out why.';
 
-async function create(request: boolean, tick = false) {
+async function create(request: boolean, untick = false) {
   const onCreated = vi.fn();
   render(
     <NewTaskDialog
@@ -75,7 +75,7 @@ async function create(request: boolean, tick = false) {
       prefill={{ projectId: 1, title: 'Fix flaky export', prompt, ...(request ? { request: { id: 's1' } } : {}) }}
     />,
   );
-  if (tick) fireEvent.click(await screen.findByLabelText('Send it when the session starts'));
+  if (untick) fireEvent.click(await screen.findByLabelText('Send it when the session starts'));
   const button = await screen.findByRole('button', { name: 'Create Worktree' });
   await waitFor(() => expect(button).not.toHaveProperty('disabled', true));
   fireEvent.click(button);
@@ -89,19 +89,20 @@ describe('NewTaskDialog from a session request', () => {
       <NewTaskDialog open onClose={() => {}} onCreated={() => {}} prefill={{ projectId: 1, title: 't', prompt, request: { id: 's1' } }} />,
     );
     expect(await screen.findByRole('heading', { name: 'New Task from Request' })).toBeTruthy();
-    expect(screen.getByText(/Left unsent in the new task/)).toBeTruthy();
+    expect(screen.getByText('Sent once, when the session starts.')).toBeTruthy();
+    expect((screen.getByLabelText('Send it when the session starts') as HTMLInputElement).checked).toBe(true);
   });
 
-  it('keeps the prompt as the new task\'s unsent draft, and sends nothing', async () => {
+  it('sends the prompt when the session starts, by default (#188)', async () => {
     const onCreated = await create(true);
-    expect(drafts.saveDraft).toHaveBeenCalledWith(41, prompt, new Map());
-    expect(onCreated.mock.calls[0]?.[1]).toBe('');
-  });
-
-  it('sends it at start instead when the user ticks the box', async () => {
-    const onCreated = await create(true, true);
     expect(drafts.saveDraft).not.toHaveBeenCalled();
     expect(onCreated.mock.calls[0]?.[1]).toBe(prompt);
+  });
+
+  it("keeps it as the new task's unsent draft instead when the user unticks the box", async () => {
+    const onCreated = await create(true, true);
+    expect(drafts.saveDraft).toHaveBeenCalledWith(41, prompt, new Map());
+    expect(onCreated.mock.calls[0]?.[1]).toBe('');
   });
 
   it('a follow-up (no request) still sends its prompt, as before', async () => {
