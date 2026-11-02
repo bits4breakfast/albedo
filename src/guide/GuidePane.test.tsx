@@ -428,7 +428,10 @@ describe('⇧⌘G puts focus in the guide (#217)', () => {
     await screen.findByRole('heading', { name: 'Everything' });
     typing.focus();
     act(() => void requestGuide(task.id, { focus: true }));
-    expect(document.activeElement).toBe(root());
+    // Waited for, not read at once: under load the pane's subscription to
+    // focus requests can attach just after the request; React re-checks on
+    // attaching and focus follows a moment later.
+    await waitFor(() => expect(document.activeElement).toBe(root()));
   });
 
   it('with no guide yet, focus goes to Write Guide', async () => {
