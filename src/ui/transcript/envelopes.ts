@@ -47,7 +47,8 @@
  * ## Albedo's own markers
  *
  * What the message box sends carries markers Albedo writes itself -- a paste
- * is `<pasted-text id="1" lines="42">…</pasted-text id="1">` (#155). Their
+ * is `<pasted-text id="1" lines="42">…</pasted-text id="1">` (#155), a quoted
+ * passage `<transcript-quote id="1" message="…">…</transcript-quote id="1">` (#187). Their
  * shape lives in `albedoMarkers.ts`, which writes and finds them; this file
  * turns them into blocks, at the top level of a body and inside Claude Code's
  * `<pasted_content>` alike, since the whole message often arrives in one.
@@ -55,6 +56,7 @@
 
 import { BLOCK_TAGS, findMarker, splitMarkers, type Marker } from './albedoMarkers';
 import { inlineMentions, mentionOfMarker, type Mention } from './mentions';
+import { quoteOf } from './transcriptQuotes';
 
 export type UserBlock =
   /**
@@ -126,6 +128,12 @@ export type UserBlock =
    * {@link unwrapSoleStreamedPaste}).
    */
   | { kind: 'pasted'; id: string | null; text: string; own: boolean }
+  /**
+   * A passage of the transcript you quoted to comment on it (#187), from
+   * Albedo's `<transcript-quote>` marker; your comment follows as text.
+   * `messageId` is the row it came from, null when the marker names none.
+   */
+  | { kind: 'quote'; messageId: number | null; text: string; code: boolean; lang: string | null }
   /** A skill's SKILL.md, loaded into context when it was invoked. */
   | { kind: 'skill'; name: string; dir: string; text: string };
 
@@ -532,6 +540,8 @@ function markerBlock(m: Marker): UserBlock {
   switch (m.tag) {
     case 'pasted-text':
       return { kind: 'pasted', id: m.attrs.id ?? null, text: m.content, own: true };
+    case 'transcript-quote':
+      return { kind: 'quote', ...quoteOf(m) };
     case 'task-ref':
     case 'file-ref': {
       // Found with the text around it (`pushText`), never as a block; drawn
@@ -747,7 +757,7 @@ export function parseUserBody(body: string): UserBlock[] {
  * started them: every `<command-name>` on a non-meta line in local transcripts
  * was one the user typed. A bare `/clear` is `cleared` by now, the divider.
  * So is a paste from the message box: a message that is only a paste is still
- * the person's.
+ * the person's, and so is a quote they commented on (#187).
  */
 export function isAllEnvelopes(blocks: readonly UserBlock[]): boolean {
   return (
@@ -758,6 +768,7 @@ export function isAllEnvelopes(blocks: readonly UserBlock[]): boolean {
         b.kind !== 'shell-input' &&
         b.kind !== 'action' &&
         b.kind !== 'command' &&
+        b.kind !== 'quote' &&
         !(b.kind === 'pasted' && b.own),
     )
   );

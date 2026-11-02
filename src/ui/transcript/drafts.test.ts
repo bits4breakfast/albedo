@@ -8,12 +8,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KEYS } from '../persisted';
+import type { TranscriptComment } from './transcriptQuotes';
 import {
   DRAFT_MAX_AGE_MS,
   DRAFT_WRITE_DELAY_MS,
   __resetDrafts,
+  addComment,
+  commentsOf,
   draftsCodec,
   dropDraft,
+  dropDraftText,
+  editComment,
+  removeComment,
+  takeComments,
   flushDrafts,
   getDraft,
   keepDraftsFor,
@@ -180,5 +187,103 @@ describe('the store', () => {
     saveDraft(1, 'kept in memory', new Map());
     expect(() => vi.advanceTimersByTime(DRAFT_WRITE_DELAY_MS)).not.toThrow();
     expect(getDraft(1)?.text).toBe('kept in memory');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comments on transcript passages (#187): part of the draft
+// ---------------------------------------------------------------------------
+
+describe('waiting comments', () => {
+  const c = (id: string, over: Partial<TranscriptComment> = {}): TranscriptComment => ({
+    id,
+    messageId: 7,
+    quote: `passage ${id}`,
+    code: false,
+    comment: `comment ${id}`,
+    at: T0,
+    offset: 0,
+    addedAt: T0,
+    ...over,
+  });
+
+  it('add, edit and remove; a draft can be comments alone, with an empty box', () => {
+    addComment(1, c('a'));
+    addComment(1, c('b'));
+    expect(commentsOf(1).map((x) => x.id)).toEqual(['a', 'b']);
+    expect(getDraft(1)?.text).toBe('');
+    editComment(1, 'a', 'changed my mind');
+    expect(commentsOf(1)[0]?.comment).toBe('changed my mind');
+    editComment(1, 'a', '   '); // empty is not a comment: Remove is the way
+    expect(commentsOf(1)[0]?.comment).toBe('changed my mind');
+    removeComment(1, 'a');
+    expect(commentsOf(1).map((x) => x.id)).toEqual(['b']);
+    removeComment(1, 'b');
+    expect(getDraft(1)).toBeNull();
+  });
+
+  it('survive a restart, and are per task', () => {
+    addComment(1, c('a', { code: true, lang: 'ts' }));
+    addComment(2, c('z'));
+    restart();
+    expect(commentsOf(1)).toEqual([c('a', { code: true, lang: 'ts' })]);
+    expect(commentsOf(2).map((x) => x.id)).toEqual(['z']);
+  });
+
+  it('typing in the box and emptying it again leaves them waiting', () => {
+    addComment(1, c('a'));
+    saveDraft(1, 'some text', new Map());
+    expect(getDraft(1)?.text).toBe('some text');
+    expect(commentsOf(1)).toHaveLength(1);
+    saveDraft(1, '', new Map());
+    expect(getDraft(1)?.text).toBe('');
+    expect(commentsOf(1)).toHaveLength(1);
+  });
+
+  it('a send under way drops the box part, never the comments (dropDraftText)', () => {
+    saveDraft(1, 'being sent', new Map([[1, 'p']]));
+    addComment(1, c('a'));
+    dropDraftText(1);
+    expect(getDraft(1)).toMatchObject({ text: '', pastes: [] });
+    expect(commentsOf(1)).toHaveLength(1);
+    saveDraft(2, 'no comments', new Map());
+    dropDraftText(2);
+    expect(getDraft(2)).toBeNull();
+  });
+
+  it('keepUnsent keeps them beside the text that was not sent', () => {
+    addComment(1, c('a'));
+    keepUnsent(1, 'held', new Map());
+    expect(getDraft(1)).toMatchObject({ text: 'held', notSent: true });
+    expect(commentsOf(1)).toHaveLength(1);
+  });
+
+  it('takeComments removes only those a message carried', () => {
+    addComment(1, c('a'));
+    addComment(1, c('b'));
+    takeComments(1, ['a']);
+    expect(commentsOf(1).map((x) => x.id)).toEqual(['b']);
+    takeComments(1, ['b']);
+    expect(getDraft(1)).toBeNull();
+  });
+
+  it('go with their task, and a task newer than the read keeps them (#184)', () => {
+    addComment(1, c('live'), T0 - 10);
+    addComment(2, c('archived'), T0 - 10);
+    const readStartedAt = Date.now();
+    addComment(42, c('new task'));
+    keepDraftsFor([1], Date.now(), readStartedAt);
+    expect(commentsOf(1)).toHaveLength(1);
+    expect(commentsOf(2)).toHaveLength(0);
+    expect(commentsOf(42)).toHaveLength(1);
+  });
+
+  it('a malformed comment drops its draft from storage, not every draft', () => {
+    const raw = JSON.stringify({
+      1: { text: '', pastes: [], savedAt: T0, comments: [{ id: 'a', quote: 'no message id' }] },
+      2: { text: 'fine', pastes: [], savedAt: T0 },
+    });
+    const back = draftsCodec.decode(raw);
+    expect([...(back?.keys() ?? [])]).toEqual([2]);
   });
 });
