@@ -27,6 +27,8 @@ export const KEYS = {
   orientation: 'albedo.shell.orientation',
   selectedTask: 'albedo.shell.selectedTask',
   activeProject: 'albedo.shell.activeProject',
+  /** Where each project tab was last left: a task, or the project view (app/useSelection.ts owns the shape). */
+  projectPlaces: 'albedo.shell.projectPlaces',
   rightTab: 'albedo.shell.rightTab',
   filesPinned: 'albedo.shell.filesPinned',
   filesWidth: 'albedo.shell.filesWidth',

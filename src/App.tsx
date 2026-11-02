@@ -1,5 +1,5 @@
 import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
-import { idCodec, KEYS, numberListCodec, readPersisted, writePersisted } from './ui/persisted';
+import { KEYS, numberListCodec, writePersisted } from './ui/persisted';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { OpenFileRequest, Project, Task } from './types';
@@ -11,6 +11,7 @@ import useLaunchNotices from './ui/app/useLaunchNotices';
 import useSessionRequests from './ui/app/useSessionRequests';
 import { resolveRequest } from './ui/requestQueue';
 import useProjectTabs from './ui/app/useProjectTabs';
+import useSelection from './ui/app/useSelection';
 import ProjectTabs from './ui/app/ProjectTabs';
 import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
 import { useQuitGuard } from './ui/quitGuard';
@@ -64,6 +65,8 @@ import WhatsNewDialog from './ui/WhatsNewDialog';
 import useWhatsNew from './ui/app/useWhatsNew';
 import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
+import ProjectFiles from './ui/ProjectFiles';
+import ProjectBar from './ui/ProjectBar';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
 import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
@@ -154,9 +157,6 @@ export default function App() {
     markSeen,
   } = useTasks();
 
-  const [selectedId, setSelectedId] = useState<number | null>(() =>
-    readPersisted(KEYS.selectedTask, idCodec, null),
-  );
   /** Tasks whose terminal has been brought up. Kept alive until the task goes. */
   const [openIds, setOpenIds] = useState<number[]>([]);
 
@@ -172,7 +172,8 @@ export default function App() {
     filesPinned,
     setFilesPinned,
     filesWidth,
-    filesColumnShown,
+    filesColumnShown: taskFilesColumnShown,
+    filesColumnShownAlone,
     dragging,
     shellOpen,
     setShellOpen,
@@ -246,9 +247,33 @@ export default function App() {
     reorderProjects,
     showTabs,
     activeProjectTab,
+    activeProjectTabKey,
     selectTab,
-    selectTabRef,
-  } = useProjectTabs(projects, tasks);
+    switchTab,
+  } = useProjectTabs(projects, tasks, (key) => landRef.current(key));
+
+  /*
+   * The selection: a task, or null for the active project's own view (#181).
+   * It and the tab move together (see useSelection): a tab switch lands on
+   * the place last left there, and selecting a task takes its tab along.
+   */
+  const { selectedId, select, land, showProjectView, clickTab } = useSelection({
+    tasks,
+    projects,
+    loading,
+    tabs,
+    activeTab: activeProjectTab,
+    activeKey: activeProjectTabKey,
+    selectTab,
+    switchTab,
+    onShow: (id) => {
+      setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      // Looking at it is what "seen" means; nothing else clears the mark.
+      clearAttention(id);
+    },
+  });
+  const landRef = useRef(land);
+  landRef.current = land;
 
   /**
    * Scoped only while the bar is showing. With the bar hidden nothing is
@@ -359,6 +384,15 @@ export default function App() {
   }, [shellOpen, shellProject]);
   const browseTaskRef = useRef(browseTask);
   browseTaskRef.current = browseTask;
+  /**
+   * The project view (#181): no task selected, and a project with a folder to
+   * show. The pane shows the main checkout's files through `browseTask` --
+   * read-only, no composer, no session, no terminal: nothing is spawned for
+   * it and nothing about it is written.
+   */
+  const projectView = !loading && selectedId === null && browseTask !== null;
+  /** Whether the pinned Files column fits: the project view has the whole row to fit it in. */
+  const filesColumnShown = projectView ? filesColumnShownAlone : taskFilesColumnShown;
   /** The folder the search dialogs work in: the task's worktree, else the checkout. */
   const searchTask = selected ?? browseTask;
   const searchScopeLabel = selected === null && browseTask ? `${browseTask.title} · main checkout` : null;
@@ -538,25 +572,6 @@ export default function App() {
     [],
   );
 
-  // select() is stable, so it reads the tabs through a ref rather than closing
-  // over them.
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-
-  const select = useCallback((id: number) => {
-    // The scope moves first. A task in another project's tab would otherwise be
-    // selected behind a list that does not show it, which reads as nothing
-    // happening. Only a visible tab can take the scope; a hidden one is the
-    // user's choice and is left alone.
-    const home = tabsRef.current.find((t) => t.tasks.some((task) => task.id === id));
-    if (home) selectTabRef.current?.(home.key);
-    setSelectedId(id);
-    writePersisted(KEYS.selectedTask, idCodec, id);
-    setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-    // Looking at it is what "seen" means; nothing else clears the mark.
-    clearAttention(id);
-  }, []);
-
   /*
    * Which tasks are asking for attention, and the window focus that decides
    * whether the ask is a dock bounce or a pulse in the list. See ui/attention.
@@ -669,8 +684,9 @@ export default function App() {
       setOpenRequest({ taskId, request: req, step: options?.step });
       // A step keeps the Files tab on screen: the list is what is being walked.
       setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
-      // The editor is useless behind a full-width terminal.
-      setMode((m) => (m === 'pty' ? 'split' : m));
+      // The editor is useless behind a full-width terminal. The project view
+      // has no terminal, and its pane shows whatever the mode.
+      if (selectedIdRef.current !== null) setMode((m) => (m === 'pty' ? 'split' : m));
     };
     const root = (selectedRef.current ?? browseTaskRef.current)?.worktreePath ?? null;
     if (!options?.lookup || !isBareName(request.path) || root === null) {
@@ -696,10 +712,10 @@ export default function App() {
    * ## THE RULE
    *
    * SELECTING A TASK THAT IS NOT IN THE ACTIVE SCOPE IS A NO-OP UNLESS THE
-   * SCOPE MOVES FIRST. The auto-select effect re-picks from the active tab's
-   * task list, so a `select()` into a tab that is not showing is immediately
-   * undone — and the symptom is the task appearing to vanish, a long way from
-   * the cause.
+   * SCOPE MOVES FIRST. A task selected behind a list that does not show it
+   * reads as the task vanishing, a long way from the cause. `select()` moves
+   * the scope itself now, but only to a VISIBLE tab: a closed one must be
+   * reopened first, which only this function does.
    *
    * That bug shipped three times, in three call sites that each had to
    * remember the ordering: new task, resume, and open-adopted-session. Hence
@@ -710,7 +726,8 @@ export default function App() {
    *   1. unhide  — a closed tab cannot be selected, and silently failing to
    *                switch brings the same "task vanished" symptom back through
    *                a new door. Same reasoning as unhiding on blocked.
-   *   2. scope   — the tab must be active before the selection can survive.
+   *   2. scope   — the scope alone (`selectTab`), never `switchTab`: the task
+   *                asked for is the place, not the one remembered there.
    *   3. select  — now it sticks.
    *   4. reveal  — "focus" means the thing is actually on screen, not merely
    *                selected behind a FILES or EDITOR tab.
@@ -733,6 +750,26 @@ export default function App() {
       setRightTab((t) => (t === 'transcript' ? t : 'transcript'));
     },
     [hiddenProjectIds, selectTab, select],
+  );
+
+  /**
+   * A project's own view, from the breadcrumb (#181). A task can be on screen
+   * from a project whose tab is closed (a banner, a reminder); its name then
+   * reopens that tab, as revealTask would, so the view is the project named.
+   */
+  const openProjectView = useCallback(
+    (projectId: number) => {
+      if (hiddenProjectIds.has(projectId)) {
+        setHiddenProjectIds((prev) => {
+          const next = new Set(prev);
+          next.delete(projectId);
+          writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
+          return next;
+        });
+      }
+      showProjectView(`p${projectId}`);
+    },
+    [hiddenProjectIds, setHiddenProjectIds, showProjectView],
   );
 
   /** Close the editor and every tab in it (the pane's ✕, or the last tab closing). */
@@ -759,19 +796,6 @@ export default function App() {
   const [editorCloseSignal, setEditorCloseSignal] = useState(0);
   /** The active tab's file, for the files list and Quick Open. */
   const [editorActivePath, setEditorActivePath] = useState<string | null>(null);
-
-  // Pick something sensible once tasks land: whatever is blocked first, and
-  // always something the active tab can actually show.
-  useEffect(() => {
-    if (loading || visibleTasks.length === 0) return;
-    if (selectedId !== null && visibleTasks.some((t) => t.id === selectedId)) return;
-    const candidate =
-      visibleTasks.find((t) => t.status === 'blocked') ??
-      visibleTasks.find((t) => t.status === 'running') ??
-      visibleTasks.find((t) => t.status !== 'archived') ??
-      visibleTasks[0];
-    if (candidate) select(candidate.id);
-  }, [loading, visibleTasks, selectedId, select]);
 
   // A selection restored from the last run is shown but was never opened, so it
   // had no terminal and the message box could not send to it. Selecting by
@@ -809,8 +833,18 @@ export default function App() {
   // tab is showing falls straight back to the transcript, with no flash.
   // A pinned column also takes FILES out of the tab strip -- a tab that shows
   // you what you are already looking at is noise.
-  const activeTab: RightTab =
-    rightTab === 'editor' && !editorTask
+  // The project view has no transcript: Files, or the editor once a file is
+  // open. With Files pinned as a column and nothing open, its 'transcript'
+  // slot says how to open one.
+  const activeTab: RightTab = projectView
+    ? rightTab === 'editor' && editorTask
+      ? 'editor'
+      : !filesColumnShown
+        ? 'files'
+        : editorTask
+          ? 'editor'
+          : 'transcript'
+    : rightTab === 'editor' && !editorTask
       ? 'transcript'
       : rightTab === 'files' && filesColumnShown
         ? 'transcript'
@@ -833,11 +867,11 @@ export default function App() {
    */
   const readingTabs = useMemo<RightTab[]>(
     () => [
-      'transcript' as const,
+      ...(projectView ? [] : (['transcript'] as const)),
       ...(filesColumnShown ? [] : (['files'] as const)),
       ...(editorTask ? (['editor'] as const) : []),
     ],
-    [filesColumnShown, editorTask],
+    [projectView, filesColumnShown, editorTask],
   );
 
   // ⌘Q and the window's close button ask first while tasks are busy.
@@ -957,7 +991,7 @@ export default function App() {
   const stepProject = (delta: number) => {
     if (!showTabs) return;
     const key = stepProjectTab(tabs.map((t) => t.key), activeProjectTab?.key ?? null, delta);
-    if (key) selectTab(key);
+    if (key) switchTab(key);
   };
 
   useShortcuts({
@@ -997,7 +1031,7 @@ export default function App() {
     // The nth project tab, as shown in the bar. Nothing to do without one.
     'mod+alt+digit': (_e, digit) => {
       const tab = showTabs && digit !== null ? tabs[digit - 1] : undefined;
-      if (tab) selectTab(tab.key);
+      if (tab) switchTab(tab.key);
     },
     // The previous / next tab, stopping at the ends; lands like the digit above.
     'mod+shift+[': () => stepProject(-1),
@@ -1083,7 +1117,7 @@ export default function App() {
             <ProjectTabs
               tabs={tabs}
               activeKey={activeProjectTab?.key ?? ''}
-              onSelect={selectTab}
+              onSelect={clickTab}
               onHide={hideProject}
               hidden={hiddenProjects}
               onRestore={restoreProject}
@@ -1207,17 +1241,21 @@ export default function App() {
                 <>
                   {selectedProject && (
                     <>
-                      <span
+                      {/* The way back to the project itself (#181): its view,
+                          where the tab clicked again also goes. */}
+                      <button
+                        type="button"
                         className="main-ident-project"
                         data-foreign={selectedProjectIsForeign}
                         title={
-                          selectedProjectIsForeign
+                          (selectedProjectIsForeign
                             ? `This task is in ${selectedProject.name}, not the project the list is showing`
-                            : selectedProject.repoPath
+                            : selectedProject.repoPath) + `\nShow ${selectedProject.name}`
                         }
+                        onClick={() => openProjectView(selectedProject.id)}
                       >
                         {selectedProject.name}
-                      </span>
+                      </button>
                       <span className="main-ident-sep" aria-hidden="true">›</span>
                     </>
                   )}
@@ -1360,6 +1398,8 @@ export default function App() {
                     </span>
                   )}
                 </>
+              ) : projectView && activeProject ? (
+                <ProjectBar project={activeProject} onNewTask={() => setNewTaskOpen(true)} />
               ) : null}
             </div>
 
@@ -1367,7 +1407,8 @@ export default function App() {
                 transcript hidden (terminal only) does it fall back to here. */}
             {selected && !showTranscript && <ModelPicker task={selected} />}
 
-            {!editorShowing && (
+            {/* The project view has one pane: nothing to lay out. */}
+            {!editorShowing && !projectView && (
               <div className="seg" role="group" aria-label="Pane layout">
                 <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} title="Terminal only (⌘\)">
                   PTY
@@ -1387,7 +1428,7 @@ export default function App() {
 
             {/* Two icons where a ⋯ held two items: the orientation only
                 means something in Split, and the shell keeps ⌥F12. */}
-            {split && (
+            {split && !projectView && (
               <button
                 type="button"
                 className="icon-btn"
@@ -1425,13 +1466,15 @@ export default function App() {
             </button>
           </div>
 
-          <div className="panes" data-orientation={orientation} data-mode={mode} ref={panesRef}>
+          {/* The project view has no terminal: its one pane is laid out as
+              Transcript mode's is, with no edge against a hidden terminal. */}
+          <div className="panes" data-orientation={orientation} data-mode={projectView ? 'transcript' : mode} ref={panesRef}>
             {/* No task: one message for the whole area, in every mode. Each
                 pane used to say it separately -- the terminal, the transcript
                 ("select a task" with none to select) and the files column, at
                 three different heights -- and Transcript mode hid the only
                 one that offered a next step. */}
-            {!selected && (
+            {!selected && !projectView && (
               <div className="placeholder">
                 {loading ? (
                   <p>Loading tasks…</p>
@@ -1495,21 +1538,24 @@ export default function App() {
                 column, so the column sits beside them rather than inside the
                 tabbed body — and so the split ratio still divides pty from
                 "everything you read", which is what the user is dragging. */}
-            <div className="read-area" style={secondaryStyle} hidden={!showTranscript || !selected}>
+            <div className="read-area" style={secondaryStyle} hidden={!projectView && (!showTranscript || !selected)}>
             <section className="pane pane-transcript">
               {/* Only when it tells panes or tabs apart: in Transcript mode with no
                   other tab, "Transcript" just repeated the switch above. */}
-              {(split || readingTabs.length > 1) && (
+              {(split || projectView || readingTabs.length > 1) && (
               <div className="pane-head">
                 <div className="tabs" role="tablist" aria-label="Reading pane">
-                  <button
-                    role="tab"
-                    aria-selected={activeTab === 'transcript'}
-                    onClick={() => setRightTab('transcript')}
-                    title={selected?.sessionId ? `Session ${selected.sessionId}` : 'No session yet'}
-                  >
-                    Transcript
-                  </button>
+                  {/* The project view has no session, so no transcript. */}
+                  {!projectView && (
+                    <button
+                      role="tab"
+                      aria-selected={activeTab === 'transcript'}
+                      onClick={() => setRightTab('transcript')}
+                      title={selected?.sessionId ? `Session ${selected.sessionId}` : 'No session yet'}
+                    >
+                      Transcript
+                    </button>
+                  )}
                   {!filesColumnShown && (
                     <button
                       role="tab"
@@ -1562,6 +1608,13 @@ export default function App() {
                   buffer survive a tab flip; only the task identity resets them. */}
               <div className="pane-body">
                 <div className="tabpanel tabpanel-col" hidden={activeTab !== 'transcript'}>
+                  {projectView ? (
+                    /* Files pinned as a column and nothing open yet. */
+                    <div className="placeholder">
+                      <p>Open a file from the list, or with Go to File (⇧⌘O).</p>
+                    </div>
+                  ) : (
+                  <>
                   {/* Above the transcript, and only while something is live:
                       when a session fans out the transcript itself goes quiet,
                       which is exactly when you need to know what is running. */}
@@ -1597,12 +1650,18 @@ export default function App() {
                       }}
                     />
                   </PaneErrorBoundary>
+                  </>
+                  )}
                 </div>
 
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
                   {selected ? (
                     <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
                       <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={tabFilesSlot} />
+                    </PaneErrorBoundary>
+                  ) : projectView && browseTask ? (
+                    <PaneErrorBoundary key={`pf-${browseTask.id}`} label="Project files">
+                      <ProjectFiles task={browseTask} activePath={editorTask === browseTask ? editorFile : null} />
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
@@ -1653,6 +1712,10 @@ export default function App() {
                     {selected ? (
                       <PaneErrorBoundary key={`fc-${selected.id}`} label="Touched files">
                         <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={columnFilesSlot} />
+                      </PaneErrorBoundary>
+                    ) : projectView && browseTask ? (
+                      <PaneErrorBoundary key={`pc-${browseTask.id}`} label="Project files">
+                        <ProjectFiles task={browseTask} activePath={editorTask === browseTask ? editorFile : null} />
                       </PaneErrorBoundary>
                     ) : (
                       <div className="placeholder">
@@ -1743,9 +1806,8 @@ export default function App() {
             followUpSeq.current++;
             setNewTaskPrefill(null);
             upsertTask(task);
-            // Switch scope BEFORE selecting: the auto-select effect re-picks
-            // from the active tab's list, so selecting into a tab that is not
-            // showing gets immediately undone.
+            // revealTask, not select: a new task can land in a closed tab,
+            // which must open before the task can show (see revealTask).
             revealTask(task);
             setNewTaskOpen(false);
           }}
@@ -1808,13 +1870,13 @@ export default function App() {
             // Follow the project that was just made. Without this the new tab
             // appears but stays in the background, and a task created into it
             // is filtered out of the active tab and silently deselected.
-            if (created) selectTab(`p${created.id}`);
+            if (created) switchTab(`p${created.id}`);
           }}
           onCreateTaskIn={(project) => {
             // The dialog already remembers the project it just created as the
             // new-task default, so this only has to switch to its tab and open
             // the dialog.
-            selectTab(`p${project.id}`);
+            switchTab(`p${project.id}`);
             setProjectsOpen(false);
             setNewTaskOpen(true);
           }}
@@ -1831,7 +1893,7 @@ export default function App() {
             for (const p of created) dismiss(`repo:${p.repoPath}`);
             void refresh();
             const first = created[0];
-            if (first) selectTab(`p${first.id}`);
+            if (first) switchTab(`p${first.id}`);
           }}
         />
       </PaneErrorBoundary>

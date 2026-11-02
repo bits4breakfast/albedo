@@ -121,6 +121,11 @@ export default function useLayout() {
         : panesWidth;
   const filesColumnFits = readAreaWidth >= filesWidth + READ_MIN;
   const filesColumnShown = filesPinned && mode !== 'pty' && filesColumnFits;
+  /**
+   * The same answer for a read area with no terminal beside it -- the project
+   * view's (#181), which takes the whole row whatever the mode.
+   */
+  const filesColumnShownAlone = filesPinned && panesWidth >= filesWidth + READ_MIN;
 
   // --- splitter drags ------------------------------------------------------
 
@@ -203,6 +208,7 @@ export default function useLayout() {
     setFilesPinned,
     filesWidth,
     filesColumnShown,
+    filesColumnShownAlone,
     dragging,
     shellOpen,
     setShellOpen,

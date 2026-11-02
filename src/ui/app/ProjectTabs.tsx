@@ -12,7 +12,9 @@ import { detectPlatform } from '../../lib/platform';
 // and in that case this is a no-op: no bar, no chrome, no vertical space — the
 // app exactly as it was. The second project summons the bar, and that is the
 // entire interaction, plus drag-to-reorder (view state, like closing a tab).
-// No per-tab state beyond that: a rare case earns correctness, not a surface.
+// The one per-tab memory is where each was left -- a task or the project's
+// own view (#181, app/useSelection.ts) -- so a tab shows its own project.
+// Nothing beyond that: a rare case earns correctness, not a surface.
 //
 // The one thing the bar MUST do is keep the app's core promise working. Tabs
 // hide every task outside the active project, so a session that blocks in a
