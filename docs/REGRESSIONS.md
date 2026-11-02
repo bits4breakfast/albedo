@@ -93,6 +93,9 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - `@tauri-apps/*` and their crates move together, in one PR; `scripts/check-tauri-versions.mjs` runs on every push and fails a one-sided bump.
   - A check the real build makes before compiling anything belongs in CI as its own fast step, when the build itself is not run per push.
 - **A test that passed only on the day it was written.** `ReminderCard.test.tsx` (#174) fixed a reminder at 2026-10-30 09:00 and expected "due today", but the card reads the real clock; from the next day CI on `main` and every PR failed. **Rule:** a test asserting relative time ("today", "in 2 hours", "Tue") pins the clock (`vi.useFakeTimers({ toFake: ['Date'] })` + `setSystemTime`), or passes `now` in.
+- **A text query on highlighted code: flaky when it should find, blind when it should not.** `DiffContext.test.tsx` failed now and then in CI with "Unable to find an element with the text: before 1", but every line was on screen (#213). Syntax colour loads on its own schedule and splits a line into token spans (`before ` then `1`), and `getByText` matches one element's own text. A query that ran before the colours passed; one that ran after failed. The same test's `queryByText('before 10')` toBeNull passed whether or not the line was there. **Rule:**
+  - Find a diff or code line by its code cell's whole text (`.tx-d-code` textContent), or by a region's text.
+  - A test about code lines waits for the coloured tokens once, so it meets the state the app ends in on purpose, not by chance.
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
 ## Cleanup paths
