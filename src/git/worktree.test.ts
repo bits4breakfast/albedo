@@ -863,6 +863,17 @@ describe('listWorktrees / listBranches / uncommittedChanges', () => {
     expect(r.files).toEqual(['?? a.txt', ' M b.txt']);
   });
 
+  it('takes no optional lock, so it never holds index.lock in the user\'s checkout (#181)', async () => {
+    let env: Record<string, string> | undefined;
+    restoreRunner = () => setGitRunner(prev);
+    const prev = setGitRunner(async (_args, _cwd, e) => {
+      env = e;
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    await uncommittedChanges('/repo');
+    expect(env).toEqual({ GIT_OPTIONAL_LOCKS: '0' });
+  });
+
   it('reports a clean worktree as not dirty', async () => {
     install(() => ({ code: 0, stdout: '', stderr: '' }));
     expect(await uncommittedChanges('/wt')).toMatchObject({ dirty: false, files: [] });

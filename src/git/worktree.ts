@@ -1032,10 +1032,16 @@ export interface UncommittedChanges {
  * untracked directory to a single entry).
  */
 export async function uncommittedChanges(worktreePath: string): Promise<UncommittedChanges> {
-  const stdout = await gitOk(
-    ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
-    worktreePath,
-  );
+  // No optional locks: a plain `git status` may refresh the index and take
+  // index.lock, and this runs on every focus -- in a task's worktree and in
+  // the project view, on the user's own main checkout (#181), where it could
+  // make the user's own git command fail on the lock.
+  const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all'];
+  const r = await git(args, worktreePath, { GIT_OPTIONAL_LOCKS: '0' });
+  if (r.code !== 0) {
+    throw new GitError({ args, cwd: worktreePath, code: r.code, stderr: r.stderr, stdout: r.stdout });
+  }
+  const stdout = r.stdout;
   const entries = parseStatusPorcelain(stdout);
   return {
     entries,

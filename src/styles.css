@@ -778,6 +778,12 @@ button {
    never louder: no tint, no motion, nothing that reads as an error — it is a
    fact worth noticing, not a problem. */
 .main-ident-project[data-foreign='true'] { color: var(--text-strong); }
+/* A button since #181: it opens the project's view. Says so on hover by
+   brightening a tier and underlining, never by dimming the resting state. */
+.main-ident-project:hover { color: var(--text-strong); text-decoration: underline; }
+/* The project view's New Task: its one action, after the branch like a
+   task's PR badge, with the same 20px between groups. */
+.main-ident-action { flex: none; height: 24px; margin-left: 12px; }
 
 /* Breadcrumb: project › task. */
 .main-ident-sep { flex: none; color: var(--faint); }

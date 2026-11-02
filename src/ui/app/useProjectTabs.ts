@@ -13,8 +13,13 @@ const tabKeyCodec: Codec<string> = {
 /**
  * The project tab bar's state: order, closed tabs, the active one. See
  * ProjectTabs.tsx for why the bar exists at all and what it must never hide.
+ *
+ * `onEnter` is told whenever the user goes to a tab (a click, a shortcut,
+ * closing the active tab, restoring one), so the selection can follow
+ * (useSelection's `land`). `selectTab` moves the scope alone, for callers that
+ * have already decided what is selected.
  */
-export default function useProjectTabs(projects: Project[], tasks: Task[]) {
+export default function useProjectTabs(projects: Project[], tasks: Task[], onEnter?: (key: string) => void) {
   const [activeProjectTabKey, setActiveProjectTabKey] = useState<string>(() =>
     readPersisted(KEYS.activeProject, tabKeyCodec, ''),
   );
@@ -27,7 +32,9 @@ export default function useProjectTabs(projects: Project[], tasks: Task[]) {
   const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<number>>(
     () => new Set(readHiddenProjectIds()),
   );
-  const selectTabRef = useRef<((key: string) => void) | null>(null);
+  const switchTabRef = useRef<((key: string) => void) | null>(null);
+  const onEnterRef = useRef(onEnter);
+  onEnterRef.current = onEnter;
 
   /** Tab order as the user dragged it. View state, like hiding: ids only. */
   const [projectOrder, setProjectOrder] = useState<number[]>(() =>
@@ -98,7 +105,7 @@ export default function useProjectTabs(projects: Project[], tasks: Task[]) {
     if (activeProjectTabKey === key) {
       const i = tabs.findIndex((t) => t.key === key);
       const neighbour = tabs[i + 1] ?? tabs[i - 1] ?? null;
-      if (neighbour) selectTabRef.current?.(neighbour.key);
+      if (neighbour) switchTabRef.current?.(neighbour.key);
     }
     setHiddenProjectIds((prev) => {
       const next = new Set(prev);
@@ -116,7 +123,7 @@ export default function useProjectTabs(projects: Project[], tasks: Task[]) {
         writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
         return next;
       });
-      selectTabRef.current?.(`p${projectId}`);
+      switchTabRef.current?.(`p${projectId}`);
     },
     [],
   );
@@ -141,9 +148,17 @@ export default function useProjectTabs(projects: Project[], tasks: Task[]) {
     setActiveProjectTabKey(key);
     writePersisted(KEYS.activeProject, tabKeyCodec, key);
   }, []);
-  // Restoring selects the restored tab; the ref avoids ordering the two
-  // callbacks against each other.
-  selectTabRef.current = selectTab;
+  /** Go to a tab: the scope moves, and the selection follows (`onEnter`). */
+  const switchTab = useCallback(
+    (key: string) => {
+      selectTab(key);
+      onEnterRef.current?.(key);
+    },
+    [selectTab],
+  );
+  // Restoring and closing go to a tab; the ref avoids ordering the callbacks
+  // against each other.
+  switchTabRef.current = switchTab;
 
   return {
     tabs,
@@ -155,7 +170,8 @@ export default function useProjectTabs(projects: Project[], tasks: Task[]) {
     reorderProjects,
     showTabs,
     activeProjectTab,
+    activeProjectTabKey,
     selectTab,
-    selectTabRef,
+    switchTab,
   };
 }

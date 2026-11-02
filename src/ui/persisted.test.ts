@@ -134,6 +134,7 @@ describe('KEYS', () => {
       splitRatio: 'albedo.shell.splitRatio',
       orientation: 'albedo.shell.orientation',
       selectedTask: 'albedo.shell.selectedTask',
+      projectPlaces: 'albedo.shell.projectPlaces',
       activeProject: 'albedo.shell.activeProject',
       rightTab: 'albedo.shell.rightTab',
       filesPinned: 'albedo.shell.filesPinned',
