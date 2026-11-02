@@ -176,6 +176,12 @@ describe('viewerLogin (#180)', () => {
     expect(calls.length).toBe(2);
   });
 
+  it("takes an Enterprise managed user's login, which has an underscore", async () => {
+    resetViewerLoginForTests();
+    install(async () => ({ code: 0, stdout: 'alice_acme\n', stderr: '' }));
+    expect(await loadViewerLogin()).toBe('alice_acme');
+  });
+
   it('the PR view asks for reviews, requests and the author', async () => {
     const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
     await fetchPrStatus(task);

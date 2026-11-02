@@ -25,7 +25,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
 import { reviewBanner, reviewStep, type ReviewEvent, type ReviewOutcome, type ReviewWatch } from '../gh/reviewTransition';
 import { getPrStatus, subscribePrStatus } from '../gh/prStore';
-import { viewerLogin } from '../gh/gh';
+import { loadViewerLogin, viewerLogin } from '../gh/gh';
 import type { PrStatus } from '../gh/prStatus';
 import { noteReviewLanded } from './attention';
 import { ciNotifyEnabled } from './ciNotice';
@@ -121,16 +121,31 @@ export function useReviewNotices(
   selectedRef.current = selectedId;
 
   useEffect(() => {
+    let live = true;
     const check = () => {
+      let anyPr = false;
       for (const t of tasksRef.current) {
         if (t.status === 'archived' || t.kind === 'chat') continue;
         const pr = getPrStatus(t.id);
         if (pr === undefined) continue; // not asked yet
+        if (pr) anyPr = true;
         observeReview(t, pr, selectedRef.current);
+      }
+      // A new review waits until the signed-in login is known (see
+      // `reviewStep`), so ask for it here: the PR badge asks only for the
+      // open task, and nothing else would. gh.ts dedupes and paces the asking.
+      if (anyPr && viewerLogin() === null) {
+        void loadViewerLogin().then((l) => {
+          if (live && l) check();
+        });
       }
     };
     check();
-    return subscribePrStatus(check);
+    const unsubscribe = subscribePrStatus(check);
+    return () => {
+      live = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {

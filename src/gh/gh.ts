@@ -128,8 +128,9 @@ export function loadViewerLogin(): Promise<string | null> {
   viewerAsked = gh(['api', 'user', '--jq', '.login'])
     .then((r) => {
       const login = r && r.code === 0 ? r.stdout.trim() : '';
-      // A login has no spaces or slashes; anything else is not one.
-      if (login && /^[A-Za-z0-9-]+(\[bot\])?$/.test(login)) viewer = login;
+      // A login has no spaces or slashes; anything else is not one. An
+      // Enterprise managed user's has an underscore (`alice_acme`).
+      if (login && /^[A-Za-z0-9_-]+(\[bot\])?$/.test(login)) viewer = login;
       else viewerFailedAt = Date.now();
       return viewer;
     })

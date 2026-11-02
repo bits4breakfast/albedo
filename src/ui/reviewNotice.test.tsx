@@ -18,7 +18,7 @@ import {
 } from './reviewNotice';
 import { parsePrView, type PrStatus } from '../gh/prStatus';
 import { refreshPrStatus, setPrFetcherForTests } from '../gh/prStore';
-import { resetViewerLoginForTests } from '../gh/gh';
+import { resetViewerLoginForTests, setGhRunner } from '../gh/gh';
 import type { Task } from '../types';
 
 const rev = (login: string, state: string, submittedAt = 't1') => ({ author: { login }, state, submittedAt });
@@ -180,5 +180,40 @@ describe('useReviewNotices', () => {
 
     rerender({ sel: 1 });
     expect(reviewMarkFor(1)).toBeUndefined();
+  });
+
+  it('asks for the signed-in login itself, and announces a review held for it once known', async () => {
+    resetViewerLoginForTests();
+    let login: () => void = () => {};
+    const asked = new Promise<void>((r) => (login = r));
+    const logins: string[][] = [];
+    const restore = setGhRunner(async (_p, args) => {
+      logins.push(args);
+      await asked;
+      return { code: 0, stdout: 'me\n', stderr: '' };
+    });
+    try {
+      let answer = none();
+      setPrFetcherForTests(async () => answer);
+      renderHook(() => useReviewNotices([task(1)], null));
+      await act(async () => {
+        await refreshPrStatus(task(1));
+      });
+      answer = approved();
+      await act(async () => {
+        await refreshPrStatus(task(1), { force: true });
+      });
+      // Nobody else asked: no PR badge is on screen.
+      expect(logins).toEqual([['api', 'user', '--jq', '.login']]);
+      expect(posted).toEqual([]);
+      await act(async () => {
+        login();
+        await asked;
+      });
+      expect(posted.map((n) => n.body)).toEqual(['PR #12 approved by alice']);
+      expect(reviewMarkFor(1)?.outcome).toBe('approved');
+    } finally {
+      setGhRunner(restore);
+    }
   });
 });
