@@ -1582,6 +1582,23 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     __resetIntro();
   });
 
+  it('a switch to another task never carries this one’s code comments, not even for one render', async () => {
+    const { useWaitingCodeComments } = await import('./codeComments');
+    const { listComments } = await import('../../db/comments');
+    let release2: (rows: never[]) => void = () => {};
+    vi.mocked(listComments).mockImplementation((id: number) =>
+      id === 1 ? Promise.resolve([codeComment(7)]) : new Promise((r) => (release2 = r)),
+    );
+    const { result, rerender } = renderHook(({ id }) => useWaitingCodeComments(id), { initialProps: { id: 1 } });
+    await waitFor(() => expect(result.current.map((c) => c.id)).toEqual([7]));
+    rerender({ id: 2 });
+    // Task 2's read has not landed: task 1's list must not stand in for it.
+    expect(result.current).toEqual([]);
+    await act(async () => release2([]));
+    expect(result.current).toEqual([]);
+    vi.mocked(listComments).mockImplementation(async () => codeRows.rows);
+  });
+
   it('a command goes alone and leaves the code comments waiting', async () => {
     const { markCommentsSent } = await import('../../db/comments');
     vi.mocked(submitPty).mockResolvedValue(true);

@@ -17,21 +17,20 @@ import { composeWithComments, type TranscriptComment } from './transcriptQuotes'
 
 /** A task's open, unsent code comments, by file then line; kept current. */
 export function useWaitingCodeComments(taskId: number | null): readonly ReviewComment[] {
-  const [waiting, setWaiting] = useState<readonly ReviewComment[]>([]);
+  // Tagged with the task they were read for: on the render that switches
+  // task the state is still the last task's, and a Send in that frame must
+  // carry none of them into this task's message.
+  const [waiting, setWaiting] = useState<{ taskId: number | null; rows: readonly ReviewComment[] }>({ taskId: null, rows: [] });
   useEffect(() => {
-    if (taskId === null) {
-      setWaiting([]);
-      return;
-    }
+    if (taskId === null) return;
     let live = true;
     const load = () =>
       void listComments(taskId).then(
         (rows) => {
-          if (live) setWaiting(rows.filter((c) => c.sentAt === null));
+          if (live) setWaiting({ taskId, rows: rows.filter((c) => c.sentAt === null) });
         },
         (err: unknown) => console.warn('[comments] could not load the waiting ones', err),
       );
-    setWaiting([]);
     load();
     const off = onCommentsChanged((id) => {
       if (id === taskId) load();
@@ -41,8 +40,10 @@ export function useWaitingCodeComments(taskId: number | null): readonly ReviewCo
       off();
     };
   }, [taskId]);
-  return waiting;
+  return waiting.taskId === taskId && taskId !== null ? waiting.rows : NONE;
 }
+
+const NONE: readonly ReviewComment[] = [];
 
 /**
  * What Send hands Claude Code: the code comments under the intro (as
