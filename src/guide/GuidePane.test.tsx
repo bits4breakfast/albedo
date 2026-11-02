@@ -139,7 +139,10 @@ describe('GuidePane', () => {
     expect(marks[0]!.getAttribute('aria-label')).toBe('01 Foundations, reviewed');
     cleanup();
     pane();
-    await screen.findByRole('heading', { name: 'Foundations' });
+    // Back where it was left (#199), then up to the group it reviewed.
+    await screen.findByRole('heading', { name: 'Wiring' });
+    key('ArrowUp', true);
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
     expect((left().getByRole('checkbox', { name: 'Reviewed' }) as HTMLInputElement).checked).toBe(true);
     // A reviewed file folds its diff away.
     expect(right().getByText('Reviewed.')).toBeTruthy();
@@ -209,3 +212,56 @@ describe('GuidePane', () => {
     expect(within(screen.getByRole('navigation', { name: 'Groups' })).getAllByRole('button')).toHaveLength(1);
   });
 });
+
+describe('GuidePane keeps your place (#199)', () => {
+  it('leaving for another task and coming back keeps the group and the file, with no "Reading" in between', async () => {
+    await written();
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Groups' })).getAllByRole('button')[0]!);
+    fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
+    key('ArrowDown', true);
+    expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
+    key('ArrowUp', true);
+    expect(left().getByRole('button', { name: /b\.ts/ }).getAttribute('aria-current')).toBe('true');
+    key('ArrowDown', true);
+
+    // The pane goes when another task is selected (App keys it per task).
+    cleanup();
+    pane();
+    expect(screen.queryByText(/Reading the branch/)).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
+    key('ArrowUp', true);
+    expect(left().getByRole('button', { name: /b\.ts/ }).getAttribute('aria-current')).toBe('true');
+  });
+
+  it('with no place kept, opens at the first group still to review', async () => {
+    await written();
+    fireEvent.click(left().getByRole('checkbox', { name: 'Reviewed' }));
+    cleanup();
+    // A restart: memory is gone, the guide and its Reviewed marks are not.
+    resetGuideStoreForTests();
+    pane();
+    expect(await screen.findByRole('heading', { name: 'Wiring' })).toBeTruthy();
+  });
+
+  it('keeps the group by name, not number, across Uncommitted Only', async () => {
+    await written();
+    key('ArrowDown', true);
+    expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
+    // Only b.ts is uncommitted, so Wiring (a.ts) is filtered out, then back.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Uncommitted Only' }));
+    expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Uncommitted Only' }));
+    expect(screen.getByRole('heading', { name: 'Wiring' })).toBeTruthy();
+  });
+
+  it('Rewrite writes for the branch as it is now, not the read on screen', async () => {
+    const { loadGuide } = await import('./store');
+    await written();
+    // The branch moves on while the pane still shows the earlier read.
+    const moved = makeDiff(20);
+    loaded = { ...loaded, diff: moved };
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await waitFor(() => expect(loadGuide(task.id)?.diffHash).toBe(moved.hash));
+  });
+});
+

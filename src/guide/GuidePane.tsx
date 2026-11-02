@@ -28,8 +28,12 @@ import type { BranchDiff, GuideFile } from './blocks';
 import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
 import {
   clearWriteError,
+  keepLastRead,
+  keepPlace,
+  lastReadOf,
   loadGuide,
   loadReviewed,
+  placeOf,
   reviewedKey,
   setReviewed,
   startWrite,
@@ -56,7 +60,11 @@ async function readWorking(worktreePath: string, rel: string): Promise<string | 
   }
 }
 
-type Load = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; data: LoadedBranchDiff };
+/** The read of the branch, for the task it was read for. */
+type Load =
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string; taskId: number }
+  | { kind: 'ready'; data: LoadedBranchDiff; taskId: number };
 
 export interface GuidePaneProps {
   task: Task;
@@ -66,31 +74,42 @@ export interface GuidePaneProps {
 
 export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   useGuideStoreVersion();
-  const [load, setLoad] = useState<Load>({ kind: 'loading' });
+  // Coming back to a task (#199): its last read shows at once, and is read
+  // again behind it, as on every return to the tab.
+  const [read, setLoad] = useState<Load>(() => {
+    const last = lastReadOf(task.id);
+    return last ? { kind: 'ready', data: last, taskId: task.id } : { kind: 'loading' };
+  });
   const [again, setAgain] = useState(0);
-
-  useEffect(() => {
-    setLoad({ kind: 'loading' });
-  }, [task.id]);
+  /** Write or Rewrite was pressed and the branch is being read again first. */
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
 
   useEffect(() => {
     if (!active) return;
     let live = true;
-    setLoad((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }));
+    const id = task.id;
+    setLoad((prev) => (prev.kind === 'ready' && prev.taskId === id ? prev : { kind: 'loading' }));
     loadBranchDiff(task.worktreePath, task.baseBranch, (rel) => readWorking(task.worktreePath, rel))
       .then((data) => {
-        if (live) setLoad({ kind: 'ready', data });
+        if (!live) return;
+        keepLastRead(id, data);
+        setLoad({ kind: 'ready', data, taskId: id });
       })
       .catch((err: unknown) => {
-        if (live) setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        if (live) setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err), taskId: id });
       });
     return () => {
       live = false;
     };
-  }, [task.worktreePath, task.baseBranch, active, again]);
+  }, [task.id, task.worktreePath, task.baseBranch, active, again]);
 
   const guide = loadGuide(task.id);
-  const write = writeStateOf(task.id);
+  const stored = writeStateOf(task.id);
+  // Reading the branch before a write already counts as writing: one press.
+  const write: WriteState | null = starting && stored?.kind !== 'writing' ? { kind: 'writing', progress: null } : stored;
+  // Another task's read is never shown for this one.
+  const load: Load = read.kind !== 'loading' && read.taskId !== task.id ? { kind: 'loading' } : read;
 
   if (load.kind === 'loading') return <div className="gd-message">Reading the branch’s changes…</div>;
   if (load.kind === 'error') {
@@ -107,9 +126,28 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
 
   const { diff } = load.data;
   const writeNow = () => {
-    // A guide is written for the diff as it is now; the result is saved for
-    // this task even if another is on screen when it lands (store.ts).
-    void startWrite(task.id, diff, task.baseBranch);
+    if (startingRef.current || stored?.kind === 'writing') return;
+    startingRef.current = true;
+    setStarting(true);
+    // A guide is written for the branch as it is now, not as the pane last
+    // read it (that read may be from an earlier visit, #199). The result is
+    // saved for this task even if another is on screen when it lands.
+    const id = task.id;
+    const base = task.baseBranch;
+    void loadBranchDiff(task.worktreePath, base, (rel) => readWorking(task.worktreePath, rel))
+      .then((fresh) => {
+        keepLastRead(id, fresh);
+        setLoad({ kind: 'ready', data: fresh, taskId: id });
+        return fresh.diff;
+      })
+      // The branch cannot be read just now: write for what is on screen.
+      .catch(() => diff)
+      .then((d) => {
+        const run = startWrite(id, d, base);
+        startingRef.current = false;
+        setStarting(false);
+        return run;
+      });
   };
 
   if (guide === null) {
@@ -270,10 +308,25 @@ function GuideBody({
   const isFileReviewed = (f: GroupFile) => reviewed.has(reviewedKey(f.path, f.blocks));
   const isGroupReviewed = (g: GroupView) => g.files.length > 0 && g.files.every(isFileReviewed);
 
-  const [gi, setGi] = useState(0);
-  const [picked, setPicked] = useState<Record<string, string>>({});
-  const at = Math.min(gi, Math.max(0, groups.length - 1));
+  // The group is kept by its key, never its number: Uncommitted Only changes
+  // the numbers. With no place kept, the first group still to review.
+  const [place, setPlace] = useState(() => {
+    const kept = placeOf(task.id, guide.writtenAt);
+    if (kept) return kept;
+    const next = groups.find((g) => !isGroupReviewed(g)) ?? groups[0] ?? null;
+    return { writtenAt: guide.writtenAt, group: next?.key ?? null, picked: {} as Readonly<Record<string, string>> };
+  });
+  const picked = place.picked;
+  useEffect(() => keepPlace(task.id, place), [task.id, place]);
+  const found = groups.findIndex((g) => g.key === place.group);
+  const at = found >= 0 ? found : 0;
   const group = groups[at] ?? null;
+  const goTo = (i: number) => {
+    const g = groups[Math.max(0, Math.min(groups.length - 1, i))];
+    if (g) setPlace((p) => ({ ...p, group: g.key }));
+  };
+  const setPicked = (next: (p: Readonly<Record<string, string>>) => Record<string, string>) =>
+    setPlace((p) => ({ ...p, picked: next(p.picked) }));
   const file = group ? (group.files.find((f) => f.path === picked[group.key]) ?? group.files[0] ?? null) : null;
 
   // The keys work once focus is in the guide. Take it when the tab comes on
@@ -313,7 +366,7 @@ function GuideBody({
     );
   };
 
-  const stepGroup = (delta: number) => setGi((i) => Math.max(0, Math.min(groups.length - 1, Math.min(i, groups.length - 1) + delta)));
+  const stepGroup = (delta: number) => goTo(at + delta);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
@@ -458,7 +511,7 @@ function GuideBody({
                 aria-current={i === at ? 'true' : undefined}
                 data-reviewed={isGroupReviewed(g) || undefined}
                 data-unsorted={g.unsorted || undefined}
-                onClick={() => setGi(i)}
+                onClick={() => goTo(i)}
                 aria-label={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}`}
                 title={g.title}
               />
