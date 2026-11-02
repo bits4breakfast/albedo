@@ -79,6 +79,20 @@ export function useReadFile(): (path: string) => Promise<string | null> {
   return useContext(FileTextContext);
 }
 
+/**
+ * A path as the transcript wrote it, as the worktree-relative path a review
+ * comment stores (#222: a comment made on a transcript diff's lines). The
+ * same division of labour as `FileTextContext`: the provider resolves it
+ * through `resolveInWorktree`; null for anything outside the worktree or
+ * with no task.
+ */
+export const FilePathContext = createContext<(path: string) => Promise<string | null>>(async () => null);
+FilePathContext.displayName = 'FilePathContext';
+
+export function useWorktreePath(): (path: string) => Promise<string | null> {
+  return useContext(FilePathContext);
+}
+
 // ---------------------------------------------------------------------------
 // The escape hatch, removed
 // ---------------------------------------------------------------------------

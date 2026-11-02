@@ -1978,6 +1978,8 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
 .tx-waiting-intro { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
 .tx-waiting-intro-label { color: var(--muted); font-size: var(--fs-xs); }
 .tx-waiting-error { color: var(--warn); font-size: var(--fs-xs); }
+/* What a comment field is about to comment on (#222): code lines, or why the passage. */
+.tx-cmt-target { margin: 0 0 4px; color: var(--muted); font-size: var(--fs-xs); }
 .tx-waiting-row { display: flex; align-items: flex-start; gap: 6px; }
 .tx-waiting-comment {
   flex: 1;

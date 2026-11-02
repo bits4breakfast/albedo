@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
 const cards = readFileSync(new URL('./ui/editor/comments.css', import.meta.url), 'utf8');
 const list = readFileSync(new URL('./ui/touched.css', import.meta.url), 'utf8');
+const transcript = readFileSync(new URL('./ui/transcript/transcript.css', import.meta.url), 'utf8');
 
 const DARK_MEDIA = css.indexOf('@media (prefers-color-scheme: dark)');
 const DARK_ATTR = css.indexOf(":root[data-theme='dark']");
@@ -49,6 +50,12 @@ describe('comment states (#222)', () => {
     expect(cards).toMatch(/\.ed-cmt\[data-state='sent'\] \{ border-left-color: var\(--border-strong\); \}/);
     expect(cards).toMatch(/\.ed-cmt-trace-mark \{ color: var\(--status-done\); \}/);
     expect(list).toMatch(/\.tf-comments-sub \{[^}]*color: var\(--muted\)/);
+    // The selection bar and the field's target line: on --panel (the bar's own
+    // ground, the field's), text and note tiers measured below.
+    expect(transcript).toMatch(/\.tx-d-selcmt \{[^}]*background: var\(--panel\)/);
+    expect(transcript).toMatch(/\.tx-d-selcmt-note \{ color: var\(--muted\); \}/);
+    expect(transcript).toMatch(/\.tx-cmt-target \{[^}]*color: var\(--muted\)/);
+    expect(transcript).toMatch(/\.tx-waiting-where \{[^}]*color: var\(--muted\)/);
     // No ✓ on a state any more: it is Resolve's.
     expect(cards).not.toMatch(/ed-cmt-sent::before/);
     expect(list).not.toMatch(/tf-comment-sent::before/);
@@ -62,6 +69,7 @@ describe('comment states (#222)', () => {
         ['--muted', '--panel'], // the Sent chip, the trace, the list's labels
         ['--muted', '--panel-hover'], // a list label under a hovered row's neighbour
         ['--muted', '--panel-raised'],
+        ['--text', '--panel'], // the selection bar's button
       ];
       for (const [fg, bg] of text) expect(ratio(g(fg), g(bg)), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
       const ui: Array<[string, string]> = [

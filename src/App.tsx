@@ -71,7 +71,7 @@ import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
 import GuidePane from './guide/GuidePane';
 import { onGuideRequest, requestGuide } from './guide/openGuide';
-import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
+import { FileOpenContext, FilePathContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
 import { markUserActivated } from './ui/editor/outsideFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
@@ -574,6 +574,17 @@ export default function App() {
     },
     [],
   );
+
+  /** A transcript's path as the selected task's worktree-relative one (#222). */
+  const relativeInWorktree = useCallback(async (path: string): Promise<string | null> => {
+    const task = selectedRef.current;
+    if (!task) return null;
+    try {
+      return (await resolveInWorktree(task.worktreePath, path))?.relative ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
 
   /*
    * Which tasks are asking for attention, and the window focus that decides
@@ -1121,6 +1132,7 @@ export default function App() {
   return (
     <FileOpenContext.Provider value={openFile}>
     <FileTextContext.Provider value={readFileText}>
+    <FilePathContext.Provider value={relativeInWorktree}>
     <TaskOpenContext.Provider value={taskOpener}>
     <MentionSourceContext.Provider value={mentionSource}>
     <div className="app" data-dragging={dragging !== null} data-drag={dragging ?? undefined}>
@@ -2071,6 +2083,7 @@ export default function App() {
     </div>
     </MentionSourceContext.Provider>
     </TaskOpenContext.Provider>
+    </FilePathContext.Provider>
     </FileTextContext.Provider>
     </FileOpenContext.Provider>
   );
