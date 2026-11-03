@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  *
  * Copy what is in backticks (#242): a code block always has a copy button at
- * its end; inline code has one after it (shown on hover, by CSS), never a Tab
+ * its end; inline code has one at its end, always shown (#244), never a Tab
  * stop; a click copies the exact text and says so; a path chip keeps its own
  * click.
  */

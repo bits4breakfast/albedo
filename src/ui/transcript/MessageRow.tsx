@@ -1176,7 +1176,7 @@ export function parseInline(text: string, depth = 0, mentions: readonly Mention[
     if (codeText !== undefined) {
       const ref = codeSpanRef(codeText);
       const asUrl = safeHttpUrl(codeText);
-      // With a copy icon after it while hovered (#242), a sibling so a path
+      // With a copy icon at its end, always (#242, #244), a sibling so a path
       // chip or a link keeps its own click.
       out.push(
         <span key={key++} className="tx-md-code-wrap">

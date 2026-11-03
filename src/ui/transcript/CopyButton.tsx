@@ -1,6 +1,6 @@
 /**
  * A copy icon for text in backticks (#242): always at the right end of a code
- * block, and after inline code while it is hovered. A click copies the exact
+ * block, and always at the right end of inline code (#244). A click copies the exact
  * text; the icon turns into a tick for a moment and a polite live region says
  * so. A sibling of the code it copies, never inside it, so a path chip or a
  * link keeps its own click.

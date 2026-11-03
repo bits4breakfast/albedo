@@ -158,6 +158,11 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - A row the pane draws from its own state (the echo, the working line) is content like any other: a following reader stays at the end after every commit, not only after `messages` changes.
   - Scroll behaviour is tested with a layout model (heights, `scrollTop` clamping, scroll events and `requestAnimationFrame` in frame order), not by asserting a handler was called.
 
+- **A hover-revealed control nobody could reach.** Owner-reported (#244): the copy icon after inline code (#243) showed only while the code was hovered, and could never be clicked. It sat 1px to the right of the code (`margin-left: 1px`, absolutely positioned). Measured with `elementFromPoint`: that pixel belonged to the paragraph. Crossing it ended the hover, so the icon hid, and the pointer then rested on plain text, so it never came back. Tests passed: jsdom has no layout and no hover. **Rule:**
+  - Never reveal a control on hover unless the trigger and the control share one unbroken hit area: no margin, gap or offset between them.
+  - Prefer a control that is always there. Hiding it saves little, and an invisible target can't be found either.
+  - Geometry claims (touching, as tall as, inside) are checked in a real engine, with `elementFromPoint` across the boundary, before saying done.
+
 ## Shell scripts (for agents)
 
 - **zsh `path` is `PATH`.** `while read path …` in zsh wipes the command search path, and every later command is "not found". Use another variable name.
