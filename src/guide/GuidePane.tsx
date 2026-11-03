@@ -26,6 +26,7 @@ import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
 import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
+import { useMeasuredBase } from '../ui/useMeasuredBase';
 import {
   clearWriteError,
   ensureNotes,
@@ -81,6 +82,9 @@ export interface GuidePaneProps {
 
 export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   useGuideStoreVersion();
+  // Measured against the branch the header shows it merging into (#237).
+  const measured = useMeasuredBase(task);
+  const measuredBase = measured.base;
   // Coming back to a task (#199): its last read shows at once, and is read
   // again behind it, as on every return to the tab.
   const [read, setLoad] = useState<Load>(() => {
@@ -97,7 +101,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     let live = true;
     const id = task.id;
     setLoad((prev) => (prev.kind === 'ready' && prev.taskId === id ? prev : { kind: 'loading' }));
-    loadBranchDiff(task.worktreePath, task.baseBranch, (rel) => readWorking(task.worktreePath, rel))
+    loadBranchDiff(task.worktreePath, measuredBase, (rel) => readWorking(task.worktreePath, rel))
       .then((data) => {
         if (!live) return;
         keepLastRead(id, data);
@@ -109,7 +113,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     return () => {
       live = false;
     };
-  }, [task.id, task.worktreePath, task.baseBranch, active, again]);
+  }, [task.id, task.worktreePath, measuredBase, active, again]);
 
   const guide = loadGuide(task.id);
   const stored = writeStateOf(task.id);
@@ -131,6 +135,25 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     );
   }
 
+  // The base could not be found (#237): the read is against HEAD, so a guide
+  // would be of uncommitted changes only, or none. Say why, never an empty guide.
+  if (!load.data.fromMergeBase && measuredBase !== '' && measured.settled) {
+    return (
+      <div className="gd-message" data-tone="error">
+        Can’t find the base branch <code>{measuredBase}</code>
+        <div className="gd-message-sub">
+          {measured.target?.from === 'pr'
+            ? `The pull request merges into it${task.baseBranch && task.baseBranch !== measuredBase ? `; the task was cut from ${task.baseBranch}` : ''}.`
+            : 'The task was cut from it.'}{' '}
+          Git has no local or origin copy of it, so there is nothing to measure the branch against. Fetch it, then try again.
+        </div>
+        <button type="button" className="gd-btn" onClick={() => setAgain((n) => n + 1)}>
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
   const { diff } = load.data;
   const writeNow = () => {
     if (startingRef.current || stored?.kind === 'writing') return;
@@ -140,7 +163,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     // read it (that read may be from an earlier visit, #199). The result is
     // saved for this task even if another is on screen when it lands.
     const id = task.id;
-    const base = task.baseBranch;
+    const base = measuredBase;
     void loadBranchDiff(task.worktreePath, base, (rel) => readWorking(task.worktreePath, rel))
       .then((fresh) => {
         keepLastRead(id, fresh);

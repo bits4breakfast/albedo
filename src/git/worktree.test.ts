@@ -1456,6 +1456,8 @@ describe('commitsOnBranch', () => {
     expect(calls.map((c) => c.args)).toEqual([
       ['rev-parse', '--verify', '--quiet', 'refs/heads/fix-import'],
       ['rev-parse', '--abbrev-ref', 'main@{upstream}'],
+      // No upstream: is there a local main, or only origin's (#237)?
+      ['rev-parse', '--verify', '--quiet', 'refs/heads/main'],
       ['rev-list', '--count', 'main..refs/heads/fix-import', '--'],
     ]);
     expect(calls.every((c) => c.cwd === '/repo')).toBe(true);

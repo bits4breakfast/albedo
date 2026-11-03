@@ -25,9 +25,11 @@ import {
   unmergedCommits,
   type BranchCommit,
   type UnmergedCommits,
+  taskBase,
   type ChangeKind,
   type LineChange,
 } from '../git/worktree';
+import { useMeasuredBase } from './useMeasuredBase';
 import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
@@ -87,6 +89,12 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   // The first section heading's right end, where GitBar puts Push / Create PR.
   const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // What the change set is measured against: the branch the header shows it
+  // merging into (#237), not only the one it was cut from.
+  const measured = useMeasuredBase(task);
+  const base = measured.base;
+  /** The base named a branch git could not find: said, never shown as "no changes" (#237). */
+  const [baseMissing, setBaseMissing] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [reloadKey, setReloadKey] = useState(0);
   /** +/- per path against the task's base. Empty when git cannot say. */
@@ -114,41 +122,49 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
     setLoading(true);
     // Line counts are a nicety beside the change set: a failure here leaves
     // the rows without them rather than failing the list.
-    void lineChanges(task.worktreePath, task.baseBranch)
+    void lineChanges(task.worktreePath, base)
       .then((m) => {
         if (live) setLines(m);
       })
       .catch(() => {
         if (live) setLines(new Map());
       });
-    void changeKinds(task.worktreePath, task.baseBranch)
+    void changeKinds(task.worktreePath, base)
       .then((m) => {
         if (live) setKinds(m);
       })
       .catch(() => {
         if (live) setKinds(new Map());
       });
-    void unmergedCommits(task.worktreePath, task.baseBranch)
+    void unmergedCommits(task.worktreePath, base)
       .then((r) => {
         if (live) setRemote(r);
       })
       .catch(() => {
         if (live) setRemote(null);
       });
-    void branchCommits(task.worktreePath, task.baseBranch)
+    void branchCommits(task.worktreePath, base)
       .then((c) => {
         if (live) setCommits(c);
       })
       .catch(() => {
         if (live) setCommits([]);
       });
-    void committedFileTimes(task.worktreePath, task.baseBranch)
+    void committedFileTimes(task.worktreePath, base)
       .then((m) => {
         if (live) setCommittedAt(m);
       })
       .catch(() => {
         if (live) setCommittedAt(new Map());
       });
+    // '' is the main checkout's browse diff, against HEAD's upstream: no
+    // upstream there means uncommitted changes only, which is not an error.
+    void (base === ''
+      ? Promise.resolve(null)
+      : taskBase(task.worktreePath, base).then((merge) => (merge === null ? base : null))
+    ).then((missing) => {
+      if (live) setBaseMissing(missing);
+    });
     void touchedFilesDetailed(task.id)
       .then((res) => {
         if (!live) return;
@@ -179,7 +195,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
     return () => {
       live = false;
     };
-  }, [task.id, task.worktreePath, task.baseBranch, reloadKey]);
+  }, [task.id, task.worktreePath, base, reloadKey]);
 
   // Reset between tasks so the previous task's rows never flash in the new one.
   useEffect(() => {
@@ -192,6 +208,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
     setFolded(new Set());
     setGitError(null);
     setError(null);
+    setBaseMissing(null);
     setLoaded(false);
   }, [task.id]);
 
@@ -512,7 +529,22 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           ),
         )}
 
-        {mode !== 'commit' && view.uncommitted.length === 0 && view.committed.length === 0 && loaded && error === null ? (
+        {/* The base could not be found (#237): git measured against HEAD,
+            so only uncommitted changes can show. Say it, rather than let an
+            empty list claim the branch has no changes. */}
+        {baseMissing !== null && measured.settled && loaded && error === null ? (
+          <div className="tf-empty" role="status">
+            <span>
+              Can’t find the base branch <span className="tf-mono">{baseMissing}</span>
+            </span>
+            <span className="tf-empty-hint">
+              {baseNote(task.baseBranch, measured.target?.from === 'pr' ? measured.target.base : null, baseMissing)} Only
+              uncommitted changes can be listed until it is fetched.
+            </span>
+          </div>
+        ) : null}
+
+        {mode !== 'commit' && view.uncommitted.length === 0 && view.committed.length === 0 && loaded && error === null && !(baseMissing !== null && measured.settled) ? (
           <div className="tf-empty">
             No changes yet.
             <span className="tf-empty-hint">
@@ -736,6 +768,19 @@ function samePath(a: string, b: string): boolean {
  * The hook is called unconditionally on every render (React requires that);
  * only its RESULT is guarded.
  */
+/**
+ * Which branch was looked for, and why that one (#237): the PR's base when
+ * there is a PR, else the branch the task was cut from. Exported for tests.
+ */
+export function baseNote(stored: string, prBase: string | null, missing: string): string {
+  if (prBase !== null && prBase === missing) {
+    return stored !== '' && stored !== missing
+      ? `The pull request merges into it; the task was cut from ${stored}.`
+      : 'The pull request merges into it.';
+  }
+  return 'The task was cut from it, and git has no local or origin copy of it.';
+}
+
 function useSafeOpenFile(): OpenFile {
   let bound: OpenFile | null = null;
   try {

@@ -17,6 +17,7 @@ import type { ReactNode } from 'react';
 import type { Task } from '../../types';
 import type { ResolvedPath } from '../../lib/paths';
 import { loadTaskFileDiff, type ChangeKind, type TaskFileDiff } from '../../git/fileDiff';
+import { useMeasuredBase } from '../useMeasuredBase';
 import { Diff, DiffAnnotationsContext } from '../transcript/Diff';
 import { useDiffComments } from './diffComments';
 import { dismissAfterFocusedTime } from '../../lib/focusTimer';
@@ -51,6 +52,8 @@ export interface FileDiffViewProps {
 export default function FileDiffView({ task, target, reloadKey, unsaved }: FileDiffViewProps): ReactNode {
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [again, setAgain] = useState(0);
+  // Against the branch the header shows it merging into (#237).
+  const measuredBase = useMeasuredBase(task).base;
 
   // Another file: drop the old diff at once. Declared first, so on a step it
   // runs before the load below and the "keep while refreshing" rule there
@@ -75,7 +78,7 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     // Keep the previous diff on screen while a refresh of the SAME file runs;
     // a step to another file clears it, so the wrong file never shows.
     setLoad((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }));
-    void loadTaskFileDiff(task.worktreePath, task.baseBranch, target.relative, () => readWorking(target.absolute))
+    void loadTaskFileDiff(task.worktreePath, measuredBase, target.relative, () => readWorking(target.absolute))
       .then((data) => {
         if (!live) return;
         setLoad({ kind: 'ready', data });
@@ -89,7 +92,7 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     return () => {
       live = false;
     };
-  }, [task.worktreePath, task.baseBranch, target.relative, target.absolute, reloadKey, again]);
+  }, [task.worktreePath, measuredBase, target.relative, target.absolute, reloadKey, again]);
 
   const refresh = () => {
     setOutcome('refreshing');
@@ -118,13 +121,13 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
   }
 
   const { result, base, fromMergeBase } = load.data;
-  const against = fromMergeBase ? `${base.slice(0, 7)}, where this branch left ${task.baseBranch}` : 'HEAD';
+  const against = fromMergeBase ? `${base.slice(0, 7)}, where this branch left ${measuredBase}` : 'HEAD';
 
   return (
     <div className="ed-diff">
       <div className="ed-diff-meta">
         {'change' in result ? <span className="ed-diff-change" data-change={result.change}>{CHANGE_LABEL[result.change]}</span> : null}
-        <span className="ed-diff-against" title={fromMergeBase ? base : 'No merge base with the base branch; uncommitted changes only'}>
+        <span className="ed-diff-against" title={fromMergeBase ? base : `Can’t find the base branch ${measuredBase || '(none)'}: uncommitted changes only`}>
           Against {against}
         </span>
         {unsaved ? <span className="ed-diff-unsaved">Unsaved edits are not included</span> : null}

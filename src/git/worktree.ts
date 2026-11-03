@@ -401,7 +401,8 @@ export function parseNumstat(stdout: string): Map<string, LineChange> {
  * that has not been pulled is behind `origin/master`; a branch rebased onto
  * origin would otherwise diff against a stale point and drag in every upstream
  * change since. Null when there is no merge base (a base that no longer
- * exists), which callers read as "uncommitted changes only".
+ * exists), which callers read as "uncommitted changes only" -- and which a
+ * pane must then say out loud (#237): "no merge base" is not "no changes".
  */
 export async function taskBase(worktreePath: string, baseBranch: string): Promise<string | null> {
   try {
@@ -418,6 +419,11 @@ export async function taskBase(worktreePath: string, baseBranch: string): Promis
  * branch is measured against. Everything that counts or diffs a task's work
  * against its base goes through here, so a stale local base cannot make one
  * place see 24 commits where another sees none (#82).
+ *
+ * A base with no local branch at all, only `origin/<base>` -- a parent
+ * branch deleted locally once it merged, or one never checked out here --
+ * is measured against `origin/<base>` (#237). Before, the bare name went on
+ * to `merge-base`, failed, and the whole change set read as empty.
  */
 export async function baseOrUpstream(cwd: string, baseBranch: string): Promise<string> {
   try {
@@ -425,6 +431,18 @@ export async function baseOrUpstream(cwd: string, baseBranch: string): Promise<s
     if (up) return up;
   } catch {
     /* no upstream: the local branch is the base */
+  }
+  // '' asks for HEAD's upstream above (the main checkout's browse diff); a
+  // name that is not a branch name is left for the caller to refuse.
+  if (baseBranch === '' || baseBranch.startsWith('-')) return baseBranch;
+  try {
+    const local = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${baseBranch}`], cwd);
+    if (local.code !== 0) {
+      const remote = await git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${baseBranch}`], cwd);
+      if (remote.code === 0) return `origin/${baseBranch}`;
+    }
+  } catch {
+    /* git could not say: the name as given */
   }
   return baseBranch;
 }
