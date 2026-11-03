@@ -322,7 +322,7 @@ async function pump(taskId: number, job: NotesJob): Promise<void> {
     let notes: Record<string, string> | null = null;
     let ok = true;
     try {
-      notes = await writeNotes(job.diff, group);
+      notes = await writeNotes(job.diff, group, { groupTitles: guide.groups.map((g) => g.title) });
     } catch (err) {
       ok = false;
       const e = err instanceof Error ? err.message : String(err);

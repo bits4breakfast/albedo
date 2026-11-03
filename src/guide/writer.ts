@@ -220,8 +220,8 @@ const NOTES_SCHEMA = {
  * this group, not what changed -- the diff is beside it and says that.
  */
 export const NOTES_SYSTEM = [
-  'You help a reviewer read one group of a code change. You are given the group\'s title and summary,',
-  'a list of files to note, and the group\'s changed blocks: each block starts with its id in square',
+  'You help a reviewer read one group of a code change. You are given the titles of all the change\'s',
+  'groups (for context), this group\'s title and summary, a list of files to note, and the group\'s changed blocks: each block starts with its id in square',
   'brackets, then its file path and its changed lines.',
   'For each file to note, write one or two short sentences (under 220 characters in all) on WHY this file',
   'changes as part of this group: the part it plays in what the group sets out to do, the reason the change',
@@ -399,12 +399,15 @@ function folderGuide(diff: BranchDiff, o: WriteOptions, reason: string): Guide {
 export async function writeNotes(
   diff: BranchDiff,
   group: Pick<GuideGroup, 'title' | 'summary' | 'blocks'>,
-  o: { budget?: number } = {},
+  o: { budget?: number; groupTitles?: readonly string[] } = {},
 ): Promise<Record<string, string> | null> {
   const blocks = group.blocks.filter((id) => diff.blocks.has(id));
   const paths = notableFiles(blocks, diff);
   if (paths.length === 0) return null;
+  // The whole change, by its groups' titles: what a file's why is measured against.
+  const others = (o.groupTitles ?? []).filter((t) => t !== group.title);
   const head = [
+    others.length > 0 ? `The change's other groups:\n${others.map((t) => `- ${t}`).join('\n')}\n` : null,
     `Group: ${group.title}`,
     group.summary ? `Summary: ${group.summary}` : null,
     `Files to note:\n${paths.map((p) => `- ${p}`).join('\n')}`,

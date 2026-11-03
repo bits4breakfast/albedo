@@ -269,6 +269,14 @@ describe('notes come after the groups (#224)', () => {
     expect(notes).toEqual({ 'src/a.ts': 'keeps the page size in one place', 'src/c.ts': `${'x'.repeat(NOTE_MAX_CHARS - 1)}…` });
   });
 
+  it("a group's notes call names the change's other groups, so a note can say why against the whole", async () => {
+    const calls = useRunner(() => ok({ notes: [] }));
+    await writeNotes(diff, { title: 'Paging', summary: '', blocks: [a, c] }, { groupTitles: ['Locking', 'Paging', 'Docs'] });
+    const p = calls[0]!.prompt;
+    expect(p).toContain("The change's other groups:\n- Locking\n- Docs\n");
+    expect(p.indexOf('- Locking')).toBeLessThan(p.indexOf('Group: Paging'));
+  });
+
   it('the notes prompt asks why, not what', () => {
     expect(NOTES_SYSTEM).toMatch(/WHY this file changes/);
     expect(NOTES_SYSTEM).toMatch(/Do not restate what changed/);
