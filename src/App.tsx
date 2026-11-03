@@ -20,6 +20,7 @@ import TaskList from './ui/TaskList';
 import { seenUpdate } from './ui/taskGroups';
 import { createPrPrompt, resolveConflictsPrompt, pushPrompt } from './ui/gitPrompts';
 import { sendPrompt } from './ui/sendPrompt';
+import { useMeasuredBase } from './ui/useMeasuredBase';
 import Subagents from './ui/Subagents';
 import {
   announcementFor,
@@ -301,6 +302,8 @@ export default function App() {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+  /** What the selected task merges into, for its Create PR (#237): the header's base. */
+  const selectedBase = useMeasuredBase(selected);
   /**
    * What's New after an update (#147). It waits while another dialog or the
    * "waiting on you" card is on screen (checked in the DOM), and while the
@@ -1441,7 +1444,7 @@ export default function App() {
                       setArchiveTarget(selected);
                     }}
                     onFollowUp={(pr) => void openFollowUp(selected, pr)}
-                    onCreatePr={() => void sendPrompt(selected, createPrPrompt(selected))}
+                    onCreatePr={() => void sendPrompt(selected, createPrPrompt(selectedBase.base !== '' ? { ...selected, baseBranch: selectedBase.base } : selected))}
                     onResolveConflicts={(pr) => void sendPrompt(selected, resolveConflictsPrompt(selected, pr))}
                     onOpenFile={openFile}
                   />

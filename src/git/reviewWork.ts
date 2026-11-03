@@ -17,8 +17,10 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
 import { commitsOnBranch, uncommittedChanges } from './worktree';
+import { getPrStatus } from '../gh/prStore';
+import { measuredBase } from '../ui/mergeTarget';
 
-type WorkTask = Pick<Task, 'id' | 'repoPath' | 'baseBranch' | 'branch' | 'worktreePath'>;
+type WorkTask = Pick<Task, 'id' | 'kind' | 'repoPath' | 'baseBranch' | 'branch' | 'worktreePath'>;
 
 interface Entry {
   /** The finish this answer is for; a later one makes it stale. */
@@ -51,7 +53,11 @@ export function workFrom(commits: number | null, dirty: boolean | null): boolean
 
 async function gitProbe(task: WorkTask): Promise<boolean | null> {
   const [commits, dirty] = await Promise.all([
-    task.branch ? commitsOnBranch(task.repoPath, task.baseBranch, task.branch) : Promise.resolve(null),
+    // Against the PR's base when there is one, like the Create PR count and
+    // the Files pane (#237); the stack check is a header's, not a probe's.
+    task.branch
+      ? commitsOnBranch(task.repoPath, measuredBase(task, getPrStatus(task.id) ?? null), task.branch)
+      : Promise.resolve(null),
     uncommittedChanges(task.worktreePath).then(
       (c) => c.dirty,
       () => null,

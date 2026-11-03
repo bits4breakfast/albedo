@@ -18,6 +18,7 @@ import { prLookupBranch } from '../gh/gh';
 import { commitsOnBranch } from '../git/worktree';
 import { prLabel, prTooltip, reviewChip, reviewTooltip, type PrStatus } from '../gh/prStatus';
 import ChecksDialog from './ChecksDialog';
+import { useMeasuredBase } from './useMeasuredBase';
 import MergeDialog from './MergeDialog';
 import { prAction } from '../gh/prAction';
 import { ciCueFor, takeChecksRequest, useCiVersion } from './ciNotice';
@@ -107,6 +108,9 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [task?.id, task?.status]);
 
+  // No PR yet: counted against what the branch is stacked on, else the
+  // stored base -- the base the Files pane measures too (#237).
+  const countBase = useMeasuredBase(task).base;
   const answered = task ? getPrStatus(task.id) !== undefined : false;
   const askable = !!task && !!onCreatePr && answered && pr === null && prLookupBranch(task) !== null;
   const [own, setOwn] = useState<number | null>(null);
@@ -114,13 +118,13 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
     setOwn(null);
     if (!askable || !task) return;
     let live = true;
-    void commitsOnBranch(task.repoPath, task.baseBranch, task.branch).then((n) => {
+    void commitsOnBranch(task.repoPath, countBase, task.branch).then((n) => {
       if (live) setOwn(n);
     });
     return () => {
       live = false;
     };
-  }, [askable, task?.id, task?.repoPath, task?.baseBranch, task?.branch, task?.lastActivityAt]);
+  }, [askable, task?.id, task?.repoPath, countBase, task?.branch, task?.lastActivityAt]);
 
   if (task && !pr && askable && own !== null && own > 0) {
     return (
