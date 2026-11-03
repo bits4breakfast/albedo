@@ -19,6 +19,7 @@ import type { ReactNode } from 'react';
 import {
   ANSWER_WINDOW_S,
   answerPrompt,
+  answerWindowClosed,
   isAnswerable,
   onPromptChange,
   pendingPrompt,
@@ -156,6 +157,10 @@ function PromptBody({
         <div className="tx-prompt-q">{prompt.message}</div>
       )}
 
+      {/* Still waiting, but past the hour the card can answer in (#246). */}
+      {prompt.kind !== 'notice' && send === 'idle' && answerWindowClosed(prompt, now) ? (
+        <div className="pc-note">Too late to answer here: Albedo can pass on an answer for an hour only. Answer it in the terminal.</div>
+      ) : null}
       <SendNote state={send} />
     </div>
   );
