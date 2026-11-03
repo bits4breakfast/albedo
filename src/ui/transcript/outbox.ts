@@ -25,6 +25,7 @@
 import { useSyncExternalStore } from 'react';
 import { KEYS, readPersisted, writePersisted } from '../persisted';
 import type { Codec } from '../persisted';
+import { isSlashCommand } from './slash';
 
 export interface HeldMessage {
   /** Stable within the store, for edit and remove. */
@@ -212,7 +213,10 @@ export function setEditing(taskId: number, id: string, on: boolean): void {
 
 /**
  * Send the task's held messages, oldest first, with `send` (which says
- * whether it was delivered), and stop at the first that is not.
+ * whether it was delivered), and stop at the first write that is not. They
+ * go a run at a time (#240, `nextRun`): the leading plain messages as one
+ * message, joined by a blank line; a slash command alone. The count returned
+ * is of held messages, not writes.
  *
  * Each is marked `sending` -- in storage too -- before it is sent, and leaves
  * only once `send` says it was delivered; a failure clears the mark and it
@@ -236,14 +240,14 @@ export async function releaseHeld(
   let sent = 0;
   try {
     for (;;) {
-      const head = heldFor(taskId)[0];
-      if (!head || head.maybeSent || editing.has(head.id) || !mayGo()) return sent;
-      if (!(await deliver(taskId, head, send))) {
+      const run = nextRun(heldFor(taskId), editing);
+      if (run.length === 0 || !mayGo()) return sent;
+      if (!(await deliverRun(taskId, run, send))) {
         failing.add(taskId);
         return sent;
       }
       failing.delete(taskId);
-      sent++;
+      sent += run.length;
     }
   } finally {
     releasing.delete(taskId);
@@ -285,6 +289,59 @@ async function deliver(taskId: number, entry: HeldMessage, send: (text: string) 
   if (held.some((h) => h.id === entry.id)) commit(taskId, held.filter((h) => h.id !== entry.id));
   for (const cb of [...releaseListeners]) cb(taskId, entry);
   return true;
+}
+
+/**
+ * The held messages that go together next (#240): the leading run, oldest
+ * first, as Claude Code's own queue joins messages typed during a turn. A
+ * slash command goes alone -- it must reach an idle session by itself -- so
+ * it is a run of one, and ends the run before it. An entry being edited or
+ * `maybeSent` stops the run where it is, as it stops a release. Exported for
+ * tests.
+ */
+export function nextRun(held: readonly HeldMessage[], editingIds: ReadonlySet<string> = new Set()): HeldMessage[] {
+  const free = (h: HeldMessage) => !h.maybeSent && !editingIds.has(h.id);
+  const head = held[0];
+  if (!head || !free(head)) return [];
+  if (isSlashCommand(head.text)) return [head];
+  const run = [head];
+  for (const h of held.slice(1)) {
+    if (!free(h) || isSlashCommand(h.text)) break;
+    run.push(h);
+  }
+  return run;
+}
+
+/** How a run's texts are joined into the one message that goes (#240). */
+export const RUN_JOINER = '\n\n';
+
+/**
+ * Deliver a run as one message: every entry marked `sending` first (a crash
+ * mid-write brings them all back `maybeSent`), one write, then all leave the
+ * outbox together and each is announced, so each one's comments are marked.
+ */
+async function deliverRun(taskId: number, run: readonly HeldMessage[], send: (text: string) => Promise<boolean>): Promise<boolean> {
+  if (run.length === 1) return deliver(taskId, run[0]!, send);
+  const ids = new Set(run.map((h) => h.id));
+  for (const h of run) patch(taskId, h.id, { sending: true });
+  let ok = false;
+  try {
+    ok = await send(run.map((h) => h.text).join(RUN_JOINER));
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    for (const h of run) patch(taskId, h.id, { sending: undefined });
+    return false;
+  }
+  commit(taskId, heldFor(taskId).filter((h) => !ids.has(h.id)));
+  for (const h of run) for (const cb of [...releaseListeners]) cb(taskId, h);
+  return true;
+}
+
+/** How many held messages the next release would send as one (#240). */
+export function nextRunSize(taskId: number): number {
+  return nextRun(heldFor(taskId), editing).length;
 }
 
 /** Change fields of one entry, if it is still there. Undefined removes a field. */
