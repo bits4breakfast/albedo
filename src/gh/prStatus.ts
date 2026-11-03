@@ -37,6 +37,19 @@ export type ChecksSummary =
 export type ReviewDecision = 'approved' | 'changes-requested' | 'review-required' | null;
 
 /**
+ * GitHub's `mergeable` (#236): whether the head merges into the base without
+ * conflicts. `unknown` is GitHub still computing it -- it is never guessed.
+ */
+export type Mergeable = 'mergeable' | 'conflicting' | 'unknown';
+
+/**
+ * GitHub's `mergeStateStatus` (#236), lower-cased: whether the PR can be
+ * merged now, and if not, roughly why. `unknown` covers UNKNOWN and anything
+ * new.
+ */
+export type MergeStateStatus = 'clean' | 'blocked' | 'behind' | 'dirty' | 'unstable' | 'has-hooks' | 'draft' | 'unknown';
+
+/**
  * One reviewer's latest say (`latestReviews`), kept only when it decides
  * something: an approval or a request for changes. A comment-only review, a
  * dismissed one or a pending draft says nothing about whether to merge.
@@ -79,6 +92,13 @@ export interface PrStatus {
   reviewRequests?: string[];
   /** The PR author's login. Empty when gh did not say. */
   author?: string;
+  /**
+   * `mergeable` and `mergeStateStatus` (#236). Optional, like `reviews`, so a
+   * hand-built status (tests) need not spell them out; `parsePrView` always
+   * sets them, `unknown` when gh did not say.
+   */
+  mergeable?: Mergeable;
+  mergeState?: MergeStateStatus;
   checks: ChecksSummary;
   /** Every check after dedupe, failing first; the tooltip lists them. */
   lines: CheckLine[];
@@ -269,6 +289,18 @@ function reviewOf(decision: unknown, reviews: PrReview[]): ReviewDecision {
   return null;
 }
 
+function mergeableOf(v: unknown): Mergeable {
+  const m = str(v)?.toUpperCase();
+  return m === 'MERGEABLE' ? 'mergeable' : m === 'CONFLICTING' ? 'conflicting' : 'unknown';
+}
+
+const MERGE_STATES: ReadonlySet<string> = new Set(['clean', 'blocked', 'behind', 'dirty', 'unstable', 'has-hooks', 'draft']);
+
+function mergeStateOf(v: unknown): MergeStateStatus {
+  const m = str(v)?.toLowerCase().replace(/_/g, '-') ?? '';
+  return MERGE_STATES.has(m) ? (m as MergeStateStatus) : 'unknown';
+}
+
 function stateOf(state: unknown, isDraft: unknown, mergedAt: string | null): PrState {
   const s = str(state)?.toUpperCase();
   if (s === 'MERGED' || mergedAt) return 'merged';
@@ -279,7 +311,7 @@ function stateOf(state: unknown, isDraft: unknown, mergedAt: string | null): PrS
 /**
  * Parse `gh pr view --json number,url,state,isDraft,title,reviewDecision,
  * statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,
- * latestReviews,reviewRequests,author`. Returns null
+ * latestReviews,reviewRequests,author,mergeable,mergeStateStatus`. Returns null
  * for anything that is not recognisably a PR -- the caller treats that exactly
  * like "no PR".
  */
@@ -309,6 +341,8 @@ export function parsePrView(stdout: string): PrStatus | null {
     reviews,
     reviewRequests: requestsOf(d.reviewRequests),
     author: loginOf(d.author) ?? '',
+    mergeable: mergeableOf(d.mergeable),
+    mergeState: mergeStateOf(d.mergeStateStatus),
     checks: summarizeChecks(lines),
     lines,
   };

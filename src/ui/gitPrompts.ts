@@ -65,6 +65,24 @@ export function createPrPrompt(task: GitTask): string {
   ].join('\n'));
 }
 
+/**
+ * GitHub reports the PR conflicts with its base (#236): rebase onto the base
+ * as GitHub sees it, resolve, check, and push. The base is the PR's own
+ * (`baseRefName`), which is what GitHub measured the conflict against.
+ */
+export function resolveConflictsPrompt(task: Pick<Task, 'branch'>, pr: { number: number; baseRefName: string }): string {
+  const base = pr.baseRefName;
+  return wrapAction('resolve-conflicts', [
+    `GitHub reports that PR #${pr.number} (\`${task.branch}\`) has conflicts with \`${base}\`. Rebase it and resolve them.`,
+    '',
+    `- Fetch first, then rebase \`${task.branch}\` onto \`origin/${base}\`.`,
+    '- If there are uncommitted changes, stash them before you start and restore them at the end.',
+    '- Resolve each conflict keeping the intent of both sides. If a resolution is not obvious, stop and ask me.',
+    "- Run the project's tests and typecheck, and fix what the rebase broke.",
+    `- When it is done and they pass, push \`${task.branch}\` with \`--force-with-lease\`.`,
+  ].join('\n'));
+}
+
 /** What the git bar's main button offers: the next thing this branch needs. */
 export type NextStep = 'push' | 'create-pr' | 'open-pr' | 'none';
 

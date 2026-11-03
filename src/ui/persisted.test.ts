@@ -155,3 +155,9 @@ describe('KEYS', () => {
     expect(KEYS.taskModel(3)).toBe('albedo.taskModel.3');
   });
 });
+
+describe('KEYS: Squash and Merge (#236)', () => {
+  it('remembers the delete-branch choice under its own key', () => {
+    expect(KEYS.mergeDeleteBranch).toBe('albedo.pr.mergeDeleteBranch');
+  });
+});

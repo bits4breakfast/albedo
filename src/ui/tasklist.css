@@ -240,6 +240,8 @@
 .task-review { white-space: nowrap; font-weight: 600; }
 .task-review[data-outcome='approved'] { color: var(--add); }
 .task-review[data-outcome='changes-requested'] { color: var(--warn); }
+/* GitHub reports conflicts (#236): state, like Approved, in the warn tone. */
+.task-review[data-outcome='conflicts'] { color: var(--warn); }
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on

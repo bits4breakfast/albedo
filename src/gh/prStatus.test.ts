@@ -315,3 +315,24 @@ describe('reviewChip (#180)', () => {
     ]);
   });
 });
+
+describe('mergeable and mergeStateStatus (#236)', () => {
+  const view = (extra: Record<string, unknown>) =>
+    parsePrView(JSON.stringify({ number: 3, state: 'OPEN', headRefName: 'b', ...extra }))!;
+
+  it('reads both, lower-cased', () => {
+    const pr = view({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' });
+    expect(pr.mergeable).toBe('conflicting');
+    expect(pr.mergeState).toBe('dirty');
+    expect(view({ mergeable: 'MERGEABLE', mergeStateStatus: 'HAS_HOOKS' })).toMatchObject({ mergeable: 'mergeable', mergeState: 'has-hooks' });
+    for (const s of ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'DRAFT']) {
+      expect(view({ mergeStateStatus: s }).mergeState).toBe(s.toLowerCase());
+    }
+  });
+
+  it('UNKNOWN, missing, or anything new is unknown', () => {
+    expect(view({ mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' })).toMatchObject({ mergeable: 'unknown', mergeState: 'unknown' });
+    expect(view({})).toMatchObject({ mergeable: 'unknown', mergeState: 'unknown' });
+    expect(view({ mergeable: 7, mergeStateStatus: 'SOMETHING_NEW' })).toMatchObject({ mergeable: 'unknown', mergeState: 'unknown' });
+  });
+});
