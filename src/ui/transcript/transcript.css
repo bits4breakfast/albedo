@@ -962,28 +962,34 @@ ol.tx-md-list { list-style-type: decimal; }
   border-left: 1px solid var(--border);
   border-radius: 0 var(--radius) var(--radius) 0;
 }
-/* Inline: floats just after the code, shown only while the code (or the
-   icon) is hovered. It takes no room in the line -- a paragraph lays out
-   exactly as it did without it -- and covers the next few characters only
-   while it shows, on the message's own ground. Hidden by visibility, never
-   opacity, so a hidden one takes no clicks. */
-.tx-md-code-wrap { position: relative; }
+/* Inline: always shown (#244), as the right end of the code chip itself -- a
+   segment as tall as the chip, on its ground, behind a hairline, like the
+   column on a code block. Nothing hover-revealed and no gap: #243 showed it
+   only while the code was hovered, 1px to the right, and that pixel ended the
+   hover before the pointer got there, so it could never be clicked.
+   An inline-flex box, so the segment stretches to the chip's height; the
+   wrap itself carries no ground, so a path chip's hover edge stays its own. */
+.tx-md-code-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+  vertical-align: baseline;
+}
+.tx-md-code-wrap > .tx-md-code {
+  min-width: 0;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  border-right: 0;
+  border-radius: 4px 0 0 4px;
+}
 .tx-copy-inline {
-  position: absolute;
-  left: 100%;
-  /* As tall as the code chip (#242), on the chip's own ground and edge. */
-  top: 0;
-  bottom: 0;
-  z-index: 1;
+  flex: none;
   width: 20px;
   height: auto;
-  margin-left: 1px;
   background: var(--panel-chrome);
   border: 1px solid var(--border);
-  visibility: hidden;
+  border-radius: 0 4px 4px 0;
 }
-.tx-md-code-wrap:hover > .tx-copy-inline,
-.tx-copy-inline[data-done] { visibility: visible; }
 
 /* --- preformatted --------------------------------------------------------- */
 

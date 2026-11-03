@@ -64,3 +64,15 @@ describe('the copy button’s colours (#242)', () => {
     });
   }
 });
+
+describe('the inline copy icon is always there and reachable (#244)', () => {
+  // #243 revealed it on hover, 1px to the right of the code: crossing that
+  // pixel ended the hover, so it hid before the pointer got to it.
+  it('is never hidden, never offset, never floated away from the code', () => {
+    const inline = rule('.tx-copy-inline');
+    expect(inline).not.toMatch(/visibility|display: none|position: absolute|margin/);
+    expect(tx).not.toMatch(/\.tx-md-code-wrap:hover/);
+    // A segment of the chip: the wrap lays them side by side, stretched to one height.
+    expect(rule('.tx-md-code-wrap')).toMatch(/display: inline-flex;[\s\S]*align-items: stretch/);
+  });
+});
