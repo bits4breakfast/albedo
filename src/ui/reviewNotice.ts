@@ -19,6 +19,11 @@
  * TaskList). It says Approved or Changes, until the task is opened, the PR
  * stops being open, or a newer review replaces it. Awaiting Review never
  * marks a row: it is the default state of every open PR.
+ *
+ * The row shows only a Changes mark from here. Approved, by the owner's
+ * decision (#234), is state: read from the PR as it is now
+ * ({@link standingApproval}) and shown on every row, the selected one too,
+ * until the PR is merged.
  */
 
 import { useEffect, useRef, useSyncExternalStore } from 'react';
@@ -92,6 +97,19 @@ export function clearReviewMark(taskId: number): void {
 /** The unseen review on a task's row, if any. */
 export function reviewMarkFor(taskId: number): ReviewMark | undefined {
   return marks.get(taskId);
+}
+
+/**
+ * The approval that stands on a task's PR (#234): open, not a draft, and
+ * approved, as GitHub says now. State, not news -- by the owner's decision it
+ * stays on the row, selected or not and across restarts, until the PR is
+ * merged or closed, or the approval is dismissed or outranked by a change
+ * request. Each of those arrives with the next poll.
+ */
+export function standingApproval(pr: PrStatus | null | undefined): ReviewMark | null {
+  if (!pr || pr.state !== 'open' || pr.review !== 'approved') return null;
+  const reviewers = (pr.reviews ?? []).filter((r) => r.state === 'approved').map((r) => r.author);
+  return { outcome: 'approved', prNumber: pr.number, reviewers };
 }
 
 /** Re-render on any change to the marks. */

@@ -1,9 +1,10 @@
 /**
  * @vitest-environment jsdom
  *
- * The row mark for a review that landed unseen (#180): Approved or Changes,
- * beside the checks' mark, never on the selected row, gone once the task is
- * opened. Awaiting Review never marks a row.
+ * The row's review mark. Approved is state (#234): shown while the open PR
+ * is approved, on the selected row too, until it is merged. Changes is news
+ * (#180): an unseen change request, never on the selected row, gone once the
+ * task is opened. Awaiting Review never marks a row.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,8 +13,9 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import type { Task } from '../types';
 import { parsePrView, type PrStatus } from '../gh/prStatus';
 
+const prs = new Map<number, PrStatus | null>();
 vi.mock('../gh/prStore', () => ({
-  getPrStatus: () => null,
+  getPrStatus: (id: number) => prs.get(id) ?? null,
   usePrPolling: () => {},
   usePrStatusVersion: () => 0,
 }));
@@ -26,11 +28,12 @@ const rn = await import('./reviewNotice');
 const ci = await import('./ciNotice');
 const { __setAttentionBackend } = await import('./attention');
 
-const pr = (decision: string, reviews: { login: string; state: string }[]): PrStatus =>
+const pr = (decision: string, reviews: { login: string; state: string }[], state = 'OPEN', isDraft = false): PrStatus =>
   parsePrView(
     JSON.stringify({
       number: 21,
-      state: 'OPEN',
+      state,
+      isDraft,
       headRefName: 'b',
       reviewDecision: decision,
       latestReviews: reviews.map((r) => ({ author: { login: r.login }, state: r.state, submittedAt: 't1' })),
@@ -46,6 +49,7 @@ const row = (id: number, title: string): Task =>
 const tasks = [row(1, 'Fix login'), row(2, 'Write docs')];
 
 beforeEach(() => {
+  prs.clear();
   rn.resetReviewNoticesForTests();
   // Signed in as someone who is not the reviewer: unknown holds reviews back.
   resetViewerLoginForTests('me');
@@ -64,17 +68,55 @@ function land(task: Task, after: PrStatus, selectedId: number | null) {
   });
 }
 
-describe('TaskList: unseen reviews', () => {
-  it('marks an approval with ✓ Approved and names the reviewer', () => {
+const approved = () => pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }]);
+
+describe('TaskList: an approval that stands (#234)', () => {
+  it('shows ✓ Approved from the PR as it is, naming the reviewer', () => {
+    prs.set(1, approved());
     const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
-    expect(container.querySelector('.task-review')).toBeNull();
-    land(tasks[0]!, pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }]), 2);
-    const mark = screen.getByRole('img', { name: 'PR #21 approved by alice, not seen yet' });
+    const mark = screen.getByRole('img', { name: 'PR #21 approved by alice, ready to merge' });
     expect(mark.textContent).toBe('✓ Approved');
     expect(mark.getAttribute('data-outcome')).toBe('approved');
+    expect(mark.getAttribute('title')).toBe('PR #21 approved by alice. Ready to merge.');
     expect(container.querySelector('[data-task-id="1"] .task-review')).toBe(mark);
   });
 
+  it('stays on the selected row, and after the task is opened', () => {
+    prs.set(1, approved());
+    land(tasks[0]!, approved(), 2);
+    const { container, rerender } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    act(() => rn.clearReviewMark(1));
+    rerender(<TaskList tasks={tasks} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
+    expect(container.querySelector('[data-task-id="1"] .task-review')?.textContent).toBe('✓ Approved');
+  });
+
+  it('with no review event at all: a restart, or an approval from before launch', () => {
+    prs.set(1, approved());
+    const { container } = render(<TaskList tasks={tasks} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
+    expect(container.querySelector('[data-task-id="1"] .task-review')).not.toBeNull();
+  });
+
+  it.each([
+    ['merged', pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }], 'MERGED')],
+    ['closed', pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }], 'CLOSED')],
+    ['a draft', pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }], 'OPEN', true)],
+    ['dismissed by a push', pr('REVIEW_REQUIRED', [])],
+  ])('goes once the PR is %s', (_what, now) => {
+    prs.set(1, now);
+    // Even with the approval still marked as news from when it landed.
+    land(tasks[0]!, approved(), 2);
+    const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    expect(container.querySelector('[data-task-id="1"] .task-review')).toBeNull();
+  });
+
+  it('says approved alone when GitHub names no reviewer', () => {
+    prs.set(1, pr('APPROVED', []));
+    render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    expect(screen.getByRole('img', { name: 'PR #21 approved, ready to merge' })).toBeTruthy();
+  });
+});
+
+describe('TaskList: an unseen change request (#180)', () => {
   it('marks changes requested with ✎ Changes', () => {
     render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
     land(tasks[0]!, pr('CHANGES_REQUESTED', [{ login: 'carol', state: 'CHANGES_REQUESTED' }]), 2);
@@ -82,16 +124,17 @@ describe('TaskList: unseen reviews', () => {
     expect(mark.textContent).toBe('✎ Changes');
   });
 
-  it('never marks the selected row, nor Awaiting Review; opening the task clears the mark', () => {
+  it('never on the selected row, nor for Awaiting Review; opening the task clears it', () => {
+    const changes = pr('CHANGES_REQUESTED', [{ login: 'carol', state: 'CHANGES_REQUESTED' }]);
     const { container, rerender } = render(
       <TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />,
     );
-    land(tasks[1]!, pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }]), 2);
+    land(tasks[1]!, changes, 2);
     // A reviewer asked, nobody answered yet: still the default state.
     land(tasks[0]!, pr('REVIEW_REQUIRED', [{ login: 'bot', state: 'COMMENTED' }]), 2);
     expect(container.querySelector('.task-review')).toBeNull();
 
-    land(tasks[0]!, pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }]), 2);
+    land(tasks[0]!, changes, 2);
     expect(container.querySelector('[data-task-id="1"] .task-review')).not.toBeNull();
     act(() => rn.clearReviewMark(1));
     rerender(<TaskList tasks={tasks} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
