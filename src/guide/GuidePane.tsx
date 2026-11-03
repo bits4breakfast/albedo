@@ -697,7 +697,6 @@ function GuideFileDiff({
   onToggleReviewed: () => void;
 }): ReactNode {
   const [whole, setWhole] = useState(false);
-  const [showAnyway, setShowAnyway] = useState(false);
   const openFile = useOpenFile();
   const full = diff.files.find((f) => f.path === file.path) ?? null;
   const result = full?.result ?? null;
@@ -742,14 +741,9 @@ function GuideFileDiff({
       ) : null}
       {comments.bar}
       <div className="gd-diff-scroll">
-        {reviewed && !showAnyway ? (
-          <div className="gd-collapsed">
-            Reviewed.
-            <button type="button" className="gd-link" onClick={() => setShowAnyway(true)}>
-              Show Diff
-            </button>
-          </div>
-        ) : result === null ? (
+        {/* A reviewed file shows its diff like any other (#228): the ticked
+            box above and the rail say it is reviewed. */}
+        {result === null ? (
           <div className="gd-message">This file is no longer in the change.</div>
         ) : result.kind === 'binary' ? (
           <div className="gd-message">Binary file. No text diff to show.</div>
