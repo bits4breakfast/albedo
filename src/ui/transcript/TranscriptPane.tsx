@@ -31,7 +31,7 @@ import { PassageComments } from './PassageComments';
 import { WaitingComments } from './WaitingComments';
 import { composeMessage, NOTHING_CARRIED, takeCarried, useWaitingCodeComments, type Carried } from './codeComments';
 import { useCommentsIntro } from '../commentsIntro';
-import { editHeld, holdMessage, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
+import { editHeld, holdMessage, nextRunSize, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
 import {
   conditionsFor,
   heldHint,
@@ -828,7 +828,8 @@ export function QueuedStrip({
 /** The outbox's part of the band, headed by what its messages wait for. */
 function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessage[] }): ReactNode {
   const conditions = useReleaseConditions(taskId);
-  const hint = heldHint(conditions);
+  // Held messages go together, as one (#240): the hint says so when they will.
+  const hint = heldHint(conditions, nextRunSize(taskId));
   return (
     <>
       <div className="tx-queued-head">

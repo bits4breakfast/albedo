@@ -119,7 +119,8 @@ describe('held messages', () => {
     holdMessage(1, 'and update the docs');
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     const band = screen.getByRole('status');
-    expect(band.textContent).toMatch(/^Queued 2sent when Claude finishes this turn/);
+    // Two go as one when the turn ends (#240), and the band says so.
+    expect(band.textContent).toMatch(/^Queued 2sent together when Claude finishes this turn/);
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]!);
     expect(heldFor(1).map((h) => h.text)).toEqual(['and update the docs']);
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
@@ -168,7 +169,9 @@ describe('held messages', () => {
   it('say so briefly when Send Now could not go: a release had the lock', async () => {
     vi.mocked(submitPty).mockClear();
     turnRunning();
-    holdMessage(1, 'being written');
+    // A command goes on its own (#240), so the release writes it alone and
+    // the next row is still free to be sent now.
+    holdMessage(1, '/compact');
     holdMessage(1, 'now, please');
     let finish: (ok: boolean) => void = () => {};
     // A release under way, its write still in flight.

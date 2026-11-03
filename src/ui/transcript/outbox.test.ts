@@ -16,6 +16,7 @@ import {
   isReleasing,
   keepOutboxFor,
   lastReleaseFailed,
+  nextRun,
   onHeldReleased,
   outboxCodec,
   releaseHeld,
@@ -23,6 +24,7 @@ import {
   sendAnyway,
   setEditing,
   tasksWithHeld,
+  type HeldMessage,
 } from './outbox';
 
 const T0 = Date.parse('2026-10-23T09:00:00.000Z');
@@ -118,8 +120,35 @@ describe('holding', () => {
   });
 });
 
+describe('nextRun: what goes together (#240)', () => {
+  const h = (text: string, o: Partial<HeldMessage> = {}): HeldMessage => ({ id: text, text, heldAt: 0, ...o });
+  it('the leading run of plain messages, in order', () => {
+    expect(nextRun([h('a'), h('b'), h('c')]).map((x) => x.text)).toEqual(['a', 'b', 'c']);
+  });
+  it('a slash command goes alone, and ends the run before it', () => {
+    expect(nextRun([h('/clear'), h('b')]).map((x) => x.text)).toEqual(['/clear']);
+    expect(nextRun([h('a'), h('/compact'), h('c')]).map((x) => x.text)).toEqual(['a']);
+    // A path is not a command.
+    expect(nextRun([h('a'), h('/Users/me/shot.png look')]).map((x) => x.text)).toEqual(['a', '/Users/me/shot.png look']);
+  });
+  it('stops at one being edited or maybe sent; nothing when the head is', () => {
+    expect(nextRun([h('a'), h('b'), h('c')], new Set(['b'])).map((x) => x.text)).toEqual(['a']);
+    expect(nextRun([h('a'), h('b', { maybeSent: true })]).map((x) => x.text)).toEqual(['a']);
+    expect(nextRun([h('a', { maybeSent: true }), h('b')])).toEqual([]);
+    expect(nextRun([h('a')], new Set(['a']))).toEqual([]);
+  });
+  it('each message of a run is announced, so each one\'s comments are marked', async () => {
+    holdMessage(1, 'see a.ts:3', T0, [7]);
+    holdMessage(1, 'and b.ts:9', T0, [8]);
+    const released = vi.fn();
+    onHeldReleased(released);
+    await releaseHeld(1, async () => true);
+    expect(released.mock.calls.map(([, held]) => held.commentIds)).toEqual([[7], [8]]);
+  });
+});
+
 describe('releasing', () => {
-  it('sends in order, each once, and empties the outbox', async () => {
+  it('sends them as one message, in order, once, and empties the outbox (#240)', async () => {
     holdMessage(1, 'one');
     holdMessage(1, 'two');
     holdMessage(1, 'three');
@@ -127,7 +156,7 @@ describe('releasing', () => {
     const released = vi.fn();
     onHeldReleased(released);
     expect(await releaseHeld(1, async (t) => (sent.push(t), true))).toBe(3);
-    expect(sent).toEqual(['one', 'two', 'three']);
+    expect(sent).toEqual(['one\n\ntwo\n\nthree']);
     expect(released.mock.calls.map(([id, held]) => [id, held.text])).toEqual([
       [1, 'one'],
       [1, 'two'],
@@ -136,26 +165,27 @@ describe('releasing', () => {
     expect(texts(1)).toEqual([]);
   });
 
-  it('a crash mid-send leaves the message as maybe sent: never resent on its own, never lost', async () => {
+  it('a crash mid-send leaves every message of the write as maybe sent: never resent on its own, never lost', async () => {
     holdMessage(1, 'one');
     holdMessage(1, 'two');
+    holdMessage(1, '/compact');
     void releaseHeld(1, () => new Promise<boolean>(() => {})); // the write never comes back
-    expect(heldFor(1)[0]?.sending).toBe(true);
+    expect(heldFor(1).map((h) => h.sending ?? false)).toEqual([true, true, false]);
     __resetOutbox(); // the crash: only storage survives
     expect(heldFor(1).map((h) => [h.text, h.maybeSent ?? false, h.sending ?? false])).toEqual([
       ['one', true, false],
-      ['two', false, false],
+      ['two', true, false],
+      ['/compact', false, false],
     ]);
-    // The release stops at it, keeping order.
+    // The release stops at them, keeping order.
     const sent: string[] = [];
     const send = async (t: string) => (sent.push(t), true);
     expect(await releaseHeld(1, send)).toBe(0);
     expect(sent).toEqual([]);
-    // Send: the person says it did not arrive.
-    sendAnyway(1, heldFor(1)[0]!.id);
-    expect(heldFor(1)[0]?.maybeSent).toBeUndefined();
-    expect(await releaseHeld(1, send)).toBe(2);
-    expect(sent).toEqual(['one', 'two']);
+    // Send, for each: the person says they did not arrive.
+    for (const h of heldFor(1).slice(0, 2)) sendAnyway(1, h.id);
+    expect(await releaseHeld(1, send)).toBe(3);
+    expect(sent).toEqual(['one\n\ntwo', '/compact']);
   });
 
   it('a maybe-sent message can be removed instead, and the rest go', async () => {
@@ -165,6 +195,10 @@ describe('releasing', () => {
     __resetOutbox();
     removeHeld(1, heldFor(1)[0]!.id);
     const sent: string[] = [];
+    // 'two' went in the same write, so it may have arrived too: it waits as well.
+    await releaseHeld(1, async (t) => (sent.push(t), true));
+    expect(sent).toEqual([]);
+    sendAnyway(1, heldFor(1)[0]!.id);
     await releaseHeld(1, async (t) => (sent.push(t), true));
     expect(sent).toEqual(['two']);
     __resetOutbox();
@@ -173,19 +207,28 @@ describe('releasing', () => {
 
   it('stops at a failed send and keeps it at the head, so nothing is lost or reordered', async () => {
     holdMessage(1, 'one');
-    holdMessage(1, 'two');
+    holdMessage(1, '/clear');
     holdMessage(1, 'three');
-    const send = vi.fn(async (t: string) => t !== 'two');
+    const send = vi.fn(async (t: string) => t !== '/clear');
     expect(await releaseHeld(1, send)).toBe(1);
-    expect(texts(1)).toEqual(['two', 'three']);
+    expect(texts(1)).toEqual(['/clear', 'three']);
+    expect(heldFor(1).every((h) => h.sending === undefined)).toBe(true);
+    // A failed run of several keeps all of it.
+    holdMessage(2, 'a');
+    holdMessage(2, 'b');
+    expect(await releaseHeld(2, async () => false)).toBe(0);
+    expect(heldFor(2).map((h) => [h.text, h.sending ?? false])).toEqual([
+      ['a', false],
+      ['b', false],
+    ]);
     // A throw is a failure too.
     expect(await releaseHeld(1, async () => Promise.reject(new Error('pty gone')))).toBe(0);
-    expect(texts(1)).toEqual(['two', 'three']);
+    expect(texts(1)).toEqual(['/clear', 'three']);
   });
 
   it('marks each message as sending before sending it: a second release at the same time sends nothing twice', async () => {
     holdMessage(1, 'one');
-    holdMessage(1, 'two');
+    holdMessage(1, '/clear');
     let land: () => void = () => {};
     const sent: string[] = [];
     const slow = (t: string) => new Promise<boolean>((r) => (sent.push(t), (land = () => r(true))));
@@ -193,11 +236,11 @@ describe('releasing', () => {
     expect(isReleasing(1)).toBe(true);
     expect(heldFor(1).map((h) => [h.text, h.sending ?? false])).toEqual([
       ['one', true],
-      ['two', false],
+      ['/clear', false],
     ]);
     expect(await releaseHeld(1, slow)).toBe(0);
     land();
-    await vi.waitFor(() => expect(sent).toEqual(['one', 'two']));
+    await vi.waitFor(() => expect(sent).toEqual(['one', '/clear']));
     land();
     expect(await first).toBe(2);
     expect(isReleasing(1)).toBe(false);
@@ -245,6 +288,6 @@ describe('releasing', () => {
     editHeld(1, b.id, 'two, edited');
     setEditing(1, b.id, false);
     await releaseHeld(1, send);
-    expect(sent).toEqual(['one', 'two, edited', 'three']);
+    expect(sent).toEqual(['one', 'two, edited\n\nthree']);
   });
 });

@@ -18,7 +18,7 @@ import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import { seenUpdate } from './ui/taskGroups';
-import { createPrPrompt, pushPrompt } from './ui/gitPrompts';
+import { createPrPrompt, resolveConflictsPrompt, pushPrompt } from './ui/gitPrompts';
 import { sendPrompt } from './ui/sendPrompt';
 import { useMeasuredBase } from './ui/useMeasuredBase';
 import Subagents from './ui/Subagents';
@@ -1445,6 +1445,7 @@ export default function App() {
                     }}
                     onFollowUp={(pr) => void openFollowUp(selected, pr)}
                     onCreatePr={() => void sendPrompt(selected, createPrPrompt(selectedBase.base !== '' ? { ...selected, baseBranch: selectedBase.base } : selected))}
+                    onResolveConflicts={(pr) => void sendPrompt(selected, resolveConflictsPrompt(selected, pr))}
                     onOpenFile={openFile}
                   />
                   )}

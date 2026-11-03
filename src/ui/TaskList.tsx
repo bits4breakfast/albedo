@@ -14,6 +14,7 @@ import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { ciMarkFor, useCiVersion } from './ciNotice';
 import { reviewMarkFor, standingApproval, useReviewVersion } from './reviewNotice';
+import { hasConflicts } from '../gh/prAction';
 import { reviewerNames } from '../gh/prStatus';
 import { useBranchSync } from '../git/branchSync';
 import { getReviewWork, useReviewWorkProbes, useReviewWorkVersion } from '../git/reviewWork';
@@ -545,8 +546,10 @@ export default function TaskList({
                         exceptions are news, not state -- checks that finished,
                         or a change request that landed, since the task was
                         last open (CiRowMark, ReviewRowMark) -- and, by the
-                        owner's decision (#234), one state: an approval that
-                        stands, until the PR is merged. */}
+                        owner's decisions, two states: an approval that stands,
+                        until the PR is merged (#234), and conflicts GitHub
+                        reports, which outrank it (#236). Marks only: the
+                        actions are the task bar's. */}
                     <span className="task-meta-tail">
                       {/* PR checks that finished since the task was last
                           open: ✓ or ✗ and the word, until it is opened
@@ -554,9 +557,10 @@ export default function TaskList({
                           rest is state. Never on the selected row -- it is
                           being looked at, and its PR badge carries a cue. */}
                       {task.id !== selectedId && <CiRowMark taskId={task.id} />}
-                      {/* Approved while the approval stands, on every row,
-                          the selected one too (#234); Changes once, as news,
-                          until the task is opened (#180). */}
+                      {/* ⚠ Conflicts while GitHub reports them, else
+                          Approved while the approval stands, on every row,
+                          the selected one too (#236, #234); Changes once, as
+                          news, until the task is opened (#180). */}
                       <ReviewRowMark taskId={task.id} selected={task.id === selectedId} />
                       {/* An unsent message waiting in this task's composer, so a
                           forgotten one can be found. Not on the selected row:
@@ -785,17 +789,35 @@ function CiRowMark({ taskId }: { taskId: number }) {
 }
 
 /**
- * The review on the task's PR, on its row. Approved is state (#234): shown
+ * The review on the task's PR, on its row. ⚠ Conflicts is state (#236): shown
+ * while GitHub reports them on an open PR, selected or not, and it outranks
+ * Approved. Approved is state (#234): shown
  * while GitHub says the open PR is approved, selected or not, until it is
  * merged. Changes is news (#180): an unseen change request, never on the
  * selected row, gone once the task is opened. Awaiting Review never marks a
  * row. Glyph and word, as the checks' mark; the reviewers are in the tooltip.
  */
 function ReviewRowMark({ taskId, selected }: { taskId: number; selected: boolean }) {
-  const standing = standingApproval(getPrStatus(taskId));
+  const pr = getPrStatus(taskId);
+  // Conflicts outrank an approval: the PR cannot be merged either way (#236).
+  // A change request that landed unseen is news, and still shows beside it.
+  const conflicts = hasConflicts(pr);
+  const standing = conflicts ? null : standingApproval(pr);
   const news = reviewMarkFor(taskId);
   const mark = standing ?? (!selected && news?.outcome === 'changes-requested' ? news : null);
-  if (!mark) return null;
+  const conflictMark =
+    conflicts && pr ? (
+      <span
+        className="task-review"
+        data-outcome="conflicts"
+        role="img"
+        aria-label={`PR #${pr.number} has conflicts with ${pr.baseRefName || 'its base'}`}
+        title={`GitHub reports conflicts between PR #${pr.number} and ${pr.baseRefName || 'its base'}. Open the task: its ⚠ Conflicts button asks Claude to resolve them.`}
+      >
+        <span aria-hidden="true">⚠</span> Conflicts
+      </span>
+    ) : null;
+  if (!mark) return conflictMark;
   const approved = mark.outcome === 'approved';
   const who = reviewerNames(mark.reviewers);
   const what = approved
@@ -804,6 +826,8 @@ function ReviewRowMark({ taskId, selected }: { taskId: number; selected: boolean
       : `PR #${mark.prNumber} approved`
     : `Changes requested on PR #${mark.prNumber} by ${who}`;
   return (
+    <>
+    {conflictMark}
     <span
       className="task-review"
       data-outcome={mark.outcome}
@@ -813,5 +837,6 @@ function ReviewRowMark({ taskId, selected }: { taskId: number; selected: boolean
     >
       <span aria-hidden="true">{approved ? '✓' : '✎'}</span> {approved ? 'Approved' : 'Changes'}
     </span>
+    </>
   );
 }

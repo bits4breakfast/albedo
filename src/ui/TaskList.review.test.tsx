@@ -141,3 +141,52 @@ describe('TaskList: an unseen change request (#180)', () => {
     expect(container.querySelector('.task-review')).toBeNull();
   });
 });
+
+describe('TaskList: conflicts GitHub reports (#236)', () => {
+  const conflicting = (o: { decision?: string; state?: string; isDraft?: boolean } = {}) =>
+    parsePrView(
+      JSON.stringify({
+        number: 21,
+        state: o.state ?? 'OPEN',
+        isDraft: o.isDraft ?? false,
+        headRefName: 'b',
+        baseRefName: 'main',
+        reviewDecision: o.decision ?? 'APPROVED',
+        latestReviews: [{ author: { login: 'alice' }, state: 'APPROVED', submittedAt: 't1' }],
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+      }),
+    ) as PrStatus;
+
+  it('marks ⚠ Conflicts, outranking Approved, on the selected row too', () => {
+    prs.set(1, conflicting());
+    const { container } = render(<TaskList tasks={tasks} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
+    const mark = screen.getByRole('img', { name: 'PR #21 has conflicts with main' });
+    expect(mark.textContent).toBe('⚠ Conflicts');
+    expect(mark.getAttribute('data-outcome')).toBe('conflicts');
+    expect(container.querySelector('[data-task-id="1"] [data-outcome="approved"]')).toBeNull();
+    // A mark, never a button: the actions are the task bar's.
+    expect(container.querySelector('[data-task-id="1"] .task-meta-tail button')).toBeNull();
+  });
+
+  it('on a draft or an unapproved PR as well', () => {
+    prs.set(1, conflicting({ isDraft: true, decision: 'REVIEW_REQUIRED' }));
+    render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    expect(screen.getByRole('img', { name: 'PR #21 has conflicts with main' })).toBeTruthy();
+  });
+
+  it('an unseen change request still shows beside it', () => {
+    prs.set(1, conflicting({ decision: 'CHANGES_REQUESTED' }));
+    const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    land(tasks[0]!, pr('CHANGES_REQUESTED', [{ login: 'carol', state: 'CHANGES_REQUESTED' }]), 2);
+    const marks = [...container.querySelectorAll('[data-task-id="1"] .task-review')].map((m) => m.getAttribute('data-outcome'));
+    expect(marks).toEqual(['conflicts', 'changes-requested']);
+  });
+
+  it('gone once merged or closed', () => {
+    prs.set(1, conflicting({ state: 'MERGED' }));
+    prs.set(2, conflicting({ state: 'CLOSED' }));
+    const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    expect(container.querySelector('[data-outcome="conflicts"]')).toBeNull();
+  });
+});
