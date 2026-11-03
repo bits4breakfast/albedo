@@ -109,3 +109,28 @@
 .pr-end:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .pr-end[data-tone='danger'] { color: var(--danger); }
 
+
+/*
+ * The PR's one action (#236). Its tone on its own soft ground, edged in the
+ * same token, so it reads as the one thing to press. Measured light | dark
+ * (prActionContrast.test.ts):
+ *   Squash and Merge…  --add on --add-soft
+ *   ⚠ Conflicts        --warn on --banner-bg (the warn-tinted ground)
+ * No opacity anywhere; hover changes the edge, never the text.
+ */
+.pr-action {
+  height: 20px;
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 18px;
+  border: 1px solid;
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.pr-action[data-tone='merge'] { color: var(--add); background: var(--add-soft); border-color: var(--add); }
+.pr-action[data-tone='conflicts'] { color: var(--warn); background: var(--banner-bg); border-color: var(--warn); }
+.pr-action:hover { border-color: var(--text-strong); }
+.pr-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* Approved but not mergeable yet: GitHub's reason in words, quiet. */
+.pr-reason { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }

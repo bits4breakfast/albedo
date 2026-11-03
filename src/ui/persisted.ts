@@ -70,6 +70,8 @@ export const KEYS = {
   reviewGuides: 'albedo.guide.guides',
   /** What the Review Guide has marked Reviewed, per task (guide/store.ts owns the shape). */
   reviewGuideReviewed: 'albedo.guide.reviewed',
+  /** Squash and Merge's "Delete the branch on GitHub" choice (ui/MergeDialog.tsx, #236). Absent means on. */
+  mergeDeleteBranch: 'albedo.pr.mergeDeleteBranch',
   /** One per task: the model its session is launched on. */
   taskModel: (taskId: number) => `albedo.taskModel.${taskId}`,
 } as const;

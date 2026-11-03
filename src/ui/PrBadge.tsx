@@ -1,9 +1,13 @@
 /**
  * Pull-request status for a task: a badge in the header, a mark on the row.
  *
- * Everything here is an ornament. With no `gh`, no login or no PR the
+ * The status is an ornament. With no `gh`, no login or no PR the
  * components render nothing at all -- no placeholder, no "unknown" -- because
  * a task without a PR is the normal case for most of its life.
+ *
+ * One action rides on it (#236), chosen by `prAction`: Squash and Merge…,
+ * which Albedo runs through gh after a confirm (MergeDialog), or ⚠ Conflicts,
+ * which hands Claude the rebase. Nothing when neither applies.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -14,6 +18,8 @@ import { prLookupBranch } from '../gh/gh';
 import { commitsOnBranch } from '../git/worktree';
 import { prLabel, prTooltip, reviewChip, reviewTooltip, type PrStatus } from '../gh/prStatus';
 import ChecksDialog from './ChecksDialog';
+import MergeDialog from './MergeDialog';
+import { prAction } from '../gh/prAction';
 import { ciCueFor, takeChecksRequest, useCiVersion } from './ciNotice';
 import './pr.css';
 
@@ -39,6 +45,12 @@ export interface PrBadgeProps {
   onCreatePr?: () => void;
   /** Opens a check annotation's file at its line (the Checks dialog). */
   onOpenFile?: (request: OpenFileRequest) => void;
+  /**
+   * Asks Claude to rebase onto the base and resolve the conflicts GitHub
+   * reports (#236), as the other git buttons do: a prompt, sent at once or
+   * held while a turn runs. Albedo runs no git for it.
+   */
+  onResolveConflicts?: (pr: PrStatus) => void;
 }
 
 /**
@@ -54,12 +66,16 @@ export function opensChecks(pr: PrStatus): boolean {
 const AFTER_TURN_RECHECK_MS = [10_000, 30_000];
 
 /** Header badge: "#6 ✓ checks", "#6 ✗ 2 failing", "#6 merged  Archive… Delete…". */
-export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrBadgeProps) {
+export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onResolveConflicts }: PrBadgeProps) {
   const pr = usePrStatus(task);
   const [checksOpen, setChecksOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const badgeRef = useRef<HTMLButtonElement>(null);
   // Another task's PR is another dialog: never carry one over a switch.
-  useEffect(() => setChecksOpen(false), [task?.id]);
+  useEffect(() => {
+    setChecksOpen(false);
+    setMergeOpen(false);
+  }, [task?.id]);
   // A click on a "checks failed" banner opens the task, then this (#159).
   // After the reset above, which a switch to that task also runs.
   const ciVersion = useCiVersion();
@@ -148,6 +164,8 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
         <span>{label.text}</span>
       </button>
       {pr.state === 'open' && <ReviewChip pr={pr} viewer={viewer} />}
+      <PrActionControl pr={pr} onMerge={() => setMergeOpen(true)} onResolveConflicts={onResolveConflicts} />
+      {mergeOpen && <MergeDialog task={task} pr={pr} onClose={() => setMergeOpen(false)} />}
       <span className="sr-only" role="status">
         {cue ? `Checks ${cue === 'pass' ? 'passed' : 'failed'} on pull request ${pr.number}` : ''}
       </span>
@@ -197,6 +215,58 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile }: PrB
           </button>
         </>
       )}
+    </span>
+  );
+}
+
+/**
+ * The PR's one action, after the review chip (#236): Squash and Merge… when
+ * it is approved, green and clean; ⚠ Conflicts when GitHub reports them; or,
+ * approved but not mergeable yet, GitHub's reason in words -- never a
+ * disabled button. Nothing otherwise (`prAction`).
+ */
+function PrActionControl({
+  pr,
+  onMerge,
+  onResolveConflicts,
+}: {
+  pr: PrStatus;
+  onMerge: () => void;
+  onResolveConflicts?: (pr: PrStatus) => void;
+}) {
+  const action = prAction(pr);
+  if (!action) return null;
+  if (action.kind === 'conflicts') {
+    if (!onResolveConflicts) return null;
+    return (
+      <button
+        type="button"
+        className="pr-action"
+        data-tone="conflicts"
+        title={`GitHub reports conflicts with ${pr.baseRefName || 'the base'}. Ask Claude to rebase onto it, resolve them, run the tests and push. Sent at once (queued if Claude is working).`}
+        onClick={() => onResolveConflicts(pr)}
+      >
+        <span aria-hidden="true">⚠</span> Conflicts
+      </button>
+    );
+  }
+  if (action.kind === 'merge') {
+    return (
+      <button
+        type="button"
+        className="pr-action"
+        data-tone="merge"
+        title={`Approved, checks pass, no conflicts: squash and merge PR #${pr.number} into ${pr.baseRefName || 'its base'} (asks first)`}
+        aria-haspopup="dialog"
+        onClick={onMerge}
+      >
+        Squash and Merge…
+      </button>
+    );
+  }
+  return (
+    <span className="pr-reason" title={`GitHub's merge state: ${pr.mergeState ?? 'unknown'}`}>
+      {action.reason}
     </span>
   );
 }

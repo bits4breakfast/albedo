@@ -153,7 +153,7 @@ export function resetViewerLoginForTests(login: string | null = null): void {
 
 const PR_FIELDS =
   'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,' +
-  'latestReviews,reviewRequests,author';
+  'latestReviews,reviewRequests,author,mergeable,mergeStateStatus';
 
 /**
  * Is there a PR for this task worth asking about? A resumed session often
@@ -294,4 +294,57 @@ export async function fetchAnnotations(ref: { host: string; repo: string; id: st
   const r = await gh(['api', ...hostArgs(ref), `repos/${ref.repo}/check-runs/${ref.id}/annotations`]);
   if (!r || r.code !== 0) return [];
   return parseAnnotations(r.stdout);
+}
+
+// ---------------------------------------------------------------------------
+// Squash and merge (#236): the one GitHub write Albedo makes itself
+// ---------------------------------------------------------------------------
+
+export type MergeOutcome =
+  | { ok: true; branchNotDeleted?: string }
+  | { ok: false; message: string };
+
+/**
+ * `gh pr merge <n> --squash`, by the owner's decision (#236), and only from
+ * the confirm dialog. Never `--admin`: when GitHub refuses, its message is the
+ * answer, shown in the dialog. Unlike the reads above, a failure is reported,
+ * not folded into null -- the person who pressed the button needs to know.
+ *
+ * Deleting the branch is GitHub's half only: the remote ref, through the API,
+ * after the merge. Not gh's `--delete-branch`, which also deletes the local
+ * branch and switches the checkout off it -- in a task's worktree that branch
+ * is checked out, so gh would fail half-way or move the worktree. The worktree
+ * and its branch stay as they are; Archive… is where they go.
+ *
+ * Runs where the PR lookup does: the worktree, else the main checkout (the
+ * worktree may be gone). gh finds the repository from the folder's remote.
+ */
+export async function mergePr(
+  pr: { number: number; headRefName: string },
+  task: Pick<Task, 'worktreePath' | 'repoPath'>,
+  opts: { deleteBranch: boolean },
+): Promise<MergeOutcome> {
+  if (!Number.isInteger(pr.number) || pr.number <= 0) return { ok: false, message: 'Not a pull request number.' };
+  for (const cwd of [task.worktreePath, task.repoPath]) {
+    if (!cwd) continue;
+    const r = await gh(['pr', 'merge', String(pr.number), '--squash'], cwd);
+    if (!r) continue; // could not spawn here: the cwd may not exist
+    if (r.code !== 0) return { ok: false, message: ghMessage(r) };
+    if (!opts.deleteBranch || !pr.headRefName) return { ok: true };
+    const ref = pr.headRefName.split('/').map(encodeURIComponent).join('/');
+    const d = await gh(['api', '-X', 'DELETE', `repos/{owner}/{repo}/git/refs/heads/${ref}`], cwd);
+    // Already gone (the repo deletes merged branches itself) is what was asked.
+    if (!d || (d.code !== 0 && !/Reference does not exist|HTTP 422/i.test(d.stderr + d.stdout))) {
+      return { ok: true, branchNotDeleted: d ? ghMessage(d) : 'GitHub CLI (gh) could not be run.' };
+    }
+    return { ok: true };
+  }
+  return { ok: false, message: 'GitHub CLI (gh) could not be run.' };
+}
+
+/** gh's own words for a failure, without colour codes; the exit code when it said nothing. */
+export function ghMessage(r: GhResult): string {
+  // eslint-disable-next-line no-control-regex
+  const text = (r.stderr || r.stdout).replace(/\x1b\[[0-9;]*m/g, '').trim();
+  return text || `gh exited with ${r.code ?? 'a signal'}.`;
 }

@@ -6,6 +6,7 @@ import {
   fetchPrStatus,
   gh,
   loadViewerLogin,
+  mergePr,
   parsePrBase,
   prLookupBranch,
   resetViewerLoginForTests,
@@ -187,5 +188,83 @@ describe('viewerLogin (#180)', () => {
     await fetchPrStatus(task);
     const fields = calls[0]![1][calls[0]![1].indexOf('--json') + 1]!.split(',');
     expect(fields).toEqual(expect.arrayContaining(['reviewDecision', 'latestReviews', 'reviewRequests', 'author']));
+  });
+});
+
+describe('fetchPrStatus asks for what the merge action needs (#236)', () => {
+  it('requests mergeable and mergeStateStatus', async () => {
+    const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
+    await fetchPrStatus(task);
+    const fields = calls[0]![1][calls[0]![1].indexOf('--json') + 1]!.split(',');
+    expect(fields).toContain('mergeable');
+    expect(fields).toContain('mergeStateStatus');
+  });
+});
+
+describe('mergePr (#236)', () => {
+  const pr = { number: 7, headRefName: 'feat/x' };
+  const ok = { code: 0, stdout: '', stderr: '' };
+
+  it('squash-merges in the worktree, never with --admin, and keeps the branch when asked', async () => {
+    const calls = install(async () => ok);
+    expect(await mergePr(pr, task, { deleteBranch: false })).toEqual({ ok: true });
+    expect(calls).toEqual([['gh', ['pr', 'merge', '7', '--squash'], '/wt/x']]);
+    expect(calls.flatMap((c) => c[1])).not.toContain('--admin');
+    // gh's own --delete-branch would delete the local branch and move the worktree off it.
+    expect(calls.flatMap((c) => c[1])).not.toContain('--delete-branch');
+  });
+
+  it('deletes only the branch on GitHub, through the API, after the merge', async () => {
+    const calls = install(async () => ok);
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({ ok: true });
+    expect(calls.map((c) => c[1])).toEqual([
+      ['pr', 'merge', '7', '--squash'],
+      ['api', '-X', 'DELETE', 'repos/{owner}/{repo}/git/refs/heads/feat/x'],
+    ]);
+    expect(calls.flatMap((c) => c[1])).not.toContain('--admin');
+  });
+
+  it('a branch GitHub already deleted is what was asked', async () => {
+    install(async (_p, args) =>
+      args[0] === 'api' ? { code: 1, stdout: '', stderr: 'gh: Reference does not exist (HTTP 422)' } : ok,
+    );
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({ ok: true });
+  });
+
+  it('merged, but the branch could not be deleted: says so, still a merge', async () => {
+    install(async (_p, args) => (args[0] === 'api' ? { code: 1, stdout: '', stderr: 'HTTP 403: forbidden' } : ok));
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({ ok: true, branchNotDeleted: 'HTTP 403: forbidden' });
+  });
+
+  it("a refusal is gh's own message, colour codes stripped, and nothing else runs", async () => {
+    const calls = install(async () => ({
+      code: 1,
+      stdout: '',
+      stderr: '\x1b[31mX\x1b[0m Pull request #7 is not mergeable: the base branch policy prohibits the merge.\n',
+    }));
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({
+      ok: false,
+      message: 'X Pull request #7 is not mergeable: the base branch policy prohibits the merge.',
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('falls back to the main checkout when the worktree is gone', async () => {
+    const calls = install(async (_p, _a, cwd) => {
+      if (cwd === '/wt/x') throw new Error('No such file or directory');
+      return ok;
+    });
+    expect(await mergePr(pr, task, { deleteBranch: false })).toEqual({ ok: true });
+    expect(calls.at(-1)?.[2]).toBe('/repo');
+  });
+
+  it('says so when gh cannot be run at all, and refuses a non-number', async () => {
+    install(async () => {
+      throw new Error('program not found');
+    });
+    expect(await mergePr(pr, task, { deleteBranch: false })).toEqual({ ok: false, message: 'GitHub CLI (gh) could not be run.' });
+    const calls = install(async () => ok);
+    expect((await mergePr({ number: 0, headRefName: 'x' }, task, { deleteBranch: false })).ok).toBe(false);
+    expect(calls).toHaveLength(0);
   });
 });
