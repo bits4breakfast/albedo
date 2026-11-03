@@ -1124,6 +1124,26 @@ describe('(o) offline, a send waits in the outbox', () => {
     stop();
   });
 
+  it('a code comment a held message carries is not carried again by the next one; removing the held one brings it back (#222)', async () => {
+    codeRows.rows = [codeComment(7)];
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
+    setOnline(false);
+    pressEnter();
+    await waitFor(() => expect(heldFor(5)).toEqual([expect.objectContaining({ commentIds: [7] })]));
+    // Still unsent in the store until delivery, but on its way: not waiting.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /1 Comment/ })).toBeNull());
+    type('and one more thing');
+    pressEnter();
+    await waitFor(() => expect(heldFor(5)).toHaveLength(2));
+    expect(heldFor(5)[1]!.text).toBe('and one more thing');
+    expect(heldFor(5)[1]!.commentIds).toBeUndefined();
+    // Taking the first message back out returns its comment to the queue.
+    act(() => removeHeld(5, heldFor(5)[0]!.id));
+    expect(await screen.findByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    codeRows.rows = [];
+  });
+
   it('never resends what already went to Claude Code before the outage', async () => {
     const stop = startOutboxRelease();
     render(<Composer taskId={1} onSent={vi.fn()} />);

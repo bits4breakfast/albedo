@@ -10,9 +10,10 @@
  * delivered (outboxRelease.ts), exactly as transcript comments are taken.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatForClaude, listComments, markCommentsSent, onCommentsChanged, type ReviewComment } from '../../db/comments';
 import { takeComments } from './drafts';
+import { useHeld } from './outbox';
 import { composeWithComments, type TranscriptComment } from './transcriptQuotes';
 
 /** A task's open, unsent code comments, by file then line; kept current. */
@@ -40,7 +41,18 @@ export function useWaitingCodeComments(taskId: number | null): readonly ReviewCo
       off();
     };
   }, [taskId]);
-  return waiting.taskId === taskId && taskId !== null ? waiting.rows : NONE;
+  // A comment a held message carries is on its way, not waiting: it is
+  // marked sent when that message is delivered (outboxRelease.ts). Left in
+  // the queue, the next message would carry it again and Claude would read
+  // it twice. Removing the held message brings it back here.
+  const held = useHeld(taskId);
+  const rows = waiting.taskId === taskId && taskId !== null ? waiting.rows : NONE;
+  return useMemo(() => {
+    const carried = new Set(held.flatMap((h) => h.commentIds ?? []));
+    if (carried.size === 0) return rows;
+    const left = rows.filter((c) => !carried.has(c.id));
+    return left.length === rows.length ? rows : left;
+  }, [rows, held]);
 }
 
 const NONE: readonly ReviewComment[] = [];

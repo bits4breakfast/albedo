@@ -42,6 +42,14 @@ export function useDiffComments(
   /** The file as it is now, which the diff's new side shows. Null: no comments. */
   newText: string | null,
   unsaved: boolean,
+  /**
+   * Whether `newText` is a read made for this view, so a sent comment whose
+   * lines are gone from it may resolve itself (#222). False while a view
+   * shows a remembered read (the guide's, #199): the file may have moved on
+   * since, and a comment made on its newer lines would resolve against the
+   * older text.
+   */
+  fresh = true,
 ): { annotations: DiffAnnotations | null; notice: string | null; clearNotice: () => void; bar: ReactNode } {
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -84,11 +92,11 @@ export function useDiffComments(
       const at = relocate(c, newText);
       if (at.state === 'current') out.placed.push({ comment: c, from: at.lineStart, to: at.lineEnd });
       // `newText` is the file on disk; unsaved typing is not.
-      else if (!unsaved && shouldAutoResolve(c, newText)) out.resolving.push(c);
+      else if (!unsaved && fresh && shouldAutoResolve(c, newText)) out.resolving.push(c);
       else out.outdated.push(c);
     }
     return out;
-  }, [comments, newText, unsaved]);
+  }, [comments, newText, unsaved, fresh]);
 
   const resolvingKey = resolving.map((c) => c.id).join(',');
   useEffect(() => {

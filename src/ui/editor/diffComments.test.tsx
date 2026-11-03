@@ -12,6 +12,7 @@ vi.mock('../../db/comments', async () => {
     addComment,
     editComment: vi.fn(async () => {}),
     resolveComment: vi.fn(async () => {}),
+    resolveComments: vi.fn(async () => {}),
     deleteComment: vi.fn(async () => {}),
   };
 });
@@ -59,5 +60,36 @@ describe('useDiffComments', () => {
   it('offers nothing without a current file (a deleted one)', () => {
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', null, false));
     expect(result.current.annotations).toBeNull();
+  });
+});
+
+describe('auto-resolve in a diff (#222)', () => {
+  const sent = {
+    id: 9, taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'gone line', body: 'Fix it.',
+    createdAt: 0, updatedAt: 0, sentAt: 5, resolvedAt: null,
+  };
+
+  it('a sent comment whose lines are gone resolves itself against a read made for this view', async () => {
+    const db = await import('../../db/comments');
+    vi.mocked(db.listComments).mockResolvedValue([sent]);
+    vi.mocked(db.resolveComments).mockClear();
+    renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false));
+    await waitFor(() => expect(db.resolveComments).toHaveBeenCalledWith(1, [9]));
+  });
+
+  it('never against a remembered read (the guide on coming back): the file may have moved on since', async () => {
+    const db = await import('../../db/comments');
+    vi.mocked(db.listComments).mockResolvedValue([sent]);
+    vi.mocked(db.resolveComments).mockClear();
+    const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, false));
+    // Loaded, and shown as outdated instead.
+    await waitFor(() => expect(vi.mocked(db.listComments)).toHaveBeenCalled());
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(db.resolveComments).not.toHaveBeenCalled();
+    render(<>{result.current.bar}</>);
+    expect(screen.getByText(/Fix it\./)).toBeTruthy();
+    vi.mocked(db.listComments).mockResolvedValue([]);
   });
 });
