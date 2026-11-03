@@ -162,7 +162,7 @@ describe('GuidePane', () => {
     expect(left().getByRole('button', { name: /a\.ts/ }).getAttribute('data-reviewed')).toBe('true');
   });
 
-  it('says which files changed since the guide was written, offers Rewrite, and puts new blocks in Unsorted', async () => {
+  it('says which files changed since the guide was written, offers Rewrite, and keeps changes in their groups (#248)', async () => {
     saveGuide(task.id, {
       diffHash: diff.hash,
       writtenAt: Date.now(),
@@ -177,13 +177,43 @@ describe('GuidePane', () => {
     // The news leads, so a narrow pane cuts the base, not it; only the text is announced.
     await screen.findByRole('heading', { name: 'Everything' });
     const notice = screen.getAllByRole('status').find((s) => s.classList.contains('gd-meta-text'))!;
-    expect(notice.textContent).toMatch(/^1 file changed since it was written .* · new changes are under Unsorted · branch vs main$/);
+    expect(notice.textContent).toMatch(/^1 file changed since it was written .* · shown in their groups, to review again · branch vs main$/);
     expect(within(notice).queryByRole('button')).toBeNull();
     const marks = within(screen.getByRole('navigation', { name: 'Groups' })).getAllByRole('button');
-    expect(marks.map((m) => m.getAttribute('aria-label'))).toEqual(['01 Everything', '02 Unsorted']);
+    expect(marks.map((m) => m.getAttribute('aria-label'))).toEqual(['01 Everything']);
     // One Rewrite, in the one row that says the guide is out of date (#197).
     expect(screen.getAllByRole('button', { name: 'Rewrite' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Rewrite' }).className).toContain('gd-btn-primary');
+  });
+
+  it('a reviewed group with a file changed since goes back to unreviewed, the file tagged (#248)', async () => {
+    const { setReviewed, reviewedKey } = await import('./store');
+    saveGuide(task.id, {
+      diffHash: diff.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [
+        { title: 'Alpha', summary: '', blocks: [ids.a1, ids.a2] },
+        { title: 'Rest', summary: '', blocks: [ids.b1, ids.c1] },
+      ],
+      files: fileBlockIndex(diff),
+      fallback: null,
+    });
+    // Everything reviewed, as the owner had it.
+    setReviewed(task.id, [reviewedKey('src/a.ts', [ids.a1, ids.a2]), reviewedKey('src/b.ts', [ids.b1]), reviewedKey('src/c.ts', [ids.c1])], true);
+    // Then src/c.ts changes: its one hunk gets a new id.
+    loaded = { ...loaded, diff: makeDiff(20) };
+    pane();
+    // It opens on the group still to review.
+    await screen.findByRole('heading', { name: 'Rest' });
+    const rail = within(screen.getByRole('navigation', { name: 'Groups' }));
+    // No Unsorted, and Rest -- which holds the change -- is not Reviewed.
+    expect(rail.getAllByRole('button').map((m) => m.getAttribute('aria-label'))).toEqual(['01 Alpha, reviewed', '02 Rest']);
+    // The changed file is tagged; the unchanged one beside it is not.
+    const c = left().getByRole('button', { name: /c\.ts/ });
+    expect(c.textContent).toContain('changed since review');
+    expect(c.hasAttribute('data-reviewed')).toBe(false);
+    expect(left().getByRole('button', { name: /b\.ts/ }).textContent).not.toContain('changed since review');
   });
 
   it('a failed write says why, keeps nothing, and offers Try Again', async () => {

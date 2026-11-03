@@ -57,7 +57,7 @@ describe('viewGuide', () => {
     expect(view.groups[1]).toMatchObject({ unsorted: true, blocks: [a1] });
   });
 
-  it('after the diff moved on: says which files changed, drops gone blocks, puts new ones in Unsorted', () => {
+  it('after the diff moved on: says which files changed, drops gone blocks, keeps a changed hunk in its file\'s group (#248)', () => {
     const before = at([3, 30]);
     const guide = guideFor(before, [{ title: 'All', summary: '', blocks: [...before.order] }]);
     const after = at([3, 31]);
@@ -66,15 +66,74 @@ describe('viewGuide', () => {
     expect(view.changedFiles).toEqual(['src/a.ts']);
     expect(changedSince(guide, after)).toEqual(['src/a.ts']);
     const [kept, fresh] = after.files[0]!.blocks;
-    expect(view.groups[0]!.blocks).toEqual([kept, after.files[1]!.blocks[0]]);
-    expect(view.groups[1]).toMatchObject({ title: 'Unsorted', blocks: [fresh] });
+    // Where the old hunk was, so the file reads as one; no Unsorted at all.
+    expect(view.groups.map((g) => g.title)).toEqual(['All']);
+    expect(view.groups[0]!.blocks).toEqual([kept, fresh, after.files[1]!.blocks[0]]);
+    expect(view.groups[0]!.files.map((f) => [f.path, f.blocks])).toEqual([
+      ['src/a.ts', [kept, fresh]],
+      ['src/b.ts', after.files[1]!.blocks],
+    ]);
   });
 
-  it('hides a group none of whose blocks exist any more', () => {
+  it('a file whose every hunk changed stays in its group, with the new ones (#248)', () => {
+    // The bug: the old block went, the new one went to Unsorted, and the group
+    // -- left with only its unchanged, ticked files -- read Reviewed.
     const before = at([3]);
-    const guide = guideFor(before, [{ title: 'Gone', summary: '', blocks: [before.order[0]!] }]);
+    const [a1, b1] = before.order;
+    const guide = guideFor(before, [
+      { title: 'A', summary: '', blocks: [a1!] },
+      { title: 'B', summary: '', blocks: [b1!] },
+    ]);
     const after = at([20]);
-    expect(viewGuide(guide, after).groups.map((g) => g.title)).toEqual(['Unsorted']);
+    const view = viewGuide(guide, after);
+    expect(view.groups.map((g) => g.title)).toEqual(['A', 'B']);
+    expect(view.groups[0]!.files.map((f) => [f.path, f.blocks])).toEqual([['src/a.ts', after.files[0]!.blocks]]);
+    // A new content id, so its Reviewed key is new: unreviewed.
+    expect(after.files[0]!.blocks).not.toEqual([a1]);
+  });
+
+  it('a file split across groups: an edited hunk stays in its own group, an added one joins its nearest neighbour\'s', () => {
+    const before = at([3, 15, 35]);
+    const [a1, a2, a3, b1] = before.order;
+    const guide = guideFor(before, [
+      { title: 'Top', summary: '', blocks: [a1!, b1!] },
+      { title: 'Rest', summary: '', blocks: [a2!, a3!] },
+    ]);
+    // The first hunk edited (3 -> 4), one added after the second (25).
+    const after = at([4, 15, 25, 35]);
+    const [n1, k2, n3, k3] = after.files[0]!.blocks;
+    expect([k2, k3]).toEqual([a2, a3]);
+    expect(n1).not.toBe(a1);
+    const view = viewGuide(guide, after);
+    const top = view.groups.find((g) => g.title === 'Top')!;
+    const rest = view.groups.find((g) => g.title === 'Rest')!;
+    expect(top.files.map((f) => [f.path, f.blocks])).toEqual([
+      ['src/a.ts', [n1]],
+      ['src/b.ts', [b1]],
+    ]);
+    expect(rest.files.map((f) => [f.path, f.blocks])).toEqual([['src/a.ts', [k2, n3, k3]]]);
+    expect(view.groups.some((g) => g.unsorted)).toBe(false);
+  });
+
+  it('Unsorted keeps a file new to the branch, and a block the guide saw and placed nowhere', () => {
+    const before = at([3, 30]);
+    const [a1, a2, b1] = before.order;
+    const guide = guideFor(before, [{ title: 'One', summary: '', blocks: [a1!, b1!] }]);
+    const after = buildBranchDiff([edited('src/a.ts', [3, 30]), edited('src/b.ts', [5]), edited('src/c.ts', [1])], statReason);
+    const view = viewGuide(guide, after);
+    const c1 = after.files.find((f) => f.path === 'src/c.ts')!.blocks[0];
+    expect(view.groups.map((g) => g.title)).toEqual(['One', 'Unsorted']);
+    expect(view.groups[1]!.blocks).toEqual([a2, c1]);
+  });
+
+  it('hides a group whose files are no longer in the change', () => {
+    const before = at([3]);
+    const guide = guideFor(before, [
+      { title: 'Gone', summary: '', blocks: [before.order[0]!] },
+      { title: 'B', summary: '', blocks: [before.order[1]!] },
+    ]);
+    const after = buildBranchDiff([edited('src/b.ts', [5])], statReason);
+    expect(viewGuide(guide, after).groups.map((g) => g.title)).toEqual(['B']);
   });
 });
 
