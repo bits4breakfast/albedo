@@ -380,6 +380,87 @@ describe('file notes (#202)', () => {
   });
 });
 
+describe('notes after the groups (#224)', () => {
+  // Three groups of two files, each +3 -3: all are asked about.
+  let big: BranchDiff;
+  let calls: Array<{ group: string | null; answer: (o: ReturnType<typeof reply>) => void }>;
+  const ok = (structured: unknown) => ({ code: 0, stdout: JSON.stringify({ type: 'result', is_error: false, structured_output: structured }), stderr: '', timedOut: false });
+  beforeEach(() => {
+    big = buildBranchDiff(
+      ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts'].map((p) => edited(p, [3, 4, 5], 'x')),
+      statReason,
+    );
+    loaded = { ...loaded, diff: big };
+    const at = (p: string) => big.files.find((f) => f.path === p)!.blocks;
+    saveGuide(task.id, {
+      diffHash: big.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [
+        { title: 'First', summary: 'S1.', blocks: [...at('src/a.ts'), ...at('src/b.ts')] },
+        { title: 'Second', summary: 'S2.', blocks: [...at('src/c.ts'), ...at('src/d.ts')] },
+        { title: 'Third', summary: 'S3.', blocks: [...at('src/e.ts'), ...at('src/f.ts')] },
+      ],
+      files: fileBlockIndex(big),
+      fallback: null,
+    });
+    calls = [];
+    setOneshotRunner(
+      (req) =>
+        new Promise((answer) => {
+          calls.push({ group: /^Group: (.*)$/m.exec(req.prompt)?.[1] ?? null, answer });
+        }),
+    );
+  });
+
+  it('shows the groups at once, a placeholder where each note will be, then the note', async () => {
+    pane();
+    await screen.findByRole('heading', { name: 'First' });
+    await waitFor(() => expect(calls.map((c) => c.group)).toEqual(['First']));
+    expect(screen.getAllByTestId('note-pending')).toHaveLength(2);
+    act(() => calls[0]!.answer(ok({ notes: [{ path: 'src/a.ts', note: 'Why a changes.' }, { path: 'src/b.ts', note: 'Why b changes.' }] })));
+    await waitFor(() => expect(left().getByText('Why a changes.').className).toBe('gd-file-note'));
+    expect(screen.queryAllByTestId('note-pending')).toHaveLength(0);
+  });
+
+  it('the group you move to is asked about next', async () => {
+    pane();
+    await screen.findByRole('heading', { name: 'First' });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    // First is in flight; the reader skips ahead to Third, which goes before Second.
+    key('ArrowDown', true);
+    key('ArrowDown', true);
+    expect(screen.getByRole('heading', { name: 'Third' })).toBeTruthy();
+    expect(screen.getAllByTestId('note-pending')).toHaveLength(2);
+    act(() => calls[0]!.answer(ok({ notes: [] })));
+    await waitFor(() => expect(calls.map((c) => c.group)).toEqual(['First', 'Third']));
+  });
+
+  it('a failed group says so quietly, with Retry, and the guide stays', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    pane();
+    await screen.findByRole('heading', { name: 'First' });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    act(() => calls[0]!.answer({ code: null, stdout: '', stderr: '', timedOut: true }));
+    await waitFor(() => expect(left().getByText(/Notes could not be written/)).toBeTruthy());
+    expect(screen.queryAllByTestId('note-pending')).toHaveLength(0);
+    expect(screen.getByRole('heading', { name: 'First' })).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    // The others go on; then Retry puts First back.
+    await waitFor(() => expect(calls).toHaveLength(2));
+    act(() => calls[1]!.answer(ok({ notes: [] })));
+    await waitFor(() => expect(calls).toHaveLength(3));
+    act(() => calls[2]!.answer(ok({ notes: [] })));
+    fireEvent.click(left().getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls.map((c) => c.group)).toEqual(['First', 'Second', 'Third', 'First']));
+    expect(screen.getAllByTestId('note-pending')).toHaveLength(2);
+    act(() => calls[3]!.answer(ok({ notes: [{ path: 'src/a.ts', note: 'Now written.' }] })));
+    await waitFor(() => expect(left().getByText('Now written.')).toBeTruthy());
+    expect(left().queryByText(/Notes could not be written/)).toBeNull();
+    warn.mockRestore();
+  });
+});
+
 describe('⇧⌘G puts focus in the guide (#217)', () => {
   let typing: HTMLTextAreaElement;
   beforeEach(async () => {

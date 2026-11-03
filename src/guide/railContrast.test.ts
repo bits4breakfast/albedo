@@ -70,4 +70,18 @@ describe('the guide rail (#201)', () => {
       }
     }
   });
+
+  it('a note still being written (#224) is drawn in --border-mid, which stands off every ground its row takes', () => {
+    expect(rail).toMatch(/\.gd-file-note-pending \{[^}]*linear-gradient\(var\(--border-mid\), var\(--border-mid\)\)/);
+    expect(rail).not.toMatch(/\.gd-file-note-pending \{[^}]*opacity/);
+    for (const [name, t] of Object.entries(themes)) {
+      for (const g of ['--panel', '--panel-hover', '--accent-soft']) {
+        expect(ratio(t.get('--border-mid')!, t.get(g)!), `${name} ${g}`).toBeGreaterThanOrEqual(1.25);
+      }
+    }
+  });
+
+  it('the quiet failure line (#224) is --muted text', () => {
+    expect(rail).toMatch(/\.gd-notes-failed \{[^}]*color: var\(--muted\)/);
+  });
 });

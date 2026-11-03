@@ -28,12 +28,16 @@ import type { BranchDiff, GuideFile } from './blocks';
 import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
 import {
   clearWriteError,
+  ensureNotes,
+  focusNotes,
   keepLastRead,
   keepPlace,
   lastReadOf,
   loadGuide,
   loadReviewed,
+  notesStateOf,
   placeOf,
+  retryNotes,
   reviewedKey,
   setReviewed,
   startWrite,
@@ -371,6 +375,23 @@ function GuideBody({
   }, [shownKey]);
   const reviewedCount = groups.filter(isGroupReviewed).length;
 
+  // The notes come after the groups, a call per group (#224): queue the
+  // groups still without them -- after a restart too -- and keep the one in
+  // view at the front. The guide read for this is the latest, by ref, so a
+  // note landing (a new object, the same guide) does not queue again.
+  const guideRef = useRef(guide);
+  guideRef.current = guide;
+  const groupIndex = group?.index ?? null;
+  const groupIndexRef = useRef(groupIndex);
+  groupIndexRef.current = groupIndex;
+  useEffect(() => {
+    ensureNotes(task.id, guideRef.current, diff, groupIndexRef.current ?? undefined);
+  }, [task.id, guide.writtenAt, diff]);
+  useEffect(() => {
+    if (groupIndex !== null) focusNotes(task.id, guide.writtenAt, groupIndex);
+  }, [task.id, guide.writtenAt, groupIndex]);
+  const notesState = groupIndex === null ? null : notesStateOf(task.id, guide.writtenAt, groupIndex);
+
   // The keys work once focus is in the guide. Take it when the tab comes on
   // screen, but never from someone typing (a guide finishing in the
   // background must not pull focus out of the message box or the terminal)
@@ -554,13 +575,26 @@ function GuideBody({
                       </span>
                       <span className="gd-file-dir">{dir}</span>
                       <Counts file={f} />
-                      {/* What the file does in this group (#202), under its name. */}
-                      {f.note ? <span className="gd-file-note">{f.note}</span> : null}
+                      {/* Why the file changes in this group (#202), under its name; while
+                          it is being written, a placeholder its size (#224). */}
+                      {f.note ? (
+                        <span className="gd-file-note">{f.note}</span>
+                      ) : f.notable && notesState === 'pending' ? (
+                        <span className="gd-file-note gd-file-note-pending" aria-hidden="true" data-testid="note-pending" />
+                      ) : null}
                     </button>
                   </li>
                 );
               })}
             </ul>
+            {notesState === 'failed' && groupIndex !== null ? (
+              <p className="gd-notes-failed">
+                Notes could not be written.{' '}
+                <button type="button" className="gd-link" onClick={() => retryNotes(task.id, guide.writtenAt, groupIndex)}>
+                  Retry
+                </button>
+              </p>
+            ) : null}
             <div className="gd-nav">
               <button type="button" className="gd-btn" onClick={() => stepGroup(-1)} disabled={at === 0} title="Previous group (⌥↑)">
                 ‹ Previous

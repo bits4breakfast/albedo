@@ -6,14 +6,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildBranchDiff, type BranchDiff } from './blocks';
 import { estimateTokens, renderBlock, statReason, SUMMARY_LINE_TOKENS } from './budget';
 import { changed, edited, lines, text } from './fixtures';
+import { NOTE_MAX_CHARS } from './validate';
 import {
   CALL_OVERHEAD_TOKENS,
   findResult,
   GuideError,
-  MAX_NOTED_FILES,
-  notedFiles,
+  NOTES_SYSTEM,
   setOneshotRunner,
   writeGuide,
+  writeNotes,
   type OneshotOutput,
   type OneshotRequest,
 } from './writer';
@@ -178,9 +179,6 @@ describe('writeGuide over budget', () => {
     // Pass two reads the lines, not the code.
     expect(calls.at(-1)!.prompt).toContain(`[${diff.order[0]}] a.ts +18 -18: changes ${diff.order[0]}`);
     expect(calls.at(-1)!.prompt).not.toContain('+line 3 edited');
-    // And the files to note: pass one's lines are what the notes come from.
-    expect(calls.at(-1)!.prompt).toContain('Files to note:\n- a.ts\n- b.ts\n- c.ts\n- d.ts');
-    expect(pass1.every((c) => !c.prompt.includes('Files to note'))).toBe(true);
     expect(guide.groups[0]!.blocks).toEqual(diff.order);
     expect(progress.at(-1)).toBe(`${pass1.length + 1}/${pass1.length + 1}`);
   });
@@ -206,7 +204,7 @@ describe('writeGuide over budget', () => {
   });
 });
 
-describe('file notes (#202)', () => {
+describe('notes come after the groups (#224)', () => {
   // a.ts and c.ts change 3 lines each (+3 -3); b.ts one (+1 -1); the lockfile is a stat line.
   const diff = buildBranchDiff(
     [
@@ -217,54 +215,23 @@ describe('file notes (#202)', () => {
     ],
     statReason,
   );
+  const idOf = (path: string) => diff.files.find((f) => f.path === path)!.blocks[0]!;
+  const [a, b, c, lock] = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'package-lock.json'].map(idOf) as [string, string, string, string];
 
-  it('offers files with at least 5 changed lines whose lines the model sees', () => {
-    expect(notedFiles(diff)).toEqual(['src/a.ts', 'src/c.ts']);
-    // One such file alone can only be in a one-file group, or beside small ones: no note asked for.
-    expect(notedFiles(buildBranchDiff([edited('src/a.ts', [3, 4, 5]), edited('src/b.ts', [5])], statReason))).toEqual([]);
-  });
-
-  it('offers at most MAX_NOTED_FILES, the most changed, in path order', () => {
-    const many = buildBranchDiff(
-      Array.from({ length: MAX_NOTED_FILES + 5 }, (_, i) => edited(`src/f${String(i).padStart(3, '0')}.ts`, i < 5 ? [3, 4, 5] : [3, 4, 5, 6])),
-      statReason,
-    );
-    const got = notedFiles(many);
-    expect(got).toHaveLength(MAX_NOTED_FILES);
-    expect(got[0]).toBe('src/f005.ts');
-    expect([...got].sort()).toEqual(got);
-  });
-
-  it('asks for notes in the same call, on those files only, and keeps them on the guide', async () => {
-    const [a, b, c, lock] = diff.order as [string, string, string, string];
+  it('the grouping call asks for no notes, and keeps none even if some come back', async () => {
     const calls = useRunner(() =>
-      ok({
-        groups: [
-          {
-            title: 'Paging',
-            summary: 'S',
-            blocks: [a, b, c, lock],
-            notes: [
-              { path: 'src/a.ts', note: 'the value object' },
-              { path: 'src/c.ts', note: 'reads it' },
-              { path: 'src/elsewhere.ts', note: 'dropped' },
-              { bad: true },
-            ],
-          },
-        ],
-      }),
+      ok({ groups: [{ title: 'Paging', summary: 'S', blocks: [a, b, c, lock], notes: [{ path: 'src/a.ts', note: 'n' }] }] }),
     );
     const guide = await writeGuide(diff, { base: 'main' });
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.prompt.endsWith('Files to note:\n- src/a.ts\n- src/c.ts')).toBe(true);
+    expect(calls[0]!.prompt).not.toContain('Files to note');
+    expect(calls[0]!.systemPrompt).not.toMatch(/note/i);
     const schema = JSON.parse(calls[0]!.jsonSchema);
-    expect(Object.keys(schema.properties.groups.items.properties)).toContain('notes');
-    expect(schema.properties.groups.items.required).toEqual(['title', 'summary', 'blocks']);
-    expect(guide.groups[0]!.notes).toEqual({ 'src/a.ts': 'the value object', 'src/c.ts': 'reads it' });
+    expect(Object.keys(schema.properties.groups.items.properties)).not.toContain('notes');
+    expect(guide.groups[0]!.notes).toBeUndefined();
   });
 
-  it('counts the list against the grouping call only: what fits only without it is one batch, then grouping', async () => {
-    // Blocks big enough that two summary lines fit where the blocks do not.
+  it('pass two asks for no notes either', async () => {
     const span = Array.from({ length: 18 }, (_, i) => i + 3);
     const two = buildBranchDiff([edited('src/a.ts', span), edited('src/c.ts', span)], statReason);
     const total = two.order.reduce((n, id) => n + estimateTokens(renderBlock(two.blocks.get(id)!, two)) + 1, 0);
@@ -273,16 +240,57 @@ describe('file notes (#202)', () => {
       if (JSON.parse(req.jsonSchema).required[0] === 'blocks') return ok({ blocks: ids.map((id) => ({ id, line: `changes ${id}` })) });
       return ok({ groups: [{ title: 'All', summary: 'S', blocks: ids }] });
     });
-    await writeGuide(two, { base: 'main', budget: CALL_OVERHEAD_TOKENS + total + 1 });
-    expect(calls).toHaveLength(2);
-    expect(calls[0]!.prompt).not.toContain('Files to note');
-    expect(calls[1]!.prompt).toContain('Files to note:\n- src/a.ts\n- src/c.ts');
+    await writeGuide(two, { base: 'main', budget: CALL_OVERHEAD_TOKENS + total - 1 });
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.every((x) => !x.prompt.includes('Files to note'))).toBe(true);
   });
 
-  it('a change with nothing to note asks for none', async () => {
-    const small = diffOf('src/a.ts', 'src/b.ts');
-    const calls = useRunner(() => ok({ groups: [{ title: 'T', summary: 'S', blocks: [...small.order] }] }));
-    await writeGuide(small, { base: 'main' });
-    expect(calls[0]!.prompt).not.toContain('Files to note');
+  it('a group’s notes call has its title, summary, the files to note, and its blocks in full', async () => {
+    const calls = useRunner(() =>
+      ok({
+        notes: [
+          { path: 'src/a.ts', note: '  keeps the page size\n in one place ' },
+          { path: 'src/c.ts', note: 'x'.repeat(NOTE_MAX_CHARS + 30) },
+          { path: 'src/b.ts', note: 'not listed: too small' },
+          { path: 'src/elsewhere.ts', note: 'dropped' },
+          { bad: true },
+        ],
+      }),
+    );
+    const notes = await writeNotes(diff, { title: 'Paging', summary: 'Pages the list.', blocks: [a, b, c, lock] });
+    expect(calls).toHaveLength(1);
+    const p = calls[0]!.prompt;
+    expect(p).toContain('Group: Paging\nSummary: Pages the list.\nFiles to note:\n- src/a.ts\n- src/c.ts\n');
+    // The lines themselves, not a summary of them.
+    expect(p).toContain(renderBlock(diff.blocks.get(a)!, diff));
+    expect(p).toContain(renderBlock(diff.blocks.get(c)!, diff));
+    expect(calls[0]!.systemPrompt).toBe(NOTES_SYSTEM);
+    expect(JSON.parse(calls[0]!.jsonSchema).required).toEqual(['notes']);
+    expect(notes).toEqual({ 'src/a.ts': 'keeps the page size in one place', 'src/c.ts': `${'x'.repeat(NOTE_MAX_CHARS - 1)}…` });
+  });
+
+  it('the notes prompt asks why, not what', () => {
+    expect(NOTES_SYSTEM).toMatch(/WHY this file changes/);
+    expect(NOTES_SYSTEM).toMatch(/Do not restate what changed/);
+    expect(NOTE_MAX_CHARS).toBeGreaterThanOrEqual(200);
+  });
+
+  it('makes no call for a group with nothing to note: one file, or only small or stat-only files', async () => {
+    const calls = useRunner(() => ok({ notes: [] }));
+    expect(await writeNotes(diff, { title: 'One file', summary: '', blocks: [a] })).toBeNull();
+    expect(await writeNotes(diff, { title: 'Small', summary: '', blocks: [b, lock] })).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('skips a group too large for one call, without a call', async () => {
+    const calls = useRunner(() => ok({ notes: [] }));
+    expect(await writeNotes(diff, { title: 'Paging', summary: '', blocks: [a, c] }, { budget: 50 })).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a reply in the wrong shape is an error', async () => {
+    useRunner(() => ok({ groups: [] }));
+    const e = await failure(writeNotes(diff, { title: 'Paging', summary: '', blocks: [a, c] }));
+    expect(e.kind).toBe('invalid');
   });
 });
