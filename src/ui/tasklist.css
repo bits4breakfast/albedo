@@ -316,6 +316,12 @@
 
 .task-row[data-menu-open='true'] { background: var(--panel-raised); }
 
+/* A row with ⋯ keeps ⌘N hidden too (#230): it shares the age's cell, which
+   the ⋯ covers, and only a sliver of it showed at the button's left edge.
+   Rows without ⋯ still swap the age for ⌘N on hover. */
+.task-row:hover:has(> .task-more) .task-index,
+.task-row[data-menu-open='true'] .task-index { visibility: hidden; }
+
 /* --------------------------------------------------------------------------
    Issue key (M4)
 
