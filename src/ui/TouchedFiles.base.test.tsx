@@ -41,7 +41,13 @@ vi.mock('../git/worktree', async (importActual) => ({
 vi.mock('@tauri-apps/plugin-fs', () => ({ stat: async () => Promise.reject(new Error('no fs')) }));
 vi.mock('../capture', () => ({ onCaptureUpdate: () => () => {} }));
 vi.mock('./CommentsSection', () => ({ default: () => null }));
-vi.mock('./GitBar', () => ({ default: () => null }));
+const gitBar = vi.hoisted(() => ({ bases: [] as string[] }));
+vi.mock('./GitBar', () => ({
+  default: (p: { task: { baseBranch: string } }) => {
+    gitBar.bases.push(p.task.baseBranch);
+    return null;
+  },
+}));
 
 const { default: TouchedFiles, baseNote } = await import('./TouchedFiles');
 
@@ -64,6 +70,13 @@ describe('the Files pane’s base (#237)', () => {
     render(<TouchedFiles task={task} />);
     await waitFor(() => expect(asked.bases).toContain('main'));
     expect(asked.bases).not.toContain('feature-a');
+  });
+
+  it('hands the git actions the same base: Squash & Rebase and Create PR act on main', async () => {
+    gitBar.bases = [];
+    render(<TouchedFiles task={task} />);
+    await waitFor(() => expect(gitBar.bases.length).toBeGreaterThan(0));
+    expect(gitBar.bases.at(-1)).toBe('main');
   });
 
   it('says it cannot find the base, instead of "No changes yet"', async () => {

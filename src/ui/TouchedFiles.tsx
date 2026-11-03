@@ -93,6 +93,13 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   // merging into (#237), not only the one it was cut from.
   const measured = useMeasuredBase(task);
   const base = measured.base;
+  // The git actions (Squash & Rebase, Create PR, their hints) act on the same
+  // base the panes measure against (#237): a PR retargeted to main rebases
+  // onto main, not onto the parent it was cut from.
+  const actTask = useMemo(
+    () => (base !== '' && base !== task.baseBranch ? { ...task, baseBranch: base } : task),
+    [task, base],
+  );
   /** The base named a branch git could not find: said, never shown as "no changes" (#237). */
   const [baseMissing, setBaseMissing] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -397,7 +404,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
       {askNotice !== null ? <div className="tf-warn">{askNotice}</div> : null}
       {squashOpen ? (
         <SquashRebaseDialog
-          task={task}
+          task={actTask}
           commits={commits}
           uncommitted={view.uncommitted.map((f) => f.path)}
           onClose={() => setSquashOpen(false)}
@@ -559,7 +566,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
       </div>
       {loaded ? (
         <GitBar
-          task={task}
+          task={actTask}
           commits={commits.length}
           dirty={view.uncommitted.length}
           remote={remote}
