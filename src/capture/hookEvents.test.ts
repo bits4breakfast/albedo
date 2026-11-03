@@ -20,6 +20,7 @@ import {
   HOOK_SCRIPT,
   hookSettingsArg,
   isAnswerable,
+  answerWindowClosed,
   parseHookLines,
   parseStatusSnapshot,
   permissionDecision,
@@ -442,7 +443,7 @@ const req = (id: string, command: string, at = 1) =>
 const end = (id: string) => ev('AlbedoReqEnd', { requestId: id });
 
 describe('derivePending: a waiting request ends only by its own end marker', () => {
-  it('retires the request named by the marker, however the hook ended', () => {
+  it('retires the request named by the marker when the hook ends inside its window', () => {
     // Terminal "No" or Esc: no PostToolUse, no Stop -- only the marker.
     expect(derivePending([req('1-1700000000000', 'ls'), end('1-1700000000000')])).toBeNull();
     expect(derivePending([req('1-1700000000000', 'ls'), end('2-1700000000000')])).toMatchObject({ requestId: '1-1700000000000' });
@@ -484,6 +485,65 @@ describe('derivePending: a waiting request ends only by its own end marker', () 
     expect(currentPrompt(s)).toEqual(derivePending(evs));
     applyHookEvents(s, [end('2-1700000000000')]);
     expect(isQuiet(s)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A hook that ran out its window (#246)
+// ---------------------------------------------------------------------------
+
+describe('derivePending: a hook that ran out its window leaves the prompt waiting (#246)', () => {
+  const HOUR = ANSWER_WINDOW_S * 1000;
+  // As measured on the owner's machine: the end marker came 3630 s after the
+  // request, Claude Code's timeout for the hook, while the dialog was still up.
+  const endAt = (id: string, at: number) => ev('AlbedoReqEnd', { requestId: id }, at);
+  const pre = ev('PreToolUse', { toolName: 'AskUserQuestion', toolUseId: 'tu1', toolInput: ASK_INPUT }, 1_000);
+  const q = ev('PermissionRequest', { toolName: 'AskUserQuestion', toolInput: ASK_INPUT, requestId: '3-1' }, 2_000);
+  const timedOut = endAt('3-1', 2_000 + HOUR + 30_000);
+
+  it('the question is still shown, and the task still reads blocked', () => {
+    const s = applyHookEvents(emptyPending(), [pre, q, timedOut]);
+    expect(isQuiet(s)).toBe(false);
+    expect(currentPrompt(s)).toMatchObject({ kind: 'question', toolUseId: 'tu1', requestId: '3-1' });
+  });
+
+  it('the card can no longer answer it: only the terminal can', () => {
+    const p = derivePending([pre, q, timedOut])!;
+    expect(isAnswerable(p, p, 2_000 + HOUR + 30_000)).toBe(false);
+    expect(answerWindowClosed(p, 2_000 + HOUR + 30_000)).toBe(true);
+  });
+
+  it('the hook\'s own loop ending at the window counts too', () => {
+    expect(derivePending([pre, q, endAt('3-1', 2_000 + HOUR)])).toMatchObject({ kind: 'question' });
+  });
+
+  it('it goes when the terminal answers: the question\'s own PostToolUse', () => {
+    expect(derivePending([pre, q, timedOut, ev('PostToolUse', { toolUseId: 'tu1' })])).toBeNull();
+    expect(derivePending([pre, q, timedOut, ev('PostToolUse', { toolUseId: 'other' })])).toMatchObject({ kind: 'question' });
+  });
+
+  it('a permission prompt (no tool_use_id) goes when a tool next finishes', () => {
+    const r = req('5-1', 'ls', 2_000);
+    expect(derivePending([r, endAt('5-1', 2_000 + HOUR + 30_000)])).toMatchObject({ kind: 'permission' });
+    expect(derivePending([r, endAt('5-1', 2_000 + HOUR + 30_000), ev('PostToolUseFailure')])).toBeNull();
+  });
+
+  it('Stop, a new prompt and the session starting over clear it', () => {
+    for (const name of ['SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit']) {
+      expect(derivePending([pre, q, timedOut, ev(name)])).toBeNull();
+    }
+  });
+
+  it('an end well inside the window is the terminal answering: retired at once, as before', () => {
+    expect(derivePending([pre, q, endAt('3-1', 2_000 + 60_000)])).toBeNull();
+    expect(derivePending([pre, q, endAt('3-1', 2_000 + HOUR - 60_000)])).toBeNull();
+  });
+
+  it('applies incrementally, as the live watcher does', () => {
+    const s = emptyPending();
+    applyHookEvents(s, [pre, q]);
+    applyHookEvents(s, [timedOut]);
+    expect(currentPrompt(s)).toEqual(derivePending([pre, q, timedOut]));
   });
 });
 

@@ -172,3 +172,28 @@ describe('PromptCard: AskUserQuestion', () => {
     expect(screen.queryByRole('button', { name: /Red/ })).toBeNull();
   });
 });
+
+describe('PromptCard: past the hour it can answer in (#246)', () => {
+  const HOUR = 3600 * 1000;
+  const Q = [{ question: 'Pick one', header: 'Pick', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }];
+
+  it('a question still waiting shows, without buttons, and says to answer in the terminal', () => {
+    const p = { ...ask(Q), at: NOW - HOUR - 30_000 };
+    show(p);
+    expect(screen.getByText('Pick one')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'A' })).toBeNull();
+    expect(screen.getByText(/Too late to answer here/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Answer in Terminal' })).toBeTruthy();
+  });
+
+  it('a permission prompt likewise: no Allow, and the note', () => {
+    show(perm({ at: NOW - HOUR - 30_000 }));
+    expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull();
+    expect(screen.getByText(/Too late to answer here/)).toBeTruthy();
+  });
+
+  it('inside the hour, no note', () => {
+    show(ask(Q));
+    expect(screen.queryByText(/Too late to answer here/)).toBeNull();
+  });
+});

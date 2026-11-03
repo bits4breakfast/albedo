@@ -331,7 +331,9 @@ export function isQuiet(s: PendingState): boolean {
  * `PreToolUse` of AskUserQuestion. A request with a waiting hook is retired
  * ONLY by its own end marker (or by its tool_use_id finishing, for a question
  * that adopted one) -- never by an unrelated PostToolUse, which may be a
- * parallel subagent's. Stop, a new user prompt, and the session ending or
+ * parallel subagent's. An end marker at or past the answer window is the
+ * hook timing out, not an answer: the prompt stays, answerable only in the
+ * terminal (#246). Stop, a new user prompt, and the session ending or
  * restarting retire everything: none can happen while a dialog is up.
  *
  * `Notification` is only a fallback (see the `notice` kind): it fires for idle
@@ -378,9 +380,19 @@ export function applyHookEvents(s: PendingState, events: readonly HookEvent[]): 
         }
         break;
       }
-      case REQ_END:
-        if (e.requestId !== null) s.open.delete(e.requestId);
+      case REQ_END: {
+        if (e.requestId === null) break;
+        const ended = s.open.get(e.requestId);
+        s.open.delete(e.requestId);
+        // A hook that ran out its window -- its own loop, or Claude Code's
+        // timeout for it -- decided nothing: the dialog is still up in the
+        // terminal (#246). Keep the prompt, now answerable only there, and let
+        // it go the way a prompt without a hook does: its tool finishing, Stop,
+        // a new prompt, or the session starting over. An end well inside the
+        // window is the terminal answering, which kills the hook at once.
+        if (ended && hookExpired(ended, e.at)) s.loose = ended;
         break;
+      }
       case 'PreToolUse':
         if (e.toolName === ASK_TOOL) {
           s.loose = {
@@ -457,6 +469,30 @@ export function derivePending(events: readonly HookEvent[], done?: ReadonlySet<s
  * The polling is a `sleep 0.5` loop, so the cost while waiting is negligible.
  */
 export const ANSWER_WINDOW_S = 3600;
+
+/**
+ * The card stops answering this long before the window closes: a click in the
+ * last seconds could land after the hook quit.
+ */
+export const ANSWER_MARGIN_S = 15;
+
+/**
+ * Whether a request's hook, ending at `endedAt`, ran out its window rather
+ * than being killed by an answer in the terminal (#246).
+ *
+ * By wall clock: Claude Code times the hook out at the window plus 30 s, and
+ * the hook's own `sleep` loop only runs longer, never shorter, across a Mac's
+ * sleep. A terminal answer given after the card stopped answering also lands
+ * here; the prompt then lingers, with no buttons, until its tool finishes.
+ */
+export function hookExpired(p: PendingPrompt, endedAt: number): boolean {
+  return endedAt - p.at >= (ANSWER_WINDOW_S - ANSWER_MARGIN_S) * 1000;
+}
+
+/** Whether the card's time to answer `p` is up: only the terminal can, now. */
+export function answerWindowClosed(p: PendingPrompt, now: number): boolean {
+  return now - p.at >= (ANSWER_WINDOW_S - ANSWER_MARGIN_S) * 1000;
+}
 
 /** Hook stdout: the documented `hookSpecificOutput` for PermissionRequest. */
 export interface HookDecision {
@@ -558,7 +594,7 @@ export function isAnswerable(current: PendingPrompt | null, shown: PendingPrompt
   if (current === null || shown.kind === 'notice' || current.kind !== shown.kind) return false;
   if (shown.requestId === null || current.requestId !== shown.requestId) return false;
   // Leave a margin: a click in the last seconds could land after the hook quit.
-  return now - shown.at < (ANSWER_WINDOW_S - 15) * 1000;
+  return !answerWindowClosed(shown, now);
 }
 
 /** The file the waiting hook polls for. Mirrors the name in HOOK_SCRIPT. */
