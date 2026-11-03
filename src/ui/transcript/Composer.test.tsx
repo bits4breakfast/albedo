@@ -56,8 +56,20 @@ vi.mock('../Terminal', () => {
   };
 });
 
-// A held message's review comments are marked sent through this on delivery.
-vi.mock('../../db/comments', () => ({ markCommentsSent: vi.fn(async () => {}) }));
+// Code comments waiting in the queue (#222) come from here, and are marked
+// sent through it on delivery. `codeRows` is what the store holds.
+const codeRows = vi.hoisted(() => ({ rows: [] as import('../../db/comments').ReviewComment[] }));
+vi.mock('../../db/comments', async () => {
+  const actual = await vi.importActual<typeof import('../../db/comments')>('../../db/comments');
+  return {
+    ...actual,
+    listComments: vi.fn(async () => codeRows.rows),
+    onCommentsChanged: vi.fn(() => () => {}),
+    markCommentsSent: vi.fn(async () => {}),
+    editComment: vi.fn(async () => {}),
+    deleteComment: vi.fn(async () => {}),
+  };
+});
 
 // Paste writes through these; nothing touches a real disk.
 vi.mock('@tauri-apps/api/path', () => ({ homeDir: vi.fn(async () => '/Users/me') }));
@@ -77,6 +89,14 @@ afterEach(() => {
 const box = () => screen.getByRole('textbox') as HTMLTextAreaElement;
 const type = (value: string) => fireEvent.change(box(), { target: { value } });
 const pressEnter = () => fireEvent.keyDown(box(), { key: 'Enter' });
+
+/** A waiting comment on code, as the store returns it (#222). */
+function codeComment(id: number, over: Partial<import('../../db/comments').ReviewComment> = {}): import('../../db/comments').ReviewComment {
+  return {
+    id, taskId: 1, path: 'src/a.ts', lineStart: 3, lineEnd: 3, anchorText: 'const x = 1;', body: 'Name it.',
+    createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, ...over,
+  };
+}
 
 /** No live pty: the first send fails and the composer must ask for a session. */
 function deadPty() {
@@ -1085,26 +1105,43 @@ describe('(o) offline, a send waits in the outbox', () => {
     expect(submitPty).not.toHaveBeenCalled();
   });
 
-  it('marks review comments sent when their held message is delivered, after a switch away', async () => {
-    const { insertIntoComposer } = await import('./composerBridge');
+  it('marks code comments sent when their held message is delivered, after a switch away (#222)', async () => {
     const { markCommentsSent } = await import('../../db/comments');
+    codeRows.rows = [codeComment(7)];
     const stop = startOutboxRelease();
     const { rerender } = render(<Composer taskId={5} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
     setOnline(false);
-    const onSent = vi.fn(() => true);
-    act(() => {
-      insertIntoComposer({ taskId: 5, text: 'Comment at a.ts:3', onSent, comments: [{ id: 7, marker: 'a.ts:3' }] });
-    });
     pressEnter();
     await waitFor(() => expect(heldFor(5)).toEqual([expect.objectContaining({ commentIds: [7] })]));
-    rerender(<Composer taskId={6} onSent={vi.fn()} />); // the watcher goes with the switch
+    rerender(<Composer taskId={6} onSent={vi.fn()} />);
     expect(markCommentsSent).not.toHaveBeenCalled();
 
     setOnline(true);
     await waitFor(() => expect(markCommentsSent).toHaveBeenCalledWith(5, [7]));
-    expect(submitPty).toHaveBeenCalledWith(5, 'Comment at a.ts:3');
-    expect(onSent).not.toHaveBeenCalled();
+    expect(vi.mocked(submitPty).mock.calls[0]![1]).toContain('1. src/a.ts:3');
+    codeRows.rows = [];
     stop();
+  });
+
+  it('a code comment a held message carries is not carried again by the next one; removing the held one brings it back (#222)', async () => {
+    codeRows.rows = [codeComment(7)];
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
+    setOnline(false);
+    pressEnter();
+    await waitFor(() => expect(heldFor(5)).toEqual([expect.objectContaining({ commentIds: [7] })]));
+    // Still unsent in the store until delivery, but on its way: not waiting.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /1 Comment/ })).toBeNull());
+    type('and one more thing');
+    pressEnter();
+    await waitFor(() => expect(heldFor(5)).toHaveLength(2));
+    expect(heldFor(5)[1]!.text).toBe('and one more thing');
+    expect(heldFor(5)[1]!.commentIds).toBeUndefined();
+    // Taking the first message back out returns its comment to the queue.
+    act(() => removeHeld(5, heldFor(5)[0]!.id));
+    expect(await screen.findByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    codeRows.rows = [];
   });
 
   it('never resends what already went to Claude Code before the outage', async () => {
@@ -1474,5 +1511,137 @@ describe('(q) waiting comments on transcript passages', () => {
     expect(commentsOf(1)[0]?.comment).toBe('Which tag, exactly?');
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     expect(commentsOf(1)).toEqual([]);
+  });
+});
+
+describe('(r) one queue: comments on code wait above the box with the transcript ones (#222)', () => {
+  const passage: TranscriptComment = {
+    id: 'p', messageId: 4, quote: 'It already runs.', code: false, comment: 'How do you know?', at: 100, offset: 0, addedAt: 1,
+  };
+  const CODE = [
+    'I left some review comments on your changes. Please address each one:',
+    '',
+    '1. src/a.ts:3',
+    '```',
+    'const x = 1;',
+    '```',
+    'Name it.',
+  ].join('\n');
+
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    __resetDrafts();
+    __resetConnectivity(async () => true);
+    __resetOutbox();
+    __resetTurns();
+    codeRows.rows = [codeComment(7)];
+  });
+  afterEach(() => {
+    codeRows.rows = [];
+    __resetTurns();
+    __resetOutbox();
+    __resetConnectivity();
+    vi.mocked(hasLivePty).mockReturnValue(false);
+  });
+
+  it('lists both kinds in one place, code first, with the intro beside the count', async () => {
+    addComment(1, passage);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /2 Comments/ }));
+    const items = [...document.querySelectorAll('.tx-waiting-item')];
+    expect(items[0]?.querySelector('.tx-waiting-where')?.textContent).toBe('a.ts:3');
+    expect(items[0]?.textContent).toContain('Name it.');
+    expect(items[1]?.textContent).toContain('How do you know?');
+    expect(screen.getByRole('button', { name: 'Intro…' })).toBeTruthy();
+  });
+
+  it('Send carries the code comments under the intro, then the passages, then the box; all leave the queue', async () => {
+    const { markCommentsSent } = await import('../../db/comments');
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    addComment(1, passage);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /2 Comments/ });
+    type('Then deploy.');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    const body = vi.mocked(submitPty).mock.calls[0]![1];
+    expect(body.startsWith(`${CODE}\n\n<transcript-quote id="1" message="4">`)).toBe(true);
+    expect(body.endsWith('How do you know?\n\nThen deploy.')).toBe(true);
+    expect(markCommentsSent).toHaveBeenCalledWith(1, [7]);
+    expect(commentsOf(1)).toEqual([]);
+  });
+
+  it('with only code comments and an empty box, Send sends just them', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(false);
+    pressEnter();
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, CODE]]));
+  });
+
+  it('the intro the person writes opens the message; an empty one, none', async () => {
+    const { writeIntro, __resetIntro } = await import('../commentsIntro');
+    vi.mocked(submitPty).mockResolvedValue(true);
+    __resetIntro();
+    writeIntro('Please fix:');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
+    pressEnter();
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls[0]![1].startsWith('Please fix:\n\n1. src/a.ts:3')).toBe(true));
+    writeIntro('I left some review comments on your changes. Please address each one:');
+    __resetIntro();
+  });
+
+  it('a switch to another task never carries this one’s code comments, not even for one render', async () => {
+    const { useWaitingCodeComments } = await import('./codeComments');
+    const { listComments } = await import('../../db/comments');
+    let release2: (rows: never[]) => void = () => {};
+    vi.mocked(listComments).mockImplementation((id: number) =>
+      id === 1 ? Promise.resolve([codeComment(7)]) : new Promise((r) => (release2 = r)),
+    );
+    const { result, rerender } = renderHook(({ id }) => useWaitingCodeComments(id), { initialProps: { id: 1 } });
+    await waitFor(() => expect(result.current.map((c) => c.id)).toEqual([7]));
+    rerender({ id: 2 });
+    // Task 2's read has not landed: task 1's list must not stand in for it.
+    expect(result.current).toEqual([]);
+    await act(async () => release2([]));
+    expect(result.current).toEqual([]);
+    vi.mocked(listComments).mockImplementation(async () => codeRows.rows);
+  });
+
+  it('a command goes alone and leaves the code comments waiting', async () => {
+    const { markCommentsSent } = await import('../../db/comments');
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
+    type('/compact');
+    pressEnter();
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, '/compact']]));
+    expect(markCommentsSent).not.toHaveBeenCalled();
+  });
+
+  it('held at a prompt, they are marked sent only once the message goes', async () => {
+    const { markCommentsSent } = await import('../../db/comments');
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    const { rerender } = render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
+    pressEnter();
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+    expect(markCommentsSent).not.toHaveBeenCalled();
+    await act(async () => {
+      rerender(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    });
+    await waitFor(() => expect(markCommentsSent).toHaveBeenCalledWith(1, [7]));
   });
 });

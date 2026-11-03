@@ -861,7 +861,9 @@ export function Diff({
   const offerContext = readPath !== null;
 
   return (
-    <div className="tx-d" ref={ref}>
+    // The path a selection's code comment is for (#222): the file read for
+    // context, else the diff's own.
+    <div className="tx-d" ref={ref} data-diff-path={readPath ?? diff.path}>
       <DiffHeader
         diff={diff}
         model={model}
@@ -916,6 +918,7 @@ export function Diff({
           </button>
         </div>
       ) : null}
+      <SelectionComment rootRef={ref} />
     </div>
   );
 }
@@ -1064,7 +1067,10 @@ function newLineAt(x: number, y: number): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** The + on a row: press for that line, drag across rows for a range. */
+/** The last + pressed in each diff, for Shift-click to extend from (#222). */
+const lastHandle = new WeakMap<Element, number>();
+
+/** The + on a row: press for that line, drag across rows, or Shift-click another + for a range. */
 function CommentHandle({ line }: { line: number }): ReactNode {
   const annotate = useContext(DiffAnnotationsContext);
   if (!annotate) return null;
@@ -1074,10 +1080,17 @@ function CommentHandle({ line }: { line: number }): ReactNode {
       className="tx-d-cmt-add"
       tabIndex={-1}
       aria-label={`Comment on line ${line}`}
-      title="Comment on this line (drag for several)"
+      title="Comment on this line (drag, or Shift-click another +, for several)"
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
+        const root = e.currentTarget.closest('.tx-d');
+        const from = root ? lastHandle.get(root) : undefined;
+        if (root) lastHandle.set(root, line);
+        if (e.shiftKey && from !== undefined) {
+          annotate.pick(Math.min(from, line), Math.max(from, line), true);
+          return;
+        }
         const start = line;
         let end = line;
         annotate.pick(start, end, false);
@@ -1098,6 +1111,125 @@ function CommentHandle({ line }: { line: number }): ReactNode {
     >
       +
     </button>
+  );
+}
+
+/** The rows a selection covers in a diff: new-side lines with their code, in order. */
+export interface SelectedRows {
+  /** The diff's root (`.tx-d`), which carries the file's path. */
+  root: HTMLElement;
+  lines: Array<{ line: number; text: string }>;
+  /** It covers rows, but only deleted ones: nothing in the file to point at. */
+  deletedOnly: boolean;
+}
+
+/**
+ * Which diff rows a DOM selection covers (#222), read from the rows' own
+ * `data-new-line`, never from the text selected: a selection that starts
+ * halfway through one line still means that line. Null when the selection
+ * is empty or not inside one diff's rows.
+ */
+export function selectedDiffRows(sel: Selection | null): SelectedRows | null {
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const at = (n: Node | null) => (n instanceof Element ? n : (n?.parentElement ?? null));
+  const root = at(range.startContainer)?.closest<HTMLElement>('.tx-d') ?? null;
+  if (!root || at(range.endContainer)?.closest('.tx-d') !== root) return null;
+  const rows = [...root.querySelectorAll<HTMLElement>('.tx-d-row, .tx-d-half')].filter((r) => {
+    try {
+      return range.intersectsNode(r);
+    } catch {
+      return false;
+    }
+  });
+  if (rows.length === 0) return null;
+  const lines: SelectedRows['lines'] = [];
+  for (const r of rows) {
+    const n = Number(r.getAttribute('data-new-line'));
+    if (!Number.isInteger(n) || n <= 0 || lines.some((l) => l.line === n)) continue;
+    lines.push({ line: n, text: r.querySelector('.tx-d-code')?.textContent ?? '' });
+  }
+  return { root, lines, deletedOnly: lines.length === 0 };
+}
+
+/**
+ * Select lines in a diff, then comment (#222): a Comment button at the
+ * selection, and ⌥⌘M, both for the new-side lines it covers -- the same
+ * `pick` the + handles use. A selection only on deleted lines says why it
+ * cannot be commented. Only where comments are offered (the editor's Diff
+ * mode, the guide); a transcript diff's selection belongs to PassageComments.
+ *
+ * ⌥⌘M is read from `code` (Option makes `key` µ). It is the File mode's
+ * comment key; nothing app-wide binds it (shortcuts.ts), and CodeMirror is
+ * not in a diff to take it first.
+ */
+function SelectionComment({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }): ReactNode {
+  const annotate = useContext(DiffAnnotationsContext);
+  const [found, setFound] = useState<{ rows: SelectedRows; top: number; left: number } | null>(null);
+  const annotateRef = useRef(annotate);
+  annotateRef.current = annotate;
+  const foundRef = useRef(found);
+  foundRef.current = found;
+  const commentNow = useRef<() => boolean>(() => false);
+
+  useEffect(() => {
+    if (!annotate) return;
+    const look = () => {
+      const root = rootRef.current;
+      const sel = document.getSelection();
+      const rows = selectedDiffRows(sel);
+      if (!root || !rows || rows.root !== root) {
+        setFound(null);
+        return;
+      }
+      const rect = sel!.getRangeAt(0).getBoundingClientRect?.();
+      const box = root.getBoundingClientRect();
+      setFound({ rows, top: rect ? rect.bottom - box.top + 4 : 0, left: rect ? Math.max(0, rect.left - box.left) : 0 });
+    };
+    const comment = () => {
+      const f = foundRef.current;
+      const a = annotateRef.current;
+      if (!f || !a || f.rows.deletedOnly) return false;
+      const ns = f.rows.lines.map((l) => l.line);
+      a.pick(Math.min(...ns), Math.max(...ns), true);
+      document.getSelection()?.removeAllRanges();
+      setFound(null);
+      return true;
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyM' || !e.metaKey || !e.altKey || e.shiftKey || e.ctrlKey) return;
+      if (comment()) e.preventDefault();
+    };
+    document.addEventListener('selectionchange', look);
+    document.addEventListener('keydown', key);
+    commentNow.current = comment;
+    return () => {
+      document.removeEventListener('selectionchange', look);
+      document.removeEventListener('keydown', key);
+    };
+  }, [annotate, rootRef]);
+
+  if (!annotate || !found) return null;
+  const { rows } = found;
+  const first = rows.lines[0]?.line;
+  const last = rows.lines[rows.lines.length - 1]?.line;
+  return (
+    <div className="tx-d-selcmt" style={{ top: found.top, left: found.left }} role="group" aria-label="Selected lines">
+      {rows.deletedOnly ? (
+        <span className="tx-d-selcmt-note">Deleted lines are not in the file now: nothing to comment on</span>
+      ) : (
+        <button
+          type="button"
+          className="tx-btn tx-d-selcmt-btn"
+          // Keep the selection until the click lands.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => commentNow.current()}
+          title="Comment on the selected lines (⌥⌘M)"
+        >
+          Comment on {first === last ? `Selected Line ${first}` : `Selected Lines ${first}–${last}`}
+        </button>
+      )}
+    </div>
   );
 }
 

@@ -511,34 +511,9 @@ button.tf-section-head:hover .disc { color: var(--text); }
 /* --- review comments ------------------------------------------------------ */
 
 .tf-comments-head { align-items: center; }
-.tf-comments-actions { margin-left: auto; display: inline-flex; gap: 4px; }
-/* The one action this section exists for: text in --text-strong on the
-   button's own --panel-raised, with the accent edge to mark it. */
+/* The primary action of a Files pane row (GitBar's Push / Create PR): text
+   in --text-strong on the button's own --panel-raised, with the accent edge. */
 .tf-btn-primary { color: var(--text-strong); border-color: var(--accent-line); }
-
-.tf-comments-intro {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 2px 8px 8px;
-}
-.tf-comments-intro-label { color: var(--muted); font-size: var(--fs-xs); }
-.tf-comments-intro-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 4px 6px;
-  resize: vertical;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--panel-inset);
-  color: var(--text-strong);
-  font: inherit;
-  font-size: var(--fs-sm);
-  user-select: text;
-  -webkit-user-select: text;
-}
-.tf-comments-intro-input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
 .tf-comments-notice { padding: 0 8px 6px; color: var(--warn); font-size: var(--fs-xs); }
 
 .tf-comment {
@@ -568,8 +543,26 @@ button.tf-section-head:hover .disc { color: var(--text); }
   white-space: nowrap;
   color: var(--text);
 }
-.tf-comment-sent { flex: none; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
-.tf-comment-sent::before { content: '✓ '; }
+/* Grouped by state (#222): Waiting, ↗ Sent, and Resolved folded away. The
+   labels are text in --muted, cleared on --panel and --panel-hover
+   (commentsContrast.test.ts). No ✓ here: in this list ✓ is Resolve only. */
+.tf-comments-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 8px 2px 11px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+.tf-comments-fold { cursor: pointer; }
+.tf-comments-fold:hover { color: var(--text); }
+.tf-comments-fold:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* A resolved comment and its reason, in the tier below an open one. */
+.tf-comment-resolved .tf-comment-body,
+.tf-comment-why { color: var(--muted); }
+.tf-comment-reopen { flex: none; align-self: center; margin-right: 6px; }
 .tf-comment-resolve {
   flex: none;
   width: 28px;

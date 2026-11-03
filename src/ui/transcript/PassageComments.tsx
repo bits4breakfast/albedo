@@ -10,6 +10,13 @@
  *  - Every passage with a comment waiting stays marked, and its row shows how
  *    many it has.
  *
+ *  - A selection inside a diff's rows is a comment on CODE (#222): on the
+ *    file's lines `a–b`, when the new-side lines it covers are found
+ *    verbatim in the file as it is now (lib/anchor.ts, through the file-read
+ *    context). It joins the code comments' queue. When they are not found
+ *    -- the file has moved on -- or the selection is on deleted lines only,
+ *    it stays a comment on the passage, and the field says why.
+ *
  * Drawn inside the scroller, so the bar and the field scroll with the text
  * they belong to. Marks use the CSS Custom Highlight API and a data attribute
  * on the row (passages.ts): nothing is inserted into rows React owns.
@@ -22,6 +29,10 @@ import { copyText } from '../../lib/clipboard';
 import { addComment, useComments } from './drafts';
 import { HIGHLIGHT, findPassage, offsetOf, rowContent, setHighlight, squeeze } from './passages';
 import type { TranscriptComment } from './transcriptQuotes';
+import { selectedDiffRows } from './Diff';
+import { anchorBlock, fileLines } from '../../lib/anchor';
+import { useReadFile, useWorktreePath } from '../editor/openFile';
+import { addComment as addCodeComment } from '../../db/comments';
 
 /** A selection the bar is shown for. */
 interface Picked {
@@ -44,6 +55,37 @@ interface Field {
   top: number;
   left: number;
   width: number;
+  /** What it will be a comment on: the passage, or the file's lines (#222). */
+  target: Target;
+}
+
+/**
+ * A field opened on a diff's rows first checks the file ('checking'); the
+ * rest are settled: code lines found in the file now, or the passage with
+ * the reason it could not be code.
+ */
+type Target =
+  | { kind: 'passage'; why: string | null }
+  | { kind: 'checking' }
+  | { kind: 'code'; path: string; lineStart: number; lineEnd: number; anchorText: string };
+
+/** Where a diff selection's lines are in the file now, or why not. Pure. */
+export function codeTarget(
+  lines: ReadonlyArray<{ line: number; text: string }>,
+  path: string | null,
+  text: string | null,
+): Target {
+  if (lines.length === 0) return { kind: 'passage', why: 'Deleted lines are not in the file now, so this comments on the passage.' };
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i]!.line !== lines[i - 1]!.line + 1) {
+      return { kind: 'passage', why: 'The selection spans two parts of the diff, so this comments on the passage.' };
+    }
+  }
+  if (path === null || text === null) return { kind: 'passage', why: 'The file could not be read, so this comments on the passage.' };
+  const block = lines.map((l) => l.text);
+  const found = anchorBlock(fileLines(text), block, lines[0]!.line);
+  if (!found.ok) return { kind: 'passage', why: 'These lines are not in the file as it is now, so this comments on the passage.' };
+  return { kind: 'code', path, lineStart: found.offset + 1, lineEnd: found.offset + block.length, anchorText: block.join('\n') };
 }
 
 const ROW = '[data-message-id]';
@@ -106,6 +148,9 @@ export function PassageComments({
   const [text, setText] = useState('');
   const [copied, setCopied] = useState(false);
   const comments = useComments(taskId);
+  const readFile = useReadFile();
+  const relativeOf = useWorktreePath();
+  const [error, setError] = useState<string | null>(null);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
@@ -170,7 +215,21 @@ export function PassageComments({
     const rect = typeof range.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : null;
     const col = content.getBoundingClientRect();
     const below = inContent(scroller, col.left, rect ? rect.bottom : col.bottom);
+    // Inside a diff's rows: a comment on the file's lines, once they are
+    // found in the file as it is now (#222). Checked after the field opens.
+    const rows = selectedDiffRows(document.getSelection());
+    const inDiff = rows !== null && content.contains(rows.root);
+    const target: Target = inDiff ? (rows.deletedOnly ? codeTarget([], null, null) : { kind: 'checking' }) : { kind: 'passage', why: null };
+    if (inDiff && !rows.deletedOnly) {
+      const raw = rows.root.getAttribute('data-diff-path') ?? '';
+      void Promise.all([relativeOf(raw).catch(() => null), readFile(raw).catch(() => null)]).then(([path, text]) => {
+        const settled = codeTarget(rows.lines, path, text);
+        setField((f) => (f && f.range === range ? { ...f, target: settled } : f));
+      });
+    }
+    setError(null);
     setField({
+      target,
       messageId,
       // The passage as selected; only the blank edges a drag picks up go.
       quote: sel.text.replace(/^\s*\n/, '').replace(/\s+$/, ''),
@@ -187,7 +246,7 @@ export function PassageComments({
     setPicked(null);
     setHighlight(HIGHLIGHT.pending, [range]);
     return true;
-  }, [scrollRef, taskId]);
+  }, [scrollRef, taskId, readFile, relativeOf]);
 
   // ⌘': the bar's Comment, from the keyboard. Command only, matched on the
   // physical key too (`code`), so a layout that puts ' elsewhere still has it.
@@ -203,6 +262,18 @@ export function PassageComments({
 
   const add = () => {
     if (!field || taskId === null || text.trim().length === 0) return;
+    if (field.target.kind === 'checking') return;
+    const t = field.target;
+    if (t.kind === 'code') {
+      addCodeComment({ taskId, path: t.path, lineStart: t.lineStart, lineEnd: t.lineEnd, anchorText: t.anchorText, body: text.trim() }).then(
+        () => {
+          document.getSelection()?.removeAllRanges();
+          close();
+        },
+        (err: unknown) => setError(`Could not save the comment, which is still here: ${String(err)}`),
+      );
+      return;
+    }
     const now = Date.now();
     const c: TranscriptComment = {
       id: `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -287,10 +358,23 @@ export function PassageComments({
           data-focus-keeps-tab=""
           style={{ top: field.top, left: field.left, ...(field.width > 0 ? { width: field.width } : {}) }}
         >
+          {field.target.kind !== 'passage' || field.target.why ? (
+            <div className="tx-cmt-target" role="status">
+              {field.target.kind === 'checking'
+                ? 'Finding these lines in the file…'
+                : field.target.kind === 'code'
+                  ? `On ${field.target.path.split('/').pop()}:${
+                      field.target.lineStart === field.target.lineEnd
+                        ? field.target.lineStart
+                        : `${field.target.lineStart}–${field.target.lineEnd}`
+                    }, as a code comment`
+                  : field.target.why}
+            </div>
+          ) : null}
           <textarea
             className="tx-cmt-input"
-            aria-label="Comment on the selected passage"
-            placeholder="Comment on this passage…"
+            aria-label={field.target.kind === 'code' ? 'Comment on the selected lines' : 'Comment on the selected passage'}
+            placeholder={field.target.kind === 'code' ? 'Comment on these lines…' : 'Comment on this passage…'}
             rows={3}
             value={text}
             autoFocus
@@ -310,10 +394,16 @@ export function PassageComments({
             <button type="button" className="tx-btn tx-queued-act" onClick={close}>
               Cancel
             </button>
-            <button type="button" className="tx-btn tx-queued-act tx-cmt-add" onClick={add} disabled={text.trim().length === 0}>
+            <button
+              type="button"
+              className="tx-btn tx-queued-act tx-cmt-add"
+              onClick={add}
+              disabled={text.trim().length === 0 || field.target.kind === 'checking'}
+            >
               Add <span className="tx-cmt-key">⌘↩</span>
             </button>
           </div>
+          {error ? <div className="tx-waiting-error">{error}</div> : null}
         </div>
       ) : null}
     </>

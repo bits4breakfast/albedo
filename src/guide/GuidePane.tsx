@@ -65,7 +65,9 @@ async function readWorking(worktreePath: string, rel: string): Promise<string | 
 type Load =
   | { kind: 'loading' }
   | { kind: 'error'; message: string; taskId: number }
-  | { kind: 'ready'; data: LoadedBranchDiff; taskId: number };
+  // `remembered`: the last visit's read, shown at once while the branch is
+  // read again (#199). Not the file as it is now, so it resolves no comment.
+  | { kind: 'ready'; data: LoadedBranchDiff; taskId: number; remembered?: boolean };
 
 export interface GuidePaneProps {
   task: Task;
@@ -79,7 +81,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   // again behind it, as on every return to the tab.
   const [read, setLoad] = useState<Load>(() => {
     const last = lastReadOf(task.id);
-    return last ? { kind: 'ready', data: last, taskId: task.id } : { kind: 'loading' };
+    return last ? { kind: 'ready', data: last, taskId: task.id, remembered: true } : { kind: 'loading' };
   });
   const [again, setAgain] = useState(0);
   /** Write or Rewrite was pressed and the branch is being read again first. */
@@ -160,6 +162,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
       task={task}
       guide={guide}
       loaded={load.data}
+      fresh={load.remembered !== true}
       write={write}
       onRewrite={writeNow}
       active={active}
@@ -294,6 +297,7 @@ function GuideBody({
   task,
   guide,
   loaded,
+  fresh,
   write,
   onRewrite,
   active,
@@ -301,6 +305,8 @@ function GuideBody({
   task: Task;
   guide: Guide;
   loaded: LoadedBranchDiff;
+  /** The read is this visit's, not a remembered one (#222: auto-resolve). */
+  fresh: boolean;
   write: WriteState | null;
   onRewrite: () => void;
   active: boolean;
@@ -605,6 +611,7 @@ function GuideBody({
                 key={`${group.key}:${file.path}`}
                 task={task}
                 diff={diff}
+                fresh={fresh}
                 file={file}
                 reviewed={isFileReviewed(file)}
                 onToggleReviewed={() => toggleFile(file)}
@@ -643,12 +650,14 @@ export function restrictDiff(full: FileDiff, file: GuideFile, blocks: readonly s
 function GuideFileDiff({
   task,
   diff,
+  fresh,
   file,
   reviewed,
   onToggleReviewed,
 }: {
   task: Task;
   diff: BranchDiff;
+  fresh: boolean;
   file: GroupFile;
   reviewed: boolean;
   onToggleReviewed: () => void;
@@ -659,7 +668,7 @@ function GuideFileDiff({
   const full = diff.files.find((f) => f.path === file.path) ?? null;
   const result = full?.result ?? null;
   const newText = result && result.kind === 'diff' && result.change !== 'deleted' ? result.newText : null;
-  const comments = useDiffComments(task.id, file.path, newText, false);
+  const comments = useDiffComments(task.id, file.path, newText, false, fresh);
   const { name, dir } = splitPath(file.path);
   const split = file.blocks.length < file.totalBlocks;
   // A stat-only file is one block standing for all of its hunks: it shows whole.
@@ -697,6 +706,7 @@ function GuideFileDiff({
           </button>
         </div>
       ) : null}
+      {comments.bar}
       <div className="gd-diff-scroll">
         {reviewed && !showAnyway ? (
           <div className="gd-collapsed">

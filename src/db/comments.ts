@@ -141,8 +141,26 @@ export async function markCommentsSent(taskId: number, ids: readonly number[]): 
 }
 
 export async function resolveComment(taskId: number, id: number): Promise<void> {
+  await resolveComments(taskId, [id]);
+}
+
+/** Several at once, one change event: what auto-resolve writes (#222). */
+export async function resolveComments(taskId: number, ids: readonly number[]): Promise<void> {
+  if (ids.length === 0) return;
   const db = await getDb();
-  await db.execute(`UPDATE comments SET resolved_at = $2 WHERE id = $1`, [id, Date.now()]);
+  const now = Date.now();
+  for (const id of ids) await db.execute(`UPDATE comments SET resolved_at = $2 WHERE id = $1`, [id, now]);
+  changed(taskId);
+}
+
+/**
+ * Back to open (#222), and unsent: reopening asks for it to be dealt with
+ * again, so it waits for your next message. Left marked sent, a comment
+ * whose lines are gone would be resolved again at the next look.
+ */
+export async function reopenComment(taskId: number, id: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE comments SET resolved_at = NULL, sent_at = NULL WHERE id = $1`, [id]);
   changed(taskId);
 }
 
@@ -168,6 +186,63 @@ export function relocate(comment: Pick<ReviewComment, 'anchorText' | 'lineStart'
   const found = anchorBlock(fileLines(text), block, comment.lineStart);
   if (!found.ok) return { state: 'outdated' };
   return { state: 'current', lineStart: found.offset + 1, lineEnd: found.offset + block.length };
+}
+
+// ---------------------------------------------------------------------------
+// The life of a comment (#222)
+// ---------------------------------------------------------------------------
+
+export type CommentState = 'waiting' | 'sent' | 'resolved';
+
+export function commentState(c: Pick<ReviewComment, 'sentAt' | 'resolvedAt'>): CommentState {
+  if (c.resolvedAt !== null) return 'resolved';
+  return c.sentAt !== null ? 'sent' : 'waiting';
+}
+
+type Anchored = Pick<ReviewComment, 'sentAt' | 'resolvedAt' | 'anchorText' | 'lineStart'>;
+
+/**
+ * The owner's rule: a comment that went to Claude and whose lines are no
+ * longer in the file has been acted on, so it resolves itself. `text` is the
+ * file as it is on disk; null means it could not be read, which decides
+ * nothing. An unsent comment never resolves on its own: its lines changing
+ * means the file moved under your note, not that it was answered.
+ */
+export function shouldAutoResolve(c: Anchored, text: string | null): boolean {
+  if (c.sentAt === null || c.resolvedAt !== null || text === null) return false;
+  return relocate(c, text).state === 'outdated';
+}
+
+/**
+ * Why a resolved comment is resolved, for the list. Not stored (no schema
+ * change): derived from what auto-resolve acts on -- it was sent and its
+ * lines are gone. A sent comment resolved by hand before its lines changed
+ * reads "resolved by you" until they do.
+ */
+export function resolvedReason(c: Anchored, text: string | null): 'changed' | 'you' | null {
+  if (c.resolvedAt === null) return null;
+  if (c.sentAt !== null && text !== null && relocate(c, text).state === 'outdated') return 'changed';
+  return 'you';
+}
+
+/**
+ * Resolve every sent comment whose lines are gone, reading each file once.
+ * Returns the ids resolved. A file that cannot be read resolves nothing.
+ */
+export async function autoResolveComments(
+  taskId: number,
+  comments: readonly ReviewComment[],
+  read: (path: string) => Promise<string | null>,
+): Promise<number[]> {
+  const candidates = comments.filter((c) => c.sentAt !== null && c.resolvedAt === null);
+  if (candidates.length === 0) return [];
+  const texts = new Map<string, string | null>();
+  for (const path of new Set(candidates.map((c) => c.path))) {
+    texts.set(path, await read(path).catch(() => null));
+  }
+  const ids = candidates.filter((c) => shouldAutoResolve(c, texts.get(c.path) ?? null)).map((c) => c.id);
+  await resolveComments(taskId, ids);
+  return ids;
 }
 
 /** `path:12` or `path:12-14`: how a comment names its place, in the message and in lists. */

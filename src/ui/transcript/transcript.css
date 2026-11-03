@@ -1386,6 +1386,27 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-picking { box-shadow: inset 2px 0 0 var(--accent); }
 .tx-d-annot { padding: 2px 0 4px; font-size: var(--fs-sm); }
 
+/* Select lines, then comment (#222): a small bar under the selection, on
+   the diff's --panel-inset, with the button's text in --text and the note
+   in --muted (commentsContrast.test.ts). */
+.tx-d:has(.tx-d-selcmt) { position: relative; }
+.tx-d-selcmt {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-menu);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+}
+.tx-d-selcmt-btn { color: var(--text); }
+.tx-d-selcmt-note { color: var(--muted); }
+
 /* A selection stays on the side it started on (set on mousedown in Diff.tsx). */
 .tx-d-split[data-select='old'] .tx-d-half:last-child,
 .tx-d-split[data-select='new'] .tx-d-half:first-child {
@@ -1941,6 +1962,24 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
 }
 .tx-waiting-quote::before { content: '> '; }
 .tx-waiting-more { font-size: var(--fs-xs); }
+/* The head and, beside it, Intro… (#222): two controls, not one button. */
+.tx-waiting-bar { display: flex; align-items: center; gap: 4px; }
+.tx-waiting-bar .tx-waiting-head { flex: 1 1 auto; min-width: 0; }
+/* A code comment's place, where a passage shows its quote: same tier. */
+.tx-waiting-where {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-waiting-file { color: var(--text); }
+.tx-waiting-intro { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
+.tx-waiting-intro-label { color: var(--muted); font-size: var(--fs-xs); }
+.tx-waiting-error { color: var(--warn); font-size: var(--fs-xs); }
+/* What a comment field is about to comment on (#222): code lines, or why the passage. */
+.tx-cmt-target { margin: 0 0 4px; color: var(--muted); font-size: var(--fs-xs); }
 .tx-waiting-row { display: flex; align-items: flex-start; gap: 6px; }
 .tx-waiting-comment {
   flex: 1;

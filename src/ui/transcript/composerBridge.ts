@@ -1,6 +1,7 @@
 /**
- * Put text into a task's composer from elsewhere in the app -- review
- * comments, for now -- and learn when a message carrying it was sent.
+ * Put text into a task's composer from elsewhere in the app, and learn when
+ * a message carrying it was sent. (Review comments no longer come this way:
+ * they wait in the composer's own queue, #222.)
  *
  * The composer does the sending, so everything it already handles (a held
  * message during a permission prompt, starting the session, a failed write)
@@ -12,13 +13,6 @@ export interface ComposerInsert {
   text: string;
   /** Called with the text Claude Code received, each time a message is sent until it returns true. */
   onSent?: (sent: string) => boolean;
-  /**
-   * Review comments in the text, each found by a marker (its location). A
-   * message held offline keeps the ids of those whose marker it carries, and
-   * they are marked sent when it is delivered: by then this insert, and the
-   * `onSent` above, may be gone.
-   */
-  comments?: ReadonlyArray<{ id: number; marker: string }>;
 }
 
 /** Returns true when it took the text: only the task's own composer does. */

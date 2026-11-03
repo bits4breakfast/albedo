@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ReviewComment } from '../../db/comments';
+import { ACTION_LABEL, cardState, resolvedTrace } from './commentLabels';
 
 function where(from: number, to: number): string {
   return from === to ? `Line ${from}` : `Lines ${from}–${to}`;
@@ -24,26 +25,104 @@ export function CommentCardView({
   onResolve: () => void;
   onDelete: () => void;
 }): ReactNode {
+  // One main action on the row, the rest under ⋯ (#222); the File mode's
+  // widget draws the same from the same `cardState`.
+  const [more, setMore] = useState(false);
+  const card = cardState(comment);
+  const run = { edit: onEdit, resolve: onResolve, delete: onDelete };
+  const action = (a: 'edit' | 'resolve' | 'delete', primary: boolean) => (
+    <button
+      key={a}
+      type="button"
+      className={a === 'delete' ? 'ed-cmt-btn ed-cmt-danger' : primary ? 'ed-cmt-btn ed-cmt-primary' : 'ed-cmt-btn'}
+      onClick={run[a]}
+    >
+      {ACTION_LABEL[a]}
+    </button>
+  );
   return (
-    <div className="ed-cmt">
+    <div className="ed-cmt" data-state={card.state}>
       <div className="ed-cmt-head">
         <span className="ed-cmt-where">{where(comment.lineStart, comment.lineEnd)}</span>
-        <span className={comment.sentAt ? 'ed-cmt-state ed-cmt-sent' : 'ed-cmt-state'}>
-          {comment.sentAt ? 'Sent to Claude' : 'Not Sent'}
+        <span className="ed-cmt-chip" data-state={card.state}>
+          {card.chip}
         </span>
         <span className="ed-cmt-actions">
-          <button type="button" className="ed-cmt-btn" onClick={onEdit}>
-            Edit
-          </button>
-          <button type="button" className="ed-cmt-btn" onClick={onResolve}>
-            Resolve
-          </button>
-          <button type="button" className="ed-cmt-btn ed-cmt-danger" onClick={onDelete}>
-            Delete
+          {action(card.main, card.state === 'sent')}
+          {more ? card.more.map((a) => action(a, false)) : null}
+          <button
+            type="button"
+            className="ed-cmt-btn ed-cmt-more"
+            aria-expanded={more}
+            aria-label="More actions"
+            title="More actions"
+            onClick={() => setMore((v) => !v)}
+          >
+            ⋯
           </button>
         </span>
       </div>
       <div className="ed-cmt-body">{comment.body}</div>
+    </div>
+  );
+}
+
+/**
+ * The bar above a file's diff or text for the comments that are not on its
+ * lines (#222): one resolved on its own while the file was open (a one-line
+ * trace with Reopen), and an unsent one whose lines are gone (outdated, with
+ * Resolve and Delete). Never pinned to whatever sits at their old lines.
+ * File mode, Diff mode and the guide show the same bar.
+ */
+export function CommentsBar({
+  traces,
+  outdated,
+  onReopen,
+  onResolve,
+  onDelete,
+}: {
+  traces: readonly ReviewComment[];
+  outdated: readonly ReviewComment[];
+  onReopen: (c: ReviewComment) => void;
+  onResolve: (c: ReviewComment) => void;
+  onDelete: (c: ReviewComment) => void;
+}): ReactNode {
+  if (traces.length === 0 && outdated.length === 0) return null;
+  return (
+    <div className="ed-cmt-bar">
+      {traces.map((c) => (
+        <div key={`t${c.id}`} className="ed-cmt-trace" title={c.body}>
+          <span className="ed-cmt-trace-mark" aria-hidden="true">
+            ✓
+          </span>
+          <span className="ed-cmt-trace-text">
+            Resolved: {resolvedTrace(c)} <span className="ed-cmt-trace-body">· “{c.body.split('\n')[0]}”</span>
+          </span>
+          <button type="button" className="ed-cmt-btn" onClick={() => onReopen(c)}>
+            Reopen
+          </button>
+        </div>
+      ))}
+      {outdated.length > 0 ? (
+        <div className="ed-cmt-outdated">
+          <span className="ed-cmt-outdated-lead">
+            {outdated.length === 1 ? 'A comment' : `${outdated.length} comments`} on this file no longer match its code:
+          </span>
+          {outdated.map((c) => (
+            <span key={`o${c.id}`} className="ed-cmt-outdated-item" title={c.anchorText}>
+              <span className="ed-cmt-outdated-body">
+                {where(c.lineStart, c.lineEnd)}: {c.body.split('\n')[0]}
+              </span>
+              <button type="button" className="ed-cmt-btn" onClick={() => onResolve(c)}>
+                ✓ Resolve
+              </button>
+              <button type="button" className="ed-cmt-btn ed-cmt-danger" onClick={() => onDelete(c)}>
+                Delete
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

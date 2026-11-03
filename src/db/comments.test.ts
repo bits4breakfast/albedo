@@ -17,7 +17,12 @@ import {
   moveComment,
   onCommentsChanged,
   relocate,
+  autoResolveComments,
+  commentState,
+  reopenComment,
   resolveComment,
+  resolvedReason,
+  shouldAutoResolve,
   type ReviewComment,
 } from './comments';
 
@@ -144,5 +149,55 @@ describe('formatForClaude', () => {
   it('fences code that itself contains backticks with a longer fence', () => {
     const text = formatForClaude([{ ...base, anchorText: 'echo ```' }]);
     expect(text).toContain('````\necho ```\n````');
+  });
+});
+
+describe('the life of a comment (#222)', () => {
+  const at = { anchorText: 'two\nthree', lineStart: 2 };
+  const file = 'one\ntwo\nthree\n';
+  const changed = 'one\ntwo\nTHREE\n';
+
+  it('a sent comment whose lines are gone resolves itself; an unsent one never does', () => {
+    expect(shouldAutoResolve({ ...at, sentAt: 5, resolvedAt: null }, changed)).toBe(true);
+    expect(shouldAutoResolve({ ...at, sentAt: 5, resolvedAt: null }, file)).toBe(false);
+    expect(shouldAutoResolve({ ...at, sentAt: null, resolvedAt: null }, changed)).toBe(false);
+    // Unreadable decides nothing; resolved already, nothing to do.
+    expect(shouldAutoResolve({ ...at, sentAt: 5, resolvedAt: null }, null)).toBe(false);
+    expect(shouldAutoResolve({ ...at, sentAt: 5, resolvedAt: 9 }, changed)).toBe(false);
+  });
+
+  it('states and reasons', () => {
+    expect(commentState({ sentAt: null, resolvedAt: null })).toBe('waiting');
+    expect(commentState({ sentAt: 1, resolvedAt: null })).toBe('sent');
+    expect(commentState({ sentAt: 1, resolvedAt: 2 })).toBe('resolved');
+    expect(resolvedReason({ ...at, sentAt: 1, resolvedAt: 2 }, changed)).toBe('changed');
+    expect(resolvedReason({ ...at, sentAt: 1, resolvedAt: 2 }, file)).toBe('you');
+    expect(resolvedReason({ ...at, sentAt: null, resolvedAt: 2 }, changed)).toBe('you');
+    expect(resolvedReason({ ...at, sentAt: 1, resolvedAt: null }, changed)).toBeNull();
+  });
+
+  it('autoResolveComments resolves the sent ones whose lines are gone, reading each file once', async () => {
+    const t = await task();
+    const gone = await comment(t, { path: 'a.ts', anchorText: 'two\nthree' });
+    const kept = await comment(t, { path: 'a.ts', anchorText: 'one' });
+    const waiting = await comment(t, { path: 'b.ts', anchorText: 'nope' });
+    await markCommentsSent(t, [gone, kept]);
+    const reads: string[] = [];
+    const ids = await autoResolveComments(t, await listComments(t), async (p) => {
+      reads.push(p);
+      return p === 'a.ts' ? changed : '';
+    });
+    expect(ids).toEqual([gone]);
+    expect(reads).toEqual(['a.ts']);
+    expect((await listComments(t)).map((c) => c.id).sort()).toEqual([kept, waiting].sort());
+  });
+
+  it('reopening makes it open and unsent: it waits for your next message', async () => {
+    const t = await task();
+    const id = await comment(t);
+    await markCommentsSent(t, [id]);
+    await resolveComment(t, id);
+    await reopenComment(t, id);
+    expect((await listComments(t))[0]).toMatchObject({ id, sentAt: null, resolvedAt: null });
   });
 });
