@@ -1194,6 +1194,28 @@ select:disabled { cursor: default; }
 .pane-head .tabs button:hover { color: var(--text); background: var(--panel-hover); }
 .pane-head .tabs button[aria-selected='true'] { color: var(--text-strong); background: var(--panel-raised); }
 
+/* A tab with its own ✕ (#226): one pill, the ✕ at its right end. The pill
+   carries the selected and hover grounds, so tab and ✕ read as one tab; the
+   ✕ gets its own hover ground inside it, to show which part takes the click. */
+.pane-head .tabs .tab-closable { display: inline-flex; align-items: center; border-radius: var(--radius-sm); }
+.pane-head .tabs .tab-closable:hover { background: var(--panel-hover); }
+.pane-head .tabs .tab-closable[data-selected='true'] { background: var(--panel-raised); }
+.pane-head .tabs .tab-closable > button[role='tab'] { padding-right: 4px; background: transparent; }
+.pane-head .tabs .tab-closable:hover > button[role='tab'] { color: var(--text); }
+.pane-head .tabs .tab-closable[data-selected='true'] > button[role='tab'] { color: var(--text-strong); }
+.pane-head .tabs .tab-close {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.pane-head .tabs .tab-close:hover { color: var(--text-strong); background: var(--panel-active); }
+.pane-head .tabs .tab-close:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+
 .pane-head-close {
   flex: 0 0 auto;
   width: 26px;

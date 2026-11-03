@@ -1626,14 +1626,28 @@ export default function App() {
                     </button>
                   )}
                   {guideTask && !projectView && (
-                    <button
-                      role="tab"
-                      aria-selected={activeTab === 'guide'}
-                      onClick={() => setRightTab('guide')}
-                      title="This branch’s changes, grouped by what they do"
-                    >
-                      Guide
-                    </button>
+                    /* The tab and its ✕ in one pill (#226): the close sits on
+                       what it closes, not at the far end of the row. A sibling
+                       of the tab, never inside it (a button in a button). */
+                    <span className="tab-closable" data-selected={activeTab === 'guide'}>
+                      <button
+                        role="tab"
+                        aria-selected={activeTab === 'guide'}
+                        onClick={() => setRightTab('guide')}
+                        title="This branch’s changes, grouped by what they do"
+                      >
+                        Guide
+                      </button>
+                      <button
+                        type="button"
+                        className="tab-close"
+                        onClick={() => closeGuide(guideTask.id)}
+                        title="Close the guide"
+                        aria-label="Close the guide"
+                      >
+                        ✕
+                      </button>
+                    </span>
                   )}
                   {editorTask && (
                     <button
@@ -1655,16 +1669,6 @@ export default function App() {
                 )}
                 {activeTab === 'editor' && (
                   <button className="pane-head-close" onClick={closeEditor} title="Close editor" aria-label="Close editor">
-                    ✕
-                  </button>
-                )}
-                {activeTab === 'guide' && guideTask && (
-                  <button
-                    className="pane-head-close"
-                    onClick={() => closeGuide(guideTask.id)}
-                    title="Close the guide"
-                    aria-label="Close the guide"
-                  >
                     ✕
                   </button>
                 )}

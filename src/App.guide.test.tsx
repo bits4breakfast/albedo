@@ -218,6 +218,26 @@ describe('opening the Review Guide', () => {
     expect(screen.getByRole('tab', { name: 'Transcript' }).getAttribute('aria-selected')).toBe('true');
   });
 
+  it('its ✕ sits on the Guide tab, and closes it from another tab too (#226)', async () => {
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    fireEvent.click(within(document.querySelector<HTMLElement>('.main-bar')!).getByRole('button', { name: 'Actions for Fix the login retry' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Review Guide/ }));
+    await settle();
+    const close = screen.getByRole('button', { name: 'Close the guide' });
+    // In the tab's own pill, right after the tab -- not at the row's far end.
+    expect(close.previousElementSibling).toBe(screen.getByRole('tab', { name: 'Guide' }));
+    expect(close.closest('[role="tablist"]')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Close the guide' }));
+    await settle();
+    expect(screen.queryByRole('tab', { name: 'Guide' })).toBeNull();
+  });
+
   it('from the Files pane’s button', async () => {
     store.set(KEYS.activeProject, 'p1');
     store.set(KEYS.selectedTask, '10');
