@@ -27,9 +27,11 @@ export interface GuideGroup {
   summary: string;
   blocks: string[];
   /**
-   * path -> one line on what the file does in this group (#202), for paths
-   * among the group's blocks only. Absent when there are none, and on guides
-   * written before notes existed.
+   * path -> a line or two on why the file changes in this group (#202), for
+   * paths among the group's blocks only. Written after the groups, one call
+   * per group (#224): absent while they are still to be written (and on
+   * guides from before notes), `{}` once asked and there were none, or the
+   * group was too large to ask about.
    */
   notes?: Record<string, string>;
 }
@@ -56,8 +58,23 @@ export interface Proposal {
   groups: Array<{ title: string; summary: string; blocks: string[]; notes?: Array<{ path: string; note: string }> }>;
 }
 
-/** A note longer than this is cut: it is one line under a file name. */
-export const NOTE_MAX_CHARS = 160;
+/** A note longer than this is cut: about two lines under a file name (#224). */
+export const NOTE_MAX_CHARS = 240;
+
+/**
+ * The model's notes, held to the rule: only for `allowed` paths, the first per
+ * path, on one line, cut at {@link NOTE_MAX_CHARS}. The one gate every note
+ * passes, whichever call wrote it.
+ */
+export function cleanNotes(raw: ReadonlyArray<{ path: string; note: string }>, allowed: ReadonlySet<string>): Record<string, string> {
+  const notes: Record<string, string> = {};
+  for (const n of raw) {
+    const note = n.note.replace(/\s+/g, ' ').trim();
+    if (!note || !allowed.has(n.path) || Object.hasOwn(notes, n.path)) continue;
+    notes[n.path] = note.length > NOTE_MAX_CHARS ? `${note.slice(0, NOTE_MAX_CHARS - 1).trimEnd()}…` : note;
+  }
+  return notes;
+}
 
 export interface Validated {
   groups: GuideGroup[];
@@ -111,13 +128,8 @@ export function validateProposal(
     // A group left with no blocks has nothing to show its words against.
     if (blocks.length === 0) continue;
     const group: GuideGroup = { title: g.title.trim() || 'Untitled', summary: g.summary.trim(), blocks };
-    const paths = new Set(pathOf ? blocks.map((id) => pathOf.get(id)) : []);
-    const notes: Record<string, string> = {};
-    for (const n of g.notes ?? []) {
-      const note = n.note.replace(/\s+/g, ' ').trim();
-      if (!note || !paths.has(n.path) || n.path in notes) continue;
-      notes[n.path] = note.length > NOTE_MAX_CHARS ? `${note.slice(0, NOTE_MAX_CHARS - 1).trimEnd()}…` : note;
-    }
+    const paths = new Set(pathOf ? blocks.flatMap((id) => pathOf.get(id) ?? []) : []);
+    const notes = cleanNotes(g.notes ?? [], paths);
     if (Object.keys(notes).length > 0) group.notes = notes;
     groups.push(group);
   }
@@ -139,12 +151,16 @@ export interface GroupFile {
   added: number;
   removed: number;
   stat: StatReason | null;
-  /** What the file does in this group (#202), when the rule allows one. */
+  /** Why the file changes in this group (#202), when the rule allows one. */
   note: string | null;
+  /** The rule allows this file a note here, written or not (#224). */
+  notable: boolean;
 }
 
 export interface GroupView {
   key: string;
+  /** The group's place in `guide.groups`; null for Unsorted. */
+  index: number | null;
   title: string;
   summary: string;
   unsorted: boolean;
@@ -182,7 +198,7 @@ function filesOf(blockIds: readonly string[], diff: BranchDiff): GroupFile[] {
       added += b?.added ?? 0;
       removed += b?.removed ?? 0;
     }
-    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat, note: null });
+    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat, note: null, notable: false });
   }
   return out;
 }
@@ -193,12 +209,23 @@ function filesOf(blockIds: readonly string[], diff: BranchDiff): GroupFile[] {
  * changed lines of the file in it, and lines the model was shown.
  */
 function withNotes(files: GroupFile[], notes: unknown): GroupFile[] {
-  if (files.length < 2 || typeof notes !== 'object' || notes === null) return files;
-  const by = notes as Record<string, unknown>;
+  if (files.length < 2) return files;
+  const by = typeof notes === 'object' && notes !== null ? (notes as Record<string, unknown>) : {};
   return files.map((f) => {
+    if (f.stat !== null || f.added + f.removed < NOTE_MIN_LINES) return f;
     const note = Object.hasOwn(by, f.path) ? by[f.path] : undefined;
-    return typeof note === 'string' && note && f.stat === null && f.added + f.removed >= NOTE_MIN_LINES ? { ...f, note } : f;
+    return { ...f, notable: true, note: typeof note === 'string' && note ? note : null };
   });
+}
+
+/**
+ * The files of a group the rule allows a note (#224), in file order: what a
+ * notes call is asked about. Empty when there is nothing to ask.
+ */
+export function notableFiles(blockIds: readonly string[], diff: BranchDiff): string[] {
+  return withNotes(filesOf(blockIds, diff), null)
+    .filter((f) => f.notable)
+    .map((f) => f.path);
 }
 
 /** Paths whose block ids are not what the guide recorded. */
@@ -224,6 +251,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
     if (blocks.length === 0) return;
     groups.push({
       key: `g${i}-${fnv1a(g.title).toString(36)}`,
+      index: i,
       title: g.title,
       summary: g.summary,
       unsorted: false,
@@ -235,6 +263,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
   if (rest.length > 0) {
     groups.push({
       key: 'unsorted',
+      index: null,
       title: UNSORTED_TITLE,
       summary:
         guide.diffHash === diff.hash

@@ -15,6 +15,12 @@
  *  - **A write in progress**, in memory only: which task it is for, and how
  *    far it got. It belongs to the task that started it -- the result is
  *    saved for that task whatever is on screen when it lands.
+ *  - **Notes being written** (#224), in memory only: once the groups are
+ *    saved, the notes are asked for a group at a time, the group in view
+ *    first, and each lands in the saved guide as it comes. A queue belongs to
+ *    one guide (its `writtenAt`): a rewrite replaces it, and a late answer for
+ *    the old guide is dropped. A restart loses it; opening the guide again
+ *    queues whatever groups still have no notes.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -22,7 +28,8 @@ import { KEYS, readPersisted, writePersisted, type Codec } from '../ui/persisted
 import type { Guide } from './validate';
 import type { BranchDiff } from './blocks';
 import type { LoadedBranchDiff } from './branchDiff';
-import { GuideError, writeGuide, type GuideErrorKind, type Progress } from './writer';
+import { GuideError, writeGuide, writeNotes, type GuideErrorKind, type Progress } from './writer';
+import { notableFiles } from './validate';
 
 export const MAX_GUIDES = 40;
 /** Per task; a branch with more reviewed file-groups than this is not a review. */
@@ -199,6 +206,8 @@ export async function startWrite(taskId: number, diff: BranchDiff, base: string)
     });
     saveGuide(taskId, guide);
     writes.delete(taskId);
+    // The guide is on screen from here; its notes follow (#224).
+    ensureNotes(taskId, guide, diff);
   } catch (err) {
     const e = err instanceof GuideError ? err : new GuideError('failed', err instanceof Error ? err.message : String(err));
     console.warn('[guide] write failed', e.kind, e.message);
@@ -211,6 +220,131 @@ export function clearWriteError(taskId: number): void {
   if (writes.get(taskId)?.kind !== 'error') return;
   writes.delete(taskId);
   changed();
+}
+
+// ---------------------------------------------------------------------------
+// Notes, a group at a time (#224)
+// ---------------------------------------------------------------------------
+
+interface NotesJob {
+  writtenAt: number;
+  diff: BranchDiff;
+  /** Indexes into `guide.groups` still to ask about, the next first. */
+  queue: number[];
+  running: number | null;
+  failed: Set<number>;
+}
+
+const notesJobs = new Map<number, NotesJob>();
+
+/** Groups with no notes yet (never asked) that have a file the rule allows one, in reading order. */
+function groupsToNote(guide: Guide, diff: BranchDiff): number[] {
+  const out: number[] = [];
+  guide.groups.forEach((g, i) => {
+    if (g.notes === undefined && notableFiles(g.blocks, diff).length > 0) out.push(i);
+  });
+  return out;
+}
+
+/**
+ * Queue the notes of `guide`'s groups that have none yet, and start writing
+ * them, one call at a time. `first` (a group's index) goes to the front. Only
+ * for the diff the guide was written for: an out-of-date guide gets no new
+ * notes, and a rewrite will bring its own.
+ */
+export function ensureNotes(taskId: number, guide: Guide, diff: BranchDiff, first?: number): void {
+  if (diff.hash !== guide.diffHash) return;
+  let job = notesJobs.get(taskId);
+  if (!job || job.writtenAt !== guide.writtenAt) {
+    const queue = groupsToNote(guide, diff);
+    if (queue.length === 0) {
+      if (job) notesJobs.delete(taskId);
+      return;
+    }
+    job = { writtenAt: guide.writtenAt, diff, queue, running: null, failed: new Set() };
+    notesJobs.set(taskId, job);
+    changed();
+  }
+  if (first !== undefined) focusNotes(taskId, guide.writtenAt, first);
+  void pump(taskId, job);
+}
+
+/** The group now in view is asked about next (#224). */
+export function focusNotes(taskId: number, writtenAt: number, index: number): void {
+  const job = notesJobs.get(taskId);
+  if (!job || job.writtenAt !== writtenAt) return;
+  const at = job.queue.indexOf(index);
+  if (at > 0) {
+    job.queue.splice(at, 1);
+    job.queue.unshift(index);
+  }
+}
+
+export type NotesState = 'pending' | 'failed';
+
+/** Whether a group's notes are still coming, or could not be written. */
+export function notesStateOf(taskId: number, writtenAt: number, index: number): NotesState | null {
+  const job = notesJobs.get(taskId);
+  if (!job || job.writtenAt !== writtenAt) return null;
+  if (job.failed.has(index)) return 'failed';
+  return job.running === index || job.queue.includes(index) ? 'pending' : null;
+}
+
+/** Ask again for a group whose notes failed, ahead of the rest. */
+export function retryNotes(taskId: number, writtenAt: number, index: number): void {
+  const job = notesJobs.get(taskId);
+  if (!job || job.writtenAt !== writtenAt || !job.failed.delete(index)) return;
+  job.queue.unshift(index);
+  changed();
+  void pump(taskId, job);
+}
+
+async function pump(taskId: number, job: NotesJob): Promise<void> {
+  if (job.running !== null) return;
+  const current = () => notesJobs.get(taskId) === job;
+  while (current()) {
+    const index = job.queue.shift();
+    if (index === undefined) {
+      // Done. Kept only while a failure waits for Retry (it needs the diff).
+      if (job.failed.size === 0) notesJobs.delete(taskId);
+      return;
+    }
+    const guide = loadGuide(taskId);
+    const group = guide?.writtenAt === job.writtenAt ? guide.groups[index] : undefined;
+    if (!guide || guide.writtenAt !== job.writtenAt) {
+      notesJobs.delete(taskId);
+      changed();
+      return;
+    }
+    if (!group || group.notes !== undefined) continue;
+    job.running = index;
+    changed();
+    let notes: Record<string, string> | null = null;
+    let ok = true;
+    try {
+      notes = await writeNotes(job.diff, group, { groupTitles: guide.groups.map((g) => g.title) });
+    } catch (err) {
+      ok = false;
+      const e = err instanceof Error ? err.message : String(err);
+      console.warn('[guide] notes failed', index, e);
+    }
+    job.running = null;
+    if (!current()) return;
+    // Saved into the guide as it is now, and only if it is still this one.
+    const now = loadGuide(taskId);
+    if (!now || now.writtenAt !== job.writtenAt) {
+      notesJobs.delete(taskId);
+      changed();
+      return;
+    }
+    if (ok) {
+      const groups = now.groups.map((g, i) => (i === index ? { ...g, notes: notes ?? {} } : g));
+      saveGuide(taskId, { ...now, groups });
+    } else {
+      job.failed.add(index);
+      changed();
+    }
+  }
 }
 
 /** Re-renders on any change to guides, Reviewed or a write. */
@@ -275,5 +409,6 @@ export function resetGuideStoreForTests(): void {
   places.clear();
   lastReads.clear();
   writes.clear();
+  notesJobs.clear();
   changed();
 }

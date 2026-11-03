@@ -218,6 +218,20 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+/* While a note is being written (#224): two bars where its two lines will
+   be, so nothing moves when it lands. Decorative (aria-hidden); drawn in
+   --border-mid, which stands off --panel, --panel-hover and --accent-soft in
+   every theme (railContrast.test.ts). No opacity, no motion. */
+.gd-file-note-pending {
+  display: block;
+  height: calc(2 * 1.4em);
+  background:
+    linear-gradient(var(--border-mid), var(--border-mid)) 0 0.35em / 90% 0.7em no-repeat,
+    linear-gradient(var(--border-mid), var(--border-mid)) 0 1.75em / 55% 0.7em no-repeat;
+}
+/* A group whose notes could not be written: quiet, with Retry. */
+.gd-notes-failed { margin: 4px 6px 0; font-size: var(--fs-xs); color: var(--muted); }
+.gd-notes-failed .gd-link { font-size: var(--fs-xs); }
 
 .gd-counts { display: inline-flex; gap: 6px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
 .gd-add { color: var(--add); }

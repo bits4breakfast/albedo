@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KEYS } from '../ui/persisted';
-import { buildBranchDiff } from './blocks';
+import { buildBranchDiff, fileBlockIndex, type BranchDiff } from './blocks';
 import { statReason } from './budget';
 import { edited } from './fixtures';
 import {
   capGuides,
   clearWriteError,
+  ensureNotes,
+  focusNotes,
   guidesCodec,
   keepLastRead,
   lastReadOf,
   loadGuide,
   MAX_LAST_READS,
   loadReviewed,
+  notesStateOf,
+  retryNotes,
   resetGuideStoreForTests,
   reviewedKey,
   reviewingTaskIds,
@@ -22,7 +26,7 @@ import {
   writeStateOf,
 } from './store';
 import type { Guide } from './validate';
-import { setOneshotRunner } from './writer';
+import { setOneshotRunner, type OneshotOutput } from './writer';
 
 /** A fresh in-memory store per test (REGRESSIONS: never the runtime's localStorage). */
 let data: Map<string, string>;
@@ -168,5 +172,200 @@ describe('which tasks are being reviewed (#219)', () => {
     saveGuide(1, { ...guide(10), files: { 'docs/c#/a.md': ['aaaa'] } });
     setReviewed(1, [reviewedKey('docs/c#/a.md', ['aaaa'])], true);
     expect([...reviewingTaskIds()]).toEqual([1]);
+  });
+});
+
+describe('notes, a group at a time (#224)', () => {
+  let prev: ReturnType<typeof setOneshotRunner> | null = null;
+  afterEach(() => {
+    if (prev) setOneshotRunner(prev);
+    prev = null;
+  });
+
+  const result = (structured: unknown): OneshotOutput => ({
+    code: 0,
+    stdout: JSON.stringify({ type: 'result', is_error: false, structured_output: structured }),
+    stderr: '',
+    timedOut: false,
+  });
+  /** Every call waits until the test answers it; `group` is the notes call's group title. */
+  function controlled() {
+    const calls: Array<{ group: string | null; prompt: string; answer: (o: OneshotOutput) => void }> = [];
+    prev = setOneshotRunner(
+      (req) =>
+        new Promise<OneshotOutput>((answer) => {
+          calls.push({ group: /^Group: (.*)$/m.exec(req.prompt)?.[1] ?? null, prompt: req.prompt, answer });
+        }),
+    );
+    return calls;
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const notesFor = (paths: readonly string[], note: string) => result({ notes: paths.map((path) => ({ path, note: `${note} ${path}` })) });
+
+  // Three groups of two files, each file +3 -3: every group is asked about.
+  const big = (path: string) => edited(path, [3, 4, 5]);
+  let diff: BranchDiff;
+  const at = (path: string) => diff.files.find((f) => f.path === path)!.blocks;
+  const makeGuide = (writtenAt: number, over: Partial<Guide> = {}): Guide => ({
+    diffHash: diff.hash,
+    writtenAt,
+    base: 'main',
+    groups: [
+      { title: 'G1', summary: 'one', blocks: [...at('src/a1.ts'), ...at('src/a2.ts')] },
+      { title: 'G2', summary: 'two', blocks: [...at('src/b1.ts'), ...at('src/b2.ts')] },
+      { title: 'G3', summary: 'three', blocks: [...at('src/c1.ts'), ...at('src/c2.ts')] },
+    ],
+    files: fileBlockIndex(diff),
+    fallback: null,
+    ...over,
+  });
+  beforeEach(() => {
+    diff = buildBranchDiff(['src/a1.ts', 'src/a2.ts', 'src/b1.ts', 'src/b2.ts', 'src/c1.ts', 'src/c2.ts'].map(big), statReason);
+  });
+
+  it('asks one group at a time, in reading order, and saves each group’s notes as they land', async () => {
+    const calls = controlled();
+    const g = makeGuide(10);
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual(['G1']);
+    expect(notesStateOf(1, 10, 0)).toBe('pending');
+    expect(notesStateOf(1, 10, 2)).toBe('pending');
+    calls[0]!.answer(notesFor(['src/a1.ts', 'src/a2.ts'], 'why'));
+    await settle();
+    expect(loadGuide(1)!.groups[0]!.notes).toEqual({ 'src/a1.ts': 'why src/a1.ts', 'src/a2.ts': 'why src/a2.ts' });
+    expect(notesStateOf(1, 10, 0)).toBeNull();
+    expect(calls.map((c) => c.group)).toEqual(['G1', 'G2']);
+  });
+
+  it('the group in view goes next, ahead of the ones before it', async () => {
+    const calls = controlled();
+    const g = makeGuide(10);
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    // G1 is in flight; the reader moves to G3.
+    focusNotes(1, 10, 2);
+    calls[0]!.answer(notesFor([], ''));
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual(['G1', 'G3']);
+    calls[1]!.answer(notesFor([], ''));
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual(['G1', 'G3', 'G2']);
+  });
+
+  it('a rewrite drops the queue, and a late answer for the old guide is never saved', async () => {
+    const calls = controlled();
+    const old = makeGuide(10);
+    saveGuide(1, old);
+    ensureNotes(1, old, diff);
+    await settle();
+    const next = makeGuide(20);
+    saveGuide(1, next);
+    ensureNotes(1, next, diff);
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual(['G1', 'G1']);
+    calls[0]!.answer(notesFor(['src/a1.ts'], 'stale'));
+    await settle();
+    expect(loadGuide(1)!.groups[0]!.notes).toBeUndefined();
+    // The old queue does not go on to G2.
+    expect(calls).toHaveLength(2);
+    calls[1]!.answer(notesFor(['src/a1.ts'], 'fresh'));
+    await settle();
+    expect(loadGuide(1)!.groups[0]!.notes).toEqual({ 'src/a1.ts': 'fresh src/a1.ts' });
+    expect(notesStateOf(1, 10, 1)).toBeNull();
+  });
+
+  it('a failed call costs that group’s notes only: the guide stays, the rest go on, Retry asks again', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const calls = controlled();
+    const g = makeGuide(10);
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    calls[0]!.answer({ code: null, stdout: '', stderr: '', timedOut: true });
+    await settle();
+    expect(notesStateOf(1, 10, 0)).toBe('failed');
+    expect(loadGuide(1)!.groups.map((x) => x.title)).toEqual(['G1', 'G2', 'G3']);
+    calls[1]!.answer(notesFor(['src/b1.ts'], 'why'));
+    await settle();
+    calls[2]!.answer(notesFor(['src/c1.ts'], 'why'));
+    await settle();
+    expect(loadGuide(1)!.groups[1]!.notes).toEqual({ 'src/b1.ts': 'why src/b1.ts' });
+    expect(loadGuide(1)!.groups[0]!.notes).toBeUndefined();
+    retryNotes(1, 10, 0);
+    expect(notesStateOf(1, 10, 0)).toBe('pending');
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual(['G1', 'G2', 'G3', 'G1']);
+    calls[3]!.answer(notesFor(['src/a2.ts'], 'why'));
+    await settle();
+    expect(loadGuide(1)!.groups[0]!.notes).toEqual({ 'src/a2.ts': 'why src/a2.ts' });
+    expect(notesStateOf(1, 10, 0)).toBeNull();
+    warn.mockRestore();
+  });
+
+  it('makes no call for groups with nothing to note', async () => {
+    const calls = controlled();
+    diff = buildBranchDiff(['src/a1.ts', 'src/a2.ts'].map((p) => edited(p, [3])), statReason);
+    const g: Guide = {
+      diffHash: diff.hash,
+      writtenAt: 10,
+      base: 'main',
+      groups: [{ title: 'Small', summary: '', blocks: [...diff.order] }],
+      files: fileBlockIndex(diff),
+      fallback: null,
+    };
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    expect(calls).toHaveLength(0);
+    expect(notesStateOf(1, 10, 0)).toBeNull();
+  });
+
+  it('after a restart, asks only for the groups that still have no notes', async () => {
+    const calls = controlled();
+    const g = makeGuide(10);
+    g.groups[0]!.notes = { 'src/a1.ts': 'kept' };
+    g.groups[2]!.notes = {};
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual(['G2']);
+  });
+
+  it('an out-of-date guide gets no new notes', async () => {
+    const calls = controlled();
+    const g = makeGuide(10, { diffHash: 'moved' });
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a folder guide gets notes too', async () => {
+    const calls = controlled();
+    const g = makeGuide(10, { fallback: 'Too many. Grouped by folder instead, with no summaries.' });
+    g.groups = [{ title: 'src', summary: '', blocks: [...diff.order] }];
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual(['src']);
+    expect(calls[0]!.prompt).toContain('- src/a1.ts\n- src/a2.ts\n- src/b1.ts');
+  });
+
+  it('startWrite shows the groups first, then asks for their notes', async () => {
+    const calls = controlled();
+    const run = startWrite(1, diff, 'main');
+    await settle();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.group).toBeNull();
+    expect(calls[0]!.prompt).not.toContain('Files to note');
+    calls[0]!.answer(result({ groups: [{ title: 'All', summary: 'S', blocks: diff.order }] }));
+    await run;
+    expect(loadGuide(1)!.groups[0]!.notes).toBeUndefined();
+    expect(writeStateOf(1)).toBeNull();
+    await settle();
+    expect(calls.map((c) => c.group)).toEqual([null, 'All']);
   });
 });
