@@ -13,7 +13,7 @@ import { useShortcuts } from './shortcuts';
 import { canFollowUp } from './followUp';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { ciMarkFor, useCiVersion } from './ciNotice';
-import { reviewMarkFor, useReviewVersion } from './reviewNotice';
+import { reviewMarkFor, standingApproval, useReviewVersion } from './reviewNotice';
 import { reviewerNames } from '../gh/prStatus';
 import { useBranchSync } from '../git/branchSync';
 import { getReviewWork, useReviewWorkProbes, useReviewWorkVersion } from '../git/reviewWork';
@@ -542,9 +542,11 @@ export default function TaskList({
                     {/* No branch and no PR state here: the task bar is the one
                         place git and GitHub state is shown, for the selected
                         task. Rows identify the task; the title does that. The
-                        one exception is news, not state: checks that finished,
-                        or a review that landed, since the task was last open
-                        (CiRowMark, ReviewRowMark). */}
+                        exceptions are news, not state -- checks that finished,
+                        or a change request that landed, since the task was
+                        last open (CiRowMark, ReviewRowMark) -- and, by the
+                        owner's decision (#234), one state: an approval that
+                        stands, until the PR is merged. */}
                     <span className="task-meta-tail">
                       {/* PR checks that finished since the task was last
                           open: ✓ or ✗ and the word, until it is opened
@@ -552,9 +554,10 @@ export default function TaskList({
                           rest is state. Never on the selected row -- it is
                           being looked at, and its PR badge carries a cue. */}
                       {task.id !== selectedId && <CiRowMark taskId={task.id} />}
-                      {/* A review that landed since: Approved or Changes,
-                          beside the checks (reviewNotice.ts, #180). */}
-                      {task.id !== selectedId && <ReviewRowMark taskId={task.id} />}
+                      {/* Approved while the approval stands, on every row,
+                          the selected one too (#234); Changes once, as news,
+                          until the task is opened (#180). */}
+                      <ReviewRowMark taskId={task.id} selected={task.id === selectedId} />
                       {/* An unsent message waiting in this task's composer, so a
                           forgotten one can be found. Not on the selected row:
                           its draft is in the box right below. */}
@@ -782,25 +785,31 @@ function CiRowMark({ taskId }: { taskId: number }) {
 }
 
 /**
- * An unseen review on the task's PR: Approved (ready to merge) or Changes
- * (asked to change). Awaiting Review never marks a row. Glyph and word, as
- * the checks' mark; the reviewers are in the tooltip.
+ * The review on the task's PR, on its row. Approved is state (#234): shown
+ * while GitHub says the open PR is approved, selected or not, until it is
+ * merged. Changes is news (#180): an unseen change request, never on the
+ * selected row, gone once the task is opened. Awaiting Review never marks a
+ * row. Glyph and word, as the checks' mark; the reviewers are in the tooltip.
  */
-function ReviewRowMark({ taskId }: { taskId: number }) {
-  const mark = reviewMarkFor(taskId);
+function ReviewRowMark({ taskId, selected }: { taskId: number; selected: boolean }) {
+  const standing = standingApproval(getPrStatus(taskId));
+  const news = reviewMarkFor(taskId);
+  const mark = standing ?? (!selected && news?.outcome === 'changes-requested' ? news : null);
   if (!mark) return null;
   const approved = mark.outcome === 'approved';
   const who = reviewerNames(mark.reviewers);
   const what = approved
-    ? `PR #${mark.prNumber} approved by ${who}`
+    ? mark.reviewers.length > 0
+      ? `PR #${mark.prNumber} approved by ${who}`
+      : `PR #${mark.prNumber} approved`
     : `Changes requested on PR #${mark.prNumber} by ${who}`;
   return (
     <span
       className="task-review"
       data-outcome={mark.outcome}
       role="img"
-      aria-label={`${what}, not seen yet`}
-      title={`${what}. Not seen yet: opening the task clears this.`}
+      aria-label={approved ? `${what}, ready to merge` : `${what}, not seen yet`}
+      title={approved ? `${what}. Ready to merge.` : `${what}. Not seen yet: opening the task clears this.`}
     >
       <span aria-hidden="true">{approved ? '✓' : '✎'}</span> {approved ? 'Approved' : 'Changes'}
     </span>
