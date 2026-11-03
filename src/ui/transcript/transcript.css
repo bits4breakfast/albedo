@@ -914,13 +914,76 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-md-pre-lang {
   position: absolute;
   top: 2px;
-  right: 6px;
+  /* Left of the copy column (#242). */
+  right: 36px;
   color: var(--faint);
   font-size: var(--fs-xs);
   user-select: none;
 }
 
 .tx-md-pre-line { min-height: 1.45em; }
+/* Room for the copy icon, so the last characters never run under it (#242). */
+.tx-md-pre .tx-pre-code { padding-right: 38px; }
+
+/* --- copy (#242) ----------------------------------------------------------
+   An icon, never text: selecting a passage never picks it up. --muted at
+   rest, --text-strong on --panel-hover when pointed at; both cleared on the
+   grounds they sit on (copyContrast.test.ts). As tall as the code it copies. */
+.tx-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tx-copy:hover { color: var(--text-strong); background: var(--panel-hover); }
+.tx-copy:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+.tx-copy[data-done='copied'] { color: var(--add); }
+/* Its "Copied" is for a screen reader: never part of a selected passage. */
+.tx-copy-status { user-select: none; -webkit-user-select: none; }
+.tx-copy[data-done='failed'] { color: var(--danger); }
+/* As tall as the block (#242): a column at its right end, the icon centred,
+   the whole column the target. */
+.tx-copy-block {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 30px;
+  height: auto;
+  border-left: 1px solid var(--border);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+/* Inline: floats just after the code, shown only while the code (or the
+   icon) is hovered. It takes no room in the line -- a paragraph lays out
+   exactly as it did without it -- and covers the next few characters only
+   while it shows, on the message's own ground. Hidden by visibility, never
+   opacity, so a hidden one takes no clicks. */
+.tx-md-code-wrap { position: relative; }
+.tx-copy-inline {
+  position: absolute;
+  left: 100%;
+  /* As tall as the code chip (#242), on the chip's own ground and edge. */
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 20px;
+  height: auto;
+  margin-left: 1px;
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
+  visibility: hidden;
+}
+.tx-md-code-wrap:hover > .tx-copy-inline,
+.tx-copy-inline[data-done] { visibility: visible; }
 
 /* --- preformatted --------------------------------------------------------- */
 
