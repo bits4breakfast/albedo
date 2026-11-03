@@ -106,6 +106,15 @@
  * focusAreas.ts, the native menu (only ⌘Q and ⌘W) and GuidePane's own keys:
  * nothing else binds G.
  *
+ * ## ⌘T: the shell
+ *
+ * The same as ⌥F12 (#232): opens or hides the shell drawer, from anywhere,
+ * T for Terminal. Command only, from `code` (`KeyT`): Ctrl+T is Claude Code's
+ * in the task terminal and transpose-chars in the shell, and both keep it.
+ * xterm sends no Command combos to a pty, CodeMirror binds only Ctrl-T, and
+ * the native menu has only ⌘Q and ⌘W, so nothing loses ⌘T. ⇧⌘T is left free
+ * (Reopen Closed Tab, by macOS habit).
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
@@ -138,6 +147,7 @@ export type Combo =
   | 'mod+shift+r'
   | 'mod+shift+g'
   | 'mod+u'
+  | 'mod+t'
   | 'alt+f12'
   | 'shift+f6'
   | 'f2';
@@ -225,6 +235,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
+  { combo: 'mod+t', keys: '⌘T', description: 'Shell in the Main Checkout (the same as ⌥F12)' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger Text' },
   { combo: 'mod+-', keys: '⌘−', description: 'Smaller Text' },
   { combo: 'mod+0', keys: '⌘0', description: 'Actual Size' },
@@ -317,6 +328,12 @@ export function comboOf(
   // the O family.
   if (e.code === 'F12' && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
     return { combo: 'alt+f12', digit: null };
+  }
+  // The shell again, T for Terminal (#232). Command only, from `code`:
+  // Ctrl+T is Claude Code's own key in the task terminal, and the shell's
+  // transpose-chars, so neither loses it.
+  if (e.code === 'KeyT' && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+t', digit: null };
   }
   // Rename. Function keys, read from `code`; see the module comment.
   if (e.code === 'F6' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {

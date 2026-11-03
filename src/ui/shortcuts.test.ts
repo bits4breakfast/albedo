@@ -97,6 +97,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
+      comboOf(ev({ key: 't', code: 'KeyT', metaKey: true }))?.combo,
       comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
@@ -128,6 +129,17 @@ describe('shell drawer key', () => {
     expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo).toBe('alt+f12');
     expect(comboOf(ev({ key: 'F12', code: 'F12' }))).toBeNull();
     expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true, metaKey: true }))).toBeNull();
+  });
+
+  it('is ⌘T too, Command only and read from code (#232)', () => {
+    expect(comboOf(ev({ key: 't', code: 'KeyT', metaKey: true }))?.combo).toBe('mod+t');
+    // Another layout's letter on that key is still the key.
+    expect(comboOf(ev({ key: 'y', code: 'KeyT', metaKey: true }))?.combo).toBe('mod+t');
+    // Ctrl+T stays Claude Code's, and the shell's.
+    expect(comboOf(ev({ key: 't', code: 'KeyT', ctrlKey: true }))).toBeNull();
+    // ⇧⌘T is left free.
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '†', code: 'KeyT', metaKey: true, altKey: true }))).toBeNull();
   });
 });
 

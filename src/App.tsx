@@ -1071,6 +1071,7 @@ export default function App() {
       if (!requestAttach(id)) window.setTimeout(() => requestAttach(id), 150);
     },
     'alt+f12': () => setShellOpen((o) => !o),
+    'mod+t': () => setShellOpen((o) => !o),
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
     'mod+0': () => zoomTo(1),
@@ -1511,7 +1512,7 @@ export default function App() {
               disabled={!shellProject}
               title={
                 shellProject
-                  ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
+                  ? `Shell in ${shellProject.name}'s main checkout (⌘T or ⌥F12)`
                   : 'No project to open a shell in'
               }
               onClick={() => setShellOpen((o) => !o)}
