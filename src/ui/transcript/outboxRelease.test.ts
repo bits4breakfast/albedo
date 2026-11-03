@@ -153,6 +153,10 @@ describe('the gate', () => {
     expect(heldHint({ ...ok, turnRunning: true })).toBe('sent when Claude finishes this turn');
     expect(heldHint({ ...ok, turnRunning: true, promptOpen: true })).toBeNull();
     expect(heldHint({ ...ok, turnRunning: true, headMaybeSent: true })).toBeNull();
+    // Two or more go as one (#240), and the hint says so.
+    expect(heldHint({ ...ok, turnRunning: true }, 2)).toBe('sent together when Claude finishes this turn');
+    expect(heldHint({ ...ok, offline: true }, 3)).toBe('sent together once it is back');
+    expect(heldHint({ ...ok, offline: true }, 1)).toBe('sent in order once it is back');
   });
 
   it('offers Send Now only for what the turn alone holds, and allows it with no prompt and a live session', () => {
@@ -168,7 +172,7 @@ describe('the gate', () => {
 });
 
 describe('the release', () => {
-  it('holds while offline and sends in order, through submitPty, once the probe succeeds', async () => {
+  it('holds while offline and sends them as one, through submitPty, once the probe succeeds', async () => {
     await goOffline();
     stop = startOutboxRelease();
     holdMessage(1, 'one');
@@ -180,12 +184,10 @@ describe('the release', () => {
     reachable = true;
     await vi.advanceTimersByTimeAsync(PROBE_EVERY_MS);
     expect(isOffline()).toBe(false);
-    // In order within a task; each task has its own pty, so tasks go side by side.
+    // As one message, in order, within a task (#240); each task has its own
+    // pty, so tasks go side by side.
     const calls = vi.mocked(submitPty).mock.calls;
-    expect(calls.filter(([id]) => id === 1)).toEqual([
-      [1, 'one'],
-      [1, 'two'],
-    ]);
+    expect(calls.filter(([id]) => id === 1)).toEqual([[1, 'one\n\ntwo']]);
     expect(calls.filter(([id]) => id === 2)).toEqual([[2, 'for another task']]);
     expect(heldFor(1)).toEqual([]);
     expect(heldFor(2)).toEqual([]);
@@ -274,10 +276,12 @@ describe('the release', () => {
     expect(heldFor(1).map((h) => h.text)).toEqual(['one', 'two']);
     term.__emitPresence(1, true);
     await vi.advanceTimersByTimeAsync(0);
+    // 'one' went for the pty as soon as it was held, and failed; it stays at
+    // the head, and the next write takes it with what was held meanwhile
+    // (#240): nothing lost, nothing reordered.
     expect(vi.mocked(submitPty).mock.calls).toEqual([
       [1, 'one'],
-      [1, 'one'],
-      [1, 'two'],
+      [1, 'one\n\ntwo'],
     ]);
   });
 
@@ -323,7 +327,7 @@ describe('a running turn (#61)', () => {
 
   afterEach(() => seedQueue([S], []));
 
-  it('holds while a turn runs, and sends when it ends -- one turn per message, in order', async () => {
+  it('holds while a turn runs, and sends them as one when it ends (#240)', async () => {
     started(T - 1_000);
     stop = startOutboxRelease();
     holdMessage(1, 'one');
@@ -334,21 +338,33 @@ describe('a running turn (#61)', () => {
     at(1_000);
     ended(T + 1_000);
     await vi.advanceTimersByTimeAsync(0);
-    // 'one' starts a turn the transcript has not shown yet: 'two' waits for it.
+    // One message, one turn: Claude reads both together.
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'one\n\ntwo']]);
+    expect(heldFor(1)).toEqual([]);
+  });
+
+  it('a held command still waits for its own idle moment: one turn for what comes before it', async () => {
+    started(T - 1_000);
+    stop = startOutboxRelease();
+    holdMessage(1, 'one');
+    holdMessage(1, '/compact');
+    await vi.advanceTimersByTimeAsync(0);
+
+    at(1_000);
+    ended(T + 1_000);
+    await vi.advanceTimersByTimeAsync(0);
+    // 'one' starts a turn the transcript has not shown yet: the command waits for it.
     expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'one']]);
-    expect(heldFor(1).map((h) => h.text)).toEqual(['two']);
+    expect(heldFor(1).map((h) => h.text)).toEqual(['/compact']);
 
     at(2_000);
     started(T + 2_000);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(submitPty).toHaveBeenCalledTimes(1);
-
     at(9_000);
     ended(T + 9_000);
     await vi.advanceTimersByTimeAsync(0);
     expect(vi.mocked(submitPty).mock.calls).toEqual([
       [1, 'one'],
-      [1, 'two'],
+      [1, '/compact'],
     ]);
     expect(heldFor(1)).toEqual([]);
   });
