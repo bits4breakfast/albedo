@@ -144,8 +144,11 @@ describe('GuidePane', () => {
     key('ArrowUp', true);
     expect(screen.getByRole('heading', { name: 'Foundations' })).toBeTruthy();
     expect((left().getByRole('checkbox', { name: 'Reviewed' }) as HTMLInputElement).checked).toBe(true);
-    // A reviewed file folds its diff away.
-    expect(right().getByText('Reviewed.')).toBeTruthy();
+    // A reviewed file still shows its diff, ticked (#228).
+    expect(right().queryByText('Reviewed.')).toBeNull();
+    expect(right().queryByRole('button', { name: 'Show Diff' })).toBeNull();
+    expect((right().getByRole('checkbox', { name: 'Reviewed' }) as HTMLInputElement).checked).toBe(true);
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Diff' }).querySelector('.tx-d-code')).not.toBeNull());
     // Unticking the group unticks its files, and never moves.
     fireEvent.click(left().getByRole('checkbox', { name: 'Reviewed' }));
     expect((left().getByRole('checkbox', { name: 'Reviewed' }) as HTMLInputElement).checked).toBe(false);
