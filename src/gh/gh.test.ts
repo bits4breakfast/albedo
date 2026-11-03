@@ -224,6 +224,26 @@ describe('mergePr (#236)', () => {
     expect(calls.flatMap((c) => c[1])).not.toContain('--admin');
   });
 
+  it('merges only the head that was shown, when it is known', async () => {
+    const calls = install(async () => ok);
+    await mergePr({ ...pr, headSha: 'abc1234def' }, task, { deleteBranch: false });
+    expect(calls[0]![1]).toEqual(['pr', 'merge', '7', '--squash', '--match-head-commit', 'abc1234def']);
+    // Nothing that is not a sha reaches gh's argv.
+    const more = install(async () => ok);
+    await mergePr({ ...pr, headSha: '--admin' }, task, { deleteBranch: false });
+    expect(more[0]![1]).toEqual(['pr', 'merge', '7', '--squash']);
+  });
+
+  it('a 422 that is not "already gone" is a branch not deleted', async () => {
+    install(async (_p, args) =>
+      args[0] === 'api' ? { code: 1, stdout: '', stderr: 'gh: Cannot delete a protected branch (HTTP 422)' } : ok,
+    );
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({
+      ok: true,
+      branchNotDeleted: 'gh: Cannot delete a protected branch (HTTP 422)',
+    });
+  });
+
   it('a branch GitHub already deleted is what was asked', async () => {
     install(async (_p, args) =>
       args[0] === 'api' ? { code: 1, stdout: '', stderr: 'gh: Reference does not exist (HTTP 422)' } : ok,

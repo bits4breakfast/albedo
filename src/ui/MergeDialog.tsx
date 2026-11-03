@@ -28,7 +28,11 @@ export interface MergeDialogProps {
   onClose: () => void;
 }
 
-export default function MergeDialog({ task, pr, onClose }: MergeDialogProps) {
+export default function MergeDialog({ task, pr: live, onClose }: MergeDialogProps) {
+  // The PR as it was when the dialog opened: what you confirm is what merges.
+  // A push that lands meanwhile changes the head, and gh's
+  // --match-head-commit then refuses instead of merging unseen commits.
+  const [pr] = useState(live);
   const [deleteBranch, setDeleteBranch] = useState(() => readPersisted(KEYS.mergeDeleteBranch, flagCodec, true));
   const [commits, setCommits] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);

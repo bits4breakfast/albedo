@@ -320,21 +320,26 @@ export type MergeOutcome =
  * worktree may be gone). gh finds the repository from the folder's remote.
  */
 export async function mergePr(
-  pr: { number: number; headRefName: string },
+  pr: { number: number; headRefName: string; headSha?: string },
   task: Pick<Task, 'worktreePath' | 'repoPath'>,
   opts: { deleteBranch: boolean },
 ): Promise<MergeOutcome> {
   if (!Number.isInteger(pr.number) || pr.number <= 0) return { ok: false, message: 'Not a pull request number.' };
   for (const cwd of [task.worktreePath, task.repoPath]) {
     if (!cwd) continue;
-    const r = await gh(['pr', 'merge', String(pr.number), '--squash'], cwd);
+    // Only the head that was approved and shown: a push that lands while the
+    // dialog is open makes GitHub refuse, rather than merge unseen commits.
+    const head = pr.headSha && /^[0-9a-f]{7,64}$/i.test(pr.headSha) ? ['--match-head-commit', pr.headSha] : [];
+    const r = await gh(['pr', 'merge', String(pr.number), '--squash', ...head], cwd);
     if (!r) continue; // could not spawn here: the cwd may not exist
     if (r.code !== 0) return { ok: false, message: ghMessage(r) };
     if (!opts.deleteBranch || !pr.headRefName) return { ok: true };
     const ref = pr.headRefName.split('/').map(encodeURIComponent).join('/');
     const d = await gh(['api', '-X', 'DELETE', `repos/{owner}/{repo}/git/refs/heads/${ref}`], cwd);
     // Already gone (the repo deletes merged branches itself) is what was asked.
-    if (!d || (d.code !== 0 && !/Reference does not exist|HTTP 422/i.test(d.stderr + d.stdout))) {
+    // Only "already gone" -- not any 422, which is also how GitHub refuses a
+    // protected branch.
+    if (!d || (d.code !== 0 && !/Reference does not exist/i.test(d.stderr + d.stdout))) {
       return { ok: true, branchNotDeleted: d ? ghMessage(d) : 'GitHub CLI (gh) could not be run.' };
     }
     return { ok: true };

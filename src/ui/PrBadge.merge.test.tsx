@@ -36,7 +36,7 @@ const task = {
   ownsWorktree: true, createdBranch: true,
 } as unknown as Task;
 
-function pr(o: { decision?: string; mergeable?: string; mergeState?: string; isDraft?: boolean } = {}): PrStatus {
+function pr(o: { decision?: string; mergeable?: string; mergeState?: string; isDraft?: boolean; head?: string } = {}): PrStatus {
   return parsePrView(
     JSON.stringify({
       number: 21,
@@ -44,6 +44,7 @@ function pr(o: { decision?: string; mergeable?: string; mergeState?: string; isD
       state: 'OPEN',
       isDraft: o.isDraft ?? false,
       headRefName: 'feat',
+      headRefOid: o.head ?? 'aaaaaaa1',
       baseRefName: 'main',
       reviewDecision: o.decision ?? 'APPROVED',
       statusCheckRollup: [{ __typename: 'CheckRun', name: 't', status: 'COMPLETED', conclusion: 'SUCCESS' }],
@@ -113,6 +114,21 @@ describe('Squash and Merge… (#236)', () => {
 
     fireEvent.click(mergeButton()!);
     expect((screen.getByRole('checkbox', { name: 'Delete the branch on GitHub after merging' }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('merges the PR as it was when the dialog opened, even if a poll brings a new head', async () => {
+    state.pr = pr({ head: 'aaaaaaa1' });
+    const shown = state.pr;
+    mergePr.mockResolvedValue({ ok: true });
+    const { rerender } = render(<PrBadge task={task} />);
+    fireEvent.click(mergeButton()!);
+    // A push lands while the dialog is open.
+    state.pr = pr({ head: 'bbbbbbb2' });
+    rerender(<PrBadge task={task} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Squash and Merge' }));
+    await waitFor(() => expect(mergePr).toHaveBeenCalled());
+    expect(mergePr.mock.calls[0]![0]).toBe(shown);
+    expect((mergePr.mock.calls[0]![0] as PrStatus).headSha).toBe('aaaaaaa1');
   });
 
   it("a refusal shows GitHub's message in the dialog, and nothing else happens", async () => {
