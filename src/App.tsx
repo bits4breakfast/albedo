@@ -42,7 +42,7 @@ import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
 import Terminal, { focusPty, hasLivePty, usePtyLiveSince } from './ui/Terminal';
-import { useFocusAreaCycle } from './ui/focusAreas';
+import { focusArea, useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
@@ -1064,6 +1064,26 @@ export default function App() {
         // The key, unlike a click, takes focus into the guide (#217).
         requestGuide(selected.id, { focus: true });
       },
+    },
+    // Straight to a reading tab (#256), beside ⇧⌘G. Shown even from PTY
+    // only, as ⌘U does. Not over a dialog.
+    'mod+shift+t': () => {
+      if (!selected || projectView) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      setRightTab('transcript');
+      setMode((m) => (m === 'pty' ? 'split' : m));
+    },
+    'mod+shift+e': () => {
+      if (!selected && !projectView) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      setMode((m) => (m === 'pty' ? 'split' : m));
+      // Pinned as a column, Files has no tab: go into the column instead.
+      if (filesColumnShown) {
+        const col = document.querySelector<HTMLElement>('[data-focus-area="files"]');
+        if (col) focusArea(col);
+        return;
+      }
+      setRightTab('files');
     },
     // The message box is in the transcript: show it, then ask it to attach.
     'mod+u': () => {

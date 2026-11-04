@@ -112,8 +112,16 @@
  * T for Terminal. Command only, from `code` (`KeyT`): Ctrl+T is Claude Code's
  * in the task terminal and transpose-chars in the shell, and both keep it.
  * xterm sends no Command combos to a pty, CodeMirror binds only Ctrl-T, and
- * the native menu has only ⌘Q and ⌘W, so nothing loses ⌘T. ⇧⌘T is left free
- * (Reopen Closed Tab, by macOS habit).
+ * the native menu has only ⌘Q and ⌘W, so nothing loses ⌘T.
+ *
+ * ## ⇧⌘T, ⇧⌘E: the Transcript and Files tabs
+ *
+ * Straight to a reading tab (#256), beside ⇧⌘G for the Guide: T for
+ * Transcript, E for Files (VS Code's Explorer). Command only, from `code`, as
+ * the rest of the family: Ctrl+Shift+T/E stay the terminals'. Live while
+ * typing -- they move between tabs, and no field claims them: checked against
+ * CodeMirror's default, history and search keymaps, editorKeys.ts,
+ * focusAreas.ts and the native menu (only ⌘Q and ⌘W).
  *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
@@ -148,6 +156,8 @@ export type Combo =
   | 'mod+shift+g'
   | 'mod+u'
   | 'mod+t'
+  | 'mod+shift+t'
+  | 'mod+shift+e'
   | 'alt+f12'
   | 'shift+f6'
   | 'f2';
@@ -171,6 +181,7 @@ export type Gesture =
   | 'transcript mod+arrowdown'
   | "transcript mod+'"
   | 'new-task mod+enter'
+  | 'guide mod+enter'
   | 'guide alt+arrows'
   | 'guide arrows'
   | 'guide alt+enter';
@@ -211,6 +222,8 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
   { combo: 'mod+shift+r', keys: '⇧⌘R', description: 'Make the Selected Task Available Remotely (Asks First)' },
   { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
+  { combo: 'mod+shift+t', keys: '⇧⌘T', description: 'Transcript Tab' },
+  { combo: 'mod+shift+e', keys: '⇧⌘E', description: 'Files Tab (or the Files column, when pinned)' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   {
     combo: 'shift+f6',
@@ -233,6 +246,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
+  { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
   { combo: 'mod+t', keys: '⌘T', description: 'Shell in the Main Checkout (the same as ⌥F12)' },
@@ -311,6 +325,13 @@ export function comboOf(
   if (e.code === 'KeyR' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+r', digit: null };
   }
+  // The Transcript and Files tabs (#256), on the same terms.
+  if (e.code === 'KeyT' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+t', digit: null };
+  }
+  if (e.code === 'KeyE' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+e', digit: null };
+  }
   // The Review Guide (#207), on the same terms: Ctrl+G belongs to the terminal.
   if (e.code === 'KeyG' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+g', digit: null };
@@ -381,6 +402,8 @@ const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set([
   'mod+shift+]',
   'mod+shift+r',
   'mod+shift+g',
+  'mod+shift+t',
+  'mod+shift+e',
 ]);
 
 /**

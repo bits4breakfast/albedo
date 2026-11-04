@@ -449,7 +449,8 @@ function GuideBody({
         type="button"
         className={view.stale ? 'gd-btn' : 'gd-btn gd-btn-primary'}
         onClick={sendComments}
-        title="Send every waiting comment to Claude now, and show the transcript. What you're typing in the message box stays there."
+        aria-keyshortcuts="Meta+Enter"
+        title="Send every waiting comment to Claude now, and show the transcript (⌘↩). What you're typing in the message box stays there."
       >
         Send {waitingCount} {waitingCount === 1 ? 'Comment' : 'Comments'}
       </button>
@@ -595,6 +596,14 @@ function GuideBody({
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
     if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
+    // ⌘⏎: Send Comments (#256). A comment box is a textarea, returned above,
+    // so there ⌘⏎ still saves the comment and never sends.
+    if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+      if (waitingCount === 0) return;
+      e.preventDefault();
+      sendComments();
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.shiftKey) return;
     if (e.altKey && (e.code === 'ArrowDown' || e.code === 'ArrowUp')) {
       e.preventDefault();

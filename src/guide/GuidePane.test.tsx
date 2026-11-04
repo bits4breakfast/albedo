@@ -315,6 +315,30 @@ describe('GuidePane', () => {
       expect(shown).toHaveBeenCalledTimes(1);
     });
 
+    it('⌘⏎ in the guide sends them too; in a comment box it never does (#256)', async () => {
+      save();
+      waitingCode = [{ id: 1 }];
+      const shown = vi.fn();
+      render(<GuidePane task={task} active onShowTranscript={shown} />);
+      await screen.findByRole('heading', { name: 'Everything' });
+      const box = document.createElement('textarea');
+      root().appendChild(box);
+      fireEvent.keyDown(box, { code: 'Enter', key: 'Enter', metaKey: true });
+      expect(sendAsked).toEqual([]);
+      fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
+      expect(sendAsked).toEqual([task.id]);
+      expect(shown).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: 'Send 1 Comment' }).getAttribute('aria-keyshortcuts')).toBe('Meta+Enter');
+    });
+
+    it('⌘⏎ with nothing waiting does nothing', async () => {
+      save();
+      pane();
+      await screen.findByRole('heading', { name: 'Everything' });
+      fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
+      expect(sendAsked).toEqual([]);
+    });
+
     it('out of date: Rewrite stays the primary, Send is plain beside it', async () => {
       save('stale-hash');
       waitingCode = [{ id: 1 }];
