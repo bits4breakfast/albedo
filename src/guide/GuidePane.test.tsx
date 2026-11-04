@@ -24,7 +24,7 @@ let waitingCode: Array<{ id: number }> = [];
 vi.mock('../ui/transcript/codeComments', () => ({ useWaitingCodeComments: () => waitingCode }));
 vi.mock('../ui/transcript/drafts', () => ({ useComments: () => [] }));
 const sendAsked: number[] = [];
-vi.mock('../ui/transcript/composerBridge', () => ({ requestSendComments: (id: number) => (sendAsked.push(id), true) }));
+vi.mock('../ui/transcript/composerBridge', () => ({ sendWaitingComments: (id: number) => (sendAsked.push(id), true) }));
 vi.mock('../ui/editor/diffComments', () => ({
   useDiffComments: () => ({ annotations: null, notice: null, clearNotice: () => {}, bar: null }),
 }));
@@ -301,25 +301,23 @@ describe('GuidePane', () => {
       expect(screen.queryByRole('button', { name: /^Send \d/ })).toBeNull();
     });
 
-    it('comments waiting: Send N Comments leads the row; a click asks the composer, then shows the transcript', async () => {
+    it('comments waiting: Send N Comments leads the row; a click sends them (and the shell shows the transcript)', async () => {
       save();
       waitingCode = [{ id: 1 }, { id: 2 }];
-      const shown = vi.fn();
-      render(<GuidePane task={task} active onShowTranscript={shown} />);
+      pane();
       await screen.findByRole('heading', { name: 'Everything' });
       const send = screen.getByRole('button', { name: 'Send 2 Comments' });
       expect(send.className).toContain('gd-btn-primary');
       expect(screen.getByRole('button', { name: 'Rewrite' }).className).not.toContain('gd-btn-primary');
+      // sendWaitingComments sends, then has the shell show the transcript.
       fireEvent.click(send);
       expect(sendAsked).toEqual([task.id]);
-      expect(shown).toHaveBeenCalledTimes(1);
     });
 
     it('⌘⏎ in the guide sends them too; in a comment box it never does (#256)', async () => {
       save();
       waitingCode = [{ id: 1 }];
-      const shown = vi.fn();
-      render(<GuidePane task={task} active onShowTranscript={shown} />);
+      pane();
       await screen.findByRole('heading', { name: 'Everything' });
       const box = document.createElement('textarea');
       root().appendChild(box);
@@ -327,7 +325,6 @@ describe('GuidePane', () => {
       expect(sendAsked).toEqual([]);
       fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
       expect(sendAsked).toEqual([task.id]);
-      expect(shown).toHaveBeenCalledTimes(1);
       expect(screen.getByRole('button', { name: 'Send 1 Comment' }).getAttribute('aria-keyshortcuts')).toBe('Meta+Enter');
     });
 

@@ -100,6 +100,7 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 't', code: 'KeyT', metaKey: true }))?.combo,
       comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
@@ -303,6 +304,16 @@ describe('Transcript and Files tabs (#256)', () => {
     expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+t')?.keys).toBe('⇧⌘T');
     expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+e')?.keys).toBe('⇧⌘E');
     expect(SHORTCUTS.find((s) => s.combo === 'guide mod+enter')?.keys).toBe('⌘↩');
+  });
+});
+
+describe('⇧⌘S, send the waiting comments (#258)', () => {
+  it('maps by physical key; leaves ⌘S (Save) and Ctrl+S alone; kept from the terminal; in the help', () => {
+    expect(comboOf(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+s');
+    expect(comboOf(ev({ key: 's', code: 'KeyS', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'S', code: 'KeyS', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(terminalTakesKey(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+s')?.keys).toBe('⇧⌘S');
   });
 });
 

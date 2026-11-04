@@ -72,7 +72,7 @@ export function onAttachRequest(cb: AttachListener): () => void {
 type SendCommentsListener = (taskId: number) => boolean | void;
 const sendCommentsListeners = new Set<SendCommentsListener>();
 
-/** False when no composer for that task is mounted to take it. */
+/** False when no composer for that task took it: none mounted, or nothing waiting. */
 export function requestSendComments(taskId: number): boolean {
   let taken = false;
   for (const cb of [...sendCommentsListeners]) {
@@ -90,4 +90,32 @@ export function onSendCommentsRequest(cb: SendCommentsListener): () => void {
   return () => {
     sendCommentsListeners.delete(cb);
   };
+}
+
+/** "Show this task's transcript", heard by the shell (App), which owns the tabs. */
+type ShowTranscriptListener = (taskId: number) => void;
+const showTranscriptListeners = new Set<ShowTranscriptListener>();
+
+export function onShowTranscriptRequest(cb: ShowTranscriptListener): () => void {
+  showTranscriptListeners.add(cb);
+  return () => {
+    showTranscriptListeners.delete(cb);
+  };
+}
+
+/**
+ * Send the task's waiting comments, then show its transcript (#254, #258):
+ * the Review Guide's and the Files pane's Send, and ⇧⌘S. False -- and the
+ * tab stays -- when nothing was waiting or no composer took it.
+ */
+export function sendWaitingComments(taskId: number): boolean {
+  if (!requestSendComments(taskId)) return false;
+  for (const cb of [...showTranscriptListeners]) {
+    try {
+      cb(taskId);
+    } catch {
+      /* as above */
+    }
+  }
+  return true;
 }

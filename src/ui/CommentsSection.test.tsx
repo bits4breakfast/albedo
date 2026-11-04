@@ -10,6 +10,8 @@ import { createTestDb } from '../db/testkit';
 import type { Task } from '../types';
 
 const harness = vi.hoisted(() => ({ db: null as unknown }));
+const sendAsked = vi.hoisted(() => [] as number[]);
+vi.mock('./transcript/composerBridge', () => ({ sendWaitingComments: (id: number) => (sendAsked.push(id), true) }));
 vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => harness.db } }));
 
 const { createTask, resetDb } = await import('../db/index');
@@ -53,6 +55,30 @@ describe('the Comments list', () => {
     expect(within(waiting).queryByRole('button', { name: /Resolve/ })).toBeNull();
     const sentGroup = screen.getByRole('group', { name: 'Sent, 1' });
     expect(within(sentGroup).getByRole('button', { name: 'Resolve the comment on src/a.ts:2' }).textContent).toBe('✓');
+  });
+
+  it('Waiting has Send (#258): it sends the waiting comments, as ⇧⌘S does; Sent has none', async () => {
+    sendAsked.length = 0;
+    await add('one', 'first, unsent', 1);
+    const sent = await add('two', 'second, sent');
+    await markCommentsSent(task.id, [sent]);
+    render(list());
+    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
+    const send = within(waiting).getByRole('button', { name: 'Send' });
+    expect(send.getAttribute('aria-keyshortcuts')).toBe('Meta+Shift+S');
+    fireEvent.click(send);
+    expect(sendAsked).toEqual([task.id]);
+    expect(within(screen.getByRole('group', { name: 'Sent, 1' })).queryByRole('button', { name: 'Send' })).toBeNull();
+  });
+
+  it('the place keeps its line: the name and :line are separate, so only the name ellipsizes (#258)', async () => {
+    await add('two', 'a body', 2);
+    render(list());
+    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
+    const where = waiting.querySelector('.tf-comment-where')!;
+    expect(where.querySelector('.tf-name')?.textContent).toBe('a.ts');
+    expect(where.querySelector('.tf-comment-line')?.textContent).toBe(':2');
+    expect(where.textContent).toBe('a.ts:2');
   });
 
   it('a sent comment resolves itself once its lines change, says why, and reopens as waiting', async () => {

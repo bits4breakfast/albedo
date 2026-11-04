@@ -69,7 +69,7 @@ import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
 import ProjectBar from './ui/ProjectBar';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
-import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
+import { onComposerInsert, onShowTranscriptRequest, requestAttach, sendWaitingComments } from './ui/transcript/composerBridge';
 import GuidePane from './guide/GuidePane';
 import { onGuideRequest, requestGuide } from './guide/openGuide';
 import { FileOpenContext, FilePathContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
@@ -809,6 +809,15 @@ export default function App() {
       }),
     [],
   );
+  // Comments just sent (#254, #258): the transcript, where they land.
+  useEffect(
+    () =>
+      onShowTranscriptRequest(() => {
+        setRightTab('transcript');
+        setMode((m) => (m === 'pty' ? 'split' : m));
+      }),
+    [],
+  );
 
   /** Tasks whose Review Guide tab is open (#186): opened from Files or ⋯. */
   const [guideIds, setGuideIds] = useState<ReadonlySet<number>>(() => new Set());
@@ -1084,6 +1093,13 @@ export default function App() {
         return;
       }
       setRightTab('files');
+    },
+    // Send the selected task's waiting comments, from anywhere (#258): the
+    // transcript then shows, where the message lands, sent or held.
+    'mod+shift+s': () => {
+      if (!selected) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      sendWaitingComments(selected.id);
     },
     // The message box is in the transcript: show it, then ask it to attach.
     'mod+u': () => {
@@ -1777,7 +1793,7 @@ export default function App() {
                 <div className="tabpanel tabpanel-col" hidden={activeTab !== 'guide'}>
                   {guideTask && !projectView && (
                     <PaneErrorBoundary key={`gd-${guideTask.id}`} label="Review Guide">
-                      <GuidePane task={guideTask} active={activeTab === 'guide' && showTranscript} onShowTranscript={() => setRightTab('transcript')} />
+                      <GuidePane task={guideTask} active={activeTab === 'guide' && showTranscript} />
                     </PaneErrorBoundary>
                   )}
                 </div>
