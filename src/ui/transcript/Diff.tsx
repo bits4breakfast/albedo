@@ -1054,6 +1054,8 @@ export interface DiffAnnotations {
   after(line: number): ReactNode;
   /** The lines a drag on the + handles currently covers. */
   picking: { from: number; to: number } | null;
+  /** Whether an open comment covers this new-side line: an accent edge, as the editor's File mode marks it (#252). */
+  commented?(line: number): boolean;
   /** A drag on the + handles moved (`done` false) or ended (`done` true). */
   pick(from: number, to: number, done: boolean): void;
 }
@@ -1238,6 +1240,12 @@ function picked(annotate: DiffAnnotations | null, line: number | null): boolean 
   return !!p && line !== null && line >= p.from && line <= p.to;
 }
 
+/** " tx-d-picking" or " tx-d-commented" (#252): the row's comment edge, if any. */
+function edge(annotate: DiffAnnotations | null, line: number | null): string {
+  if (picked(annotate, line)) return ' tx-d-picking';
+  return line !== null && annotate?.commented?.(line) ? ' tx-d-commented' : '';
+}
+
 /** Whatever belongs under a row: cards and drafts ending on its line. */
 function Annotation({ line }: { line: number | null }): ReactNode {
   const annotate = useContext(DiffAnnotationsContext);
@@ -1276,7 +1284,7 @@ function UnifiedBody({
         return (
           <Fragment key={i}>
             <div
-              className={`tx-d-row tx-d-${r.line.kind}${picked(annotate, line) ? ' tx-d-picking' : ''}`}
+              className={`tx-d-row tx-d-${r.line.kind}${edge(annotate, line)}`}
               data-new-line={line ?? undefined}
             >
               <LineNo n={r.line.oldNumber} linkPath={null} />
@@ -1333,7 +1341,7 @@ function SplitBody({
               )}
             </div>
             <div
-              className={`tx-d-half tx-d-${p.right ? p.right.line.kind : 'blank'}${picked(annotate, p.right?.line.newNumber ?? null) ? ' tx-d-picking' : ''}`}
+              className={`tx-d-half tx-d-${p.right ? p.right.line.kind : 'blank'}${edge(annotate, p.right?.line.newNumber ?? null)}`}
               data-new-line={p.right?.line.newNumber ?? undefined}
             >
               {p.right ? (

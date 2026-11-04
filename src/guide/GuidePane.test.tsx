@@ -15,6 +15,11 @@ import type { LoadedBranchDiff } from './branchDiff';
 
 let loaded: LoadedBranchDiff;
 vi.mock('./branchDiff', () => ({ loadBranchDiff: async () => loaded }));
+let openComments: Array<{ path: string; lineStart: number; anchorText: string; resolvedAt: number | null }> = [];
+vi.mock('./commentMarks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./commentMarks')>()),
+  useOpenComments: () => openComments,
+}));
 vi.mock('../ui/editor/diffComments', () => ({
   useDiffComments: () => ({ annotations: null, notice: null, clearNotice: () => {}, bar: null }),
 }));
@@ -52,6 +57,7 @@ beforeEach(() => {
     },
   });
   resetGuideStoreForTests();
+  openComments = [];
   diff = makeDiff();
   const [a1, a2, b1, c1] = diff.order as [string, string, string, string];
   ids = { a1, a2, b1, c1 };
@@ -234,6 +240,40 @@ describe('GuidePane', () => {
     // The whole change, not the Uncommitted Only filter's (only src/b.ts here).
     fireEvent.click(screen.getByRole('checkbox', { name: 'Uncommitted Only' }));
     expect(screen.getByRole('note', { name: /files changed/ }).getAttribute('aria-label')).toMatch(/^3 files changed/);
+  });
+
+  it('shows where comments are: a count on the file, in its diff header, and a dot on the group in the rail (#252)', async () => {
+    saveGuide(task.id, {
+      diffHash: diff.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [
+        { title: 'Foundations', summary: '', blocks: [ids.a1, ids.b1] },
+        { title: 'Wiring', summary: '', blocks: [ids.a2, ids.c1] },
+      ],
+      files: fileBlockIndex(diff),
+      fallback: null,
+    });
+    // Two on src/b.ts, one on src/c.ts, one resolved (never counted).
+    openComments = [
+      { path: 'src/b.ts', lineStart: 5, anchorText: 'line 5 beta', resolvedAt: null },
+      { path: 'src/b.ts', lineStart: 6, anchorText: 'line 6', resolvedAt: null },
+      { path: 'src/c.ts', lineStart: 5, anchorText: 'line 5 gamma', resolvedAt: null },
+      { path: 'src/a.ts', lineStart: 3, anchorText: 'line 3 alpha', resolvedAt: 7 },
+    ];
+    pane();
+    await screen.findByRole('heading', { name: 'Foundations' });
+    const rail = within(screen.getByRole('navigation', { name: 'Groups' }));
+    const [one, two] = rail.getAllByRole('button');
+    expect(one!.getAttribute('aria-label')).toBe('01 Foundations, 2 comments');
+    expect(one!.hasAttribute('data-comments')).toBe(true);
+    expect(two!.getAttribute('aria-label')).toBe('02 Wiring, 1 comment');
+    // The file row says it; the one without comments says nothing.
+    expect(within(left().getByRole('button', { name: /b\.ts/ })).getByRole('img', { name: '2 comments' })).toBeTruthy();
+    expect(within(left().getByRole('button', { name: /a\.ts/ })).queryByRole('img', { name: /comment/ })).toBeNull();
+    // Open src/b.ts: its diff header says it too.
+    fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
+    expect(right().getByRole('img', { name: '2 comments' })).toBeTruthy();
   });
 
   it('a failed write says why, keeps nothing, and offers Try Again', async () => {

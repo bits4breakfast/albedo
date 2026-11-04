@@ -44,6 +44,13 @@ describe.each(['unified', 'split'] as const)('diff comments (%s)', (layout) => {
     expect(pick).toHaveBeenLastCalledWith(3, 3, true);
   });
 
+  it('marks the lines an open comment covers with an edge, not the drag\'s class (#252)', () => {
+    const { container } = renderDiff(layout, annotations({ commented: (line) => line === 2 || line === 3 }));
+    const marked = [...container.querySelectorAll('.tx-d-commented')].map((r) => r.getAttribute('data-new-line'));
+    expect(marked).toEqual(['2', '3']);
+    expect(container.querySelector('.tx-d-picking')).toBeNull();
+  });
+
   it('shows what belongs under a line right after its row', () => {
     renderDiff(layout, annotations({ after: (line) => (line === 3 ? <span>note on 3</span> : null) }));
     const note = screen.getByText('note on 3');

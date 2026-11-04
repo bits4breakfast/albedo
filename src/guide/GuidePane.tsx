@@ -25,6 +25,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
+import { commentMarks, groupCommentCount, useOpenComments } from './commentMarks';
 import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
 import {
@@ -308,6 +309,51 @@ function splitPath(path: string): { name: string; dir: string } {
   return i === -1 ? { name: path, dir: '' } : { name: path.slice(i + 1), dir: path.slice(0, i + 1) };
 }
 
+/** ", 2 comments": what a mark adds to its label (#252); nothing for none. */
+function commentsSaid(n: number, sep: string): string {
+  return n === 0 ? '' : `${sep}${n} ${n === 1 ? 'comment' : 'comments'}`;
+}
+
+/**
+ * A speech bubble and a count (#252): open comments on this file, here.
+ * --accent, the comments' own colour in the editor; measured on every ground
+ * a file row has, the current one included (railContrast.test.ts).
+ */
+function CommentCount({ n }: { n: number }): ReactNode {
+  if (n === 0) return null;
+  const said = commentsSaid(n, '');
+  return (
+    <span className="gd-cmt" title={said} aria-label={said} role="img">
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+        <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" strokeLinejoin="round" />
+      </svg>
+      {n}
+    </span>
+  );
+}
+
+/**
+ * A file row's figures in three fixed columns -- comments, +, − -- each
+ * right-aligned, so they line up from row to row whatever a row lacks.
+ */
+function RowCounts({ file, comments }: { file: GroupFile; comments: number }): ReactNode {
+  if (file.stat === 'binary' || file.stat === 'too-large') {
+    return (
+      <span className="gd-file-counts">
+        <CommentCount n={comments} />
+        <span className="gd-counts gd-counts-wide">{file.stat === 'binary' ? 'Binary' : 'Too large'}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="gd-file-counts">
+      {comments > 0 ? <CommentCount n={comments} /> : <span />}
+      <span className="gd-counts">{file.added > 0 ? <span className="gd-add">+{file.added}</span> : null}</span>
+      <span className="gd-counts">{file.removed > 0 ? <span className="gd-del">−{file.removed}</span> : null}</span>
+    </span>
+  );
+}
+
 function Counts({ file }: { file: GroupFile }): ReactNode {
   if (file.stat === 'binary' || file.stat === 'too-large') {
     return <span className="gd-counts">{file.stat === 'binary' ? 'Binary' : 'Too large'}</span>;
@@ -380,6 +426,11 @@ function GuideBody({
   }, [view, onlyUncommitted, uncommitted]);
 
   const changed = view.changedFiles.length === 1 ? '1 file' : `${view.changedFiles.length} files`;
+
+  // Where the open comments are (#252), so one left on a file is found again here.
+  const openComments = useOpenComments(task.id);
+  const marks = useMemo(() => commentMarks(groups, diff, openComments), [groups, diff, openComments]);
+  const fileComments = (g: GroupView, f: GroupFile) => marks.get(g.key)?.get(f.path) ?? 0;
 
   const reviewed = loadReviewed(task.id);
   const isFileReviewed = (f: GroupFile) => reviewed.has(reviewedKey(f.path, f.blocks));
@@ -633,7 +684,7 @@ function GuideBody({
                         {changedSinceReview(f) ? <span className="gd-file-part"> · changed since review</span> : null}
                       </span>
                       <span className="gd-file-dir">{dir}</span>
-                      <Counts file={f} />
+                      <RowCounts file={f} comments={fileComments(group, f)} />
                       {/* Why the file changes in this group (#202), under its name; while
                           it is being written, a placeholder its size (#224). */}
                       {f.note ? (
@@ -690,9 +741,10 @@ function GuideBody({
                   aria-current={i === at ? 'true' : undefined}
                   data-reviewed={isGroupReviewed(g) || undefined}
                   data-unsorted={g.unsorted || undefined}
+                  data-comments={groupCommentCount(marks, g.key) > 0 || undefined}
                   onClick={() => goTo(i, false)}
-                  aria-label={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}`}
-                  title={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}`}
+                  aria-label={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ', ')}`}
+                  title={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ' · ')}`}
                 />
               ))}
             </div>
@@ -707,6 +759,7 @@ function GuideBody({
                 fresh={fresh}
                 file={file}
                 reviewed={isFileReviewed(file)}
+                commentCount={group ? fileComments(group, file) : 0}
                 onToggleReviewed={() => toggleFile(file)}
               />
             ) : null}
@@ -746,6 +799,7 @@ function GuideFileDiff({
   fresh,
   file,
   reviewed,
+  commentCount,
   onToggleReviewed,
 }: {
   task: Task;
@@ -753,6 +807,7 @@ function GuideFileDiff({
   fresh: boolean;
   file: GroupFile;
   reviewed: boolean;
+  commentCount: number;
   onToggleReviewed: () => void;
 }): ReactNode {
   const [whole, setWhole] = useState(false);
@@ -777,6 +832,7 @@ function GuideFileDiff({
         <span className="gd-diff-name">{name}</span>
         <span className="gd-diff-dir">{dir}</span>
         <Counts file={file} />
+        <CommentCount n={commentCount} />
         {split ? (
           <button type="button" className="gd-link" onClick={() => setWhole((w) => !w)} aria-pressed={whole}>
             {whole ? `Only This Group’s ${file.blocks.length} of ${file.totalBlocks}` : `Whole File (${file.totalBlocks} blocks)`}

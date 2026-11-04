@@ -190,9 +190,12 @@ export function useDiffComments(
     [placed, draft, taskId, report, save],
   );
 
+  // The lines an open comment covers get an edge (#252), so a card's lines
+  // read as commented after its card is scrolled past.
+  const commented = useCallback((line: number) => placed.some((p) => line >= p.from && line <= p.to), [placed]);
   const annotations = useMemo<DiffAnnotations | null>(
-    () => (newText === null ? null : { after, picking, pick }),
-    [newText, after, picking, pick],
+    () => (newText === null ? null : { after, picking, pick, commented }),
+    [newText, after, picking, pick, commented],
   );
 
   const bar = (
