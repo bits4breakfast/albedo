@@ -1793,7 +1793,7 @@ export default function App() {
                 <div className="tabpanel tabpanel-col" hidden={activeTab !== 'guide'}>
                   {guideTask && !projectView && (
                     <PaneErrorBoundary key={`gd-${guideTask.id}`} label="Review Guide">
-                      <GuidePane task={guideTask} active={activeTab === 'guide' && showTranscript} onShowTranscript={() => setRightTab('transcript')} />
+                      <GuidePane task={guideTask} active={activeTab === 'guide' && showTranscript} />
                     </PaneErrorBoundary>
                   )}
                 </div>
