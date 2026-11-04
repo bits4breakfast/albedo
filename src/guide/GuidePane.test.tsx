@@ -20,6 +20,11 @@ vi.mock('./commentMarks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./commentMarks')>()),
   useOpenComments: () => openComments,
 }));
+let waitingCode: Array<{ id: number }> = [];
+vi.mock('../ui/transcript/codeComments', () => ({ useWaitingCodeComments: () => waitingCode }));
+vi.mock('../ui/transcript/drafts', () => ({ useComments: () => [] }));
+const sendAsked: number[] = [];
+vi.mock('../ui/transcript/composerBridge', () => ({ requestSendComments: (id: number) => (sendAsked.push(id), true) }));
 vi.mock('../ui/editor/diffComments', () => ({
   useDiffComments: () => ({ annotations: null, notice: null, clearNotice: () => {}, bar: null }),
 }));
@@ -58,6 +63,8 @@ beforeEach(() => {
   });
   resetGuideStoreForTests();
   openComments = [];
+  waitingCode = [];
+  sendAsked.length = 0;
   diff = makeDiff();
   const [a1, a2, b1, c1] = diff.order as [string, string, string, string];
   ids = { a1, a2, b1, c1 };
@@ -274,6 +281,48 @@ describe('GuidePane', () => {
     // Open src/b.ts: its diff header says it too.
     fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
     expect(right().getByRole('img', { name: '2 comments' })).toBeTruthy();
+  });
+
+  describe('Send Comments (#254)', () => {
+    const save = (hash = diff.hash) =>
+      saveGuide(task.id, {
+        diffHash: hash,
+        writtenAt: Date.now(),
+        base: 'main',
+        groups: [{ title: 'Everything', summary: '', blocks: [...diff.order] }],
+        files: fileBlockIndex(diff),
+        fallback: null,
+      });
+
+    it('none waiting: no button, Rewrite as before', async () => {
+      save();
+      pane();
+      await screen.findByRole('heading', { name: 'Everything' });
+      expect(screen.queryByRole('button', { name: /^Send \d/ })).toBeNull();
+    });
+
+    it('comments waiting: Send N Comments leads the row; a click asks the composer, then shows the transcript', async () => {
+      save();
+      waitingCode = [{ id: 1 }, { id: 2 }];
+      const shown = vi.fn();
+      render(<GuidePane task={task} active onShowTranscript={shown} />);
+      await screen.findByRole('heading', { name: 'Everything' });
+      const send = screen.getByRole('button', { name: 'Send 2 Comments' });
+      expect(send.className).toContain('gd-btn-primary');
+      expect(screen.getByRole('button', { name: 'Rewrite' }).className).not.toContain('gd-btn-primary');
+      fireEvent.click(send);
+      expect(sendAsked).toEqual([task.id]);
+      expect(shown).toHaveBeenCalledTimes(1);
+    });
+
+    it('out of date: Rewrite stays the primary, Send is plain beside it', async () => {
+      save('stale-hash');
+      waitingCode = [{ id: 1 }];
+      pane();
+      await screen.findByRole('heading', { name: 'Everything' });
+      expect(screen.getByRole('button', { name: 'Send 1 Comment' }).className).not.toContain('gd-btn-primary');
+      expect(screen.getByRole('button', { name: 'Rewrite' }).className).toContain('gd-btn-primary');
+    });
   });
 
   it('a failed write says why, keeps nothing, and offers Try Again', async () => {

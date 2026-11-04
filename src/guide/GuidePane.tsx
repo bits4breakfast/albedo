@@ -26,6 +26,9 @@ import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
 import { commentMarks, groupCommentCount, useOpenComments } from './commentMarks';
+import { useWaitingCodeComments } from '../ui/transcript/codeComments';
+import { useComments } from '../ui/transcript/drafts';
+import { requestSendComments } from '../ui/transcript/composerBridge';
 import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
 import {
@@ -79,9 +82,11 @@ export interface GuidePaneProps {
   task: Task;
   /** The Guide tab is on screen: the diff is re-read each time it comes back. */
   active: boolean;
+  /** Show the task's transcript: where Send Comments takes you (#254). */
+  onShowTranscript?: () => void;
 }
 
-export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
+export default function GuidePane({ task, active, onShowTranscript }: GuidePaneProps): ReactNode {
   useGuideStoreVersion();
   // Measured against the branch the header shows it merging into (#237).
   const measured = useMeasuredBase(task);
@@ -194,6 +199,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
       write={write}
       onRewrite={writeNow}
       active={active}
+      onShowTranscript={onShowTranscript}
     />
   );
 }
@@ -405,6 +411,7 @@ function GuideBody({
   write,
   onRewrite,
   active,
+  onShowTranscript,
 }: {
   task: Task;
   guide: Guide;
@@ -414,6 +421,7 @@ function GuideBody({
   write: WriteState | null;
   onRewrite: () => void;
   active: boolean;
+  onShowTranscript: (() => void) | undefined;
 }): ReactNode {
   const { diff, uncommitted } = loaded;
   const [onlyUncommitted, setOnlyUncommitted] = useState(false);
@@ -426,6 +434,26 @@ function GuideBody({
   }, [view, onlyUncommitted, uncommitted]);
 
   const changed = view.changedFiles.length === 1 ? '1 file' : `${view.changedFiles.length} files`;
+
+  // Every comment waiting to go with the next message, the composer's queue:
+  // on code (this guide, the editor, diffs) and on transcript passages (#254).
+  const waitingCount = useWaitingCodeComments(task.id).length + useComments(task.id).length;
+  const sendComments = () => {
+    requestSendComments(task.id);
+    // Where it shows: sent, or held behind a running turn (#254).
+    onShowTranscript?.();
+  };
+  const sendButton =
+    waitingCount > 0 ? (
+      <button
+        type="button"
+        className={view.stale ? 'gd-btn' : 'gd-btn gd-btn-primary'}
+        onClick={sendComments}
+        title="Send every waiting comment to Claude now, and show the transcript. What you're typing in the message box stays there."
+      >
+        Send {waitingCount} {waitingCount === 1 ? 'Comment' : 'Comments'}
+      </button>
+    ) : null;
 
   // Where the open comments are (#252), so one left on a file is found again here.
   const openComments = useOpenComments(task.id);
@@ -615,6 +643,9 @@ function GuideBody({
           <input type="checkbox" checked={onlyUncommitted} onChange={(e) => setOnlyUncommitted(e.target.checked)} />
           Uncommitted Only
         </label>
+        {/* Out of date, Rewrite leads and Send Comments waits beside it;
+            otherwise comments waiting make Send the row's action (#254). */}
+        {view.stale ? sendButton : null}
         <button
           type="button"
           // The one thing to do about an out-of-date guide: the primary action then.
@@ -625,6 +656,7 @@ function GuideBody({
         >
           {write?.kind === 'writing' ? 'Rewriting…' : 'Rewrite'}
         </button>
+        {view.stale ? null : sendButton}
       </div>
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">

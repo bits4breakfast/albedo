@@ -63,3 +63,31 @@ export function onAttachRequest(cb: AttachListener): () => void {
     attachListeners.delete(cb);
   };
 }
+
+/**
+ * "Send the waiting comments" asked of a task's composer (#254): from the
+ * Review Guide's Send Comments. The composer sends them as Send with an empty
+ * box would, through the same gates, and leaves its draft alone.
+ */
+type SendCommentsListener = (taskId: number) => boolean | void;
+const sendCommentsListeners = new Set<SendCommentsListener>();
+
+/** False when no composer for that task is mounted to take it. */
+export function requestSendComments(taskId: number): boolean {
+  let taken = false;
+  for (const cb of [...sendCommentsListeners]) {
+    try {
+      if (cb(taskId) === true) taken = true;
+    } catch {
+      /* as above */
+    }
+  }
+  return taken;
+}
+
+export function onSendCommentsRequest(cb: SendCommentsListener): () => void {
+  sendCommentsListeners.add(cb);
+  return () => {
+    sendCommentsListeners.delete(cb);
+  };
+}
