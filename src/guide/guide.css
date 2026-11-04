@@ -246,6 +246,20 @@
 .gd-notes-failed { margin: 4px 6px 0; font-size: var(--fs-xs); color: var(--muted); }
 .gd-notes-failed .gd-link { font-size: var(--fs-xs); }
 
+.gd-file-counts { display: inline-flex; align-items: center; gap: 8px; }
+/* Open comments on the file (#252): --accent, the comments' colour in the
+   editor. On --panel, --panel-hover and the current row's --accent-soft, every
+   theme: 5.56 at the least (railContrast.test.ts). */
+.gd-cmt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .gd-counts { display: inline-flex; gap: 6px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
 .gd-add { color: var(--add); }
 .gd-del { color: var(--del); }
@@ -320,6 +334,21 @@
 .gd-rail-mark[aria-current='true']::before {
   width: 12px;
   box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+}
+/* A group holding open comments (#252): a dot beside its mark, beside the
+   Reviewed fill too, so "reviewed, with notes left" still shows. --accent on
+   --panel, a glyph: 3:1 (railContrast.test.ts). */
+.gd-rail-mark { position: relative; }
+.gd-rail-mark[data-comments]::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  /* Clear of the current mark's ring, which reaches 7px from the edge. */
+  right: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .gd-rail-mark:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 

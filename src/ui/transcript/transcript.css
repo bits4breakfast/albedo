@@ -1453,6 +1453,8 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-row:hover > .tx-d-cmt-add,
 .tx-d-half:hover > .tx-d-cmt-add { display: flex; }
 .tx-d-picking { box-shadow: inset 2px 0 0 var(--accent); }
+/* Lines an open comment covers (#252): the editor's File mode edge, here too. */
+.tx-d-commented { box-shadow: inset 2px 0 0 var(--accent); }
 .tx-d-annot { padding: 2px 0 4px; font-size: var(--fs-sm); }
 
 /* Select lines, then comment (#222): a small bar under the selection, on

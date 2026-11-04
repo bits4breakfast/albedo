@@ -84,4 +84,16 @@ describe('the guide rail (#201)', () => {
   it('the quiet failure line (#224) is --muted text', () => {
     expect(rail).toMatch(/\.gd-notes-failed \{[^}]*color: var\(--muted\)/);
   });
+
+  it('comment marks (#252): the count is --accent text on every ground a file row takes, the rail dot an --accent glyph', () => {
+    expect(rail).toMatch(/\.gd-cmt \{[^}]*color: var\(--accent\)/);
+    expect(rail).toMatch(/\.gd-rail-mark\[data-comments\]::after \{[^}]*background: var\(--accent\)/);
+    expect(rail).not.toMatch(/\.gd-cmt[^{]*\{[^}]*opacity/);
+    for (const [name, t] of Object.entries(themes)) {
+      for (const g of ['--panel', '--panel-hover', '--accent-soft']) {
+        expect(ratio(t.get('--accent')!, t.get(g)!), `${name} count on ${g}`).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(ratio(t.get('--accent')!, t.get('--panel')!), `${name} dot`).toBeGreaterThanOrEqual(3);
+    }
+  });
 });
