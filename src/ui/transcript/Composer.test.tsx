@@ -1589,6 +1589,42 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, CODE]]));
   });
 
+  it('the guide\'s Send Comments (#254): sends just the comments, and leaves the draft in the box', async () => {
+    const { requestSendComments } = await import('./composerBridge');
+    const { markCommentsSent } = await import('../../db/comments');
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    addComment(1, passage);
+    const onSent = vi.fn();
+    render(<Composer taskId={1} onSent={onSent} />);
+    await screen.findByRole('button', { name: /2 Comments/ });
+    type('half a thought');
+    expect(requestSendComments(2)).toBe(false);
+    expect(requestSendComments(1)).toBe(true);
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    const body = vi.mocked(submitPty).mock.calls[0]![1];
+    expect(body.startsWith(`${CODE}\n\n<transcript-quote id="1" message="4">`)).toBe(true);
+    expect(body.endsWith('How do you know?')).toBe(true);
+    expect(body).not.toContain('half a thought');
+    await waitFor(() => expect(markCommentsSent).toHaveBeenCalledWith(1, [7]));
+    expect(commentsOf(1)).toEqual([]);
+    expect(onSent).toHaveBeenCalledWith(body);
+    expect(box().value).toBe('half a thought');
+  });
+
+  it('the guide\'s Send Comments with no live session: held in the outbox, nothing typed, the draft kept (#254)', async () => {
+    const { requestSendComments } = await import('./composerBridge');
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /1 Comment/ });
+    type('keep me');
+    requestSendComments(1);
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([CODE]));
+    expect(heldFor(1)[0]!.commentIds).toEqual([7]);
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(box().value).toBe('keep me');
+  });
+
   it('the intro the person writes opens the message; an empty one, none', async () => {
     const { writeIntro, __resetIntro } = await import('../commentsIntro');
     vi.mocked(submitPty).mockResolvedValue(true);

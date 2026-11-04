@@ -23,7 +23,7 @@ import { PastedTexts } from './PastedTexts';
 import { markMentions, unmarkMentions, type Mention } from './mentions';
 import { MentionPopover, mentionOptionId } from './MentionPopover';
 import { useMentions } from './useMentions';
-import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
+import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type ComposerInsert } from './composerBridge';
 import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, takeComments, useComments } from './drafts';
 import { markQuotes, unmarkQuotes } from './transcriptQuotes';
 import { PassageRevealContext, revealPassageIn, type RevealPassage } from './passages';
@@ -1632,6 +1632,49 @@ export function Composer({
         return true;
       }),
     [taskId, attachFiles],
+  );
+
+  /*
+     The waiting comments alone, asked for from the Review Guide (#254): the
+     message Send with an empty box would make, and the draft is left as it
+     is -- so none of send()'s box handling. Straight to the session when it
+     is live and idle; otherwise into the outbox, where it waits exactly as a
+     held message does (a turn running, a prompt open, offline, the session
+     not up) and is shown as held in the transcript, with Send Now.
+  */
+  const sendComments = useCallback(async () => {
+    const comments = commentsOf(taskId);
+    const code = waitingCodeRef.current;
+    if (comments.length === 0 && code.length === 0) return;
+    const body = composeMessage(code, introRef.current, comments, '');
+    const carried: Carried = { transcript: comments.map((c) => c.id), code: code.map((c) => c.id) };
+    const owner = taskId;
+    const hold = () => {
+      holdMessage(owner, body, Date.now(), carried.code);
+      takeComments(owner, carried.transcript);
+    };
+    if (inFlightRef.current || mustHold(owner) || promptOpen(owner, status) || !hasLivePty(owner)) {
+      hold();
+      return;
+    }
+    try {
+      if (await submitLocked(owner, body)) {
+        takeCarried(owner, carried);
+        onSent(body);
+      } else hold();
+    } catch {
+      hold();
+    }
+  }, [taskId, status, onSent]);
+
+  useEffect(
+    () =>
+      onSendCommentsRequest((id) => {
+        if (id !== taskId) return false;
+        void sendComments();
+        return true;
+      }),
+    [taskId, sendComments],
   );
 
   /** Take the held message back, so a prompt nobody answers is not a trap. */
