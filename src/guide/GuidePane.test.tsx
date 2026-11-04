@@ -216,6 +216,26 @@ describe('GuidePane', () => {
     expect(left().getByRole('button', { name: /b\.ts/ }).textContent).not.toContain('changed since review');
   });
 
+  it('says how big the whole change is, right after the base (#250)', async () => {
+    saveGuide(task.id, {
+      diffHash: diff.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [{ title: 'Everything', summary: '', blocks: [...diff.order] }],
+      files: fileBlockIndex(diff),
+      fallback: null,
+    });
+    pane();
+    await screen.findByRole('heading', { name: 'Everything' });
+    // src/a.ts two lines, b.ts and c.ts one each: every edit is one in, one out.
+    const totals = screen.getByRole('note', { name: /files changed/ });
+    expect(totals.getAttribute('aria-label')).toBe('3 files changed, 4 lines added, 4 removed, branch vs main');
+    expect(totals.textContent).toBe('· 3 files+4−4');
+    // The whole change, not the Uncommitted Only filter's (only src/b.ts here).
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Uncommitted Only' }));
+    expect(screen.getByRole('note', { name: /files changed/ }).getAttribute('aria-label')).toMatch(/^3 files changed/);
+  });
+
   it('a failed write says why, keeps nothing, and offers Try Again', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     reply = () => ({ code: null, stdout: '', stderr: '', timedOut: true });

@@ -42,10 +42,23 @@
   color: var(--banner-text);
 }
 .gd-meta-text {
-  margin-right: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The change's size, right after the base (#250): it never shrinks, the text
+   before it does. Pulled in to read as part of the same line ("· 14 files"),
+   then the row's gap before the filter. --add and --del on --panel and
+   --banner-bg, every theme: 6.34 at the least (guideTotalsContrast.test.ts). */
+.gd-meta-totals {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: -8px;
+  margin-right: auto;
   white-space: nowrap;
 }
 
