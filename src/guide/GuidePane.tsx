@@ -82,9 +82,11 @@ export interface GuidePaneProps {
   task: Task;
   /** The Guide tab is on screen: the diff is re-read each time it comes back. */
   active: boolean;
+  /** Show the task's transcript: where Send Comments takes you (#254). */
+  onShowTranscript?: () => void;
 }
 
-export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
+export default function GuidePane({ task, active, onShowTranscript }: GuidePaneProps): ReactNode {
   useGuideStoreVersion();
   // Measured against the branch the header shows it merging into (#237).
   const measured = useMeasuredBase(task);
@@ -197,6 +199,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
       write={write}
       onRewrite={writeNow}
       active={active}
+      onShowTranscript={onShowTranscript}
     />
   );
 }
@@ -408,6 +411,7 @@ function GuideBody({
   write,
   onRewrite,
   active,
+  onShowTranscript,
 }: {
   task: Task;
   guide: Guide;
@@ -417,6 +421,7 @@ function GuideBody({
   write: WriteState | null;
   onRewrite: () => void;
   active: boolean;
+  onShowTranscript: (() => void) | undefined;
 }): ReactNode {
   const { diff, uncommitted } = loaded;
   const [onlyUncommitted, setOnlyUncommitted] = useState(false);
