@@ -246,7 +246,18 @@
 .gd-notes-failed { margin: 4px 6px 0; font-size: var(--fs-xs); color: var(--muted); }
 .gd-notes-failed .gd-link { font-size: var(--fs-xs); }
 
-.gd-file-counts { display: inline-flex; align-items: center; gap: 8px; }
+/* Comments, +, − in fixed columns, right-aligned, so the figures line up
+   down the list (mono, so ch is a digit). */
+.gd-file-counts {
+  display: inline-grid;
+  grid-template-columns: 4ch 5ch 5ch;
+  justify-items: end;
+  align-items: center;
+  column-gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.gd-counts-wide { grid-column: 2 / 4; }
 /* Open comments on the file (#252): --accent, the comments' colour in the
    editor. On --panel, --panel-hover and the current row's --accent-soft, every
    theme: 5.56 at the least (railContrast.test.ts). */

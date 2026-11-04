@@ -332,6 +332,28 @@ function CommentCount({ n }: { n: number }): ReactNode {
   );
 }
 
+/**
+ * A file row's figures in three fixed columns -- comments, +, − -- each
+ * right-aligned, so they line up from row to row whatever a row lacks.
+ */
+function RowCounts({ file, comments }: { file: GroupFile; comments: number }): ReactNode {
+  if (file.stat === 'binary' || file.stat === 'too-large') {
+    return (
+      <span className="gd-file-counts">
+        <CommentCount n={comments} />
+        <span className="gd-counts gd-counts-wide">{file.stat === 'binary' ? 'Binary' : 'Too large'}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="gd-file-counts">
+      {comments > 0 ? <CommentCount n={comments} /> : <span />}
+      <span className="gd-counts">{file.added > 0 ? <span className="gd-add">+{file.added}</span> : null}</span>
+      <span className="gd-counts">{file.removed > 0 ? <span className="gd-del">−{file.removed}</span> : null}</span>
+    </span>
+  );
+}
+
 function Counts({ file }: { file: GroupFile }): ReactNode {
   if (file.stat === 'binary' || file.stat === 'too-large') {
     return <span className="gd-counts">{file.stat === 'binary' ? 'Binary' : 'Too large'}</span>;
@@ -662,10 +684,7 @@ function GuideBody({
                         {changedSinceReview(f) ? <span className="gd-file-part"> · changed since review</span> : null}
                       </span>
                       <span className="gd-file-dir">{dir}</span>
-                      <span className="gd-file-counts">
-                        <CommentCount n={fileComments(group, f)} />
-                        <Counts file={f} />
-                      </span>
+                      <RowCounts file={f} comments={fileComments(group, f)} />
                       {/* Why the file changes in this group (#202), under its name; while
                           it is being written, a placeholder its size (#224). */}
                       {f.note ? (
