@@ -241,13 +241,90 @@ export function changedSince(guide: Guide, diff: BranchDiff): string[] {
   return out.sort();
 }
 
+/**
+ * Which guide group each block of the diff as it is now belongs to (#248).
+ *
+ * A block the guide placed stays in its group. A block it never saw (a hunk
+ * changed or added after it was written: ids follow the content) goes to the
+ * group of the hunk it replaced, so a file changed since it was reviewed shows
+ * up, with a new key and so unreviewed, in the group it was reviewed in --
+ * never in Unsorted while that group keeps reading Reviewed.
+ *
+ * "The hunk it replaced": the file's old and new blocks are lined up on the
+ * ones they share. Between two shared blocks, the new ones take the groups of
+ * the old ones that went, in order; with none gone there (a hunk added), the
+ * group of the nearest shared block before it, else after it; with nothing
+ * shared at all, the old blocks' groups in order. Left out (null, i.e.
+ * Unsorted): a file the guide never placed, and a block it saw when written
+ * and put in no group.
+ */
+function placeBlocks(guide: Guide, diff: BranchDiff): Map<string, number | null> {
+  const groupOf = new Map<string, number>();
+  guide.groups.forEach((g, i) => {
+    for (const id of g.blocks) if (!groupOf.has(id)) groupOf.set(id, i);
+  });
+  const out = new Map<string, number | null>();
+  for (const f of diff.files) {
+    const old = guide.files[f.path] ?? [];
+    const now = new Set(f.blocks);
+    const shared = new Set(old.filter((id) => now.has(id)));
+    // Old blocks that went, by the shared block they follow ('' = the start).
+    const goneAfter = new Map<string, string[]>();
+    let anchor = '';
+    for (const id of old) {
+      if (shared.has(id)) anchor = id;
+      else if (!now.has(id)) goneAfter.set(anchor, [...(goneAfter.get(anchor) ?? []), id]);
+    }
+    const sharedGroups = f.blocks.map((id) => (shared.has(id) ? groupOf.get(id) : undefined));
+    anchor = '';
+    let k = 0;
+    f.blocks.forEach((id, i) => {
+      if (shared.has(id) || groupOf.has(id)) {
+        // Known: its own group, or none if the guide placed it nowhere.
+        out.set(id, groupOf.get(id) ?? null);
+        if (shared.has(id)) {
+          anchor = id;
+          k = 0;
+        }
+        return;
+      }
+      const gone = goneAfter.get(anchor) ?? [];
+      let g: number | undefined = gone.length > 0 ? groupOf.get(gone[Math.min(k, gone.length - 1)]!) : undefined;
+      k++;
+      for (let j = i - 1; g === undefined && j >= 0; j--) g = sharedGroups[j];
+      for (let j = i + 1; g === undefined && j < sharedGroups.length; j++) g = sharedGroups[j];
+      if (g === undefined) g = old.map((o) => groupOf.get(o)).find((x) => x !== undefined);
+      out.set(id, g ?? null);
+    });
+  }
+  return out;
+}
+
 /** The guide's groups over the diff as it is now, with Unsorted last. */
 export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
-  const placed = new Set<string>();
+  const place = placeBlocks(guide, diff);
+  const pathOf = new Map<string, string>();
+  for (const [path, ids] of Object.entries(guide.files)) for (const id of ids) pathOf.set(id, path);
   const groups: GroupView[] = [];
   guide.groups.forEach((g, i) => {
-    const blocks = g.blocks.filter((id) => diff.blocks.has(id) && !placed.has(id));
-    for (const id of blocks) placed.add(id);
+    // The group's own order, a moved-in block where its file's old ones were.
+    const mine = diff.order.filter((id) => place.get(id) === i);
+    const own = new Set(g.blocks);
+    const blocks: string[] = [];
+    const taken = new Set<string>();
+    const add = (id: string) => {
+      if (taken.has(id)) return;
+      taken.add(id);
+      blocks.push(id);
+    };
+    for (const id of g.blocks) {
+      if (place.get(id) === i) add(id);
+      else if (!diff.blocks.has(id)) {
+        const path = pathOf.get(id);
+        for (const n of mine) if (!own.has(n) && diff.blocks.get(n)?.path === path) add(n);
+      }
+    }
+    for (const id of mine) add(id);
     if (blocks.length === 0) return;
     groups.push({
       key: `g${i}-${fnv1a(g.title).toString(36)}`,
@@ -259,7 +336,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
       files: withNotes(filesOf(blocks, diff), g.notes),
     });
   });
-  const rest = diff.order.filter((id) => !placed.has(id));
+  const rest = diff.order.filter((id) => place.get(id) === null);
   if (rest.length > 0) {
     groups.push({
       key: 'unsorted',
@@ -268,7 +345,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
       summary:
         guide.diffHash === diff.hash
           ? 'Changes the guide did not place in a group.'
-          : 'Changes the guide did not place in a group, or made after it was written.',
+          : 'Files the guide did not place in a group, or new since it was written.',
       unsorted: true,
       blocks: rest,
       files: filesOf(rest, diff),

@@ -353,6 +353,9 @@ function GuideBody({
   const reviewed = loadReviewed(task.id);
   const isFileReviewed = (f: GroupFile) => reviewed.has(reviewedKey(f.path, f.blocks));
   const isGroupReviewed = (g: GroupView) => g.files.length > 0 && g.files.every(isFileReviewed);
+  // Ticked once, at other blocks: the file changed since it was reviewed (#248).
+  const reviewedPaths = new Set([...reviewed].map((k) => k.slice(0, k.lastIndexOf('#'))));
+  const changedSinceReview = (f: GroupFile) => !isFileReviewed(f) && reviewedPaths.has(f.path);
 
   // The group is kept by its key, never its number: Uncommitted Only changes
   // the numbers. With no place kept, the first group still to review.
@@ -515,9 +518,9 @@ function GuideBody({
           <span
             className="gd-meta-text"
             role="status"
-            title={`${changed} changed since this guide was written (${new Date(guide.writtenAt).toLocaleString()}). New changes are under Unsorted. Branch vs ${guide.base}.`}
+            title={`${changed} changed since this guide was written (${new Date(guide.writtenAt).toLocaleString()}). A changed file stays in its group and needs reviewing again; files new to the branch are under Unsorted. Branch vs ${guide.base}.`}
           >
-            {changed} changed since it was written {writtenAgo(guide.writtenAt)} · new changes are under Unsorted · branch vs{' '}
+            {changed} changed since it was written {writtenAgo(guide.writtenAt)} · shown in their groups, to review again · branch vs{' '}
             {guide.base}
           </span>
         ) : (
@@ -595,6 +598,7 @@ function GuideBody({
                             · {f.blocks.length} of {f.totalBlocks} blocks
                           </span>
                         ) : null}
+                        {changedSinceReview(f) ? <span className="gd-file-part"> · changed since review</span> : null}
                       </span>
                       <span className="gd-file-dir">{dir}</span>
                       <Counts file={f} />
