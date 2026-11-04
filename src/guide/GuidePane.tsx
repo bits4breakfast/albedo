@@ -320,6 +320,37 @@ function Counts({ file }: { file: GroupFile }): ReactNode {
   );
 }
 
+/** The whole change's size (#250): every file of the branch, not the filter's. Pure. */
+export function changeTotals(diff: BranchDiff): { files: number; added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const f of diff.files) {
+    added += f.added;
+    removed += f.removed;
+  }
+  return { files: diff.files.length, added, removed };
+}
+
+/**
+ * "· 14 files +320 −45", right after the base (#250). Never cut: the text
+ * before it gives way first. The +/− are the file counts' tokens, cleared on
+ * this row's two grounds (guideTotalsContrast.test.ts).
+ */
+function ChangeTotals({ diff, base }: { diff: BranchDiff; base: string }): ReactNode {
+  const t = changeTotals(diff);
+  const files = t.files === 1 ? '1 file' : `${t.files} files`;
+  const said = `${files} changed, ${t.added} ${t.added === 1 ? 'line' : 'lines'} added, ${t.removed} removed, branch vs ${base}`;
+  return (
+    <span className="gd-meta-totals" title={said} aria-label={said} role="note">
+      <span aria-hidden="true">· {files}</span>
+      <span className="gd-counts" aria-hidden="true">
+        <span className="gd-add">+{t.added}</span>
+        <span className="gd-del">−{t.removed}</span>
+      </span>
+    </span>
+  );
+}
+
 function GuideBody({
   task,
   guide,
@@ -528,6 +559,7 @@ function GuideBody({
             Written {writtenAgo(guide.writtenAt)} · branch vs {guide.base}
           </span>
         )}
+        <ChangeTotals diff={diff} base={guide.base} />
         <label className="gd-filter">
           <input type="checkbox" checked={onlyUncommitted} onChange={(e) => setOnlyUncommitted(e.target.checked)} />
           Uncommitted Only
