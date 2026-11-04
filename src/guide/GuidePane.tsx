@@ -28,7 +28,7 @@ import type { BranchDiff, GuideFile } from './blocks';
 import { commentMarks, groupCommentCount, useOpenComments } from './commentMarks';
 import { useWaitingCodeComments } from '../ui/transcript/codeComments';
 import { useComments } from '../ui/transcript/drafts';
-import { requestSendComments } from '../ui/transcript/composerBridge';
+import { sendWaitingComments } from '../ui/transcript/composerBridge';
 import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
 import {
@@ -82,11 +82,9 @@ export interface GuidePaneProps {
   task: Task;
   /** The Guide tab is on screen: the diff is re-read each time it comes back. */
   active: boolean;
-  /** Show the task's transcript: where Send Comments takes you (#254). */
-  onShowTranscript?: () => void;
 }
 
-export default function GuidePane({ task, active, onShowTranscript }: GuidePaneProps): ReactNode {
+export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   useGuideStoreVersion();
   // Measured against the branch the header shows it merging into (#237).
   const measured = useMeasuredBase(task);
@@ -199,7 +197,6 @@ export default function GuidePane({ task, active, onShowTranscript }: GuidePaneP
       write={write}
       onRewrite={writeNow}
       active={active}
-      onShowTranscript={onShowTranscript}
     />
   );
 }
@@ -411,7 +408,6 @@ function GuideBody({
   write,
   onRewrite,
   active,
-  onShowTranscript,
 }: {
   task: Task;
   guide: Guide;
@@ -421,7 +417,6 @@ function GuideBody({
   write: WriteState | null;
   onRewrite: () => void;
   active: boolean;
-  onShowTranscript: (() => void) | undefined;
 }): ReactNode {
   const { diff, uncommitted } = loaded;
   const [onlyUncommitted, setOnlyUncommitted] = useState(false);
@@ -438,11 +433,8 @@ function GuideBody({
   // Every comment waiting to go with the next message, the composer's queue:
   // on code (this guide, the editor, diffs) and on transcript passages (#254).
   const waitingCount = useWaitingCodeComments(task.id).length + useComments(task.id).length;
-  const sendComments = () => {
-    requestSendComments(task.id);
-    // Where it shows: sent, or held behind a running turn (#254).
-    onShowTranscript?.();
-  };
+  // The transcript is shown after (#254): where it lands, sent or held.
+  const sendComments = () => void sendWaitingComments(task.id);
   const sendButton =
     waitingCount > 0 ? (
       <button

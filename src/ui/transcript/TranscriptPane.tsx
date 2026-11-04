@@ -1671,6 +1671,8 @@ export function Composer({
     () =>
       onSendCommentsRequest((id) => {
         if (id !== taskId) return false;
+        // Nothing waiting: not taken, so the caller leaves the tab alone.
+        if (commentsOf(taskId).length === 0 && waitingCodeRef.current.length === 0) return false;
         void sendComments();
         return true;
       }),

@@ -534,9 +534,13 @@ button.tf-section-head:hover .disc { color: var(--text); }
 }
 .tf-comment-open:hover { background: var(--panel-hover); }
 .tf-comment-open:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-.tf-comment-where { flex: none; font-family: var(--font-mono); color: var(--muted); }
-.tf-comment-where .tf-name { color: var(--text); }
+/* The place shrinks before the row overflows (#258): the name ellipsizes,
+   the :line never does. Was flex: none, and a long name ran under the ✓. */
+.tf-comment-where { flex: 0 1 auto; min-width: 0; display: inline-flex; font-family: var(--font-mono); color: var(--muted); }
+.tf-comment-where .tf-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.tf-comment-line { flex: none; }
 .tf-comment-body {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -562,6 +566,8 @@ button.tf-section-head:hover .disc { color: var(--text); }
 /* A resolved comment and its reason, in the tier below an open one. */
 .tf-comment-resolved .tf-comment-body,
 .tf-comment-why { color: var(--muted); }
+/* Send, at the Waiting label's end (#258). */
+.tf-comments-send { margin-left: auto; }
 .tf-comment-reopen { flex: none; align-self: center; margin-right: 6px; }
 .tf-comment-resolve {
   flex: none;

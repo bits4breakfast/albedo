@@ -123,6 +123,13 @@
  * CodeMirror's default, history and search keymaps, editorKeys.ts,
  * focusAreas.ts and the native menu (only ⌘Q and ⌘W).
  *
+ * ## ⇧⌘S: send the waiting comments
+ *
+ * From anywhere (#258), as the Send beside them in Files and the guide: the
+ * selected task's waiting comments go, and the transcript shows. Nothing
+ * waiting, nothing happens. ⌘S is the editor's Save (exact match, so ⇧⌘S
+ * never saves); Ctrl+S stays the terminals'. No CodeMirror keymap binds it.
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
@@ -158,6 +165,7 @@ export type Combo =
   | 'mod+t'
   | 'mod+shift+t'
   | 'mod+shift+e'
+  | 'mod+shift+s'
   | 'alt+f12'
   | 'shift+f6'
   | 'f2';
@@ -224,6 +232,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
   { combo: 'mod+shift+t', keys: '⇧⌘T', description: 'Transcript Tab' },
   { combo: 'mod+shift+e', keys: '⇧⌘E', description: 'Files Tab (or the Files column, when pinned)' },
+  { combo: 'mod+shift+s', keys: '⇧⌘S', description: 'Send the Waiting Comments, then Show the Transcript' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   {
     combo: 'shift+f6',
@@ -332,6 +341,11 @@ export function comboOf(
   if (e.code === 'KeyE' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+e', digit: null };
   }
+  // Send the waiting comments (#258), on the same terms: Ctrl+S is the
+  // terminal's (XOFF), and ⌘S stays the editor's Save.
+  if (e.code === 'KeyS' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+s', digit: null };
+  }
   // The Review Guide (#207), on the same terms: Ctrl+G belongs to the terminal.
   if (e.code === 'KeyG' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+g', digit: null };
@@ -404,6 +418,7 @@ const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set([
   'mod+shift+g',
   'mod+shift+t',
   'mod+shift+e',
+  'mod+shift+s',
 ]);
 
 /**

@@ -22,6 +22,7 @@ import {
 } from '../db/comments';
 import { useReadFile } from './editor/openFile';
 import { Disclosure } from './Disclosure';
+import { sendWaitingComments } from './transcript/composerBridge';
 
 export interface CommentsSectionProps {
   task: Task;
@@ -110,9 +111,13 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         onClick={() => onOpen(c.path, c.lineStart)}
         title={`${commentLocation(c)}\n\n${c.body}`}
       >
+        {/* The name gives way, never the line (#258): a long one ellipsizes
+            inside its row instead of running under the ✓. */}
         <span className="tf-comment-where">
-          <span className="tf-name">{c.path.split('/').pop()}</span>:
-          {c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
+          <span className="tf-name">{c.path.split('/').pop()}</span>
+          <span className="tf-comment-line">
+            :{c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
+          </span>
         </span>
         <span className="tf-comment-body">{c.body.split('\n')[0]}</span>
       </button>
@@ -131,7 +136,19 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
       {/* Grouped by state (#222), so ✓ only ever means Resolve. */}
       {unsent.length > 0 && (
         <div className="tf-comments-group" role="group" aria-label={`Waiting, ${unsent.length}`}>
-          <div className="tf-comments-sub">Waiting · {unsent.length}</div>
+          <div className="tf-comments-sub">
+            Waiting · {unsent.length}
+            {/* Send them now (#258), as ⇧⌘S does: the transcript then shows. */}
+            <button
+              type="button"
+              className="tf-btn tf-comments-send"
+              onClick={() => sendWaitingComments(task.id)}
+              aria-keyshortcuts="Meta+Shift+S"
+              title="Send the waiting comments to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
+            >
+              Send
+            </button>
+          </div>
           {unsent.map((c) => row(c, null))}
         </div>
       )}

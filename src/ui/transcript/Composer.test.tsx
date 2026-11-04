@@ -1612,6 +1612,16 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     expect(box().value).toBe('half a thought');
   });
 
+  it('nothing waiting: the composer declines, so the caller leaves the tab alone (#258)', async () => {
+    const { requestSendComments } = await import('./composerBridge');
+    codeRows.rows = [];
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await waitFor(() => expect(box()).toBeTruthy());
+    expect(requestSendComments(1)).toBe(false);
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(heldFor(1)).toEqual([]);
+  });
+
   it('the guide\'s Send Comments with no live session: held in the outbox, nothing typed, the draft kept (#254)', async () => {
     const { requestSendComments } = await import('./composerBridge');
     vi.mocked(hasLivePty).mockReturnValue(false);
