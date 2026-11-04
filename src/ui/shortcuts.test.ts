@@ -98,6 +98,8 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
       comboOf(ev({ key: 't', code: 'KeyT', metaKey: true }))?.combo,
+      comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
@@ -137,8 +139,8 @@ describe('shell drawer key', () => {
     expect(comboOf(ev({ key: 'y', code: 'KeyT', metaKey: true }))?.combo).toBe('mod+t');
     // Ctrl+T stays Claude Code's, and the shell's.
     expect(comboOf(ev({ key: 't', code: 'KeyT', ctrlKey: true }))).toBeNull();
-    // ⇧⌘T is left free.
-    expect(comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))).toBeNull();
+    // ⇧⌘T is the Transcript tab now (#256), not the shell.
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+t');
     expect(comboOf(ev({ key: '†', code: 'KeyT', metaKey: true, altKey: true }))).toBeNull();
   });
 });
@@ -276,6 +278,31 @@ describe('Review Guide (#207)', () => {
     expect(terminalTakesKey(ev({ key: 'G', code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(false);
     expect(terminalTakesKey(ev({ key: 'g', code: 'KeyG', ctrlKey: true }))).toBe(true);
     expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+g')?.keys).toBe('⇧⌘G');
+  });
+});
+
+describe('Transcript and Files tabs (#256)', () => {
+  it('maps ⇧⌘T and ⇧⌘E by physical key', () => {
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+t');
+    expect(comboOf(ev({ key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+e');
+    // Another layout's letter on that key is still the key.
+    expect(comboOf(ev({ key: 'Y', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+t');
+  });
+
+  it('leaves Ctrl+Shift+T/E to the terminals, and ⌘E and ⌥⇧⌘T/E unbound', () => {
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'E', code: 'KeyE', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'e', code: 'KeyE', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'ˇ', code: 'KeyT', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '´', code: 'KeyE', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('are kept from the terminal, and in the shortcuts help', () => {
+    expect(terminalTakesKey(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+t')?.keys).toBe('⇧⌘T');
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+e')?.keys).toBe('⇧⌘E');
+    expect(SHORTCUTS.find((s) => s.combo === 'guide mod+enter')?.keys).toBe('⌘↩');
   });
 });
 
