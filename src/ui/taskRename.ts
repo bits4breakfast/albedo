@@ -47,6 +47,17 @@ import { displayName } from './text';
 /** Longest title a rename saves. A title made from a prompt can be longer; it is kept until edited. */
 export const MAX_TITLE = 200;
 
+/**
+ * Longest summary (#262), in characters: the same cap Albedo's MCP server and
+ * the inbox put on `set_task_summary` (src-tauri/mcp/src/tools.rs,
+ * capture/inbox.ts `CAPS.taskSummary`).
+ */
+export const MAX_SUMMARY = 120;
+
+/** What the summary field says about itself. */
+export const SUMMARY_HINT =
+  'One line on what the task is about, shown under its title. Empty clears it. The task’s session may set it again.';
+
 /** The keys that start a rename (shortcuts.ts `shift+f6`, `f2`), as the ⋯ item shows them. */
 export const RENAME_KEYS = '⇧F6';
 
@@ -76,6 +87,18 @@ export function renamedTitle(raw: string, old: string): string | null {
   const chars = Array.from(line);
   const title = chars.length > MAX_TITLE ? chars.slice(0, MAX_TITLE).join('').trimEnd() : line;
   return title === old ? null : title;
+}
+
+/**
+ * The summary to save for `raw`: one line, trimmed, capped at
+ * {@link MAX_SUMMARY} characters (code points); null when that leaves nothing,
+ * which clears it.
+ */
+export function cleanSummary(raw: string): string | null {
+  const line = oneLine(raw);
+  if (line === '') return null;
+  const chars = Array.from(line);
+  return chars.length > MAX_SUMMARY ? chars.slice(0, MAX_SUMMARY).join('').trimEnd() : line;
 }
 
 /**

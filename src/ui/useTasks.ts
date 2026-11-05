@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, Task, TaskStatus } from '../types';
-import { listTasks, updateTask, archiveTask, renameTask, getMessages, onTasksChanged, compactHistory } from '../db';
+import {
+  listTasks,
+  updateTask,
+  archiveTask,
+  renameTask,
+  setTaskSummary,
+  getMessages,
+  onTasksChanged,
+  compactHistory,
+} from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
 import { keepUserStatus, pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt, turnEndedAt } from '../capture/status';
@@ -98,6 +107,12 @@ export interface UseTasksResult {
    * write failed: the old title is back, and the banner says why.
    */
   rename: (id: number, title: string) => Promise<boolean>;
+  /**
+   * The task's one-line summary (#262), null to clear it: shown at once and
+   * then written. Already clean (taskRename.ts `cleanSummary`). Resolves
+   * false when the write failed: the old summary is back, and the banner says why.
+   */
+  setSummary: (id: number, summary: string | null) => Promise<boolean>;
   /** The task was on screen at `at` (epoch ms); see `Task.seenAt`. */
   markSeen: (id: number, at: number) => void;
 }
@@ -414,6 +429,31 @@ export function useTasks(): UseTasksResult {
         },
       );
       if (err !== null && aliveRef.current) setLoadError(`Could not rename task: ${message(err)}`);
+      return err === null;
+    },
+    [applyTask, persist],
+  );
+
+  const setSummary = useCallback(
+    async (id: number, summary: string | null) => {
+      const task = tasksRef.current.find((t) => t.id === id);
+      if (!task) return false;
+      const was = task.summary;
+      applyTask(id, { summary });
+      const err = await persist(
+        id,
+        { summary },
+        {
+          write: async () => {
+            await setTaskSummary(id, summary);
+          },
+          // Only if nothing changed it again meanwhile.
+          rollback: () => {
+            if (tasksRef.current.find((t) => t.id === id)?.summary === summary) applyTask(id, { summary: was });
+          },
+        },
+      );
+      if (err !== null && aliveRef.current) setLoadError(`Could not save the task's summary: ${message(err)}`);
       return err === null;
     },
     [applyTask, persist],
@@ -758,6 +798,7 @@ export function useTasks(): UseTasksResult {
       archive,
       setDone,
       rename,
+      setSummary,
       markSeen,
     }),
     [
@@ -773,6 +814,7 @@ export function useTasks(): UseTasksResult {
       archive,
       setDone,
       rename,
+      setSummary,
       markSeen,
     ],
   );

@@ -46,3 +46,33 @@
   font-size: var(--fs-md);
   font-weight: 500;
 }
+
+/*
+ * The summary field (#262), after the name: the two are one edit, and the
+ * one holding focus has the --focus edge. The other keeps an input's edge,
+ * --border-strong (4.11 on --panel-inset, light and dark), so it still reads
+ * as a field. Its placeholder is --faint, the hint tier: 6.09 light / 6.36
+ * dark on --panel-inset.
+ */
+.task-title-edit:has(+ .task-summary-edit):not(:focus),
+.task-summary-edit:not(:focus) {
+  outline: 1px solid var(--border-strong);
+}
+.task-summary-edit::placeholder { color: var(--faint); }
+
+/* Task bar: beside the name, in the room the summary had. */
+.main-ident-summary-edit {
+  flex: 1 1 24ch;
+  font-size: var(--fs-sm);
+  font-weight: 400;
+}
+
+/* Task row: the summary's own line, under the name. */
+.task-row-summary-edit {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  width: 100%;
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  font-weight: 400;
+}
