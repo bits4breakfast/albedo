@@ -133,7 +133,7 @@ export interface Task {
    */
   seenAt: number | null;
   /**
-   * One line on what the task is about, shown under its title (migration
+   * One line on what the task is about, shown beside its title (migration
    * v11, #262). Set by the task's own session through Albedo's MCP server
    * (`set_task_summary`) or by the user in the rename field; the last write
    * wins. One line, trimmed, at most 120 characters. Null: none.

@@ -133,7 +133,7 @@ export const MCP_SERVER_NAME = 'albedo';
 /**
  * Its four tools, allowed without a permission prompt. Each only hands
  * Albedo a request -- a new session still waits for the user's Approve, and a
- * summary (#262) is one line under the task's title -- so a prompt in the
+ * summary (#262) is one line beside the task's title -- so a prompt in the
  * terminal first would ask the user twice for one thing.
  */
 export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked', 'set_task_summary'].map(

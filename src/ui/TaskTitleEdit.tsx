@@ -26,7 +26,7 @@
  * ## The summary (#262)
  *
  * Given `summary` (the task's, null for none), a second field follows the
- * name: the one-line summary shown under the title. The two are one edit:
+ * name: the one-line summary shown beside the title. The two are one edit:
  * Tab goes from the name to the summary and Shift+Tab back, Return in either
  * saves both, Escape puts both back, and moving focus from one to the other
  * is not leaving. Empty clears the summary; what is saved is `cleanSummary`'s.

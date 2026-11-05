@@ -64,7 +64,7 @@ pub const RATE_WINDOW_MS: i64 = 60_000;
 const INSTRUCTIONS: &str = "This session runs inside Albedo, the user's desktop cockpit for Claude Code sessions. \
 These tools ask Albedo for things only it can do: a reminder on this task, a new session (only ever started with \
 the user's approval), telling the user you are blocked on them, or a one-line summary of what this task is about, \
-shown under its title. Each call is delivered to Albedo and answered \
+shown beside its title. Each call is delivered to Albedo and answered \
 at once; none of them waits for the user.";
 
 /// What the server needs from the outside world, so tests can supply it.

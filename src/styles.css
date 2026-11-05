@@ -867,7 +867,7 @@ button {
  * width it adds nothing to the row: the ⋯ after it is a 24px button with
  * room of its own around the glyph.
  *
- * --muted, never opacity: the branch's tier, a step under the title. On the
+ * --muted, never opacity: the branch's tier, a step below the title's. On the
  * task bar's --panel, light | dark: 7.15 | 7.74; --panel-raised 5.89 | 6.50
  * (taskSummaryContrast.test.ts).
  */

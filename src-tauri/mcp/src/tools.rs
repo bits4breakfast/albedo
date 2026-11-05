@@ -1,6 +1,6 @@
 //! The four tools: what Claude is told about them, and what a call must hold.
 //! The fourth, `set_task_summary`, is by the owner's decision (issue #262):
-//! its one line is shown under the task's title, never acted on.
+//! its one line is shown beside the task's title, never acted on.
 //!
 //! Every limit here is repeated in `src/capture/inbox.ts`, which checks each
 //! line again: this process runs inside the session, so the app never takes
@@ -104,8 +104,8 @@ pub fn definitions() -> Value {
         {
             "name": SET_TASK_SUMMARY,
             "title": "Summarize this task in one line",
-            "description": "Give this task a one-line summary of what it is about, shown under its title in Albedo's \
-                task list. Call it once you know, typically right after reading the ticket or issue the task is named \
+            "description": "Give this task a one-line summary of what it is about, shown beside its \
+                title in Albedo (in the header, and when hovering the task in the list). Call it once you know, typically right after reading the ticket or issue the task is named \
                 after (from Linear, GitHub, Jira or similar), and again only if the task's purpose changes. Plain \
                 words, no ticket key (the title already has it), at most 120 characters.",
             "inputSchema": {
@@ -219,7 +219,7 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
             Ok(Accepted {
                 tool: SET_TASK_SUMMARY,
                 args: out,
-                reply: "Albedo shows this under the task's title.".into(),
+                reply: "Albedo shows this beside the task's title.".into(),
             })
         }
         _ => Err(format!("Unknown tool: {name}")),
@@ -457,7 +457,7 @@ mod tests {
                 .unwrap()
                 .clone()
         );
-        assert_eq!(a.reply, "Albedo shows this under the task's title.");
+        assert_eq!(a.reply, "Albedo shows this beside the task's title.");
     }
 
     #[test]

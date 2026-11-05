@@ -56,7 +56,7 @@ export const MAX_SUMMARY = 120;
 
 /** What the summary field says about itself. */
 export const SUMMARY_HINT =
-  'One line on what the task is about, shown under its title. Empty clears it. The task’s session may set it again.';
+  'One line on what the task is about, shown beside its title. Empty clears it. The task’s session may set it again.';
 
 /** The keys that start a rename (shortcuts.ts `shift+f6`, `f2`), as the ⋯ item shows them. */
 export const RENAME_KEYS = '⇧F6';

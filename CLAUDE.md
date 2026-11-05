@@ -67,7 +67,7 @@ can name another task. It offers four tools and nothing else --
 `create_reminder`, `request_session`, `notify_blocked`, `set_task_summary` --
 for things only the agent starts; whatever the user starts goes through Albedo
 directly. The fourth, `set_task_summary`, is by the owner's decision (issue
-#262): its one line is written to `tasks.summary` and shown under the task's
+#262): its one line is written to `tasks.summary` and shown beside the task's
 title, never acted on. A call that passes its checks is appended as one JSON
 line to `~/.albedo/inbox/task-<id>.jsonl`, and the app checks every line again
 (known tool, size caps, the task id in the line equal to the file's). A

@@ -124,7 +124,7 @@ const M0008_TASK_KIND: &str = include_str!("../../src/db/migrations/0008_task_ki
 const M0009_SEEN_AT: &str = include_str!("../../src/db/migrations/0009_seen_at.sql");
 /// v10: reminders -- set on a task, back at their time as a card (#156).
 const M0010_REMINDERS: &str = include_str!("../../src/db/migrations/0010_reminders.sql");
-/// v11: tasks.summary -- one line on what the task is about, under its title (#262).
+/// v11: tasks.summary -- one line on what the task is about, beside its title (#262).
 const M0011_TASK_SUMMARY: &str = include_str!("../../src/db/migrations/0011_task_summary.sql");
 
 pub fn run() {
