@@ -86,10 +86,10 @@ describe('⌘B with one answer opens it (#260)', () => {
     expect(await navigate(at('src/Beta.php', 'run'), 'declaration')).toEqual({ kind: 'open', path: 'src/Alpha.php', line: 6 });
   });
 
-  it('two declarations on different lines still list', async () => {
+  it('two declarations elsewhere still list', async () => {
     stub.definition = [
       { path: 'src/Alpha.php', line: 6 },
-      { path: 'src/Beta.php', line: 6 },
+      { path: 'src/util.ts', line: 1 },
     ];
     const out = await navigate(at('src/Beta.php', 'run'), 'declaration');
     expect(out.kind).toBe('list');
@@ -105,6 +105,20 @@ describe('⌘B with one answer opens it (#260)', () => {
     stub.words = rows(['src/util.ts', 1]);
     const out = await navigate(at('src/util.ts', 'helper'), 'declaration');
     expect(out.kind).toBe('list');
+  });
+
+  it('a method called once, by text search: its declaration row is not a choice, so the call opens', async () => {
+    // PHPantom not installed (or not ready): the by-name path lists text
+    // matches, the declaration under the cursor among them.
+    stub.symbols = [{ name: 'run', kind: 'method', path: 'src/Alpha.php', line: 6 }];
+    stub.words = rows(['src/Alpha.php', 6], ['src/Beta.php', 6]);
+    expect(await navigate(at('src/Alpha.php', 'run'), 'declaration')).toEqual({ kind: 'open', path: 'src/Beta.php', line: 6 });
+  });
+
+  it('two places besides the cursor still list', async () => {
+    stub.symbols = [{ name: 'run', kind: 'method', path: 'src/Alpha.php', line: 6 }];
+    stub.words = rows(['src/Alpha.php', 6], ['src/Beta.php', 6], ['src/util.ts', 1]);
+    expect((await navigate(at('src/Alpha.php', 'run'), 'declaration')).kind).toBe('list');
   });
 
   it('⌥F7 asked for a list: one usage is still listed', async () => {

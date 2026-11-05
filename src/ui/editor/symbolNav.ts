@@ -282,20 +282,22 @@ function declarationsAsResult(result: FindResult): FindResult {
 }
 
 /**
- * ⌘B (and ⌘-click) and ⌥⌘B ask to be taken somewhere: a list holding one row
- * is that place, so it opens straight away, as PhpStorm does (#260). That
- * covers every path, not only the ones that count their answer: a single
- * usage of the declaration under the cursor, from PHPantom or git grep; two
- * PHPantom locations on one line, folded into one row; one text match.
- * Except when that row is where the cursor already is: opening it would do
- * nothing, so the list stays and the click still answers.
+ * ⌘B (and ⌘-click) and ⌥⌘B ask to be taken somewhere: a list with one place
+ * to go is that place, so it opens straight away, as PhpStorm does (#260).
+ * That covers every path, not only the ones that count their answer: a
+ * method's single call, asked on its declaration, from PHPantom or git grep;
+ * two PHPantom locations on one line, folded into one row; one text match.
+ * The row the cursor is on is not a place to go: the text search lists the
+ * declaration among its own matches, so a method called once answers two
+ * rows, and opening the cursor's own line would look like the click did
+ * nothing. A list of only that row stays a list, so the click still answers.
  * ⌥F7 asked for a list, and always gets one.
  */
 function openLoneRow(out: NavOutcome, path: string, number: number): NavOutcome {
-  if (out.kind !== 'list' || out.result.count !== 1) return out;
-  const only = out.result.groups[0]?.matches[0];
-  if (!only || (only.path === path && only.line === number)) return out;
-  return { kind: 'open', path: only.path, line: only.line };
+  if (out.kind !== 'list') return out;
+  const elsewhere = out.result.groups.flatMap((g) => g.matches).filter((m) => !(m.path === path && m.line === number));
+  if (elsewhere.length !== 1 || out.result.capped) return out;
+  return { kind: 'open', path: elsewhere[0]!.path, line: elsewhere[0]!.line };
 }
 
 /** Where ⌘B, ⌥F7 or ⌥⌘B at the cursor leads. */
