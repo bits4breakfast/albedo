@@ -5,17 +5,19 @@
  *
  * CLAUDE.md, "Two channels": every session Albedo starts gets Albedo's MCP
  * server (`src-tauri/mcp`, a Rust binary bundled beside the app) through
- * `--mcp-config`, with `ALBEDO_TASK_ID` in its environment. It offers three
+ * `--mcp-config`, with `ALBEDO_TASK_ID` in its environment. It offers four
  * tools and nothing else -- `create_reminder`, `request_session`,
- * `notify_blocked` -- and a call that passes its checks is appended as one
- * JSON line to `~/.albedo/inbox/task-<id>.jsonl`. This module reads those
+ * `notify_blocked`, and `set_task_summary` (#262: one line shown under the
+ * task's title, never acted on) -- and a call that passes its checks is
+ * appended as one JSON line to `~/.albedo/inbox/task-<id>.jsonl`. This module reads those
  * files. It is the only file in the app that knows the line's shape, as
  * hookEvents.ts is for hook payloads.
  *
  *   spawn `claude --mcp-config <json>`      (sessionSpawn.ts, withMcpConfig)
  *     the agent calls mcp__albedo__<tool>
  *       albedo-mcp appends one line to ~/.albedo/inbox/task-<id>.jsonl
- *         this module reads it, checks it again, hands it on (requestQueue.ts)
+ *         this module reads it, checks it again, hands it on (requestQueue.ts,
+ *         which writes a summary to tasks.summary rather than queueing it)
  *
  * Only the agent starts anything here; what the user starts goes through
  * Albedo directly. Nothing flows back: the server answers the agent at once,
@@ -64,9 +66,10 @@ export const CAPS = {
   project: 200,
   branch: 200,
   message: 1_000,
+  taskSummary: 120,
 } as const;
 
-export type InboxTool = 'create_reminder' | 'request_session' | 'notify_blocked';
+export type InboxTool = 'create_reminder' | 'request_session' | 'notify_blocked' | 'set_task_summary';
 
 interface Base {
   /** Unique per line; the server makes it from its pid, the time and a counter. */
@@ -87,7 +90,8 @@ export type InboxRequest =
       project: string | null;
       branch: string | null;
     })
-  | (Base & { tool: 'notify_blocked'; message: string });
+  | (Base & { tool: 'notify_blocked'; message: string })
+  | (Base & { tool: 'set_task_summary'; summary: string });
 
 const ID = /^[A-Za-z0-9._-]{1,100}$/;
 const BRANCH = /^[A-Za-z0-9._/-]+$/;
@@ -185,6 +189,12 @@ export function parseInboxLine(line: string, fileTaskId: number): InboxRequest |
       if (message === null) return null;
       return { ...base, tool: 'notify_blocked', message };
     }
+    case 'set_task_summary': {
+      if (!onlyKeys(a, ['summary'])) return null;
+      const summary = text(a, 'summary', CAPS.taskSummary, false);
+      if (summary === null) return null;
+      return { ...base, tool: 'set_task_summary', summary };
+    }
     default:
       return null;
   }
@@ -219,7 +229,9 @@ export function encodeRequest(r: InboxRequest): string {
             ...(r.project !== null ? { project: r.project } : {}),
             ...(r.branch !== null ? { branch: r.branch } : {}),
           }
-        : { message: r.message };
+        : r.tool === 'notify_blocked'
+          ? { message: r.message }
+          : { summary: r.summary };
   return JSON.stringify({ v: INBOX_VERSION, task: taskId, tool, args, at, id });
 }
 

@@ -74,7 +74,7 @@ const { __resetPhpantomNotice } = await import('./phpantomNotice');
 const task: Task = {
   id: 4, title: 't', projectId: 1, repoPath: '/repo', baseBranch: 'main', branch: 'b',
   worktreePath: '/wt', sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
-  status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null,
+  status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
 };
 
 const MISSING = /using text search: PHPantom isn’t installed/;

@@ -109,6 +109,7 @@ interface TaskRow {
   created_at: number;
   last_activity_at: number | null;
   seen_at: number | null;
+  summary: string | null;
 }
 
 interface MessageRow {
@@ -142,10 +143,11 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   createdAt: 'created_at',
   lastActivityAt: 'last_activity_at',
   seenAt: 'seen_at',
+  summary: 'summary',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -178,6 +180,8 @@ function toTask(r: TaskRow): Task {
     createdAt: r.created_at,
     lastActivityAt: r.last_activity_at,
     seenAt: r.seen_at,
+    // Absent only on a database older than v11 that a test hands over.
+    summary: r.summary ?? null,
   };
 }
 
@@ -229,8 +233,8 @@ export async function createTask(t: NewTask): Promise<Task> {
     // no insert from here is allowed to fall through to it.
     // created_branch likewise: NULL is reserved for pre-v6 rows. And kind:
     // its default backfills pre-v8 rows, and is not a decision for new ones.
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL)`,
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL, NULL)`,
     [
       t.title,
       t.projectId,
@@ -265,6 +269,7 @@ export async function createTask(t: NewTask): Promise<Task> {
     createdAt,
     lastActivityAt: null,
     seenAt: null,
+    summary: null,
   };
 }
 
@@ -299,6 +304,20 @@ export async function renameTask(id: number, title: string): Promise<void> {
   const db = await getDb();
   await db.execute(`UPDATE tasks SET title = $1 WHERE id = $2`, [title, id]);
   emitTasksChanged();
+}
+
+/**
+ * A task's one-line summary (#262), or null to clear it: `tasks.summary` and
+ * nothing else. Written by the session (src/ui/requestQueue.ts, from the MCP
+ * inbox) and by the user (the rename field); the last write wins. The caller
+ * cleans it (`cleanSummary` in ui/taskRename.ts, or the inbox's checks).
+ * Resolves false when there is no such task.
+ */
+export async function setTaskSummary(id: number, summary: string | null): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.execute(`UPDATE tasks SET summary = $1 WHERE id = $2`, [summary, id]);
+  emitTasksChanged();
+  return res.rowsAffected > 0;
 }
 
 /**

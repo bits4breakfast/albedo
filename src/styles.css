@@ -856,6 +856,33 @@ button {
   white-space: nowrap;
 }
 
+/*
+ * What the task is about (#262), after its name. It has no claim on the bar:
+ * a zero basis, so it takes only the room left once the title, the branch
+ * and the PR have theirs (shared with the folder, the other leftover-only
+ * item), and never more than its own text. So it goes first when the bar is
+ * short, and the title is never cut for it. One line, cut to fit.
+ *
+ * Its -8px right margin takes back the bar's gap after it, so even at zero
+ * width it adds nothing to the row: the ⋯ after it is a 24px button with
+ * room of its own around the glyph.
+ *
+ * --muted, never opacity: the branch's tier, a step below the title's. On the
+ * task bar's --panel, light | dark: 7.15 | 7.74; --panel-raised 5.89 | 6.50
+ * (taskSummaryContrast.test.ts).
+ */
+.main-ident-summary {
+  flex: 1 1 0;
+  max-width: max-content;
+  min-width: 0;
+  margin-right: -8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .main-ident-branch {
   flex: 0 1 auto;
   min-width: 0;

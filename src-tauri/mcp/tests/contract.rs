@@ -30,6 +30,10 @@ fn lines() -> String {
             "notify_blocked",
             json!({"message": "I need the staging database password to go on."}),
         ),
+        (
+            "set_task_summary",
+            json!({"summary": "Import pictures from a URL"}),
+        ),
     ];
     let mut out = String::new();
     for (i, (tool, args)) in calls.iter().enumerate() {

@@ -71,6 +71,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   createdAt: 1,
   lastActivityAt: 1,
   seenAt: null,
+  summary: null,
   ...over,
 });
 

@@ -158,6 +158,7 @@ export default function App() {
     archive,
     setDone,
     rename,
+    setSummary,
     markSeen,
   } = useTasks();
 
@@ -331,6 +332,11 @@ export default function App() {
     (task: Task, title: string) => void renameTaskAndSession(task, title, rename),
     [rename],
   );
+  /** The summary from the rename field (#262): Albedo's only; nothing goes to the session. */
+  const saveSummary = useCallback(
+    (task: Task, summary: string | null) => void setSummary(task.id, summary),
+    [setSummary],
+  );
   /**
    * ⇧⌘R's confirmation shows only while it still has something to confirm:
    * on the task it was asked on, still selected, live and with Remote Control
@@ -378,6 +384,7 @@ export default function App() {
       createdAt: 0,
       lastActivityAt: null,
       seenAt: null,
+      summary: null,
     };
   }, [selected, activeProject]);
   /** Whose main checkout the shell drawer is in: the project the list shows. */
@@ -1296,6 +1303,7 @@ export default function App() {
             onFollowUp={(task) => void openFollowUp(task)}
             onSetDone={(task, done) => void setDone(task.id, done)}
             onRename={saveTitle}
+            onSummary={saveSummary}
             onRenameClosed={() => {
               if (selected) focusLiveTerminal(selected.id);
             }}
@@ -1350,23 +1358,44 @@ export default function App() {
                   {renaming?.id === selected.id ? (
                     <TaskTitleEdit
                       className="main-ident-title-edit"
+                      summaryClassName="main-ident-summary-edit"
                       title={selected.title}
+                      summary={selected.summary}
                       returnFocus={renaming.by === 'key' ? 'previous' : 'fallback'}
                       fallbackFocus={() => focusLiveTerminal(selected.id)}
                       onSave={(title) => {
                         setRenaming(null);
                         saveTitle(selected, title);
                       }}
+                      onSaveSummary={(summary) => {
+                        setRenaming(null);
+                        saveSummary(selected, summary);
+                      }}
                       onDone={() => setRenaming(null)}
                     />
                   ) : (
-                    <span
-                      className="main-ident-title"
-                      title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
-                      onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
-                    >
-                      {selected.title}
-                    </span>
+                    <>
+                      <span
+                        className="main-ident-title"
+                        title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
+                        onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
+                      >
+                        {selected.title}
+                      </span>
+                      {/* What the task is about (#262), after its name: it
+                          takes only room nothing else wants, so it goes
+                          first when the bar is short and never cuts the
+                          title. The tooltip has it whole. */}
+                      {selected.summary && (
+                        <span
+                          className="main-ident-summary"
+                          title={`${wrapForTooltip(selected.summary)}\nDouble-click to edit (${RENAME_KEYS})`}
+                          onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
+                        >
+                          {selected.summary}
+                        </span>
+                      )}
+                    </>
                   )}
                   {/* What acts on the task, right after its name; the ⋯ at
                       the bar's end keeps what acts on the panes. */}

@@ -83,6 +83,11 @@ export interface TaskListProps {
    */
   onRename?: (task: Task, title: string) => void;
   /**
+   * Saves a new summary (#262; already cleaned, and different; null clears).
+   * Given, the row's rename field has a summary field under the name.
+   */
+  onSummary?: (task: Task, summary: string | null) => void;
+  /**
    * Where focus goes once the row's name field closes on its own key or
    * leaving the window (the selected task's terminal, in App): the menu it
    * was started from is gone.
@@ -179,6 +184,7 @@ export default function TaskList({
   onFollowUp,
   onSetDone,
   onRename,
+  onSummary,
   onRenameClosed,
   contextBySession,
   signals,
@@ -481,7 +487,12 @@ export default function TaskList({
                      — including the row's own context menu. */
                   /* The row's details on hover: the context reading the
                      hairline draws, in words, now that no panel shows it. */
-                  title={`${wrapForTooltip(task.title)}\n${task.kind === 'chat' ? CHAT_ROW_TITLE : task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
+                  /* What the task is about (#262), on hover only: the line
+                     after the title. Rows keep their one-line layout. */
+                  title={`${wrapForTooltip(task.title)}${task.summary ? `\n${wrapForTooltip(task.summary)}` : ''}\n${task.kind === 'chat' ? CHAT_ROW_TITLE : task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
+                  /* The same without a pointer: a hover-only text is also
+                     the row's accessible description. */
+                  aria-describedby={task.summary ? `task-summary-${task.id}` : undefined}
                 >
                   {/* The group's glyph, not the bare status: a row lifted into
                       Ready to Review or Done by something other than its
@@ -502,12 +513,18 @@ export default function TaskList({
                   {renamingId === task.id && onRename ? (
                     <TaskTitleEdit
                       className="task-row-title-edit"
+                      summaryClassName="task-row-summary-edit"
                       title={task.title}
+                      summary={onSummary ? task.summary : undefined}
                       returnFocus="fallback"
                       fallbackFocus={onRenameClosed}
                       onSave={(title) => {
                         setRenamingId(null);
                         onRename(task, title);
+                      }}
+                      onSaveSummary={(summary) => {
+                        setRenamingId(null);
+                        onSummary?.(task, summary);
                       }}
                       onDone={() => setRenamingId(null)}
                     />
@@ -635,6 +652,15 @@ export default function TaskList({
                 </div>
               );
             })}
+            {/* Outside the options, so it describes a row without being part of
+                its name; hidden, since a description is read from it anyway. */}
+            {group.tasks.map((task) =>
+              task.summary ? (
+                <span key={`summary-${task.id}`} id={`task-summary-${task.id}`} hidden>
+                  {task.summary}
+                </span>
+              ) : null,
+            )}
           </div>
         ))}
       </div>

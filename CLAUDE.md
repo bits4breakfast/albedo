@@ -63,15 +63,17 @@ also gets Albedo's own MCP server through `--mcp-config` (additive, never
 binary bundled beside the app (`src-tauri/mcp`, a sidecar; no Node, no
 network, no port), and Albedo sets `ALBEDO_TASK_ID` in its environment: that
 id, set at spawn, is the caller's whole identity, and nothing in a request
-can name another task. It offers three tools and nothing else --
-`create_reminder`, `request_session`, `notify_blocked` -- for things only the
-agent starts; whatever the user starts goes through Albedo directly. A call
-that passes its checks is appended as one JSON line to
-`~/.albedo/inbox/task-<id>.jsonl`, and the app checks every line again (known
-tool, size caps, the task id in the line equal to the file's). A session
-request is never acted on without the user: it waits in Requests until they
-approve it, and approving only opens New Task filled in from it. Nothing
-flows back to the session. `src/capture/inbox.ts` is the only file in the app
+can name another task. It offers four tools and nothing else --
+`create_reminder`, `request_session`, `notify_blocked`, `set_task_summary` --
+for things only the agent starts; whatever the user starts goes through Albedo
+directly. The fourth, `set_task_summary`, is by the owner's decision (issue
+#262): its one line is written to `tasks.summary` and shown beside the task's
+title, never acted on. A call that passes its checks is appended as one JSON
+line to `~/.albedo/inbox/task-<id>.jsonl`, and the app checks every line again
+(known tool, size caps, the task id in the line equal to the file's). A
+session request is never acted on without the user: it waits in Requests
+until they approve it, and approving only opens New Task filled in from it.
+Nothing flows back to the session. `src/capture/inbox.ts` is the only file in the app
 that knows the line's shape.
 
 A sixth, by the owner's decision (2026-11-02, issue #186): for the Review

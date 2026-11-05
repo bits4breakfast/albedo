@@ -48,6 +48,7 @@ import {
   renameTask,
   touchTaskActivity,
   updateTask,
+  setTaskSummary,
 } from './index';
 import { listPastSessions, listSessionCwds, PROMPT_CHARS } from './sessions';
 import { deriveStatus } from '../capture/status';
@@ -92,6 +93,7 @@ describe('the harness itself', () => {
     expect(taskCols).toContain('owns_worktree');
     expect(taskCols).toContain('kind');
     expect(taskCols).toContain('seen_at');
+    expect(taskCols).toContain('summary');
   });
 
   it('rewrites $n placeholders positionally, including reuse and reordering', () => {
@@ -1480,6 +1482,56 @@ describe('tasks.seen_at (v9)', () => {
     // Whole seconds: strftime('%s') has no milliseconds.
     expect(row.seen_at).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
     expect(row.seen_at).toBeLessThanOrEqual(Date.now());
+    raw.close();
+  });
+});
+
+describe('tasks.summary (v11, #262)', () => {
+  const work = {
+    title: 'ABC-1234', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'abc-1234',
+    worktreePath: '/wt/abc-1234', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
+  };
+
+  it('starts null on a new task', async () => {
+    const t = await createTask(work);
+    expect(t.summary).toBeNull();
+    expect((await getTask(t.id))?.summary).toBeNull();
+  });
+
+  it('is written, replaced (last write wins) and cleared by setTaskSummary, and nothing else changes', async () => {
+    const t = await createTask(work);
+    const other = await createTask({ ...work, title: 'ABC-1235', branch: 'abc-1235', worktreePath: '/wt/abc-1235' });
+    expect(await setTaskSummary(t.id, 'Import pictures from a URL')).toBe(true);
+    expect((await getTask(t.id))?.summary).toBe('Import pictures from a URL');
+    expect((await listTasks()).find((x) => x.id === t.id)?.summary).toBe('Import pictures from a URL');
+    await setTaskSummary(t.id, 'Import pictures from a URL or a file');
+    expect((await getTask(t.id))?.summary).toBe('Import pictures from a URL or a file');
+    expect((await getTask(t.id))?.title).toBe('ABC-1234');
+    expect((await getTask(other.id))?.summary).toBeNull();
+    await setTaskSummary(t.id, null);
+    expect((await getTask(t.id))?.summary).toBeNull();
+  });
+
+  it('says false for a task that is not there', async () => {
+    expect(await setTaskSummary(9_999, 'Nobody')).toBe(false);
+  });
+
+  it('leaves every existing row without one', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v11 = all.findIndex((m) => m.name.endsWith('0011_task_summary.sql'));
+    expect(v11).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v11)) raw.exec(m.sql);
+    raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    raw.exec((all[v11] as { sql: string }).sql);
+    const row = raw.prepare(`SELECT summary FROM tasks WHERE title = 'old'`).get() as { summary: string | null };
+    expect(row.summary).toBeNull();
     raw.close();
   });
 });

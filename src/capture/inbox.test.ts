@@ -22,7 +22,13 @@ function line(over: Record<string, unknown> = {}, args: Record<string, unknown> 
 describe('parseInboxLine: the server\'s own lines', () => {
   it('reads every line the server writes, field for field', () => {
     const reqs = parseInboxLines(fixture, 12);
-    expect(reqs.map((r) => r.tool)).toEqual(['create_reminder', 'request_session', 'request_session', 'notify_blocked']);
+    expect(reqs.map((r) => r.tool)).toEqual([
+      'create_reminder',
+      'request_session',
+      'request_session',
+      'notify_blocked',
+      'set_task_summary',
+    ]);
     expect(reqs[0]).toEqual({
       id: 'fixture-1',
       taskId: 12,
@@ -36,12 +42,19 @@ describe('parseInboxLine: the server\'s own lines', () => {
     expect(reqs[1]).toMatchObject({ project: 'albedo', branch: 'fix/flaky-export' });
     expect(reqs[2]).toMatchObject({ title: 'Short one', project: null, branch: null });
     expect(reqs[3]).toMatchObject({ message: 'I need the staging database password to go on.' });
+    expect(reqs[4]).toEqual({
+      id: 'fixture-5',
+      taskId: 12,
+      at: NOW,
+      tool: 'set_task_summary',
+      summary: 'Import pictures from a URL',
+    });
   });
 
   it('refuses them all from another task\'s file: the file name is the identity', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(parseInboxLines(fixture, 13)).toEqual([]);
-    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(5);
     warn.mockRestore();
   });
 
@@ -106,6 +119,28 @@ describe('parseInboxLine: what is dropped', () => {
     expect(parseInboxLine(reminder('2026-11-03T09:00:00+01:00', NOW), 12)).not.toBeNull();
     expect(parseInboxLine(reminder('2026-11-03T09:00:00+01:00', NOW + 3_600_000), 12)).toBeNull();
     expect(parseInboxLine(reminder('tomorrow', NOW), 12)).toBeNull();
+  });
+
+  it('a task summary: one line within its cap, and nothing but the summary (#262)', () => {
+    const summary = (args: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+      parseInboxLine(line({ tool: 'set_task_summary', ...over }, args), 12);
+    expect(summary({ summary: 'Import pictures from a URL' })).toMatchObject({
+      tool: 'set_task_summary',
+      taskId: 12,
+      summary: 'Import pictures from a URL',
+    });
+    expect(summary({ summary: 'é'.repeat(CAPS.taskSummary) })).not.toBeNull();
+    expect(summary({ summary: 'a'.repeat(CAPS.taskSummary + 1) })).toBeNull();
+    expect(summary({ summary: 'Import pictures\nfrom a URL' })).toBeNull();
+    expect(summary({ summary: 'tab\tinside' })).toBeNull();
+    expect(summary({ summary: 'esc \u001b[31m' })).toBeNull();
+    expect(summary({ summary: ' padded' })).toBeNull();
+    expect(summary({ summary: '' })).toBeNull();
+    expect(summary({ summary: 3 })).toBeNull();
+    expect(summary({})).toBeNull();
+    // It can name no task but its own: no extra argument, and the file decides.
+    expect(summary({ summary: 's', task: 4 })).toBeNull();
+    expect(parseInboxLine(line({ tool: 'set_task_summary' }, { summary: 's' }), 13)).toBeNull();
   });
 
   it('a line as long as the server\'s cap or longer', () => {
