@@ -41,7 +41,7 @@ afterEach(cleanup);
 
 const base = {
   projectId: 1, repoPath: '/r/app', createdBranch: false, kind: 'work', baseBranch: 'main',
-  ownsWorktree: true, createdAt: 1, lastActivityAt: 1, seenAt: null,
+  ownsWorktree: true, createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null,
 } as const;
 const idle: Task = { ...base, id: 1, status: 'idle', title: 'Fix login', sessionId: 's1', branch: 'fix-login', worktreePath: '/w/fix-login' };
 const running: Task = { ...base, id: 2, status: 'running', title: 'Add search', sessionId: 's2', branch: 'add-search', worktreePath: '/w/add-search' };

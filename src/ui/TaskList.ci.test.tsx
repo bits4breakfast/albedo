@@ -42,7 +42,7 @@ const pr = (bucket: 'pending' | 'SUCCESS' | 'FAILURE'): PrStatus =>
 const row = (id: number, title: string): Task =>
   ({
     id, title, projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false, baseBranch: 'main',
-    ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1, branch: `b${id}`,
+    ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1, summary: null, branch: `b${id}`,
     worktreePath: `/w/${id}`,
   }) as Task;
 const tasks = [row(1, 'Fix login'), row(2, 'Write docs')];

@@ -10,9 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('./attention', () => ({ noteAgentBlocked: vi.fn() }));
 vi.mock('../reminders', () => ({ createReminder: vi.fn(), listPendingReminders: vi.fn() }));
+vi.mock('../db', async () => ({ ...(await vi.importActual('../db')), setTaskSummary: vi.fn() }));
 
 const attention = await import('./attention');
 const reminders = await import('../reminders');
+const db = await import('../db');
 const { KEYS } = await import('./persisted');
 const q = await import('./requestQueue');
 type Req = import('./requestQueue').QueuedRequest;
@@ -151,6 +153,45 @@ describe('the store', () => {
       q.receiveRequest(reminder('r'), known, NOW);
       await vi.waitFor(() => expect(q.pendingRequests().map((x) => x.id)).toEqual(['r']));
       expect(reminders.createReminder).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a task summary (#262)', () => {
+    const summary = (id: string, text: string, taskId = 3): import('./requestQueue').TaskSummaryRequest => ({
+      id,
+      taskId,
+      at: NOW,
+      tool: 'set_task_summary',
+      summary: text,
+    });
+    beforeEach(() => {
+      vi.mocked(db.setTaskSummary).mockResolvedValue(true);
+    });
+
+    it('is written to the asking task at once, and never queued or cued', async () => {
+      q.receiveRequest(summary('s1', 'Import pictures from a URL'), known, NOW);
+      await vi.waitFor(() => expect(db.setTaskSummary).toHaveBeenCalledWith(3, 'Import pictures from a URL'));
+      expect(q.pendingRequests()).toEqual([]);
+      expect(attention.noteAgentBlocked).not.toHaveBeenCalled();
+    });
+
+    it('the last one wins, and a line handed on twice is written once', async () => {
+      q.receiveRequest(summary('s1', 'Import pictures'), known, NOW);
+      q.receiveRequest(summary('s1', 'Import pictures'), known, NOW);
+      q.receiveRequest(summary('s2', 'Import pictures from a URL'), known, NOW);
+      await vi.waitFor(() => expect(db.setTaskSummary).toHaveBeenCalledTimes(2));
+      expect(vi.mocked(db.setTaskSummary).mock.calls.at(-1)).toEqual([3, 'Import pictures from a URL']);
+    });
+
+    it('is not written for a task Albedo does not know, and a failed write is only logged', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      q.receiveRequest(summary('s1', 'x'), { title: undefined, archived: false }, NOW);
+      expect(db.setTaskSummary).not.toHaveBeenCalled();
+      vi.mocked(db.setTaskSummary).mockRejectedValue(new Error('database is locked'));
+      q.receiveRequest(summary('s2', 'y'), known, NOW);
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledWith('[requests] summary from task 3 not set:', expect.any(Error)));
+      expect(q.pendingRequests()).toEqual([]);
+      warn.mockRestore();
     });
   });
 

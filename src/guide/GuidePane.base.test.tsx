@@ -41,7 +41,7 @@ const { resetGuideStoreForTests } = await import('./store');
 const task = {
   id: 9, title: 't', projectId: 1, repoPath: '/r', baseBranch: 'feature-a', branch: 'feature-b', worktreePath: '/wt',
   sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work', status: 'idle', createdAt: 0,
-  lastActivityAt: null, seenAt: null,
+  lastActivityAt: null, seenAt: null, summary: null,
 } as unknown as Task;
 
 beforeEach(() => {

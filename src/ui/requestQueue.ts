@@ -15,6 +15,9 @@
  *     and the message is kept here until dismissed: opening the task clears
  *     its mark, but the message is only here, so it stays until read. A newer
  *     one from the same task replaces it.
+ *   - `set_task_summary` (#262): written to the asking task's `tasks.summary`
+ *     at once by {@link handleSetTaskSummary}; never queued, never shown here.
+ *     The last write wins, the user's included (the rename field).
  *
  * Kept across a restart in localStorage, as the composer's drafts are: no
  * database table, since the requests are the user's to clear, not history.
@@ -25,11 +28,14 @@
 
 import { useSyncExternalStore } from 'react';
 import { decodeStoredRequest, encodeRequest, type InboxRequest } from '../capture/inbox';
+import { setTaskSummary } from '../db';
 import { createReminder, listPendingReminders } from '../reminders';
 import { noteAgentBlocked } from './attention';
 import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
 
-export type QueuedRequest = InboxRequest;
+/** What can wait here: everything but a summary, which is written at once. */
+export type QueuedRequest = Exclude<InboxRequest, { tool: 'set_task_summary' }>;
+export type TaskSummaryRequest = Extract<InboxRequest, { tool: 'set_task_summary' }>;
 export type SessionRequest = Extract<InboxRequest, { tool: 'request_session' }>;
 export type ReminderRequest = Extract<InboxRequest, { tool: 'create_reminder' }>;
 export type BlockedNotice = Extract<InboxRequest, { tool: 'notify_blocked' }>;
@@ -60,7 +66,9 @@ export const queueCodec: Codec<QueueState> = {
     if (typeof o !== 'object' || o === null) return null;
     const { items, handled } = o as { items?: unknown; handled?: unknown };
     return {
-      items: Array.isArray(items) ? items.map(decodeStoredRequest).filter((r): r is QueuedRequest => r !== null) : [],
+      items: Array.isArray(items)
+        ? items.map(decodeStoredRequest).filter((r): r is QueuedRequest => r !== null && r.tool !== 'set_task_summary')
+        : [],
       handled: Array.isArray(handled) ? handled.filter((h): h is string => typeof h === 'string') : [],
     };
   },
@@ -162,6 +170,29 @@ export async function handleCreateReminder(req: ReminderRequest): Promise<boolea
 }
 
 // ---------------------------------------------------------------------------
+// set_task_summary (#262)
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a session's summary to the task that asked: `tasks.summary`, nothing
+ * else. Already checked twice (the server, then inbox.ts): one line, trimmed,
+ * at most 120 characters. Resolves false, logged, when it was not written.
+ */
+export async function handleSetTaskSummary(
+  req: TaskSummaryRequest,
+  write: (taskId: number, summary: string) => Promise<boolean> = setTaskSummary,
+): Promise<boolean> {
+  try {
+    const ok = await write(req.taskId, req.summary);
+    if (!ok) console.warn(`[requests] summary from task ${req.taskId} not set: no such task`);
+    return ok;
+  } catch (e) {
+    console.warn(`[requests] summary from task ${req.taskId} not set:`, e);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
@@ -183,10 +214,27 @@ function commit(next: QueueState): void {
 /**
  * A request from the inbox. `task` is what the app knows of the requesting
  * task right now. Cues the user for a fresh `notify_blocked`; never starts
- * anything.
+ * anything. A summary is written, not queued.
  */
-export function receiveRequest(req: QueuedRequest, task: TaskInfo, now = Date.now()): void {
+export function receiveRequest(
+  req: InboxRequest,
+  task: TaskInfo,
+  now = Date.now(),
+  writeSummary?: (taskId: number, summary: string) => Promise<boolean>,
+): void {
   const prev = current();
+  if (req.tool === 'set_task_summary') {
+    // Not queued, so not aged out either: lines are read in the order they
+    // were written, and the latest is the one that should stand.
+    if (prev.handled.includes(req.id)) return;
+    if (task.title === undefined) {
+      console.warn(`[requests] summary from task ${req.taskId} not set: unknown-task`);
+      return;
+    }
+    commit({ ...prev, handled: remember(prev.handled, [req.id]) });
+    void handleSetTaskSummary(req, writeSummary);
+    return;
+  }
   const a = admit(prev, req, task, now);
   if (!a.add && a.why !== 'seen') console.warn(`[requests] ${req.tool} from task ${req.taskId} not queued: ${a.why}`);
   if (a.add && req.tool === 'create_reminder') {

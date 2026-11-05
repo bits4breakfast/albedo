@@ -378,6 +378,7 @@ export default function App() {
       createdAt: 0,
       lastActivityAt: null,
       seenAt: null,
+      summary: null,
     };
   }, [selected, activeProject]);
   /** Whose main checkout the shell drawer is in: the project the list shows. */

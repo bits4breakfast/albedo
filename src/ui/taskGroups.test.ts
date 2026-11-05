@@ -22,7 +22,7 @@ function task(over: Partial<Task> = {}): Task {
   return {
     id: 1, title: 't', projectId: 1, repoPath: '/r', baseBranch: 'main', branch: 'b', worktreePath: '/wt/b',
     sessionId: 's', ownsWorktree: true, createdBranch: true, kind: 'work', status: 'idle',
-    createdAt: 0, lastActivityAt: 100, seenAt: 1_000, ...over,
+    createdAt: 0, lastActivityAt: 100, seenAt: 1_000, summary: null, ...over,
   };
 }
 

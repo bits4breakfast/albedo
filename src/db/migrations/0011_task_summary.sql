@@ -1,0 +1,14 @@
+-- v11: a one-line summary of what the task is about, shown under its title.
+--
+-- Decided by the owner (schema.sql and migrations are a shared contract;
+-- issue #262). Tasks are often named after a ticket key (`ABC-1234`), and the
+-- key alone does not say which task is which a few days later.
+--
+-- Two writers, last write wins: the task's own session, through Albedo's MCP
+-- server (`set_task_summary`, checked again in src/capture/inbox.ts), and the
+-- user, in the task's rename field. One line, at most 120 characters, no
+-- control characters; both writers clean it before it gets here.
+--
+-- NULLABLE, no backfill: NULL is "no summary", and the row looks as it did
+-- before v11.
+ALTER TABLE tasks ADD COLUMN summary TEXT;

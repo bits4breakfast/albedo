@@ -131,11 +131,12 @@ export function isResumePlan(plan: SpawnPlan): boolean {
 export const MCP_SERVER_NAME = 'albedo';
 
 /**
- * Its three tools, allowed without a permission prompt. Each only hands
- * Albedo a request -- a new session still waits for the user's Approve -- so
- * a prompt in the terminal first would ask the user twice for one thing.
+ * Its four tools, allowed without a permission prompt. Each only hands
+ * Albedo a request -- a new session still waits for the user's Approve, and a
+ * summary (#262) is one line under the task's title -- so a prompt in the
+ * terminal first would ask the user twice for one thing.
  */
-export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked'].map(
+export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked', 'set_task_summary'].map(
   (t) => `mcp__${MCP_SERVER_NAME}__${t}`,
 );
 

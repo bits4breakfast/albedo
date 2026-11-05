@@ -152,6 +152,7 @@ function task(id: number, projectId: number, title: string): Task {
     createdAt: 0,
     lastActivityAt: null,
     seenAt: null,
+    summary: null,
   };
 }
 

@@ -132,9 +132,16 @@ export interface Task {
    * task that existed before v9 counts as seen at the moment it applied.
    */
   seenAt: number | null;
+  /**
+   * One line on what the task is about, shown under its title (migration
+   * v11, #262). Set by the task's own session through Albedo's MCP server
+   * (`set_task_summary`) or by the user in the rename field; the last write
+   * wins. One line, trimmed, at most 120 characters. Null: none.
+   */
+  summary: string | null;
 }
 
-export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt'>;
+export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt' | 'summary'>;
 
 // ---------------------------------------------------------------------------
 // Messages

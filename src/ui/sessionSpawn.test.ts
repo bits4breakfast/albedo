@@ -149,11 +149,12 @@ describe('Albedo MCP server (#157)', () => {
     expect(withMcpConfig([], 7, server).slice(4)).toEqual(['--']);
   });
 
-  it('allows exactly the three tools', () => {
+  it('allows exactly the four tools', () => {
     expect(MCP_TOOLS).toEqual([
       'mcp__albedo__create_reminder',
       'mcp__albedo__request_session',
       'mcp__albedo__notify_blocked',
+      'mcp__albedo__set_task_summary',
     ]);
   });
 

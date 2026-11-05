@@ -112,7 +112,7 @@ describe('the task row: Rename Task…', () => {
   const task: Task = {
     id: 7, title: 'Fix login', projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: 'fix-login',
     worktreePath: '/w/fix-login', sessionId: 's7', ownsWorktree: true, createdBranch: true, kind: 'work',
-    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null,
+    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null,
   };
 
   it('is in the row menu, edits on the row without selecting it, and saves through onRename', () => {
@@ -259,7 +259,7 @@ describe('TaskTitleEdit: where focus goes after', () => {
     const task: Task = {
       id: 8, title: 'Fix login', projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: 'fix-login',
       worktreePath: '/w/fix-login', sessionId: 's8', ownsWorktree: true, createdBranch: true, kind: 'work',
-      status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null,
+      status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null,
     };
     const { container } = render(
       <TaskList tasks={[task]} selectedId={null} onSelect={() => {}} onNew={() => {}} onRename={() => {}} onRenameClosed={closed} />,
