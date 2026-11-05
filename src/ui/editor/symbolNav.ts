@@ -265,8 +265,7 @@ async function implementations(ctx: NavContext, line: string, col: number, numbe
   const note = (listed: boolean) => `${target.fqcn} · ${implementationNote(engines, kind, listed)}`;
 
   if (result.count === 0) return { kind: 'none', message: empty, note: note(false) };
-  const only = result.count === 1 ? result.groups[0]!.matches[0]! : null;
-  if (only) return { kind: 'open', path: only.path, line: only.line };
+  // One answer opens straight away: see `openLoneRow`.
   return { kind: 'list', title, result, note: note(true), textSearch: engines === 'grep' };
 }
 
@@ -282,8 +281,31 @@ function declarationsAsResult(result: FindResult): FindResult {
   return { ...result, groups };
 }
 
+/**
+ * ⌘B (and ⌘-click) and ⌥⌘B ask to be taken somewhere: a list holding one row
+ * is that place, so it opens straight away, as PhpStorm does (#260). That
+ * covers every path, not only the ones that count their answer: a single
+ * usage of the declaration under the cursor, from PHPantom or git grep; two
+ * PHPantom locations on one line, folded into one row; one text match.
+ * Except when that row is where the cursor already is: opening it would do
+ * nothing, so the list stays and the click still answers.
+ * ⌥F7 asked for a list, and always gets one.
+ */
+function openLoneRow(out: NavOutcome, path: string, number: number): NavOutcome {
+  if (out.kind !== 'list' || out.result.count !== 1) return out;
+  const only = out.result.groups[0]?.matches[0];
+  if (!only || (only.path === path && only.line === number)) return out;
+  return { kind: 'open', path: only.path, line: only.line };
+}
+
 /** Where ⌘B, ⌥F7 or ⌥⌘B at the cursor leads. */
 export async function navigate(ctx: NavContext, action: NavAction): Promise<NavOutcome> {
+  const { number } = lineAround(ctx.text, ctx.offset);
+  const out = await answer(ctx, action);
+  return action === 'usages' ? out : openLoneRow(out, ctx.path, number);
+}
+
+async function answer(ctx: NavContext, action: NavAction): Promise<NavOutcome> {
   const { line, col, number } = lineAround(ctx.text, ctx.offset);
   if (action === 'implementations') return implementations(ctx, line, col, number);
 
