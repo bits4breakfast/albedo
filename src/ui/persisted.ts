@@ -3,8 +3,9 @@
  * write them.
  *
  * Only per-machine view preferences live here -- widths, which tab, which
- * notice was waved away -- the composer's unsent drafts and held messages, and
- * the Review Guide's cache and Reviewed marks. Anything that has to survive
+ * notice was waved away -- the composer's unsent drafts and held messages,
+ * comments on a waiting plan, and the Review Guide's cache and Reviewed
+ * marks. Anything that has to survive
  * a reinstall or be reprocessed belongs in SQLite. Every key is listed below, so this file is
  * the whole answer to "what does the app remember outside the database".
  *
@@ -53,6 +54,8 @@ export const KEYS = {
   composerPx: 'albedo.composerPx',
   /** Unsent composer drafts, one per task (transcript/drafts.ts owns the shape). */
   composerDrafts: 'albedo.composerDrafts',
+  /** Comments on a waiting plan, per prompt, not sent yet (transcript/planComments.ts owns the shape, #272). */
+  planComments: 'albedo.planComments',
   /** Messages held back while offline, per task (transcript/outbox.ts owns the shape). */
   composerOutbox: 'albedo.composerOutbox',
   /** What sessions asked for through Albedo's MCP server (ui/requestQueue.ts owns the shape). */

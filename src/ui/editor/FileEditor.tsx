@@ -26,7 +26,7 @@ import { copyText } from '../../lib/clipboard';
 import OverflowMenu, { type OverflowItem } from '../OverflowMenu';
 import { editorKeyOf, isImplementationKey } from './editorKeys';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
-import { useOpenFile } from './openFile';
+import { isReadOnlyRequest, useOpenFile } from './openFile';
 import { formatBytes, imageTypeForPath } from './preview';
 import { looksBinary } from '../../git/fileDiff';
 import FileDiffView from './FileDiffView';
@@ -467,7 +467,7 @@ export default function FileEditor({
   task,
   request,
   onClose,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
   active = true,
   onDirtyChange,
   onStep,
@@ -477,6 +477,9 @@ export default function FileEditor({
   onModeChange,
   controlsSlot = null,
 }: FileEditorProps) {
+  // A browsed main checkout, or one request asked to open read-only (the
+  // waiting card's plan, #272; openFile.tsx).
+  const readOnly = readOnlyProp || isReadOnlyRequest(request);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** Content as it was last known to be on disk. The overwrite guard's baseline. */
@@ -1362,13 +1365,17 @@ export default function FileEditor({
         // A lock alone in a narrow column; the words stay for a screen reader.
         <span
           className="ed-badge ed-readonly"
-          title="Read-only, main checkout: opened with no task selected, this is the project's own folder, so it is shown and never saved"
+          title={
+            readOnlyProp
+              ? "Read-only, main checkout: opened with no task selected, this is the project's own folder, so it is shown and never saved"
+              : 'Read-only: opened from the waiting card, where it is under review, so it is shown and never saved'
+          }
         >
           <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
             <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
           </svg>
-          <span className="ed-readonly-text">Read-Only · Main Checkout</span>
+          <span className="ed-readonly-text">{readOnlyProp ? 'Read-Only · Main Checkout' : 'Read-Only'}</span>
         </span>
       ) : dirty ? (
         // The one main action, and only while there is something to save.

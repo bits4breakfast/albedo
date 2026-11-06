@@ -42,6 +42,27 @@ export interface OpenFileOptions {
    * `PathLink` alone, never by anything that opens a file on its own.
    */
   activated?: boolean;
+  /**
+   * Open this request read-only: no edits, no save, no Diff, as a browsed
+   * main checkout is. The waiting card's plan (#272) opens this way: it is
+   * Claude's document under review, not one of the task's files.
+   */
+  readOnly?: boolean;
+}
+
+/**
+ * Requests to open read-only, by object identity -- the way a click is carried
+ * (outsideFile.ts). A tab restored later is a new object, and opens as usual.
+ */
+const readOnlyRequests = new WeakSet<OpenFileRequest>();
+
+/** This exact request object opens read-only. App only. */
+export function markReadOnly(request: OpenFileRequest): void {
+  readOnlyRequests.add(request);
+}
+
+export function isReadOnlyRequest(request: OpenFileRequest | null): boolean {
+  return request !== null && readOnlyRequests.has(request);
 }
 
 export type OpenFile = (req: OpenFileRequest, options?: OpenFileOptions) => void;
