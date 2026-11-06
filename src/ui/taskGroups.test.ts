@@ -5,9 +5,11 @@ import type { PrState, PrStatus } from '../gh/prStatus';
 import {
   canMarkDone,
   canMarkNotDone,
+  checksFailing,
   compareInGroup,
-  GROUP_GLYPH,
+  GROUP_HUE,
   GROUP_ORDER,
+  GROUP_PIE,
   GROUP_TITLE,
   groupOf,
   hasWorkToReview,
@@ -26,10 +28,10 @@ function task(over: Partial<Task> = {}): Task {
   };
 }
 
-function pr(state: PrState, mergedAt: string | null = null): PrStatus {
+function pr(state: PrState, mergedAt: string | null = null, over: Partial<PrStatus> = {}): PrStatus {
   return {
     number: 7, url: 'u', title: 'p', state, headRefName: 'b', baseRefName: 'main', headSha: '', mergedAt, review: null,
-    checks: { kind: 'none' }, lines: [],
+    checks: { kind: 'none' }, lines: [], ...over,
   };
 }
 
@@ -194,14 +196,15 @@ describe('Mark as Done / Mark as Not Done', () => {
   });
 });
 
-describe('In Review (#219)', () => {
+describe('My Review (#219, #278)', () => {
   const reviewing = (over: Partial<GroupFacts> = {}) => facts({ reviewing: true, ...over });
 
-  it('a task you have started reviewing, at rest', () => {
-    expect(groupOf(task(), reviewing())).toBe('reviewing');
+  it('a task you have started reviewing, at rest, with no PR up for review', () => {
+    expect(groupOf(task(), reviewing())).toBe('mine');
+    expect(groupOf(task(), reviewing({ pr: pr('draft') }))).toBe('mine');
+    expect(groupOf(task(), reviewing({ pr: pr('closed') }))).toBe('mine');
     expect(groupOf(task(), facts())).toBe('quiet');
-    expect(GROUP_TITLE.reviewing).toBe('In Review');
-    expect(GROUP_GLYPH.reviewing).toBe('reviewing');
+    expect(GROUP_TITLE.mine).toBe('My Review');
   });
 
   it('gives way to what matters more: blocked, running, done, merged, and a new finish with work', () => {
@@ -210,13 +213,123 @@ describe('In Review (#219)', () => {
     expect(groupOf(task({ status: 'done' }), reviewing())).toBe('done');
     expect(groupOf(task(), reviewing({ pr: pr('merged') }))).toBe('done');
     expect(groupOf(task({ seenAt: 1_000 }), reviewing({ finishedAt: 2_000, work: true }))).toBe('review');
-    // Once that finish has been seen, back to In Review.
-    expect(groupOf(task({ seenAt: 3_000 }), reviewing({ finishedAt: 2_000, work: true }))).toBe('reviewing');
+    // Once that finish has been seen, back to My Review.
+    expect(groupOf(task({ seenAt: 3_000 }), reviewing({ finishedAt: 2_000, work: true }))).toBe('mine');
   });
 
-  it('never a chat, and sits between Ready to Review and Idle', () => {
+  it('gives way to the PR once it is up for review, whatever the guide marks say', () => {
+    expect(groupOf(task(), reviewing({ pr: pr('open') }))).toBe('awaiting');
+    expect(groupOf(task(), reviewing({ pr: pr('open', null, { review: 'approved' }) }))).toBe('approved');
+  });
+
+  it('never a chat', () => {
     expect(groupOf(task({ kind: 'chat' }), reviewing())).toBe('quiet');
-    expect(GROUP_ORDER.indexOf('reviewing')).toBe(GROUP_ORDER.indexOf('review') + 1);
-    expect(GROUP_ORDER.indexOf('quiet')).toBe(GROUP_ORDER.indexOf('reviewing') + 1);
+  });
+});
+
+describe('the team\'s review (#278)', () => {
+  const open = (over: Partial<PrStatus> = {}) => facts({ pr: pr('open', null, over) });
+  const threads = (total: number, unresolved: number) => ({ reviewThreads: { total, unresolved } });
+
+  it('an open PR with no review threads is Awaiting Review', () => {
+    expect(groupOf(task(), open())).toBe('awaiting');
+    expect(groupOf(task(), open({ review: 'review-required' }))).toBe('awaiting');
+    expect(groupOf(task(), open(threads(0, 0)))).toBe('awaiting');
+  });
+
+  it('threads not known read as none', () => {
+    expect(groupOf(task(), open({ reviewThreads: null }))).toBe('awaiting');
+  });
+
+  it('with review threads, resolved or not, it is In Review', () => {
+    expect(groupOf(task(), open(threads(3, 3)))).toBe('team');
+    expect(groupOf(task(), open(threads(2, 0)))).toBe('team');
+  });
+
+  it('a change request is In Review, threads or not', () => {
+    expect(groupOf(task(), open({ review: 'changes-requested' }))).toBe('team');
+    expect(groupOf(task(), open({ review: 'changes-requested', ...threads(1, 1) }))).toBe('team');
+  });
+
+  it('approved is Approved, unresolved threads or not; a change request outranks an approval upstream', () => {
+    expect(groupOf(task(), open({ review: 'approved' }))).toBe('approved');
+    expect(groupOf(task(), open({ review: 'approved', ...threads(4, 2) }))).toBe('approved');
+    // reviewOf (prStatus.ts) already decided: changes requested AND approved reads 'changes-requested'.
+    expect(groupOf(task(), open({ review: 'changes-requested', reviews: [] }))).toBe('team');
+  });
+
+  it('a draft PR is not up for review: My Review with guide marks, else Idle', () => {
+    expect(groupOf(task(), facts({ pr: pr('draft', null, { review: 'approved', ...threads(2, 2) }) }))).toBe('quiet');
+    expect(groupOf(task(), facts({ reviewing: true, pr: pr('draft') }))).toBe('mine');
+  });
+
+  it('a new finish still goes to Ready to Review first', () => {
+    expect(groupOf(task(), facts({ finishedAt: 2_000, pr: pr('open', null, threads(1, 1)) }))).toBe('review');
+  });
+
+  it('running, blocked and done outrank the review', () => {
+    expect(groupOf(task({ status: 'running' }), open({ review: 'approved' }))).toBe('active');
+    expect(groupOf(task({ status: 'blocked' }), open(threads(1, 1)))).toBe('blocked');
+    expect(groupOf(task({ status: 'done' }), open({ review: 'approved' }))).toBe('done');
+  });
+
+  it('never for a chat', () => {
+    expect(groupOf(task({ kind: 'chat' }), open({ review: 'approved' }))).toBe('quiet');
+    expect(groupOf(task({ kind: 'chat' }), open(threads(1, 1)))).toBe('quiet');
+  });
+});
+
+describe('failing checks (#278)', () => {
+  const failing = { kind: 'failing', failing: 1, total: 3 } as const;
+
+  it('an open or draft PR whose checks failed is Needs You', () => {
+    expect(groupOf(task(), facts({ pr: pr('open', null, { checks: failing }) }))).toBe('blocked');
+    expect(groupOf(task(), facts({ pr: pr('draft', null, { checks: failing }) }))).toBe('blocked');
+    // Over Ready to Review and over an approval.
+    expect(groupOf(task(), facts({ finishedAt: 2_000, work: true, pr: pr('open', null, { checks: failing }) }))).toBe('blocked');
+    expect(groupOf(task(), facts({ pr: pr('open', null, { checks: failing, review: 'approved' }) }))).toBe('blocked');
+  });
+
+  it('is Running while the session runs: Claude may be fixing it', () => {
+    expect(groupOf(task({ status: 'running' }), facts({ pr: pr('open', null, { checks: failing }) }))).toBe('active');
+  });
+
+  it('not while the checks run, nor once they pass', () => {
+    const pending = { kind: 'pending', pending: 1, total: 3 } as const;
+    expect(groupOf(task(), facts({ pr: pr('open', null, { checks: pending }) }))).toBe('awaiting');
+    expect(groupOf(task(), facts({ pr: pr('open', null, { checks: { kind: 'passing', total: 3 } }) }))).toBe('awaiting');
+  });
+
+  it('a merged PR with old failing checks is Done; a closed one is not Needs You', () => {
+    expect(groupOf(task(), facts({ pr: pr('merged', '2026-11-01T00:00:00Z', { checks: failing }) }))).toBe('done');
+    expect(groupOf(task(), facts({ pr: pr('closed', null, { checks: failing }) }))).toBe('quiet');
+    expect(checksFailing(pr('closed', null, { checks: failing }))).toBe(false);
+  });
+
+  it('never for a chat', () => {
+    expect(groupOf(task({ kind: 'chat' }), facts({ pr: pr('open', null, { checks: failing }) }))).toBe('quiet');
+  });
+});
+
+describe('the groups (#278)', () => {
+  it('in the order decided', () => {
+    expect(GROUP_ORDER.map((k) => GROUP_TITLE[k])).toEqual([
+      'Needs You', 'Running', 'Ready to Review', 'My Review', 'In Review', 'Awaiting Review', 'Approved', 'Idle', 'Done',
+      'Archived',
+    ]);
+  });
+
+  it('each stage has its colour; the review pairs share one', () => {
+    expect(GROUP_HUE.review).toBe(GROUP_HUE.mine);
+    expect(GROUP_HUE.team).toBe(GROUP_HUE.awaiting);
+    const live = GROUP_ORDER.filter((k) => k !== 'archived');
+    expect(new Set(live.map((k) => GROUP_HUE[k])).size).toBe(7);
+  });
+
+  it('each header icon fills as the work moves along', () => {
+    expect(GROUP_PIE).toMatchObject({
+      blocked: 'full', active: 0.25, review: 0.5, mine: 0.5, awaiting: 0.625, team: 0.75, approved: 0.875, quiet: 0,
+      done: 'check',
+    });
   });
 });

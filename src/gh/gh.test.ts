@@ -23,17 +23,39 @@ const task = {
   repoPath: '/repo',
 };
 
+/** What `gh api graphql` prints for PR_QUERY (#278): one PR for the branch. */
 const PR_JSON = JSON.stringify({
-  number: 7,
-  url: 'https://github.com/o/r/pull/7',
-  state: 'OPEN',
-  isDraft: false,
-  title: 't',
-  reviewDecision: '',
-  statusCheckRollup: [],
-  mergedAt: null,
-  headRefName: 'feat/x',
+  data: {
+    repository: {
+      pullRequests: {
+        nodes: [
+          {
+            number: 7,
+            url: 'https://github.com/o/r/pull/7',
+            state: 'OPEN',
+            isDraft: false,
+            title: 't',
+            reviewDecision: null,
+            mergedAt: null,
+            headRefName: 'feat/x',
+            commits: { nodes: [] },
+            reviewThreads: { totalCount: 1, nodes: [{ isResolved: false }] },
+          },
+        ],
+      },
+    },
+  },
 });
+
+/** The value of a `-f`/`-F` field in a gh api argv. */
+function field(args: string[], name: string): string | undefined {
+  for (let i = 0; i < args.length - 1; i++) {
+    if ((args[i] === '-f' || args[i] === '-F') && args[i + 1]!.startsWith(`${name}=`)) {
+      return args[i + 1]!.slice(name.length + 1);
+    }
+  }
+  return undefined;
+}
 
 let restore: GhRunner | null = null;
 afterEach(() => {
@@ -80,12 +102,37 @@ describe('gh runner', () => {
 });
 
 describe('fetchPrStatus', () => {
-  it('runs `gh pr view <branch>` in the worktree', async () => {
+  it('asks one `gh api graphql` request in the worktree, threads included (#278)', async () => {
     const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
     const pr = await fetchPrStatus(task);
     expect(pr?.number).toBe(7);
-    expect(calls[0]?.[1].slice(0, 3)).toEqual(['pr', 'view', 'feat/x']);
+    expect(pr?.reviewThreads).toEqual({ total: 1, unresolved: 1 });
+    expect(calls).toHaveLength(1);
+    const args = calls[0]![1];
+    expect(args.slice(0, 2)).toEqual(['api', 'graphql']);
     expect(calls[0]?.[2]).toBe('/wt/x');
+    // gh fills the placeholders from the folder's remote, through -F only.
+    expect(args).toEqual(expect.arrayContaining(['-F', 'owner={owner}', '-F', 'repo={repo}']));
+    // The branch raw (-f): -F would make a branch named "193" a number.
+    expect(args[args.indexOf('branch=feat/x') - 1]).toBe('-f');
+    expect(field(args, 'query')).toContain('reviewThreads(first: 100) { totalCount nodes { isResolved } }');
+  });
+
+  it('a branch whose name is a number is still a branch (#278)', async () => {
+    const calls = install(async () => ({ code: 0, stdout: PR_JSON.replace('"feat/x"', '"193"'), stderr: '' }));
+    expect((await fetchPrStatus({ ...task, branch: '193' }))?.number).toBe(7);
+    expect(calls[0]![1][calls[0]![1].indexOf('branch=193') - 1]).toBe('-f');
+  });
+
+  it('is silent for a GraphQL error answer and for no PR at all', async () => {
+    install(async () => ({
+      code: 1,
+      stdout: '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}',
+      stderr: 'gh: Could not resolve to a Repository',
+    }));
+    expect(await fetchPrStatus(task)).toBeNull();
+    install(async () => ({ code: 0, stdout: '{"data":{"repository":{"pullRequests":{"nodes":[]}}}}', stderr: '' }));
+    expect(await fetchPrStatus(task)).toBeNull();
   });
 
   it('is silent for "no pull requests found" and for logged-out gh', async () => {
@@ -183,21 +230,24 @@ describe('viewerLogin (#180)', () => {
     expect(await loadViewerLogin()).toBe('alice_acme');
   });
 
-  it('the PR view asks for reviews, requests and the author', async () => {
+  it('the PR query asks for reviews, requests and the author', async () => {
     const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
     await fetchPrStatus(task);
-    const fields = calls[0]![1][calls[0]![1].indexOf('--json') + 1]!.split(',');
-    expect(fields).toEqual(expect.arrayContaining(['reviewDecision', 'latestReviews', 'reviewRequests', 'author']));
+    const query = field(calls[0]![1], 'query')!;
+    for (const f of ['reviewDecision', 'latestReviews(first: 100)', 'reviewRequests(first: 100)', 'author {']) {
+      expect(query).toContain(f);
+    }
   });
 });
 
 describe('fetchPrStatus asks for what the merge action needs (#236)', () => {
-  it('requests mergeable and mergeStateStatus', async () => {
+  it('requests mergeable and mergeStateStatus, with the preview gh sends for it', async () => {
     const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
     await fetchPrStatus(task);
-    const fields = calls[0]![1][calls[0]![1].indexOf('--json') + 1]!.split(',');
-    expect(fields).toContain('mergeable');
-    expect(fields).toContain('mergeStateStatus');
+    const query = field(calls[0]![1], 'query')!;
+    expect(query).toMatch(/\bmergeable\b/);
+    expect(query).toContain('mergeStateStatus');
+    expect(calls[0]![1]).toEqual(expect.arrayContaining(['-H', 'Accept: application/vnd.github.merge-info-preview+json']));
   });
 });
 

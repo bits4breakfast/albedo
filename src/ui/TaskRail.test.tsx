@@ -1,12 +1,12 @@
 /**
  * @vitest-environment jsdom
  *
- * The task list collapsed to a rail (#266): one count circle per non-empty
- * group, each filled (Ready to Review ringed inside), the selected task's
- * group ringed, a pulse when Needs You or Ready to Review goes up (#276), and a
- * circle's popover listing that group's rows -- opened, walked, chosen from
- * and closed the ways a person does it. The ‹ / › toggles never move the
- * selection.
+ * The task list collapsed to a rail (#266): one filled count circle per
+ * colour with tasks (#278: Your Review and Team Review count two groups
+ * each), the selected task's circle ringed, a pulse when Needs You or Ready
+ * to Review goes up (#276), and a circle's popover listing its rows --
+ * opened, walked, chosen from and closed the ways a person does it. The ‹ / ›
+ * toggles never move the selection.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,11 +16,12 @@ import type { PrState, PrStatus } from '../gh/prStatus';
 import type { TaskSignals } from './useTasks';
 
 const prs = vi.hoisted(() => new Map<number, PrState>());
+const prExtra = vi.hoisted(() => new Map<number, Partial<PrStatus>>());
 vi.mock('../gh/prStore', () => ({
   getPrStatus: (id: number): PrStatus | null => {
     const state = prs.get(id);
     return state
-      ? { number: id, url: 'u', title: 'p', state, headRefName: 'b', baseRefName: 'main', headSha: '', mergedAt: null, review: null, checks: { kind: 'none' }, lines: [] }
+      ? { number: id, url: 'u', title: 'p', state, headRefName: 'b', baseRefName: 'main', headSha: '', mergedAt: null, review: null, checks: { kind: 'none' }, lines: [], ...prExtra.get(id) }
       : null;
   },
   usePrPolling: () => {},
@@ -35,6 +36,7 @@ const { setWorkProbeForTests } = await import('../git/reviewWork');
 
 beforeEach(() => {
   prs.clear();
+  prExtra.clear();
   prs.set(3, 'open');
   setWorkProbeForTests(async () => false);
 });
@@ -85,29 +87,30 @@ const circles = () => [...document.querySelectorAll<HTMLButtonElement>('.rail-ci
 const circle = (name: RegExp) => screen.getByRole('button', { name });
 
 describe('the rail (#266)', () => {
-  it('draws one circle per non-empty group, in the list’s order, with its count; Archived never', () => {
+  it('draws one circle per colour with tasks, in the list’s order, with its count; Archived never', () => {
     renderRail();
     expect(circles().map((c) => [c.dataset.group, c.textContent])).toEqual([
       ['blocked', '1'],
       ['active', '1'],
-      ['review', '1'],
+      ['yours', '1'],
       ['quiet', '3'],
       ['done', '1'],
     ]);
-    // In Review has no task, so no circle.
-    expect(document.querySelector('[data-group="reviewing"]')).toBeNull();
+    // Nothing in the team's review, so no circle.
+    expect(document.querySelector('[data-group="team"]')).toBeNull();
     expect(document.querySelector('[data-group="archived"]')).toBeNull();
   });
 
-  it('fills every group, Done included, and rings Ready to Review (#276)', () => {
+  it('paints each circle its colour (#278); no second shape', () => {
     renderRail();
-    expect(Object.fromEntries(circles().map((c) => [c.dataset.group, c.dataset.fill]))).toEqual({
-      blocked: 'solid',
-      active: 'solid',
-      review: 'ringed',
-      quiet: 'solid',
-      done: 'solid',
+    expect(Object.fromEntries(circles().map((c) => [c.dataset.group, c.dataset.hue]))).toEqual({
+      blocked: 'blocked',
+      active: 'running',
+      yours: 'review',
+      quiet: 'idle',
+      done: 'done',
     });
+    expect(circles().some((c) => c.hasAttribute('data-fill'))).toBe(false);
   });
 
   it('names each circle by its group and count, as tooltip and accessible name', () => {
@@ -147,7 +150,10 @@ describe('a circle’s popover (#266)', () => {
     const pop = screen.getByRole('menu', { name: 'Idle' });
     expect(idle.getAttribute('aria-expanded')).toBe('true');
     expect(pop.querySelector('.rail-pop-head')?.textContent).toBe('Idle· 3');
-    expect(pop.querySelector('.rail-pop-head .status-dot')?.getAttribute('data-status')).toBe('idle');
+    expect(pop.querySelector('.rail-pop-head .group-pie')?.getAttribute('data-hue')).toBe('idle');
+    // One group: no sub-headers, and rows carry no icon (#278).
+    expect(pop.querySelector('.rail-pop-sub')).toBeNull();
+    expect(pop.querySelector('.task-row .status-dot, .task-row .group-pie')).toBeNull();
     const rows = within(pop).getAllByRole('menuitem');
     // The list's order within the group: most recent first.
     expect(rows.map((r) => r.querySelector('.task-title')?.textContent)).toEqual(['filter-by-tag', 'ABC-1201', 'guest-messages']);
@@ -234,7 +240,7 @@ describe('a circle’s popover (#266)', () => {
     const running = circle(/^Running/);
     running.focus();
     fireEvent.keyDown(running, { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(circle(/^Ready to Review/));
+    expect(document.activeElement).toBe(circle(/^Your Review/));
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
     expect(document.activeElement).toBe(running);
   });
@@ -276,8 +282,8 @@ describe('the pulse on a rise (#276)', () => {
     prs.set(10, 'open');
     const { rerender } = render(<TaskList tasks={tasks} {...props} signals={reviewSignals} />);
     rerender(<TaskList tasks={moreReview} {...props} signals={reviewSignals} />);
-    expect(circle(/^Ready to Review, 2 tasks$/)).toBeTruthy();
-    expect(pulsing()).toEqual(['review']);
+    expect(circle(/^Your Review: Ready to Review 2, My Review 0$/)).toBeTruthy();
+    expect(pulsing()).toEqual(['yours']);
   });
 
   it('does not pulse on a fall', () => {
@@ -315,6 +321,138 @@ describe('the pulse on a rise (#276)', () => {
     rerender(<TaskList tasks={moreBlocked} {...props} collapsed />);
     expect(circle(/^Needs You, 2 tasks$/)).toBeTruthy();
     expect(pulsing()).toEqual([]);
+  });
+});
+
+describe('the merged circles (#278)', () => {
+  const data = new Map<string, string>();
+  beforeEach(async () => {
+    data.clear();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    const store = await import('../guide/store');
+    store.resetGuideStoreForTests();
+  });
+
+  /** Marks task `id` Reviewed in its guide: My Review. */
+  async function startReview(id: number) {
+    const store = await import('../guide/store');
+    store.saveGuide(id, {
+      diffHash: 'h', writtenAt: 1, base: 'main', groups: [{ title: 'T', summary: '', blocks: ['aaaa'] }],
+      files: { 'a.ts': ['aaaa'] }, fallback: null,
+    });
+    act(() => store.setReviewed(id, [store.reviewedKey('a.ts', ['aaaa'])], true));
+  }
+
+  // Ready to Review 1 (3), My Review 1 (4), In Review 2 (11, 12), Awaiting Review 1 (13), Approved 1 (14).
+  const team: Task[] = [
+    ...tasks,
+    row(11, 'ABC-1234 Three open', { lastActivityAt: 50 }),
+    row(12, 'ABC-1229 Changes asked', { lastActivityAt: 40 }),
+    row(13, 'ABC-1251 Nobody yet'),
+    row(14, 'ABC-1220 Good to go'),
+  ];
+  function setPrs() {
+    for (const id of [11, 12, 13, 14]) prs.set(id, 'open');
+    prExtra.set(11, { reviewThreads: { total: 3, unresolved: 3 } });
+    prExtra.set(12, { review: 'changes-requested', reviewThreads: { total: 1, unresolved: 1 } });
+    prExtra.set(14, { review: 'approved' });
+  }
+  const props = { signals, selectedId: 5, onSelect: () => {}, onNew: () => {}, onCollapsedChange: () => {}, collapsed: true };
+
+  it('one circle per colour: Your Review and Team Review each count two groups, and say both counts', async () => {
+    setPrs();
+    render(<TaskList tasks={team} {...props} />);
+    await startReview(4);
+    expect(circles().map((c) => [c.dataset.group, c.dataset.hue, c.textContent])).toEqual([
+      ['blocked', 'blocked', '1'],
+      ['active', 'running', '1'],
+      ['yours', 'review', '2'],
+      ['team', 'team', '3'],
+      ['approved', 'approved', '1'],
+      ['quiet', 'idle', '2'],
+      ['done', 'done', '1'],
+    ]);
+    const yours = circle(/^Your Review/);
+    expect(yours.getAttribute('aria-label')).toBe('Your Review: Ready to Review 1, My Review 1');
+    expect(yours.title).toBe('Your Review: Ready to Review 1, My Review 1');
+    expect(circle(/^Team Review/).getAttribute('aria-label')).toBe('Team Review: In Review 2, Awaiting Review 1');
+    expect(circle(/^Approved/).getAttribute('aria-label')).toBe('Approved, 1 task');
+  });
+
+  it('its popover lists the tasks under the two groups’ names, In Review rows with their chip', () => {
+    setPrs();
+    render(<TaskList tasks={team} {...props} />);
+    fireEvent.click(circle(/^Team Review/));
+    const pop = screen.getByRole('menu', { name: 'Team Review' });
+    expect(pop.querySelector('.rail-pop-head')?.textContent).toBe('Team Review· 3');
+    // Two groups, each its own icon: none on the head.
+    expect(pop.querySelector('.rail-pop-head .group-pie')).toBeNull();
+    const sub = within(pop).getAllByRole('group');
+    expect(sub.map((g) => g.getAttribute('aria-labelledby') && document.getElementById(g.getAttribute('aria-labelledby')!)?.textContent)).toEqual([
+      'In Review2',
+      'Awaiting Review1',
+    ]);
+    expect(within(sub[0]!).getAllByRole('menuitem').map((r) => r.querySelector('.task-threads')?.textContent)).toEqual([
+      '3 unresolved',
+      'Changes · 1 unresolved',
+    ]);
+    expect(within(sub[1]!).getAllByRole('menuitem').map((r) => r.querySelector('.task-key')?.textContent)).toEqual(['ABC-1251']);
+    expect(sub[0]!.querySelector('.rail-pop-sub .group-pie')?.getAttribute('data-pie')).toBe('6');
+    // ↓ walks across both groups.
+    const rows = within(pop).getAllByRole('menuitem');
+    expect(rows).toHaveLength(3);
+    rows[1]!.focus();
+    fireEvent.keyDown(rows[1]!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(rows[2]);
+  });
+
+  it('shows only the groups that have tasks', () => {
+    setPrs();
+    render(<TaskList tasks={team} {...props} />);
+    fireEvent.click(circle(/^Your Review/));
+    const pop = screen.getByRole('menu', { name: 'Your Review' });
+    expect([...pop.querySelectorAll('.rail-pop-sub')].map((s) => s.textContent)).toEqual(['Ready to Review1']);
+  });
+
+  describe('pulse', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+    const pulsing = () => circles().filter((c) => c.hasAttribute('data-pulse')).map((c) => c.dataset.group);
+
+    it('not when only My Review rises: you started that review yourself', async () => {
+      render(<TaskList tasks={team} {...props} />);
+      await startReview(4);
+      expect(circle(/^Your Review: Ready to Review 1, My Review 1$/)).toBeTruthy();
+      expect(pulsing()).toEqual([]);
+    });
+
+    it('Needs You when failing checks put a task there', () => {
+      setPrs();
+      const { rerender } = render(<TaskList tasks={team} {...props} />);
+      prExtra.set(13, { checks: { kind: 'failing', failing: 1, total: 1 } });
+      rerender(<TaskList tasks={[...team]} {...props} />);
+      expect(circle(/^Needs You, 2 tasks$/)).toBeTruthy();
+      expect(pulsing()).toEqual(['blocked']);
+    });
+
+    it('never Team Review', () => {
+      const { rerender } = render(<TaskList tasks={team} {...props} />);
+      setPrs();
+      rerender(<TaskList tasks={[...team]} {...props} />);
+      expect(circle(/^Team Review/)).toBeTruthy();
+      expect(pulsing()).toEqual([]);
+    });
   });
 });
 

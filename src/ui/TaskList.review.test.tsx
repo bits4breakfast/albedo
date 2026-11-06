@@ -2,9 +2,11 @@
  * @vitest-environment jsdom
  *
  * The row's review mark. Approved is state (#234): shown while the open PR
- * is approved, on the selected row too, until it is merged. Changes is news
- * (#180): an unseen change request, never on the selected row, gone once the
- * task is opened. Awaiting Review never marks a row.
+ * is approved, on the selected row too, until it is merged -- but not in the
+ * Approved group, which says it (#278). Changes is news (#180): an unseen
+ * change request, never on the selected row, gone once the task is opened,
+ * and not in In Review, whose chip says it (#278). Awaiting Review never
+ * marks a row.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,6 +49,11 @@ const row = (id: number, title: string): Task =>
     worktreePath: `/w/${id}`,
   }) as Task;
 const tasks = [row(1, 'Fix login'), row(2, 'Write docs')];
+/**
+ * Task 1 at work: an approved PR on a running task is in Running, where the
+ * row's mark is the only place it shows. At rest it would be in Approved.
+ */
+const working = [{ ...tasks[0]!, status: 'running' as const }, tasks[1]!];
 
 beforeEach(() => {
   prs.clear();
@@ -73,7 +80,7 @@ const approved = () => pr('APPROVED', [{ login: 'alice', state: 'APPROVED' }]);
 describe('TaskList: an approval that stands (#234)', () => {
   it('shows ✓ Approved from the PR as it is, naming the reviewer', () => {
     prs.set(1, approved());
-    const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    const { container } = render(<TaskList tasks={working} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
     const mark = screen.getByRole('img', { name: 'PR #21 approved by alice, ready to merge' });
     expect(mark.textContent).toBe('✓ Approved');
     expect(mark.getAttribute('data-outcome')).toBe('approved');
@@ -83,16 +90,16 @@ describe('TaskList: an approval that stands (#234)', () => {
 
   it('stays on the selected row, and after the task is opened', () => {
     prs.set(1, approved());
-    land(tasks[0]!, approved(), 2);
-    const { container, rerender } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    land(working[0]!, approved(), 2);
+    const { container, rerender } = render(<TaskList tasks={working} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
     act(() => rn.clearReviewMark(1));
-    rerender(<TaskList tasks={tasks} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
+    rerender(<TaskList tasks={working} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
     expect(container.querySelector('[data-task-id="1"] .task-review')?.textContent).toBe('✓ Approved');
   });
 
   it('with no review event at all: a restart, or an approval from before launch', () => {
     prs.set(1, approved());
-    const { container } = render(<TaskList tasks={tasks} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
+    const { container } = render(<TaskList tasks={working} selectedId={1} onSelect={() => {}} onNew={() => {}} />);
     expect(container.querySelector('[data-task-id="1"] .task-review')).not.toBeNull();
   });
 
@@ -104,14 +111,21 @@ describe('TaskList: an approval that stands (#234)', () => {
   ])('goes once the PR is %s', (_what, now) => {
     prs.set(1, now);
     // Even with the approval still marked as news from when it landed.
-    land(tasks[0]!, approved(), 2);
+    land(working[0]!, approved(), 2);
+    const { container } = render(<TaskList tasks={working} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    expect(container.querySelector('[data-task-id="1"] .task-review')).toBeNull();
+  });
+
+  it('not in the Approved group: the group says it (#278)', () => {
+    prs.set(1, approved());
     const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    expect(container.querySelector('[aria-labelledby="task-group-approved"] [data-task-id="1"]')).not.toBeNull();
     expect(container.querySelector('[data-task-id="1"] .task-review')).toBeNull();
   });
 
   it('says approved alone when GitHub names no reviewer', () => {
     prs.set(1, pr('APPROVED', []));
-    render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    render(<TaskList tasks={working} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
     expect(screen.getByRole('img', { name: 'PR #21 approved, ready to merge' })).toBeTruthy();
   });
 });
@@ -177,10 +191,20 @@ describe('TaskList: conflicts GitHub reports (#236)', () => {
 
   it('an unseen change request still shows beside it', () => {
     prs.set(1, conflicting({ decision: 'CHANGES_REQUESTED' }));
-    const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
-    land(tasks[0]!, pr('CHANGES_REQUESTED', [{ login: 'carol', state: 'CHANGES_REQUESTED' }]), 2);
+    const { container } = render(<TaskList tasks={working} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    land(working[0]!, pr('CHANGES_REQUESTED', [{ login: 'carol', state: 'CHANGES_REQUESTED' }]), 2);
     const marks = [...container.querySelectorAll('[data-task-id="1"] .task-review')].map((m) => m.getAttribute('data-outcome'));
     expect(marks).toEqual(['conflicts', 'changes-requested']);
+  });
+
+  it('in In Review the chip says Changes, once (#278)', () => {
+    prs.set(1, conflicting({ decision: 'CHANGES_REQUESTED' }));
+    const { container } = render(<TaskList tasks={tasks} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    land(tasks[0]!, pr('CHANGES_REQUESTED', [{ login: 'carol', state: 'CHANGES_REQUESTED' }]), 2);
+    expect(container.querySelector('[aria-labelledby="task-group-team"] [data-task-id="1"]')).not.toBeNull();
+    const marks = [...container.querySelectorAll('[data-task-id="1"] .task-review')].map((m) => m.getAttribute('data-outcome'));
+    expect(marks).toEqual(['conflicts']);
+    expect(container.querySelector('[data-task-id="1"] .task-threads')?.textContent).toBe('Changes Requested');
   });
 
   it('gone once merged or closed', () => {
