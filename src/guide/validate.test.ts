@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildBranchDiff, fileBlockIndex } from './blocks';
 import { statReason } from './budget';
 import { edited } from './fixtures';
-import { changedSince, NOTE_MAX_CHARS, normalizeId, validateProposal, viewGuide, type Guide } from './validate';
+import { changedSince, cleanNotes, NOTE_LINE_MAX_CHARS, NOTE_MAX_CHARS, normalizeId, validateProposal, viewGuide, type Guide } from './validate';
 
 describe('validateProposal', () => {
   const known = ['aaaa', 'bbbb', 'cccc', 'dddd'];
@@ -201,5 +201,50 @@ describe('file notes (#202)', () => {
     expect(notesOf(guide([{ title: 'T', summary: '', blocks: [a, c] }]))).toEqual([[['src/a.ts', null], ['src/c.ts', null]], unsorted]);
     const odd = { title: 'T', summary: '', blocks: [a, c], notes: { 'src/a.ts': 7, 'src/c.ts': '' } } as unknown as Guide['groups'][number];
     expect(notesOf(guide([odd]))).toEqual([[['src/a.ts', null], ['src/c.ts', null]], unsorted]);
+  });
+
+  const textsOf = (g: Guide) => viewGuide(g, diff).groups.map((x) => x.files.map((f) => [f.path, f.line, f.note]));
+
+  it('a guide from before #264 (notes only) still shows its notes, with no short lines', () => {
+    const stored = JSON.parse(JSON.stringify(guide([{ title: 'T', summary: '', blocks: [a, c], notes: { 'src/a.ts': 'Why a.' } }]))) as Guide;
+    expect(textsOf(stored)).toEqual([
+      [
+        ['src/a.ts', null, 'Why a.'],
+        ['src/c.ts', null, null],
+      ],
+      [['src/b.ts', null, null]],
+    ]);
+  });
+
+  it('a new guide carries both the short line and the note through viewGuide (#264)', () => {
+    const g = guide([
+      { title: 'T', summary: '', blocks: [a, b, c], notes: { 'src/a.ts': 'Why a.' }, lines: { 'src/a.ts': 'Holds a', 'src/b.ts': 'too small', 'src/c.ts': 'Line only' } },
+    ]);
+    expect(textsOf(g)).toEqual([
+      [
+        ['src/a.ts', 'Holds a', 'Why a.'],
+        // +1 -1: the rule allows it neither.
+        ['src/b.ts', null, null],
+        ['src/c.ts', 'Line only', null],
+      ],
+    ]);
+    const odd = { title: 'T', summary: '', blocks: [a, c], lines: { 'src/a.ts': 7, 'src/c.ts': '' } } as unknown as Guide['groups'][number];
+    expect(textsOf(guide([odd]))[0]).toEqual([
+      ['src/a.ts', null, null],
+      ['src/c.ts', null, null],
+    ]);
+  });
+});
+
+describe('cleanNotes', () => {
+  it('cuts at the cap given, on one line, for allowed paths only', () => {
+    const allowed = new Set(['a', 'b']);
+    expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_LINE_MAX_CHARS + 1) }, { path: 'b', note: ' one\n line ' }, { path: 'z', note: 'no' }], allowed, NOTE_LINE_MAX_CHARS)).toEqual({
+      a: `${'x'.repeat(NOTE_LINE_MAX_CHARS - 1)}…`,
+      b: 'one line',
+    });
+    expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_LINE_MAX_CHARS) }], allowed, NOTE_LINE_MAX_CHARS).a).toHaveLength(NOTE_LINE_MAX_CHARS);
+    // The default cap is still the note's.
+    expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_MAX_CHARS + 1) }], allowed).a).toHaveLength(NOTE_MAX_CHARS);
   });
 });

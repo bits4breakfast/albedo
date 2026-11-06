@@ -31,9 +31,16 @@ export interface GuideGroup {
    * paths among the group's blocks only. Written after the groups, one call
    * per group (#224): absent while they are still to be written (and on
    * guides from before notes), `{}` once asked and there were none, or the
-   * group was too large to ask about.
+   * group was too large to ask about. `notes` alone marks a group as asked.
+   * Shown under the file's header in the diff (#264).
    */
   notes?: Record<string, string>;
+  /**
+   * path -> the note condensed to one short line (#264), for the group's file
+   * list. Written by the same call as `notes`. Absent on guides from before
+   * #264: their list shows no text under the file, never the note cut down.
+   */
+  lines?: Record<string, string>;
 }
 
 /** A written guide, as cached (store.ts). */
@@ -58,20 +65,31 @@ export interface Proposal {
   groups: Array<{ title: string; summary: string; blocks: string[]; notes?: Array<{ path: string; note: string }> }>;
 }
 
-/** A note longer than this is cut: about two lines under a file name (#224). */
+/** A note longer than this is cut (#224). Shown in full under the file's header in the diff (#264). */
 export const NOTE_MAX_CHARS = 240;
 
 /**
- * The model's notes, held to the rule: only for `allowed` paths, the first per
- * path, on one line, cut at {@link NOTE_MAX_CHARS}. The one gate every note
- * passes, whichever call wrote it.
+ * A file's short line longer than this is cut (#264): a safety net only. The
+ * model is asked for at most 50 characters; the list fits about 45 and
+ * ellipsizes the rest, with the whole line in its tooltip.
  */
-export function cleanNotes(raw: ReadonlyArray<{ path: string; note: string }>, allowed: ReadonlySet<string>): Record<string, string> {
+export const NOTE_LINE_MAX_CHARS = 80;
+
+/**
+ * The model's notes, held to the rule: only for `allowed` paths, the first per
+ * path, on one line, cut at `max` ({@link NOTE_MAX_CHARS} unless given). The
+ * one gate every note and every short line passes, whichever call wrote it.
+ */
+export function cleanNotes(
+  raw: ReadonlyArray<{ path: string; note: string }>,
+  allowed: ReadonlySet<string>,
+  max: number = NOTE_MAX_CHARS,
+): Record<string, string> {
   const notes: Record<string, string> = {};
   for (const n of raw) {
     const note = n.note.replace(/\s+/g, ' ').trim();
     if (!note || !allowed.has(n.path) || Object.hasOwn(notes, n.path)) continue;
-    notes[n.path] = note.length > NOTE_MAX_CHARS ? `${note.slice(0, NOTE_MAX_CHARS - 1).trimEnd()}…` : note;
+    notes[n.path] = note.length > max ? `${note.slice(0, max - 1).trimEnd()}…` : note;
   }
   return notes;
 }
@@ -153,6 +171,8 @@ export interface GroupFile {
   stat: StatReason | null;
   /** Why the file changes in this group (#202), when the rule allows one. */
   note: string | null;
+  /** The note's gist, one short line for the file list (#264), when the rule allows one. */
+  line: string | null;
   /** The rule allows this file a note here, written or not (#224). */
   notable: boolean;
 }
@@ -198,7 +218,7 @@ function filesOf(blockIds: readonly string[], diff: BranchDiff): GroupFile[] {
       added += b?.added ?? 0;
       removed += b?.removed ?? 0;
     }
-    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat, note: null, notable: false });
+    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat, note: null, line: null, notable: false });
   }
   return out;
 }
@@ -208,13 +228,18 @@ function filesOf(blockIds: readonly string[], diff: BranchDiff): GroupFile[] {
  * is now: more than one file in the group, at least {@link NOTE_MIN_LINES}
  * changed lines of the file in it, and lines the model was shown.
  */
-function withNotes(files: GroupFile[], notes: unknown): GroupFile[] {
+function withNotes(files: GroupFile[], notes: unknown, lines?: unknown): GroupFile[] {
   if (files.length < 2) return files;
-  const by = typeof notes === 'object' && notes !== null ? (notes as Record<string, unknown>) : {};
+  const record = (v: unknown) => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {});
+  const text = (by: Record<string, unknown>, path: string) => {
+    const v = Object.hasOwn(by, path) ? by[path] : undefined;
+    return typeof v === 'string' && v ? v : null;
+  };
+  const notesBy = record(notes);
+  const linesBy = record(lines);
   return files.map((f) => {
     if (f.stat !== null || f.added + f.removed < NOTE_MIN_LINES) return f;
-    const note = Object.hasOwn(by, f.path) ? by[f.path] : undefined;
-    return { ...f, notable: true, note: typeof note === 'string' && note ? note : null };
+    return { ...f, notable: true, note: text(notesBy, f.path), line: text(linesBy, f.path) };
   });
 }
 
@@ -333,7 +358,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
       summary: g.summary,
       unsorted: false,
       blocks,
-      files: withNotes(filesOf(blocks, diff), g.notes),
+      files: withNotes(filesOf(blocks, diff), g.notes, g.lines),
     });
   });
   const rest = diff.order.filter((id) => place.get(id) === null);

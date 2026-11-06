@@ -198,7 +198,7 @@
 .gd-file {
   width: 100%;
   display: grid;
-  grid-template-columns: 12px 16px minmax(0, auto) minmax(0, 1fr) auto;
+  grid-template-columns: 12px minmax(0, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
@@ -216,31 +216,34 @@
 .gd-file:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 .gd-file[data-reviewed] .gd-file-name { color: var(--muted); }
 .gd-file-mark { color: var(--add); font-size: var(--fs-xs); }
-.gd-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gd-file-part { color: var(--muted); }
+/* The name, then its parts ("· 2 of 5 blocks", "· changed since review").
+   The base name gives way last: the parts shrink and ellipsize first (#264). */
+.gd-file-name { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
+.gd-file-base { flex: 0 1 auto; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; }
+.gd-file-part { flex: 0 100000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; color: var(--muted); }
 .gd-file-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--fs-xs); }
-/* A file's note (#202): under the name, wrapping, in --muted -- on --panel,
-   on --panel-hover and on the current row's --accent-soft alike
-   (fileNoteContrast in railContrast.test.ts). */
-.gd-file-note {
-  grid-column: 3 / -1;
+/* A file's short line (#264): its note's gist, one line under the name.
+   The model is asked for ~50 characters, so the ellipsis is a safety net;
+   the title holds it whole. --muted on --panel, on --panel-hover and on the
+   current row's --accent-soft alike (railContrast.test.ts). */
+.gd-file-line {
+  grid-column: 2 / -1;
   margin-top: -2px;
   color: var(--muted);
   font-size: var(--fs-xs);
   line-height: 1.4;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* While a note is being written (#224): two bars where its two lines will
-   be, so nothing moves when it lands. Decorative (aria-hidden); drawn in
+/* While the line is being written (#224): one bar where it will be, so
+   nothing moves when it lands. Decorative (aria-hidden); drawn in
    --border-mid, which stands off --panel, --panel-hover and --accent-soft in
    every theme (railContrast.test.ts). No opacity, no motion. */
-.gd-file-note-pending {
+.gd-file-line-pending {
   display: block;
-  height: calc(2 * 1.4em);
-  background:
-    linear-gradient(var(--border-mid), var(--border-mid)) 0 0.35em / 90% 0.7em no-repeat,
-    linear-gradient(var(--border-mid), var(--border-mid)) 0 1.75em / 55% 0.7em no-repeat;
+  height: 1.4em;
+  background: linear-gradient(var(--border-mid), var(--border-mid)) 0 0.35em / 70% 0.7em no-repeat;
 }
 /* A group whose notes could not be written: quiet, with Retry. */
 .gd-notes-failed { margin: 4px 6px 0; font-size: var(--fs-xs); color: var(--muted); }
@@ -376,9 +379,28 @@
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
-.gd-diff-name { color: var(--text-strong); font-weight: 600; white-space: nowrap; }
-.gd-diff-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); margin-right: auto; }
+/* One row, never two: everything keeps its width and stays on one line,
+   except the folder, which ellipsizes first (#264). */
+.gd-diff-head > * { flex: none; white-space: nowrap; }
+.gd-diff-name { color: var(--text-strong); font-weight: 600; }
+.gd-diff-head > .gd-diff-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); }
+/* The size, then the layout toggle beside it (#264); Open and Reviewed sit
+   right, past the gap. */
+.gd-diff-head > .gd-diff-gap { flex: 1 1 0; }
 .gd-diff-check { margin-left: 4px; }
+/* Why the file changes in this group (#264): a band under the header, on
+   --panel-chrome, in --text, with a "Why" label in --faint. It wraps in full,
+   at a reading width. Outside the diff's scroll, like the header, so the two
+   stay together. Both tokens clear 4.5:1 on --panel-chrome in every theme
+   (guideNoteContrast.test.ts). */
+.gd-diff-why {
+  flex: none;
+  padding: 8px 12px 9px;
+  background: var(--panel-chrome);
+  border-bottom: 1px solid var(--border);
+}
+.gd-diff-why-text { margin: 0; max-width: 92ch; font-size: var(--fs-md); line-height: 1.5; color: var(--text); }
+.gd-diff-why-label { margin-right: 8px; font-size: var(--fs-xs); color: var(--faint); }
 .gd-diff-scroll {
   flex: 1 1 auto;
   min-height: 0;

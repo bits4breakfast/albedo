@@ -555,6 +555,30 @@ function gapBefore(hunk: HunkModel | undefined, prev: HunkModel | undefined): Ga
 // Layout
 // ---------------------------------------------------------------------------
 
+/**
+ * A diff's layout: split when its container is wide enough, unless the
+ * reader toggled it. {@link Diff} uses it for its own header's toggle; a
+ * caller that draws the toggle in its own header (the Review Guide, #264)
+ * uses the same rule on the diff's container and passes `layout` and
+ * `head={false}`, so the two never disagree on what "auto" means.
+ */
+export function useDiffLayout(): {
+  ref: RefObject<HTMLDivElement | null>;
+  resolved: 'split' | 'unified';
+  toggle: () => void;
+} {
+  const [ref, width] = useContainerWidth();
+  const [override, setOverride] = useState<'split' | 'unified' | null>(null);
+  const resolved = override ?? (width >= SIDE_BY_SIDE_MIN ? 'split' : 'unified');
+  const toggle = useCallback(() => setOverride(resolved === 'split' ? 'unified' : 'split'), [resolved]);
+  return { ref, resolved, toggle };
+}
+
+/** The toggle's words: the layout a click switches to. */
+export function layoutToggleLabel(resolved: 'split' | 'unified'): string {
+  return resolved === 'split' ? 'Unified' : 'Split';
+}
+
 function useContainerWidth(): [RefObject<HTMLDivElement | null>, number] {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -617,6 +641,12 @@ export interface DiffProps {
    */
   showPath?: boolean;
   /**
+   * Draw the header row (path, counts, layout toggle). Off where the caller's
+   * own header already says the counts and carries the toggle -- the Review
+   * Guide (#264), with {@link useDiffLayout} and a forced `layout`.
+   */
+  head?: boolean;
+  /**
    * Set by {@link CollapsibleDiff}: the header gets an open caret, and a click
    * on it closes the diff again.
    */
@@ -630,10 +660,11 @@ export function Diff({
   absoluteLines = false,
   contextPath,
   showPath = true,
+  head = true,
   onCollapse,
 }: DiffProps): ReactNode {
-  const [ref, width] = useContainerWidth();
-  const [override, setOverride] = useState<'split' | 'unified' | null>(null);
+  const auto = useDiffLayout();
+  const ref = auto.ref;
   const [budget, setBudget] = useState(INITIAL_BUDGET);
   const [openGaps, setOpenGaps] = useState<Record<number, boolean>>({});
 
@@ -641,8 +672,7 @@ export function Diff({
   const oldTokens = useCodeTokens(model.oldBlob, diff.lang);
   const newTokens = useCodeTokens(model.newBlob, diff.lang);
 
-  const resolved: 'split' | 'unified' =
-    layout !== 'auto' ? layout : (override ?? (width >= SIDE_BY_SIDE_MIN ? 'split' : 'unified'));
+  const resolved: 'split' | 'unified' = layout !== 'auto' ? layout : auto.resolved;
 
   // Per-line links only when the numbers are real file lines (see `absoluteLines`).
   // A rename's destination is the file that exists.
@@ -752,7 +782,7 @@ export function Diff({
   if (diff.hunks.length === 0) {
     return (
       <div className="tx-d" ref={ref}>
-        <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} showPath={showPath} />
+        {head ? <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} showPath={showPath} /> : null}
         <div className="tx-d-empty">No content changes</div>
       </div>
     );
@@ -864,14 +894,16 @@ export function Diff({
     // The path a selection's code comment is for (#222): the file read for
     // context, else the diff's own.
     <div className="tx-d" ref={ref} data-diff-path={readPath ?? diff.path}>
-      <DiffHeader
-        diff={diff}
-        model={model}
-        resolved={resolved}
-        onToggle={layout === 'auto' ? () => setOverride(resolved === 'split' ? 'unified' : 'split') : null}
-        showPath={showPath}
-        disclosure={onCollapse ? { open: true, onToggle: onCollapse } : null}
-      />
+      {head ? (
+        <DiffHeader
+          diff={diff}
+          model={model}
+          resolved={resolved}
+          onToggle={layout === 'auto' ? auto.toggle : null}
+          showPath={showPath}
+          disclosure={onCollapse ? { open: true, onToggle: onCollapse } : null}
+        />
+      ) : null}
       <div className="tx-d-body">
         {offerContext ? (
           <ContextRegion
@@ -1023,7 +1055,7 @@ function DiffHeader({
             onToggle();
           }}
         >
-          {resolved === 'split' ? 'Unified' : 'Split'}
+          {layoutToggleLabel(resolved)}
         </button>
       ) : null}
     </div>

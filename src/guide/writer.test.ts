@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildBranchDiff, type BranchDiff } from './blocks';
 import { estimateTokens, renderBlock, statReason, SUMMARY_LINE_TOKENS } from './budget';
 import { changed, edited, lines, text } from './fixtures';
-import { NOTE_MAX_CHARS } from './validate';
+import { NOTE_LINE_MAX_CHARS, NOTE_MAX_CHARS } from './validate';
 import {
+  asNotes,
   CALL_OVERHEAD_TOKENS,
   findResult,
   GuideError,
@@ -266,7 +267,47 @@ describe('notes come after the groups (#224)', () => {
     expect(p).toContain(renderBlock(diff.blocks.get(c)!, diff));
     expect(calls[0]!.systemPrompt).toBe(NOTES_SYSTEM);
     expect(JSON.parse(calls[0]!.jsonSchema).required).toEqual(['notes']);
-    expect(notes).toEqual({ 'src/a.ts': 'keeps the page size in one place', 'src/c.ts': `${'x'.repeat(NOTE_MAX_CHARS - 1)}…` });
+    expect(notes).toEqual({ notes: { 'src/a.ts': 'keeps the page size in one place', 'src/c.ts': `${'x'.repeat(NOTE_MAX_CHARS - 1)}…` }, lines: {} });
+  });
+
+  it('the notes call asks for a short line and a why per file, in one call (#264)', async () => {
+    const calls = useRunner(() =>
+      ok({
+        notes: [
+          { path: 'src/a.ts', line: '  Holds the page\n size ', note: 'So every caller pages alike.' },
+          { path: 'src/c.ts', line: 'y'.repeat(NOTE_LINE_MAX_CHARS + 20), note: 'Why c.' },
+          { path: 'src/b.ts', line: 'not listed', note: 'not listed' },
+        ],
+      }),
+    );
+    const notes = await writeNotes(diff, { title: 'Paging', summary: '', blocks: [a, b, c, lock] });
+    expect(calls).toHaveLength(1);
+    const item = JSON.parse(calls[0]!.jsonSchema).properties.notes.items;
+    // The note first: the line is written as its gist.
+    expect(Object.keys(item.properties)).toEqual(['path', 'note', 'line']);
+    expect(item.required).toEqual(['path', 'note', 'line']);
+    expect(notes).toEqual({
+      notes: { 'src/a.ts': 'So every caller pages alike.', 'src/c.ts': 'Why c.' },
+      // One line, cut at the hard cap with an ellipsis.
+      lines: { 'src/a.ts': 'Holds the page size', 'src/c.ts': `${'y'.repeat(NOTE_LINE_MAX_CHARS - 1)}…` },
+    });
+  });
+
+  it('a reply missing a line keeps the note, and one missing a note keeps the line (#264)', async () => {
+    useRunner(() =>
+      ok({
+        notes: [
+          { path: 'src/a.ts', note: 'Only the why.' },
+          { path: 'src/c.ts', line: 'Only the line' },
+        ],
+      }),
+    );
+    expect(await writeNotes(diff, { title: 'Paging', summary: '', blocks: [a, c] })).toEqual({
+      notes: { 'src/a.ts': 'Only the why.' },
+      lines: { 'src/c.ts': 'Only the line' },
+    });
+    expect(asNotes({ notes: [{ line: 'no path' }, { path: 'x', line: 3, note: null }, 'odd'] })).toEqual({ notes: [], lines: [] });
+    expect(asNotes({ notes: 'no' })).toBeNull();
   });
 
   it("a group's notes call names the change's other groups, so a note can say why against the whole", async () => {
@@ -277,9 +318,15 @@ describe('notes come after the groups (#224)', () => {
     expect(p.indexOf('- Locking')).toBeLessThan(p.indexOf('Group: Paging'));
   });
 
-  it('the notes prompt asks why, not what', () => {
+  it('the notes prompt asks why, not what, and a line that is the note condensed, not cut (#264)', () => {
     expect(NOTES_SYSTEM).toMatch(/WHY this file changes/);
     expect(NOTES_SYSTEM).toMatch(/Do not restate what changed/);
+    expect(NOTES_SYSTEM).toMatch(/"note": one or two short sentences/);
+    expect(NOTES_SYSTEM).toMatch(/"line": the same thing as the note in a few words/);
+    expect(NOTES_SYSTEM).toMatch(/its gist,\s+rewritten shorter, never its first words cut off/);
+    expect(NOTES_SYSTEM).toMatch(/At most 50 characters/);
+    expect(NOTES_SYSTEM).toMatch(/Do not restate the group's title/);
+    expect(NOTES_SYSTEM.indexOf('"note"')).toBeLessThan(NOTES_SYSTEM.indexOf('"line"'));
     expect(NOTE_MAX_CHARS).toBeGreaterThanOrEqual(200);
   });
 

@@ -24,7 +24,7 @@
 
 import type { BranchDiff } from './blocks';
 import { estimateTokens, groupByFolder, INPUT_BUDGET_TOKENS, planInput, renderBlock } from './budget';
-import { cleanNotes, normalizeId, notableFiles, validateProposal, type Guide, type GuideGroup, type Proposal } from './validate';
+import { cleanNotes, NOTE_LINE_MAX_CHARS, normalizeId, notableFiles, validateProposal, type Guide, type GuideGroup, type Proposal } from './validate';
 import { fileBlockIndex } from './blocks';
 
 /**
@@ -207,8 +207,9 @@ const NOTES_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { path: { type: 'string' }, note: { type: 'string' } },
-        required: ['path', 'note'],
+        // The note first, then the line: the line is the note condensed (#264).
+        properties: { path: { type: 'string' }, note: { type: 'string' }, line: { type: 'string' } },
+        required: ['path', 'note', 'line'],
       },
     },
   },
@@ -217,19 +218,26 @@ const NOTES_SCHEMA = {
 
 /**
  * The notes call (#224). The owner's ask: a note says why the file changes in
- * this group, not what changed -- the diff is beside it and says that.
+ * this group, not what changed -- the diff is beside it and says that. Since
+ * #264 the same call also writes each file's short line for the group's file
+ * list: the note condensed to its gist (about 45 characters fit the list), so
+ * the list scans. Never the note cut down.
  */
 export const NOTES_SYSTEM = [
   'You help a reviewer read one group of a code change. You are given the titles of all the change\'s',
   'groups (for context), this group\'s title and summary, a list of files to note, and the group\'s changed blocks: each block starts with its id in square',
   'brackets, then its file path and its changed lines.',
-  'For each file to note, write one or two short sentences (under 220 characters in all) on WHY this file',
+  'For each file to note, write two texts.',
+  'First, "note": one or two short sentences (under 220 characters in all) on WHY this file',
   'changes as part of this group: the part it plays in what the group sets out to do, the reason the change',
   'is needed in this file, or what it enables, protects or keeps working.',
   'Do not restate what changed: the reviewer reads the diff right beside your note. Mention what changed',
   'only when the reason cannot be told without it. If the reason is not evident from the lines, the title',
   'or the summary, state the file\'s role in the group plainly rather than guess at intent.',
-  'Use each file path exactly as listed, and write no notes for files not listed.',
+  'Then "line": the same thing as the note in a few words, for a list of the group\'s files: its gist,',
+  'rewritten shorter, never its first words cut off. At most 50 characters, no trailing period.',
+  'Do not restate the group\'s title.',
+  'Use each file path exactly as listed, and write nothing for files not listed.',
   'Write plainly; describe, do not praise or judge the code.',
 ].join(' ');
 
@@ -274,15 +282,30 @@ function asLines(v: unknown): Map<string, string> | null {
   return out;
 }
 
-/** The notes in a reply, or null when it is not the shape asked for. A malformed note is dropped. */
-function asNotes(v: unknown): Array<{ path: string; note: string }> | null {
+/**
+ * The notes and short lines in a reply, or null when it is not the shape
+ * asked for. An entry missing its line keeps its note, and the other way
+ * round (#264); one with neither, or no path, is dropped.
+ */
+export function asNotes(v: unknown): { notes: Array<{ path: string; note: string }>; lines: Array<{ path: string; note: string }> } | null {
   if (typeof v !== 'object' || v === null) return null;
-  const notes = (v as { notes?: unknown }).notes;
-  if (!Array.isArray(notes)) return null;
-  return notes.flatMap((n) => {
-    const { path, note } = (typeof n === 'object' && n !== null ? n : {}) as { path?: unknown; note?: unknown };
-    return typeof path === 'string' && typeof note === 'string' ? [{ path, note }] : [];
-  });
+  const raw = (v as { notes?: unknown }).notes;
+  if (!Array.isArray(raw)) return null;
+  const notes: Array<{ path: string; note: string }> = [];
+  const lines: Array<{ path: string; note: string }> = [];
+  for (const n of raw) {
+    const { path, note, line } = (typeof n === 'object' && n !== null ? n : {}) as { path?: unknown; note?: unknown; line?: unknown };
+    if (typeof path !== 'string') continue;
+    if (typeof note === 'string') notes.push({ path, note });
+    if (typeof line === 'string') lines.push({ path, note: line });
+  }
+  return { notes, lines };
+}
+
+/** One group's answer: path -> why (`notes`), and path -> short line (`lines`), #264. */
+export interface GroupNotes {
+  notes: Record<string, string>;
+  lines: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +413,8 @@ function folderGuide(diff: BranchDiff, o: WriteOptions, reason: string): Guide {
 // ---------------------------------------------------------------------------
 
 /**
- * The notes for one group: path -> why the file changes in it. One call, given
+ * The notes for one group: path -> why the file changes in it, and path -> a
+ * short line on what it does there (#264). One call, given
  * the group's title, summary and blocks in full, so a note is written from the
  * lines. Null when no call is made: nothing in the group may have a note, or
  * the group will not fit the budget (it is skipped, never split). Throws a
@@ -400,7 +424,7 @@ export async function writeNotes(
   diff: BranchDiff,
   group: Pick<GuideGroup, 'title' | 'summary' | 'blocks'>,
   o: { budget?: number; groupTitles?: readonly string[] } = {},
-): Promise<Record<string, string> | null> {
+): Promise<GroupNotes | null> {
   const blocks = group.blocks.filter((id) => diff.blocks.has(id));
   const paths = notableFiles(blocks, diff);
   if (paths.length === 0) return null;
@@ -416,7 +440,8 @@ export async function writeNotes(
     .join('\n');
   const prompt = `${head}\n\nThe group's blocks:\n\n${blocks.map((id) => renderBlock(diff.blocks.get(id)!, diff)).join('\n\n')}`;
   if (estimateTokens(prompt) + NOTES_OVERHEAD_TOKENS > (o.budget ?? INPUT_BUDGET_TOKENS)) return null;
-  const notes = asNotes(await call(NOTES_SYSTEM, NOTES_SCHEMA, prompt));
-  if (notes === null) throw new GuideError('invalid', 'The notes were not in the shape asked for.');
-  return cleanNotes(notes, new Set(paths));
+  const reply = asNotes(await call(NOTES_SYSTEM, NOTES_SCHEMA, prompt));
+  if (reply === null) throw new GuideError('invalid', 'The notes were not in the shape asked for.');
+  const allowed = new Set(paths);
+  return { notes: cleanNotes(reply.notes, allowed), lines: cleanNotes(reply.lines, allowed, NOTE_LINE_MAX_CHARS) };
 }
