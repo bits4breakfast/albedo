@@ -173,16 +173,6 @@ export function relativeTime(ts: number | null, now: number): string {
   return `${d}d`;
 }
 
-function projectName(task: Task, projects: Project[] | undefined): string | null {
-  if (task.projectId === null) return null;
-  return projects?.find((p) => p.id === task.projectId)?.name ?? null;
-}
-
-function basename(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  return parts.length ? (parts[parts.length - 1] as string) : path;
-}
-
 export default function TaskList({
   tasks,
   selectedId,
@@ -465,18 +455,7 @@ export default function TaskList({
     const sig = signals?.get(task.id);
     return (
       <span className="task-meta">
-        {/* When a project tab is active the repo is already the
-            tab; repeating it on every row is noise. On "All" it is
-            the one thing you need, because rows come from
-            everywhere. */}
-        {(!activeProject || task.projectId !== activeProject.id) && (
-          <>
-            <span className="task-repo">
-              {projectName(task, projects) ?? basename(task.repoPath)}
-            </span>
-            <span className="task-sep">/</span>
-          </>
-        )}
+        {/* No project name: the project is the tab selected above (#278). */}
         {/* No branch and no PR state here: the task bar is the one
             place git and GitHub state is shown, for the selected
             task. Rows identify the task; the title does that. The

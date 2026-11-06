@@ -217,8 +217,8 @@
   color: var(--muted);
 }
 
-/* An unsent draft in the composer: a word in the caption, --muted like the
-   repo name (cleared against --panel-raised). */
+/* An unsent draft in the composer: a word in the caption, --muted (cleared
+   against --panel-raised). */
 .task-draft { color: var(--muted); }
 /* A reminder is back (#156): --accent, the reminder card's own colour, with
    its glyph, so it is never colour alone. Measured, light | dark: --panel-chrome
@@ -300,8 +300,6 @@
   border-radius: 50%;
 }
 
-.task-repo { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.task-sep { color: var(--faint); }
 .task-branch {
   flex: 0 1 auto;
   min-width: 0;
@@ -390,9 +388,8 @@
    title ellipsizes after it. On a row with a key the title's grid track
    cannot go below the key (min-content: the rest counts 0 there, `width: 0`
    growing into the room), so when the row is short the rest goes first,
-   then the repo name in the marks (it shrinks), then the marks are clipped
-   at the end. The rest has no floor on purpose: at 260px in the All view a
-   floor of a few letters clipped the threads chip's count, which is the
+   then the marks are clipped at the end. The rest has no floor on purpose:
+   at 260px a floor of a few letters clipped the threads chip's count, which is the
    information. Rows with no key keep the grid they had. */
 .task-title:has(> .task-key) { display: flex; min-width: 0; }
 .task-rest { flex-grow: 1; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
