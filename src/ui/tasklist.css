@@ -61,10 +61,11 @@
   color: var(--faint);
 }
 
+/* The two groups with something for you, each in its hue's text tier (#276),
+   so the label agrees with its dot. On --panel-chrome: Needs You 6.01 light,
+   7.68 dark; Ready to Review 6.53, 9.55. Done keeps --faint: it is history. */
 .group-label[data-tone='blocked'] { color: var(--status-blocked); }
-/* The other group with something for you. On --panel-chrome: 6.53 light,
-   9.55 dark. Done keeps --faint: it is history. */
-.group-label[data-tone='review'] { color: var(--status-done); }
+.group-label[data-tone='review'] { color: var(--status-review); }
 
 .group-count { font-variant-numeric: tabular-nums; }
 
@@ -132,7 +133,7 @@
   box-shadow: inset 2px 0 0 var(--warn);
   animation: task-attention 1.4s steps(1, end) 6;
 }
-.task-row[data-attention='finished'] { box-shadow: inset 2px 0 0 var(--status-done); }
+.task-row[data-attention='finished'] { box-shadow: inset 2px 0 0 var(--status-review); }
 /* Accent, like the merged chip and row mark it sits beside. */
 .task-row[data-attention='merged'] { box-shadow: inset 2px 0 0 var(--accent); }
 /* Accent too: the same colour as the row's "?" badge. */

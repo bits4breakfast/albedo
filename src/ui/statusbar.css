@@ -20,7 +20,7 @@
 }
 /* One plan window: label, the shared meter bar, percentage, reset. The bar and
    its warn/high colours are .ctx's. Text cleared on --panel-chrome: --muted
-   6.50 / 7.31, --status-blocked 6.90 / 9.42, --danger 6.34 / 7.91. */
+   6.50 / 7.31, --warn 6.90 / 9.42, --danger 6.34 / 7.91. */
 .plan-meter { flex: none; gap: 6px; }
 .plan-meter .ctx-text { font-size: var(--fs-xs); }
 .plan-label { color: var(--muted); }

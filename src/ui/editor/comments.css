@@ -102,7 +102,7 @@
   font-size: var(--fs-xs);
 }
 .ed-cmt-trace { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.ed-cmt-trace-mark { color: var(--status-done); }
+.ed-cmt-trace-mark { color: var(--status-review); }
 .ed-cmt-trace-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .ed-cmt-trace-body { color: var(--muted); }
 .ed-cmt-trace .ed-cmt-btn { margin-left: auto; }

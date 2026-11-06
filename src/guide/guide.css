@@ -292,7 +292,7 @@
      still to do  hollow, --muted           (7.2 light, 7.7 dark; --border-strong
                   at 3.9 was hard to find in dark, owner-reported)
      Unsorted     hollow and dashed, the same
-     Reviewed     filled, --status-done     (7.2 light, 10.1 dark)
+     Reviewed     filled, --status-review    (7.2 light, 10.1 dark)
      current      wider, with an --accent ring (6.5, 7.9) around whichever
                   of those it is, a --panel gap between
    Marks are UI, not text: each has its label for assistive tech and a
@@ -348,7 +348,7 @@
 }
 .gd-rail-mark[data-unsorted]::before { border-style: dashed; }
 .gd-rail-mark:hover::before { border-color: var(--text); }
-.gd-rail-mark[data-reviewed]::before { border-color: var(--status-done); background: var(--status-done); }
+.gd-rail-mark[data-reviewed]::before { border-color: var(--status-review); background: var(--status-review); }
 .gd-rail-mark[aria-current='true']::before {
   width: 12px;
   box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
@@ -370,7 +370,7 @@
 }
 .gd-rail-mark:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 
-.gd-all-done { font-size: var(--fs-sm); color: var(--status-done); }
+.gd-all-done { font-size: var(--fs-sm); color: var(--status-review); }
 
 .gd-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .gd-diff { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

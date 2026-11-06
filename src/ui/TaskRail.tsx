@@ -16,23 +16,79 @@ import './taskrail.css';
  * (⌘N, ⌘1–9, ⌘[ ⌘]) keep working while it is collapsed.
  */
 
-/** How a group's circle is drawn: the shape its glyph has in the list. */
-export type CircleFill = 'solid' | 'outline' | 'dotted';
+/** How a group's circle is drawn. */
+export type CircleFill = 'solid' | 'ringed';
 
 /**
- * Filled for the groups that want you (Needs You, Ready to Review), so the eye
- * goes there first; dotted for Done, so the three greens stay apart (filled,
- * outline, dotted); an outline for the rest.
+ * Every circle filled with its group's colour (#276), Done included: a 2px
+ * outline alone was too little colour to tell the groups apart. Ready to
+ * Review is filled with a ring inside, so it stays apart from In Review's
+ * green filled plain.
  */
 export const CIRCLE_FILL: Record<GroupKey, CircleFill> = {
   blocked: 'solid',
-  active: 'outline',
-  review: 'solid',
-  reviewing: 'outline',
-  quiet: 'outline',
-  done: 'dotted',
-  archived: 'outline',
+  active: 'solid',
+  review: 'ringed',
+  reviewing: 'solid',
+  quiet: 'solid',
+  done: 'solid',
+  archived: 'solid',
 };
+
+/** The groups whose circle pulses when its count goes up: the two that want you. */
+export const PULSING: readonly GroupKey[] = ['blocked', 'review'];
+/** Three 2s pulses (taskrail.css), then the attribute goes. */
+export const PULSE_MS = 6000;
+type Pulse = 'a' | 'b';
+
+/**
+ * Which circles pulse: Needs You's or Ready to Review's count went up since
+ * the last render. Never on the first render -- launch, or the list
+ * collapsing into the rail -- and never on a fall. A rise during a pulse
+ * swaps 'a' for 'b' (or back), which restarts the animation; the timer
+ * starts over with it.
+ */
+function usePulse(counts: Partial<Record<GroupKey, number>>): Partial<Record<GroupKey, Pulse>> {
+  const [pulse, setPulse] = useState<Partial<Record<GroupKey, Pulse>>>({});
+  const prev = useRef<Partial<Record<GroupKey, number>> | null>(null);
+  const timers = useRef(new Map<GroupKey, ReturnType<typeof setTimeout>>());
+  const key = PULSING.map((g) => counts[g] ?? 0).join(',');
+
+  useEffect(() => {
+    const before = prev.current;
+    prev.current = Object.fromEntries(PULSING.map((g) => [g, counts[g] ?? 0]));
+    if (before === null) return;
+    for (const g of PULSING) {
+      if ((counts[g] ?? 0) <= (before[g] ?? 0)) continue;
+      const t = timers.current.get(g);
+      if (t !== undefined) clearTimeout(t);
+      setPulse((p) => ({ ...p, [g]: p[g] === 'a' ? 'b' : 'a' }));
+      timers.current.set(
+        g,
+        setTimeout(() => {
+          timers.current.delete(g);
+          setPulse((p) => {
+            const next = { ...p };
+            delete next[g];
+            return next;
+          });
+        }, PULSE_MS),
+      );
+    }
+    // The counts are what `key` spells; nothing else is read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  useEffect(() => {
+    const live = timers.current;
+    return () => {
+      for (const t of live.values()) clearTimeout(t);
+      live.clear();
+    };
+  }, []);
+
+  return pulse;
+}
 
 /** "In Review, 2 tasks": the circle's tooltip and accessible name. */
 export function circleLabel(key: GroupKey, count: number): string {
@@ -63,6 +119,7 @@ const EDGE = 8;
 
 export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpand, row }: TaskRailProps) {
   const groups = sections.filter((g) => g.key !== 'archived' && g.tasks.length > 0);
+  const pulse = usePulse(Object.fromEntries(groups.map((g) => [g.key, g.tasks.length])));
   const [open, setOpen] = useState<GroupKey | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const railRef = useRef<HTMLElement | null>(null);
@@ -218,6 +275,7 @@ export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpa
           className="rail-circle"
           data-group={g.key}
           data-fill={CIRCLE_FILL[g.key]}
+          data-pulse={pulse[g.key]}
           data-open={open === g.key || undefined}
           /* Where the Tab cycle lands (focusAreas.ts): the selected task's
              group, else the first. */
