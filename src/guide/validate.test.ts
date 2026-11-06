@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildBranchDiff, fileBlockIndex } from './blocks';
 import { statReason } from './budget';
 import { edited } from './fixtures';
-import { changedSince, cleanNotes, LINE_MAX_CHARS, NOTE_MAX_CHARS, normalizeId, validateProposal, viewGuide, type Guide } from './validate';
+import { changedSince, cleanNotes, NOTE_LINE_MAX_CHARS, NOTE_MAX_CHARS, normalizeId, validateProposal, viewGuide, type Guide } from './validate';
 
 describe('validateProposal', () => {
   const known = ['aaaa', 'bbbb', 'cccc', 'dddd'];
@@ -239,11 +239,11 @@ describe('file notes (#202)', () => {
 describe('cleanNotes', () => {
   it('cuts at the cap given, on one line, for allowed paths only', () => {
     const allowed = new Set(['a', 'b']);
-    expect(cleanNotes([{ path: 'a', note: 'x'.repeat(LINE_MAX_CHARS + 1) }, { path: 'b', note: ' one\n line ' }, { path: 'z', note: 'no' }], allowed, LINE_MAX_CHARS)).toEqual({
-      a: `${'x'.repeat(LINE_MAX_CHARS - 1)}…`,
+    expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_LINE_MAX_CHARS + 1) }, { path: 'b', note: ' one\n line ' }, { path: 'z', note: 'no' }], allowed, NOTE_LINE_MAX_CHARS)).toEqual({
+      a: `${'x'.repeat(NOTE_LINE_MAX_CHARS - 1)}…`,
       b: 'one line',
     });
-    expect(cleanNotes([{ path: 'a', note: 'x'.repeat(LINE_MAX_CHARS) }], allowed, LINE_MAX_CHARS).a).toHaveLength(LINE_MAX_CHARS);
+    expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_LINE_MAX_CHARS) }], allowed, NOTE_LINE_MAX_CHARS).a).toHaveLength(NOTE_LINE_MAX_CHARS);
     // The default cap is still the note's.
     expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_MAX_CHARS + 1) }], allowed).a).toHaveLength(NOTE_MAX_CHARS);
   });

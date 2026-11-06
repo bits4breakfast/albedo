@@ -36,9 +36,9 @@ export interface GuideGroup {
    */
   notes?: Record<string, string>;
   /**
-   * path -> one short line on what the file does in this group (#264), for
-   * the group's file list. Written by the same call as `notes`. Absent on
-   * guides from before #264: their list cuts the long note to one line.
+   * path -> the note condensed to one short line (#264), for the group's file
+   * list. Written by the same call as `notes`. Absent on guides from before
+   * #264: their list shows no text under the file, never the note cut down.
    */
   lines?: Record<string, string>;
 }
@@ -65,15 +65,15 @@ export interface Proposal {
   groups: Array<{ title: string; summary: string; blocks: string[]; notes?: Array<{ path: string; note: string }> }>;
 }
 
-/** A note longer than this is cut: about two lines under a file name (#224). */
+/** A note longer than this is cut (#224). Shown in full under the file's header in the diff (#264). */
 export const NOTE_MAX_CHARS = 240;
 
 /**
- * A file's short line longer than this is cut (#264). The model is asked for
- * under 80; this is the hard cap, a little above, so a slightly long line
- * survives whole.
+ * A file's short line longer than this is cut (#264): a safety net only. The
+ * model is asked for at most 50 characters; the list fits about 45 and
+ * ellipsizes the rest, with the whole line in its tooltip.
  */
-export const LINE_MAX_CHARS = 100;
+export const NOTE_LINE_MAX_CHARS = 80;
 
 /**
  * The model's notes, held to the rule: only for `allowed` paths, the first per
@@ -171,7 +171,7 @@ export interface GroupFile {
   stat: StatReason | null;
   /** Why the file changes in this group (#202), when the rule allows one. */
   note: string | null;
-  /** What the file does in this group, one short line (#264), when the rule allows one. */
+  /** The note's gist, one short line for the file list (#264), when the rule allows one. */
   line: string | null;
   /** The rule allows this file a note here, written or not (#224). */
   notable: boolean;

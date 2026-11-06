@@ -12,6 +12,7 @@ import { buildBranchDiff, fileBlockIndex, type BranchDiff } from './blocks';
 import { statReason } from './budget';
 import { edited } from './fixtures';
 import type { LoadedBranchDiff } from './branchDiff';
+import type { Guide } from './validate';
 
 let loaded: LoadedBranchDiff;
 vi.mock('./branchDiff', () => ({ loadBranchDiff: async () => loaded }));
@@ -522,24 +523,82 @@ describe('Reviewed moves you on (#201)', () => {
   });
 });
 
-describe('file notes (#202)', () => {
-  it('shows what each file does in the group, under its name, when it changes 5 lines or more', async () => {
-    const both = buildBranchDiff([edited('src/a.ts', [3, 4, 5], 'alpha'), edited('src/b.ts', [5], 'beta')], statReason);
+describe('file notes (#202, #264)', () => {
+  const both = buildBranchDiff(
+    [edited('src/a.ts', [3, 4, 5], 'alpha'), edited('src/b.ts', [5], 'beta'), edited('src/c.ts', [3, 4, 5], 'gamma')],
+    statReason,
+  );
+  const save = (group: Partial<Guide['groups'][number]>) => {
     loaded = { ...loaded, diff: both };
     saveGuide(task.id, {
       diffHash: both.hash,
       writtenAt: Date.now(),
       base: 'main',
-      groups: [{ title: 'Both', summary: 'S.', blocks: [...both.order], notes: { 'src/a.ts': 'the value object', 'src/b.ts': 'registers it' } }],
+      groups: [{ title: 'Both', summary: 'S.', blocks: [...both.order], ...group }],
       files: fileBlockIndex(both),
       fallback: null,
+    });
+  };
+  const why = () => screen.getByRole('region', { name: 'Diff' }).querySelector('.gd-diff-why');
+
+  it('the list shows each file’s short line under its name; the open file’s why is under the diff’s header', async () => {
+    save({
+      notes: { 'src/a.ts': 'So every caller pages alike.', 'src/b.ts': 'registers it' },
+      lines: { 'src/a.ts': 'Holds the page size', 'src/b.ts': 'registers it', 'src/c.ts': 'Line only' },
     });
     pane();
     await screen.findByRole('heading', { name: 'Both' });
     const a = left().getByRole('button', { name: /a\.ts/ });
-    expect(within(a).getByText('the value object').className).toBe('gd-file-note');
-    // b.ts is +1 -1: no note, its diff says it.
+    const line = within(a).getByText('Holds the page size');
+    expect(line.className).toBe('gd-file-line');
+    expect(line.getAttribute('title')).toBe('Holds the page size');
+    // The why is never in the list.
+    expect(left().queryByText('So every caller pages alike.')).toBeNull();
+    // b.ts is +1 -1: neither text, its diff says it.
     expect(left().queryByText('registers it')).toBeNull();
+    // a.ts is open: its why sits under the header, before the diff's scroll.
+    const band = why()!;
+    expect(band.textContent).toBe('WhySo every caller pages alike.');
+    expect(band.previousElementSibling!.className).toBe('gd-diff-head');
+    expect(right().getByText('Why').className).toBe('gd-diff-why-label');
+    // c.ts has a line and no why: the pane shows nothing extra.
+    fireEvent.click(left().getByRole('button', { name: /c\.ts/ }));
+    await waitFor(() => expect(right().getByText('c.ts')).toBeTruthy());
+    expect(why()).toBeNull();
+  });
+
+  it('the diff has one header row: the layout toggle sits beside the size, and the diff draws no head of its own', async () => {
+    save({});
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    const region = screen.getByRole('region', { name: 'Diff' });
+    await waitFor(() => expect(region.querySelector('.tx-d-code')).not.toBeNull());
+    expect(region.querySelector('.tx-d-head')).toBeNull();
+    const toggle = right().getByRole('button', { name: 'Split View' });
+    expect(toggle.textContent).toBe('Split');
+    expect(toggle.parentElement!.className).toBe('gd-diff-head');
+    expect(toggle.previousElementSibling!.className).toBe('gd-counts');
+    expect(region.querySelector('.tx-d-unified')).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(region.querySelector('.tx-d-split')).not.toBeNull();
+    expect(right().getByRole('button', { name: 'Unified View' })).toBeTruthy();
+  });
+
+  it('a guide from before #264 (the why only): no text row in the list, the why in the pane', async () => {
+    save({ notes: { 'src/a.ts': 'the value object' } });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    expect(left().queryByText('the value object')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Group' }).querySelector('.gd-file-line')).toBeNull();
+    expect(why()!.textContent).toBe('Whythe value object');
+  });
+
+  it('a file with no note shows nothing extra in either place', async () => {
+    save({ notes: {} });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    expect(screen.getByRole('region', { name: 'Group' }).querySelector('.gd-file-line')).toBeNull();
+    expect(why()).toBeNull();
   });
 });
 
@@ -576,14 +635,25 @@ describe('notes after the groups (#224)', () => {
     );
   });
 
-  it('shows the groups at once, a placeholder where each note will be, then the note', async () => {
+  it('shows the groups at once, a placeholder where each line will be, then the line and the why', async () => {
     pane();
     await screen.findByRole('heading', { name: 'First' });
     await waitFor(() => expect(calls.map((c) => c.group)).toEqual(['First']));
     expect(screen.getAllByTestId('note-pending')).toHaveLength(2);
-    act(() => calls[0]!.answer(ok({ notes: [{ path: 'src/a.ts', note: 'Why a changes.' }, { path: 'src/b.ts', note: 'Why b changes.' }] })));
-    await waitFor(() => expect(left().getByText('Why a changes.').className).toBe('gd-file-note'));
+    act(() =>
+      calls[0]!.answer(
+        ok({
+          notes: [
+            { path: 'src/a.ts', line: 'What a does', note: 'Why a changes.' },
+            { path: 'src/b.ts', line: 'What b does', note: 'Why b changes.' },
+          ],
+        }),
+      ),
+    );
+    await waitFor(() => expect(left().getByText('What a does').className).toBe('gd-file-line'));
     expect(screen.queryAllByTestId('note-pending')).toHaveLength(0);
+    expect(left().queryByText('Why a changes.')).toBeNull();
+    expect(right().getByText('Why a changes.')).toBeTruthy();
   });
 
   it('the group you move to is asked about next', async () => {
@@ -617,8 +687,8 @@ describe('notes after the groups (#224)', () => {
     fireEvent.click(left().getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(calls.map((c) => c.group)).toEqual(['First', 'Second', 'Third', 'First']));
     expect(screen.getAllByTestId('note-pending')).toHaveLength(2);
-    act(() => calls[3]!.answer(ok({ notes: [{ path: 'src/a.ts', note: 'Now written.' }] })));
-    await waitFor(() => expect(left().getByText('Now written.')).toBeTruthy());
+    act(() => calls[3]!.answer(ok({ notes: [{ path: 'src/a.ts', line: 'Now written', note: 'Why, now written.' }] })));
+    await waitFor(() => expect(left().getByText('Now written')).toBeTruthy());
     expect(left().queryByText(/Notes could not be written/)).toBeNull();
     warn.mockRestore();
   });

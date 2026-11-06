@@ -50,7 +50,7 @@ import {
   writeStateOf,
   type WriteState,
 } from './store';
-import { Diff, DiffAnnotationsContext } from '../ui/transcript/Diff';
+import { Diff, DiffAnnotationsContext, layoutToggleLabel, useDiffLayout } from '../ui/transcript/Diff';
 import { useDiffComments } from '../ui/editor/diffComments';
 import { useOpenFile } from '../ui/editor/openFile';
 import { relativeTime } from '../ui/TaskList';
@@ -705,9 +705,9 @@ function GuideBody({
                       <span className="gd-file-mark" aria-hidden="true">
                         {done ? '✓' : ''}
                       </span>
-                      <FileIcon path={f.path} />
+                      {/* The name keeps its room: the parts after it give way first (#264). */}
                       <span className="gd-file-name">
-                        {name}
+                        <span className="gd-file-base">{name}</span>
                         {f.blocks.length < f.totalBlocks ? (
                           <span className="gd-file-part">
                             {' '}
@@ -718,12 +718,16 @@ function GuideBody({
                       </span>
                       <span className="gd-file-dir">{dir}</span>
                       <RowCounts file={f} comments={fileComments(group, f)} />
-                      {/* Why the file changes in this group (#202), under its name; while
-                          it is being written, a placeholder its size (#224). */}
-                      {f.note ? (
-                        <span className="gd-file-note">{f.note}</span>
+                      {/* The note's gist, one short line (#264); the note itself
+                          is under the diff's header. While it is being written, a
+                          placeholder its size (#224). A guide from before #264 has no
+                          line: nothing here, never the long note cut down. */}
+                      {f.line ? (
+                        <span className="gd-file-line" title={f.line}>
+                          {f.line}
+                        </span>
                       ) : f.notable && notesState === 'pending' ? (
-                        <span className="gd-file-note gd-file-note-pending" aria-hidden="true" data-testid="note-pending" />
+                        <span className="gd-file-line gd-file-line-pending" aria-hidden="true" data-testid="note-pending" />
                       ) : null}
                     </button>
                   </li>
@@ -857,6 +861,10 @@ function GuideFileDiff({
     () => (full && result?.kind === 'diff' ? restrictDiff(result.diff, full, file.blocks, whole || statBlock) : null),
     [full, result, file.blocks, whole, statBlock],
   );
+  // The diff's layout, toggled from this header (#264): the same rule the
+  // diff's own header uses, measured on the scroll it is drawn in.
+  const layout = useDiffLayout();
+  const hasLines = shown !== null && shown.hunks.length > 0;
 
   return (
     <div className="gd-diff">
@@ -865,7 +873,19 @@ function GuideFileDiff({
         <span className="gd-diff-name">{name}</span>
         <span className="gd-diff-dir">{dir}</span>
         <Counts file={file} />
+        {hasLines ? (
+          <button
+            type="button"
+            className="gd-link gd-diff-layout"
+            onClick={layout.toggle}
+            aria-label={`${layoutToggleLabel(layout.resolved)} View`}
+            title={layout.resolved === 'split' ? 'Show the diff unified' : 'Show the diff side by side'}
+          >
+            {layoutToggleLabel(layout.resolved)}
+          </button>
+        ) : null}
         <CommentCount n={commentCount} />
+        <span className="gd-diff-gap" />
         {split ? (
           <button type="button" className="gd-link" onClick={() => setWhole((w) => !w)} aria-pressed={whole}>
             {whole ? `Only This Group’s ${file.blocks.length} of ${file.totalBlocks}` : `Whole File (${file.totalBlocks} blocks)`}
@@ -879,6 +899,16 @@ function GuideFileDiff({
           Reviewed
         </label>
       </div>
+      {/* Why the file changes in this group (#224), under its header (#264):
+          outside the scroll, so it stays with the header as the diff scrolls. */}
+      {file.note ? (
+        <div className="gd-diff-why">
+          <p className="gd-diff-why-text">
+            <span className="gd-diff-why-label">Why</span>
+            {file.note}
+          </p>
+        </div>
+      ) : null}
       {comments.notice ? (
         <div className="gd-banner">
           <span>{comments.notice}</span>
@@ -888,7 +918,7 @@ function GuideFileDiff({
         </div>
       ) : null}
       {comments.bar}
-      <div className="gd-diff-scroll">
+      <div className="gd-diff-scroll" ref={layout.ref}>
         {/* A reviewed file shows its diff like any other (#228): the ticked
             box above and the rail say it is reviewed. */}
         {result === null ? (
@@ -907,6 +937,8 @@ function GuideFileDiff({
               <Diff
                 key={`${file.path}:${whole}`}
                 diff={shown}
+                layout={layout.resolved}
+                head={false}
                 expand={{ oldText: result.oldText, newText: result.newText }}
                 absoluteLines={result.change !== 'deleted'}
                 contextPath={null}
