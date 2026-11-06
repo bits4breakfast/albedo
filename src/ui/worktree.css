@@ -1036,3 +1036,25 @@
 .sq-sha { font-family: var(--font-mono); color: var(--muted); }
 .sq-subject { color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sq-when { font-size: var(--fs-xs); color: var(--muted); }
+
+/* --- CI Details (#280): the command, its contract, and its test ----------- */
+
+.wt-ci-command {
+  margin-top: 8px;
+}
+
+.wt-ci-command .wt-confirm-actions {
+  margin-top: 8px;
+  align-items: center;
+}
+
+/* The test's log tail: the preview's own audited tiers, scrolled when long
+   rather than pushing Save below the fold. */
+.wt-ci-log {
+  max-height: 14em;
+  overflow-y: auto;
+}
+
+.wt-preview-body + .wt-preview-label {
+  margin-top: 8px;
+}

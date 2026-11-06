@@ -31,7 +31,9 @@
  * items, for Claude (#280, `transcript/ciFailure.ts`), by a rule of its own:
  * silent, so a failure already final at launch queues too, and a rerun that
  * fails again re-queues unless the owner handled that commit. It is kept
- * across a restart, and it is only ever queued: nothing here sends.
+ * across a restart, and it is only ever queued: nothing here sends. A newly
+ * queued failure's details (step 2) are fetched here too, once, when its
+ * project asks for them (`transcript/ciDetailsQueue.ts`).
  */
 
 import { useEffect, useRef, useSyncExternalStore } from 'react';
@@ -41,7 +43,8 @@ import { getPrStatus, subscribePrStatus } from '../gh/prStore';
 import type { PrStatus } from '../gh/prStatus';
 import { noteChecksFinished } from './attention';
 import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
-import { observeCiQueue } from './transcript/ciFailure';
+import { ciDetailsWanted, observeCiQueue } from './transcript/ciFailure';
+import { fetchQueuedCiDetails, type DetailsTask } from './transcript/ciDetailsQueue';
 
 /** An unseen result on a task's row. */
 export interface CiMark {
@@ -105,7 +108,7 @@ export function useCiNotifyEnabled(): [boolean, (on: boolean) => void] {
  * production caller.
  */
 export function observeCi(
-  task: Pick<Task, 'id' | 'title'>,
+  task: Pick<Task, 'id' | 'title'> & Partial<DetailsTask>,
   pr: PrStatus | null,
   selectedId: number | null,
 ): CiEvent | null {
@@ -117,6 +120,15 @@ export function observeCi(
   // queueing is silent (see ciFailure.ts). Queued, never sent: it goes with
   // the owner's next message, or with Send.
   observeCiQueue(task.id, pr);
+  // Its details, once, if its project asks for them. A task without its
+  // project and folders (a test's bare id and title) is never fetched for.
+  const wanted = ciDetailsWanted(task.id);
+  if (wanted && task.projectId !== undefined && task.worktreePath !== undefined && task.repoPath !== undefined) {
+    void fetchQueuedCiDetails(
+      { id: task.id, projectId: task.projectId, worktreePath: task.worktreePath, repoPath: task.repoPath },
+      wanted,
+    );
+  }
   let changed = false;
   // A push makes a mark about the commit before it old news.
   if (prev && watch && prev.sha !== watch.sha && marks.delete(task.id)) changed = true;
@@ -197,7 +209,7 @@ export function resetCiNoticesForTests(): void {
  * one, by whatever path -- opening a task is what "seen" means.
  */
 export function useCiNotices(
-  tasks: Pick<Task, 'id' | 'title' | 'status' | 'kind'>[],
+  tasks: (Pick<Task, 'id' | 'title' | 'status' | 'kind'> & Partial<DetailsTask>)[],
   selectedId: number | null,
 ): void {
   const tasksRef = useRef(tasks);

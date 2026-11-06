@@ -11,19 +11,32 @@
  * has named the work and committed to starting it. Every rejection names its
  * reason; see `validateWorktreeRoot`.
  *
+ * CI Details (#280, step 2) says what a queued CI failure carries: name and
+ * link only, GitHub Actions' step and log tail, or what a command prints.
+ * "Test on the Last Failure" runs the SAVED command -- read back from the
+ * project row, never the field's unsaved text -- on a failure at hand, and
+ * shows what it gave.
+ *
  * Owner: worktree workstream (M3).
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
-import type { Project } from '../types';
+import type { CiDetailsMode, Project } from '../types';
 import {
   ProjectExistsError,
   archiveProject,
   createProject,
+  getProject,
   listProjects,
   updateProject,
 } from '../db/projects';
+import { listTasks } from '../db';
+import { getPrStatus } from '../gh/prStore';
+import { runDetailsCommand } from '../gh/ciDetailsRun';
+import { failedDetailsLine, type CiDetailsState } from '../gh/ciDetails';
+import { queuedCiOf, shortSha } from './transcript/ciFailure';
+import { lastFailureIn, type LastFailure } from './transcript/ciDetailsQueue';
 import { checkWorktreeRoot, expandTilde, validateWorktreeRoot } from '../git/reconcile';
 import { basename, defaultWorktreeRoot, listBranches, repoRootFor } from '../git/worktree';
 import { PROMPT_PLACEHOLDERS, fillPromptTemplate } from '../lib/issueKey';
@@ -71,6 +84,10 @@ interface Draft {
   defaultBaseBranch: string;
   /** Initial prompt sent to `claude` as argv on a task's first spawn. */
   taskPromptTemplate: string;
+  /** What a queued CI failure carries (#280). */
+  ciDetails: CiDetailsMode;
+  /** Kept while another mode is chosen, so switching back loses nothing. */
+  ciDetailsCommand: string;
   /** Whether the user has hand-edited the root, so we stop re-deriving it. */
   rootTouched: boolean;
 }
@@ -88,6 +105,28 @@ const SUGGESTED_PROMPT = 'Pick up {key}. Read the issue, plan the change, then i
  * tell what `{rest}` means from its name, but they can read it off a sentence.
  */
 const PREVIEW_TITLE = 'ACME-2398 fix the login redirect loop';
+
+/** The CI Details choices, in the order shown. */
+const CI_DETAILS_OPTIONS: readonly { mode: CiDetailsMode; label: string; detail: string }[] = [
+  {
+    mode: 'link',
+    label: 'Name and Link Only',
+    detail: 'Claude reads the failure with its own tools. Say which in the repo’s CLAUDE.md. The default.',
+  },
+  {
+    mode: 'actions',
+    label: 'GitHub Actions',
+    detail: 'Albedo adds the job, the failing step and the last 40 log lines, as the Checks dialog shows them.',
+  },
+  { mode: 'command', label: 'A Command', detail: 'Albedo runs it in the task’s folder and adds what it prints.' },
+];
+
+/** What "Test on the Last Failure" has to show. */
+type CommandTest =
+  | { kind: 'running' }
+  | { kind: 'nothing' }
+  | { kind: 'error'; message: string }
+  | { kind: 'done'; on: LastFailure; details: CiDetailsState };
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -116,6 +155,7 @@ export function ProjectsDialog({
   const [hiddenIds, setHiddenIds] = useState<number[]>([]);
   /** Set when a create collided with an existing project, to offer "edit it". */
   const [clash, setClash] = useState<Project | null>(null);
+  const [commandTest, setCommandTest] = useState<CommandTest | null>(null);
 
   // --- load ---------------------------------------------------------------
 
@@ -138,6 +178,7 @@ export function ProjectsDialog({
       setConfirmArchive(null);
       setJustCreated(null);
       setClash(null);
+      setCommandTest(null);
       return;
     }
     setHiddenIds(readHiddenProjectIds());
@@ -219,6 +260,7 @@ export function ProjectsDialog({
       }
 
       const name = basename(repoPath);
+      setCommandTest(null);
       setDraft({
         id: null,
         name,
@@ -226,6 +268,8 @@ export function ProjectsDialog({
         worktreeRoot: suggestRoot(name),
         defaultBaseBranch: '',
         taskPromptTemplate: '',
+        ciDetails: 'link',
+        ciDetailsCommand: '',
         rootTouched: false,
       });
       void loadBranches(repoPath);
@@ -239,6 +283,7 @@ export function ProjectsDialog({
       setSaveError(null);
       setClash(null);
       setJustCreated(null);
+      setCommandTest(null);
       setDraft({
         id: p.id,
         name: p.name,
@@ -246,6 +291,8 @@ export function ProjectsDialog({
         worktreeRoot: p.worktreeRoot,
         defaultBaseBranch: p.defaultBaseBranch ?? '',
         taskPromptTemplate: p.taskPromptTemplate ?? '',
+        ciDetails: p.ciDetails,
+        ciDetailsCommand: p.ciDetailsCommand ?? '',
         rootTouched: true,
       });
       void loadBranches(p.repoPath);
@@ -319,6 +366,12 @@ export function ProjectsDialog({
         return;
       }
 
+      const command = draft.ciDetailsCommand.trim();
+      if (draft.ciDetails === 'command' && !command) {
+        setSaveError('Give the command CI Details runs, or choose another option.');
+        return;
+      }
+
       const patch = {
         name,
         repoPath: draft.repoPath,
@@ -328,6 +381,8 @@ export function ProjectsDialog({
         // '' and null both mean "no prompt"; the db layer collapses them, and
         // sending one representation keeps that true from this end too.
         taskPromptTemplate: draft.taskPromptTemplate.trim() || null,
+        ciDetails: draft.ciDetails,
+        ciDetailsCommand: command || null,
       };
 
       if (draft.id === null) {
@@ -356,6 +411,33 @@ export function ProjectsDialog({
       setBusy(false);
     }
   }, [draft, busy, home, reload, onChanged]);
+
+  /**
+   * The saved command, on the most recent failure at hand. Read back from the
+   * row, so what runs is what was saved -- the button is off while the field
+   * differs from it.
+   */
+  const testCommand = useCallback(async () => {
+    if (!draft || draft.id === null) return;
+    setCommandTest({ kind: 'running' });
+    try {
+      const saved = await getProject(draft.id);
+      if (!saved?.ciDetailsCommand) {
+        setCommandTest({ kind: 'error', message: 'Save the command first.' });
+        return;
+      }
+      const tasks = (await listTasks()).filter((t) => t.projectId === saved.id);
+      const last = lastFailureIn(tasks, queuedCiOf, getPrStatus);
+      if (!last) {
+        setCommandTest({ kind: 'nothing' });
+        return;
+      }
+      const details = await runDetailsCommand(saved, last.task.worktreePath || last.task.repoPath, last.failure);
+      setCommandTest({ kind: 'done', on: last, details });
+    } catch (e) {
+      setCommandTest({ kind: 'error', message: messageOf(e) });
+    }
+  }, [draft]);
 
   const doArchive = useCallback(
     async (id: number) => {
@@ -530,6 +612,18 @@ export function ProjectsDialog({
                   </div>
                 )}
               </div>
+
+              <CiDetailsField
+                draft={draft}
+                saved={projects.find((p) => p.id === draft.id) ?? null}
+                busy={busy}
+                test={commandTest}
+                onChange={(patch) => {
+                  setDraft({ ...draft, ...patch });
+                  setCommandTest(null);
+                }}
+                onTest={() => void testCommand()}
+              />
 
               <div className="wt-field">
                 <label className="wt-label" htmlFor="wt-proj-base">
@@ -727,6 +821,11 @@ export function ProjectsDialog({
                     {p.defaultBaseBranch && (
                       <span className="wt-chip">Base: {p.defaultBaseBranch}</span>
                     )}
+                    {p.ciDetails !== 'link' && (
+                      <span className="wt-chip">
+                        CI Details: {p.ciDetails === 'actions' ? 'GitHub Actions' : 'a command'}
+                      </span>
+                    )}
                   </div>
 
                   {confirmArchive === p.id && (
@@ -802,6 +901,136 @@ export function ProjectsDialog({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * CI Details (#280): three choices, and for "A Command" the command, its
+ * contract in short (the README has it in full) and a way to try it.
+ */
+function CiDetailsField({
+  draft,
+  saved,
+  busy,
+  test,
+  onChange,
+  onTest,
+}: {
+  draft: Draft;
+  /** The project as stored; null while adding one. */
+  saved: Project | null;
+  busy: boolean;
+  test: CommandTest | null;
+  onChange: (patch: Partial<Pick<Draft, 'ciDetails' | 'ciDetailsCommand'>>) => void;
+  onTest: () => void;
+}) {
+  const typed = draft.ciDetailsCommand.trim();
+  const unsaved = saved === null || (saved.ciDetailsCommand ?? '') !== typed;
+  const why = saved === null ? 'Add the project first, then test the command.' : !typed ? null : unsaved ? 'Save first: the test runs the saved command.' : null;
+  return (
+    <div className="wt-field" role="radiogroup" aria-labelledby="wt-proj-ci-label">
+      <span className="wt-label" id="wt-proj-ci-label">
+        CI Details <span className="wt-label-optional">What a queued CI failure carries</span>
+      </span>
+      {CI_DETAILS_OPTIONS.map((o) => (
+        <label key={o.mode} className="wt-option" data-selected={draft.ciDetails === o.mode}>
+          <input
+            type="radio"
+            name="wt-proj-ci"
+            value={o.mode}
+            checked={draft.ciDetails === o.mode}
+            disabled={busy}
+            onChange={() => onChange({ ciDetails: o.mode })}
+          />
+          <span>
+            <span className="wt-option-label">{o.label}</span>
+            <span className="wt-option-detail">{o.detail}</span>
+          </span>
+        </label>
+      ))}
+      {draft.ciDetails === 'command' && (
+        <div className="wt-ci-command">
+          <input
+            id="wt-proj-ci-command"
+            className="wt-input wt-mono"
+            type="text"
+            aria-label="The command"
+            value={draft.ciDetailsCommand}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            placeholder="./scripts/ci-details.sh"
+            disabled={busy}
+            onChange={(e) => onChange({ ciDetailsCommand: e.target.value })}
+          />
+          <div className="wt-hint">
+            Gets the failing checks as JSON on stdin (<span className="wt-mono">name, conclusion, link</span>).
+            Prints, per check, the step and the log tail. 30 s limit; if it fails, the item goes out with name and
+            link and says so. The README has the full contract.
+          </div>
+          <div className="wt-confirm-actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || why !== null || !typed || test?.kind === 'running'}
+              title={why ?? 'Run the saved command on the most recent failing checks of a task in this project'}
+              onClick={onTest}
+            >
+              {test?.kind === 'running' ? 'Testing…' : 'Test on the Last Failure'}
+            </button>
+            {why ? <span className="wt-modal-sub">{why}</span> : null}
+          </div>
+          {test ? <CommandTestResult test={test} /> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CommandTestResult({ test }: { test: CommandTest }) {
+  if (test.kind === 'running') return <div className="wt-hint" role="status">Running the command, for up to 30 s…</div>;
+  if (test.kind === 'nothing') {
+    return (
+      <div className="wt-notice" role="status">
+        No failure to test on: none of this project’s tasks has failing checks right now.
+      </div>
+    );
+  }
+  if (test.kind === 'error') {
+    return (
+      <div className="wt-notice" data-tone="error" role="status">
+        {test.message}
+      </div>
+    );
+  }
+  const { on, details } = test;
+  const sha = shortSha(on.failure.sha);
+  const where = `PR #${on.failure.prNumber}${sha ? ` (${sha})` : ''}, task “${on.task.title}”`;
+  if (details.state !== 'ready') {
+    return (
+      <div className="wt-notice" data-tone="error" role="status">
+        On {where}: {details.state === 'failed' ? failedDetailsLine(details.reason) : 'nothing came back.'}
+      </div>
+    );
+  }
+  const lines = on.failure.checks.map((c) => {
+    const d = details.checks.find((x) => x.name === c.name);
+    if (!d) return `${c.name}: no details`;
+    const log = d.log.length > 0 ? `${d.log.length} log line${d.log.length === 1 ? '' : 's'}${d.more > 0 ? ` (${d.more} more cut)` : ''}` : 'no log';
+    return `${c.name}: ${d.step ? `step “${d.step}”, ` : ''}${log}`;
+  });
+  const first = details.checks.find((d) => d.log.length > 0);
+  return (
+    <div className="wt-preview" role="status">
+      <div className="wt-preview-label">On {where}, the item would carry:</div>
+      <div className="wt-preview-body">{lines.join('\n')}</div>
+      {first ? (
+        <>
+          <div className="wt-preview-label">The end of {first.name}’s log:</div>
+          <div className="wt-preview-body wt-ci-log">{first.log.join('\n')}</div>
+        </>
+      ) : null}
     </div>
   );
 }

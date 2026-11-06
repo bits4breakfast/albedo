@@ -36,9 +36,24 @@ export interface Project {
    * so "unset" has exactly one representation.
    */
   taskPromptTemplate: string | null;
+  /**
+   * What a queued CI failure carries (#280): `link` (name and link only, the
+   * default), `actions` (the failing step and log tail, from GitHub Actions)
+   * or `command` (what `ciDetailsCommand` prints).
+   */
+  ciDetails: CiDetailsMode;
+  /**
+   * The command the `command` mode runs, through `/bin/sh -c`, in the task's
+   * folder. Kept whatever the mode, so switching back loses nothing. The only
+   * source of a command run this way (CLAUDE.md, the `ci-details-sh` scope).
+   */
+  ciDetailsCommand: string | null;
   createdAt: number;
   archivedAt: number | null;
 }
+
+/** See `Project.ciDetails`. Stored as NULL, 'actions' or 'command'. */
+export type CiDetailsMode = 'link' | 'actions' | 'command';
 
 /**
  * Write shape for a project.
@@ -56,10 +71,14 @@ export interface Project {
  */
 export type NewProject = Omit<
   Project,
-  'id' | 'createdAt' | 'archivedAt' | 'taskPromptTemplate'
+  'id' | 'createdAt' | 'archivedAt' | 'taskPromptTemplate' | 'ciDetails' | 'ciDetailsCommand'
 > & {
   /** Omit, or pass null/'' , for no initial prompt. Normalised on write. */
   taskPromptTemplate?: string | null;
+  /** Omit for name and link only (#280). */
+  ciDetails?: CiDetailsMode;
+  /** Omit, or pass null/'', for none. Normalised on write. */
+  ciDetailsCommand?: string | null;
 };
 
 // ---------------------------------------------------------------------------

@@ -108,6 +108,22 @@ KB, read only, and grants no fs scope; it refuses every place
 `~/.claude.json`, secret stores, the app's own folders). Nothing else in a
 question is opened.
 
+## Shell scope: one command the owner saved
+
+Albedo's shell scope otherwise allows only named programs (git, gh, open,
+PHPantom). By the owner's decision (2026-11-06, issue #280) it also allows
+`ci-details-sh`: `/bin/sh -c` with a script that must start with a fixed
+preamble (it unsets the Anthropic credentials and turns `$ALBEDO_CI_INPUT`
+into stdin) and then runs the project's "CI Details" command. It exists so a
+queued CI failure can carry the failing step and log tail from a CI system
+Albedo does not speak to itself. The command string comes ONLY from the saved
+project setting (`projects.ci_details_command`), read back from the row --
+never from a session, a transcript, a PR, a check's name or link, or a
+command's output; those reach the command as data, through the environment,
+never in the script. `src/gh/ciDetailsRun.ts` is the only code that spawns
+it: once per queued failure, and from the Projects dialog's Test button, in
+the task's folder, for at most 30 s. That is the whole of it.
+
 ## Which session a task is on
 
 A restart resumes `tasks.session_id`, so that value is a fact, never a guess.

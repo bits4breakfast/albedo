@@ -99,6 +99,16 @@
           "name": "phpantom",
           "cmd": "$HOME/.albedo/bin/phpantom_lsp",
           "args": ["--stdio"]
+        },
+        {
+          "name": "ci-details-sh",
+          "cmd": "/bin/sh",
+          "args": [
+            "-c",
+            {
+              "validator": "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL\nexec 0<<ALBEDO_CI_EOF\n\\$ALBEDO_CI_INPUT\nALBEDO_CI_EOF\nunset ALBEDO_CI_INPUT\n(?s:.+)"
+            }
+          ]
         }
       ]
     },

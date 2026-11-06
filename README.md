@@ -107,6 +107,10 @@ anything.
    - **Default base branch**: what new branches start from.
    - **Initial Prompt**, optional: text typed into every new session. It can
      use `{key}`, `{rest}`, `{title}` and `{branch}`.
+   - **CI Details**: what a failing check carries when it waits for Claude.
+     **Name and Link Only** (the default), **GitHub Actions** (the failing
+     step and the last 40 log lines), or **A Command** of your own; see
+     [CI details from a command](#ci-details-from-a-command).
 3. **Create a task** with **⌘N**. Give it a title, pick a new or existing
    branch, and choose a new worktree or the main checkout. **⌘↩** creates it.
    Claude Code starts in the new worktree.
@@ -304,6 +308,47 @@ blocked on you, or give its task a one-line summary, shown under the task's
 title (you can change or clear it with Rename Task). A new session is never started for it: the request waits
 under Requests in the title bar until you approve it, and approving opens New
 Task filled in from it.
+
+**A failing check waits for Claude, it is never sent for you.** When a
+task's pull request fails its checks, the failure is listed above the message
+box and goes with your next message, or with Send. A project's **CI Details**
+setting decides what it carries besides each check's name and link.
+
+### CI details from a command
+
+With **CI Details: A Command**, Albedo runs your command once, when a failure
+is queued, and adds what it prints to the queued item:
+
+- **How it runs:** `/bin/sh -c '<your command>'`, in the task's folder, with
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` removed
+  from its environment. It has 30 seconds; after that it is stopped, with
+  everything it started.
+- **What it reads on stdin:** one line of JSON. `head` is `""` when GitHub
+  named no commit; `link` may be `null`.
+
+  ```json
+  {"pr": 14, "head": "abc1234…", "checks": [{"name": "build", "conclusion": "failed", "link": "https://ci.example/job/812"}]}
+  ```
+
+- **What it prints on stdout:** JSON with a `checks` list. Each entry is
+  matched to a failing check by `name`; `step` and `log` are optional, and
+  `log` is a string (or a list of lines). Entries for other checks, and any
+  other fields, are ignored.
+
+  ```json
+  {"checks": [{"name": "build", "step": "Run tests", "log": "FAIL src/recipes/fractions.test.ts\n  Expected: \"⅓ cup\""}]}
+  ```
+
+- **Limits:** the last 40 lines of each log, and at most 4 KB of them; the
+  rest is cut from the top. Escape sequences and control characters are
+  removed.
+- **When it fails** (a non-zero exit, a timeout, output that is not this
+  JSON), the failure still queues with names and links, and says in one line
+  why there are no details. Its first line on stderr is shown as the reason.
+- **Only what you saved runs.** The command comes from the project setting
+  and nothing else; check names and links reach it as data, never as part of
+  the command. **Test on the Last Failure**, under the field, runs the saved
+  command on a failure at hand and shows what it gave.
 
 **Where things live.**
 
