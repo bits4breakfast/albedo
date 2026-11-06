@@ -15,14 +15,14 @@ import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { ciMarkFor, useCiVersion } from './ciNotice';
 import { reviewMarkFor, standingApproval, useReviewVersion } from './reviewNotice';
 import { hasConflicts } from '../gh/prAction';
-import { reviewerNames } from '../gh/prStatus';
+import { reviewerNames, type PrStatus } from '../gh/prStatus';
 import { useBranchSync } from '../git/branchSync';
 import { getReviewWork, useReviewWorkProbes, useReviewWorkVersion } from '../git/reviewWork';
 import {
   canMarkDone,
   canMarkNotDone,
+  checksFailing,
   compareInGroup,
-  GROUP_GLYPH,
   GROUP_ORDER,
   GROUP_TITLE,
   groupOf,
@@ -40,6 +40,7 @@ import { ReminderGlyph } from './reminders/ReminderGlyph';
 import TaskTitleEdit from './TaskTitleEdit';
 import { RENAME_HINT } from './taskRename';
 import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
+import GroupPie from './GroupPie';
 import './tasklist.css';
 
 /** The row's word for a chat, in its tooltip where a branch would be. */
@@ -170,16 +171,6 @@ export function relativeTime(ts: number | null, now: number): string {
   if (h < 24) return `${h}h`;
   const d = Math.floor(h / 24);
   return `${d}d`;
-}
-
-function projectName(task: Task, projects: Project[] | undefined): string | null {
-  if (task.projectId === null) return null;
-  return projects?.find((p) => p.id === task.projectId)?.name ?? null;
-}
-
-function basename(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  return parts.length ? (parts[parts.length - 1] as string) : path;
 }
 
 export default function TaskList({
@@ -451,7 +442,11 @@ export default function TaskList({
   };
 
   /** The row's caption and marks: the list's rows and the rail's popover (#266) both draw this. */
-  const rowMeta = (task: Task): ReactNode => {
+  const rowMeta = (task: Task, group: GroupKey): ReactNode => {
+    const pr = task.kind === 'chat' ? null : getPrStatus(task.id);
+    // In Needs You for its checks, not for a prompt (taskGroups.ts): the row
+    // says why, and the checks' news mark would say it twice.
+    const failingHere = group === 'blocked' && task.status !== 'blocked' && checksFailing(pr);
     const ctx = contextOf(task);
     const ctxLevel = ctx ? contextLevel(ctx.fraction) : null;
     // Quiet sessions say nothing. The number appears only once it is
@@ -460,18 +455,7 @@ export default function TaskList({
     const sig = signals?.get(task.id);
     return (
       <span className="task-meta">
-        {/* When a project tab is active the repo is already the
-            tab; repeating it on every row is noise. On "All" it is
-            the one thing you need, because rows come from
-            everywhere. */}
-        {(!activeProject || task.projectId !== activeProject.id) && (
-          <>
-            <span className="task-repo">
-              {projectName(task, projects) ?? basename(task.repoPath)}
-            </span>
-            <span className="task-sep">/</span>
-          </>
-        )}
+        {/* No project name: the project is the tab selected above (#278). */}
         {/* No branch and no PR state here: the task bar is the one
             place git and GitHub state is shown, for the selected
             task. Rows identify the task; the title does that. The
@@ -488,12 +472,17 @@ export default function TaskList({
               (ciNotice.ts). First in the tail: it is news, the
               rest is state. Never on the selected row -- it is
               being looked at, and its PR badge carries a cue. */}
-          {task.id !== selectedId && <CiRowMark taskId={task.id} />}
+          {failingHere && pr && <FailingChecksMark pr={pr} />}
+          {task.id !== selectedId && !failingHere && <CiRowMark taskId={task.id} />}
           {/* ⚠ Conflicts while GitHub reports them, else
               Approved while the approval stands, on every row,
               the selected one too (#236, #234); Changes once, as
               news, until the task is opened (#180). */}
-          <ReviewRowMark taskId={task.id} selected={task.id === selectedId} />
+          <ReviewRowMark taskId={task.id} selected={task.id === selectedId} group={group} />
+          {/* Where the team's review stands (#278): the unresolved threads,
+              and a change request, on In Review rows -- and the threads
+              still open on an Approved one. */}
+          {(group === 'team' || group === 'approved') && pr && <ThreadsChip pr={pr} />}
           {/* An unsent message waiting in this task's composer, so a
               forgotten one can be found. Not on the selected row:
               its draft is in the box right below. */}
@@ -555,9 +544,9 @@ export default function TaskList({
     );
   };
 
-  const railRow = (task: Task): RailRow => ({
+  const railRow = (task: Task, group: GroupKey): RailRow => ({
     title: rowTitle(task),
-    meta: rowMeta(task),
+    meta: rowMeta(task, group),
     age: relativeTime(task.lastActivityAt, now),
     tooltip: rowTooltip(task),
   });
@@ -640,9 +629,11 @@ export default function TaskList({
         )}
 
         {sections.map((group) => (
-          <div key={group.key}>
-            <div className="group-label" data-tone={group.key}>
-              <span className="status-dot" data-status={GROUP_GLYPH[group.key]} aria-hidden="true" />
+          /* The group names its rows for assistive tech: a row carries no
+             status icon (#278), so the group is what says "Needs You". */
+          <div key={group.key} className="task-group" role="group" aria-labelledby={`task-group-${group.key}`}>
+            <div className="group-label" data-tone={group.key} id={`task-group-${group.key}`}>
+              <GroupPie group={group.key} />
               <span>{GROUP_TITLE[group.key]}</span>
               <span className="group-count">{group.tasks.length}</span>
             </div>
@@ -671,18 +662,8 @@ export default function TaskList({
                      the row's accessible description. */
                   aria-describedby={task.summary ? `task-summary-${task.id}` : undefined}
                 >
-                  {/* The group's glyph, not the bare status: a row lifted into
-                      Ready to Review or Done by something other than its
-                      status wears the shape of the group it sits in. */}
-                  <span className="task-dot-cell">
-                    <span
-                      className="status-dot"
-                      data-status={GROUP_GLYPH[group.key]}
-                      role="img"
-                      aria-label={GROUP_TITLE[group.key]}
-                      title={GROUP_TITLE[group.key]}
-                    />
-                  </span>
+                  {/* No status icon (#278): the group's header carries it,
+                      and the title starts under the header's name. */}
                   {/* The key IS the task's identity to the user, so it reads
                       as its own chip down the left edge instead of being the
                       first few characters of a sentence. Identifier, not a
@@ -712,7 +693,7 @@ export default function TaskList({
                   {/* Shares the age's spot and swaps in on hover: reserving
                       its own width hid on every row cut titles short. */}
                   {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
-                  {rowMeta(task)}
+                  {rowMeta(task, group.key)}
                   <ContextMeter usage={ctx} variant="hairline" />
                   {(onArchive || onDelete) && (
                     <button
@@ -895,18 +876,21 @@ function CiRowMark({ taskId }: { taskId: number }) {
  * while GitHub reports them on an open PR, selected or not, and it outranks
  * Approved. Approved is state (#234): shown
  * while GitHub says the open PR is approved, selected or not, until it is
- * merged. Changes is news (#180): an unseen change request, never on the
- * selected row, gone once the task is opened. Awaiting Review never marks a
- * row. Glyph and word, as the checks' mark; the reviewers are in the tooltip.
+ * merged -- except in the Approved group, which says it already (#278).
+ * Changes is news (#180): an unseen change request, never on the selected
+ * row, gone once the task is opened -- and not in In Review, whose chip says
+ * "Changes" as state (#278). Awaiting Review never marks a row. Glyph and
+ * word, as the checks' mark; the reviewers are in the tooltip.
  */
-function ReviewRowMark({ taskId, selected }: { taskId: number; selected: boolean }) {
+function ReviewRowMark({ taskId, selected, group }: { taskId: number; selected: boolean; group: GroupKey }) {
   const pr = getPrStatus(taskId);
   // Conflicts outrank an approval: the PR cannot be merged either way (#236).
   // A change request that landed unseen is news, and still shows beside it.
   const conflicts = hasConflicts(pr);
-  const standing = conflicts ? null : standingApproval(pr);
+  const standing = conflicts || group === 'approved' ? null : standingApproval(pr);
   const news = reviewMarkFor(taskId);
-  const mark = standing ?? (!selected && news?.outcome === 'changes-requested' ? news : null);
+  const mark =
+    standing ?? (!selected && group !== 'team' && news?.outcome === 'changes-requested' ? news : null);
   const conflictMark =
     conflicts && pr ? (
       <span
@@ -940,5 +924,57 @@ function ReviewRowMark({ taskId, selected }: { taskId: number; selected: boolean
       <span aria-hidden="true">{approved ? '✓' : '✎'}</span> {approved ? 'Approved' : 'Changes'}
     </span>
     </>
+  );
+}
+
+/**
+ * What the team's review left open (#278), on an In Review or Approved row,
+ * as a compact chip: a speech bubble and the unresolved count ("3"), in the
+ * Needs You tone when changes were requested ("!" when none is open). The
+ * words are its tooltip and accessible name: "3 unresolved threads",
+ * "Changes requested · 1 unresolved thread". Null when nothing is open and
+ * no change was requested.
+ */
+export function threadsChip(pr: PrStatus): { mark: string; label: string; changes: boolean } | null {
+  const open = pr.reviewThreads?.unresolved ?? 0;
+  const threads = `${open} unresolved thread${open === 1 ? '' : 's'}`;
+  if (pr.review === 'changes-requested') {
+    return { mark: open > 0 ? String(open) : '!', label: open > 0 ? `Changes requested · ${threads}` : 'Changes requested', changes: true };
+  }
+  return open > 0 ? { mark: String(open), label: threads, changes: false } : null;
+}
+
+function ThreadsChip({ pr }: { pr: PrStatus }) {
+  const chip = threadsChip(pr);
+  if (!chip) return null;
+  return (
+    <span
+      className="task-threads"
+      data-changes={chip.changes || undefined}
+      role="img"
+      aria-label={chip.label}
+      title={`${chip.label} on PR #${pr.number}`}
+    >
+      <ChatIcon size={12} />
+      <span aria-hidden="true">{chip.mark}</span>
+    </span>
+  );
+}
+
+/**
+ * Why a task with no prompt waiting is in Needs You (#278): its PR's checks
+ * failed. State, not news: it stays until they pass or run again, selected or
+ * not, in the Needs You text tone.
+ */
+function FailingChecksMark({ pr }: { pr: PrStatus }) {
+  const c = pr.checks;
+  const what =
+    c.kind === 'failing'
+      ? `${c.failing} of ${c.total} ${c.total === 1 ? 'check' : 'checks'} failing on PR #${pr.number}`
+      : `Checks failing on PR #${pr.number}`;
+  return (
+    <span className="task-checks-failing" role="img" aria-label={what} title={`${what}. The PR badge lists them.`}>
+      <span aria-hidden="true">✗</span> Checks
+    </span>
   );
 }

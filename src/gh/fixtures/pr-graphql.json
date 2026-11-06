@@ -1,0 +1,101 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "nodes": [
+          {
+            "number": 12,
+            "url": "https://github.com/acme/widgets/pull/12",
+            "state": "OPEN",
+            "isDraft": false,
+            "title": "ABC-1234 Add the export",
+            "reviewDecision": "CHANGES_REQUESTED",
+            "mergedAt": null,
+            "headRefName": "abc-1234-export",
+            "baseRefName": "main",
+            "headRefOid": "0123456789abcdef0123456789abcdef01234567",
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "BLOCKED",
+            "author": { "__typename": "User", "login": "octo" },
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "statusCheckRollup": {
+                      "contexts": {
+                        "nodes": [
+                          {
+                            "__typename": "CheckRun",
+                            "name": "linux",
+                            "checkSuite": { "workflowRun": { "workflow": { "name": "CI" } } },
+                            "status": "COMPLETED",
+                            "conclusion": "FAILURE",
+                            "startedAt": "2026-11-06T10:00:00Z",
+                            "completedAt": "2026-11-06T10:04:00Z",
+                            "detailsUrl": "https://github.com/acme/widgets/actions/runs/1/job/2"
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "linux",
+                            "checkSuite": { "workflowRun": { "workflow": { "name": "CI" } } },
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                            "startedAt": "2026-11-06T11:00:00Z",
+                            "completedAt": "2026-11-06T11:04:00Z",
+                            "detailsUrl": "https://github.com/acme/widgets/actions/runs/3/job/4"
+                          },
+                          {
+                            "__typename": "StatusContext",
+                            "context": "deploy/preview",
+                            "state": "PENDING",
+                            "targetUrl": "https://preview.example/12",
+                            "createdAt": "2026-11-06T11:00:00Z"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "latestReviews": {
+              "nodes": [
+                { "author": { "login": "alice" }, "submittedAt": "2026-11-06T09:00:00Z", "state": "CHANGES_REQUESTED" },
+                { "author": { "login": "bob" }, "submittedAt": "2026-11-06T09:30:00Z", "state": "COMMENTED" }
+              ]
+            },
+            "reviewRequests": {
+              "nodes": [
+                { "requestedReviewer": { "__typename": "User", "login": "carol" } },
+                { "requestedReviewer": { "__typename": "Team", "name": "Platform", "slug": "platform" } }
+              ]
+            },
+            "reviewThreads": {
+              "totalCount": 3,
+              "nodes": [{ "isResolved": false }, { "isResolved": true }, { "isResolved": false }]
+            }
+          },
+          {
+            "number": 9,
+            "url": "https://github.com/acme/widgets/pull/9",
+            "state": "CLOSED",
+            "isDraft": false,
+            "title": "ABC-1234 Add the export (first try)",
+            "reviewDecision": null,
+            "mergedAt": null,
+            "headRefName": "abc-1234-export",
+            "baseRefName": "main",
+            "headRefOid": "89abcdef0123456789abcdef0123456789abcdef",
+            "mergeable": "UNKNOWN",
+            "mergeStateStatus": "UNKNOWN",
+            "author": { "__typename": "User", "login": "octo" },
+            "commits": { "nodes": [] },
+            "latestReviews": { "nodes": [] },
+            "reviewRequests": { "nodes": [] },
+            "reviewThreads": { "totalCount": 5, "nodes": [{ "isResolved": false }] }
+          }
+        ]
+      }
+    }
+  }
+}

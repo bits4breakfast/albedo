@@ -46,42 +46,63 @@
 
 .tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 8px 8px; }
 
-/* A Title Case label over a status glyph: "Needs You 1", "Running 2",
-   "Ready to Review 1", "Idle 3", "Done 4". */
-.group-label > .status-dot { margin: 0 3.5px; }
+/* A Title Case label after the group's icon (#278): "Needs You 1",
+   "Running 2", "In Review 3". The icon is a pie in the group's edge colour
+   (GroupPie.tsx) in a 16px column, so the name starts at 34px: where the
+   rows' titles start. Rows carry no icon of their own. */
 .group-label {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* Same left geometry as a row (10px padding, a 16px status column), so the
-     group's dot sits on the rows' dots and its name on their titles. */
   padding: 14px 8px 6px 10px;
   font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--faint);
 }
+.group-label > .group-pie { margin: 0 2px; }
+
+/* A hairline above each group's header but the first (#278), in --border:
+   it separates, it carries nothing to read. */
+.task-group + .task-group { margin-top: 6px; }
+.task-group + .task-group > .group-label { border-top: 1px solid var(--border); padding-top: 12px; }
 
 /* The two groups with something for you, each in its hue's text tier (#276),
-   so the label agrees with its dot. On --panel-chrome: Needs You 6.01 light,
-   7.68 dark; Ready to Review 6.53, 9.55. Done keeps --faint: it is history. */
+   so the label agrees with its icon. On --panel-chrome: Needs You 6.03
+   light, 7.36 dark; Ready to Review 6.48, 11.99. The rest keep --faint. */
 .group-label[data-tone='blocked'] { color: var(--status-blocked); }
 .group-label[data-tone='review'] { color: var(--status-review); }
 
 .group-count { font-variant-numeric: tabular-nums; }
 
+/* The group icon (#278): ring and pie in the group's -edge (3:1 on every
+   ground it sits on: the list's --panel-chrome, the popover's --panel),
+   Done's check in its -ink (4.5 on its fill). Archived: the thin ring. */
+.group-pie { display: block; flex: 0 0 auto; color: var(--status-idle-edge); }
+.group-pie[data-hue='blocked'] { color: var(--status-blocked-edge); }
+.group-pie[data-hue='running'] { color: var(--status-running-edge); }
+.group-pie[data-hue='review'] { color: var(--status-review-edge); }
+.group-pie[data-hue='team'] { color: var(--status-team-edge); }
+.group-pie[data-hue='approved'] { color: var(--status-approved-edge); }
+.group-pie[data-hue='idle'] { color: var(--status-idle-edge); }
+.group-pie[data-hue='done'] { color: var(--status-done-edge); }
+.group-pie[data-hue='archived'] { color: var(--status-archived); }
+.group-pie-check { stroke: var(--status-done-ink); }
+
 /* Task row ---------------------------------------------------------------- */
 
 .task-row {
   display: grid;
-  /* status | title | context %, ⌘N | age -- one line. The second line held
-     the branch, which now lives only in the task bar. */
-  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  /* title | marks, context % | age, ⌘N -- one line. The second line held
+     the branch, which now lives only in the task bar. No status column
+     (#278): the group's header carries the icon. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
   column-gap: 8px;
   align-items: center;
   width: 100%;
   min-height: var(--row-h);
   margin-bottom: 1px;
-  padding: 6px 8px 6px 10px;
+  /* 34px: the title starts under the group header's name. */
+  padding: 6px 8px 6px 34px;
   text-align: left;
   border-radius: var(--radius);
   /* The attention mark (below). Transparent at rest, so it costs no width. */
@@ -102,10 +123,6 @@
   background: var(--row-selected);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
-/* --status-archived is 2.79 on the dark tint; the glyph's shape says
-   archived, so its colour can take the idle tier (3.76) here. */
-.task-row[data-selected='true'] .status-dot[data-status='archived'] { border-color: var(--status-idle); }
-
 .task-row[data-selected='true'] .task-title { color: var(--text-strong); }
 
 .task-row[data-status='archived'] .task-title,
@@ -156,10 +173,8 @@
   .task-row[data-attention] { animation: none; }
 }
 
-.task-dot-cell { grid-row: 1; justify-self: center; display: inline-flex; }
-
 .task-title {
-  grid-column: 2;
+  grid-column: 1;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text);
@@ -172,7 +187,7 @@
    wider than "1h", so a start-aligned age sat further left on those rows than
    on the rest. */
 .task-age {
-  grid-column: 4;
+  grid-column: 3;
   grid-row: 1;
   justify-self: end;
   font-size: var(--fs-xs);
@@ -181,7 +196,7 @@
 }
 
 .task-meta {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 1;
   display: flex;
   align-items: center;
@@ -202,8 +217,8 @@
   color: var(--muted);
 }
 
-/* An unsent draft in the composer: a word in the caption, --muted like the
-   repo name (cleared against --panel-raised). */
+/* An unsent draft in the composer: a word in the caption, --muted (cleared
+   against --panel-raised). */
 .task-draft { color: var(--muted); }
 /* A reminder is back (#156): --accent, the reminder card's own colour, with
    its glyph, so it is never colour alone. Measured, light | dark: --panel-chrome
@@ -243,6 +258,30 @@
 .task-review[data-outcome='changes-requested'] { color: var(--warn); }
 /* GitHub reports conflicts (#236): state, like Approved, in the warn tone. */
 .task-review[data-outcome='conflicts'] { color: var(--warn); }
+/* What the team's review left open (#278): a speech bubble and the
+   unresolved count. A quiet chip: --muted text in a --border-mid outline, no
+   fill, so it reads on whatever ground the row has (--muted cleared on
+   --panel-raised, CLAUDE.md rule 1). The group already says In Review; this
+   is the count. */
+.task-threads {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 1px solid var(--border-mid);
+  border-radius: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* Changes requested: the same chip in the Needs You text tier (4.5 on every
+   ground a row has, styles.css). Glyph, number and colour, and words in its
+   label: never colour alone. */
+.task-threads[data-changes] { color: var(--status-blocked); }
+/* Failing checks put the task in Needs You (#278): the row says why, a glyph
+   and a word in the Needs You text tier (4.5 on every ground a row has,
+   styles.css). State: it stays while they fail. */
+.task-checks-failing { color: var(--status-blocked); font-weight: 600; white-space: nowrap; }
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on
@@ -261,8 +300,6 @@
   border-radius: 50%;
 }
 
-.task-repo { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.task-sep { color: var(--faint); }
 .task-branch {
   flex: 0 1 auto;
   min-width: 0;
@@ -279,7 +316,7 @@
 /* ⌘1-9. Hidden until hover or selection, by visibility -- never opacity. */
 /* ⌘N sits in the age's cell and swaps in on hover, so it costs no width.
    Hidden by visibility, never opacity (CLAUDE.md, Contrast rule 2). */
-.task-index { grid-column: 4; grid-row: 1; justify-self: end; visibility: hidden; }
+.task-index { grid-column: 3; grid-row: 1; justify-self: end; visibility: hidden; }
 .task-row:hover .task-index { visibility: visible; }
 .task-row:hover .task-age { visibility: hidden; }
 
@@ -335,6 +372,8 @@
    -------------------------------------------------------------------------- */
 
 .task-key {
+  /* Never truncated (#278): see .task-rest below. */
+  flex: none;
   font-size: var(--fs-md);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -343,7 +382,18 @@
 }
 
 .task-row[data-status='archived'] .task-key { color: var(--faint); }
-.task-rest { overflow: hidden; text-overflow: ellipsis; }
+
+/* The key is the task's name to the user, so it never truncates (#278): the
+   title is a flex line, the key keeps its full width, and the rest of the
+   title ellipsizes after it. On a row with a key the title's grid track
+   cannot go below the key (min-content: the rest counts 0 there, `width: 0`
+   growing into the room), so when the row is short the rest goes first,
+   then the marks are clipped at the end. The rest has no floor on purpose:
+   at 260px a floor of a few letters clipped the threads chip's count, which is the
+   information. Rows with no key keep the grid they had. */
+.task-title:has(> .task-key) { display: flex; min-width: 0; }
+.task-rest { flex-grow: 1; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.task-row:has(> .task-title > .task-key) { grid-template-columns: minmax(min-content, 1fr) auto auto; }
 
 /* ‹ Collapse the list to the rail (#266): at the head's far end, whatever
    else the head holds. */

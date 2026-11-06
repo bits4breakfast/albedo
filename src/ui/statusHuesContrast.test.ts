@@ -1,12 +1,13 @@
 /**
- * The status hues (#276), parsed from every theme block of styles.css.
+ * The status hues (#276; the stage colours, #278), parsed from every theme
+ * block of styles.css.
  *
  * Two tiers per group. Text (--status-running, -blocked, -review, -done): a
  * label or word in its group's hue, 4.5:1 on the worst flat ground and on
- * every tint such text sits on. Glyph (-fill, -edge, -ink): the list's dots
- * draw their ring in the -edge and whatever is filled inside in the -fill,
- * so a dot and the rail's circle are the same colours
- * (taskRailContrast.test.ts measures those).
+ * every tint such text sits on. Glyph (-fill, -edge, -ink): a task's dot
+ * draws its ring in the -edge and whatever is filled inside in the -fill, a
+ * group's pie draws in the -edge, so a dot, a pie and the rail's circle are
+ * the same colours (taskRailContrast.test.ts measures those).
  */
 
 import { readFileSync } from 'node:fs';
@@ -52,7 +53,8 @@ const TEXT_GROUNDS = [
   '--panel-raised', '--panel-active', '--panel-hover', '--panel-chrome', '--panel', '--bg', '--subcard',
   '--row-selected', '--accent-soft', '--accent-soft-strong', '--row-blocked', '--row-blocked-hover',
 ];
-const GROUPS = ['blocked', 'running', 'review', 'reviewing', 'idle', 'done'];
+/** One per colour (#278): review is Ready to Review and My Review, team In Review and Awaiting Review. */
+const GROUPS = ['blocked', 'running', 'review', 'team', 'approved', 'idle', 'done'];
 
 describe('status hues (#276)', () => {
   it('every block defines every status token, and the two dark blocks agree', () => {
@@ -91,13 +93,22 @@ describe('status hues (#276)', () => {
     };
     expect(rule(".status-dot[data-status='idle']")).toContain('border-color: var(--status-idle-edge)');
     expect(rule(".status-dot[data-status='done']")).toMatch(/border-color: var\(--status-done-edge\); background: var\(--status-done-fill\)/);
-    expect(rule(".status-dot[data-status='review']")).toContain('var(--status-review-edge)');
-    expect(rule(".status-dot[data-status='review']::after")).toContain('background: var(--status-review-fill)');
-    expect(rule(".status-dot[data-status='reviewing']")).toContain('var(--status-reviewing-edge)');
-    expect(rule(".status-dot[data-status='reviewing']::after")).toContain('background: var(--status-reviewing-fill)');
     expect(rule(".status-dot[data-status='running']")).toContain('border-color: var(--status-running-edge)');
     expect(rule(".status-dot[data-status='running']::after")).toContain('background: var(--status-running-fill)');
     expect(rule(".status-dot[data-status='blocked']")).toMatch(/border-color: var\(--status-blocked-edge\);\s*background: var\(--status-blocked-fill\);/);
+  });
+
+  it('no dot draws a group any more: the groups have their pie (#278)', () => {
+    expect(css).not.toMatch(/\.status-dot\[data-status='review/);
+    expect(css).not.toMatch(/--status-reviewing-/);
+  });
+
+  it('each group’s pie draws in its colour’s -edge, Done’s check in its -ink (#278)', () => {
+    for (const hue of ['blocked', 'running', 'review', 'team', 'approved', 'idle', 'done']) {
+      expect(list).toContain(`.group-pie[data-hue='${hue}'] { color: var(--status-${hue}-edge); }`);
+    }
+    expect(list).toContain(".group-pie[data-hue='archived'] { color: var(--status-archived); }");
+    expect(list).toContain('.group-pie-check { stroke: var(--status-done-ink); }');
   });
 
   it('labels take the text tier of their group', () => {

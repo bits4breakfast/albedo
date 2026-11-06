@@ -45,28 +45,22 @@ const themes: Record<string, Map<string, string>> = {
   'dark (chosen)': new Map([...light, ...tokensIn(DARK_ATTR, css.length)]),
 };
 
-/** Each group's glyph tokens, as taskrail.css sets `--fill`, `--edge`, `--ink`. */
-const GROUP_GLYPH = {
-  blocked: 'blocked',
-  active: 'running',
-  review: 'review',
-  reviewing: 'reviewing',
-  quiet: 'idle',
-  done: 'done',
-} as const;
+/** Each circle's colour (#278), as taskrail.css sets `--fill`, `--edge`, `--ink` from it. */
+const HUES = ['blocked', 'running', 'review', 'team', 'approved', 'idle', 'done'] as const;
 /** The grounds a circle's or a dot's edge must clear 3:1 on. */
 const EDGE_GROUNDS = ['--panel', '--panel-chrome', '--row-selected', '--panel-hover', '--panel-raised'];
 
-describe('the task rail’s circles (#266, #276)', () => {
+describe('the task rail’s circles (#266, #276, #278)', () => {
   it('draws each with the tokens measured below', () => {
-    for (const [group, g] of Object.entries(GROUP_GLYPH)) {
+    for (const g of HUES) {
       const sel = new RegExp(
-        `\\.rail-circle\\[data-group='${group}'\\] \\{ --fill: var\\(--status-${g}-fill\\); --edge: var\\(--status-${g}-edge\\); --ink: var\\(--status-${g}-ink\\); \\}`,
+        `\\.rail-circle\\[data-hue='${g}'\\] \\{ --fill: var\\(--status-${g}-fill\\); --edge: var\\(--status-${g}-edge\\); --ink: var\\(--status-${g}-ink\\); \\}`,
       );
-      expect(rail, group).toMatch(sel);
+      expect(rail, g).toMatch(sel);
     }
     expect(rail).toMatch(/\.rail-circle \{[^}]*border: 1\.5px solid var\(--edge\);[^}]*background: var\(--fill\);[^}]*color: var\(--ink\);/);
-    expect(rail).toMatch(/\.rail-circle\[data-fill='ringed'\] \{ box-shadow: inset 0 0 0 2px var\(--panel\); \}/);
+    // One colour per circle: no second shape is needed to tell two apart.
+    expect(rail).not.toMatch(/data-fill/);
     expect(rail).toMatch(/\.rail-circle\[aria-current='true'\]::after \{[^}]*border: 1\.5px solid var\(--accent\)/);
     // Opacity only on the pulse's decorative ring, never on a count.
     for (const m of rail.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]*)\{([^{}]*opacity[^{}]*)\}/g)) {
@@ -85,13 +79,13 @@ describe('the task rail’s circles (#266, #276)', () => {
     };
 
     it(`${name}: each circle's count clears 4.5 on its fill`, () => {
-      for (const g of Object.values(GROUP_GLYPH)) {
+      for (const g of HUES) {
         expect(ratio(tok(`--status-${g}-ink`), tok(`--status-${g}-fill`)), `${name} ${g}`).toBeGreaterThanOrEqual(4.5);
       }
     });
 
     it(`${name}: every edge clears 3:1 on the rail, the list's grounds and the hover halo`, () => {
-      for (const g of Object.values(GROUP_GLYPH)) {
+      for (const g of HUES) {
         for (const ground of EDGE_GROUNDS) {
           expect(ratio(tok(`--status-${g}-edge`), tok(ground)), `${name} ${g} on ${ground}`).toBeGreaterThanOrEqual(3);
         }
@@ -109,14 +103,31 @@ describe('the task rail’s circles (#266, #276)', () => {
     });
   }
 
-  it('dark: In Review differs from Ready to Review by lightness, not only by the ring', () => {
-    for (const name of ['dark (system)', 'dark (chosen)']) {
-      const t = themes[name]!;
-      const review = t.get('--status-review-fill')!;
-      const reviewing = t.get('--status-reviewing-fill')!;
-      expect(ratio(review, reviewing), name).toBeGreaterThanOrEqual(3);
-      // Its deep body carries a light ink, ringed in the bright edge.
-      expect(ratio(t.get('--status-reviewing-edge')!, reviewing), name).toBeGreaterThanOrEqual(3);
+  it('every circle has a colour of its own, in every theme (#278)', () => {
+    for (const [name, t] of Object.entries(themes)) {
+      const fills = HUES.map((g) => t.get(`--status-${g}-fill`));
+      expect(new Set(fills).size, name).toBe(HUES.length);
+    }
+  });
+
+  it('the stage colours, by hue (#278): orange-red, yellow, cyan, blue, green, grey, indigo', () => {
+    const hue = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number];
+      const max = Math.max(r, g, b);
+      const d = max - Math.min(r, g, b);
+      if (d === 0) return -1;
+      const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      return (h * 60 + 360) % 360;
+    };
+    const within = (h: number, lo: number, hi: number) => h >= lo && h <= hi;
+    for (const [name, t] of Object.entries(themes)) {
+      const h = (g: string) => hue(t.get(`--status-${g}-fill`)!);
+      expect(within(h('blocked'), 5, 30), `${name} blocked`).toBe(true);
+      expect(within(h('running'), 40, 60), `${name} running`).toBe(true);
+      expect(within(h('review'), 180, 200), `${name} review`).toBe(true);
+      expect(within(h('team'), 205, 225), `${name} team`).toBe(true);
+      expect(within(h('approved'), 135, 160), `${name} approved`).toBe(true);
+      expect(within(h('done'), 225, 240), `${name} done`).toBe(true);
     }
   });
 

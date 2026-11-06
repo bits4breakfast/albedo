@@ -4,51 +4,111 @@
  * Pure. The groups are a presentation of facts the app already has, never a
  * status of their own: the derived status (`capture/status.ts`), when the
  * session last handed control back, when the task was last open
- * (`Task.seenAt`), its PR as the PR store last saw it, and whether a finished
- * turn left work on the branch (`git/reviewWork.ts`), and whether you have
- * started reviewing it in the Review Guide (`guide/store.ts`). No new
- * channel, and nothing read from the terminal.
+ * (`Task.seenAt`), its PR as the PR store last saw it (checks, review
+ * decision, review threads), whether a finished turn left work on the branch
+ * (`git/reviewWork.ts`), and whether you have started reviewing it in the
+ * Review Guide (`guide/store.ts`). No new channel, and nothing read from the
+ * terminal.
  *
+ * Highest first; the first that holds decides (#278):
+ *
+ *   Archived
  *   Needs You        blocked
  *   Running          running
- *   Ready to Review  an unseen finish, with work to review
- *   In Review        a Reviewed mark in its guide that still matches (#219)
- *   Idle             everything else that is live
  *   Done             marked done, or its PR merged
- *   Archived
+ *   Needs You        its open or draft PR's checks failed (not while they run)
+ *   Ready to Review  an unseen finish, with work to review
+ *   Approved         an open PR, approved (GitHub's decision, else the
+ *                    latest reviews: a change request outranks an approval)
+ *   In Review        an open PR with changes requested, or with review threads
+ *   Awaiting Review  an open PR with neither
+ *   My Review        a Reviewed mark in its guide that still matches (#219),
+ *                    and no PR up for review (none, a draft, or closed)
+ *   Idle             everything else that is live
+ *
+ * "Open" is open and not a draft: once a PR is up for review, GitHub's state
+ * decides, whatever the guide marks say. A chat has no branch and no PR, so
+ * it never reaches the PR or review groups.
  */
 
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
 
-export type GroupKey = 'blocked' | 'active' | 'review' | 'reviewing' | 'quiet' | 'done' | 'archived';
+export type GroupKey =
+  | 'blocked'
+  | 'active'
+  | 'review'
+  | 'mine'
+  | 'team'
+  | 'awaiting'
+  | 'approved'
+  | 'quiet'
+  | 'done'
+  | 'archived';
 
-export const GROUP_ORDER: readonly GroupKey[] = ['blocked', 'active', 'review', 'reviewing', 'quiet', 'done', 'archived'];
+export const GROUP_ORDER: readonly GroupKey[] = [
+  'blocked',
+  'active',
+  'review',
+  'mine',
+  'team',
+  'awaiting',
+  'approved',
+  'quiet',
+  'done',
+  'archived',
+];
 
 export const GROUP_TITLE: Record<GroupKey, string> = {
   blocked: 'Needs You',
   active: 'Running',
   review: 'Ready to Review',
-  reviewing: 'In Review',
+  mine: 'My Review',
+  team: 'In Review',
+  awaiting: 'Awaiting Review',
+  approved: 'Approved',
   quiet: 'Idle',
   done: 'Done',
   archived: 'Archived',
 };
 
 /**
- * The glyph a group's label and its rows carry (`.status-dot[data-status]`).
- * Shape first: a row moved into a group by something other than its status
- * (Ready to Review, a merged PR's Done) wears the group's shape, so the label
- * and the rows beneath it never disagree.
+ * The colour a group is drawn in: the `--status-<hue>-fill/-edge/-ink` tokens
+ * (styles.css). One colour per stage, so the two review pairs share theirs:
+ * your own pass (Ready to Review, My Review) and the team's (In Review,
+ * Awaiting Review). The collapsed rail merges each pair into one circle.
  */
-export const GROUP_GLYPH: Record<GroupKey, string> = {
+export const GROUP_HUE: Record<GroupKey, string> = {
   blocked: 'blocked',
   active: 'running',
   review: 'review',
-  reviewing: 'reviewing',
+  mine: 'review',
+  team: 'team',
+  awaiting: 'team',
+  approved: 'approved',
   quiet: 'idle',
   done: 'done',
   archived: 'archived',
+};
+
+/**
+ * The group header's icon (#278): a pie in the group's edge colour that fills
+ * as work moves along. A number is the filled fraction; `full` a solid dot,
+ * `check` a solid dot with a check, `thin` archived's thin ring.
+ */
+export type GroupPieShape = number | 'full' | 'check' | 'thin';
+
+export const GROUP_PIE: Record<GroupKey, GroupPieShape> = {
+  blocked: 'full',
+  active: 1 / 4,
+  review: 1 / 2,
+  mine: 1 / 2,
+  awaiting: 5 / 8,
+  team: 3 / 4,
+  approved: 7 / 8,
+  quiet: 0,
+  done: 'check',
+  archived: 'thin',
 };
 
 /** What a task's row does not carry, gathered by the list. */
@@ -102,16 +162,48 @@ export function wantsWorkProbe(task: Pick<Task, 'kind' | 'status' | 'seenAt'>, f
   return unseenFinish(facts.finishedAt, task.seenAt);
 }
 
-/** Highest first: a prompt waiting on you outranks everything else. */
+/** Open and not a draft: up for review. */
+function prUpForReview(pr: PrStatus | null | undefined): pr is PrStatus {
+  return pr?.state === 'open';
+}
+
+/**
+ * The checks on an open or draft PR finished, and one failed: the badge's own
+ * final reading. Never while they run (`pending`), and never on a merged or
+ * closed PR, whose last checks are history.
+ */
+export function checksFailing(pr: PrStatus | null | undefined): boolean {
+  return prOpen(pr) && pr?.checks.kind === 'failing';
+}
+
+/**
+ * Where an open PR's review stands (#278). Approved is GitHub's decision (or
+ * the latest reviews where no rule asks for one), and a change request
+ * outranks an approval there already, so an approved PR has none standing.
+ * Unresolved threads do not hold it back: the reviewer said it can go, and
+ * the row still shows how many are open. Unknown threads read as none.
+ */
+export function reviewStage(pr: PrStatus): 'approved' | 'team' | 'awaiting' {
+  if (pr.review === 'approved') return 'approved';
+  if (pr.review === 'changes-requested') return 'team';
+  if ((pr.reviewThreads?.total ?? 0) > 0) return 'team';
+  return 'awaiting';
+}
+
+/** Highest first: a prompt waiting on you outranks everything else. See the table above. */
 export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt'>, facts: GroupFacts): GroupKey {
   if (task.status === 'archived') return 'archived';
   if (task.status === 'blocked') return 'blocked';
   if (task.status === 'running') return 'active';
   if (task.status === 'done' || prMerged(facts.pr)) return 'done';
+  // A chat's PR is always null (the list never asks), so these are work tasks.
+  if (task.kind !== 'chat' && checksFailing(facts.pr)) return 'blocked';
   if (unseenFinish(facts.finishedAt, task.seenAt) && hasWorkToReview(task, facts)) return 'review';
-  // Below Ready to Review: a new finish is news about the branch you were
-  // reviewing, so it is shown as such until you look.
-  if (facts.reviewing === true && task.kind !== 'chat') return 'reviewing';
+  // Below Ready to Review: a new finish is news about the branch, so it is
+  // shown as such until you look.
+  if (task.kind === 'chat') return 'quiet';
+  if (prUpForReview(facts.pr)) return reviewStage(facts.pr);
+  if (facts.reviewing === true) return 'mine';
   return 'quiet';
 }
 

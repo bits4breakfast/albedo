@@ -292,7 +292,8 @@
      still to do  hollow, --muted           (7.2 light, 7.7 dark; --border-strong
                   at 3.9 was hard to find in dark, owner-reported)
      Unsorted     hollow and dashed, the same
-     Reviewed     filled, --status-review    (7.2 light, 10.1 dark)
+     Reviewed     filled, --status-review    (7.1 light, 12.7 dark): the cyan
+                  of your own review (#278)
      current      wider, with an --accent ring (6.5, 7.9) around whichever
                   of those it is, a --panel gap between
    Marks are UI, not text: each has its label for assistive tech and a

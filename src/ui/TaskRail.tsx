@@ -1,14 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { Task } from '../types';
-import { GROUP_GLYPH, GROUP_TITLE, type GroupKey } from './taskGroups';
+import { GROUP_HUE, GROUP_TITLE, type GroupKey } from './taskGroups';
+import GroupPie from './GroupPie';
 import './taskrail.css';
 
 /**
  * The task list collapsed to a rail (#266): New Task, the way back to the
- * list, and one circle per group that has tasks, with its count. A circle
- * opens its group's tasks in a popover beside the rail, over the pane, so
- * nothing reflows.
+ * list, and one circle per colour that has tasks, with its count. A circle
+ * opens its tasks in a popover beside the rail, over the pane, so nothing
+ * reflows. Two circles stand for two groups each (#278): Your Review (Ready
+ * to Review and My Review) and Team Review (In Review and Awaiting Review),
+ * whose groups share a colour; their popover lists the tasks under the two
+ * groups' names.
  *
  * Presentation only. The groups, their order and their rows are the list's
  * (TaskList.tsx hands them over as they are drawn there), so the rail can
@@ -16,27 +20,34 @@ import './taskrail.css';
  * (⌘N, ⌘1–9, ⌘[ ⌘]) keep working while it is collapsed.
  */
 
-/** How a group's circle is drawn. */
-export type CircleFill = 'solid' | 'ringed';
+/** One circle of the rail: the groups it counts, in the list's order. */
+export interface RailCircle {
+  key: string;
+  title: string;
+  /** Its colour (`GROUP_HUE`), the same for every group it counts. */
+  hue: string;
+  groups: readonly GroupKey[];
+}
+
+/** One circle per colour (#278), in the list's order. Archived has none. */
+export const RAIL_CIRCLES: readonly RailCircle[] = [
+  { key: 'blocked', title: GROUP_TITLE.blocked, hue: GROUP_HUE.blocked, groups: ['blocked'] },
+  { key: 'active', title: GROUP_TITLE.active, hue: GROUP_HUE.active, groups: ['active'] },
+  { key: 'yours', title: 'Your Review', hue: GROUP_HUE.review, groups: ['review', 'mine'] },
+  { key: 'team', title: 'Team Review', hue: GROUP_HUE.team, groups: ['team', 'awaiting'] },
+  { key: 'approved', title: GROUP_TITLE.approved, hue: GROUP_HUE.approved, groups: ['approved'] },
+  { key: 'quiet', title: GROUP_TITLE.quiet, hue: GROUP_HUE.quiet, groups: ['quiet'] },
+  { key: 'done', title: GROUP_TITLE.done, hue: GROUP_HUE.done, groups: ['done'] },
+];
 
 /**
- * Every circle filled with its group's colour (#276), Done included: a 2px
- * outline alone was too little colour to tell the groups apart. Ready to
- * Review is filled with a ring inside, so it stays apart from In Review's
- * green filled plain.
+ * What pulses when its count goes up: Needs You, and Your Review when its
+ * Ready to Review part rises -- a new finish, not a review you started.
  */
-export const CIRCLE_FILL: Record<GroupKey, CircleFill> = {
-  blocked: 'solid',
-  active: 'solid',
-  review: 'ringed',
-  reviewing: 'solid',
-  quiet: 'solid',
-  done: 'solid',
-  archived: 'solid',
-};
-
-/** The groups whose circle pulses when its count goes up: the two that want you. */
-export const PULSING: readonly GroupKey[] = ['blocked', 'review'];
+export const PULSING: readonly { group: GroupKey; circle: string }[] = [
+  { group: 'blocked', circle: 'blocked' },
+  { group: 'review', circle: 'yours' },
+];
 /** Three 2s pulses (taskrail.css), then the attribute goes. */
 export const PULSE_MS = 6000;
 type Pulse = 'a' | 'b';
@@ -48,18 +59,18 @@ type Pulse = 'a' | 'b';
  * swaps 'a' for 'b' (or back), which restarts the animation; the timer
  * starts over with it.
  */
-function usePulse(counts: Partial<Record<GroupKey, number>>): Partial<Record<GroupKey, Pulse>> {
-  const [pulse, setPulse] = useState<Partial<Record<GroupKey, Pulse>>>({});
+function usePulse(counts: Partial<Record<GroupKey, number>>): Partial<Record<string, Pulse>> {
+  const [pulse, setPulse] = useState<Partial<Record<string, Pulse>>>({});
   const prev = useRef<Partial<Record<GroupKey, number>> | null>(null);
-  const timers = useRef(new Map<GroupKey, ReturnType<typeof setTimeout>>());
-  const key = PULSING.map((g) => counts[g] ?? 0).join(',');
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const key = PULSING.map((p) => counts[p.group] ?? 0).join(',');
 
   useEffect(() => {
     const before = prev.current;
-    prev.current = Object.fromEntries(PULSING.map((g) => [g, counts[g] ?? 0]));
+    prev.current = Object.fromEntries(PULSING.map((p) => [p.group, counts[p.group] ?? 0]));
     if (before === null) return;
-    for (const g of PULSING) {
-      if ((counts[g] ?? 0) <= (before[g] ?? 0)) continue;
+    for (const { group, circle: g } of PULSING) {
+      if ((counts[group] ?? 0) <= (before[group] ?? 0)) continue;
       const t = timers.current.get(g);
       if (t !== undefined) clearTimeout(t);
       setPulse((p) => ({ ...p, [g]: p[g] === 'a' ? 'b' : 'a' }));
@@ -90,9 +101,17 @@ function usePulse(counts: Partial<Record<GroupKey, number>>): Partial<Record<Gro
   return pulse;
 }
 
-/** "In Review, 2 tasks": the circle's tooltip and accessible name. */
-export function circleLabel(key: GroupKey, count: number): string {
-  return `${GROUP_TITLE[key]}, ${count} task${count === 1 ? '' : 's'}`;
+/**
+ * The circle's tooltip and accessible name: "Running, 2 tasks", or for a
+ * circle of two groups both counts, "Your Review: Ready to Review 1, My
+ * Review 1".
+ */
+export function circleLabel(circle: RailCircle, counts: Partial<Record<GroupKey, number>>): string {
+  if (circle.groups.length > 1) {
+    return `${circle.title}: ${circle.groups.map((g) => `${GROUP_TITLE[g]} ${counts[g] ?? 0}`).join(', ')}`;
+  }
+  const count = counts[circle.groups[0]!] ?? 0;
+  return `${circle.title}, ${count} task${count === 1 ? '' : 's'}`;
 }
 
 /** What a popover row shows, built by the list so its rows and these match. */
@@ -117,22 +136,38 @@ export interface TaskRailProps {
 const POP_GAP = 6;
 const EDGE = 8;
 
+/** A circle with tasks, and its groups' tasks (only the non-empty ones). */
+interface Circle {
+  circle: RailCircle;
+  parts: { key: GroupKey; tasks: Task[] }[];
+  count: number;
+}
+
 export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpand, row }: TaskRailProps) {
-  const groups = sections.filter((g) => g.key !== 'archived' && g.tasks.length > 0);
-  const pulse = usePulse(Object.fromEntries(groups.map((g) => [g.key, g.tasks.length])));
-  const [open, setOpen] = useState<GroupKey | null>(null);
+  const counts: Partial<Record<GroupKey, number>> = Object.fromEntries(sections.map((g) => [g.key, g.tasks.length]));
+  const circles: Circle[] = RAIL_CIRCLES.flatMap((circle) => {
+    const parts = circle.groups.flatMap((key) => {
+      const tasks = sections.find((g) => g.key === key)?.tasks ?? [];
+      return tasks.length > 0 ? [{ key, tasks }] : [];
+    });
+    const count = parts.reduce((n, p) => n + p.tasks.length, 0);
+    return count > 0 ? [{ circle, parts, count }] : [];
+  });
+  const pulse = usePulse(counts);
+  const [open, setOpen] = useState<string | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const railRef = useRef<HTMLElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
-  const circleRefs = useRef(new Map<GroupKey, HTMLButtonElement>());
+  const circleRefs = useRef(new Map<string, HTMLButtonElement>());
 
-  const openGroup = open === null ? undefined : groups.find((g) => g.key === open);
-  // The group emptied while it was open (its last task moved on): nothing to show.
+  const openCircle = open === null ? undefined : circles.find((c) => c.circle.key === open);
+  // The circle emptied while it was open (its last task moved on): nothing to show.
   useEffect(() => {
-    if (open !== null && !openGroup) setOpen(null);
-  }, [open, openGroup]);
+    if (open !== null && !openCircle) setOpen(null);
+  }, [open, openCircle]);
 
-  const selectedGroup = groups.find((g) => g.tasks.some((t) => t.id === selectedId))?.key ?? null;
+  const selectedCircle =
+    circles.find((c) => c.parts.some((p) => p.tasks.some((t) => t.id === selectedId)))?.circle.key ?? null;
 
   const close = (refocus: boolean) => {
     const key = open;
@@ -142,7 +177,7 @@ export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpa
   const closeRef = useRef(close);
   closeRef.current = close;
 
-  const toggle = (key: GroupKey) => {
+  const toggle = (key: string) => {
     if (open === key) {
       setOpen(null);
       return;
@@ -232,11 +267,13 @@ export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpa
   const onRailKey = (e: ReactKeyboardEvent<HTMLElement>) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-    const circles = groups.map((g) => circleRefs.current.get(g.key)).filter((c): c is HTMLButtonElement => !!c);
-    const i = circles.indexOf(document.activeElement as HTMLButtonElement);
+    const buttons = circles
+      .map((c) => circleRefs.current.get(c.circle.key))
+      .filter((c): c is HTMLButtonElement => !!c);
+    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (i === -1) return;
     e.preventDefault();
-    circles[Math.min(circles.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))]?.focus();
+    buttons[Math.min(buttons.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))]?.focus();
   };
 
   const pick = (id: number) => {
@@ -264,72 +301,85 @@ export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpa
         <ChevronGlyph dir="right" />
       </button>
       <span className="task-rail-sep" aria-hidden="true" />
-      {groups.map((g, i) => (
+      {circles.map(({ circle, count }, i) => (
         <button
-          key={g.key}
+          key={circle.key}
           ref={(el) => {
-            if (el) circleRefs.current.set(g.key, el);
-            else circleRefs.current.delete(g.key);
+            if (el) circleRefs.current.set(circle.key, el);
+            else circleRefs.current.delete(circle.key);
           }}
           type="button"
           className="rail-circle"
-          data-group={g.key}
-          data-fill={CIRCLE_FILL[g.key]}
-          data-pulse={pulse[g.key]}
-          data-open={open === g.key || undefined}
+          data-group={circle.key}
+          data-hue={circle.hue}
+          data-pulse={pulse[circle.key]}
+          data-open={open === circle.key || undefined}
           /* Where the Tab cycle lands (focusAreas.ts): the selected task's
-             group, else the first. */
-          data-focus-default={g.key === selectedGroup || undefined}
+             circle, else the first. */
+          data-focus-default={circle.key === selectedCircle || undefined}
           data-focus-fallback={i === 0 || undefined}
-          aria-current={g.key === selectedGroup || undefined}
+          aria-current={circle.key === selectedCircle || undefined}
           aria-haspopup="menu"
-          aria-expanded={open === g.key}
-          aria-label={circleLabel(g.key, g.tasks.length)}
-          title={circleLabel(g.key, g.tasks.length)}
-          onClick={() => toggle(g.key)}
+          aria-expanded={open === circle.key}
+          aria-label={circleLabel(circle, counts)}
+          title={circleLabel(circle, counts)}
+          onClick={() => toggle(circle.key)}
         >
-          {g.tasks.length}
+          {count}
         </button>
       ))}
 
-      {openGroup && (
+      {openCircle && (
         <div
           ref={popRef}
           className="row-menu rail-pop"
           role="menu"
-          aria-label={GROUP_TITLE[openGroup.key]}
+          aria-label={openCircle.circle.title}
           style={{ top: pos.top, left: pos.left }}
           onKeyDown={onPopKey}
         >
           <div className="rail-pop-head">
-            <span className="status-dot" data-status={GROUP_GLYPH[openGroup.key]} aria-hidden="true" />
-            <span className="rail-pop-title">{GROUP_TITLE[openGroup.key]}</span>
-            <span className="rail-pop-count">· {openGroup.tasks.length}</span>
+            {/* One group: its icon, as on the list's header. Two: each
+                sub-header below carries its own. */}
+            {openCircle.circle.groups.length === 1 && <GroupPie group={openCircle.circle.groups[0]!} />}
+            <span className="rail-pop-title">{openCircle.circle.title}</span>
+            <span className="rail-pop-count">· {openCircle.count}</span>
           </div>
           <div className="rail-pop-list">
-            {openGroup.tasks.map((task) => {
-              const r = row(task, openGroup.key);
-              const selected = task.id === selectedId;
+            {openCircle.parts.map((part) => {
+              const rows = part.tasks.map((task) => {
+                const r = row(task, part.key);
+                const selected = task.id === selectedId;
+                return (
+                  <button
+                    key={task.id}
+                    type="button"
+                    role="menuitem"
+                    className="task-row"
+                    data-rail-task-id={task.id}
+                    data-selected={selected}
+                    data-status={task.status}
+                    aria-current={selected || undefined}
+                    title={r.tooltip}
+                    onClick={() => pick(task.id)}
+                  >
+                    <span className="task-title">{r.title}</span>
+                    <span className="task-age">{r.age}</span>
+                    {r.meta}
+                  </button>
+                );
+              });
+              if (openCircle.circle.groups.length === 1) return rows;
+              const id = `rail-pop-${part.key}`;
               return (
-                <button
-                  key={task.id}
-                  type="button"
-                  role="menuitem"
-                  className="task-row"
-                  data-rail-task-id={task.id}
-                  data-selected={selected}
-                  data-status={task.status}
-                  aria-current={selected || undefined}
-                  title={r.tooltip}
-                  onClick={() => pick(task.id)}
-                >
-                  <span className="task-dot-cell">
-                    <span className="status-dot" data-status={GROUP_GLYPH[openGroup.key]} aria-hidden="true" />
-                  </span>
-                  <span className="task-title">{r.title}</span>
-                  <span className="task-age">{r.age}</span>
-                  {r.meta}
-                </button>
+                <div key={part.key} role="group" aria-labelledby={id} className="rail-pop-group">
+                  <div className="rail-pop-sub" id={id}>
+                    <GroupPie group={part.key} />
+                    <span>{GROUP_TITLE[part.key]}</span>
+                    <span className="group-count">{part.tasks.length}</span>
+                  </div>
+                  {rows}
+                </div>
               );
             })}
           </div>

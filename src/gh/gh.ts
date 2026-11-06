@@ -12,7 +12,7 @@
  */
 
 import type { Task } from '../types';
-import { parsePrView, type PrStatus } from './prStatus';
+import { parsePrGraphql, PR_QUERY, type PrStatus } from './prStatus';
 import {
   parseAnnotations,
   parsePrChecks,
@@ -151,10 +151,6 @@ export function resetViewerLoginForTests(login: string | null = null): void {
   viewerFailedAt = -Infinity;
 }
 
-const PR_FIELDS =
-  'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,' +
-  'latestReviews,reviewRequests,author,mergeable,mergeStateStatus';
-
 /**
  * Is there a PR for this task worth asking about? A resumed session often
  * runs on the repo's base branch, and `gh pr view main` can find some stray PR
@@ -173,24 +169,43 @@ export function prLookupBranch(task: Pick<Task, 'branch' | 'baseBranch'>): strin
  * worktree as asked, and falls back to the origin repo when the worktree is
  * gone (removed on archive) -- the branch lookup only needs the remote, which
  * both share.
+ *
+ * One `gh api graphql` request (#278): what `gh pr view <branch> --json …`
+ * asked before, plus the review threads, in the same single call, so the
+ * unresolved count adds nothing to the PR store's rate (prStore.ts).
+ * `{owner}` and `{repo}` are gh's own placeholders, filled from the folder's
+ * remote as `gh pr view` resolves it; they work only through -F. The branch
+ * goes through -f, raw: -F would turn a branch named `193` into a number.
+ * The Accept header is the preview `gh pr view` sends for mergeStateStatus.
  */
 export async function fetchPrStatus(
   task: Pick<Task, 'branch' | 'baseBranch' | 'worktreePath' | 'repoPath'>,
 ): Promise<PrStatus | null> {
   const branch = prLookupBranch(task);
   if (!branch) return null;
-  const args = ['pr', 'view', branch, '--json', PR_FIELDS];
+  const args = [
+    'api',
+    'graphql',
+    '-H',
+    'Accept: application/vnd.github.merge-info-preview+json',
+    '-F',
+    'owner={owner}',
+    '-F',
+    'repo={repo}',
+    '-f',
+    `branch=${branch}`,
+    '-f',
+    `query=${PR_QUERY}`,
+  ];
   for (const cwd of [task.worktreePath, task.repoPath]) {
     if (!cwd) continue;
     const r = await gh(args, cwd);
     if (!r) continue; // could not spawn here: the cwd may not exist
-    // Exit 1 covers "no pull requests found", "not logged in", "no remote",
-    // offline. None of them is something to shout about; all mean "no badge".
+    // Non-zero covers "not logged in", "no remote", offline and a GraphQL
+    // error. None of them is something to shout about; all mean "no badge".
     if (r.code !== 0) return null;
-    const pr = parsePrView(r.stdout);
-    // gh resolves a bare branch name loosely; be sure it is ours.
-    if (pr && pr.headRefName && pr.headRefName !== branch) return null;
-    return pr;
+    // Only a PR whose head is this branch: parsePrGraphql checks.
+    return parsePrGraphql(r.stdout, branch);
   }
   return null;
 }

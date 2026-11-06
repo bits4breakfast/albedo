@@ -17,6 +17,9 @@
  *   - on demand, when a task is selected.
  * Whatever the trigger, a task never has more than one `gh` call in flight,
  * and a result younger than {@link MIN_AGE_MS} is reused rather than refetched.
+ *
+ * Each call is one GraphQL request (gh.ts `fetchPrStatus`), and it carries the
+ * review threads too (#278): the unresolved counts cost no call of their own.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -32,7 +35,7 @@ export const MIN_AGE_MS = 15_000;
 /** gh is a network round trip each; ten tasks should not be ten at once. */
 const MAX_CONCURRENT = 3;
 /**
- * The most `gh pr view` calls a minute that watching running checks may cost,
+ * The most PR fetches a minute that watching running checks may cost,
  * whatever the number of PRs. Each is one GraphQL request against a budget of
  * 5,000 an hour shared with everything else the owner runs through gh; 40 a
  * minute is 2,400 an hour at worst, under half of it. Up to ten PRs with
@@ -133,7 +136,8 @@ export function refreshPrStatus(task: PrTask, opts: { force?: boolean } = {}): P
   if (fresh && !opts.force) return Promise.resolve();
 
   const p = gate(() => fetcher(task))
-    .then((pr) => {
+    .then((fetched) => {
+      const pr = keepThreads(fetched, prev && prev.branch === task.branch ? prev.pr : null);
       cache.set(task.id, { pr, branch: task.branch, fetchedAt: now() });
       emit();
     })
@@ -147,6 +151,18 @@ export function refreshPrStatus(task: PrTask, opts: { force?: boolean } = {}): P
     });
   inflight.set(task.id, p);
   return p;
+}
+
+/**
+ * An answer that does not say how many review threads the PR has keeps the
+ * counts last seen for the same open PR (#278): unknown is not "none", and
+ * reading it as none would move the task out of In Review and back.
+ */
+export function keepThreads(next: PrStatus | null, prev: PrStatus | null | undefined): PrStatus | null {
+  if (!next || next.reviewThreads != null) return next;
+  if (next.state !== 'open' && next.state !== 'draft') return next;
+  if (!prev?.reviewThreads || prev.number !== next.number) return next;
+  return { ...next, reviewThreads: prev.reviewThreads };
 }
 
 /** Drop a task's entry, e.g. after it is deleted. */

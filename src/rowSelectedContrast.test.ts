@@ -49,7 +49,7 @@ const TEXT = [
 /** Status glyphs: non-text, 3.0. Archived takes --status-idle on this row (tasklist.css). */
 const GLYPHS = [
   '--status-idle',
-  ...['blocked', 'running', 'review', 'reviewing', 'idle', 'done'].map((g) => `--status-${g}-edge`),
+  ...['blocked', 'running', 'review', 'team', 'approved', 'idle', 'done'].map((g) => `--status-${g}-edge`),
 ];
 
 describe('the selected task row (#203)', () => {
