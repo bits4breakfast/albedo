@@ -16,22 +16,23 @@ import './taskrail.css';
  * (⌘N, ⌘1–9, ⌘[ ⌘]) keep working while it is collapsed.
  */
 
-/** How a group's circle is drawn: the shape its glyph has in the list. */
-export type CircleFill = 'solid' | 'outline' | 'dotted';
+/** How a group's circle is drawn. */
+export type CircleFill = 'solid' | 'ringed' | 'dotted';
 
 /**
- * Filled for the groups that want you (Needs You, Ready to Review), so the eye
- * goes there first; dotted for Done, so the three greens stay apart (filled,
- * outline, dotted); an outline for the rest.
+ * Every circle filled with its group's colour (#276): a 2px outline alone was
+ * too little colour to tell the groups apart. Done stays a dotted outline;
+ * Ready to Review is filled with a ring inside, so it stays apart from In
+ * Review, the same green filled plain.
  */
 export const CIRCLE_FILL: Record<GroupKey, CircleFill> = {
   blocked: 'solid',
-  active: 'outline',
-  review: 'solid',
-  reviewing: 'outline',
-  quiet: 'outline',
+  active: 'solid',
+  review: 'ringed',
+  reviewing: 'solid',
+  quiet: 'solid',
   done: 'dotted',
-  archived: 'outline',
+  archived: 'solid',
 };
 
 /** "In Review, 2 tasks": the circle's tooltip and accessible name. */

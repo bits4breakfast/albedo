@@ -54,8 +54,8 @@ const GROUP_COLOUR = {
   quiet: '--status-idle',
   done: '--status-done',
 } as const;
-const FILLED = ['blocked', 'review'] as const;
-const OUTLINED = ['active', 'reviewing', 'quiet', 'done'] as const;
+const FILLED = ['blocked', 'active', 'review', 'reviewing', 'quiet'] as const;
+const OUTLINED = ['done'] as const;
 
 describe('the task rail’s circles (#266)', () => {
   it('draws each with the token measured below', () => {
@@ -64,7 +64,8 @@ describe('the task rail’s circles (#266)', () => {
       expect(rail, group).toMatch(sel);
     }
     expect(rail).toMatch(/\.rail-circle \{[^}]*border: 2px solid var\(--c\);[^}]*background: var\(--panel\);[^}]*color: var\(--text\);/);
-    expect(rail).toMatch(/\.rail-circle\[data-fill='solid'\] \{ background: var\(--c\); color: var\(--panel\); \}/);
+    expect(rail).toMatch(/\.rail-circle\[data-fill='solid'\],\s*\.rail-circle\[data-fill='ringed'\] \{ background: var\(--c\); color: var\(--panel\); \}/);
+    expect(rail).toMatch(/\.rail-circle\[data-fill='ringed'\] \{ box-shadow: inset 0 0 0 2px var\(--panel\); \}/);
     expect(rail).toMatch(/\.rail-circle\[aria-current='true'\]::after \{[^}]*border: 1\.5px solid var\(--accent\)/);
     expect(rail).not.toMatch(/opacity\s*:/);
     expect(rail).not.toMatch(/transparent\)/);

@@ -98,13 +98,13 @@ describe('the rail (#266)', () => {
     expect(document.querySelector('[data-group="archived"]')).toBeNull();
   });
 
-  it('fills the groups that want you, dots Done, outlines the rest', () => {
+  it('fills every group, rings Ready to Review, dots Done (#276)', () => {
     renderRail();
     expect(Object.fromEntries(circles().map((c) => [c.dataset.group, c.dataset.fill]))).toEqual({
       blocked: 'solid',
-      active: 'outline',
-      review: 'solid',
-      quiet: 'outline',
+      active: 'solid',
+      review: 'ringed',
+      quiet: 'solid',
       done: 'dotted',
     });
   });

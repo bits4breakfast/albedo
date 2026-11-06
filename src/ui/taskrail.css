@@ -5,11 +5,10 @@
    was measured on it (railContrast.test.ts parses these tokens from
    styles.css and checks them in all three theme blocks):
 
-     outlined count   --text on the circle's --panel   16.60 | 14.63
-                      (and on --panel-chrome itself     15.09 | 13.81)
-     filled count     --panel on --status-blocked        7.59 |  9.98
-                      --panel on --status-done           7.19 | 10.12
-     outlines (UI)    --status-idle on --panel-chrome    4.32 |  4.60
+     Done's count     --text on the circle's --panel   16.60 | 14.63
+     filled count     --panel on each --status-* fill (blocked, running,
+                      done, idle): 4.5 at the least, all three blocks
+     fill edges (UI)  --status-idle on --panel-chrome    4.32 |  4.60
                       --status-running                   5.87 |  7.44
                       --status-blocked                   6.90 |  9.42
                       --status-done                      6.53 |  9.55
@@ -17,7 +16,8 @@
                                                    light | dark
 
    --panel carries a filled circle's count in both themes: white-ish on the
-   light fills, near-black on the dark ones. No opacity anywhere.
+   light fills, near-black on the dark ones (white on the dark theme's
+   lighter fills is 2.4:1). No opacity anywhere.
    -------------------------------------------------------------------------- */
 
 /* The column narrows to the rail; the main pane takes the rest. The inline
@@ -86,9 +86,14 @@
 .rail-circle[data-group='done'] { --c: var(--status-done); }
 .rail-circle[data-group='quiet'] { --c: var(--status-idle); }
 
-/* The groups that want you. */
-.rail-circle[data-fill='solid'] { background: var(--c); color: var(--panel); }
-/* Done: the third green, apart from the filled and the plain outline. */
+/* Filled, every group but Done (#276). Ready to Review keeps a ring of the
+   circle's --panel inside, so it stays apart from In Review's plain green. */
+.rail-circle[data-fill='solid'],
+.rail-circle[data-fill='ringed'] { background: var(--c); color: var(--panel); }
+.rail-circle[data-fill='ringed'] { box-shadow: inset 0 0 0 2px var(--panel); }
+.rail-circle[data-fill='ringed']:hover,
+.rail-circle[data-fill='ringed'][data-open='true'] { box-shadow: inset 0 0 0 2px var(--panel), 0 0 0 3px var(--panel-raised); }
+/* Done: a dotted outline, apart from the two filled greens. */
 .rail-circle[data-fill='dotted'] { border-style: dotted; }
 
 /* The selected task's group: an accent ring round the circle, clear of it. */
