@@ -146,7 +146,8 @@ npm run demo -- --setup-only  # reset only
 npm run demo -- --no-reset --real-claude  # your own claude; see below
 ```
 
-**What it is.** The app runs with its own home folder, `~/.albedo-demo`
+**What it is.** The app runs with its own home folder,
+`/Users/Shared/albedo-demo` on macOS and `~/.albedo-demo` elsewhere
 (`ALBEDO_DEMO_HOME` moves it), and its own bundle identifier, so its
 database, `~/.albedo`, `~/.claude/projects`, worktrees and web storage are all
 separate from yours. Nothing of yours is read or written. `npm run demo`

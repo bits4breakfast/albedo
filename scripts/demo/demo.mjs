@@ -6,8 +6,8 @@
 //   npm run demo -- --no-reset   start the app on the demo as it was left
 //   npm run demo -- --real-claude  your own `claude` instead of the stand-in
 //
-// The profile is a separate home folder, ~/.albedo-demo by default
-// (ALBEDO_DEMO_HOME overrides it). The app runs with HOME pointing there and
+// The profile is a separate home folder, /Users/Shared/albedo-demo on macOS
+// and ~/.albedo-demo elsewhere (ALBEDO_DEMO_HOME overrides it). The app runs with HOME pointing there and
 // its own bundle identifier, so its database, ~/.albedo, ~/.claude/projects,
 // worktrees and web storage are all the demo's, and nothing of yours is read
 // or written. On its PATH, stand-ins for `claude` and `gh` play back the
@@ -38,9 +38,18 @@ export function databasePath(home, os = platform()) {
   return join(dir, 'albedo.db');
 }
 
+/**
+ * On macOS the demo lives in /Users/Shared, not under your home folder: the
+ * transcript and the Files panel show full paths, and a path under
+ * /Users/<you> would put your account name in every screenshot.
+ */
+export function defaultDemoHome(os = platform(), real = homedir()) {
+  return os === 'darwin' ? '/Users/Shared/albedo-demo' : join(real, '.albedo-demo');
+}
+
 function demoHome() {
   const real = homedir();
-  const home = resolve(process.env.ALBEDO_DEMO_HOME || join(real, '.albedo-demo'));
+  const home = resolve(process.env.ALBEDO_DEMO_HOME || defaultDemoHome());
   if (home === real || real.startsWith(`${home}/`)) {
     throw new Error(`ALBEDO_DEMO_HOME must not be your home folder or contain it: ${home}`);
   }
