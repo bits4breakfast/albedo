@@ -65,7 +65,10 @@ const INSTRUCTIONS: &str = "This session runs inside Albedo, the user's desktop 
 These tools ask Albedo for things only it can do: a reminder on this task, a new session (only ever started with \
 the user's approval), telling the user you are blocked on them, or a one-line summary of what this task is about, \
 shown beside its title. Each call is delivered to Albedo and answered \
-at once; none of them waits for the user.";
+at once; none of them waits for the user. \
+As soon as you know what this task is about -- typically right after reading the ticket or issue it is named \
+after -- call `set_task_summary` once with a plain one-line summary (no ticket key), and again only if the task's \
+purpose changes. Its description is not shown until the tool is loaded, so this is the reminder.";
 
 /// What the server needs from the outside world, so tests can supply it.
 pub struct Env {
@@ -386,6 +389,10 @@ mod tests {
             json!({"listChanged": false})
         );
         assert_eq!(r["result"]["serverInfo"]["name"], "albedo");
+        // Tool descriptions are deferred in Claude Code; the instructions are
+        // what every session reads, so they carry the ask (#270).
+        let said = r["result"]["instructions"].as_str().unwrap();
+        assert!(said.contains("call `set_task_summary` once"), "{said}");
         assert!(
             r["result"].get("resultType").is_none(),
             "legacy results carry no resultType"
