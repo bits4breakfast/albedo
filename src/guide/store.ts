@@ -28,7 +28,7 @@ import { KEYS, readPersisted, writePersisted, type Codec } from '../ui/persisted
 import type { Guide } from './validate';
 import type { BranchDiff } from './blocks';
 import type { LoadedBranchDiff } from './branchDiff';
-import { GuideError, writeGuide, writeNotes, type GuideErrorKind, type Progress } from './writer';
+import { GuideError, writeGuide, writeNotes, type GroupNotes, type GuideErrorKind, type Progress } from './writer';
 import { notableFiles } from './validate';
 
 export const MAX_GUIDES = 40;
@@ -319,7 +319,7 @@ async function pump(taskId: number, job: NotesJob): Promise<void> {
     if (!group || group.notes !== undefined) continue;
     job.running = index;
     changed();
-    let notes: Record<string, string> | null = null;
+    let notes: GroupNotes | null = null;
     let ok = true;
     try {
       notes = await writeNotes(job.diff, group, { groupTitles: guide.groups.map((g) => g.title) });
@@ -338,7 +338,9 @@ async function pump(taskId: number, job: NotesJob): Promise<void> {
       return;
     }
     if (ok) {
-      const groups = now.groups.map((g, i) => (i === index ? { ...g, notes: notes ?? {} } : g));
+      // `notes` alone marks the group as asked; `lines` is kept only when there are some (#264).
+      const lines = notes && Object.keys(notes.lines).length > 0 ? { lines: notes.lines } : {};
+      const groups = now.groups.map((g, i) => (i === index ? { ...g, notes: notes?.notes ?? {}, ...lines } : g));
       saveGuide(taskId, { ...now, groups });
     } else {
       job.failed.add(index);

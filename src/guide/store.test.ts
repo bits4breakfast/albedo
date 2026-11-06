@@ -323,6 +323,41 @@ describe('notes, a group at a time (#224)', () => {
     expect(notesStateOf(1, 10, 0)).toBeNull();
   });
 
+  it('saves a group’s short lines beside its notes, and none when the reply had none (#264)', async () => {
+    const calls = controlled();
+    const g = makeGuide(10);
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    calls[0]!.answer(
+      result({
+        notes: [
+          { path: 'src/a1.ts', line: 'Holds a1', note: 'Why a1.' },
+          { path: 'src/a2.ts', line: 'Holds a2' },
+        ],
+      }),
+    );
+    await settle();
+    expect(loadGuide(1)!.groups[0]).toMatchObject({ notes: { 'src/a1.ts': 'Why a1.' }, lines: { 'src/a1.ts': 'Holds a1', 'src/a2.ts': 'Holds a2' } });
+    calls[1]!.answer(notesFor(['src/b1.ts'], 'why'));
+    await settle();
+    expect(loadGuide(1)!.groups[1]!.notes).toEqual({ 'src/b1.ts': 'why src/b1.ts' });
+    expect(loadGuide(1)!.groups[1]).not.toHaveProperty('lines');
+  });
+
+  it('a guide stored before #264 (notes only) is not asked again', async () => {
+    const calls = controlled();
+    const g = makeGuide(10);
+    g.groups[0]!.notes = { 'src/a1.ts': 'old why' };
+    g.groups[1]!.notes = { 'src/b1.ts': 'old why' };
+    g.groups[2]!.notes = {};
+    saveGuide(1, g);
+    ensureNotes(1, g, diff);
+    await settle();
+    expect(calls).toHaveLength(0);
+    expect(loadGuide(1)!.groups[0]).toEqual({ ...g.groups[0], notes: { 'src/a1.ts': 'old why' } });
+  });
+
   it('after a restart, asks only for the groups that still have no notes', async () => {
     const calls = controlled();
     const g = makeGuide(10);
