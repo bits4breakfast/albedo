@@ -1,6 +1,6 @@
 /**
  * The guide's change totals (#250): "+320 −45" in --add and --del, on the meta
- * row's two grounds -- --panel, and --banner-bg once the guide is out of date
+ * row's two grounds -- --panel-chrome (#274), and --banner-bg once the guide is out of date
  * -- in every theme. Text, so 4.5:1. The CSS is read too, so moving them onto
  * another token or ground fails here.
  */
@@ -40,14 +40,15 @@ describe('the guide’s change totals (#250)', () => {
   it('use the file counts’ tokens, on the meta row', () => {
     expect(guide).toMatch(/\.gd-add \{ color: var\(--add\); \}/);
     expect(guide).toMatch(/\.gd-del \{ color: var\(--del\); \}/);
+    expect(guide).toMatch(/\.gd-meta \{[^}]*background: var\(--panel-chrome\)/);
     expect(guide).toMatch(/\.gd-meta\[data-stale\] \{[^}]*background: var\(--banner-bg\)/);
     expect(guide).not.toMatch(/\.gd-meta-totals[^{]*\{[^}]*opacity/);
   });
 
   for (const [name, t] of Object.entries(themes)) {
     it(`clear 4.5:1 on both grounds, ${name}`, () => {
-      for (const ground of ['--panel', '--banner-bg']) {
-        for (const fg of ['--add', '--del', '--muted', '--banner-text']) {
+      for (const ground of ['--panel-chrome', '--banner-bg']) {
+        for (const fg of ['--add', '--del', '--muted', '--text', '--accent', '--banner-text']) {
           expect(ratio(t.get(fg)!, t.get(ground)!), `${fg} on ${ground}`).toBeGreaterThanOrEqual(4.5);
         }
       }

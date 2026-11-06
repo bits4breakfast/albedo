@@ -1,6 +1,6 @@
 /**
  * The why under a file's header in the guide's diff (#264): --text, with a
- * "Why" label in --faint, on the band's --panel-chrome -- and on
+ * "Why" label in --faint, on the pane's --panel (#274) -- and on
  * --panel-raised, the ground CLAUDE.md measures text against. Every theme.
  * Text, so 4.5:1. The CSS is read too, so moving the band onto another ground
  * or dimming it with opacity fails here.
@@ -38,8 +38,9 @@ const themes = {
 };
 
 describe('the why under the file’s header (#264)', () => {
-  it('is --text on --panel-chrome, its label --faint, never dimmed', () => {
-    expect(guide).toMatch(/\.gd-diff-why \{[^}]*background: var\(--panel-chrome\)/);
+  it('is --text on --panel with a --border-strong rule, its label --faint, never dimmed', () => {
+    expect(guide).toMatch(/\.gd-diff-why \{[^}]*background: var\(--panel\);/);
+    expect(guide).toMatch(/\.gd-diff-why-text \{[^}]*border-left: 2px solid var\(--border-strong\)/);
     expect(guide).toMatch(/\.gd-diff-why-text \{[^}]*color: var\(--text\)/);
     expect(guide).toMatch(/\.gd-diff-why-label \{[^}]*color: var\(--faint\)/);
     expect(guide).not.toMatch(/\.gd-diff-why[^{]*\{[^}]*(opacity|transparent)/);
@@ -47,11 +48,13 @@ describe('the why under the file’s header (#264)', () => {
 
   for (const [name, t] of Object.entries(themes)) {
     it(`clears 4.5:1, ${name}`, () => {
-      for (const ground of ['--panel-chrome', '--panel-raised']) {
+      for (const ground of ['--panel', '--panel-raised']) {
         for (const fg of ['--text', '--faint']) {
           expect(ratio(t.get(fg)!, t.get(ground)!), `${fg} on ${ground}`).toBeGreaterThanOrEqual(4.5);
         }
       }
+      // The rule is a glyph: 3:1 on the note's ground.
+      expect(ratio(t.get('--border-strong')!, t.get('--panel')!), '--border-strong on --panel').toBeGreaterThanOrEqual(3);
     });
   }
 });
