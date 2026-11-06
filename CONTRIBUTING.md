@@ -154,17 +154,21 @@ separate from yours. Nothing of yours is read or written. `npm run demo`
 starts `tauri dev`, so quit any other `tauri dev` first (port 1420).
 
 **What's in it.** `scripts/demo/scenario.mjs`: two projects, `recipe-app`
-and `blog`, with git repositories, worktrees, commits and transcripts, and six
-tasks in every state the task list has:
+and `blog`, with git repositories, worktrees, commits and transcripts, and seven
+tasks spread over the task list's groups, each with a one-line summary:
 
-| Task | State |
+| Task | Group |
 | --- | --- |
-| Add dark mode to settings | Waiting on you: Allow or Deny `npm test -- src/settings` |
+| Add dark mode to settings | Needs You: Allow or Deny `npm test -- src/settings` |
 | Import recipes from a link | Running |
 | Search recipes by ingredient | Running |
-| Round amounts to kitchen fractions | Ready to Review, PR #14 open, approved, checks green |
+| Round amounts to kitchen fractions | Approved: PR #14 open, approved, checks green |
 | Show cooking time on recipe cards | Done |
-| Add an RSS feed (`blog`) | Idle, finished on a question |
+| Add an RSS feed (`blog`) | Ready to Review: finished on a question, not opened yet |
+| Show tags on each post (`blog`) | In Review: PR #9 open, 2 of 3 review threads unresolved |
+
+Idle, My Review and Archived are left out: Idle is the quiet rest, and the
+other two need a Review Guide or an archive the hero has no room for.
 
 **No Claude login, no network.** On the demo's PATH, `claude` and `gh` are
 scripted stand-ins (`scripts/demo/fake-claude.mjs`, `fake-gh.mjs`). The
@@ -173,7 +177,8 @@ appends the transcript lines and runs the hooks Albedo passed it, so the
 waiting card, Running and the plan meters come through the real pipe. Allow
 or Deny on the card is answered by the real hook script, and the session
 carries on accordingly. Its terminal says it is a stand-in. `gh` answers the
-PR badge, its review state and the Checks dialog for the one made-up pull request.
+PR badge, its review state and threads, and the Checks dialog with each job's
+steps, for the two made-up pull requests.
 
 **A reset** rebuilds everything from the scenario, timed from now, and keeps
 the app's own preferences (zoom, theme, layout, the selected task), which
@@ -189,7 +194,8 @@ several pieces of work in parallel, and one of them needs you.
 2. Start the sessions: a terminal starts only when its task is first opened.
    Click **Import recipes from a link**, **Search recipes by ingredient**,
    then **Add dark mode to settings**. The first two move to Running, the
-   third to Needs You with its card.
+   third to Needs You with its card. Don't open **Add an RSS feed**: opening
+   it moves it from Ready to Review to Idle.
 3. Keep **Add dark mode to settings** selected. Layout **Transcript**
    (**⌘\\**), with **Files** pinned as a column. Scroll the transcript to the
    end (**⌘↓**), so the card, the last edits and the commits show.
@@ -216,7 +222,9 @@ Reset to get it back.
 | `dark-question.png` | The `blog` tab, **Add an RSS feed**, Dark, Transcript layout: the turn ending on a question. |
 
 **Where the demo stops.** The stand-in plays only its script: a new task
-made in the demo, or a message sent to one, gets no answer. Anything that
+made in the demo, or a message sent to one, gets no answer. Write Guide in
+the Review Guide fails with the stand-in's own message, and Squash and Merge
+is refused. Anything that
 needs a real session (a reply, a subagent, an AskUserQuestion card, a
 compaction) is taken by hand, still in the demo profile:
 `npm run demo -- --no-reset --real-claude` starts the app with your own
