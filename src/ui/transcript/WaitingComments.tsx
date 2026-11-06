@@ -10,6 +10,10 @@
  * The intro a message with code comments opens with is edited here too: it
  * moved from the Files pane with "Add to Message", which is gone.
  *
+ * A PR's failing checks queued for Claude (#280, ciFailure.ts) are listed
+ * here too, first, as the message carries them: "✗ CI failed · 2 checks" in
+ * the head, and opened, each check with its conclusion and its link.
+ *
  * Frozen like the box while a send is under way: the list can be read and
  * jumped from, not changed.
  */
@@ -28,6 +32,8 @@ import {
 } from '../../db/comments';
 import { useOpenFile } from '../editor/openFile';
 import { useCommentsIntro, writeIntro } from '../commentsIntro';
+import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi, type QueuedCiFailure } from './ciFailure';
+import { openExternal } from '../../lib/openUrl';
 
 export function WaitingComments({
   taskId,
@@ -43,16 +49,26 @@ export function WaitingComments({
   code?: readonly ReviewComment[];
 }): ReactNode {
   const comments = useComments(taskId);
+  const ci = useQueuedCi(taskId);
   const [open, setOpen] = useState(false);
   const [editingIntro, setEditingIntro] = useState(false);
   const n = comments.length + code.length;
-  if (n === 0) return null;
+  if (n === 0 && ci === null) return null;
   return (
-    <div className="tx-waiting" role="group" aria-label="Comments waiting to be sent">
+    <div className="tx-waiting" role="group" aria-label="Waiting to be sent">
       <div className="tx-waiting-bar">
-        <button type="button" className="tx-waiting-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <Disclosure open={open} /> {n} Comment{n === 1 ? '' : 's'}
-          <span className="tx-waiting-hint">go with your next message</span>
+        <button
+          type="button"
+          className="tx-waiting-head"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          title={ci ? ciTooltip(ci) : undefined}
+        >
+          <Disclosure open={open} />{' '}
+          {ci ? <span className="tx-waiting-ci-mark">{ciFailureLabel(ci)}</span> : null}
+          {ci && n > 0 ? ' + ' : null}
+          {n > 0 ? `${n} Comment${n === 1 ? '' : 's'}` : null}
+          <span className="tx-waiting-hint">{n + (ci ? 1 : 0) === 1 ? 'goes' : 'go'} with your next message</span>
         </button>
         {code.length > 0 ? (
           <button
@@ -69,7 +85,8 @@ export function WaitingComments({
       {editingIntro && code.length > 0 ? <IntroEditor taskId={taskId} /> : null}
       {open ? (
         <ul className="tx-waiting-list">
-          {/* In the order the message carries them: code first, then passages. */}
+          {/* In the order the message carries them: CI, code, then passages. */}
+          {ci ? <CiItem taskId={taskId} failure={ci} frozen={frozen} /> : null}
           {code.map((c) => (
             <CodeItem key={`code-${c.id}`} taskId={taskId} comment={c} frozen={frozen} />
           ))}
@@ -79,6 +96,58 @@ export function WaitingComments({
         </ul>
       ) : null}
     </div>
+  );
+}
+
+/** The head's tooltip: the PR, the commit and every failing check. */
+function ciTooltip(f: QueuedCiFailure): string {
+  const sha = shortSha(f.sha);
+  return [`CI failed on PR #${f.prNumber}${sha ? ` (${sha})` : ''}`, ...f.checks.map((c) => `${c.name}: ${c.conclusion}`)].join('\n');
+}
+
+/** The queued CI failure: the PR and commit, each failing check with Open, and Remove. */
+function CiItem({ taskId, failure, frozen }: { taskId: number; failure: QueuedCiFailure; frozen: boolean }): ReactNode {
+  const sha = shortSha(failure.sha);
+  return (
+    <li className="tx-waiting-item" data-kind="ci">
+      <div className="tx-waiting-row">
+        <div className="tx-waiting-where tx-waiting-ci-where" title={ciTooltip(failure)}>
+          {/* The head says "CI failed · N checks"; here, which PR and commit. */}
+          <span className="tx-waiting-ci-glyph" aria-hidden="true">✗</span> PR #{failure.prNumber}
+          {sha ? ` · ${sha}` : ''}
+        </div>
+        <button
+          type="button"
+          className="tx-btn tx-queued-act"
+          onClick={() => removeQueuedCi(taskId, failure.sha)}
+          disabled={frozen}
+          aria-label="Remove the CI failure"
+          title="Don’t send this failure to Claude"
+        >
+          Remove
+        </button>
+      </div>
+      <ul className="tx-waiting-checks">
+        {failure.checks.map((c) => (
+          <li key={c.name} className="tx-waiting-row">
+            <div className="tx-waiting-comment">
+              {c.name} <span className="tx-waiting-ci-conclusion">— {c.conclusion}</span>
+            </div>
+            {c.url ? (
+              <button
+                type="button"
+                className="tx-btn tx-queued-act"
+                title={c.url}
+                aria-label={`Open the details of ${c.name}`}
+                onClick={() => void openExternal(c.url!)}
+              >
+                Open
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </li>
   );
 }
 

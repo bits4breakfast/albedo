@@ -33,6 +33,7 @@ vi.mock('../ui/editor/diffComments', () => ({
 const { default: GuidePane, nextToReview } = await import('./GuidePane');
 const { resetGuideStoreForTests, saveGuide } = await import('./store');
 const { setOneshotRunner } = await import('./writer');
+const queuedCi = await import('../ui/transcript/ciFailure');
 
 const task = {
   id: 5, title: 't', projectId: 1, repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/wt',
@@ -63,6 +64,7 @@ beforeEach(() => {
     },
   });
   resetGuideStoreForTests();
+  queuedCi.__resetQueuedCi();
   openComments = [];
   waitingCode = [];
   sendAsked.length = 0;
@@ -327,6 +329,28 @@ describe('GuidePane', () => {
       fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
       expect(sendAsked).toEqual([task.id]);
       expect(screen.getByRole('button', { name: 'Send 1 Comment' }).getAttribute('aria-keyshortcuts')).toBe('Meta+Enter');
+    });
+
+    it('a queued CI failure (#280) counts: Send CI Failure + N Comments, or Send CI Failure alone', async () => {
+      const { observeCiQueue, removeQueuedCi } = queuedCi;
+      const prAt = {
+        number: 6102, url: '', title: '', state: 'open', headRefName: 'b', baseRefName: 'main', headSha: 'abc', mergedAt: null,
+        review: null, checks: { kind: 'failing', failing: 1, total: 1 }, lines: [{ name: 'build', bucket: 'fail', url: null }],
+      } as unknown as import('../gh/prStatus').PrStatus;
+      observeCiQueue(task.id, prAt, { outcome: 'fail', sha: 'abc', prNumber: 6102, count: 1 });
+      save();
+      waitingCode = [{ id: 1 }, { id: 2 }];
+      pane();
+      await screen.findByRole('heading', { name: 'Everything' });
+      expect(screen.getByRole('button', { name: 'Send CI Failure + 2 Comments' })).toBeTruthy();
+      cleanup();
+      waitingCode = [];
+      pane();
+      await screen.findByRole('heading', { name: 'Everything' });
+      fireEvent.click(screen.getByRole('button', { name: 'Send CI Failure' }));
+      expect(sendAsked).toEqual([task.id]);
+      removeQueuedCi(task.id);
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^Send CI/ })).toBeNull());
     });
 
     it('⌘⏎ with nothing waiting does nothing', async () => {

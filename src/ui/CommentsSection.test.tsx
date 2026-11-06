@@ -23,6 +23,17 @@ let files: Map<string, string>;
 let task: Task;
 
 beforeEach(async () => {
+  // The queued CI failure (#280) keeps a copy in storage: a fresh one per test.
+  const data = new Map<string, string>();
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+    },
+  });
+  (await import('./transcript/ciFailure')).__resetQueuedCi();
   resetDb();
   harness.db = createTestDb();
   files = new Map([['src/a.ts', 'one\ntwo\nthree\n']]);
@@ -45,6 +56,47 @@ function list(reloadKey = 0) {
 }
 
 describe('the Comments list', () => {
+  it('a queued CI failure (#280) waits first, counts in Waiting, and ✕ drops it', async () => {
+    const { __resetQueuedCi, observeCiQueue, queuedCiOf } = await import('./transcript/ciFailure');
+    __resetQueuedCi();
+    const prAt = {
+      number: 6102, url: '', title: '', state: 'open', headRefName: 'b', baseRefName: 'main', headSha: 'abc1234def', mergedAt: null,
+      review: null, checks: { kind: 'failing', failing: 2, total: 3 },
+      lines: [
+        { name: 'build', bucket: 'fail', url: 'https://ci.example.com/1' },
+        { name: 'test (2)', bucket: 'fail', url: null, reason: 'timed out' },
+      ],
+    } as unknown as import('../gh/prStatus').PrStatus;
+    observeCiQueue(task.id, prAt, { outcome: 'fail', sha: 'abc1234def', prNumber: 6102, count: 2 });
+    await add('one', 'first, unsent', 1);
+    render(list());
+    const waiting = await screen.findByRole('group', { name: 'Waiting, 2' });
+    const rows = waiting.querySelectorAll('.tf-comment');
+    expect(rows[0]?.classList.contains('tf-comment-ci')).toBe(true);
+    expect(rows[0]?.querySelector('.tf-comment-ci-label')?.textContent).toBe('✗ CI failed · 2 checks');
+    expect(rows[0]?.querySelector('.tf-comment-body')?.textContent).toBe('build, test (2)');
+    expect(rows[0]?.querySelector('[title]')?.getAttribute('title')).toBe('CI failed on PR #6102 (abc1234)\nbuild: failed\ntest (2): timed out');
+    expect(within(waiting).getByText('first, unsent')).toBeTruthy();
+    fireEvent.click(within(waiting).getByRole('button', { name: 'Remove the CI failure' }));
+    expect(queuedCiOf(task.id)).toBeNull();
+    await screen.findByRole('group', { name: 'Waiting, 1' });
+  });
+
+  it('a queued CI failure alone still shows the list, with Send', async () => {
+    const { __resetQueuedCi, observeCiQueue } = await import('./transcript/ciFailure');
+    __resetQueuedCi();
+    sendAsked.length = 0;
+    const prAt = {
+      number: 6102, url: '', title: '', state: 'open', headRefName: 'b', baseRefName: 'main', headSha: 'abc', mergedAt: null,
+      review: null, checks: { kind: 'failing', failing: 1, total: 1 }, lines: [{ name: 'build', bucket: 'fail', url: null }],
+    } as unknown as import('../gh/prStatus').PrStatus;
+    observeCiQueue(task.id, prAt, { outcome: 'fail', sha: 'abc', prNumber: 6102, count: 1 });
+    render(list());
+    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
+    fireEvent.click(within(waiting).getByRole('button', { name: 'Send' }));
+    expect(sendAsked).toEqual([task.id]);
+  });
+
   it('groups Waiting and ↗ Sent; only a sent one has the ✓, which is Resolve', async () => {
     await add('one', 'first, unsent', 1);
     const sent = await add('two', 'second, sent');

@@ -1691,3 +1691,200 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     await waitFor(() => expect(markCommentsSent).toHaveBeenCalledWith(1, [7]));
   });
 });
+
+describe('(ci) a PR’s failing checks wait with the comments (#280)', () => {
+  const passage: TranscriptComment = {
+    id: 'p', messageId: 4, quote: 'It already runs.', code: false, comment: 'How do you know?', at: 100, offset: 0, addedAt: 1,
+  };
+  const SHA = 'abc1234def5678900000000000000000000000aa';
+  const CI = [
+    'CI failed on PR #6102 (abc1234):',
+    '- build: failed — https://ci.example.com/1',
+    '- test (2): timed out — https://ci.example.com/2',
+  ].join('\n');
+  const QUOTE = '<transcript-quote id="1" message="4">';
+
+  /** Queue one, as the PR watch does: a pending reading, then the failing one. */
+  async function queueFailure(taskId = 1) {
+    const { observeCi, resetCiNoticesForTests } = await import('../ciNotice');
+    const { parsePrView } = await import('../../gh/prStatus');
+    const at = (runs: object[]) =>
+      parsePrView(JSON.stringify({ number: 6102, state: 'OPEN', headRefName: 'b', headRefOid: SHA, statusCheckRollup: runs }))!;
+    const run = (name: string, url: string, conclusion: string | null) => ({
+      __typename: 'CheckRun', name, detailsUrl: url, status: conclusion ? 'COMPLETED' : 'IN_PROGRESS', conclusion,
+    });
+    resetCiNoticesForTests();
+    act(() => {
+      observeCi({ id: taskId, title: 't' }, at([run('build', 'https://ci.example.com/1', null), run('test (2)', 'https://ci.example.com/2', null)]), taskId);
+      observeCi(
+        { id: taskId, title: 't' },
+        at([run('build', 'https://ci.example.com/1', 'FAILURE'), run('test (2)', 'https://ci.example.com/2', 'TIMED_OUT')]),
+        taskId,
+      );
+    });
+  }
+
+  beforeEach(async () => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    const { __resetQueuedCi } = await import('./ciFailure');
+    const { __setAttentionBackend } = await import('../attention');
+    __setAttentionBackend(() => {}, true, () => {});
+    __resetQueuedCi();
+    __resetDrafts();
+    __resetConnectivity(async () => true);
+    __resetOutbox();
+    __resetTurns();
+    seedQueue(['s1'], []);
+    codeRows.rows = [];
+  });
+  afterEach(async () => {
+    const { __setAttentionBackend } = await import('../attention');
+    __setAttentionBackend(null);
+    codeRows.rows = [];
+    __resetTurns();
+    __resetOutbox();
+    __resetConnectivity();
+    seedQueue(['s1'], []);
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    vi.mocked(ptyLiveSince).mockReturnValue(null);
+  });
+
+  it('queueing sends nothing: it is listed above the box, labelled, with the checks in the tooltip', async () => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    addComment(1, passage);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await queueFailure();
+    const head = await screen.findByRole('button', { name: /✗ CI failed · 2 checks \+ 1 Comment/ });
+    expect(head.getAttribute('title')).toBe('CI failed on PR #6102 (abc1234)\nbuild: failed\ntest (2): timed out');
+    expect(head.querySelector('.tx-waiting-ci-mark')?.textContent).toBe('✗ CI failed · 2 checks');
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(heldFor(1)).toEqual([]);
+    // Opened: first, as the message carries it, each check with its conclusion and Open.
+    fireEvent.click(head);
+    const items = [...document.querySelectorAll('.tx-waiting-item')];
+    expect(items[0]?.getAttribute('data-kind')).toBe('ci');
+    expect(items[0]?.querySelector('.tx-waiting-where')?.textContent).toBe('✗ PR #6102 · abc1234');
+    expect(items[0]?.textContent).toContain('build — failed');
+    expect(items[0]?.textContent).toContain('test (2) — timed out');
+    expect(screen.getByRole('button', { name: 'Open the details of build' })).toBeTruthy();
+    expect(items[1]?.textContent).toContain('How do you know?');
+  });
+
+  it('goes with the next message, before the comments and the box; then it is gone', async () => {
+    const { queuedCiOf } = await import('./ciFailure');
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    codeRows.rows = [codeComment(7)];
+    addComment(1, passage);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await queueFailure();
+    await screen.findByRole('button', { name: /✗ CI failed · 2 checks \+ 2 Comments/ });
+    type('Please fix.');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    const body = vi.mocked(submitPty).mock.calls[0]![1];
+    expect(body.startsWith(`${CI}\n\nI left some review comments`)).toBe(true);
+    expect(body.indexOf(QUOTE)).toBeGreaterThan(body.indexOf('Name it.'));
+    expect(body.endsWith('Please fix.')).toBe(true);
+    expect(queuedCiOf(1)).toBeNull();
+    // (The code comment's row is the mocked store's, never re-read here.)
+    await waitFor(() => expect(document.querySelector('.tx-waiting-ci-mark')).toBeNull());
+  });
+
+  it('alone: Send with an empty box is enabled and sends just it', async () => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await queueFailure();
+    await screen.findByRole('button', { name: /✗ CI failed · 2 checks/ });
+    expect(box().placeholder).toBe('Add a message, or send the CI failure as it is…');
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(false);
+    pressEnter();
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, CI]]));
+  });
+
+  it('alone through Send / ⇧⌘S / the guide (sendWaitingComments): sent, the draft left in the box', async () => {
+    const { sendWaitingComments } = await import('./composerBridge');
+    const { queuedCiOf } = await import('./ciFailure');
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    const onSent = vi.fn();
+    render(<Composer taskId={1} onSent={onSent} />);
+    await queueFailure();
+    await screen.findByRole('button', { name: /✗ CI failed/ });
+    type('half a thought');
+    expect(sendWaitingComments(1)).toBe(true);
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, CI]]));
+    expect(queuedCiOf(1)).toBeNull();
+    expect(onSent).toHaveBeenCalledWith(CI);
+    expect(box().value).toBe('half a thought');
+  });
+
+  it('a slash command goes alone and leaves it waiting', async () => {
+    const { queuedCiOf } = await import('./ciFailure');
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await queueFailure();
+    type('/compact');
+    pressEnter();
+    await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, '/compact']]));
+    expect(queuedCiOf(1)).not.toBeNull();
+  });
+
+  it('held while a turn runs: into the outbox, never typed, and it leaves the waiting list', async () => {
+    const { sendWaitingComments } = await import('./composerBridge');
+    const { queuedCiOf } = await import('./ciFailure');
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(ptyLiveSince).mockReturnValue(Date.now() - 60_000);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    noteTaskSessions([{ id: 1, sessionId: 's1' }]);
+    recordQueueOperations([{ op: 'prompt', sessionId: 's1', text: 'p', ts: Date.now() - 1_000 }]);
+    render(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    await queueFailure();
+    await screen.findByRole('button', { name: /✗ CI failed/ });
+    expect(sendWaitingComments(1)).toBe(true);
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([CI]));
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(queuedCiOf(1)).toBeNull();
+  });
+
+  it('held offline: the next message carries it into the outbox', async () => {
+    let online = true;
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => online });
+    __resetConnectivity(async () => online);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await queueFailure();
+    online = false;
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    type('when you can');
+    pressEnter();
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([`${CI}\n\nwhen you can`]));
+    expect(submitPty).not.toHaveBeenCalled();
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+  });
+
+  it('Remove takes it out, and nothing is sent', async () => {
+    const { queuedCiOf } = await import('./ciFailure');
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await queueFailure();
+    fireEvent.click(await screen.findByRole('button', { name: /✗ CI failed/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the CI failure' }));
+    expect(queuedCiOf(1)).toBeNull();
+    await waitFor(() => expect(document.querySelector('.tx-waiting')).toBeNull());
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+});

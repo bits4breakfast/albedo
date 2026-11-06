@@ -29,6 +29,7 @@ import { commentMarks, groupCommentCount, useOpenComments } from './commentMarks
 import { useWaitingCodeComments } from '../ui/transcript/codeComments';
 import { useComments } from '../ui/transcript/drafts';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
+import { useQueuedCi } from '../ui/transcript/ciFailure';
 import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
 import {
@@ -432,9 +433,13 @@ function GuideBody({
 
   // Every comment waiting to go with the next message, the composer's queue:
   // on code (this guide, the editor, diffs) and on transcript passages (#254).
-  const waitingCount = useWaitingCodeComments(task.id).length + useComments(task.id).length;
+  const commentCount = useWaitingCodeComments(task.id).length + useComments(task.id).length;
+  // And a PR's failing checks, queued for Claude like a comment (#280).
+  const ciWaiting = useQueuedCi(task.id) !== null;
+  const waitingCount = commentCount + (ciWaiting ? 1 : 0);
   // The transcript is shown after (#254): where it lands, sent or held.
   const sendComments = () => void sendWaitingComments(task.id);
+  const commentsWord = `${commentCount} ${commentCount === 1 ? 'Comment' : 'Comments'}`;
   const sendButton =
     waitingCount > 0 ? (
       <button
@@ -442,9 +447,9 @@ function GuideBody({
         className={view.stale ? 'gd-btn' : 'gd-btn gd-btn-primary'}
         onClick={sendComments}
         aria-keyshortcuts="Meta+Enter"
-        title="Send every waiting comment to Claude now, and show the transcript (⌘↩). What you're typing in the message box stays there."
+        title="Send everything waiting to Claude now, and show the transcript (⌘↩). What you're typing in the message box stays there."
       >
-        Send {waitingCount} {waitingCount === 1 ? 'Comment' : 'Comments'}
+        Send {ciWaiting ? (commentCount > 0 ? `CI Failure + ${commentsWord}` : 'CI Failure') : commentsWord}
       </button>
     ) : null;
 

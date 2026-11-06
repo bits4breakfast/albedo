@@ -38,6 +38,8 @@ import {
   type StepState,
 } from '../gh/checks';
 import { insertIntoComposer } from './transcript/composerBridge';
+import { removeQueuedCi } from './transcript/ciFailure';
+import { headKey } from '../gh/ciTransition';
 import { Disclosure } from './transcript/Diff';
 import './quickopen.css';
 import './findinfiles.css';
@@ -170,7 +172,12 @@ export default function ChecksDialog({ task, pr, onClose, onOpenFile }: ChecksDi
     });
 
   const askFix = (text: string) => {
-    if (insertIntoComposer({ taskId: task.id, text })) onClose();
+    if (insertIntoComposer({ taskId: task.id, text })) {
+      // The message box has this failure now, in more detail: the queued
+      // one for the same commit (#280) would tell Claude twice.
+      removeQueuedCi(task.id, headKey(pr));
+      onClose();
+    }
     else setNotice('Open the task’s transcript to get its message box, then try again.');
   };
 

@@ -24,12 +24,13 @@ import { markMentions, unmarkMentions, type Mention } from './mentions';
 import { MentionPopover, mentionOptionId } from './MentionPopover';
 import { useMentions } from './useMentions';
 import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type ComposerInsert } from './composerBridge';
-import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, takeComments, useComments } from './drafts';
+import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
 import { markQuotes, unmarkQuotes } from './transcriptQuotes';
 import { PassageRevealContext, revealPassageIn, type RevealPassage } from './passages';
 import { PassageComments } from './PassageComments';
 import { WaitingComments } from './WaitingComments';
-import { composeMessage, NOTHING_CARRIED, takeCarried, useWaitingCodeComments, type Carried } from './codeComments';
+import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useWaitingCodeComments, type Carried } from './codeComments';
+import { queuedCiOf, useQueuedCi, type QueuedCiFailure } from './ciFailure';
 import { useCommentsIntro } from '../commentsIntro';
 import { editHeld, holdMessage, nextRunSize, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
 import {
@@ -1036,6 +1037,19 @@ const composerPxCodec: Codec<number | null> = {
 };
 
 /** The height the user dragged it to, or null for auto-grow. Never throws. */
+/** What a message made of these carries, so each leaves the waiting list with it. */
+function carriedBy(
+  comments: readonly { id: string }[],
+  code: readonly { id: number }[],
+  ci: QueuedCiFailure | null,
+): Carried {
+  return {
+    transcript: comments.map((c) => c.id),
+    code: code.map((c) => c.id),
+    ...(ci ? { ci: ci.sha } : {}),
+  };
+}
+
 function storedComposerPx(): number | null {
   return readPersisted(KEYS.composerPx, composerPxCodec, null);
 }
@@ -1117,6 +1131,8 @@ export function Composer({
   const waitingCode = useWaitingCodeComments(taskId);
   const waitingCodeRef = useRef(waitingCode);
   waitingCodeRef.current = waitingCode;
+  /** A PR's failing checks, queued like a comment (#280); read from the store at Send. */
+  const waitingCi = useQueuedCi(taskId);
   const intro = useCommentsIntro();
   const introRef = useRef(intro);
   introRef.current = intro;
@@ -1330,7 +1346,7 @@ export function Composer({
       // delivery (outboxRelease.ts); the transcript ones leave the list now,
       // with the message that carries them.
       holdMessage(taskId, body, Date.now(), carried.code);
-      takeComments(taskId, carried.transcript);
+      takeHeldCarried(taskId, carried);
       setText('');
       pastesRef.current = new Map();
       pasteSeqRef.current = 0;
@@ -1645,13 +1661,14 @@ export function Composer({
   const sendComments = useCallback(async () => {
     const comments = commentsOf(taskId);
     const code = waitingCodeRef.current;
-    if (comments.length === 0 && code.length === 0) return;
-    const body = composeMessage(code, introRef.current, comments, '');
-    const carried: Carried = { transcript: comments.map((c) => c.id), code: code.map((c) => c.id) };
+    const ci = queuedCiOf(taskId);
+    if (comments.length === 0 && code.length === 0 && ci === null) return;
+    const body = composeMessage(code, introRef.current, comments, '', ci);
+    const carried = carriedBy(comments, code, ci);
     const owner = taskId;
     const hold = () => {
       holdMessage(owner, body, Date.now(), carried.code);
-      takeComments(owner, carried.transcript);
+      takeHeldCarried(owner, carried);
     };
     if (inFlightRef.current || mustHold(owner) || promptOpen(owner, status) || !hasLivePty(owner)) {
       hold();
@@ -1672,7 +1689,7 @@ export function Composer({
       onSendCommentsRequest((id) => {
         if (id !== taskId) return false;
         // Nothing waiting: not taken, so the caller leaves the tab alone.
-        if (commentsOf(taskId).length === 0 && waitingCodeRef.current.length === 0) return false;
+        if (commentsOf(taskId).length === 0 && waitingCodeRef.current.length === 0 && queuedCiOf(taskId) === null) return false;
         void sendComments();
         return true;
       }),
@@ -1697,14 +1714,16 @@ export function Composer({
     const comments = command ? [] : commentsOf(taskId);
     // Code comments too (#222): every waiting one goes with this message.
     const code = command ? [] : waitingCodeRef.current;
-    if (text.trim().length === 0 && comments.length === 0 && code.length === 0) return;
+    // And a PR's failing checks, queued for Claude (#280), ahead of them all.
+    const ci = command ? null : queuedCiOf(taskId);
+    if (text.trim().length === 0 && comments.length === 0 && code.length === 0 && ci === null) return;
     // What Claude Code receives: the draft with its paste placeholders filled,
     // each paste in its marker so the transcript can fold it again (#155),
     // and each picked reference in its own (#154). References first: a
     // paste's text is never read for tokens.
     const box = markPastes(markMentions(text, mentionsRef.current), pastesRef.current);
-    const body = composeMessage(code, introRef.current, comments, box);
-    const carried: Carried = { transcript: comments.map((c) => c.id), code: code.map((c) => c.id) };
+    const body = composeMessage(code, introRef.current, comments, box, ci);
+    const carried = carriedBy(comments, code, ci);
     /*
        It waits in the outbox (outbox.ts) rather than in Claude Code's queue
        while offline (Claude Code retries, and may drop it), behind messages
@@ -1805,6 +1824,8 @@ export function Composer({
     : live
       ? waiting.length + waitingCode.length > 0
         ? 'Add a message, or send the comments as they are…'
+        : waitingCi
+        ? 'Add a message, or send the CI failure as it is…'
         : 'Message this conversation…'
       : canResume(taskId)
         ? 'Terminal not running — send to pick this conversation back up.'
@@ -1917,7 +1938,7 @@ export function Composer({
           type="button"
           className="tx-composer-send"
           onClick={() => void send()}
-          disabled={busy || awaiting || held || (text.trim().length === 0 && waiting.length === 0 && waitingCode.length === 0)}
+          disabled={busy || awaiting || held || (text.trim().length === 0 && waiting.length === 0 && waitingCode.length === 0 && waitingCi === null)}
           title="Send (Enter). Shift+Enter for a newline"
           aria-label="Send"
         >
