@@ -245,10 +245,21 @@ describe('the PR groups (#278), rendered', () => {
 
   it('In Review rows show the unresolved threads, and a change request', async () => {
     const { container } = await renderPrs();
-    const chip = (id: number) => meta(container, id)?.querySelector('.task-threads')?.textContent ?? null;
-    expect(chip(12)).toBe('3 unresolved');
-    expect(chip(13)).toBe('Changes · 1 unresolved');
-    expect(chip(14)).toBe('Changes Requested');
+    const el = (id: number) => meta(container, id)?.querySelector('.task-threads') ?? null;
+    const chip = (id: number) => el(id)?.textContent ?? null;
+    // Compact: a speech bubble and the count; the words are its name and tooltip.
+    expect(chip(12)).toBe('3');
+    expect(el(12)?.querySelector('svg')).not.toBeNull();
+    expect(el(12)?.getAttribute('role')).toBe('img');
+    expect(el(12)?.getAttribute('aria-label')).toBe('3 unresolved threads');
+    expect(el(12)?.getAttribute('title')).toBe('3 unresolved threads on PR #12');
+    expect(el(12)?.hasAttribute('data-changes')).toBe(false);
+    expect(chip(13)).toBe('1');
+    expect(el(13)?.getAttribute('aria-label')).toBe('Changes requested · 1 unresolved thread');
+    expect(el(13)?.hasAttribute('data-changes')).toBe(true);
+    // Changes requested with nothing open: the bubble and "!".
+    expect(chip(14)).toBe('!');
+    expect(el(14)?.getAttribute('aria-label')).toBe('Changes requested');
     // Nothing open, nothing to count: the group says In Review.
     expect(chip(19)).toBeNull();
     expect(chip(11)).toBeNull();
@@ -257,7 +268,7 @@ describe('the PR groups (#278), rendered', () => {
   it('Approved rows carry no Approved mark: the group says it; an open thread still shows', async () => {
     const { container } = await renderPrs();
     expect(meta(container, 15)?.textContent).not.toMatch(/Approved/);
-    expect(meta(container, 16)?.querySelector('.task-threads')?.textContent).toBe('1 unresolved');
+    expect(meta(container, 16)?.querySelector('.task-threads')?.getAttribute('aria-label')).toBe('1 unresolved thread');
   });
 
   it('a task in Needs You for its checks says so on its row', async () => {

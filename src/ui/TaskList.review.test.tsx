@@ -204,7 +204,7 @@ describe('TaskList: conflicts GitHub reports (#236)', () => {
     expect(container.querySelector('[aria-labelledby="task-group-team"] [data-task-id="1"]')).not.toBeNull();
     const marks = [...container.querySelectorAll('[data-task-id="1"] .task-review')].map((m) => m.getAttribute('data-outcome'));
     expect(marks).toEqual(['conflicts']);
-    expect(container.querySelector('[data-task-id="1"] .task-threads')?.textContent).toBe('Changes Requested');
+    expect(container.querySelector('[data-task-id="1"] .task-threads')?.getAttribute('aria-label')).toBe('Changes requested');
   });
 
   it('gone once merged or closed', () => {

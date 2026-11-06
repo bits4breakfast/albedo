@@ -258,28 +258,26 @@
 .task-review[data-outcome='changes-requested'] { color: var(--warn); }
 /* GitHub reports conflicts (#236): state, like Approved, in the warn tone. */
 .task-review[data-outcome='conflicts'] { color: var(--warn); }
-/* What the team's review left open (#278): "3 unresolved", "Changes · 1
-   unresolved". A quiet chip: --muted text in a --border outline, no fill, so
-   it reads on whatever ground the row has (--muted cleared on --panel-raised,
-   CLAUDE.md rule 1). The group already says In Review; this is the count. */
+/* What the team's review left open (#278): a speech bubble and the
+   unresolved count. A quiet chip: --muted text in a --border-mid outline, no
+   fill, so it reads on whatever ground the row has (--muted cleared on
+   --panel-raised, CLAUDE.md rule 1). The group already says In Review; this
+   is the count. */
 .task-threads {
-  min-width: 0;
-  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
   border: 1px solid var(--border-mid);
   border-radius: 9px;
   color: var(--muted);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
-/* The chip is the longest mark a row can carry ("Changes · 1 unresolved"),
-   and at the list's default 260px it would take the whole title. On a row
-   that has it, the title keeps 9ch and the chip gives way first, ending in
-   an ellipsis (its tooltip says it in full). Only these rows: every other
-   row keeps the grid it had. */
-.task-row:has(.task-threads) { grid-template-columns: minmax(9ch, 1fr) minmax(0, auto) auto; }
-.task-row:has(.task-threads) .task-meta-tail { flex: 0 1 auto; min-width: 0; }
+/* Changes requested: the same chip in the Needs You text tier (4.5 on every
+   ground a row has, styles.css). Glyph, number and colour, and words in its
+   label: never colour alone. */
+.task-threads[data-changes] { color: var(--status-blocked); }
 /* Failing checks put the task in Needs You (#278): the row says why, a glyph
    and a word in the Needs You text tier (4.5 on every ground a row has,
    styles.css). State: it stays while they fail. */
@@ -376,6 +374,8 @@
    -------------------------------------------------------------------------- */
 
 .task-key {
+  /* Never truncated (#278): see .task-rest below. */
+  flex: none;
   font-size: var(--fs-md);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -384,7 +384,19 @@
 }
 
 .task-row[data-status='archived'] .task-key { color: var(--faint); }
-.task-rest { overflow: hidden; text-overflow: ellipsis; }
+
+/* The key is the task's name to the user, so it never truncates (#278): the
+   title is a flex line, the key keeps its full width, and the rest of the
+   title ellipsizes after it. On a row with a key the title's grid track
+   cannot go below the key (min-content: the rest counts 0 there, `width: 0`
+   growing into the room), so when the row is short the rest goes first,
+   then the repo name in the marks (it shrinks), then the marks are clipped
+   at the end. The rest has no floor on purpose: at 260px in the All view a
+   floor of a few letters clipped the threads chip's count, which is the
+   information. Rows with no key keep the grid they had. */
+.task-title:has(> .task-key) { display: flex; min-width: 0; }
+.task-rest { flex-grow: 1; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.task-row:has(> .task-title > .task-key) { grid-template-columns: minmax(min-content, 1fr) auto auto; }
 
 /* ‹ Collapse the list to the rail (#266): at the head's far end, whatever
    else the head holds. */

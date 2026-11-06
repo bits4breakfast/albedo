@@ -399,9 +399,9 @@ describe('the merged circles (#278)', () => {
       'In Review2',
       'Awaiting Review1',
     ]);
-    expect(within(sub[0]!).getAllByRole('menuitem').map((r) => r.querySelector('.task-threads')?.textContent)).toEqual([
-      '3 unresolved',
-      'Changes · 1 unresolved',
+    expect(within(sub[0]!).getAllByRole('menuitem').map((r) => r.querySelector('.task-threads')?.getAttribute('aria-label'))).toEqual([
+      '3 unresolved threads',
+      'Changes requested · 1 unresolved thread',
     ]);
     expect(within(sub[1]!).getAllByRole('menuitem').map((r) => r.querySelector('.task-key')?.textContent)).toEqual(['ABC-1251']);
     expect(sub[0]!.querySelector('.rail-pop-sub .group-pie')?.getAttribute('data-pie')).toBe('6');

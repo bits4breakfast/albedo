@@ -949,28 +949,35 @@ function ReviewRowMark({ taskId, selected, group }: { taskId: number; selected: 
 }
 
 /**
- * What the team's review left open (#278), on an In Review or Approved row:
- * "3 unresolved", "Changes · 1 unresolved", or "Changes Requested" when a
- * change request came with no open thread. Nothing when nothing is open.
+ * What the team's review left open (#278), on an In Review or Approved row,
+ * as a compact chip: a speech bubble and the unresolved count ("3"), in the
+ * Needs You tone when changes were requested ("!" when none is open). The
+ * words are its tooltip and accessible name: "3 unresolved threads",
+ * "Changes requested · 1 unresolved thread". Null when nothing is open and
+ * no change was requested.
  */
-export function threadsChipText(pr: PrStatus): string | null {
+export function threadsChip(pr: PrStatus): { mark: string; label: string; changes: boolean } | null {
   const open = pr.reviewThreads?.unresolved ?? 0;
-  if (pr.review === 'changes-requested') return open > 0 ? `Changes · ${open} unresolved` : 'Changes Requested';
-  return open > 0 ? `${open} unresolved` : null;
+  const threads = `${open} unresolved thread${open === 1 ? '' : 's'}`;
+  if (pr.review === 'changes-requested') {
+    return { mark: open > 0 ? String(open) : '!', label: open > 0 ? `Changes requested · ${threads}` : 'Changes requested', changes: true };
+  }
+  return open > 0 ? { mark: String(open), label: threads, changes: false } : null;
 }
 
 function ThreadsChip({ pr }: { pr: PrStatus }) {
-  const text = threadsChipText(pr);
-  if (!text) return null;
-  const open = pr.reviewThreads?.unresolved ?? 0;
-  const threads = `${open} unresolved review thread${open === 1 ? '' : 's'}`;
-  const what =
-    pr.review === 'changes-requested'
-      ? `Changes requested on PR #${pr.number}${open > 0 ? `, ${threads}` : ''}`
-      : `${threads} on PR #${pr.number}`;
+  const chip = threadsChip(pr);
+  if (!chip) return null;
   return (
-    <span className="task-threads" data-changes={pr.review === 'changes-requested' || undefined} title={what}>
-      {text}
+    <span
+      className="task-threads"
+      data-changes={chip.changes || undefined}
+      role="img"
+      aria-label={chip.label}
+      title={`${chip.label} on PR #${pr.number}`}
+    >
+      <ChatIcon size={12} />
+      <span aria-hidden="true">{chip.mark}</span>
     </span>
   );
 }
