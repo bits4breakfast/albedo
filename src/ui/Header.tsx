@@ -48,6 +48,12 @@ export interface HeaderProps {
   ciNotify?: boolean;
   onCiNotifyChange?: (on: boolean) => void;
   /**
+   * The task list drawn as its rail (#266), and the switch: "Collapse Task
+   * List" / "Expand Task List". Optional; absent, the item is not shown.
+   */
+  taskListCollapsed?: boolean;
+  onTaskListCollapsedChange?: (collapsed: boolean) => void;
+  /**
    * The project tabs, when there are two or more projects. They lead the
    * bar: the tabs are the level above everything below it.
    */
@@ -77,6 +83,8 @@ export default function Header({
   onThemeChange,
   ciNotify,
   onCiNotifyChange,
+  taskListCollapsed,
+  onTaskListCollapsedChange,
   tabs,
   onWaitingClick,
   blockedCount,
@@ -122,10 +130,25 @@ export default function Header({
         </button>
         <OverflowMenu
           label="More"
-          title="Projects, worktrees, theme, notifications, keyboard shortcuts, what's new"
+          title="Projects, worktrees, task list, theme, notifications, keyboard shortcuts, what's new"
           items={[
             { id: 'projects', label: 'Projects…', onSelect: onProjects, title: 'Manage projects' },
             { id: 'worktrees', label: 'Worktrees…', onSelect: onReconcile, title: 'Reconcile git worktrees' },
+            // The ‹ beside New Task and the rail's › do the same (#266).
+            ...(onTaskListCollapsedChange && taskListCollapsed !== undefined
+              ? [
+                  {
+                    id: 'task-list',
+                    label: taskListCollapsed ? 'Expand Task List' : 'Collapse Task List',
+                    aside: '⌥⌘T',
+                    title: taskListCollapsed
+                      ? 'Show the task list again'
+                      : 'Narrow the task list to a rail of group counts; a count opens its tasks',
+                    group: true,
+                    onSelect: () => onTaskListCollapsedChange(!taskListCollapsed),
+                  },
+                ]
+              : []),
             ...THEME_ITEMS.map((t, i) => ({
               id: `theme-${t.choice}`,
               label: t.label,

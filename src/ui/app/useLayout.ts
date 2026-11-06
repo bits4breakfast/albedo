@@ -70,6 +70,11 @@ const rightTabCodec: Codec<RightTab> = {
 
 export default function useLayout() {
   const [sidebarWidth, setSidebarWidth] = usePersisted(KEYS.sidebarWidth, sidebarCodec, SIDEBAR_DEFAULT);
+  /**
+   * The task list collapsed to its rail (#266). The width above is kept, so
+   * expanding comes back to it.
+   */
+  const [taskListCollapsed, setTaskListCollapsed] = usePersisted(KEYS.taskListCollapsed, flagCodec, false);
   const [mode, setMode] = usePersisted<PaneMode>(KEYS.paneMode, modeCodec, 'split');
   const [orientation, setOrientation] = usePersisted<Orientation>(KEYS.orientation, orientationCodec, 'row');
   const [ratio, setRatio] = usePersisted(KEYS.splitRatio, ratioCodec, 0.55);
@@ -197,6 +202,8 @@ export default function useLayout() {
 
   return {
     sidebarWidth,
+    taskListCollapsed,
+    setTaskListCollapsed,
     mode,
     setMode,
     orientation,

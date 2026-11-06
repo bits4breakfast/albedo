@@ -167,6 +167,8 @@ export default function App() {
 
   const {
     sidebarWidth,
+    taskListCollapsed,
+    setTaskListCollapsed,
     mode,
     setMode,
     orientation,
@@ -1128,6 +1130,12 @@ export default function App() {
       if (tab) switchTab(tab.key);
     },
     // The previous / next tab, stopping at the ends; lands like the digit above.
+    // The task list as a rail of group counts, or back (#266). Live while
+    // typing, as ⇧⌘T: no field claims ⌥⌘T (shortcuts.ts). Not over a dialog.
+    'mod+alt+t': () => {
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      setTaskListCollapsed((c) => !c);
+    },
     'mod+shift+[': () => stepProject(-1),
     'mod+shift+]': () => stepProject(1),
     // Only where the switch is shown: not over the editor (see the switch).
@@ -1195,6 +1203,8 @@ export default function App() {
         onThemeChange={setThemeChoice}
         ciNotify={ciNotify}
         onCiNotifyChange={setCiNotify}
+        taskListCollapsed={taskListCollapsed}
+        onTaskListCollapsedChange={setTaskListCollapsed}
         onWaitingClick={() => {
           // Most recently active first; from a waiting task, on to the next.
           const waiting = tasks
@@ -1286,7 +1296,13 @@ export default function App() {
       )}
 
       <div className="app-body">
-        <aside className="sidebar" style={{ width: sidebarWidth, flexBasis: sidebarWidth }}>
+        {/* Collapsed (#266), the rail's own width (taskrail.css) replaces the
+            list's, which is kept for when it expands. */}
+        <aside
+          className="sidebar"
+          data-collapsed={taskListCollapsed || undefined}
+          style={taskListCollapsed ? undefined : { width: sidebarWidth, flexBasis: sidebarWidth }}
+        >
           <TaskList
             tasks={visibleTasks}
             selectedId={selectedId}
@@ -1315,16 +1331,21 @@ export default function App() {
             activeProject={activeProject}
             nameProject={!showTabs}
             emptyBrief={!selected}
+            collapsed={taskListCollapsed}
+            onCollapsedChange={setTaskListCollapsed}
           />
         </aside>
 
-        <div
-          className="splitter splitter-v"
-          data-dragging={dragging === 'sidebar'}
-          onPointerDown={startSidebarDrag}
-          role="separator"
-          aria-orientation="vertical"
-        />
+        {/* Nothing to drag while it is the rail: it has one width. */}
+        {!taskListCollapsed && (
+          <div
+            className="splitter splitter-v"
+            data-dragging={dragging === 'sidebar'}
+            onPointerDown={startSidebarDrag}
+            role="separator"
+            aria-orientation="vertical"
+          />
+        )}
 
         <main className="main" ref={mainRef}>
           <div className="main-bar">

@@ -23,6 +23,8 @@ import type { Dispatch, SetStateAction } from 'react';
 export const KEYS = {
   // The frame (App.tsx and its hooks in ui/app/).
   sidebarWidth: 'albedo.shell.sidebarWidth',
+  /** The task list drawn as the rail of group counts (#266). Absent means expanded. */
+  taskListCollapsed: 'albedo.shell.taskListCollapsed',
   paneMode: 'albedo.shell.paneMode',
   splitRatio: 'albedo.shell.splitRatio',
   orientation: 'albedo.shell.orientation',

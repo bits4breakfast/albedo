@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import type { Project, Task } from '../types';
 import { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import { parseIssueKey } from '../lib/issueKey';
@@ -39,6 +39,7 @@ import { useReminderTaskIds } from './reminders/useReminders';
 import { ReminderGlyph } from './reminders/ReminderGlyph';
 import TaskTitleEdit from './TaskTitleEdit';
 import { RENAME_HINT } from './taskRename';
+import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
 import './tasklist.css';
 
 /** The row's word for a chat, in its tooltip where a branch would be. */
@@ -132,6 +133,14 @@ export interface TaskListProps {
    * button right under the ⌘N one said the same thing twice.
    */
   emptyBrief?: boolean;
+  /**
+   * Drawn as the rail (#266): New Task, the way back, and one count circle
+   * per group. The groups, rows and shortcuts are the same; only the drawing
+   * changes, and never the selection.
+   */
+  collapsed?: boolean;
+  /** Collapse (true) or expand. Absent, the list offers neither. */
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 /** Row context menu. Destructive actions live here, never on the row itself. */
@@ -193,6 +202,8 @@ export default function TaskList({
   activeProject = null,
   nameProject = false,
   emptyBrief = false,
+  collapsed = false,
+  onCollapsedChange,
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
@@ -202,6 +213,21 @@ export default function TaskList({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const drafts = useDraftTaskIds();
   const reminderIds = useReminderTaskIds();
+  /**
+   * The ‹ or › that was pressed is gone once the list redraws, so focus
+   * would fall to the body: hand it to the other one. Only for a press of
+   * the button itself; the menu item and ⌥⌘T leave focus where it was.
+   */
+  const toggledHere = useRef(false);
+  useEffect(() => {
+    if (!toggledHere.current) return;
+    toggledHere.current = false;
+    document.querySelector<HTMLElement>('[data-list-toggle]')?.focus();
+  }, [collapsed]);
+  const toggleHere = (next: boolean) => {
+    toggledHere.current = true;
+    onCollapsedChange?.(next);
+  };
 
   /*
    * PR status for the rows on screen. The list owns the polling because it
@@ -398,6 +424,157 @@ export default function TaskList({
   const blockedCount = tasks.filter((t) => t.status === 'blocked').length;
   const liveCount = tasks.filter((t) => t.status !== 'archived').length;
 
+  const contextOf = (task: Task) => (task.sessionId ? contextBySession?.get(task.sessionId) : undefined);
+
+  /** The row's name: an issue key leads, as its own chip, then the rest. */
+  const rowTitle = (task: Task): ReactNode => {
+    const issue = parseIssueKey(task.title);
+    return issue ? (
+      <>
+        <span className="task-key">{issue.key}</span>
+        {issue.rest && <span className="task-rest">{issue.rest}</span>}
+      </>
+    ) : (
+      task.title
+    );
+  };
+
+  /* Wrapped, not raw: a native title cannot break lines itself, so a
+     paragraph-length task title renders as one window-wide strip that covers
+     whatever it was describing -- including the row's own context menu.
+     The row's details on hover: the context reading the hairline draws, in
+     words, now that no panel shows it. What the task is about (#262), on
+     hover only: the line after the title. Rows keep their one-line layout. */
+  const rowTooltip = (task: Task): string => {
+    const ctx = contextOf(task);
+    return `${wrapForTooltip(task.title)}${task.summary ? `\n${wrapForTooltip(task.summary)}` : ''}\n${task.kind === 'chat' ? CHAT_ROW_TITLE : task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`;
+  };
+
+  /** The row's caption and marks: the list's rows and the rail's popover (#266) both draw this. */
+  const rowMeta = (task: Task): ReactNode => {
+    const ctx = contextOf(task);
+    const ctxLevel = ctx ? contextLevel(ctx.fraction) : null;
+    // Quiet sessions say nothing. The number appears only once it is
+    // worth reading, which is what keeps it unobtrusive.
+    const ctxText = ctx && ctxLevel !== 'quiet' ? contextReadout(ctx) : null;
+    const sig = signals?.get(task.id);
+    return (
+      <span className="task-meta">
+        {/* When a project tab is active the repo is already the
+            tab; repeating it on every row is noise. On "All" it is
+            the one thing you need, because rows come from
+            everywhere. */}
+        {(!activeProject || task.projectId !== activeProject.id) && (
+          <>
+            <span className="task-repo">
+              {projectName(task, projects) ?? basename(task.repoPath)}
+            </span>
+            <span className="task-sep">/</span>
+          </>
+        )}
+        {/* No branch and no PR state here: the task bar is the one
+            place git and GitHub state is shown, for the selected
+            task. Rows identify the task; the title does that. The
+            exceptions are news, not state -- checks that finished,
+            or a change request that landed, since the task was
+            last open (CiRowMark, ReviewRowMark) -- and, by the
+            owner's decisions, two states: an approval that stands,
+            until the PR is merged (#234), and conflicts GitHub
+            reports, which outrank it (#236). Marks only: the
+            actions are the task bar's. */}
+        <span className="task-meta-tail">
+          {/* PR checks that finished since the task was last
+              open: ✓ or ✗ and the word, until it is opened
+              (ciNotice.ts). First in the tail: it is news, the
+              rest is state. Never on the selected row -- it is
+              being looked at, and its PR badge carries a cue. */}
+          {task.id !== selectedId && <CiRowMark taskId={task.id} />}
+          {/* ⚠ Conflicts while GitHub reports them, else
+              Approved while the approval stands, on every row,
+              the selected one too (#236, #234); Changes once, as
+              news, until the task is opened (#180). */}
+          <ReviewRowMark taskId={task.id} selected={task.id === selectedId} />
+          {/* An unsent message waiting in this task's composer, so a
+              forgotten one can be found. Not on the selected row:
+              its draft is in the box right below. */}
+          {drafts.has(task.id) && task.id !== selectedId && (
+            <span className="task-draft" title="An unsent message is waiting in this task's message box">
+              Draft
+            </span>
+          )}
+          {/* A reminder came back and its card is waiting on this
+              task (#156). Not on the selected row: the card is
+              right there above the message box. */}
+          {reminderIds.has(task.id) && task.id !== selectedId && (
+            <span className="task-reminder" title="A reminder is back: its card is on this task">
+              <ReminderGlyph size={12} />
+              Reminder
+            </span>
+          )}
+          {/* Reachable through Remote Control: a click opens it on
+              claude.ai. Only while on (RemoteMark.tsx), and not on
+              the selected row: the task bar shows it there. */}
+          {task.id !== selectedId && <RemoteMark task={task} variant="row" />}
+          {/* Idle, with work still running that will report back
+              or wake it: "2 in background". The group says Idle.
+              Not on the selected row: its Background band lists
+              the same work above the composer. */}
+          {task.status === 'idle' && task.id !== selectedId && <BackgroundMark task={task} />}
+          {/* A chat is told apart by a glyph, not a word: same
+              size, stroke and tier as the branch glyph. */}
+          {task.kind === 'chat' && (
+            <span className="task-chat" role="img" aria-label="Chat, no branch" title={CHAT_ROW_TITLE}>
+              <ChatIcon />
+            </span>
+          )}
+          {sig && sig.agents > 0 && (
+            <span
+              className="task-agents"
+              title={`${sig.agents} agent${sig.agents === 1 ? '' : 's'} running`}
+            >
+              ·{sig.agents}
+            </span>
+          )}
+          {sig?.question && (
+            <span
+              className="task-question"
+              role="img"
+              aria-label="Asks you a question"
+              title="Its last turn ends on a question for you"
+            >
+              ?
+            </span>
+          )}
+          {ctx && ctxText && (
+            <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
+              {ctxText}
+            </span>
+          )}
+        </span>
+      </span>
+    );
+  };
+
+  const railRow = (task: Task): RailRow => ({
+    title: rowTitle(task),
+    meta: rowMeta(task),
+    age: relativeTime(task.lastActivityAt, now),
+    tooltip: rowTooltip(task),
+  });
+
+  if (collapsed) {
+    return (
+      <TaskRail
+        sections={sections}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        onNew={onNew}
+        onExpand={() => toggleHere(false)}
+        row={railRow}
+      />
+    );
+  }
+
   return (
     /* A stop of the Tab cycle (focusAreas.ts): the list itself takes focus,
        since it is where ↑/↓ are handled, and the selected row shows which. */
@@ -435,6 +612,19 @@ export default function TaskList({
             ⌘N
           </span>
         </button>
+        {/* Collapses the list to the rail of group counts (#266). */}
+        {onCollapsedChange && (
+          <button
+            type="button"
+            className="icon-btn tasklist-collapse"
+            data-list-toggle=""
+            onClick={() => toggleHere(true)}
+            aria-label="Collapse Task List"
+            title="Collapse the task list (⌥⌘T)"
+          >
+            <ChevronGlyph dir="left" />
+          </button>
+        )}
       </div>
 
       <div className="tasklist-scroll" ref={scrollRef}>
@@ -458,13 +648,7 @@ export default function TaskList({
             </div>
             {group.tasks.map((task) => {
               const index = ordered.indexOf(task);
-              const issue = parseIssueKey(task.title);
-              const ctx = task.sessionId ? contextBySession?.get(task.sessionId) : undefined;
-              const ctxLevel = ctx ? contextLevel(ctx.fraction) : null;
-              // Quiet sessions say nothing. The number appears only once it is
-              // worth reading, which is what keeps it unobtrusive.
-              const ctxText = ctx && ctxLevel !== 'quiet' ? contextReadout(ctx) : null;
-              const sig = signals?.get(task.id);
+              const ctx = contextOf(task);
               return (
                 <div
                   key={task.id}
@@ -481,15 +665,8 @@ export default function TaskList({
                   aria-selected={task.id === selectedId}
                   onClick={() => onSelect(task.id)}
                   onContextMenu={(e) => openMenu(e, task)}
-                  /* Wrapped, not raw: a native title cannot break lines
-                     itself, so a paragraph-length task title renders as one
-                     window-wide strip that covers whatever it was describing
-                     — including the row's own context menu. */
-                  /* The row's details on hover: the context reading the
-                     hairline draws, in words, now that no panel shows it. */
-                  /* What the task is about (#262), on hover only: the line
-                     after the title. Rows keep their one-line layout. */
-                  title={`${wrapForTooltip(task.title)}${task.summary ? `\n${wrapForTooltip(task.summary)}` : ''}\n${task.kind === 'chat' ? CHAT_ROW_TITLE : task.branch}${ctx ? `\n${contextTitle(ctx)}` : ''}`}
+                  /* Wrapped, and with the summary and context: rowTooltip. */
+                  title={rowTooltip(task)}
                   /* The same without a pointer: a hover-only text is also
                      the row's accessible description. */
                   aria-describedby={task.summary ? `task-summary-${task.id}` : undefined}
@@ -529,114 +706,13 @@ export default function TaskList({
                       onDone={() => setRenamingId(null)}
                     />
                   ) : (
-                  <span className="task-title">
-                    {issue ? (
-                      <>
-                        <span className="task-key">{issue.key}</span>
-                        {issue.rest && <span className="task-rest">{issue.rest}</span>}
-                      </>
-                    ) : (
-                      task.title
-                    )}
-                  </span>
+                  <span className="task-title">{rowTitle(task)}</span>
                   )}
                   <span className="task-age">{relativeTime(task.lastActivityAt, now)}</span>
                   {/* Shares the age's spot and swaps in on hover: reserving
                       its own width hid on every row cut titles short. */}
                   {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
-                  <span className="task-meta">
-                    {/* When a project tab is active the repo is already the
-                        tab; repeating it on every row is noise. On "All" it is
-                        the one thing you need, because rows come from
-                        everywhere. */}
-                    {(!activeProject || task.projectId !== activeProject.id) && (
-                      <>
-                        <span className="task-repo">
-                          {projectName(task, projects) ?? basename(task.repoPath)}
-                        </span>
-                        <span className="task-sep">/</span>
-                      </>
-                    )}
-                    {/* No branch and no PR state here: the task bar is the one
-                        place git and GitHub state is shown, for the selected
-                        task. Rows identify the task; the title does that. The
-                        exceptions are news, not state -- checks that finished,
-                        or a change request that landed, since the task was
-                        last open (CiRowMark, ReviewRowMark) -- and, by the
-                        owner's decisions, two states: an approval that stands,
-                        until the PR is merged (#234), and conflicts GitHub
-                        reports, which outrank it (#236). Marks only: the
-                        actions are the task bar's. */}
-                    <span className="task-meta-tail">
-                      {/* PR checks that finished since the task was last
-                          open: ✓ or ✗ and the word, until it is opened
-                          (ciNotice.ts). First in the tail: it is news, the
-                          rest is state. Never on the selected row -- it is
-                          being looked at, and its PR badge carries a cue. */}
-                      {task.id !== selectedId && <CiRowMark taskId={task.id} />}
-                      {/* ⚠ Conflicts while GitHub reports them, else
-                          Approved while the approval stands, on every row,
-                          the selected one too (#236, #234); Changes once, as
-                          news, until the task is opened (#180). */}
-                      <ReviewRowMark taskId={task.id} selected={task.id === selectedId} />
-                      {/* An unsent message waiting in this task's composer, so a
-                          forgotten one can be found. Not on the selected row:
-                          its draft is in the box right below. */}
-                      {drafts.has(task.id) && task.id !== selectedId && (
-                        <span className="task-draft" title="An unsent message is waiting in this task's message box">
-                          Draft
-                        </span>
-                      )}
-                      {/* A reminder came back and its card is waiting on this
-                          task (#156). Not on the selected row: the card is
-                          right there above the message box. */}
-                      {reminderIds.has(task.id) && task.id !== selectedId && (
-                        <span className="task-reminder" title="A reminder is back: its card is on this task">
-                          <ReminderGlyph size={12} />
-                          Reminder
-                        </span>
-                      )}
-                      {/* Reachable through Remote Control: a click opens it on
-                          claude.ai. Only while on (RemoteMark.tsx), and not on
-                          the selected row: the task bar shows it there. */}
-                      {task.id !== selectedId && <RemoteMark task={task} variant="row" />}
-                      {/* Idle, with work still running that will report back
-                          or wake it: "2 in background". The group says Idle.
-                          Not on the selected row: its Background band lists
-                          the same work above the composer. */}
-                      {task.status === 'idle' && task.id !== selectedId && <BackgroundMark task={task} />}
-                      {/* A chat is told apart by a glyph, not a word: same
-                          size, stroke and tier as the branch glyph. */}
-                      {task.kind === 'chat' && (
-                        <span className="task-chat" role="img" aria-label="Chat, no branch" title={CHAT_ROW_TITLE}>
-                          <ChatIcon />
-                        </span>
-                      )}
-                      {sig && sig.agents > 0 && (
-                        <span
-                          className="task-agents"
-                          title={`${sig.agents} agent${sig.agents === 1 ? '' : 's'} running`}
-                        >
-                          ·{sig.agents}
-                        </span>
-                      )}
-                      {sig?.question && (
-                        <span
-                          className="task-question"
-                          role="img"
-                          aria-label="Asks you a question"
-                          title="Its last turn ends on a question for you"
-                        >
-                          ?
-                        </span>
-                      )}
-                      {ctx && ctxText && (
-                        <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
-                          {ctxText}
-                        </span>
-                      )}
-                    </span>
-                  </span>
+                  {rowMeta(task)}
                   <ContextMeter usage={ctx} variant="hairline" />
                   {(onArchive || onDelete) && (
                     <button

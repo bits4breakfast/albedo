@@ -130,6 +130,7 @@ describe('KEYS', () => {
   it('keeps every key users already have', () => {
     expect(KEYS).toMatchObject({
       sidebarWidth: 'albedo.shell.sidebarWidth',
+      taskListCollapsed: 'albedo.shell.taskListCollapsed',
       paneMode: 'albedo.shell.paneMode',
       splitRatio: 'albedo.shell.splitRatio',
       orientation: 'albedo.shell.orientation',
