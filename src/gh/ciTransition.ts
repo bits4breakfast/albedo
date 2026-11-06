@@ -62,6 +62,15 @@ export interface CiStep {
 const live = (pr: PrStatus) => pr.state === 'open' || pr.state === 'draft';
 
 /**
+ * The head commit an answer is about. A commit gh did not name still has to
+ * be told apart from the next one: the PR number stands in, which at worst
+ * merges two pushes into one.
+ */
+export function headKey(pr: Pick<PrStatus, 'headSha' | 'number'>): string {
+  return pr.headSha || `#${pr.number}`;
+}
+
+/**
  * One answer from `gh`, against what was remembered.
  *
  * `pr` null is "no PR, or gh could not say": nothing is learned from it, so
@@ -71,9 +80,7 @@ const live = (pr: PrStatus) => pr.state === 'open' || pr.state === 'draft';
 export function ciStep(prev: CiWatch | undefined, pr: PrStatus | null): CiStep {
   if (pr === null) return { watch: prev, event: null };
   const pending = pr.checks.kind === 'pending';
-  // A commit gh did not name still has to be told apart from the next one:
-  // the PR number stands in, which at worst merges two pushes into one.
-  const sha = pr.headSha || `#${pr.number}`;
+  const sha = headKey(pr);
   if (!prev || prev.sha !== sha) {
     // First sight of this commit: whatever it shows is a level, not an event.
     return { watch: { sha, pending: live(pr) && pending, announced: [] }, event: null };

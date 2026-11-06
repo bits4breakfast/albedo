@@ -15,6 +15,7 @@ import { formatForClaude, listComments, markCommentsSent, onCommentsChanged, typ
 import { takeComments } from './drafts';
 import { useHeld } from './outbox';
 import { composeWithComments, type TranscriptComment } from './transcriptQuotes';
+import { formatCiFailure, takeQueuedCi, type QueuedCiFailure } from './ciFailure';
 
 /** A task's open, unsent code comments, by file then line; kept current. */
 export function useWaitingCodeComments(taskId: number | null): readonly ReviewComment[] {
@@ -58,36 +59,53 @@ export function useWaitingCodeComments(taskId: number | null): readonly ReviewCo
 const NONE: readonly ReviewComment[] = [];
 
 /**
- * What Send hands Claude Code: the code comments under the intro (as
- * `formatForClaude` writes them), then the transcript comments as quotes,
- * then the box's own text. Any part may be empty.
+ * What Send hands Claude Code: a queued CI failure (#280, `formatCiFailure`),
+ * the code comments under the intro (as `formatForClaude` writes them), then
+ * the transcript comments as quotes, then the box's own text. Any part may be
+ * empty.
  */
 export function composeMessage(
   code: readonly ReviewComment[],
   intro: string,
   transcript: readonly TranscriptComment[],
   box: string,
+  ci: QueuedCiFailure | null = null,
 ): string {
   const rest = composeWithComments(transcript, box);
-  if (code.length === 0) return rest;
-  const head = formatForClaude(code, intro);
-  return rest.trim().length > 0 ? `${head}\n\n${rest}` : head;
+  const parts = [ci ? formatCiFailure(ci) : '', code.length > 0 ? formatForClaude(code, intro) : '', rest];
+  return parts.filter((p) => p.trim().length > 0).join('\n\n');
 }
 
-/** The comments a message carries: transcript ones by id, code ones by row id. */
+/**
+ * What a message carries: transcript comments by id, code comments by row
+ * id, and the queued CI failure by its commit (#280).
+ */
 export interface Carried {
   transcript: readonly string[];
   code: readonly number[];
+  ci?: string;
 }
 
 export const NOTHING_CARRIED: Carried = { transcript: [], code: [] };
 
 /**
- * A message carrying these was delivered: the transcript ones leave the
- * waiting list, the code ones are marked sent (and so leave it too).
+ * A message carrying these is held in the outbox: the transcript comments
+ * and the CI failure leave the waiting list now -- the held message has them,
+ * in its body -- while the code comments are marked sent only once it is
+ * delivered (outboxRelease.ts).
+ */
+export function takeHeldCarried(taskId: number, carried: Carried): void {
+  takeComments(taskId, carried.transcript);
+  if (carried.ci !== undefined) takeQueuedCi(taskId, carried.ci);
+}
+
+/**
+ * A message carrying these was delivered: the transcript ones and the CI
+ * failure leave the waiting list, the code ones are marked sent (and so
+ * leave it too).
  */
 export function takeCarried(taskId: number, carried: Carried): void {
-  takeComments(taskId, carried.transcript);
+  takeHeldCarried(taskId, carried);
   if (carried.code.length === 0) return;
   markCommentsSent(taskId, carried.code).catch((err: unknown) =>
     console.warn('[comments] the message went out, but its code comments could not be marked as sent', err),

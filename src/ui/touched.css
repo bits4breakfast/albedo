@@ -577,6 +577,14 @@ button.tf-section-head:hover .disc { color: var(--text); }
 }
 .tf-comment-resolve:hover { color: var(--add); background: var(--panel-hover); }
 .tf-comment-resolve:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* A PR's failing checks queued for Claude (#280): its label in the failing
+   tone of the task list's "✗ Checks", --danger, on --panel (6.98 | 8.37
+   light | dark) -- not a link, so no hover ground; its ✕ (Remove, not
+   Resolve: no --add) on --panel-hover, --text (ciQueueContrast.test.ts). */
+.tf-comment-static { cursor: default; }
+.tf-comment-static:hover { background: transparent; }
+.tf-comment-ci-label { flex: none; color: var(--danger); font-weight: 600; white-space: nowrap; }
+.tf-comment-drop:hover { color: var(--text); background: var(--panel-hover); }
 
 /* --- view switch and commit groups ---------------------------------------- */
 

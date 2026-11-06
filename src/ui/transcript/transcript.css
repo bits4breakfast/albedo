@@ -2058,6 +2058,17 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
 /* What a comment field is about to comment on (#222): code lines, or why the passage. */
 .tx-cmt-target { margin: 0 0 4px; color: var(--muted); font-size: var(--fs-xs); }
 .tx-waiting-row { display: flex; align-items: flex-start; gap: 6px; }
+/* A PR's failing checks, queued for Claude (#280): the ✗ and its label in
+   the failing tone the task list's "✗ Checks" uses, --danger, on the
+   composer's --panel and the hovered head's --panel-hover (light | dark:
+   6.98 | 8.37 and 6.07 | 7.48; ciQueueContrast.test.ts). Each check's
+   conclusion one tier down, --muted, as a quote is. */
+.tx-waiting-ci-mark { color: var(--danger); font-weight: 600; }
+.tx-waiting-ci-glyph { color: var(--danger); }
+.tx-waiting-ci-where { flex: 1; min-width: 0; align-self: center; }
+.tx-waiting-checks { list-style: none; margin: 2px 0 0; padding: 0; }
+.tx-waiting-checks > li { margin-top: 2px; }
+.tx-waiting-ci-conclusion { color: var(--muted); }
 .tx-waiting-comment {
   flex: 1;
   min-width: 0;

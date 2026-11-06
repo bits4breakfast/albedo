@@ -4,6 +4,9 @@
  * queue above the message box), Sent, and Resolved folded away with why.
  * Sending is the composer's: there is no Add to Message here any more, and
  * the intro is edited from that queue.
+ *
+ * A PR's failing checks queued for Claude (#280, transcript/ciFailure.ts)
+ * wait here too, first in Waiting, with ✕ to drop them.
  */
 
 import { useEffect, useState } from 'react';
@@ -23,6 +26,7 @@ import {
 import { useReadFile } from './editor/openFile';
 import { Disclosure } from './Disclosure';
 import { sendWaitingComments } from './transcript/composerBridge';
+import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
 
 export interface CommentsSectionProps {
   task: Task;
@@ -43,6 +47,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const [notice, setNotice] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const read = useReadFile();
+  const ci = useQueuedCi(task.id);
 
   useEffect(() => {
     let live = true;
@@ -98,9 +103,11 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
 
   const comments = all.filter((c) => c.resolvedAt === null);
   const resolved = all.filter((c) => c.resolvedAt !== null);
-  if (all.length === 0) return null;
+  if (all.length === 0 && ci === null) return null;
 
   const unsent = comments.filter((c) => c.sentAt === null);
+  const waiting = unsent.length + (ci ? 1 : 0);
+  const sha = ci ? shortSha(ci.sha) : null;
   const sent = comments.filter((c) => c.sentAt !== null);
 
   const row = (c: ReviewComment, end: ReactNode) => (
@@ -128,27 +135,48 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   return (
     <section className="tf-section tf-comments">
       <div className="tf-section-head tf-comments-head">
-        Comments<span className="tf-section-count">{comments.length}</span>
+        Comments<span className="tf-section-count">{comments.length + (ci ? 1 : 0)}</span>
       </div>
 
       {notice && <div className="tf-comments-notice">{notice}</div>}
 
       {/* Grouped by state (#222), so ✓ only ever means Resolve. */}
-      {unsent.length > 0 && (
-        <div className="tf-comments-group" role="group" aria-label={`Waiting, ${unsent.length}`}>
+      {waiting > 0 && (
+        <div className="tf-comments-group" role="group" aria-label={`Waiting, ${waiting}`}>
           <div className="tf-comments-sub">
-            Waiting · {unsent.length}
+            Waiting · {waiting}
             {/* Send them now (#258), as ⇧⌘S does: the transcript then shows. */}
             <button
               type="button"
               className="tf-btn tf-comments-send"
               onClick={() => sendWaitingComments(task.id)}
               aria-keyshortcuts="Meta+Shift+S"
-              title="Send the waiting comments to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
+              title="Send what is waiting to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
             >
               Send
             </button>
           </div>
+          {/* First, as the message carries it. Not a link: the checks' links are in the message box's list. */}
+          {ci && (
+            <div className="tf-comment tf-comment-ci">
+              <div
+                className="tf-comment-open tf-comment-static"
+                title={[`CI failed on PR #${ci.prNumber}${sha ? ` (${sha})` : ''}`, ...ci.checks.map((c) => `${c.name}: ${c.conclusion}`)].join('\n')}
+              >
+                <span className="tf-comment-ci-label">{ciFailureLabel(ci)}</span>
+                <span className="tf-comment-body">{ci.checks.map((c) => c.name).join(', ')}</span>
+              </div>
+              <button
+                type="button"
+                className="tf-comment-resolve tf-comment-drop"
+                onClick={() => removeQueuedCi(task.id, ci.sha)}
+                title="Don’t send this failure to Claude"
+                aria-label="Remove the CI failure"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           {unsent.map((c) => row(c, null))}
         </div>
       )}

@@ -58,6 +58,8 @@ export const KEYS = {
   planComments: 'albedo.planComments',
   /** Messages held back while offline, per task (transcript/outbox.ts owns the shape). */
   composerOutbox: 'albedo.composerOutbox',
+  /** A PR's failing checks waiting to go with the next message, per task (ui/transcript/ciFailure.ts owns the shape, #280). */
+  queuedCiFailures: 'albedo.composerCiFailures',
   /** What sessions asked for through Albedo's MCP server (ui/requestQueue.ts owns the shape). */
   requestQueue: 'albedo.requests',
   /** Absent means on. */
