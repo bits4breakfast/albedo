@@ -60,7 +60,7 @@ Albedo runs on macOS and Linux, and on Windows as a Linux app under WSL2 (see
 | --- | --- | --- |
 | [Claude Code](https://claude.com/claude-code) (`claude`), signed in | Every task: Albedo runs it in the terminal | Nothing works |
 | `git` | Worktrees, branches, the Files panel, Quick Open, Find in Files | Nothing works |
-| [GitHub CLI](https://cli.github.com) (`gh`), signed in with `gh auth login` | The pull request badge: state, checks, merged | No PR status, and no hint saying why. Push and Create PR still work, because Claude runs `git` and `gh` itself in the terminal |
+| [GitHub CLI](https://cli.github.com) (`gh`), signed in with `gh auth login` | The pull request badge: state, checks, reviews, merged; Squash and Merge | No PR status, and no hint saying why. Push and Create PR still work, because Claude runs `git` and `gh` itself in the terminal |
 | [PHPantom](https://github.com/PHPantom-dev/phpantom_lsp), optional | Type-aware Go to Declaration, Find Usages and Go to Implementation in PHP | Navigation falls back to git grep |
 
 To build Albedo you also need Node 22 or newer and a Rust toolchain
@@ -124,21 +124,30 @@ Albedo.
 ![The main window with numbered areas](docs/screenshots/window-areas.png)
 
 1. **Project tabs.** One per repository, with a count of tasks waiting on you.
-   **⌥1–9** switches. Tabs appear once there are two projects; a closed tab
-   comes back from the closed-projects menu.
+   Each tab lists its own project's tasks and remembers where you were in it.
+   **⌥1–9** switches, **⇧⌘[** / **⇧⌘]** step through them. Tabs appear once
+   there are two projects; a closed tab comes back from the closed-projects
+   menu. Click the active tab, or the project name in the task header, for
+   the **project view**: the main checkout's files, read only, with **New
+   Task**.
 2. **Title bar actions.** **N Waiting** jumps to the next task that needs you.
+   **N Requests** lists what sessions asked for (see "Good to know").
    **History** opens past sessions. **⋯** holds Projects, Worktrees, the theme
-   (System, Light or Dark) and Keyboard Shortcuts.
-3. **Task list.** Tasks grouped as **Needs You**, **Running**, **Ready to
-   Review** (a finished turn you have not opened, with commits, changes or an
-   open PR on its branch), **Idle** and **Done** (marked done, or its PR
-   merged), with the time since their last activity. **⌘1–9** jumps to a task
-   and **⌘[** / **⌘]** steps through them. Each row's menu marks the task done
+   (Auto, Light or Dark), Collapse Task List, Notify About PRs, Keyboard
+   Shortcuts and What's New.
+3. **Task list.** Tasks grouped by what they need from you (see "See every
+   session at a glance"), with the time since their last activity. Hover a
+   task for its one-line summary. **⌘1–9** jumps to a task and **⌘[** /
+   **⌘]** step through them. Each row's menu renames the task, marks it done
    or not done, copies the worktree path or session ID, moves, archives or
-   deletes the task.
+   deletes it. **⌥⌘T**, or the **‹** beside New Task, collapses the list to
+   a narrow rail with one circle per group and its count; click a circle for
+   its tasks.
 4. **Task header.** Project, task title, the task's own menu (**⋯**), its
    branch, and the next step for the branch: Push, Create PR, or the open
-   pull request.
+   pull request. The menu holds **Rename Task…** (**⇧F6** or **F2**, or
+   double-click the title), **Remind Me…**, **Make Available Remotely**
+   (**⇧⌘R**) and **Compact Now**.
 5. **Layout.** **PTY** shows only the terminal, **Transcript** only the
    reading pane, **Split** both, side by side or stacked. **⌘\\** cycles
    through them. The icon next to it opens a shell in the main checkout (**⌥F12**).
@@ -148,7 +157,9 @@ Albedo.
    the branch. It can be a tab next to Transcript or, as here, a pinned
    column.
 8. **Composer.** Write to Claude without going to the terminal. **+** or
-   **⌘U** attaches files, and the menu on the right changes the task's model.
+   **⌘U** attaches files, **⌘V** pastes a screenshot, and **@** mentions
+   another task or a file. The word after **+** is the session's permission
+   mode (Ask, Auto, Plan…), and the menu on the right changes the model.
 9. **Status strip.** Your plan's **Session** (five-hour) and **Week** usage,
    with the time each one resets.
 
@@ -156,9 +167,23 @@ Albedo.
 
 ### See every session at a glance
 
-The task list groups tasks by what they need from you. A task that ends its
-turn on a question gets a **?** mark, so you can tell it is waiting for a
-decision rather than finished.
+The task list groups tasks by what they need from you, most urgent first:
+
+| Group | A task is here when |
+| --- | --- |
+| **Needs You** | It is waiting on a prompt, or its pull request's checks failed |
+| **Running** | Claude is working |
+| **Ready to Review** | A turn finished since you last opened it, with commits, changes or an open pull request on its branch |
+| **My Review** | You have started ticking files Reviewed in its Review Guide, and no pull request is up for review |
+| **Awaiting Review** | Its pull request is open, with no review yet |
+| **In Review** | Its pull request has changes requested or review threads; the row shows how many threads are unresolved |
+| **Approved** | Its pull request is approved |
+| **Idle** | Anything else that is still live |
+| **Done** | Marked done, or its pull request merged |
+
+Archived tasks sit below them. A task that ends its turn on a question gets a
+**?** mark, so you can tell it is waiting for a decision rather than
+finished. When Needs You or Ready to Review grows, its group pulses briefly.
 
 When a task gets blocked or finishes while you are looking elsewhere, the dock
 icon bounces, the row pulses, and a system notification says which task and
@@ -172,20 +197,66 @@ adds the rule Claude Code suggests and tells you exactly which rule and which
 settings file. When Claude asks a question with options, the options are
 buttons, plus a field for your own answer.
 
+When the question names a plan file (Markdown), the card shows the plan as a
+document. Select a passage and click **Comment** to note what should change,
+then **Send N Comments** answers with all of them at once. Claude Code's own plan
+mode shows the same way, with **Approve** and **Keep Planning**.
+
 ![A task waiting on a permission prompt: the card offers Allow, Allow Don't Ask Again, and Deny for a test command](docs/screenshots/waiting-on-you.png)
 
 ### Read the session instead of scrolling a terminal
 
 Tool calls are compact rows, thinking folds away, and edits open into diffs
-with word-level highlighting. Click any file path to open the file. **⌘↓**
-jumps to the latest message.
+with word-level highlighting. Click any file path to open the file. Code
+blocks and inline code have a copy icon. **⌘↓** jumps to the latest
+message.
+
+While a turn runs, the line under it says what Claude is doing right now
+("Running Bash npm test", "Thinking") with the turn's time and tokens.
 
 When Claude starts subagents, a strip above the transcript shows them, and
-clicking one opens that agent's own transcript. **Esc** goes back.
+clicking one opens that agent's own transcript. **Esc** goes back. Work left
+running in the background (shells, async agents, wake-up timers) is listed
+above the message box while it runs; click a line to find the call that
+started it.
 
-From the composer you can also **Clear** or **Compact** the task's context.
+From the composer you can also **Clear** or **Compact Now** the task's
+context. A compaction shows as one divider with its summary folded under it,
+and the context reading turns to "compacts soon" from 90%.
 
 ![The transcript in dark theme: a task that finished its turn by asking which behaviour to pick](docs/screenshots/dark-question.png)
+
+### Write to Claude from the message box
+
+- **@** opens "Mention a task or a file": another open task, or a file or
+  folder in this worktree. It is sent as a reference Claude can follow, and
+  shows as a chip in the transcript that opens the task or the file.
+- A long paste folds into a token, `[Pasted text #1 +42 lines]`, with
+  **View** and **Remove** under the box, as Claude Code does it.
+- **Messages wait for the turn.** Anything sent while Claude is working (a
+  message, a slash command, Push, the model picker) is held and goes in when
+  the turn ends, so it can never land in a question Claude asks next.
+  Several held messages go as one, as Claude Code's own queue does; a slash
+  command always goes on its own. Held messages show in the Queued band
+  with **Send Now**, **Edit** and **Remove**. Offline, they are kept and
+  sent when the connection is back.
+
+### Comment on the conversation, then answer in one go
+
+Select a passage anywhere in the transcript (Claude's reply, your own
+message, a tool's output) and click **Comment**, or press **⌘'**. Comments
+collect above the message box ("3 Comments go with your next message") while
+you read on, together with your comments on the code (below), and **Send**
+sends them all, each quoting its passage, followed by whatever is in the box.
+In the transcript, a quote opens the passage it came from.
+
+### Reminders
+
+**⋯ › Remind Me…** on a task sets a reminder: some text and a time ("tomorrow
+9:00"). At that time it comes back on the task as a card, with a banner if
+Albedo is in the background: **Snooze**, **Dismiss**, **Edit…** or **Send to
+Claude**. A reminder due while Albedo was closed comes back on the next
+launch. Sessions can set one too (see "Good to know").
 
 ### Worktrees without the cleanup
 
@@ -215,8 +286,47 @@ From the composer you can also **Clear** or **Compact** the task's context.
 - The button at the top of Files moves the branch along: **Push**, then
   **Create PR**, then the pull request with its checks. **⇧⌘P** pushes,
   committing first if needed. **Squash & Rebase…** is in the menu next to it.
+  A branch with a pull request is measured against the branch it merges
+  into, not the project's default base.
+- Click the pull request badge for **Checks**: every check, failing first,
+  an Actions job's steps, and for a failed step the end of its log and its
+  annotations, which open the file at that line. **Ask Claude to Fix…** puts
+  a prompt in the message box for you to read and send.
+- Beside the badge, the review state: **Approved**, **Changes Requested** or
+  **Awaiting Review**; hover for who said what.
+- When the pull request is approved, its checks pass and GitHub says it can
+  merge, the task bar offers **Squash and Merge…**: it confirms the commits
+  that become one and, if you leave it ticked, deletes the branch on GitHub
+  afterwards. When GitHub reports conflicts, **⚠ Conflicts** asks Claude to
+  rebase onto the base, resolve them, run the tests and push.
+- When the checks fail, the failure waits above the message box ("✗ CI
+  failed · 2 checks"), each check with a link to its details, and goes to
+  Claude with your next message, or on its own with **Send**. **Remove**
+  drops it.
+- When a pull request's checks finish or a review lands while you are
+  elsewhere, a banner says so, and the task row is marked until you open it.
+  **⋯ › Notify About PRs: Checks and Reviews** turns the banners off.
 - When the pull request is merged, the task offers a follow-up task, archiving
   and deleting.
+
+### Read the change in a Review Guide
+
+**⇧⌘G**, the book icon at the top of Files, or **⋯ › Review Guide** opens a
+guide to the task's branch: its changes grouped by what they do, in reading
+order, each group with a short summary, a line on why each larger file
+changes, and the group's diffs beside it. The header gives the change's
+total files and +/− lines against the base. **Write Guide** runs Claude Code
+once on Haiku, with no tools (see "Good to know").
+
+- Tick files or whole groups **Reviewed**; **⌥↩** marks the group and moves
+  to the next one not yet reviewed. The rail on the side shows how far you
+  are ("4 of 10"). Ticked work comes back unticked if it changes.
+- **⌥↑** / **⌥↓** move between groups, **↑** / **↓** between files.
+- Comments you leave in the guide are marked on the file, its diff, the rail
+  and the lines, and **Send N Comments** (**⌘↩**) sends them and shows the
+  transcript.
+- When the branch moves on, the guide says how many files changed since and
+  offers **Rewrite**. New changes it does not know yet are under Unsorted.
 
 ### Review the change, then send all your comments at once
 
@@ -225,35 +335,42 @@ on the code as you read, and hand them to Claude together when you are done.
 Nothing reaches Claude until you send it.
 
 1. **Comment as you read.** In the editor, select lines and press **⌥⌘M**. In
-   the diff view, press or drag the **+** next to the lines. Comments are
-   saved in Albedo's database, so they survive a restart.
-2. **Collect.** Every comment is listed in the **Comments** section at the top
-   of the Files panel. Click one to jump back to its lines.
-3. **Send in one go.** **Add N to Message** puts every comment that has not
-   been sent yet into the message box, each with its file, its lines, the
-   code it points at, and your note, under a short intro. Read it, edit it if you want, and send it like any other
-   message. **Intro…** changes the intro text, and Albedo remembers your
-   version.
+   the diff view, and in the Review Guide's diffs, press or drag the **+**
+   next to the lines. Comments are saved in Albedo's database, so they
+   survive a restart.
+2. **Collect.** Every comment waits above the message box with your
+   transcript comments, and in the **Comments** section of the Files panel
+   (**Waiting**, **Sent**, **Resolved**). Click one to jump back to its
+   lines.
+3. **Send in one go.** **Send** in the message box sends every waiting
+   comment, each with its file, its lines, the code it points at and your
+   note, under a short intro, followed by what you typed. **Send** in the
+   Files panel, or **⇧⌘S** from anywhere, sends them on their own and shows
+   the transcript. **Intro…** changes the intro text, and Albedo remembers
+   your version.
 4. **Follow up.** A comment is marked **Sent** only once a message carrying it
-   has actually gone to Claude, not when it is merely in the message box.
-   Click **✓** to resolve a comment once it has been dealt with.
+   has actually gone to Claude. Click **✓ Resolve** once it has been dealt
+   with; a sent comment whose lines then change resolves itself, and
+   **Reopen** brings it back.
 
 Comments are anchored to the text of the lines, not to line numbers, so they
 stay on the right code while Claude edits the file around them. If the lines
-themselves change, the comment is listed as outdated instead of being pinned
-to the wrong code.
+themselves change before you send it, the comment is listed as outdated
+instead of being pinned to the wrong code.
 
 ### Find your way around the code
 
 - **⇧⇧** Search Everywhere, **⇧⌘O** Go to File (`:42` jumps to a line),
   **⌘O** Go to Class, **⌥⌘O** Go to Symbol.
 - **⇧⌘F** Find in Files, with match case (**⌥C**) and regex (**⌥X**).
-- **⌘B** or **⌘-click** Go to Declaration, **⌥F7** Find Usages.
+- **⌘B** or **⌘-click** Go to Declaration (on a declaration, its usages),
+  **⌥F7** Find Usages.
 - **⌥⌘B** Go to Implementation, in PHP: on an interface the classes that
   implement it, on a class its subclasses, on a trait the classes that use
-  it. One result opens straight away.
-- **⌥F12** opens a shell drawer in the main checkout. It keeps running while
-  hidden.
+  it.
+- A single result always opens straight away, never as a one-row list.
+- **⌥F12** or **⌘T** opens a shell drawer in the main checkout. It keeps
+  running while hidden.
 
 ### Get back to old conversations
 
@@ -275,6 +392,8 @@ longer is Idle, unless it is waiting on you.
 **The waiting card and the terminal prompt are the same prompt.** Answer
 whichever is closer. If you answer in the terminal first, the card goes away
 and a late click on it does nothing, so a prompt can never be answered twice.
+The card can pass on an answer for an hour. A prompt still open after that
+stays under Needs You, and the card says to answer it in the terminal.
 
 **A task follows its session.** Typing `/clear` or `/resume` inside Claude Code
 moves the task to the new session, and restarting Albedo resumes the session
@@ -283,6 +402,12 @@ the task was on.
 **Your subscription, never the API.** Albedo removes `ANTHROPIC_API_KEY` from
 every session it starts. An inherited key would silently bill the API instead
 of your Claude subscription.
+
+**The Review Guide is the one time Albedo runs Claude Code itself.** Write
+Guide and Rewrite run `claude -p` on Haiku, with no tools, MCP servers or
+hooks, and nothing saved as a session: one call for the groups, then one per
+group for its file notes. It runs under your own Claude Code login, and only
+for a guide you asked for.
 
 **Albedo sees your shell's PATH.** It starts `claude` through your login
 shell, so the tools Claude uses are the ones you have in a terminal.
@@ -299,11 +424,19 @@ it, the same commands use git grep.
 
 **Sessions can ask Albedo for four things.** Every session Albedo starts
 gets a small MCP server of Albedo's own, next to your own servers: a session
-can ask for a reminder, ask you to start a new session, tell you it is
-blocked on you, or give its task a one-line summary, shown under the task's
-title (you can change or clear it with Rename Task). A new session is never started for it: the request waits
-under Requests in the title bar until you approve it, and approving opens New
-Task filled in from it.
+can set a reminder on its task, ask you to start a new session, tell you it
+is blocked on you, or give its task a one-line summary (you can change or
+clear it with Rename Task). A new session is never started for it: the
+request waits under **N Requests** in the title bar until you approve it, and
+approving opens New Task filled in from it, set to send its prompt when the
+session starts.
+
+**Remote Control.** **⇧⌘R**, or **⋯ › Make Available Remotely**, asks first
+and then turns on Claude Code's Remote Control for the task, so you can carry
+on from claude.ai or your phone. A **Remote** mark on the task says it is on.
+
+**What's New.** The first launch of a new build lists the changes since the
+build you last ran. **⋯ › What's New…** shows it again.
 
 **Where things live.**
 
@@ -328,21 +461,35 @@ you resume or import from History.
 | ⌘1…9 | Jump to the Nth task |
 | ⌥1…9 | Jump to the Nth project |
 | ⌘[ / ⌘] | Previous / next task |
+| ⇧⌘[ / ⇧⌘] | Previous / next project |
+| ⌥⌘T | Collapse / expand the task list |
 | ⌘← / ⌘→ | Previous / next reading tab |
+| ⇧⌘T / ⇧⌘E | Transcript tab / Files tab |
 | ⌘\\ | Cycle PTY / Split / Transcript (not on the Editor tab) |
+| Tab / ⇧Tab | Next / previous area: message box, terminal, Files, tasks (the terminal and editor keep Tab) |
+| ⌃Tab / ⌃⇧Tab | Next / previous area from anywhere |
 | ⇧⇧ | Search Everywhere |
 | ⇧⌘O / ⌘O / ⌥⌘O | Go to File / Class / Symbol |
 | ⇧⌘F | Find in Files |
 | ⇧⌘P | Push the selected task (commits first) |
+| ⇧⌘R | Make the selected task available remotely (asks first) |
+| ⇧⌘G | Review Guide for the selected task (in the editor: Find Previous) |
+| ⇧⌘S | Send the waiting comments, then show the transcript |
+| ⇧F6 or F2 | Rename the selected task |
 | ⌘U | Attach files to the message |
 | ⌘↓ | Jump to the latest message |
-| ⌘B or ⌘-click | Go to Declaration (in the editor) |
+| ⌘B or ⌘-click | Go to Declaration; on a declaration, its usages (in the editor) |
 | ⌥F7 | Find Usages (in the editor) |
 | ⌥⌘B | Go to Implementation: implementers, subclasses or trait users (in the editor, PHP) |
 | ⌥⌘M | Comment on the selected lines (in the editor); send them all from the Files panel |
+| ⌘' | Comment on the selected text (in the transcript) |
+| ⌥↑ / ⌥↓ | Previous / next group (in the Review Guide) |
+| ↑ / ↓ | Previous / next file in the group (in the Review Guide) |
+| ⌥↩ | Mark the group Reviewed and go to the next (in the Review Guide) |
+| ⌘↩ | Send the waiting comments (in the Review Guide) |
 | ⇧⌘D | File / this task's change (in the editor) |
 | ⇧⌘C / ⌥⇧⌘C | Copy the file's full path / its path in the worktree (in the editor) |
-| ⌥F12 | Shell in the main checkout |
+| ⌥F12 or ⌘T | Shell in the main checkout |
 | ⌘+ / ⌘− / ⌘0 | Bigger / smaller / actual-size text |
 | ⌘/ | Show the shortcuts |
 
@@ -372,8 +519,9 @@ Want to work on Albedo itself? Pull requests from forks are welcome: see
 [CONTRIBUTING.md](CONTRIBUTING.md) for what to expect. Albedo is released
 under the [MIT license](LICENSE).
 
-The screenshots come from a sandboxed copy of the app with made-up projects
-and conversations.
+The screenshots come from Albedo's demo profile, a copy of the app with
+made-up projects and conversations (see
+[CONTRIBUTING.md](CONTRIBUTING.md#screenshots-the-demo-profile)).
 
 Named after Edoardo and Alberto (ALB + EDO). Albedo is the fraction of
 incident light a surface reflects rather than absorbs. The app generates

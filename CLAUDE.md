@@ -223,6 +223,18 @@ cause or the fix is found. A `UserPromptSubmit` hook
 reminder when a message reads like such a report; the rule applies whether or
 not it fires.
 
+## The README keeps up
+
+A PR that adds or changes something a user can see updates `README.md`, and
+the screenshot that shows it if that screenshot has changed, or says in the
+PR why it doesn't need to. The README is the first thing a new user reads,
+and it went stale within two weeks of the repo going public (#193).
+
+Screenshots come from the demo profile only (`npm run demo`; CONTRIBUTING.md,
+"Screenshots: the demo profile"), never from a window used for real work. A
+feature the demo can't show yet gets a task in `scripts/demo/scenario.mjs`,
+made up like the rest.
+
 ## Dependencies
 
 New versions wait 7 days after publishing (14 for a new major) before Albedo
