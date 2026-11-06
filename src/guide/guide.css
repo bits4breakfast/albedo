@@ -392,18 +392,29 @@
    right, past the gap. */
 .gd-diff-head > .gd-diff-gap { flex: 1 1 0; }
 .gd-diff-check { margin-left: 4px; }
-/* Why the file changes in this group (#264): a band under the header, on
-   --panel-chrome, in --text, with a "Why" label in --faint. It wraps in full,
+/* Why the file changes in this group (#264): a note under the header, in
+   --text, with a "Why" label in --faint. On the pane's own --panel, with a
+   --border-strong rule on its left, as the transcript sets off a quoted
+   message (.tx-peer): it is something to read about the file, not chrome,
+   so it does not take the toolbar's --panel-chrome (#274). It wraps in full,
    at a reading width. Outside the diff's scroll, like the header, so the two
-   stay together. Both tokens clear 4.5:1 on --panel-chrome in every theme
-   (guideNoteContrast.test.ts). */
+   stay together. Text clears 4.5:1 and the rule 3:1 on --panel in every
+   theme (guideNoteContrast.test.ts). */
 .gd-diff-why {
   flex: none;
   padding: 8px 12px 9px;
-  background: var(--panel-chrome);
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-.gd-diff-why-text { margin: 0; max-width: 92ch; font-size: var(--fs-md); line-height: 1.5; color: var(--text); }
+.gd-diff-why-text {
+  margin: 0;
+  max-width: 92ch;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  color: var(--text);
+}
 .gd-diff-why-label { margin-right: 8px; font-size: var(--fs-xs); color: var(--faint); }
 .gd-diff-scroll {
   flex: 1 1 auto;
