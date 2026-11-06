@@ -67,7 +67,7 @@ describe('the Comments list', () => {
         { name: 'test (2)', bucket: 'fail', url: null, reason: 'timed out' },
       ],
     } as unknown as import('../gh/prStatus').PrStatus;
-    observeCiQueue(task.id, prAt, { outcome: 'fail', sha: 'abc1234def', prNumber: 6102, count: 2 });
+    observeCiQueue(task.id, prAt);
     await add('one', 'first, unsent', 1);
     render(list());
     const waiting = await screen.findByRole('group', { name: 'Waiting, 2' });
@@ -90,7 +90,7 @@ describe('the Comments list', () => {
       number: 6102, url: '', title: '', state: 'open', headRefName: 'b', baseRefName: 'main', headSha: 'abc', mergedAt: null,
       review: null, checks: { kind: 'failing', failing: 1, total: 1 }, lines: [{ name: 'build', bucket: 'fail', url: null }],
     } as unknown as import('../gh/prStatus').PrStatus;
-    observeCiQueue(task.id, prAt, { outcome: 'fail', sha: 'abc', prNumber: 6102, count: 1 });
+    observeCiQueue(task.id, prAt);
     render(list());
     const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
     fireEvent.click(within(waiting).getByRole('button', { name: 'Send' }));

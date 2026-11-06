@@ -1,32 +1,43 @@
 /**
  * A PR's failing checks, waiting to go with the next message (#280, step 1).
  *
- * When a task's checks finish failing on a head commit -- `ciStep`'s final
- * failing reading (`gh/ciTransition.ts`), once per commit -- the failure joins
- * the task's waiting items, with the comments: listed above the message box,
- * in the Files pane's "Waiting", counted by the guide's Send. It goes with the
+ * Whenever a task's open PR reads as failing on its head commit -- the
+ * badge's own final reading (`summarizeChecks`) -- the failure joins the
+ * task's waiting items, with the comments: listed above the message box, in
+ * the Files pane's "Waiting", counted by the guide's Send. It goes with the
  * owner's next message, or alone with Send / ⇧⌘S, through the composer's own
  * path (held while a turn runs, a prompt is open or the app is offline).
  * **Nothing here sends.** Queueing is all a failure does by itself.
+ *
+ * Not `ciStep`'s once-per-commit rule: that one is for banners, where a
+ * launch must not open with old news. Queueing is silent, so a failure that
+ * was already final when first seen (it failed while the app was closed)
+ * queues too, and so does a rerun that fails again on the same commit. What
+ * stops a repeat is the owner: a commit they **handled** -- its failure went
+ * out in a message (sent or held), they removed it, or Ask Claude to Fix put
+ * it in the box -- never queues again, rerun or not. "Handled" is kept per
+ * task for the head commit only, with the queue, and forgotten when the head
+ * moves, the PR closes or the task goes.
  *
  * What it carries is what GitHub's checks say, whatever runs the CI: each
  * failing check's name, its conclusion and its link, with the PR number and
  * the head commit. Nothing is fetched (no logs, no steps).
  *
  * One per task, keyed by the head commit. It leaves:
- *   - when a message carrying it is delivered or held (`takeQueuedCi`);
- *   - when the owner removes it, or Ask Claude to Fix puts the same failure
- *     in the box (`removeQueuedCi`);
- *   - by itself, when the PR's head moves (a newer failure replaces it if
- *     that one fails too), when its checks run again or pass on the same
- *     commit, or when the PR is merged or closed (`ciQueueStep`);
- *   - with its task, when the task is archived or deleted (`keepQueuedCiFor`).
+ *   - when a message carrying it is delivered or held (`takeQueuedCi`), or
+ *     the owner removes it, or Ask Claude to Fix takes the same commit
+ *     (`removeQueuedCi`) -- all three mark the commit handled;
+ *   - by itself, when the head moves (the new commit's failure queues in
+ *     turn), when its checks run again or pass on the same commit, or when
+ *     the PR is merged or closed (`ciQueueStep`);
+ *   - with its task, when the task is archived or deleted
+ *     (`forgetQueuedCi`, `keepQueuedCiFor`).
  *
  * Memory is the store; localStorage its copy, so it survives a restart.
  */
 
 import { useSyncExternalStore } from 'react';
-import { headKey, type CiEvent } from '../../gh/ciTransition';
+import { headKey } from '../../gh/ciTransition';
 import type { PrStatus } from '../../gh/prStatus';
 import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
 
@@ -62,32 +73,41 @@ function sameChecks(a: readonly FailedCheck[], b: readonly FailedCheck[]): boole
   return a.length === b.length && a.every((c, i) => c.name === b[i]!.name && c.conclusion === b[i]!.conclusion && c.url === b[i]!.url);
 }
 
+/** What is kept per task: the queued failure, and the head commit the owner already handled. */
+export interface CiQueueEntry {
+  item?: QueuedCiFailure;
+  /** A commit whose failure was sent, held, removed, or taken by Ask Claude to Fix. */
+  handled?: string;
+}
+
 /**
- * One PR answer, against what is queued. `event` is what `ciStep` made of
- * the same answer: a failure is queued only on its final failing reading,
- * so the once-per-commit rule is `ciStep`'s.
+ * One PR answer, against what is kept for the task. Queues on any failing
+ * reading of a commit nothing is queued for and the owner has not handled;
+ * drops the item when the head moves, the checks run again or pass, or the
+ * PR is merged or closed.
  *
- * `pr` null is "no PR, or gh could not say": nothing is learned, the queued
- * one stays.
+ * `pr` null is "no PR, or gh could not say": nothing is learned, all stays.
  */
-export function ciQueueStep(
-  prev: QueuedCiFailure | undefined,
-  pr: PrStatus | null,
-  event: CiEvent | null,
-  now: number,
-): QueuedCiFailure | undefined {
+export function ciQueueStep(prev: CiQueueEntry, pr: PrStatus | null, now: number): CiQueueEntry {
   if (pr === null) return prev;
-  if (event?.outcome === 'fail' && live(pr)) {
-    return { prNumber: pr.number, sha: event.sha, checks: failingChecks(pr), queuedAt: now };
+  if (!live(pr)) return {}; // merged or closed: its checks stopped mattering
+  const sha = headKey(pr);
+  const handled = prev.handled === sha ? sha : undefined; // a push forgets the old commit
+  const item = prev.item?.sha === sha ? prev.item : undefined;
+  let next: QueuedCiFailure | undefined;
+  if (pr.checks.kind === 'failing') {
+    const checks = failingChecks(pr);
+    if (item) {
+      // Still failing: keep the list current (a job rerun to green leaves
+      // it; one failing since joins it).
+      next = sameChecks(checks, item.checks) && item.prNumber === pr.number ? item : { ...item, prNumber: pr.number, checks };
+    } else if (handled === undefined) {
+      next = { prNumber: pr.number, sha, checks, queuedAt: now };
+    }
   }
-  if (!prev) return undefined;
-  if (!live(pr)) return undefined; // merged or closed: its checks stopped mattering
-  if (headKey(pr) !== prev.sha) return undefined; // a push: about a commit that is gone
-  if (pr.checks.kind !== 'failing') return undefined; // running again, or passing
-  // Still failing on the same commit: keep the list current (a job rerun to
-  // green leaves it; one failing since joins it).
-  const checks = failingChecks(pr);
-  return sameChecks(checks, prev.checks) ? prev : { ...prev, prNumber: pr.number, checks };
+  // Running again, passing, or no checks: nothing queued.
+  if (next === prev.item && handled === prev.handled) return prev;
+  return { ...(next ? { item: next } : {}), ...(handled !== undefined ? { handled } : {}) };
 }
 
 /** The commit as a message names it: seven characters, or nothing when gh named none. */
@@ -113,7 +133,7 @@ export function formatCiFailure(f: QueuedCiFailure): string {
 // Store
 // ---------------------------------------------------------------------------
 
-type QueueMap = ReadonlyMap<number, QueuedCiFailure>;
+type QueueMap = ReadonlyMap<number, CiQueueEntry>;
 
 function isFailure(value: unknown): value is QueuedCiFailure {
   if (typeof value !== 'object' || value === null) return false;
@@ -134,15 +154,21 @@ function isFailure(value: unknown): value is QueuedCiFailure {
   );
 }
 
-/** Task id -> its queued failure. A malformed entry is dropped; none removes the key. */
+function isEntry(value: unknown): value is CiQueueEntry {
+  if (typeof value !== 'object' || value === null) return false;
+  const e = value as Record<string, unknown>;
+  return (e.item === undefined || isFailure(e.item)) && (e.handled === undefined || typeof e.handled === 'string');
+}
+
+/** Task id -> what is kept for it. A malformed entry is dropped; none removes the key. */
 export const queuedCiCodec: Codec<QueueMap> = {
   decode: (raw) => {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    const map = new Map<number, QueuedCiFailure>();
+    const map = new Map<number, CiQueueEntry>();
     for (const [key, value] of Object.entries(parsed)) {
       const id = Number(key);
-      if (Number.isInteger(id) && isFailure(value)) map.set(id, value);
+      if (Number.isInteger(id) && isEntry(value) && (value.item || value.handled !== undefined)) map.set(id, value);
     }
     return map;
   },
@@ -164,43 +190,53 @@ function commit(next: QueueMap): void {
   for (const cb of [...listeners]) cb();
 }
 
-function put(taskId: number, f: QueuedCiFailure | undefined): void {
+function put(taskId: number, entry: CiQueueEntry): void {
   const prev = current();
-  if (prev.get(taskId) === f) return;
+  if (prev.get(taskId) === entry) return;
   const next = new Map(prev);
-  if (f) next.set(taskId, f);
-  else next.delete(taskId);
+  if (entry.item || entry.handled !== undefined) next.set(taskId, entry);
+  else if (prev.has(taskId)) next.delete(taskId);
+  else return;
   commit(next);
 }
 
 /** The task's queued failure, or null. */
 export function queuedCiOf(taskId: number): QueuedCiFailure | null {
-  return current().get(taskId) ?? null;
+  return current().get(taskId)?.item ?? null;
 }
 
 /**
- * One PR answer for one task, with what `ciStep` made of it. The PR watch
- * (`ciNotice.ts` `observeCi`) is the production caller; chats and archived
- * tasks never get here.
+ * One PR answer for one task. The PR watch (`ciNotice.ts` `observeCi`) is
+ * the production caller; chats and archived tasks never get here.
  */
-export function observeCiQueue(taskId: number, pr: PrStatus | null, event: CiEvent | null, now = Date.now()): void {
-  const prev = current().get(taskId);
-  put(taskId, ciQueueStep(prev, pr, event, now));
-}
-
-/** The owner removed it, or Ask Claude to Fix took that commit's failure. Only that commit's, when named. */
-export function removeQueuedCi(taskId: number, sha?: string): void {
-  const prev = current().get(taskId);
-  if (!prev || (sha !== undefined && prev.sha !== sha)) return;
-  put(taskId, undefined);
+export function observeCiQueue(taskId: number, pr: PrStatus | null, now = Date.now()): void {
+  put(taskId, ciQueueStep(current().get(taskId) ?? {}, pr, now));
 }
 
 /**
- * A message carrying it was delivered or held. By commit: a newer failure
- * queued while that send was under way stays for the next.
+ * The owner is done with commit `sha`'s failure: they removed it, or Ask
+ * Claude to Fix put it in the box. It leaves, and that commit never queues
+ * again, even after a rerun. A newer commit's queued failure is left alone.
+ */
+export function removeQueuedCi(taskId: number, sha: string): void {
+  const prev = current().get(taskId) ?? {};
+  if (prev.item && prev.item.sha !== sha) return;
+  if (!prev.item && prev.handled === sha) return;
+  put(taskId, { handled: sha });
+}
+
+/**
+ * A message carrying commit `sha`'s failure was delivered or held: handled,
+ * as a removal is. By commit, so a newer failure queued while that send was
+ * under way stays for the next.
  */
 export function takeQueuedCi(taskId: number, sha: string): void {
   removeQueuedCi(taskId, sha);
+}
+
+/** Everything kept for the task goes: it was archived or deleted. */
+export function forgetQueuedCi(taskId: number): void {
+  put(taskId, {});
 }
 
 /** Keep only these tasks' (the live ones): an archived or deleted task's goes. */

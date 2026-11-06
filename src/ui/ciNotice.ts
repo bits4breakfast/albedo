@@ -27,9 +27,11 @@
  * this mark -- a mark from a run that ended is about checks you have since
  * looked at on GitHub.
  *
- * Wherever the owner is, a failure also joins the task's waiting items, for
- * Claude (#280, `transcript/ciFailure.ts`). That one is kept across a
- * restart, and it is only ever queued: nothing here sends.
+ * Wherever the owner is, a failing reading also joins the task's waiting
+ * items, for Claude (#280, `transcript/ciFailure.ts`), by a rule of its own:
+ * silent, so a failure already final at launch queues too, and a rerun that
+ * fails again re-queues unless the owner handled that commit. It is kept
+ * across a restart, and it is only ever queued: nothing here sends.
  */
 
 import { useEffect, useRef, useSyncExternalStore } from 'react';
@@ -110,10 +112,11 @@ export function observeCi(
   const prev = watches.get(task.id);
   const { watch, event } = ciStep(prev, pr);
   if (watch) watches.set(task.id, watch);
-  // A failure joins the task's waiting items (#280), and a push, a rerun, a
-  // pass or a merge takes it out again. Queued, never sent: it goes with the
-  // owner's next message, or with Send.
-  observeCiQueue(task.id, pr, event);
+  // A failing reading joins the task's waiting items (#280), and a push, a
+  // rerun, a pass or a merge takes it out again. Not ciStep's event rule:
+  // queueing is silent (see ciFailure.ts). Queued, never sent: it goes with
+  // the owner's next message, or with Send.
+  observeCiQueue(task.id, pr);
   let changed = false;
   // A push makes a mark about the commit before it old news.
   if (prev && watch && prev.sha !== watch.sha && marks.delete(task.id)) changed = true;

@@ -337,7 +337,7 @@ describe('GuidePane', () => {
         number: 6102, url: '', title: '', state: 'open', headRefName: 'b', baseRefName: 'main', headSha: 'abc', mergedAt: null,
         review: null, checks: { kind: 'failing', failing: 1, total: 1 }, lines: [{ name: 'build', bucket: 'fail', url: null }],
       } as unknown as import('../gh/prStatus').PrStatus;
-      observeCiQueue(task.id, prAt, { outcome: 'fail', sha: 'abc', prNumber: 6102, count: 1 });
+      observeCiQueue(task.id, prAt);
       save();
       waitingCode = [{ id: 1 }, { id: 2 }];
       pane();
@@ -349,7 +349,7 @@ describe('GuidePane', () => {
       await screen.findByRole('heading', { name: 'Everything' });
       fireEvent.click(screen.getByRole('button', { name: 'Send CI Failure' }));
       expect(sendAsked).toEqual([task.id]);
-      removeQueuedCi(task.id);
+      removeQueuedCi(task.id, 'abc');
       await waitFor(() => expect(screen.queryByRole('button', { name: /^Send CI/ })).toBeNull());
     });
 

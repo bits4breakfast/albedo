@@ -2,9 +2,9 @@
  * @vitest-environment jsdom
  *
  * A PR's failing checks, queued for Claude like a waiting comment (#280):
- * queued once per head commit by the PR watch, never sent by itself, dropped
- * by a push, a rerun, a pass or a merge, kept across a restart, and written
- * into the message in one exact shape.
+ * queued on any failing reading of a head commit the owner has not handled,
+ * never sent by itself, dropped by a push, a rerun, a pass or a merge, kept
+ * across a restart, and written into the message in one exact shape.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -31,6 +31,7 @@ const {
   __resetQueuedCi,
   ciFailureLabel,
   formatCiFailure,
+  forgetQueuedCi,
   keepQueuedCiFor,
   queuedCiOf,
   removeQueuedCi,
@@ -127,9 +128,21 @@ describe('a failing transition only queues', () => {
     expect(queuedCiOf(7)).toBe(first);
   });
 
-  it('a failure already final when first seen is history: nothing is queued', () => {
+  it('a failure already final when first seen queues too (it failed while the app was closed), silently', () => {
     observeCi(T, failed(), null);
+    expect(queuedCiOf(7)?.sha).toBe(SHA_A);
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(heldFor(7)).toEqual([]);
+  });
+
+  it('a rerun that fails again on the same commit queues again', () => {
+    observeCi(T, running(), null);
+    observeCi(T, failed(), null);
+    observeCi(T, running(), null); // rerun: dropped
     expect(queuedCiOf(7)).toBeNull();
+    observeCi(T, failed(), null);
+    expect(queuedCiOf(7)?.sha).toBe(SHA_A);
+    expect(submitPty).not.toHaveBeenCalled();
   });
 
   it('a pass queues nothing', () => {
@@ -223,6 +236,67 @@ describe('dropped by itself', () => {
   });
 });
 
+describe('a commit the owner handled never queues again', () => {
+  const queue = () => {
+    observeCi(T, running(), null);
+    observeCi(T, failed(), null);
+    expect(queuedCiOf(7)?.sha).toBe(SHA_A);
+  };
+  const rerunFails = () => {
+    observeCi(T, failed(), null);
+    observeCi(T, running(), null);
+    observeCi(T, failed(), null);
+  };
+
+  it('removed (✕ / Remove): not on the next reading, nor after a rerun', () => {
+    queue();
+    removeQueuedCi(7, SHA_A);
+    rerunFails();
+    expect(queuedCiOf(7)).toBeNull();
+  });
+
+  it('sent or held (a message carried it): likewise', () => {
+    queue();
+    takeQueuedCi(7, SHA_A);
+    rerunFails();
+    expect(queuedCiOf(7)).toBeNull();
+  });
+
+  it('Ask Claude to Fix, even before anything was queued: likewise', () => {
+    observeCi(T, running(), null);
+    removeQueuedCi(7, SHA_A); // the dialog took it while checks still ran
+    rerunFails();
+    expect(queuedCiOf(7)).toBeNull();
+  });
+
+  it('a new commit’s failure queues again, and the old commit is forgotten', () => {
+    queue();
+    removeQueuedCi(7, SHA_A);
+    observeCi(T, failed(SHA_B), null);
+    expect(queuedCiOf(7)?.sha).toBe(SHA_B);
+  });
+
+  it('“handled” is kept across a restart', () => {
+    queue();
+    removeQueuedCi(7, SHA_A);
+    __resetQueuedCi();
+    resetCiNoticesForTests();
+    observeCi(T, failed(), null);
+    expect(queuedCiOf(7)).toBeNull();
+  });
+
+  it('a merge or close forgets it all; archiving the task too', () => {
+    queue();
+    removeQueuedCi(7, SHA_A);
+    observeCi(T, pr(SHA_A, [{ name: 'build', conclusion: 'FAILURE' }], 'CLOSED'), null);
+    expect(window.localStorage.getItem('albedo.composerCiFailures')).toBeNull();
+    observeCi(T, failed(SHA_B), null);
+    forgetQueuedCi(7);
+    expect(queuedCiOf(7)).toBeNull();
+    expect(window.localStorage.getItem('albedo.composerCiFailures')).toBeNull();
+  });
+});
+
 describe('removed by hand, taken by a message', () => {
   it('Remove (✕) drops it; a named commit drops only that commit’s', () => {
     observeCi(T, running(), null);
@@ -271,7 +345,10 @@ describe('kept across a restart', () => {
   });
 
   it('a malformed entry in storage is dropped, not fatal', () => {
-    window.localStorage.setItem('albedo.composerCiFailures', JSON.stringify({ 7: { prNumber: 'x' }, 8: { prNumber: 1, sha: 'a', queuedAt: 1, checks: [] } }));
+    window.localStorage.setItem(
+      'albedo.composerCiFailures',
+      JSON.stringify({ 7: { item: { prNumber: 'x' } }, 8: { item: { prNumber: 1, sha: 'a', queuedAt: 1, checks: [] } } }),
+    );
     __resetQueuedCi();
     expect(queuedCiOf(7)).toBeNull();
     expect(queuedCiOf(8)?.prNumber).toBe(1);

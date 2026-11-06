@@ -19,7 +19,7 @@ import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { noteQuestion, noteStatusChange } from './attention';
 import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
-import { keepQueuedCiFor, removeQueuedCi } from './transcript/ciFailure';
+import { forgetQueuedCi, keepQueuedCiFor } from './transcript/ciFailure';
 import { keepOutboxFor } from './transcript/outbox';
 import { noteTaskSessions } from './transcript/turn';
 import type { CaptureHandle, ContextUsage } from '../capture';
@@ -385,7 +385,7 @@ export function useTasks(): UseTasksResult {
     async (id: number) => {
       applyTask(id, { status: 'archived' });
       dropDraft(id);
-      removeQueuedCi(id);
+      forgetQueuedCi(id);
       // On failure the overlay is dropped, not the status reverted: archiveTask
       // flips the row before purging, so a failure may or may not have
       // archived, and a reload shows whichever is true.

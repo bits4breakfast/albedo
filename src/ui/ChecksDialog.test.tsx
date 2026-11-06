@@ -121,8 +121,8 @@ describe('ChecksDialog', () => {
 
   it('Ask Claude to Fix… takes the queued failure for the same commit out of the waiting items (#280)', async () => {
     const { observeCiQueue, queuedCiOf } = await import('./transcript/ciFailure');
-    observeCiQueue(7, pr, { outcome: 'fail', sha: '#69', prNumber: 69, count: 1 });
-    observeCiQueue(8, { ...pr, headSha: 'f00' }, { outcome: 'fail', sha: 'f00', prNumber: 69, count: 1 });
+    observeCiQueue(7, pr);
+    observeCiQueue(8, { ...pr, headSha: 'f00' });
     expect(queuedCiOf(7)).not.toBeNull();
     render(<ChecksDialog task={task} pr={pr} onClose={() => {}} />);
     const ask = await screen.findByRole('button', { name: 'Ask Claude to Fix…' });
@@ -135,14 +135,14 @@ describe('ChecksDialog', () => {
 
   it('Ask Claude to Fix… leaves a queued failure for another commit, and one no composer took', async () => {
     const { observeCiQueue, queuedCiOf } = await import('./transcript/ciFailure');
-    observeCiQueue(7, { ...pr, headSha: 'newer' }, { outcome: 'fail', sha: 'newer', prNumber: 69, count: 1 });
+    observeCiQueue(7, { ...pr, headSha: 'newer' });
     render(<ChecksDialog task={task} pr={pr} onClose={() => {}} />);
     const ask = await screen.findByRole('button', { name: 'Ask Claude to Fix…' });
     await waitFor(() => expect((ask as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(ask);
     expect(queuedCiOf(7)?.sha).toBe('newer');
     cleanup();
-    observeCiQueue(7, pr, { outcome: 'fail', sha: '#69', prNumber: 69, count: 1 });
+    observeCiQueue(7, pr);
     vi.mocked(insertIntoComposer).mockReturnValueOnce(false);
     render(<ChecksDialog task={task} pr={pr} onClose={() => {}} />);
     const again = await screen.findByRole('button', { name: 'Ask Claude to Fix…' });
