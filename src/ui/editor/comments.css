@@ -68,8 +68,46 @@
 .ed-cmt-head { margin-bottom: 4px; }
 .ed-cmt-foot { margin-top: 6px; justify-content: flex-end; }
 .ed-cmt-foot .ed-cmt-where { margin-right: auto; }
-.ed-cmt-sent::before { content: '✓ '; }
+/* The state is a chip, never a ✓ (#222): the ✓ is Resolve. Waiting is the
+   accent's soft pair (--on-accent-soft on --accent-soft, a measured text
+   pair); Sent is --muted on the card's --panel, outlined in --border-strong.
+   A sent comment is Claude's now, so its card's edge goes grey. Measured in
+   commentsContrast.test.ts. */
+.ed-cmt-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  white-space: nowrap;
+}
+.ed-cmt-chip[data-state='waiting'] { background: var(--accent-soft); color: var(--on-accent-soft); }
+.ed-cmt-chip[data-state='sent'] { color: var(--muted); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.ed-cmt[data-state='sent'] { border-left-color: var(--border-strong); }
 .ed-cmt-actions { margin-left: auto; display: inline-flex; gap: 2px; }
+.ed-cmt-more { padding: 0 6px; letter-spacing: 1px; }
+
+/* The bar above a file for comments not on its lines (#222): a one-line
+   trace for one resolved on its own, and the outdated list. On --panel. */
+.ed-cmt-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.ed-cmt-trace { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ed-cmt-trace-mark { color: var(--status-review); }
+.ed-cmt-trace-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.ed-cmt-trace-body { color: var(--muted); }
+.ed-cmt-trace .ed-cmt-btn { margin-left: auto; }
+.ed-cmt-outdated-lead { width: 100%; }
+.ed-cmt-bar .ed-cmt-outdated { display: flex; align-items: center; gap: 2px 6px; }
 /* What was written, kept as written: line breaks included. */
 .ed-cmt-body { white-space: pre-wrap; overflow-wrap: anywhere; }
 

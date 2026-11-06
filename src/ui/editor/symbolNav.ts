@@ -265,8 +265,7 @@ async function implementations(ctx: NavContext, line: string, col: number, numbe
   const note = (listed: boolean) => `${target.fqcn} · ${implementationNote(engines, kind, listed)}`;
 
   if (result.count === 0) return { kind: 'none', message: empty, note: note(false) };
-  const only = result.count === 1 ? result.groups[0]!.matches[0]! : null;
-  if (only) return { kind: 'open', path: only.path, line: only.line };
+  // One answer opens straight away: see `openLoneRow`.
   return { kind: 'list', title, result, note: note(true), textSearch: engines === 'grep' };
 }
 
@@ -282,8 +281,33 @@ function declarationsAsResult(result: FindResult): FindResult {
   return { ...result, groups };
 }
 
+/**
+ * ⌘B (and ⌘-click) and ⌥⌘B ask to be taken somewhere: a list with one place
+ * to go is that place, so it opens straight away, as PhpStorm does (#260).
+ * That covers every path, not only the ones that count their answer: a
+ * method's single call, asked on its declaration, from PHPantom or git grep;
+ * two PHPantom locations on one line, folded into one row; one text match.
+ * The row the cursor is on is not a place to go: the text search lists the
+ * declaration among its own matches, so a method called once answers two
+ * rows, and opening the cursor's own line would look like the click did
+ * nothing. A list of only that row stays a list, so the click still answers.
+ * ⌥F7 asked for a list, and always gets one.
+ */
+function openLoneRow(out: NavOutcome, path: string, number: number): NavOutcome {
+  if (out.kind !== 'list') return out;
+  const elsewhere = out.result.groups.flatMap((g) => g.matches).filter((m) => !(m.path === path && m.line === number));
+  if (elsewhere.length !== 1 || out.result.capped) return out;
+  return { kind: 'open', path: elsewhere[0]!.path, line: elsewhere[0]!.line };
+}
+
 /** Where ⌘B, ⌥F7 or ⌥⌘B at the cursor leads. */
 export async function navigate(ctx: NavContext, action: NavAction): Promise<NavOutcome> {
+  const { number } = lineAround(ctx.text, ctx.offset);
+  const out = await answer(ctx, action);
+  return action === 'usages' ? out : openLoneRow(out, ctx.path, number);
+}
+
+async function answer(ctx: NavContext, action: NavAction): Promise<NavOutcome> {
   const { line, col, number } = lineAround(ctx.text, ctx.offset);
   if (action === 'implementations') return implementations(ctx, line, col, number);
 

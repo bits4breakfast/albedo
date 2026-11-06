@@ -555,7 +555,31 @@ function gapBefore(hunk: HunkModel | undefined, prev: HunkModel | undefined): Ga
 // Layout
 // ---------------------------------------------------------------------------
 
-function useContainerWidth(): [RefObject<HTMLDivElement>, number] {
+/**
+ * A diff's layout: split when its container is wide enough, unless the
+ * reader toggled it. {@link Diff} uses it for its own header's toggle; a
+ * caller that draws the toggle in its own header (the Review Guide, #264)
+ * uses the same rule on the diff's container and passes `layout` and
+ * `head={false}`, so the two never disagree on what "auto" means.
+ */
+export function useDiffLayout(): {
+  ref: RefObject<HTMLDivElement | null>;
+  resolved: 'split' | 'unified';
+  toggle: () => void;
+} {
+  const [ref, width] = useContainerWidth();
+  const [override, setOverride] = useState<'split' | 'unified' | null>(null);
+  const resolved = override ?? (width >= SIDE_BY_SIDE_MIN ? 'split' : 'unified');
+  const toggle = useCallback(() => setOverride(resolved === 'split' ? 'unified' : 'split'), [resolved]);
+  return { ref, resolved, toggle };
+}
+
+/** The toggle's words: the layout a click switches to. */
+export function layoutToggleLabel(resolved: 'split' | 'unified'): string {
+  return resolved === 'split' ? 'Unified' : 'Split';
+}
+
+function useContainerWidth(): [RefObject<HTMLDivElement | null>, number] {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -617,6 +641,12 @@ export interface DiffProps {
    */
   showPath?: boolean;
   /**
+   * Draw the header row (path, counts, layout toggle). Off where the caller's
+   * own header already says the counts and carries the toggle -- the Review
+   * Guide (#264), with {@link useDiffLayout} and a forced `layout`.
+   */
+  head?: boolean;
+  /**
    * Set by {@link CollapsibleDiff}: the header gets an open caret, and a click
    * on it closes the diff again.
    */
@@ -630,10 +660,11 @@ export function Diff({
   absoluteLines = false,
   contextPath,
   showPath = true,
+  head = true,
   onCollapse,
 }: DiffProps): ReactNode {
-  const [ref, width] = useContainerWidth();
-  const [override, setOverride] = useState<'split' | 'unified' | null>(null);
+  const auto = useDiffLayout();
+  const ref = auto.ref;
   const [budget, setBudget] = useState(INITIAL_BUDGET);
   const [openGaps, setOpenGaps] = useState<Record<number, boolean>>({});
 
@@ -641,8 +672,7 @@ export function Diff({
   const oldTokens = useCodeTokens(model.oldBlob, diff.lang);
   const newTokens = useCodeTokens(model.newBlob, diff.lang);
 
-  const resolved: 'split' | 'unified' =
-    layout !== 'auto' ? layout : (override ?? (width >= SIDE_BY_SIDE_MIN ? 'split' : 'unified'));
+  const resolved: 'split' | 'unified' = layout !== 'auto' ? layout : auto.resolved;
 
   // Per-line links only when the numbers are real file lines (see `absoluteLines`).
   // A rename's destination is the file that exists.
@@ -752,7 +782,7 @@ export function Diff({
   if (diff.hunks.length === 0) {
     return (
       <div className="tx-d" ref={ref}>
-        <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} showPath={showPath} />
+        {head ? <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} showPath={showPath} /> : null}
         <div className="tx-d-empty">No content changes</div>
       </div>
     );
@@ -861,15 +891,19 @@ export function Diff({
   const offerContext = readPath !== null;
 
   return (
-    <div className="tx-d" ref={ref}>
-      <DiffHeader
-        diff={diff}
-        model={model}
-        resolved={resolved}
-        onToggle={layout === 'auto' ? () => setOverride(resolved === 'split' ? 'unified' : 'split') : null}
-        showPath={showPath}
-        disclosure={onCollapse ? { open: true, onToggle: onCollapse } : null}
-      />
+    // The path a selection's code comment is for (#222): the file read for
+    // context, else the diff's own.
+    <div className="tx-d" ref={ref} data-diff-path={readPath ?? diff.path}>
+      {head ? (
+        <DiffHeader
+          diff={diff}
+          model={model}
+          resolved={resolved}
+          onToggle={layout === 'auto' ? auto.toggle : null}
+          showPath={showPath}
+          disclosure={onCollapse ? { open: true, onToggle: onCollapse } : null}
+        />
+      ) : null}
       <div className="tx-d-body">
         {offerContext ? (
           <ContextRegion
@@ -916,6 +950,7 @@ export function Diff({
           </button>
         </div>
       ) : null}
+      <SelectionComment rootRef={ref} />
     </div>
   );
 }
@@ -1020,7 +1055,7 @@ function DiffHeader({
             onToggle();
           }}
         >
-          {resolved === 'split' ? 'Unified' : 'Split'}
+          {layoutToggleLabel(resolved)}
         </button>
       ) : null}
     </div>
@@ -1051,6 +1086,8 @@ export interface DiffAnnotations {
   after(line: number): ReactNode;
   /** The lines a drag on the + handles currently covers. */
   picking: { from: number; to: number } | null;
+  /** Whether an open comment covers this new-side line: an accent edge, as the editor's File mode marks it (#252). */
+  commented?(line: number): boolean;
   /** A drag on the + handles moved (`done` false) or ended (`done` true). */
   pick(from: number, to: number, done: boolean): void;
 }
@@ -1064,7 +1101,10 @@ function newLineAt(x: number, y: number): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** The + on a row: press for that line, drag across rows for a range. */
+/** The last + pressed in each diff, for Shift-click to extend from (#222). */
+const lastHandle = new WeakMap<Element, number>();
+
+/** The + on a row: press for that line, drag across rows, or Shift-click another + for a range. */
 function CommentHandle({ line }: { line: number }): ReactNode {
   const annotate = useContext(DiffAnnotationsContext);
   if (!annotate) return null;
@@ -1074,10 +1114,17 @@ function CommentHandle({ line }: { line: number }): ReactNode {
       className="tx-d-cmt-add"
       tabIndex={-1}
       aria-label={`Comment on line ${line}`}
-      title="Comment on this line (drag for several)"
+      title="Comment on this line (drag, or Shift-click another +, for several)"
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
+        const root = e.currentTarget.closest('.tx-d');
+        const from = root ? lastHandle.get(root) : undefined;
+        if (root) lastHandle.set(root, line);
+        if (e.shiftKey && from !== undefined) {
+          annotate.pick(Math.min(from, line), Math.max(from, line), true);
+          return;
+        }
         const start = line;
         let end = line;
         annotate.pick(start, end, false);
@@ -1101,9 +1148,134 @@ function CommentHandle({ line }: { line: number }): ReactNode {
   );
 }
 
+/** The rows a selection covers in a diff: new-side lines with their code, in order. */
+export interface SelectedRows {
+  /** The diff's root (`.tx-d`), which carries the file's path. */
+  root: HTMLElement;
+  lines: Array<{ line: number; text: string }>;
+  /** It covers rows, but only deleted ones: nothing in the file to point at. */
+  deletedOnly: boolean;
+}
+
+/**
+ * Which diff rows a DOM selection covers (#222), read from the rows' own
+ * `data-new-line`, never from the text selected: a selection that starts
+ * halfway through one line still means that line. Null when the selection
+ * is empty or not inside one diff's rows.
+ */
+export function selectedDiffRows(sel: Selection | null): SelectedRows | null {
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const at = (n: Node | null) => (n instanceof Element ? n : (n?.parentElement ?? null));
+  const root = at(range.startContainer)?.closest<HTMLElement>('.tx-d') ?? null;
+  if (!root || at(range.endContainer)?.closest('.tx-d') !== root) return null;
+  const rows = [...root.querySelectorAll<HTMLElement>('.tx-d-row, .tx-d-half')].filter((r) => {
+    try {
+      return range.intersectsNode(r);
+    } catch {
+      return false;
+    }
+  });
+  if (rows.length === 0) return null;
+  const lines: SelectedRows['lines'] = [];
+  for (const r of rows) {
+    const n = Number(r.getAttribute('data-new-line'));
+    if (!Number.isInteger(n) || n <= 0 || lines.some((l) => l.line === n)) continue;
+    lines.push({ line: n, text: r.querySelector('.tx-d-code')?.textContent ?? '' });
+  }
+  return { root, lines, deletedOnly: lines.length === 0 };
+}
+
+/**
+ * Select lines in a diff, then comment (#222): a Comment button at the
+ * selection, and ⌥⌘M, both for the new-side lines it covers -- the same
+ * `pick` the + handles use. A selection only on deleted lines says why it
+ * cannot be commented. Only where comments are offered (the editor's Diff
+ * mode, the guide); a transcript diff's selection belongs to PassageComments.
+ *
+ * ⌥⌘M is read from `code` (Option makes `key` µ). It is the File mode's
+ * comment key; nothing app-wide binds it (shortcuts.ts), and CodeMirror is
+ * not in a diff to take it first.
+ */
+function SelectionComment({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }): ReactNode {
+  const annotate = useContext(DiffAnnotationsContext);
+  const [found, setFound] = useState<{ rows: SelectedRows; top: number; left: number } | null>(null);
+  const annotateRef = useRef(annotate);
+  annotateRef.current = annotate;
+  const foundRef = useRef(found);
+  foundRef.current = found;
+  const commentNow = useRef<() => boolean>(() => false);
+
+  useEffect(() => {
+    if (!annotate) return;
+    const look = () => {
+      const root = rootRef.current;
+      const sel = document.getSelection();
+      const rows = selectedDiffRows(sel);
+      if (!root || !rows || rows.root !== root) {
+        setFound(null);
+        return;
+      }
+      const rect = sel!.getRangeAt(0).getBoundingClientRect?.();
+      const box = root.getBoundingClientRect();
+      setFound({ rows, top: rect ? rect.bottom - box.top + 4 : 0, left: rect ? Math.max(0, rect.left - box.left) : 0 });
+    };
+    const comment = () => {
+      const f = foundRef.current;
+      const a = annotateRef.current;
+      if (!f || !a || f.rows.deletedOnly) return false;
+      const ns = f.rows.lines.map((l) => l.line);
+      a.pick(Math.min(...ns), Math.max(...ns), true);
+      document.getSelection()?.removeAllRanges();
+      setFound(null);
+      return true;
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyM' || !e.metaKey || !e.altKey || e.shiftKey || e.ctrlKey) return;
+      if (comment()) e.preventDefault();
+    };
+    document.addEventListener('selectionchange', look);
+    document.addEventListener('keydown', key);
+    commentNow.current = comment;
+    return () => {
+      document.removeEventListener('selectionchange', look);
+      document.removeEventListener('keydown', key);
+    };
+  }, [annotate, rootRef]);
+
+  if (!annotate || !found) return null;
+  const { rows } = found;
+  const first = rows.lines[0]?.line;
+  const last = rows.lines[rows.lines.length - 1]?.line;
+  return (
+    <div className="tx-d-selcmt" style={{ top: found.top, left: found.left }} role="group" aria-label="Selected lines">
+      {rows.deletedOnly ? (
+        <span className="tx-d-selcmt-note">Deleted lines are not in the file now: nothing to comment on</span>
+      ) : (
+        <button
+          type="button"
+          className="tx-btn tx-d-selcmt-btn"
+          // Keep the selection until the click lands.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => commentNow.current()}
+          title="Comment on the selected lines (⌥⌘M)"
+        >
+          Comment on {first === last ? `Selected Line ${first}` : `Selected Lines ${first}–${last}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function picked(annotate: DiffAnnotations | null, line: number | null): boolean {
   const p = annotate?.picking;
   return !!p && line !== null && line >= p.from && line <= p.to;
+}
+
+/** " tx-d-picking" or " tx-d-commented" (#252): the row's comment edge, if any. */
+function edge(annotate: DiffAnnotations | null, line: number | null): string {
+  if (picked(annotate, line)) return ' tx-d-picking';
+  return line !== null && annotate?.commented?.(line) ? ' tx-d-commented' : '';
 }
 
 /** Whatever belongs under a row: cards and drafts ending on its line. */
@@ -1144,7 +1316,7 @@ function UnifiedBody({
         return (
           <Fragment key={i}>
             <div
-              className={`tx-d-row tx-d-${r.line.kind}${picked(annotate, line) ? ' tx-d-picking' : ''}`}
+              className={`tx-d-row tx-d-${r.line.kind}${edge(annotate, line)}`}
               data-new-line={line ?? undefined}
             >
               <LineNo n={r.line.oldNumber} linkPath={null} />
@@ -1201,7 +1373,7 @@ function SplitBody({
               )}
             </div>
             <div
-              className={`tx-d-half tx-d-${p.right ? p.right.line.kind : 'blank'}${picked(annotate, p.right?.line.newNumber ?? null) ? ' tx-d-picking' : ''}`}
+              className={`tx-d-half tx-d-${p.right ? p.right.line.kind : 'blank'}${edge(annotate, p.right?.line.newNumber ?? null)}`}
               data-new-line={p.right?.line.newNumber ?? undefined}
             >
               {p.right ? (

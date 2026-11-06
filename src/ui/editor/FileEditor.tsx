@@ -26,7 +26,7 @@ import { copyText } from '../../lib/clipboard';
 import OverflowMenu, { type OverflowItem } from '../OverflowMenu';
 import { editorKeyOf, isImplementationKey } from './editorKeys';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
-import { useOpenFile } from './openFile';
+import { isReadOnlyRequest, useOpenFile } from './openFile';
 import { formatBytes, imageTypeForPath } from './preview';
 import { looksBinary } from '../../git/fileDiff';
 import FileDiffView from './FileDiffView';
@@ -47,9 +47,13 @@ import {
   moveComment,
   onCommentsChanged,
   relocate,
+  reopenComment,
   resolveComment,
+  resolveComments,
+  shouldAutoResolve,
   type ReviewComment,
 } from '../../db/comments';
+import { CommentsBar } from './CommentViews';
 import {
   commentsExtension,
   linesOfSelection,
@@ -463,7 +467,7 @@ export default function FileEditor({
   task,
   request,
   onClose,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
   active = true,
   onDirtyChange,
   onStep,
@@ -473,6 +477,9 @@ export default function FileEditor({
   onModeChange,
   controlsSlot = null,
 }: FileEditorProps) {
+  // A browsed main checkout, or one request asked to open read-only (the
+  // waiting card's plan, #272; openFile.tsx).
+  const readOnly = readOnlyProp || isReadOnlyRequest(request);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** Content as it was last known to be on disk. The overwrite guard's baseline. */
@@ -1127,6 +1134,9 @@ export default function FileEditor({
   dirtyRef.current = dirty;
   const [fileComments, setFileComments] = useState<ReviewComment[]>([]);
   const [outdated, setOutdated] = useState<ReviewComment[]>([]);
+  /** Comments that resolved themselves while this file was open (#222): their trace, until it closes. */
+  const [traces, setTraces] = useState<ReviewComment[]>([]);
+  useEffect(() => setTraces([]), [task.id, current]);
   const [commentNotice, setCommentNotice] = useState<string | null>(null);
   useEffect(() => {
     if (!commentsOn || current === null) {
@@ -1161,10 +1171,15 @@ export default function FileEditor({
     const text = view.state.doc.toString();
     const placed: PlacedComment[] = [];
     const lost: ReviewComment[] = [];
+    const resolving: ReviewComment[] = [];
     for (const c of fileComments) {
       const at = relocate(c, text);
       if (at.state === 'outdated') {
-        lost.push(c);
+        // Sent, and its lines are gone from the file on disk: Claude acted on
+        // it, so it resolves itself and leaves a trace (#222). Not while the
+        // buffer holds unsaved typing, which is not the file on disk.
+        if (!dirtyRef.current && shouldAutoResolve(c, text)) resolving.push(c);
+        else lost.push(c);
         continue;
       }
       placed.push({ comment: c, from: view.state.doc.line(at.lineStart).from, to: view.state.doc.line(at.lineEnd).to });
@@ -1179,6 +1194,10 @@ export default function FileEditor({
     }
     view.dispatch({ effects: setPlacedComments.of(placed) });
     setOutdated(lost);
+    if (resolving.length > 0) {
+      setTraces((prev) => [...prev.filter((t) => !resolving.some((r) => r.id === t.id)), ...resolving]);
+      reportFailure(resolveComments(task.id, resolving.map((c) => c.id)), 'resolve the comments whose lines changed');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileComments, phase.kind, doc?.key]);
 
@@ -1346,13 +1365,17 @@ export default function FileEditor({
         // A lock alone in a narrow column; the words stay for a screen reader.
         <span
           className="ed-badge ed-readonly"
-          title="Read-only, main checkout: opened with no task selected, this is the project's own folder, so it is shown and never saved"
+          title={
+            readOnlyProp
+              ? "Read-only, main checkout: opened with no task selected, this is the project's own folder, so it is shown and never saved"
+              : 'Read-only: opened from the waiting card, where it is under review, so it is shown and never saved'
+          }
         >
           <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
             <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
           </svg>
-          <span className="ed-readonly-text">Read-Only · Main Checkout</span>
+          <span className="ed-readonly-text">{readOnlyProp ? 'Read-Only · Main Checkout' : 'Read-Only'}</span>
         </span>
       ) : dirty ? (
         // The one main action, and only while there is something to save.
@@ -1478,33 +1501,20 @@ export default function FileEditor({
         </div>
       )}
 
-      {/* A comment whose code is no longer in the file: shown, never pinned to
-          whatever now sits at its old lines. */}
-      {outdated.length > 0 && (
-        <div className="ed-notice ed-cmt-outdated" data-tone="muted">
-          <span>
-            {outdated.length === 1 ? 'A comment' : `${outdated.length} comments`} on this file no longer match its
-            code:
-          </span>
-          {outdated.map((c) => (
-            <span key={c.id} className="ed-cmt-outdated-item" title={c.anchorText}>
-              <span className="ed-cmt-outdated-body">
-                Lines {c.lineStart}–{c.lineEnd}: {c.body.split('\n')[0]}
-              </span>
-              <button type="button" className="ed-btn" onClick={() => reportFailure(resolveComment(task.id, c.id), 'resolve the comment')}>
-                Resolve
-              </button>
-              <button
-                type="button"
-                className="ed-btn ed-danger"
-                onClick={() => reportFailure(deleteComment(task.id, c.id), 'delete the comment')}
-              >
-                Delete
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
+      {/* Comments not on the file's lines, never pinned to whatever now sits
+          at their old ones: one that resolved itself while the file was open
+          (its trace, #222), and an unsent one whose code is gone. The same
+          bar as the Diff mode and the guide. */}
+      <CommentsBar
+        traces={traces}
+        outdated={outdated}
+        onReopen={(c) => {
+          setTraces((prev) => prev.filter((t) => t.id !== c.id));
+          reportFailure(reopenComment(task.id, c.id), 'reopen the comment');
+        }}
+        onResolve={(c) => reportFailure(resolveComment(task.id, c.id), 'resolve the comment')}
+        onDelete={(c) => reportFailure(deleteComment(task.id, c.id), 'delete the comment')}
+      />
 
       <div className="ed-body">
         {phase.kind === 'loading' && <div className="ed-message">Opening {request.path}…</div>}

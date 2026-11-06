@@ -54,6 +54,8 @@ export interface GitBarProps {
   menuSlot?: HTMLElement | null;
   /** Where the main action goes: the first section heading's right end. */
   actionSlot?: HTMLElement | null;
+  /** Opens the branch's Review Guide (#186). Absent: no button. */
+  onGuide?: () => void;
 }
 
 interface MenuItem {
@@ -81,6 +83,7 @@ export default function GitBar({
   onView,
   menuSlot = null,
   actionSlot = null,
+  onGuide,
 }: GitBarProps): ReactNode {
   const pr = usePrStatus(task);
   // `undefined` is "not asked yet": no Create PR until gh has had its say,
@@ -135,6 +138,7 @@ export default function GitBar({
   // This bar appears only when there is a main action (Push, Create PR).
   const menu = (
     <>
+      {onGuide && !chat ? <GuideButton onGuide={onGuide} /> : null}
       {onView ? <ViewToggle view={view} onView={onView} /> : null}
       {/* Grouping is a Changes option: the tree has one order. */}
       {view === 'changes' ? <GroupToggle mode={mode} onMode={onMode} /> : null}
@@ -189,6 +193,27 @@ export default function GitBar({
       </div>
     </div>
     </>
+  );
+}
+
+/**
+ * The branch's Review Guide (#186), in the reading pane. An icon beside the
+ * view toggles, so it costs no row: the head row is the one chrome row.
+ */
+function GuideButton({ onGuide }: { onGuide: () => void }): ReactNode {
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      aria-label="Review Guide"
+      title="Review Guide (⇧⌘G): this branch’s changes grouped by what they do, with a summary of each"
+      onClick={onGuide}
+    >
+      <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+        {/* An open book: read in order. */}
+        <path d="M8 4.25C6.75 3.25 4.75 3 2.25 3.25v9c2.5-.25 4.5 0 5.75 1 1.25-1 3.25-1.25 5.75-1v-9C11.25 3 9.25 3.25 8 4.25zM8 4.25v9" />
+      </svg>
+    </button>
   );
 }
 

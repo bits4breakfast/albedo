@@ -283,6 +283,23 @@ describe('NewTaskDialog branch picker', () => {
     expect(base.disabled).toBe(false);
     return base;
   }
+  /**
+   * Choosing Existing fetches, then reads the branches again; the field is
+   * returned once both are done. Finding the radio, or an enabled Create
+   * button, is not enough under React 19, which lets a test see a commit
+   * before the effects it scheduled have run: the radio was found before the
+   * first branch read had started (an empty list), and Create was seen enabled
+   * in the one commit between the fetch ending and the re-read starting, so
+   * Enter then landed while the dialog was busy again. The second read's own
+   * promise is the one signal that cannot come early.
+   */
+  async function existingField() {
+    fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    await waitFor(() => expect(wt.listBranches).toHaveBeenCalledTimes(2));
+    await vi.mocked(wt.listBranches).mock.results[1]?.value;
+    await waitFor(() => expect(screen.queryByText('Reading branches…')).toBeNull());
+    return screen.getByLabelText('Branch to Check Out') as HTMLInputElement;
+  }
   const options = () => within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent);
 
   it('filters as you type, and Enter picks the top match as the base', async () => {
@@ -344,8 +361,7 @@ describe('NewTaskDialog branch picker', () => {
     created();
     const onCreated = vi.fn();
     render(<NewTaskDialog open onClose={() => {}} onCreated={onCreated} />);
-    fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    const field = screen.getByLabelText('Branch to Check Out') as HTMLInputElement;
+    const field = await existingField();
     act(() => field.focus());
     fireEvent.change(field, { target: { value: 'origin/anna/fix-tz' } });
     const create = screen.getByRole('button', { name: 'Create Worktree' });
@@ -369,8 +385,7 @@ describe('NewTaskDialog branch picker', () => {
 
   it('takes a branch to check out that is not listed', async () => {
     render(<NewTaskDialog open onClose={() => {}} onCreated={() => {}} />);
-    fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    const field = screen.getByLabelText('Branch to Check Out') as HTMLInputElement;
+    const field = await existingField();
     act(() => field.focus());
     expect(options()).toEqual(['mainProject default', 'develop', 'origin/anna/fix-tz']);
     fireEvent.change(field, { target: { value: 'origin/not-fetched' } });

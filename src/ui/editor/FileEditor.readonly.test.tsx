@@ -6,7 +6,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { EditorView } from '@codemirror/view';
-import type { Task } from '../../types';
+import type { OpenFileRequest, Task } from '../../types';
+import { markReadOnly } from './openFile';
 
 const writeTextFile = vi.fn(async () => {});
 vi.mock('@tauri-apps/plugin-fs', () => ({
@@ -36,7 +37,7 @@ const { default: FileEditor } = await import('./FileEditor');
 const checkout: Task = {
   id: -3, title: 'app', projectId: 3, repoPath: '/repo', baseBranch: '', branch: '',
   worktreePath: '/repo', sessionId: null, ownsWorktree: false, createdBranch: false, kind: 'work',
-  status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null,
+  status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
 };
 
 afterEach(() => {
@@ -91,5 +92,38 @@ describe('FileEditor, read-only', () => {
     const view = EditorView.findFromDOM(content)!;
     act(() => view.dispatch({ changes: { from: 0, insert: '// ' } }));
     expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy();
+  });
+});
+
+describe('FileEditor, one request opened read-only (#272)', () => {
+  const work: Task = { ...checkout, id: 9, kind: 'work', worktreePath: '/wt', ownsWorktree: true };
+
+  it('a request marked read-only opens read-only, in a task that is not', async () => {
+    const request: OpenFileRequest = { path: 'src/a.ts' };
+    markReadOnly(request);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    render(<FileEditor task={work} request={request} onClose={() => {}} controlsSlot={slot} />);
+    const badge = await screen.findByText('Read-Only');
+    expect(badge.closest('.ed-readonly')?.getAttribute('title')).toMatch(/waiting card/);
+    const content = await waitFor(() => {
+      const el = document.querySelector('.cm-content');
+      if (!el) throw new Error('editor not mounted yet');
+      return el as HTMLElement;
+    });
+    expect(content.getAttribute('contenteditable')).toBe('false');
+  });
+
+  it('the same path, unmarked, is editable as before', async () => {
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    render(<FileEditor task={work} request={{ path: 'src/a.ts' }} onClose={() => {}} controlsSlot={slot} />);
+    const content = await waitFor(() => {
+      const el = document.querySelector('.cm-content');
+      if (!el) throw new Error('editor not mounted yet');
+      return el as HTMLElement;
+    });
+    expect(content.getAttribute('contenteditable')).toBe('true');
+    expect(screen.queryByText(/Read-Only/)).toBeNull();
   });
 });

@@ -63,16 +63,50 @@ also gets Albedo's own MCP server through `--mcp-config` (additive, never
 binary bundled beside the app (`src-tauri/mcp`, a sidecar; no Node, no
 network, no port), and Albedo sets `ALBEDO_TASK_ID` in its environment: that
 id, set at spawn, is the caller's whole identity, and nothing in a request
-can name another task. It offers three tools and nothing else --
-`create_reminder`, `request_session`, `notify_blocked` -- for things only the
-agent starts; whatever the user starts goes through Albedo directly. A call
-that passes its checks is appended as one JSON line to
-`~/.albedo/inbox/task-<id>.jsonl`, and the app checks every line again (known
-tool, size caps, the task id in the line equal to the file's). A session
-request is never acted on without the user: it waits in Requests until they
-approve it, and approving only opens New Task filled in from it. Nothing
-flows back to the session. `src/capture/inbox.ts` is the only file in the app
+can name another task. It offers four tools and nothing else --
+`create_reminder`, `request_session`, `notify_blocked`, `set_task_summary` --
+for things only the agent starts; whatever the user starts goes through Albedo
+directly. The fourth, `set_task_summary`, is by the owner's decision (issue
+#262): its one line is written to `tasks.summary` and shown beside the task's
+title, never acted on. A call that passes its checks is appended as one JSON
+line to `~/.albedo/inbox/task-<id>.jsonl`, and the app checks every line again
+(known tool, size caps, the task id in the line equal to the file's). A
+session request is never acted on without the user: it waits in Requests
+until they approve it, and approving only opens New Task filled in from it.
+Nothing flows back to the session. `src/capture/inbox.ts` is the only file in the app
 that knows the line's shape.
+
+A sixth, by the owner's decision (2026-11-02, issue #186): for the Review
+Guide only, Albedo may run `claude -p` itself -- one-shot, never in a pty and
+never the task's own session, `--model haiku`, no tools (`--tools ""`), no MCP
+servers, no hooks, no session persistence, a timeout, `ANTHROPIC_API_KEY`
+stripped as for every spawn. It runs on demand only ("Write Guide" /
+"Rewrite"), in `~/.albedo/guide` (so no project's CLAUDE.md or hooks reach
+it), with the change described on stdin; its answer is the one JSON result
+`--output-format json` prints on stdout, parsed -- never terminal bytes. The
+model only proposes groups of block ids and their words; the diff, the ids and
+every count come from git, and Albedo checks the answer against them.
+`src-tauri/src/oneshot.rs` fixes the flags, and `src/guide/writer.ts` is the
+only file that knows that output's shape. Nothing else may be built on this
+run without the same decision.
+
+A seventh, by the owner's decision (2026-11-06, issue #272): for Claude
+Code's plan mode only, the waiting prompt derived from a `PermissionRequest`
+for `ExitPlanMode` keeps its `plan` -- that one field of the tool's input, for
+that one tool, cut to 64K characters -- so the card can show the plan and
+take comments on it. Nothing new is written to disk (the hook line already
+holds the request), and it is still answered only by the user's click
+(Approve; Keep Planning, with the comments as the deny's message).
+`hookEvents.ts` stays the only file that knows it (`PLAN_MODE`).
+
+An eighth, by the owner's decision (2026-11-06, issue #272): the waiting card
+may read the one markdown file a question names, to show it as a document.
+`read_plan_file` (`src-tauri/src/fsscope.rs`) reads one absolute path ending
+in `.md` (also `.md` once symlinks are resolved), a regular file, at most 256
+KB, read only, and grants no fs scope; it refuses every place
+`allow_outside_file` refuses (`denied_roots()`: `~/.albedo`, `~/.claude`,
+`~/.claude.json`, secret stores, the app's own folders). Nothing else in a
+question is opened.
 
 ## Which session a task is on
 
@@ -165,6 +199,7 @@ read it. Three rules came out of the fix:
 src/capture/   transcript watcher + adapter + status derivation   (M1, M2)
 src/db/        SQLite access layer and schema
 src/git/       worktree create/remove/reconcile                    (M3)
+src/guide/     Review Guide: blocks, budget, writer (claude -p), pane (#186)
 src/lsp/       PHPantom client: JSON-RPC framing and the server pool
 src/ui/        React shell, task list, xterm pane                  (M2)
 src/ui/transcript/  transcript renderer and diff component         (M4)

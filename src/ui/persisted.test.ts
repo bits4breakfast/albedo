@@ -130,6 +130,7 @@ describe('KEYS', () => {
   it('keeps every key users already have', () => {
     expect(KEYS).toMatchObject({
       sidebarWidth: 'albedo.shell.sidebarWidth',
+      taskListCollapsed: 'albedo.shell.taskListCollapsed',
       paneMode: 'albedo.shell.paneMode',
       splitRatio: 'albedo.shell.splitRatio',
       orientation: 'albedo.shell.orientation',
@@ -153,5 +154,11 @@ describe('KEYS', () => {
       commentsIntro: 'albedo.comments.intro',
     });
     expect(KEYS.taskModel(3)).toBe('albedo.taskModel.3');
+  });
+});
+
+describe('KEYS: Squash and Merge (#236)', () => {
+  it('remembers the delete-branch choice under its own key', () => {
+    expect(KEYS.mergeDeleteBranch).toBe('albedo.pr.mergeDeleteBranch');
   });
 });

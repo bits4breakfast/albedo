@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getReviewWork, probeReviewWork, setWorkProbeForTests, workFrom } from './reviewWork';
 
-const t = { id: 1, repoPath: '/r', baseBranch: 'main', branch: 'b', worktreePath: '/wt/b' };
+const t = { id: 1, kind: 'work' as const, repoPath: '/r', baseBranch: 'main', branch: 'b', worktreePath: '/wt/b' };
 
 describe('workFrom', () => {
   it('is work when there are commits or uncommitted changes, either one enough', () => {

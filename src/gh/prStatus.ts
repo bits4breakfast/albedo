@@ -1,5 +1,6 @@
 /**
- * Pull-request status, derived from `gh pr view --json`.
+ * Pull-request status, derived from the PR query (`PR_QUERY`, one `gh api
+ * graphql` request: what `gh pr view --json` gives, plus review threads).
  *
  * Pure: no spawning, no Tauri. `gh.ts` runs the command and hands the stdout
  * here, so every decision about what a PR "is" can be pinned with fixture JSON.
@@ -35,6 +36,19 @@ export type ChecksSummary =
   | { kind: 'pending'; pending: number; total: number };
 
 export type ReviewDecision = 'approved' | 'changes-requested' | 'review-required' | null;
+
+/**
+ * GitHub's `mergeable` (#236): whether the head merges into the base without
+ * conflicts. `unknown` is GitHub still computing it -- it is never guessed.
+ */
+export type Mergeable = 'mergeable' | 'conflicting' | 'unknown';
+
+/**
+ * GitHub's `mergeStateStatus` (#236), lower-cased: whether the PR can be
+ * merged now, and if not, roughly why. `unknown` covers UNKNOWN and anything
+ * new.
+ */
+export type MergeStateStatus = 'clean' | 'blocked' | 'behind' | 'dirty' | 'unstable' | 'has-hooks' | 'draft' | 'unknown';
 
 /**
  * One reviewer's latest say (`latestReviews`), kept only when it decides
@@ -79,9 +93,29 @@ export interface PrStatus {
   reviewRequests?: string[];
   /** The PR author's login. Empty when gh did not say. */
   author?: string;
+  /**
+   * `mergeable` and `mergeStateStatus` (#236). Optional, like `reviews`, so a
+   * hand-built status (tests) need not spell them out; `parsePrView` always
+   * sets them, `unknown` when gh did not say.
+   */
+  mergeable?: Mergeable;
+  mergeState?: MergeStateStatus;
   checks: ChecksSummary;
   /** Every check after dedupe, failing first; the tooltip lists them. */
   lines: CheckLine[];
+  /**
+   * The PR's review threads (#278): inline conversations a reviewer started,
+   * and how many are not resolved yet. Conversation comments cannot be
+   * resolved and are not threads. Kept for an open or draft PR only; null
+   * when not known (not asked, or GitHub did not say) -- the PR store keeps
+   * the last known counts then, so a group never flickers on a gap.
+   */
+  reviewThreads?: ReviewThreads | null;
+}
+
+export interface ReviewThreads {
+  total: number;
+  unresolved: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +303,18 @@ function reviewOf(decision: unknown, reviews: PrReview[]): ReviewDecision {
   return null;
 }
 
+function mergeableOf(v: unknown): Mergeable {
+  const m = str(v)?.toUpperCase();
+  return m === 'MERGEABLE' ? 'mergeable' : m === 'CONFLICTING' ? 'conflicting' : 'unknown';
+}
+
+const MERGE_STATES: ReadonlySet<string> = new Set(['clean', 'blocked', 'behind', 'dirty', 'unstable', 'has-hooks', 'draft']);
+
+function mergeStateOf(v: unknown): MergeStateStatus {
+  const m = str(v)?.toLowerCase().replace(/_/g, '-') ?? '';
+  return MERGE_STATES.has(m) ? (m as MergeStateStatus) : 'unknown';
+}
+
 function stateOf(state: unknown, isDraft: unknown, mergedAt: string | null): PrState {
   const s = str(state)?.toUpperCase();
   if (s === 'MERGED' || mergedAt) return 'merged';
@@ -276,22 +322,8 @@ function stateOf(state: unknown, isDraft: unknown, mergedAt: string | null): PrS
   return isDraft === true ? 'draft' : 'open';
 }
 
-/**
- * Parse `gh pr view --json number,url,state,isDraft,title,reviewDecision,
- * statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,
- * latestReviews,reviewRequests,author`. Returns null
- * for anything that is not recognisably a PR -- the caller treats that exactly
- * like "no PR".
- */
-export function parsePrView(stdout: string): PrStatus | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-  const d = data as Record<string, unknown>;
+/** A PR from the record `gh pr view --json` prints, or the same fields flattened from GraphQL. */
+function prFromRecord(d: Record<string, unknown>): PrStatus | null {
   if (typeof d.number !== 'number' || !Number.isFinite(d.number)) return null;
   const mergedAt = str(d.mergedAt);
   const lines = checkLines(d.statusCheckRollup);
@@ -309,9 +341,135 @@ export function parsePrView(stdout: string): PrStatus | null {
     reviews,
     reviewRequests: requestsOf(d.reviewRequests),
     author: loginOf(d.author) ?? '',
+    mergeable: mergeableOf(d.mergeable),
+    mergeState: mergeStateOf(d.mergeStateStatus),
     checks: summarizeChecks(lines),
     lines,
   };
+}
+
+/**
+ * Parse `gh pr view --json number,url,state,isDraft,title,reviewDecision,
+ * statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,
+ * latestReviews,reviewRequests,author,mergeable,mergeStateStatus`. Returns null
+ * for anything that is not recognisably a PR -- the caller treats that exactly
+ * like "no PR". It carries no review threads: `gh pr view` cannot ask for them.
+ */
+export function parsePrView(stdout: string): PrStatus | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  return prFromRecord(data as Record<string, unknown>);
+}
+
+// ---------------------------------------------------------------------------
+// The PR for a branch, in one GraphQL request (#278)
+// ---------------------------------------------------------------------------
+
+/*
+ * The PR store's one request per refresh. It is the query `gh pr view <branch>
+ * --json …` sends itself (measured on gh 2.97 with GH_DEBUG=api), with the
+ * review threads added, so the unresolved count costs no second call: gh
+ * cannot ask `pr view` for threads. One request, 1 point of GitHub's GraphQL
+ * budget (`rateLimit { cost }` measured 1 on a live repo, threads included).
+ *
+ * `first: 10` PRs for the branch, newest first (gh asks for 30: a task's
+ * branch has one or two). Threads: the first 100, which is the count shown;
+ * `totalCount` is exact, the unresolved count is of those 100.
+ */
+export const PR_QUERY = `query PrForBranch($owner: String!, $repo: String!, $branch: String!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(headRefName: $branch, first: 10, orderBy: { field: CREATED_AT, direction: DESC }) {
+      nodes {
+        number url state isDraft title reviewDecision mergedAt headRefName baseRefName headRefOid
+        mergeable mergeStateStatus
+        author { __typename login }
+        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+          __typename
+          ... on StatusContext { context state targetUrl createdAt }
+          ... on CheckRun { name checkSuite { workflowRun { workflow { name } } } status conclusion startedAt completedAt detailsUrl }
+        } } } } } }
+        latestReviews(first: 100) { nodes { author { login } submittedAt state } }
+        reviewRequests(first: 100) { nodes { requestedReviewer {
+          __typename
+          ... on User { login }
+          ... on Bot { login }
+          ... on Team { name slug }
+        } } }
+        reviewThreads(first: 100) { totalCount nodes { isResolved } }
+      }
+    }
+  }
+}`;
+
+function obj(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function nodesOf(v: unknown): unknown[] {
+  const n = obj(v)?.nodes;
+  return Array.isArray(n) ? n : [];
+}
+
+/** A rollup context as `gh pr view` prints it: a CheckRun's workflow flattened to `workflowName`. */
+function rollupOf(commits: unknown): RawRollupEntry[] {
+  const commit = obj(obj(nodesOf(commits)[0])?.commit);
+  return nodesOf(obj(commit?.statusCheckRollup)?.contexts).flatMap((raw) => {
+    const e = obj(raw);
+    if (!e) return [];
+    const suite = obj(e.checkSuite);
+    const workflow = str(obj(obj(obj(suite?.workflowRun)?.workflow))?.name);
+    const flat: RawRollupEntry = { ...e };
+    delete flat.checkSuite;
+    if (workflow) flat.workflowName = workflow;
+    return [flat];
+  });
+}
+
+/** Total and unresolved, or null when GitHub did not say. Exported for tests. */
+export function threadsOf(v: unknown): ReviewThreads | null {
+  const t = obj(v);
+  if (!t || typeof t.totalCount !== 'number' || !Array.isArray(t.nodes)) return null;
+  const unresolved = t.nodes.filter((n) => obj(n)?.isResolved === false).length;
+  return { total: t.totalCount, unresolved };
+}
+
+/**
+ * The PR for `branch` from {@link PR_QUERY}'s answer, chosen as `gh pr view
+ * <branch>` chooses: among the PRs whose head is that branch, an open one
+ * first, else the newest. Null for none, for an error answer, or for anything
+ * that is not recognisably one -- the caller treats all of them as "no PR".
+ */
+export function parsePrGraphql(stdout: string, branch: string): PrStatus | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const repo = obj(obj(obj(data)?.data)?.repository);
+  const nodes = nodesOf(repo?.pullRequests)
+    .map(obj)
+    .filter((n): n is Record<string, unknown> => !!n && n.headRefName === branch);
+  const node = nodes.find((n) => str(n.state)?.toUpperCase() === 'OPEN') ?? nodes[0];
+  if (!node) return null;
+  const author = obj(node.author);
+  const pr = prFromRecord({
+    ...node,
+    // As `gh pr view` prints a bot's login: "app/dependabot".
+    author: author?.__typename === 'Bot' && str(author.login) ? { login: `app/${str(author.login)}` } : author,
+    statusCheckRollup: rollupOf(node.commits),
+    latestReviews: nodesOf(node.latestReviews),
+    reviewRequests: nodesOf(node.reviewRequests).map((n) => obj(n)?.requestedReviewer),
+  });
+  if (!pr) return null;
+  // Threads matter while the PR is up for review; after that, nothing reads them.
+  pr.reviewThreads = pr.state === 'open' || pr.state === 'draft' ? threadsOf(node.reviewThreads) : null;
+  return pr;
 }
 
 // ---------------------------------------------------------------------------

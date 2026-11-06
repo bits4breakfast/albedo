@@ -18,6 +18,7 @@ export function task(id: number, title: string, over: Partial<Task> = {}): Task 
     createdAt: 1000 + id,
     lastActivityAt: 2000 + id,
     seenAt: null,
+    summary: null,
     ...over,
   } as Task;
 }

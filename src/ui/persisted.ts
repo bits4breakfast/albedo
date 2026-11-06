@@ -3,8 +3,10 @@
  * write them.
  *
  * Only per-machine view preferences live here -- widths, which tab, which
- * notice was waved away -- and the composer's unsent drafts and held messages. Anything that has to survive a reinstall or be
- * reprocessed belongs in SQLite. Every key is listed below, so this file is
+ * notice was waved away -- the composer's unsent drafts and held messages,
+ * comments on a waiting plan, and the Review Guide's cache and Reviewed
+ * marks. Anything that has to survive
+ * a reinstall or be reprocessed belongs in SQLite. Every key is listed below, so this file is
  * the whole answer to "what does the app remember outside the database".
  *
  * THE STORED STRINGS ARE A FORMAT. Users already have these values on disk,
@@ -22,6 +24,8 @@ import type { Dispatch, SetStateAction } from 'react';
 export const KEYS = {
   // The frame (App.tsx and its hooks in ui/app/).
   sidebarWidth: 'albedo.shell.sidebarWidth',
+  /** The task list drawn as the rail of group counts (#266). Absent means expanded. */
+  taskListCollapsed: 'albedo.shell.taskListCollapsed',
   paneMode: 'albedo.shell.paneMode',
   splitRatio: 'albedo.shell.splitRatio',
   orientation: 'albedo.shell.orientation',
@@ -50,8 +54,12 @@ export const KEYS = {
   composerPx: 'albedo.composerPx',
   /** Unsent composer drafts, one per task (transcript/drafts.ts owns the shape). */
   composerDrafts: 'albedo.composerDrafts',
+  /** Comments on a waiting plan, per prompt, not sent yet (transcript/planComments.ts owns the shape, #272). */
+  planComments: 'albedo.planComments',
   /** Messages held back while offline, per task (transcript/outbox.ts owns the shape). */
   composerOutbox: 'albedo.composerOutbox',
+  /** A PR's failing checks waiting to go with the next message, per task (ui/transcript/ciFailure.ts owns the shape, #280). */
+  queuedCiFailures: 'albedo.composerCiFailures',
   /** What sessions asked for through Albedo's MCP server (ui/requestQueue.ts owns the shape). */
   requestQueue: 'albedo.requests',
   /** Absent means on. */
@@ -65,6 +73,12 @@ export const KEYS = {
   commentsIntro: 'albedo.comments.intro',
   /** The build last run here, for What's New (ui/whatsNew.ts owns the shape). */
   whatsNewSeen: 'albedo.whatsNew.seen',
+  /** Review Guides, one per task, newest 40 (guide/store.ts owns the shape). */
+  reviewGuides: 'albedo.guide.guides',
+  /** What the Review Guide has marked Reviewed, per task (guide/store.ts owns the shape). */
+  reviewGuideReviewed: 'albedo.guide.reviewed',
+  /** Squash and Merge's "Delete the branch on GitHub" choice (ui/MergeDialog.tsx, #236). Absent means on. */
+  mergeDeleteBranch: 'albedo.pr.mergeDeleteBranch',
   /** One per task: the model its session is launched on. */
   taskModel: (taskId: number) => `albedo.taskModel.${taskId}`,
 } as const;

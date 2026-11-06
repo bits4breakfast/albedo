@@ -1,4 +1,5 @@
-//! Albedo's MCP server (#157): the three things a session can ask Albedo for.
+//! Albedo's MCP server (#157): the four things a session can ask Albedo for
+//! (the fourth, `set_task_summary`, from #262).
 //!
 //! Claude Code starts this binary for every session Albedo spawns
 //! (`--mcp-config`, with `ALBEDO_TASK_ID` in its environment) and talks
@@ -62,8 +63,12 @@ pub const RATE_WINDOW_MS: i64 = 60_000;
 
 const INSTRUCTIONS: &str = "This session runs inside Albedo, the user's desktop cockpit for Claude Code sessions. \
 These tools ask Albedo for things only it can do: a reminder on this task, a new session (only ever started with \
-the user's approval), or telling the user you are blocked on them. Each call is delivered to Albedo and answered \
-at once; none of them waits for the user.";
+the user's approval), telling the user you are blocked on them, or a one-line summary of what this task is about, \
+shown beside its title. Each call is delivered to Albedo and answered \
+at once; none of them waits for the user. \
+As soon as you know what this task is about -- typically right after reading the ticket or issue it is named \
+after -- call `set_task_summary` once with a plain one-line summary (no ticket key), and again only if the task's \
+purpose changes. Its description is not shown until the tool is loaded, so this is the reminder.";
 
 /// What the server needs from the outside world, so tests can supply it.
 pub struct Env {
@@ -237,13 +242,7 @@ impl Server {
                 None,
             ));
         };
-        if ![
-            tools::CREATE_REMINDER,
-            tools::REQUEST_SESSION,
-            tools::NOTIFY_BLOCKED,
-        ]
-        .contains(&name)
-        {
+        if !tools::NAMES.contains(&name) {
             return Err(error(
                 Value::Null,
                 INVALID_PARAMS,
@@ -390,6 +389,10 @@ mod tests {
             json!({"listChanged": false})
         );
         assert_eq!(r["result"]["serverInfo"]["name"], "albedo");
+        // Tool descriptions are deferred in Claude Code; the instructions are
+        // what every session reads, so they carry the ask (#270).
+        let said = r["result"]["instructions"].as_str().unwrap();
+        assert!(said.contains("call `set_task_summary` once"), "{said}");
         assert!(
             r["result"].get("resultType").is_none(),
             "legacy results carry no resultType"
@@ -451,7 +454,7 @@ mod tests {
             .contains(&json!("2025-11-25")));
         let l = s.handle(&req(2, "tools/list", meta)).unwrap();
         assert_eq!(l["result"]["resultType"], "complete");
-        assert_eq!(l["result"]["tools"].as_array().unwrap().len(), 3);
+        assert_eq!(l["result"]["tools"].as_array().unwrap().len(), 4);
         for r in [&d, &l] {
             assert_eq!(r["result"]["ttlMs"], CACHE_TTL_MS);
             assert_eq!(r["result"]["cacheScope"], "public");

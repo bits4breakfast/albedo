@@ -6,6 +6,7 @@ import {
   fetchPrStatus,
   gh,
   loadViewerLogin,
+  mergePr,
   parsePrBase,
   prLookupBranch,
   resetViewerLoginForTests,
@@ -22,17 +23,39 @@ const task = {
   repoPath: '/repo',
 };
 
+/** What `gh api graphql` prints for PR_QUERY (#278): one PR for the branch. */
 const PR_JSON = JSON.stringify({
-  number: 7,
-  url: 'https://github.com/o/r/pull/7',
-  state: 'OPEN',
-  isDraft: false,
-  title: 't',
-  reviewDecision: '',
-  statusCheckRollup: [],
-  mergedAt: null,
-  headRefName: 'feat/x',
+  data: {
+    repository: {
+      pullRequests: {
+        nodes: [
+          {
+            number: 7,
+            url: 'https://github.com/o/r/pull/7',
+            state: 'OPEN',
+            isDraft: false,
+            title: 't',
+            reviewDecision: null,
+            mergedAt: null,
+            headRefName: 'feat/x',
+            commits: { nodes: [] },
+            reviewThreads: { totalCount: 1, nodes: [{ isResolved: false }] },
+          },
+        ],
+      },
+    },
+  },
 });
+
+/** The value of a `-f`/`-F` field in a gh api argv. */
+function field(args: string[], name: string): string | undefined {
+  for (let i = 0; i < args.length - 1; i++) {
+    if ((args[i] === '-f' || args[i] === '-F') && args[i + 1]!.startsWith(`${name}=`)) {
+      return args[i + 1]!.slice(name.length + 1);
+    }
+  }
+  return undefined;
+}
 
 let restore: GhRunner | null = null;
 afterEach(() => {
@@ -79,12 +102,37 @@ describe('gh runner', () => {
 });
 
 describe('fetchPrStatus', () => {
-  it('runs `gh pr view <branch>` in the worktree', async () => {
+  it('asks one `gh api graphql` request in the worktree, threads included (#278)', async () => {
     const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
     const pr = await fetchPrStatus(task);
     expect(pr?.number).toBe(7);
-    expect(calls[0]?.[1].slice(0, 3)).toEqual(['pr', 'view', 'feat/x']);
+    expect(pr?.reviewThreads).toEqual({ total: 1, unresolved: 1 });
+    expect(calls).toHaveLength(1);
+    const args = calls[0]![1];
+    expect(args.slice(0, 2)).toEqual(['api', 'graphql']);
     expect(calls[0]?.[2]).toBe('/wt/x');
+    // gh fills the placeholders from the folder's remote, through -F only.
+    expect(args).toEqual(expect.arrayContaining(['-F', 'owner={owner}', '-F', 'repo={repo}']));
+    // The branch raw (-f): -F would make a branch named "193" a number.
+    expect(args[args.indexOf('branch=feat/x') - 1]).toBe('-f');
+    expect(field(args, 'query')).toContain('reviewThreads(first: 100) { totalCount nodes { isResolved } }');
+  });
+
+  it('a branch whose name is a number is still a branch (#278)', async () => {
+    const calls = install(async () => ({ code: 0, stdout: PR_JSON.replace('"feat/x"', '"193"'), stderr: '' }));
+    expect((await fetchPrStatus({ ...task, branch: '193' }))?.number).toBe(7);
+    expect(calls[0]![1][calls[0]![1].indexOf('branch=193') - 1]).toBe('-f');
+  });
+
+  it('is silent for a GraphQL error answer and for no PR at all', async () => {
+    install(async () => ({
+      code: 1,
+      stdout: '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}',
+      stderr: 'gh: Could not resolve to a Repository',
+    }));
+    expect(await fetchPrStatus(task)).toBeNull();
+    install(async () => ({ code: 0, stdout: '{"data":{"repository":{"pullRequests":{"nodes":[]}}}}', stderr: '' }));
+    expect(await fetchPrStatus(task)).toBeNull();
   });
 
   it('is silent for "no pull requests found" and for logged-out gh', async () => {
@@ -182,10 +230,111 @@ describe('viewerLogin (#180)', () => {
     expect(await loadViewerLogin()).toBe('alice_acme');
   });
 
-  it('the PR view asks for reviews, requests and the author', async () => {
+  it('the PR query asks for reviews, requests and the author', async () => {
     const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
     await fetchPrStatus(task);
-    const fields = calls[0]![1][calls[0]![1].indexOf('--json') + 1]!.split(',');
-    expect(fields).toEqual(expect.arrayContaining(['reviewDecision', 'latestReviews', 'reviewRequests', 'author']));
+    const query = field(calls[0]![1], 'query')!;
+    for (const f of ['reviewDecision', 'latestReviews(first: 100)', 'reviewRequests(first: 100)', 'author {']) {
+      expect(query).toContain(f);
+    }
+  });
+});
+
+describe('fetchPrStatus asks for what the merge action needs (#236)', () => {
+  it('requests mergeable and mergeStateStatus, with the preview gh sends for it', async () => {
+    const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
+    await fetchPrStatus(task);
+    const query = field(calls[0]![1], 'query')!;
+    expect(query).toMatch(/\bmergeable\b/);
+    expect(query).toContain('mergeStateStatus');
+    expect(calls[0]![1]).toEqual(expect.arrayContaining(['-H', 'Accept: application/vnd.github.merge-info-preview+json']));
+  });
+});
+
+describe('mergePr (#236)', () => {
+  const pr = { number: 7, headRefName: 'feat/x' };
+  const ok = { code: 0, stdout: '', stderr: '' };
+
+  it('squash-merges in the worktree, never with --admin, and keeps the branch when asked', async () => {
+    const calls = install(async () => ok);
+    expect(await mergePr(pr, task, { deleteBranch: false })).toEqual({ ok: true });
+    expect(calls).toEqual([['gh', ['pr', 'merge', '7', '--squash'], '/wt/x']]);
+    expect(calls.flatMap((c) => c[1])).not.toContain('--admin');
+    // gh's own --delete-branch would delete the local branch and move the worktree off it.
+    expect(calls.flatMap((c) => c[1])).not.toContain('--delete-branch');
+  });
+
+  it('deletes only the branch on GitHub, through the API, after the merge', async () => {
+    const calls = install(async () => ok);
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({ ok: true });
+    expect(calls.map((c) => c[1])).toEqual([
+      ['pr', 'merge', '7', '--squash'],
+      ['api', '-X', 'DELETE', 'repos/{owner}/{repo}/git/refs/heads/feat/x'],
+    ]);
+    expect(calls.flatMap((c) => c[1])).not.toContain('--admin');
+  });
+
+  it('merges only the head that was shown, when it is known', async () => {
+    const calls = install(async () => ok);
+    await mergePr({ ...pr, headSha: 'abc1234def' }, task, { deleteBranch: false });
+    expect(calls[0]![1]).toEqual(['pr', 'merge', '7', '--squash', '--match-head-commit', 'abc1234def']);
+    // Nothing that is not a sha reaches gh's argv.
+    const more = install(async () => ok);
+    await mergePr({ ...pr, headSha: '--admin' }, task, { deleteBranch: false });
+    expect(more[0]![1]).toEqual(['pr', 'merge', '7', '--squash']);
+  });
+
+  it('a 422 that is not "already gone" is a branch not deleted', async () => {
+    install(async (_p, args) =>
+      args[0] === 'api' ? { code: 1, stdout: '', stderr: 'gh: Cannot delete a protected branch (HTTP 422)' } : ok,
+    );
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({
+      ok: true,
+      branchNotDeleted: 'gh: Cannot delete a protected branch (HTTP 422)',
+    });
+  });
+
+  it('a branch GitHub already deleted is what was asked', async () => {
+    install(async (_p, args) =>
+      args[0] === 'api' ? { code: 1, stdout: '', stderr: 'gh: Reference does not exist (HTTP 422)' } : ok,
+    );
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({ ok: true });
+  });
+
+  it('merged, but the branch could not be deleted: says so, still a merge', async () => {
+    install(async (_p, args) => (args[0] === 'api' ? { code: 1, stdout: '', stderr: 'HTTP 403: forbidden' } : ok));
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({ ok: true, branchNotDeleted: 'HTTP 403: forbidden' });
+  });
+
+  it("a refusal is gh's own message, colour codes stripped, and nothing else runs", async () => {
+    const calls = install(async () => ({
+      code: 1,
+      stdout: '',
+      stderr: '\x1b[31mX\x1b[0m Pull request #7 is not mergeable: the base branch policy prohibits the merge.\n',
+    }));
+    expect(await mergePr(pr, task, { deleteBranch: true })).toEqual({
+      ok: false,
+      message: 'X Pull request #7 is not mergeable: the base branch policy prohibits the merge.',
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('falls back to the main checkout when the worktree is gone', async () => {
+    const calls = install(async (_p, _a, cwd) => {
+      if (cwd === '/wt/x') throw new Error('No such file or directory');
+      return ok;
+    });
+    expect(await mergePr(pr, task, { deleteBranch: false })).toEqual({ ok: true });
+    expect(calls.at(-1)?.[2]).toBe('/repo');
+  });
+
+  it('says so when gh cannot be run at all, and refuses a non-number', async () => {
+    install(async () => {
+      throw new Error('program not found');
+    });
+    expect(await mergePr(pr, task, { deleteBranch: false })).toEqual({ ok: false, message: 'GitHub CLI (gh) could not be run.' });
+    const calls = install(async () => ok);
+    expect((await mergePr({ number: 0, headRefName: 'x' }, task, { deleteBranch: false })).ok).toBe(false);
+    expect(calls).toHaveLength(0);
   });
 });

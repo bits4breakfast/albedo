@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getPrStatus, MIN_AGE_MS, refreshPrStatus, setPrFetcherForTests } from './prStore';
+import { getPrStatus, keepThreads, MIN_AGE_MS, refreshPrStatus, setPrFetcherForTests } from './prStore';
 import { parsePrView, type PrStatus } from './prStatus';
 
 const PR = parsePrView(JSON.stringify({ number: 6, url: 'https://x/6', state: 'OPEN', headRefName: 'b' })) as PrStatus;
@@ -81,5 +81,32 @@ describe('prStore', () => {
     expect(getPrStatus(1)).toBeUndefined();
     await refreshPrStatus(task(1));
     expect(getPrStatus(1)).toBeUndefined();
+  });
+});
+
+describe('review threads not known (#278)', () => {
+  const withThreads = (pr: PrStatus, reviewThreads: PrStatus['reviewThreads']): PrStatus => ({ ...pr, reviewThreads });
+
+  it('keeps the counts last seen for the same open PR, so the group does not flicker', async () => {
+    let next: PrStatus = withThreads(PR, { total: 2, unresolved: 1 });
+    setPrFetcherForTests(async () => next, () => clock);
+    await refreshPrStatus(task(1));
+    next = withThreads(PR, null);
+    clock += MIN_AGE_MS + 1;
+    await refreshPrStatus(task(1));
+    expect(getPrStatus(1)?.reviewThreads).toEqual({ total: 2, unresolved: 1 });
+    // A known answer replaces them, zero included.
+    next = withThreads(PR, { total: 0, unresolved: 0 });
+    clock += MIN_AGE_MS + 1;
+    await refreshPrStatus(task(1));
+    expect(getPrStatus(1)?.reviewThreads).toEqual({ total: 0, unresolved: 0 });
+  });
+
+  it('never carries them to another PR, a closed one, or from nothing', () => {
+    const prev = withThreads(PR, { total: 2, unresolved: 1 });
+    expect(keepThreads(withThreads({ ...PR, number: 9 }, null), prev)?.reviewThreads).toBeNull();
+    expect(keepThreads(withThreads({ ...PR, state: 'closed' }, null), prev)?.reviewThreads).toBeNull();
+    expect(keepThreads(withThreads(PR, null), null)?.reviewThreads).toBeNull();
+    expect(keepThreads(null, prev)).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ mod attention;
 mod fsscope;
 mod fsx;
 mod mcp;
+mod oneshot;
 mod pty;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -123,6 +124,8 @@ const M0008_TASK_KIND: &str = include_str!("../../src/db/migrations/0008_task_ki
 const M0009_SEEN_AT: &str = include_str!("../../src/db/migrations/0009_seen_at.sql");
 /// v10: reminders -- set on a task, back at their time as a card (#156).
 const M0010_REMINDERS: &str = include_str!("../../src/db/migrations/0010_reminders.sql");
+/// v11: tasks.summary -- one line on what the task is about, beside its title (#262).
+const M0011_TASK_SUMMARY: &str = include_str!("../../src/db/migrations/0011_task_summary.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -186,6 +189,12 @@ pub fn run() {
             sql: M0010_REMINDERS,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "tasks.summary",
+            sql: M0011_TASK_SUMMARY,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -243,12 +252,14 @@ pub fn run() {
             fsx::canonicalize_path,
             fsscope::allow_project_dir,
             fsscope::allow_outside_file,
+            fsscope::read_plan_file,
             attention::attention_bounce,
             attention::notify_permission,
             attention::notify_post,
             set_busy_tasks,
             quit_app,
             mcp::mcp_server_path,
+            oneshot::claude_oneshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running albedo");

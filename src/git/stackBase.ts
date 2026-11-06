@@ -14,8 +14,9 @@
  *    parent matched no tip at all, and exactly one branch by commit subject.
  *    This branch then needs rebasing onto its parent.
  *
- * Either way it is a reading, not a fact: the header says it was detected,
- * and the stored base stays what Albedo diffs against.
+ * Either way it is a reading, not a fact: the header says it was detected.
+ * A branch found *on* its parent is measured against that parent, like a PR's
+ * base (`measuredBase`, #237); one on an older copy keeps the stored base.
  */
 
 import { baseOrUpstream, git } from './worktree';

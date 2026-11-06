@@ -92,10 +92,16 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'P', code: 'KeyP', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'R', code: 'KeyR', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'G', code: 'KeyG', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'u', code: 'KeyU', metaKey: true }))?.combo,
       comboOf(ev({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo,
+      comboOf(ev({ key: 't', code: 'KeyT', metaKey: true }))?.combo,
+      comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: '†', code: 'KeyT', metaKey: true, altKey: true }))?.combo,
+      comboOf(ev({ key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }))?.combo,
+      comboOf(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
     ]);
@@ -105,9 +111,10 @@ describe('SHORTCUTS', () => {
     if (shift(sh(100))) reachable.add('shift shift');
     // `editor …` entries are bound in CodeMirror's keymap (FileEditor.tsx),
     // `transcript …` ones in the transcript pane, `new-task …` in its
-    // dialog and `focus …` in focusAreas.ts, none of which this matcher sees.
+    // dialog, `focus …` in focusAreas.ts and `guide …` in the Review Guide
+    // (GuidePane.tsx), none of which this matcher sees.
     for (const s of SHORTCUTS) {
-      if (['editor ', 'transcript ', 'new-task ', 'focus '].some((p) => s.combo.startsWith(p))) continue;
+      if (['editor ', 'transcript ', 'new-task ', 'focus ', 'guide '].some((p) => s.combo.startsWith(p))) continue;
       expect(reachable).toContain(s.combo);
     }
   });
@@ -126,6 +133,18 @@ describe('shell drawer key', () => {
     expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true }))?.combo).toBe('alt+f12');
     expect(comboOf(ev({ key: 'F12', code: 'F12' }))).toBeNull();
     expect(comboOf(ev({ key: 'F12', code: 'F12', altKey: true, metaKey: true }))).toBeNull();
+  });
+
+  it('is ⌘T too, Command only and read from code (#232)', () => {
+    expect(comboOf(ev({ key: 't', code: 'KeyT', metaKey: true }))?.combo).toBe('mod+t');
+    // Another layout's letter on that key is still the key.
+    expect(comboOf(ev({ key: 'y', code: 'KeyT', metaKey: true }))?.combo).toBe('mod+t');
+    // Ctrl+T stays Claude Code's, and the shell's.
+    expect(comboOf(ev({ key: 't', code: 'KeyT', ctrlKey: true }))).toBeNull();
+    // ⇧⌘T is the Transcript tab now (#256), not the shell.
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+t');
+    // ⌥⌘T collapses the task list (#266), not the shell.
+    expect(comboOf(ev({ key: '†', code: 'KeyT', metaKey: true, altKey: true }))?.combo).toBe('mod+alt+t');
   });
 });
 
@@ -242,6 +261,84 @@ describe('remote control', () => {
 
   it('is in the shortcuts help', () => {
     expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+r')?.keys).toBe('⇧⌘R');
+  });
+});
+
+describe('Review Guide (#207)', () => {
+  it('maps ⇧⌘G by physical key', () => {
+    expect(comboOf(ev({ key: 'G', code: 'KeyG', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+g');
+    expect(comboOf(ev({ key: 'I', code: 'KeyG', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+g');
+  });
+
+  it('leaves Ctrl+G to the terminal, and ⌘G and ⌥⇧⌘G unbound', () => {
+    expect(comboOf(ev({ key: 'G', code: 'KeyG', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'g', code: 'KeyG', ctrlKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'g', code: 'KeyG', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '˝', code: 'KeyG', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('is kept from the terminal, and in the shortcuts help', () => {
+    expect(terminalTakesKey(ev({ key: 'G', code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: 'g', code: 'KeyG', ctrlKey: true }))).toBe(true);
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+g')?.keys).toBe('⇧⌘G');
+  });
+});
+
+describe('Transcript and Files tabs (#256)', () => {
+  it('maps ⇧⌘T and ⇧⌘E by physical key', () => {
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+t');
+    expect(comboOf(ev({ key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+e');
+    // Another layout's letter on that key is still the key.
+    expect(comboOf(ev({ key: 'Y', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+t');
+  });
+
+  it('leaves Ctrl+Shift+T/E to the terminals, and ⌘E and ⌥⇧⌘T/E unbound', () => {
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'E', code: 'KeyE', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'e', code: 'KeyE', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'ˇ', code: 'KeyT', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '´', code: 'KeyE', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+  });
+
+  it('are kept from the terminal, and in the shortcuts help', () => {
+    expect(terminalTakesKey(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(terminalTakesKey(ev({ key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+t')?.keys).toBe('⇧⌘T');
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+e')?.keys).toBe('⇧⌘E');
+    expect(SHORTCUTS.find((s) => s.combo === 'guide mod+enter')?.keys).toBe('⌘↩');
+  });
+});
+
+describe('⌥⌘T, collapse the task list (#266)', () => {
+  it('maps by physical key: Option makes `key` "†" on macOS', () => {
+    expect(comboOf(ev({ key: '†', code: 'KeyT', metaKey: true, altKey: true }))?.combo).toBe('mod+alt+t');
+    // Another layout's letter on that key is still the key.
+    expect(comboOf(ev({ key: 'z', code: 'KeyT', metaKey: true, altKey: true }))?.combo).toBe('mod+alt+t');
+  });
+
+  it('leaves ⌘T the shell, ⇧⌘T the Transcript, and Control and ⌥⇧⌘T alone', () => {
+    expect(comboOf(ev({ key: 't', code: 'KeyT', metaKey: true }))?.combo).toBe('mod+t');
+    expect(comboOf(ev({ key: 'T', code: 'KeyT', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+t');
+    expect(comboOf(ev({ key: 'ˇ', code: 'KeyT', metaKey: true, shiftKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '†', code: 'KeyT', ctrlKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '†', code: 'KeyT', metaKey: true, ctrlKey: true, altKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: '†', code: 'KeyT', altKey: true }))).toBeNull();
+  });
+
+  it('is kept from the terminals, and in the shortcuts help', () => {
+    expect(terminalTakesKey(ev({ key: '†', code: 'KeyT', metaKey: true, altKey: true }))).toBe(false);
+    expect(taskTerminalTakesKey(ev({ key: '†', code: 'KeyT', metaKey: true, altKey: true }))).toBe(false);
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+alt+t')?.keys).toBe('⌥⌘T');
+  });
+});
+
+describe('⇧⌘S, send the waiting comments (#258)', () => {
+  it('maps by physical key; leaves ⌘S (Save) and Ctrl+S alone; kept from the terminal; in the help', () => {
+    expect(comboOf(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+s');
+    expect(comboOf(ev({ key: 's', code: 'KeyS', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'S', code: 'KeyS', ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(terminalTakesKey(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))).toBe(false);
+    expect(SHORTCUTS.find((s) => s.combo === 'mod+shift+s')?.keys).toBe('⇧⌘S');
   });
 });
 

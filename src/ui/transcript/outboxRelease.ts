@@ -4,9 +4,11 @@
  *
  * A task's held messages are released, oldest first, through `submitLocked`
  * (send.ts) -- the normal send, one write at a time -- once `canRelease`
- * holds and its session is live. The gate is asked again before each
- * message, so a prompt that opens halfway through stops the rest rather than
- * being typed into. A task whose session is not live is asked to start it
+ * holds and its session is live. Plain messages go together as one write
+ * (#240, `nextRun` in outbox.ts); a slash command goes alone, after the turn
+ * the messages before it start. The gate is asked again before each write,
+ * so a prompt that opens halfway through stops the rest rather than being
+ * typed into. A task whose session is not live is asked to start it
  * (`startPty`, as a send would), and its presence event brings the release
  * back. A failed write is tried again after `RETRY_MS`.
  *
@@ -70,11 +72,16 @@ export function heldLabel(c: ReleaseConditions): string {
   return 'Sending';
 }
 
-/** The line beside `heldLabel` saying when they will go; null when it has none. */
-export function heldHint(c: ReleaseConditions): string | null {
+/**
+ * The line beside `heldLabel` saying when they will go; null when it has
+ * none. `together` is how many go as one message next (#240).
+ */
+export function heldHint(c: ReleaseConditions, together = 1): string | null {
   if (c.headMaybeSent) return null;
-  if (c.offline) return 'sent in order once it is back';
-  if (!c.promptOpen && c.turnRunning) return 'sent when Claude finishes this turn';
+  if (c.offline) return together > 1 ? 'sent together once it is back' : 'sent in order once it is back';
+  if (!c.promptOpen && c.turnRunning) {
+    return together > 1 ? 'sent together when Claude finishes this turn' : 'sent when Claude finishes this turn';
+  }
   return null;
 }
 

@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   checkLines,
+  parsePrGraphql,
   parsePrView,
+  threadsOf,
   prLabel,
   prTooltip,
   reviewChip,
@@ -313,5 +316,104 @@ describe('reviewChip (#180)', () => {
       'Review requested from dave, erin and frank',
       'Click to open the reviews on GitHub',
     ]);
+  });
+});
+
+describe('mergeable and mergeStateStatus (#236)', () => {
+  const view = (extra: Record<string, unknown>) =>
+    parsePrView(JSON.stringify({ number: 3, state: 'OPEN', headRefName: 'b', ...extra }))!;
+
+  it('reads both, lower-cased', () => {
+    const pr = view({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' });
+    expect(pr.mergeable).toBe('conflicting');
+    expect(pr.mergeState).toBe('dirty');
+    expect(view({ mergeable: 'MERGEABLE', mergeStateStatus: 'HAS_HOOKS' })).toMatchObject({ mergeable: 'mergeable', mergeState: 'has-hooks' });
+    for (const s of ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'DRAFT']) {
+      expect(view({ mergeStateStatus: s }).mergeState).toBe(s.toLowerCase());
+    }
+  });
+
+  it('UNKNOWN, missing, or anything new is unknown', () => {
+    expect(view({ mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' })).toMatchObject({ mergeable: 'unknown', mergeState: 'unknown' });
+    expect(view({})).toMatchObject({ mergeable: 'unknown', mergeState: 'unknown' });
+    expect(view({ mergeable: 7, mergeStateStatus: 'SOMETHING_NEW' })).toMatchObject({ mergeable: 'unknown', mergeState: 'unknown' });
+  });
+});
+
+describe('parsePrGraphql (#278)', () => {
+  const fixture = readFileSync(new URL('./fixtures/pr-graphql.json', import.meta.url), 'utf8');
+  const doc = () => JSON.parse(fixture) as { data: { repository: { pullRequests: { nodes: Record<string, unknown>[] } } } };
+
+  it('reads the PR as `gh pr view` does, plus its review threads', () => {
+    const pr = parsePrGraphql(fixture, 'abc-1234-export')!;
+    expect(pr).toMatchObject({
+      number: 12,
+      state: 'open',
+      headRefName: 'abc-1234-export',
+      baseRefName: 'main',
+      headSha: '0123456789abcdef0123456789abcdef01234567',
+      review: 'changes-requested',
+      reviews: [{ author: 'alice', state: 'changes-requested', submittedAt: '2026-11-06T09:00:00Z' }],
+      reviewRequests: ['carol', 'Platform'],
+      author: 'octo',
+      mergeable: 'mergeable',
+      mergeState: 'blocked',
+      reviewThreads: { total: 3, unresolved: 2 },
+    });
+    // The rerun collapsed, the workflow named, the status context kept.
+    expect(pr.lines).toEqual([
+      { name: 'deploy/preview', bucket: 'pending', url: 'https://preview.example/12' },
+      { name: 'CI / linux', bucket: 'pass', url: 'https://github.com/acme/widgets/actions/runs/3/job/4' },
+    ]);
+    expect(pr.checks).toEqual({ kind: 'pending', pending: 1, total: 2 });
+  });
+
+  it('picks an open PR over a newer closed one, as gh does', () => {
+    const d = doc();
+    d.data.repository.pullRequests.nodes.reverse();
+    expect(parsePrGraphql(JSON.stringify(d), 'abc-1234-export')?.number).toBe(12);
+  });
+
+  it('keeps no threads for a closed or merged PR: nothing reads them then', () => {
+    const d = doc();
+    d.data.repository.pullRequests.nodes.shift();
+    const closed = parsePrGraphql(JSON.stringify(d), 'abc-1234-export')!;
+    expect(closed.state).toBe('closed');
+    expect(closed.reviewThreads).toBeNull();
+  });
+
+  it('keeps them for a draft', () => {
+    const d = doc();
+    d.data.repository.pullRequests.nodes[0]!.isDraft = true;
+    expect(parsePrGraphql(JSON.stringify(d), 'abc-1234-export')?.reviewThreads).toEqual({ total: 3, unresolved: 2 });
+  });
+
+  it('only a PR whose head is the branch', () => {
+    expect(parsePrGraphql(fixture, 'abc-9999-other')).toBeNull();
+  });
+
+  it('a bot author as `gh pr view` prints it', () => {
+    const d = doc();
+    d.data.repository.pullRequests.nodes[0]!.author = { __typename: 'Bot', login: 'dependabot' };
+    expect(parsePrGraphql(JSON.stringify(d), 'abc-1234-export')?.author).toBe('app/dependabot');
+  });
+
+  it('null for an error answer, no PR, or anything else', () => {
+    expect(parsePrGraphql('{"data":{"repository":null},"errors":[{"message":"x"}]}', 'b')).toBeNull();
+    expect(parsePrGraphql('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}', 'b')).toBeNull();
+    expect(parsePrGraphql('', 'b')).toBeNull();
+    expect(parsePrGraphql('[]', 'b')).toBeNull();
+  });
+
+  it('threads GitHub did not give are unknown, not none', () => {
+    const d = doc();
+    delete d.data.repository.pullRequests.nodes[0]!.reviewThreads;
+    expect(parsePrGraphql(JSON.stringify(d), 'abc-1234-export')?.reviewThreads).toBeNull();
+    expect(threadsOf({ totalCount: 'x', nodes: [] })).toBeNull();
+    expect(threadsOf({ totalCount: 0, nodes: [] })).toEqual({ total: 0, unresolved: 0 });
+  });
+
+  it('`gh pr view` output carries no threads', () => {
+    expect(parsePrView(JSON.stringify({ number: 1, state: 'OPEN', headRefName: 'b' }))?.reviewThreads).toBeUndefined();
   });
 });

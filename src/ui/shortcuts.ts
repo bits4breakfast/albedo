@@ -95,6 +95,54 @@
  * editorKeys.ts), focusAreas.ts and the native menu: none binds F2 or F6
  * with any modifier.
  *
+ * ## ⇧⌘G: the Review Guide
+ *
+ * Opens the selected task's guide, from `code` (`KeyG`), Command only. It is
+ * Find Previous in CodeMirror's search keymap (and across macOS, beside ⌘G),
+ * so the editor keeps it: its binding passes over the editor's content and
+ * its search panel (`GUIDE_KEY_EXCEPT`), and is live in every other field,
+ * the terminals included, which take it from the pty. Checked against
+ * CodeMirror's default, history and search keymaps, editorKeys.ts,
+ * focusAreas.ts, the native menu (only ⌘Q and ⌘W) and GuidePane's own keys:
+ * nothing else binds G.
+ *
+ * ## ⌘T: the shell
+ *
+ * The same as ⌥F12 (#232): opens or hides the shell drawer, from anywhere,
+ * T for Terminal. Command only, from `code` (`KeyT`): Ctrl+T is Claude Code's
+ * in the task terminal and transpose-chars in the shell, and both keep it.
+ * xterm sends no Command combos to a pty, CodeMirror binds only Ctrl-T, and
+ * the native menu has only ⌘Q and ⌘W, so nothing loses ⌘T.
+ *
+ * ## ⇧⌘T, ⇧⌘E: the Transcript and Files tabs
+ *
+ * Straight to a reading tab (#256), beside ⇧⌘G for the Guide: T for
+ * Transcript, E for Files (VS Code's Explorer). Command only, from `code`, as
+ * the rest of the family: Ctrl+Shift+T/E stay the terminals'. Live while
+ * typing -- they move between tabs, and no field claims them: checked against
+ * CodeMirror's default, history and search keymaps, editorKeys.ts,
+ * focusAreas.ts and the native menu (only ⌘Q and ⌘W).
+ *
+ * ## ⌥⌘T: collapse or expand the task list
+ *
+ * The list as a rail of group counts, or back (#266), as the ‹ beside New
+ * Task, the rail's › and the app ⋯ menu's item. Command and Option, from
+ * `code` (`KeyT`): Option turns `key` into `†` on macOS. Live while typing,
+ * as ⇧⌘T: it changes the frame, not the text. Taken from the terminals
+ * (TAKEN_FROM_TERMINAL), which treat Option as Meta. Checked: CodeMirror's
+ * default, history and search keymaps (their only T is Ctrl-T; their
+ * Mod-Alt keys are G, the arrows and backslash), the editor's own keys
+ * (FileEditor.tsx: Mod-Alt-M and ⌥⌘B; editorKeys.ts), focusAreas.ts, every
+ * other keydown listener in src (none reads T), and the native menu (only
+ * ⌘Q and ⌘W). Nothing else binds ⌥⌘T.
+ *
+ * ## ⇧⌘S: send the waiting comments
+ *
+ * From anywhere (#258), as the Send beside them in Files and the guide: the
+ * selected task's waiting comments go, and the transcript shows. Nothing
+ * waiting, nothing happens. ⌘S is the editor's Save (exact match, so ⇧⌘S
+ * never saves); Ctrl+S stays the terminals'. No CodeMirror keymap binds it.
+ *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
  * `createDoubleShift`.
  */
@@ -125,7 +173,13 @@ export type Combo =
   | 'mod+shift+f'
   | 'mod+shift+p'
   | 'mod+shift+r'
+  | 'mod+shift+g'
   | 'mod+u'
+  | 'mod+t'
+  | 'mod+shift+t'
+  | 'mod+alt+t'
+  | 'mod+shift+e'
+  | 'mod+shift+s'
   | 'alt+f12'
   | 'shift+f6'
   | 'f2';
@@ -148,7 +202,11 @@ export type Gesture =
   | 'editor mod+alt+m'
   | 'transcript mod+arrowdown'
   | "transcript mod+'"
-  | 'new-task mod+enter';
+  | 'new-task mod+enter'
+  | 'guide mod+enter'
+  | 'guide alt+arrows'
+  | 'guide arrows'
+  | 'guide alt+enter';
 
 export interface ShortcutDoc {
   combo: Combo | Gesture;
@@ -169,6 +227,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+]', keys: '⌘]', description: 'Next Task' },
   { combo: 'mod+shift+[', keys: '⇧⌘[', description: 'Previous Project' },
   { combo: 'mod+shift+]', keys: '⇧⌘]', description: 'Next Project' },
+  { combo: 'mod+alt+t', keys: '⌥⌘T', description: 'Collapse / Expand the Task List' },
   { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous Reading Tab' },
   { combo: 'mod+arrowright', keys: '⌘→', description: 'Next Reading Tab' },
   { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle PTY / Split / Transcript (not on the Editor tab)' },
@@ -185,6 +244,10 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
   { combo: 'mod+shift+r', keys: '⇧⌘R', description: 'Make the Selected Task Available Remotely (Asks First)' },
+  { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
+  { combo: 'mod+shift+t', keys: '⇧⌘T', description: 'Transcript Tab' },
+  { combo: 'mod+shift+e', keys: '⇧⌘E', description: 'Files Tab (or the Files column, when pinned)' },
+  { combo: 'mod+shift+s', keys: '⇧⌘S', description: 'Send the Waiting Comments, then Show the Transcript' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   {
     combo: 'shift+f6',
@@ -204,8 +267,13 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'editor mod+alt+m', keys: '⌥⌘M', description: 'In the Editor: Comment on the Selected Lines' },
   { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
   { combo: "transcript mod+'", keys: '⌘\'', description: 'Transcript: Comment on the Selected Text (inside one message)' },
+  { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
+  { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
+  { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
+  { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
+  { combo: 'mod+t', keys: '⌘T', description: 'Shell in the Main Checkout (the same as ⌥F12)' },
   { combo: 'mod+=', keys: '⌘+', description: 'Bigger Text' },
   { combo: 'mod+-', keys: '⌘−', description: 'Smaller Text' },
   { combo: 'mod+0', keys: '⌘0', description: 'Actual Size' },
@@ -281,6 +349,27 @@ export function comboOf(
   if (e.code === 'KeyR' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+r', digit: null };
   }
+  // The Transcript and Files tabs (#256), on the same terms.
+  if (e.code === 'KeyT' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+t', digit: null };
+  }
+  // Collapse or expand the task list (#266): Command and Option, from `code`
+  // (⌥T is † on macOS). Before the Alt check, which would refuse it.
+  if (e.code === 'KeyT' && e.metaKey && e.altKey && !e.shiftKey && !e.ctrlKey) {
+    return { combo: 'mod+alt+t', digit: null };
+  }
+  if (e.code === 'KeyE' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+e', digit: null };
+  }
+  // Send the waiting comments (#258), on the same terms: Ctrl+S is the
+  // terminal's (XOFF), and ⌘S stays the editor's Save.
+  if (e.code === 'KeyS' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+s', digit: null };
+  }
+  // The Review Guide (#207), on the same terms: Ctrl+G belongs to the terminal.
+  if (e.code === 'KeyG' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+shift+g', digit: null };
+  }
   // Project step. Command only and read from `code`; see the module comment.
   if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: e.code === 'BracketLeft' ? 'mod+shift+[' : 'mod+shift+]', digit: null };
@@ -294,6 +383,12 @@ export function comboOf(
   // the O family.
   if (e.code === 'F12' && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
     return { combo: 'alt+f12', digit: null };
+  }
+  // The shell again, T for Terminal (#232). Command only, from `code`:
+  // Ctrl+T is Claude Code's own key in the task terminal, and the shell's
+  // transpose-chars, so neither loses it.
+  if (e.code === 'KeyT' && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+    return { combo: 'mod+t', digit: null };
   }
   // Rename. Function keys, read from `code`; see the module comment.
   if (e.code === 'F6' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -335,7 +430,17 @@ export function comboOf(
 }
 
 /** Combos the app takes from a focused terminal rather than sharing them. */
-const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set(['mod+alt+digit', 'mod+shift+[', 'mod+shift+]', 'mod+shift+r']);
+const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set([
+  'mod+alt+digit',
+  'mod+shift+[',
+  'mod+shift+]',
+  'mod+shift+r',
+  'mod+shift+g',
+  'mod+shift+t',
+  'mod+alt+t',
+  'mod+shift+e',
+  'mod+shift+s',
+]);
 
 /**
  * For xterm's `attachCustomKeyEventHandler`: false when the key is one of the
@@ -354,6 +459,12 @@ export function terminalTakesKey(e: KeyboardEvent): boolean {
 
 /** Combos the Claude Code task terminal gives up as well; the shell drawer keeps them. */
 const TAKEN_FROM_TASK_TERMINAL: ReadonlySet<Combo> = new Set(['shift+f6', 'f2']);
+
+/**
+ * For ⇧⌘G's `typingExcept`: every field counts as not typing, except inside
+ * the code editor, where the key is Find Previous.
+ */
+export const GUIDE_KEY_EXCEPT = ':is(input, textarea, select):not(.cm-editor *)';
 
 /** Marks the input of a task's Claude Code terminal (Terminal.tsx), not the shell drawer's. */
 export const TASK_TERMINAL_ATTR = 'data-task-terminal';

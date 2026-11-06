@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canSquashRebase, createPrPrompt, nextStep, pushPrompt, squashRebasePrompt } from './gitPrompts';
+import { canSquashRebase, createPrPrompt, nextStep, pushPrompt, resolveConflictsPrompt, squashRebasePrompt } from './gitPrompts';
+import { actionLabelOf } from './transcript/envelopes';
 
 const task = { branch: 'albedo/fix-retry', baseBranch: 'main' };
 
@@ -70,5 +71,24 @@ describe('nextStep', () => {
     expect(nextStep({ ...base, prable: false })).toBe('none');
     expect(nextStep({ ...base, commits: 0 })).toBe('none');
     expect(nextStep({ ...base, hasPr: null })).toBe('none');
+  });
+});
+
+describe('resolve conflicts (#236)', () => {
+  const pr = { number: 21, baseRefName: 'release' };
+  const text = resolveConflictsPrompt(task, pr);
+
+  it('is its own action, named in the transcript', () => {
+    expect(text).toMatch(/^<albedo-action kind="resolve-conflicts">\n[\s\S]*\n<\/albedo-action>$/);
+    expect(actionLabelOf(text)).toBe('Resolve Conflicts');
+  });
+
+  it("rebases onto the PR's own base on origin, resolves, checks, and pushes with a lease", () => {
+    expect(text).toContain('PR #21');
+    expect(text).toContain('Fetch first, then rebase `albedo/fix-retry` onto `origin/release`');
+    expect(text).toMatch(/not obvious, stop and ask me/);
+    expect(text).toMatch(/tests/);
+    expect(text).toContain('push `albedo/fix-retry` with `--force-with-lease`');
+    expect(text).not.toContain('origin/main');
   });
 });

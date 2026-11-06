@@ -3,6 +3,7 @@ import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import App from './App';
 import { applyPlatform, watchFullscreen } from './lib/platform';
+import { keepEscapeFromLeavingFullscreen } from './lib/escapeKeepsFullscreen';
 import { applyStoredTheme } from './ui/theme';
 
 // Before the first paint, not in an effect: an effect would render one frame
@@ -10,6 +11,8 @@ import { applyStoredTheme } from './ui/theme';
 applyStoredTheme();
 applyPlatform();
 void watchFullscreen();
+// Escape is the app's, never the window's "leave full screen" (#267).
+keepEscapeFromLeavingFullscreen();
 
 const host = document.getElementById('root');
 if (!host) throw new Error('Albedo: #root is missing from index.html');

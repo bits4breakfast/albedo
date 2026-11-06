@@ -23,13 +23,16 @@ import { PastedTexts } from './PastedTexts';
 import { markMentions, unmarkMentions, type Mention } from './mentions';
 import { MentionPopover, mentionOptionId } from './MentionPopover';
 import { useMentions } from './useMentions';
-import { onComposerInsert, onAttachRequest, type ComposerInsert } from './composerBridge';
-import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, takeComments, useComments } from './drafts';
-import { composeWithComments, markQuotes, unmarkQuotes } from './transcriptQuotes';
+import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type ComposerInsert } from './composerBridge';
+import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
+import { markQuotes, unmarkQuotes } from './transcriptQuotes';
 import { PassageRevealContext, revealPassageIn, type RevealPassage } from './passages';
 import { PassageComments } from './PassageComments';
 import { WaitingComments } from './WaitingComments';
-import { editHeld, holdMessage, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
+import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useWaitingCodeComments, type Carried } from './codeComments';
+import { queuedCiOf, useQueuedCi, type QueuedCiFailure } from './ciFailure';
+import { useCommentsIntro } from '../commentsIntro';
+import { editHeld, holdMessage, nextRunSize, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
 import {
   conditionsFor,
   heldHint,
@@ -826,7 +829,8 @@ export function QueuedStrip({
 /** The outbox's part of the band, headed by what its messages wait for. */
 function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessage[] }): ReactNode {
   const conditions = useReleaseConditions(taskId);
-  const hint = heldHint(conditions);
+  // Held messages go together, as one (#240): the hint says so when they will.
+  const hint = heldHint(conditions, nextRunSize(taskId));
   return (
     <>
       <div className="tx-queued-head">
@@ -1021,22 +1025,7 @@ const SEND_NOW_NOTE_MS = 3_000;
 // ---------------------------------------------------------------------------
 
 /** Text handed in from elsewhere, waiting to be sent (see composerBridge). */
-type InsertWatcher = Pick<ComposerInsert, 'onSent' | 'comments'>;
-
-/**
- * The review comments a held body carries, and the watchers left once they
- * are handed to it: a watcher whose comments are all in the body is done.
- */
-export function commentsHeldIn(body: string, watchers: readonly InsertWatcher[]): { ids: number[]; left: InsertWatcher[] } {
-  const ids: number[] = [];
-  const left: InsertWatcher[] = [];
-  for (const w of watchers) {
-    const found = (w.comments ?? []).filter((c) => body.includes(c.marker));
-    ids.push(...found.map((c) => c.id));
-    if (found.length === 0) left.push(w);
-  }
-  return { ids, left };
-}
+type InsertWatcher = Pick<ComposerInsert, 'onSent'>;
 
 /** Whole pixels; auto-grow (null) removes the key. */
 const composerPxCodec: Codec<number | null> = {
@@ -1048,6 +1037,19 @@ const composerPxCodec: Codec<number | null> = {
 };
 
 /** The height the user dragged it to, or null for auto-grow. Never throws. */
+/** What a message made of these carries, so each leaves the waiting list with it. */
+function carriedBy(
+  comments: readonly { id: string }[],
+  code: readonly { id: number }[],
+  ci: QueuedCiFailure | null,
+): Carried {
+  return {
+    transcript: comments.map((c) => c.id),
+    code: code.map((c) => c.id),
+    ...(ci ? { ci: ci.sha } : {}),
+  };
+}
+
 function storedComposerPx(): number | null {
   return readPersisted(KEYS.composerPx, composerPxCodec, null);
 }
@@ -1122,6 +1124,18 @@ export function Composer({
   const [text, setText] = useState('');
   /** Comments on transcript passages, waiting to go with the next message (#187). */
   const waiting = useComments(taskId);
+  /**
+   * And comments on code, from the editor, the guide or a transcript diff:
+   * one queue (#222). Read through refs at Send, which may run between renders.
+   */
+  const waitingCode = useWaitingCodeComments(taskId);
+  const waitingCodeRef = useRef(waitingCode);
+  waitingCodeRef.current = waitingCode;
+  /** A PR's failing checks, queued like a comment (#280); read from the store at Send. */
+  const waitingCi = useQueuedCi(taskId);
+  const intro = useCommentsIntro();
+  const introRef = useRef(intro);
+  introRef.current = intro;
   /** Large text pastes kept aside; the draft holds their placeholders. */
   const pastesRef = useRef(new Map<number, string>());
   const pasteSeqRef = useRef(0);
@@ -1146,7 +1160,7 @@ export function Composer({
    * the list only once it is delivered or held.
    */
   const pendingBoxRef = useRef<string | null>(null);
-  const pendingCommentsRef = useRef<readonly string[]>([]);
+  const pendingCommentsRef = useRef<Carried>(NOTHING_CARRIED);
   const inFlightRef = useRef(false);
   const timerRef = useRef(0);
   /**
@@ -1257,7 +1271,7 @@ export function Composer({
       onComposerInsert((insert) => {
         if (insert.taskId !== taskId) return false;
         setText((prev) => (prev.trim() === '' ? insert.text : `${prev.replace(/\s+$/, '')}\n\n${insert.text}`));
-        if (insert.onSent || insert.comments) insertWatchersRef.current.push({ onSent: insert.onSent, comments: insert.comments });
+        if (insert.onSent) insertWatchersRef.current.push({ onSent: insert.onSent });
         requestAnimationFrame(() => {
           grow();
           const el = ref.current;
@@ -1327,11 +1341,12 @@ export function Composer({
      them now, in the body, and its editor shows them (#187).
   */
   const holdBody = useCallback(
-    (body: string, transcriptComments: readonly string[] = []) => {
-      const { ids, left } = commentsHeldIn(body, insertWatchersRef.current);
-      holdMessage(taskId, body, Date.now(), ids);
-      takeComments(taskId, transcriptComments);
-      insertWatchersRef.current = left;
+    (body: string, carried: Carried = NOTHING_CARRIED) => {
+      // Held: the outbox keeps the code comments' ids and marks them sent on
+      // delivery (outboxRelease.ts); the transcript ones leave the list now,
+      // with the message that carries them.
+      holdMessage(taskId, body, Date.now(), carried.code);
+      takeHeldCarried(taskId, carried);
       setText('');
       pastesRef.current = new Map();
       pasteSeqRef.current = 0;
@@ -1369,9 +1384,9 @@ export function Composer({
     if (body === null) return;
     pendingRef.current = null; // taken: a repeat presence event finds nothing
     const box = pendingBoxRef.current ?? body;
-    const commentIds = pendingCommentsRef.current;
+    const carried = pendingCommentsRef.current;
     pendingBoxRef.current = null;
-    pendingCommentsRef.current = [];
+    pendingCommentsRef.current = NOTHING_CARRIED;
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
     const owner = taskId;
@@ -1382,7 +1397,7 @@ export function Composer({
       // (after an answer, the turn goes on): it joins the outbox. The band
       // shows it from now, so it is not sent as far as the box is concerned
       // -- no echo, no `onSent` -- or it would be on screen twice.
-      holdBody(body, commentIds);
+      holdBody(body, carried);
       setAwaiting(false);
       setHeld(false);
       inFlightRef.current = false;
@@ -1394,7 +1409,7 @@ export function Composer({
       threw = true;
     }
     // Delivered: the comments it carried are sent, whichever task is on screen.
-    if (ok) takeComments(owner, commentIds);
+    if (ok) takeCarried(owner, carried);
     // Left while it was being written: the box and its state are another
     // task's now (see `leftDuringSend`). It comes back with its pastes folded
     // and its references as tokens; its comments never left the list.
@@ -1635,6 +1650,52 @@ export function Composer({
     [taskId, attachFiles],
   );
 
+  /*
+     The waiting comments alone, asked for from the Review Guide (#254): the
+     message Send with an empty box would make, and the draft is left as it
+     is -- so none of send()'s box handling. Straight to the session when it
+     is live and idle; otherwise into the outbox, where it waits exactly as a
+     held message does (a turn running, a prompt open, offline, the session
+     not up) and is shown as held in the transcript, with Send Now.
+  */
+  const sendComments = useCallback(async () => {
+    const comments = commentsOf(taskId);
+    const code = waitingCodeRef.current;
+    const ci = queuedCiOf(taskId);
+    if (comments.length === 0 && code.length === 0 && ci === null) return;
+    const body = composeMessage(code, introRef.current, comments, '', ci);
+    const carried = carriedBy(comments, code, ci);
+    const owner = taskId;
+    const hold = () => {
+      holdMessage(owner, body, Date.now(), carried.code);
+      takeHeldCarried(owner, carried);
+    };
+    if (inFlightRef.current || mustHold(owner) || promptOpen(owner, status) || !hasLivePty(owner)) {
+      hold();
+      return;
+    }
+    try {
+      if (await submitLocked(owner, body)) {
+        takeCarried(owner, carried);
+        onSent(body);
+      } else hold();
+    } catch {
+      hold();
+    }
+  }, [taskId, status, onSent]);
+
+  useEffect(
+    () =>
+      onSendCommentsRequest((id) => {
+        if (id !== taskId) return false;
+        // Nothing waiting: not taken, so the caller leaves the tab alone.
+        if (commentsOf(taskId).length === 0 && waitingCodeRef.current.length === 0 && queuedCiOf(taskId) === null) return false;
+        void sendComments();
+        return true;
+      }),
+    [taskId, sendComments],
+  );
+
   /** Take the held message back, so a prompt nobody answers is not a trap. */
   const cancelHold = useCallback(() => {
     pendingRef.current = null;
@@ -1649,15 +1710,20 @@ export function Composer({
     // Waiting comments go with the message, before the box's text (#187) --
     // unless the box is a command, which goes alone and leaves them waiting:
     // after a quote it would no longer be a command.
-    const comments = isSlashCommand(text) ? [] : commentsOf(taskId);
-    if (text.trim().length === 0 && comments.length === 0) return;
+    const command = isSlashCommand(text);
+    const comments = command ? [] : commentsOf(taskId);
+    // Code comments too (#222): every waiting one goes with this message.
+    const code = command ? [] : waitingCodeRef.current;
+    // And a PR's failing checks, queued for Claude (#280), ahead of them all.
+    const ci = command ? null : queuedCiOf(taskId);
+    if (text.trim().length === 0 && comments.length === 0 && code.length === 0 && ci === null) return;
     // What Claude Code receives: the draft with its paste placeholders filled,
     // each paste in its marker so the transcript can fold it again (#155),
     // and each picked reference in its own (#154). References first: a
     // paste's text is never read for tokens.
     const box = markPastes(markMentions(text, mentionsRef.current), pastesRef.current);
-    const body = composeWithComments(comments, box);
-    const commentIds = comments.map((c) => c.id);
+    const body = composeMessage(code, introRef.current, comments, box, ci);
+    const carried = carriedBy(comments, code, ci);
     /*
        It waits in the outbox (outbox.ts) rather than in Claude Code's queue
        while offline (Claude Code retries, and may drop it), behind messages
@@ -1667,7 +1733,7 @@ export function Composer({
        session (send.ts).
     */
     if (mustHold(taskId)) {
-      holdBody(body, commentIds);
+      holdBody(body, carried);
       return;
     }
     /*
@@ -1686,7 +1752,7 @@ export function Composer({
       }
       pendingRef.current = body;
       pendingBoxRef.current = box;
-      pendingCommentsRef.current = commentIds;
+      pendingCommentsRef.current = carried;
       inFlightRef.current = true;
       setHeld(true);
       setNotice('Waiting — Claude is asking you something. Answer it in the terminal and your message sends itself.');
@@ -1703,7 +1769,7 @@ export function Composer({
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
       const ok = await submitLocked(owner, body);
-      if (ok) takeComments(owner, commentIds);
+      if (ok) takeCarried(owner, carried);
       if (leftDuringSend(owner, ok, text, pastes, mentions)) return;
       if (ok) {
         succeeded(owner, body);
@@ -1714,7 +1780,7 @@ export function Composer({
         // Coming up. Hold the body and let the presence event send it.
         pendingRef.current = body;
         pendingBoxRef.current = box;
-        pendingCommentsRef.current = commentIds;
+        pendingCommentsRef.current = carried;
         setAwaiting(true);
         setNotice('Starting the session — your message sends as soon as it is ready.');
         timerRef.current = window.setTimeout(() => {
@@ -1756,8 +1822,10 @@ export function Composer({
     : awaiting
     ? 'Starting the terminal…'
     : live
-      ? waiting.length > 0
+      ? waiting.length + waitingCode.length > 0
         ? 'Add a message, or send the comments as they are…'
+        : waitingCi
+        ? 'Add a message, or send the CI failure as it is…'
         : 'Message this conversation…'
       : canResume(taskId)
         ? 'Terminal not running — send to pick this conversation back up.'
@@ -1796,7 +1864,7 @@ export function Composer({
           ) : null}
         </div>
       ) : null}
-      <WaitingComments taskId={taskId} frozen={busy || awaiting || held} onJump={onJump} />
+      <WaitingComments taskId={taskId} frozen={busy || awaiting || held} onJump={onJump} code={waitingCode} />
       {/* claude.ai's shape: one rounded box holding the text and, under it,
           the controls -- the model and Send at the bottom right. Beside a
           tall box they floated at its foot; inside it they move with it. */}
@@ -1870,7 +1938,7 @@ export function Composer({
           type="button"
           className="tx-composer-send"
           onClick={() => void send()}
-          disabled={busy || awaiting || held || (text.trim().length === 0 && waiting.length === 0)}
+          disabled={busy || awaiting || held || (text.trim().length === 0 && waiting.length === 0 && waitingCode.length === 0 && waitingCi === null)}
           title="Send (Enter). Shift+Enter for a newline"
           aria-label="Send"
         >

@@ -146,12 +146,13 @@ export type UserBlock =
  * Claude reads exactly what it would read without the wrapper, and the tag
  * only names it. Written and read here, so this file still owns every tag.
  */
-export type AlbedoAction = 'push' | 'create-pr' | 'squash-rebase';
+export type AlbedoAction = 'push' | 'create-pr' | 'squash-rebase' | 'resolve-conflicts';
 
 const ACTION_LABEL: Record<AlbedoAction, string> = {
   push: 'Push',
   'create-pr': 'Create PR',
   'squash-rebase': 'Squash & Rebase',
+  'resolve-conflicts': 'Resolve Conflicts',
 };
 
 function isAction(v: string | null): v is AlbedoAction {

@@ -18,8 +18,9 @@ import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import { seenUpdate } from './ui/taskGroups';
-import { createPrPrompt, pushPrompt } from './ui/gitPrompts';
+import { createPrPrompt, resolveConflictsPrompt, pushPrompt } from './ui/gitPrompts';
 import { sendPrompt } from './ui/sendPrompt';
+import { useMeasuredBase } from './ui/useMeasuredBase';
 import Subagents from './ui/Subagents';
 import {
   announcementFor,
@@ -32,7 +33,7 @@ import {
   watchFocus,
   type AttentionKind,
 } from './ui/attention';
-import { TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
+import { GUIDE_KEY_EXCEPT, TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
 import { stepProjectTab } from './ui/projectStep';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
@@ -41,7 +42,7 @@ import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
 import Terminal, { focusPty, hasLivePty, usePtyLiveSince } from './ui/Terminal';
-import { useFocusAreaCycle } from './ui/focusAreas';
+import { focusArea, useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
@@ -68,8 +69,10 @@ import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
 import ProjectBar from './ui/ProjectBar';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
-import { onComposerInsert, requestAttach } from './ui/transcript/composerBridge';
-import { FileOpenContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
+import { onComposerInsert, onShowTranscriptRequest, requestAttach, sendWaitingComments } from './ui/transcript/composerBridge';
+import GuidePane from './guide/GuidePane';
+import { onGuideRequest, requestGuide } from './guide/openGuide';
+import { FileOpenContext, FilePathContext, FileTextContext, markReadOnly, type OpenFileOptions } from './ui/editor/openFile';
 import { markUserActivated } from './ui/editor/outsideFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
@@ -155,6 +158,7 @@ export default function App() {
     archive,
     setDone,
     rename,
+    setSummary,
     markSeen,
   } = useTasks();
 
@@ -163,6 +167,8 @@ export default function App() {
 
   const {
     sidebarWidth,
+    taskListCollapsed,
+    setTaskListCollapsed,
     mode,
     setMode,
     orientation,
@@ -299,6 +305,8 @@ export default function App() {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+  /** What the selected task merges into, for its Create PR (#237): the header's base. */
+  const selectedBase = useMeasuredBase(selected);
   /**
    * What's New after an update (#147). It waits while another dialog or the
    * "waiting on you" card is on screen (checked in the DOM), and while the
@@ -325,6 +333,11 @@ export default function App() {
   const saveTitle = useCallback(
     (task: Task, title: string) => void renameTaskAndSession(task, title, rename),
     [rename],
+  );
+  /** The summary from the rename field (#262): Albedo's only; nothing goes to the session. */
+  const saveSummary = useCallback(
+    (task: Task, summary: string | null) => void setSummary(task.id, summary),
+    [setSummary],
   );
   /**
    * ⇧⌘R's confirmation shows only while it still has something to confirm:
@@ -373,6 +386,7 @@ export default function App() {
       createdAt: 0,
       lastActivityAt: null,
       seenAt: null,
+      summary: null,
     };
   }, [selected, activeProject]);
   /** Whose main checkout the shell drawer is in: the project the list shows. */
@@ -573,6 +587,17 @@ export default function App() {
     [],
   );
 
+  /** A transcript's path as the selected task's worktree-relative one (#222). */
+  const relativeInWorktree = useCallback(async (path: string): Promise<string | null> => {
+    const task = selectedRef.current;
+    if (!task) return null;
+    try {
+      return (await resolveInWorktree(task.worktreePath, path))?.relative ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   /*
    * Which tasks are asking for attention, and the window focus that decides
    * whether the ask is a dock bounce or a pulse in the list. See ui/attention.
@@ -683,6 +708,7 @@ export default function App() {
       // The exact object the editor gets: only it may grant a file outside
       // the worktree, and only because a person clicked (outsideFile.ts).
       if (options?.activated) markUserActivated(req);
+      if (options?.readOnly) markReadOnly(req);
       setOpenRequest({ taskId, request: req, step: options?.step });
       // A step keeps the Files tab on screen: the list is what is being walked.
       setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
@@ -793,6 +819,31 @@ export default function App() {
       }),
     [],
   );
+  // Comments just sent (#254, #258): the transcript, where they land.
+  useEffect(
+    () =>
+      onShowTranscriptRequest(() => {
+        setRightTab('transcript');
+        setMode((m) => (m === 'pty' ? 'split' : m));
+      }),
+    [],
+  );
+
+  /** Tasks whose Review Guide tab is open (#186): opened from Files or ⋯. */
+  const [guideIds, setGuideIds] = useState<ReadonlySet<number>>(() => new Set());
+  useEffect(
+    () =>
+      onGuideRequest((taskId) => {
+        setGuideIds((prev) => (prev.has(taskId) ? prev : new Set([...prev, taskId])));
+        setRightTab('guide');
+        setMode((m) => (m === 'pty' ? 'split' : m));
+      }),
+    [],
+  );
+  const closeGuide = useCallback((taskId: number) => {
+    setGuideIds((prev) => new Set([...prev].filter((id) => id !== taskId)));
+    setRightTab((t) => (t === 'guide' ? 'transcript' : t));
+  }, []);
 
   /** Bumped by ⌘W: the editor closes its active tab. */
   const [editorCloseSignal, setEditorCloseSignal] = useState(0);
@@ -838,6 +889,8 @@ export default function App() {
   // The project view has no transcript: Files, or the editor once a file is
   // open. With Files pinned as a column and nothing open, its 'transcript'
   // slot says how to open one.
+  /** The guide only exists for the selected task, once it was asked for. */
+  const guideTask = selected && guideIds.has(selected.id) ? selected : null;
   const activeTab: RightTab = projectView
     ? rightTab === 'editor' && editorTask
       ? 'editor'
@@ -846,7 +899,7 @@ export default function App() {
         : editorTask
           ? 'editor'
           : 'transcript'
-    : rightTab === 'editor' && !editorTask
+    : (rightTab === 'editor' && !editorTask) || (rightTab === 'guide' && !guideTask)
       ? 'transcript'
       : rightTab === 'files' && filesColumnShown
         ? 'transcript'
@@ -871,9 +924,10 @@ export default function App() {
     () => [
       ...(projectView ? [] : (['transcript'] as const)),
       ...(filesColumnShown ? [] : (['files'] as const)),
+      ...(guideTask && !projectView ? (['guide'] as const) : []),
       ...(editorTask ? (['editor'] as const) : []),
     ],
-    [projectView, filesColumnShown, editorTask],
+    [projectView, filesColumnShown, editorTask, guideTask],
   );
 
   // ⌘Q and the window's close button ask first while tasks are busy.
@@ -1017,6 +1071,46 @@ export default function App() {
         setRemoteConfirmFor(selected.id);
       },
     },
+    // The selected task's Review Guide (#207), as its ⋯ item. Not for a chat,
+    // which has no branch to guide; not over a dialog; and not in the editor,
+    // where ⇧⌘G is Find Previous (shortcuts.ts).
+    'mod+shift+g': {
+      whenTyping: 'ignore',
+      typingExcept: GUIDE_KEY_EXCEPT,
+      run: () => {
+        if (!selected || selected.kind === 'chat') return;
+        if (document.querySelector('[aria-modal="true"]') !== null) return;
+        // The key, unlike a click, takes focus into the guide (#217).
+        requestGuide(selected.id, { focus: true });
+      },
+    },
+    // Straight to a reading tab (#256), beside ⇧⌘G. Shown even from PTY
+    // only, as ⌘U does. Not over a dialog.
+    'mod+shift+t': () => {
+      if (!selected || projectView) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      setRightTab('transcript');
+      setMode((m) => (m === 'pty' ? 'split' : m));
+    },
+    'mod+shift+e': () => {
+      if (!selected && !projectView) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      setMode((m) => (m === 'pty' ? 'split' : m));
+      // Pinned as a column, Files has no tab: go into the column instead.
+      if (filesColumnShown) {
+        const col = document.querySelector<HTMLElement>('[data-focus-area="files"]');
+        if (col) focusArea(col);
+        return;
+      }
+      setRightTab('files');
+    },
+    // Send the selected task's waiting comments, from anywhere (#258): the
+    // transcript then shows, where the message lands, sent or held.
+    'mod+shift+s': () => {
+      if (!selected) return;
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      sendWaitingComments(selected.id);
+    },
     // The message box is in the transcript: show it, then ask it to attach.
     'mod+u': () => {
       if (!selected) return;
@@ -1026,6 +1120,7 @@ export default function App() {
       if (!requestAttach(id)) window.setTimeout(() => requestAttach(id), 150);
     },
     'alt+f12': () => setShellOpen((o) => !o),
+    'mod+t': () => setShellOpen((o) => !o),
     'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
     'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
     'mod+0': () => zoomTo(1),
@@ -1036,6 +1131,12 @@ export default function App() {
       if (tab) switchTab(tab.key);
     },
     // The previous / next tab, stopping at the ends; lands like the digit above.
+    // The task list as a rail of group counts, or back (#266). Live while
+    // typing, as ⇧⌘T: no field claims ⌥⌘T (shortcuts.ts). Not over a dialog.
+    'mod+alt+t': () => {
+      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      setTaskListCollapsed((c) => !c);
+    },
     'mod+shift+[': () => stepProject(-1),
     'mod+shift+]': () => stepProject(1),
     // Only where the switch is shown: not over the editor (see the switch).
@@ -1087,6 +1188,7 @@ export default function App() {
   return (
     <FileOpenContext.Provider value={openFile}>
     <FileTextContext.Provider value={readFileText}>
+    <FilePathContext.Provider value={relativeInWorktree}>
     <TaskOpenContext.Provider value={taskOpener}>
     <MentionSourceContext.Provider value={mentionSource}>
     <div className="app" data-dragging={dragging !== null} data-drag={dragging ?? undefined}>
@@ -1102,6 +1204,8 @@ export default function App() {
         onThemeChange={setThemeChoice}
         ciNotify={ciNotify}
         onCiNotifyChange={setCiNotify}
+        taskListCollapsed={taskListCollapsed}
+        onTaskListCollapsedChange={setTaskListCollapsed}
         onWaitingClick={() => {
           // Most recently active first; from a waiting task, on to the next.
           const waiting = tasks
@@ -1193,7 +1297,13 @@ export default function App() {
       )}
 
       <div className="app-body">
-        <aside className="sidebar" style={{ width: sidebarWidth, flexBasis: sidebarWidth }}>
+        {/* Collapsed (#266), the rail's own width (taskrail.css) replaces the
+            list's, which is kept for when it expands. */}
+        <aside
+          className="sidebar"
+          data-collapsed={taskListCollapsed || undefined}
+          style={taskListCollapsed ? undefined : { width: sidebarWidth, flexBasis: sidebarWidth }}
+        >
           <TaskList
             tasks={visibleTasks}
             selectedId={selectedId}
@@ -1210,6 +1320,7 @@ export default function App() {
             onFollowUp={(task) => void openFollowUp(task)}
             onSetDone={(task, done) => void setDone(task.id, done)}
             onRename={saveTitle}
+            onSummary={saveSummary}
             onRenameClosed={() => {
               if (selected) focusLiveTerminal(selected.id);
             }}
@@ -1221,16 +1332,21 @@ export default function App() {
             activeProject={activeProject}
             nameProject={!showTabs}
             emptyBrief={!selected}
+            collapsed={taskListCollapsed}
+            onCollapsedChange={setTaskListCollapsed}
           />
         </aside>
 
-        <div
-          className="splitter splitter-v"
-          data-dragging={dragging === 'sidebar'}
-          onPointerDown={startSidebarDrag}
-          role="separator"
-          aria-orientation="vertical"
-        />
+        {/* Nothing to drag while it is the rail: it has one width. */}
+        {!taskListCollapsed && (
+          <div
+            className="splitter splitter-v"
+            data-dragging={dragging === 'sidebar'}
+            onPointerDown={startSidebarDrag}
+            role="separator"
+            aria-orientation="vertical"
+          />
+        )}
 
         <main className="main" ref={mainRef}>
           <div className="main-bar">
@@ -1264,23 +1380,44 @@ export default function App() {
                   {renaming?.id === selected.id ? (
                     <TaskTitleEdit
                       className="main-ident-title-edit"
+                      summaryClassName="main-ident-summary-edit"
                       title={selected.title}
+                      summary={selected.summary}
                       returnFocus={renaming.by === 'key' ? 'previous' : 'fallback'}
                       fallbackFocus={() => focusLiveTerminal(selected.id)}
                       onSave={(title) => {
                         setRenaming(null);
                         saveTitle(selected, title);
                       }}
+                      onSaveSummary={(summary) => {
+                        setRenaming(null);
+                        saveSummary(selected, summary);
+                      }}
                       onDone={() => setRenaming(null)}
                     />
                   ) : (
-                    <span
-                      className="main-ident-title"
-                      title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
-                      onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
-                    >
-                      {selected.title}
-                    </span>
+                    <>
+                      <span
+                        className="main-ident-title"
+                        title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
+                        onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
+                      >
+                        {selected.title}
+                      </span>
+                      {/* What the task is about (#262), after its name: it
+                          takes only room nothing else wants, so it goes
+                          first when the bar is short and never cuts the
+                          title. The tooltip has it whole. */}
+                      {selected.summary && (
+                        <span
+                          className="main-ident-summary"
+                          title={`${wrapForTooltip(selected.summary)}\nDouble-click to edit (${RENAME_KEYS})`}
+                          onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
+                        >
+                          {selected.summary}
+                        </span>
+                      )}
+                    </>
                   )}
                   {/* What acts on the task, right after its name; the ⋯ at
                       the bar's end keeps what acts on the panes. */}
@@ -1304,6 +1441,15 @@ export default function App() {
                         ...(remoteItem ? [remoteItem] : []),
                         // Set one, and see or change the ones to come (#156).
                         remindMenuItem(selectedPendingReminders, () => setRemindFor(selected)),
+                        // A branch's changes, grouped by what they do (#186).
+                        // A chat has no branch of its own to guide.
+                        ...(selected.kind === 'chat' ? [] : [{
+                          id: 'guide',
+                          label: 'Review Guide',
+                          aside: '⇧⌘G',
+                          title: 'This branch’s changes against its base, grouped by what they do',
+                          onSelect: () => requestGuide(selected.id),
+                        }]),
                         {
                           id: 'copy-path',
                           label: 'Copy Worktree Path',
@@ -1385,7 +1531,8 @@ export default function App() {
                       setArchiveTarget(selected);
                     }}
                     onFollowUp={(pr) => void openFollowUp(selected, pr)}
-                    onCreatePr={() => void sendPrompt(selected, createPrPrompt(selected))}
+                    onCreatePr={() => void sendPrompt(selected, createPrPrompt(selectedBase.base !== '' ? { ...selected, baseBranch: selectedBase.base } : selected))}
+                    onResolveConflicts={(pr) => void sendPrompt(selected, resolveConflictsPrompt(selected, pr))}
                     onOpenFile={openFile}
                   />
                   )}
@@ -1456,7 +1603,7 @@ export default function App() {
               disabled={!shellProject}
               title={
                 shellProject
-                  ? `Shell in ${shellProject.name}'s main checkout (⌥F12)`
+                  ? `Shell in ${shellProject.name}'s main checkout (⌘T or ⌥F12)`
                   : 'No project to open a shell in'
               }
               onClick={() => setShellOpen((o) => !o)}
@@ -1570,6 +1717,30 @@ export default function App() {
                       {filesPinned && <span className="tab-pin-hint" title="Pinned as a column — not enough room at this width, so it is a tab for now">·</span>}
                     </button>
                   )}
+                  {guideTask && !projectView && (
+                    /* The tab and its ✕ in one pill (#226): the close sits on
+                       what it closes, not at the far end of the row. A sibling
+                       of the tab, never inside it (a button in a button). */
+                    <span className="tab-closable" data-selected={activeTab === 'guide'}>
+                      <button
+                        role="tab"
+                        aria-selected={activeTab === 'guide'}
+                        onClick={() => setRightTab('guide')}
+                        title="This branch’s changes, grouped by what they do"
+                      >
+                        Guide
+                      </button>
+                      <button
+                        type="button"
+                        className="tab-close"
+                        onClick={() => closeGuide(guideTask.id)}
+                        title="Close the guide"
+                        aria-label="Close the guide"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
                   {editorTask && (
                     <button
                       role="tab"
@@ -1667,6 +1838,14 @@ export default function App() {
                     </PaneErrorBoundary>
                   ) : (
                     <div className="placeholder">No task selected.</div>
+                  )}
+                </div>
+
+                <div className="tabpanel tabpanel-col" hidden={activeTab !== 'guide'}>
+                  {guideTask && !projectView && (
+                    <PaneErrorBoundary key={`gd-${guideTask.id}`} label="Review Guide">
+                      <GuidePane task={guideTask} active={activeTab === 'guide' && showTranscript} />
+                    </PaneErrorBoundary>
                   )}
                 </div>
 
@@ -2000,6 +2179,7 @@ export default function App() {
     </div>
     </MentionSourceContext.Provider>
     </TaskOpenContext.Provider>
+    </FilePathContext.Provider>
     </FileTextContext.Provider>
     </FileOpenContext.Provider>
   );

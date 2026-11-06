@@ -29,6 +29,10 @@
 //! existing, readable, regular file, symlinks resolved, Albedo's and Claude
 //! Code's data and known secret stores refused -- because the grant itself is
 //! the only thing standing between that click and the rest of the disk.
+//!
+//! `read_plan_file` (#272) is not a grant: it reads the head of one `.md` file
+//! a waiting question names, through the same checks, and returns the text.
+//! The fs scope is unchanged by it.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -293,18 +297,11 @@ pub fn resolve_outside_file(
     Ok(real)
 }
 
-/// Grant read/write access to ONE file outside every worktree, which the user
-/// has just clicked. Returns the canonical path the grant was made for: the
-/// webview opens that path, never the one it asked with.
-#[tauri::command]
-pub async fn allow_outside_file(
-    app: tauri::AppHandle,
-    path: String,
-    base: String,
-) -> Result<String, OutsideRefusal> {
+/// Everything an outside path may not reach: the fixed list under the home
+/// folder, and the app's own folders wherever the platform keeps them.
+fn denied_roots(app: &tauri::AppHandle) -> (Option<PathBuf>, Vec<DeniedRoot>) {
     let home = app.path().home_dir().ok();
     let mut denied = home.as_deref().map(home_denied_roots).unwrap_or_default();
-    // The app's own folders, wherever the platform keeps them.
     let resolver = app.path();
     for dir in [
         resolver.app_data_dir(),
@@ -321,7 +318,19 @@ pub async fn allow_outside_file(
             reason: "it is Albedo's own data",
         });
     }
+    (home, denied)
+}
 
+/// Grant read/write access to ONE file outside every worktree, which the user
+/// has just clicked. Returns the canonical path the grant was made for: the
+/// webview opens that path, never the one it asked with.
+#[tauri::command]
+pub async fn allow_outside_file(
+    app: tauri::AppHandle,
+    path: String,
+    base: String,
+) -> Result<String, OutsideRefusal> {
+    let (home, denied) = denied_roots(&app);
     let real = resolve_outside_file(&path, &base, home.as_deref(), &denied)?;
     let capability = CapabilityBuilder::new("outside-file")
         .window("main")
@@ -338,6 +347,102 @@ pub async fn allow_outside_file(
         )
     })?;
     Ok(real.to_string_lossy().into_owned())
+}
+
+// ---------------------------------------------------------------------------
+// A plan the "waiting on you" card shows (#272)
+// ---------------------------------------------------------------------------
+//
+// A session asking to approve a plan names the markdown file it wrote the plan
+// to, usually in its scratchpad, outside every worktree. The card shows that
+// file as it appears, with no click: it is what the question asks about. So
+// this is NOT a grant. Nothing is added to the fs scope; the text comes back
+// over IPC, read here, and only for a path that is absolute, ends in `.md`
+// (after symlinks too), and passes every check `allow_outside_file` makes. At
+// most `PLAN_MAX_BYTES` is read; the webview is told when there was more.
+
+/// The most of a plan file read, in bytes.
+pub const PLAN_MAX_BYTES: u64 = 256 * 1024;
+
+/// A plan file's text, as much of it as was read.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PlanFile {
+    /// The canonical path read.
+    pub path: String,
+    pub text: String,
+    /// The file's whole size, in bytes.
+    pub size: u64,
+    /// More than `PLAN_MAX_BYTES`: `text` is its head.
+    pub truncated: bool,
+}
+
+fn is_markdown(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+}
+
+/// Read the head of the one markdown file `raw` names, or say why not. Pure
+/// but for the disk; the command below supplies the home folder and refusals.
+pub fn read_plan(
+    raw: &str,
+    home: Option<&Path>,
+    denied: &[DeniedRoot],
+    max: u64,
+) -> Result<PlanFile, OutsideRefusal> {
+    use std::io::Read;
+    let trimmed = raw.trim();
+    let shown = Path::new(trimmed);
+    if !shown.is_absolute() || !is_markdown(shown) {
+        return Err(refuse(
+            RefusalKind::Invalid,
+            shown,
+            "only an absolute path to a .md file is read",
+        ));
+    }
+    let real = resolve_outside_file(trimmed, "/", home, denied)?;
+    if !is_markdown(&real) {
+        return Err(refuse(
+            RefusalKind::Invalid,
+            &real,
+            "it leads to a file that is not .md",
+        ));
+    }
+    let file = std::fs::File::open(&real)
+        .map_err(|e| refuse(RefusalKind::Unreadable, &real, e.to_string()))?;
+    let size = file
+        .metadata()
+        .map_err(|e| refuse(RefusalKind::Unreadable, &real, e.to_string()))?
+        .len();
+    let mut bytes = Vec::new();
+    file.take(max)
+        .read_to_end(&mut bytes)
+        .map_err(|e| refuse(RefusalKind::Unreadable, &real, e.to_string()))?;
+    let truncated = size > bytes.len() as u64;
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s.to_owned(),
+        // Cut inside a character: end before it rather than show U+FFFD.
+        Err(e) if truncated && e.error_len().is_none() => {
+            String::from_utf8_lossy(&bytes[..e.valid_up_to()]).into_owned()
+        }
+        Err(_) => String::from_utf8_lossy(&bytes).into_owned(),
+    };
+    Ok(PlanFile {
+        path: real.to_string_lossy().into_owned(),
+        text,
+        size,
+        truncated,
+    })
+}
+
+/// The plan file a waiting question names, read for the card. Grants nothing.
+#[tauri::command]
+pub async fn read_plan_file(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<PlanFile, OutsideRefusal> {
+    let (home, denied) = denied_roots(&app);
+    read_plan(&path, home.as_deref(), &denied, PLAN_MAX_BYTES)
 }
 
 #[cfg(test)]
@@ -610,6 +715,73 @@ mod tests {
                 kind(resolve_outside_file(fifo.to_str().unwrap(), "/", None, &[])),
                 RefusalKind::Special
             );
+        }
+
+        #[test]
+        fn reads_a_plan_only_from_an_absolute_md_path() {
+            use super::super::read_plan;
+            let root = scratch("plan");
+            let plan = root.join("plan-ABC-1234.md");
+            std::fs::write(&plan, "# Plan\n\n- one\n").unwrap();
+            let got = read_plan(plan.to_str().unwrap(), None, &[], 1024).unwrap();
+            assert_eq!(got.text, "# Plan\n\n- one\n");
+            assert!(!got.truncated);
+            assert_eq!(got.size, 14);
+
+            // Relative, another extension, a link from .md to something else.
+            assert_eq!(
+                kind(read_plan("plan-ABC-1234.md", None, &[], 1024).map(|p| p.path.into())),
+                RefusalKind::Invalid
+            );
+            let env = root.join("secrets.env");
+            std::fs::write(&env, "KEY=1").unwrap();
+            assert_eq!(
+                kind(read_plan(env.to_str().unwrap(), None, &[], 1024).map(|p| p.path.into())),
+                RefusalKind::Invalid
+            );
+            let link = root.join("looks-like.md");
+            std::os::unix::fs::symlink(&env, &link).unwrap();
+            assert_eq!(
+                kind(read_plan(link.to_str().unwrap(), None, &[], 1024).map(|p| p.path.into())),
+                RefusalKind::Invalid
+            );
+            // Missing, and Claude Code's own data, as for a grant.
+            assert_eq!(
+                kind(
+                    read_plan(root.join("gone.md").to_str().unwrap(), None, &[], 1024)
+                        .map(|p| p.path.into())
+                ),
+                RefusalKind::Missing
+            );
+            let home = root.join("home");
+            std::fs::create_dir_all(home.join(".claude/plans")).unwrap();
+            std::fs::write(home.join(".claude/plans/x.md"), "x").unwrap();
+            let denied = home_denied_roots(&home);
+            assert_eq!(
+                kind(
+                    read_plan(
+                        home.join(".claude/plans/x.md").to_str().unwrap(),
+                        Some(&home),
+                        &denied,
+                        1024
+                    )
+                    .map(|p| p.path.into())
+                ),
+                RefusalKind::Denied
+            );
+        }
+
+        #[test]
+        fn reads_the_head_of_a_long_plan_and_says_so() {
+            use super::super::read_plan;
+            let root = scratch("plan-long");
+            let plan = root.join("long.MD");
+            // "é" is two bytes: a cut at 5 lands inside the third one.
+            std::fs::write(&plan, "ééé and more").unwrap();
+            let got = read_plan(plan.to_str().unwrap(), None, &[], 5).unwrap();
+            assert!(got.truncated);
+            assert_eq!(got.text, "éé", "never half a character");
+            assert_eq!(got.size, 15);
         }
 
         #[test]

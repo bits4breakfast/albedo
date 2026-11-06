@@ -135,7 +135,9 @@ the Files pane, quick open and the editor.
 ### `src/gh/` — the GitHub CLI
 
 `gh.ts` runs `gh` (argv only, never throws at callers: no PR, no `gh`, offline
-all end as `null`). `prStatus.ts` parses `gh pr view` and labels it.
+all end as `null`). A task's PR is one `gh api graphql` request (`PR_QUERY`:
+the fields `gh pr view` gives, plus review threads); `prStatus.ts` holds the
+query, parses the answer and labels it.
 `prStore.ts` caches and polls (`usePrStatus`, `usePrPolling`,
 `refreshPrStatus`). Called by `PrBadge.tsx`, `GitBar.tsx`, `TaskList.tsx` and
 the follow-up flow.

@@ -57,6 +57,15 @@
      measured against it first (CLAUDE.md, Contrast rule 1). Also code spans
      and pressed-in chips. */
   --panel-raised: #e6e6ea;
+  /* The selected TASK row (#203): an indigo tint, ringed in --accent
+     (tasklist.css). --panel-raised was 1.10 on the sidebar, too close to
+     see; a fill alone cannot go much further before --faint fails, so the
+     ring carries the separation (5.87 on --panel-chrome) and the tint stays
+     a step. Tint: 1.15 on --panel-chrome, 1.10 on --panel-hover. On it:
+     --text 13.15, --text-strong 15.39, --muted 5.67, --faint 4.71, --add
+     5.69, --warn 6.02, --danger 5.53, --accent 5.12, --status-idle 3.77
+     and --status-archived 3.05 (UI). */
+  --row-selected: #dfe1f5;
   /* Your own messages in the transcript. A flat ground, measured, not a tint:
      on it --text 14.99, --text-strong 17.54, --muted 6.46, --faint 5.37,
      --accent 5.84, --add 6.49, --del 6.30. */
@@ -95,6 +104,13 @@
   --accent: #4650c0;                          /* 5.32 | 5.56 on --accent-soft */
   --accent-soft: #e9eafb;                     /* chosen / active ground (opaque) */
   --accent-soft-strong: #dde0f8;              /* the same, hovered */
+  /* Text selection (#195). Its own fill, not --accent-soft: a chosen-row
+     ground sits close to the pane by design, and as a selection it measured
+     1.04 on a selected row. Against the grounds text is selected on:
+     --panel 1.81, --panel-inset 1.85, --bg 1.71, --panel-hover 1.57,
+     --panel-raised 1.49. Selected text is --text-strong on it, 10.76: the
+     dim tiers would not clear 4.5 here (--faint 3.29). */
+  --selection: #b4bbf3;
   --accent-line: #9ba1e0;                     /* splitters, link underlines, picked edges */
   --on-accent-soft: #3a43a8;                  /* 6.32 on --accent-soft-strong, 6.92 on --accent-soft */
   /* Filled primary button. Its own pair: --on-accent on --accent-btn 6.63. */
@@ -113,16 +129,60 @@
   --focus: #4650c0;                           /* 5.32 */
 
   /* --- status (light) ----------------------------------------------------- */
-  /* Status is a glyph first (ring, half ring, solid dot), colour second. */
+  /* Status is a shape first (a group's pie, a task's dot), colour second.
+     One colour per stage (#276, #278): Needs You orange-red, Running yellow,
+     your own review (Ready to Review, My Review) cyan, the team's review (In
+     Review, Awaiting Review) blue, Approved green, Idle grey, Done indigo.
+
+     Text tier: a label in its group's colour (Needs You, Ready to Review, a
+     subagent's "running"). Cleared on every flat ground and tint text sits on;
+     worst first: --panel-active | --panel-raised | --row-selected |
+     --accent-soft-strong | --row-blocked-hover. */
   --status-idle: #6e717a;      /* 3.92 (UI) */
-  --status-running: #4650c0;   /* 5.32 */
-  --status-blocked: #744903;   /* 6.26 */
-  --status-done: #11632f;      /* 5.92 */
+  --status-running: #715708;   /* dark amber   5.15 | 5.50 | 5.29 | 5.24 | 5.93 */
+  --status-blocked: #9c3d0d;   /* orange-red   5.12 | 5.47 | 5.26 | 5.21 | 5.89 */
+  --status-review: #0a5f6e;    /* dark cyan    5.50 | 5.87 | 5.64 | 5.60 | 6.33 */
+  --status-done: #404eca;      /* indigo       5.00 | 5.34 | 5.13 | 5.09 | 5.76 */
   --status-archived: #7d808a;  /* 3.17 (UI) */
+  /* Glyph tier: the rail's circles (taskrail.css), the groups' pies
+     (tasklist.css) and the task dots (StatusDot).
+     -fill   the bright body of a filled circle or dot. Never alone on a light
+             ground: 1.7-2.2 there, so it always sits inside its -edge.
+     -edge   the circle's or dot's border, a darker tone of the same hue: UI,
+             3:1 on --panel | --panel-chrome | --row-selected | --panel-hover |
+             --panel-raised (and --row-blocked / -hover for Needs You).
+     -ink    the count on the fill: text, 4.5:1 on that fill.
+     review is your own pass (Ready to Review, My Review), team the team's
+     (In Review, Awaiting Review). Team's ink is dark: white on its blue
+     fill is 3.37. */
+  --status-blocked-fill: #f2784b;
+  --status-blocked-edge: #c2501f;    /* 4.59 | 4.17 | 3.64 | 3.99 | 3.78; 4.30 / 4.08 */
+  --status-blocked-ink: #1b1c20;     /* 6.13 on the fill */
+  --status-running-fill: #f2c94c;
+  --status-running-edge: #97750b;    /* 4.21 | 3.83 | 3.34 | 3.66 | 3.47 */
+  --status-running-ink: #1b1c20;     /* 10.73 */
+  --status-review-fill: #4cc3d9;
+  --status-review-edge: #1f8496;     /* 4.27 | 3.88 | 3.38 | 3.71 | 3.52 */
+  --status-review-ink: #1b1c20;      /* 8.20 */
+  --status-team-fill: #4c8fd9;
+  --status-team-edge: #2f6fb8;       /* 5.01 | 4.56 | 3.97 | 4.36 | 4.13 */
+  --status-team-ink: #1b1c20;        /* 5.06 */
+  --status-approved-fill: #4cb782;
+  --status-approved-edge: #2f8a5c;   /* 4.17 | 3.79 | 3.30 | 3.63 | 3.44 */
+  --status-approved-ink: #1b1c20;    /* 6.81 */
+  --status-idle-fill: #bec2c8;
+  --status-idle-edge: #727b87;       /* 4.18 | 3.80 | 3.31 | 3.64 | 3.44 */
+  --status-idle-ink: #1b1c20;        /* 9.52 */
+  --status-done-fill: #5e6ad2;
+  --status-done-edge: #5e6ad2;       /* 4.58 | 4.17 | 3.63 | 3.99 | 3.78: the fill clears on its own */
+  --status-done-ink: #ffffff;        /* 4.70 */
+  /* Channels of --status-blocked-edge, for the Needs You dot's ping (alpha
+     off one hue; carries no text). */
+  --status-blocked-rgb: 194 80 31;
   --warn: #744903;             /* 6.26 | 6.90 on --banner-bg, 7.24 on --prompt-bg */
   --danger: #a8241d;           /* 5.75 */
-  /* Channels, for the ping keyframes and the editor's search veil, which
-     vary alpha off one hue. Neither carries text. */
+  /* Channels, for the editor's search veil, which varies alpha off one hue.
+     It carries no text. (The Needs You ping has --status-blocked-rgb.) */
   --warn-rgb: 116 73 3;
 
   /* --- derived surfaces + marks (light) ----------------------------------- */
@@ -237,6 +297,13 @@
     /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
        worst ground for every text tier. */
     --panel-raised: #23242a;
+    /* The selected task row (#203): was --panel-raised, 1.12 on the
+       sidebar. Tint 1.22 on --panel-chrome, 1.16 on --panel-hover; the
+       --accent ring 7.44 on the sidebar, 6.08 on the tint. On it: --text
+       11.28, --text-strong 13.26, --muted 5.97, --faint 4.64, --add 7.80,
+       --warn 7.69, --danger 6.46, --accent 6.08, --status-idle 3.76 (UI);
+       --status-archived 2.79, so that glyph takes --status-idle there. */
+    --row-selected: #262a3c;
     /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
        --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
     --user-row: #1a1c26;
@@ -268,6 +335,10 @@
     --accent: #9aa2ff;                          /* 6.62 | 6.82 on --accent-soft */
     --accent-soft: #1f2130;
     --accent-soft-strong: #272a3d;
+    /* Text selection (#195): --panel 2.49, --panel-inset 2.63, --bg 2.59,
+       --panel-hover 2.22, --panel-raised 2.09 (was 1.03). --text-strong on
+       it 6.92; --faint would be 2.42, hence one text tier for a selection. */
+    --selection: #465094;
     --accent-line: #5560d0;
     --on-accent-soft: #bcc1ff;                  /* 8.22 on --accent-soft-strong, 9.26 on --accent-soft */
     --accent-btn: #5560d0;                      /* --on-accent on it 5.29 */
@@ -282,12 +353,38 @@
     --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
     --focus: #9aa2ff;                           /* 6.62 */
 
-    /* --- status (dark) --- */
+    /* --- status (dark) --- text worst first: --row-selected | --accent-soft-strong |
+       --panel-raised | --row-blocked-hover. Glyphs: -edge on --panel | --panel-chrome |
+       --row-selected | --panel-hover | --panel-raised; -ink on its -fill. */
     --status-idle: #80838f;      /* 4.10 (UI) */
-    --status-running: #9aa2ff;   /* 6.62 */
-    --status-blocked: #f2b35b;   /* 8.38 */
-    --status-done: #6fd496;      /* 8.50 */
+    --status-running: #facc15;   /* yellow  9.27 | 9.24 | 10.10 | 10.63 */
+    --status-blocked: #fb8a5c;   /* orange-red  6.01 | 5.99 |  6.55 |  6.90 */
+    --status-review: #67e8f9;    /* cyan        9.80 | 9.76 | 10.67 | 11.23 */
+    --status-done: #a5b4fc;      /* indigo  7.12 | 7.09 |  7.76 |  8.17 */
     --status-archived: #6b6e78;  /* 3.04 (UI) */
+    /* Light fills, so each is its own edge; dark ink on every one. */
+    --status-blocked-fill: #fb8a5c;
+    --status-blocked-edge: #fb8a5c;    /* 7.80 | 7.36 | 6.01 | 6.96 | 6.55; 7.36 / 6.90 */
+    --status-blocked-ink: #131417;     /* 7.80 */
+    --status-running-fill: #facc15;
+    --status-running-edge: #facc15;    /* 12.03 | 11.35 | 9.27 | 10.74 | 10.10 */
+    --status-running-ink: #131417;     /* 12.03 */
+    --status-review-fill: #67e8f9;
+    --status-review-edge: #67e8f9;     /* 12.71 | 11.99 | 9.80 | 11.35 | 10.67 */
+    --status-review-ink: #131417;      /* 12.71 */
+    --status-team-fill: #7cb4f5;
+    --status-team-edge: #7cb4f5;       /* 8.51 | 8.03 | 6.56 | 7.60 | 7.15 */
+    --status-team-ink: #131417;        /* 8.51 */
+    --status-approved-fill: #4ade80;
+    --status-approved-edge: #4ade80;   /* 10.57 | 9.98 | 8.15 | 9.44 | 8.88 */
+    --status-approved-ink: #131417;    /* 10.57 */
+    --status-idle-fill: #9ca3af;
+    --status-idle-edge: #9ca3af;       /* 7.25 | 6.85 | 5.59 | 6.48 | 6.09 */
+    --status-idle-ink: #131417;        /* 7.25 */
+    --status-done-fill: #a5b4fc;
+    --status-done-edge: #a5b4fc;       /* 9.24 | 8.72 | 7.12 | 8.25 | 7.76 */
+    --status-done-ink: #131417;        /* 9.24 */
+    --status-blocked-rgb: 251 138 92;
     --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
     --danger: #ff8f8a;           /* 7.03 */
     --warn-rgb: 242 179 91;
@@ -336,6 +433,13 @@
   /* THE SELECTED ROW, and the LIGHTEST dark surface -- so, as in light, the
      worst ground for every text tier. */
   --panel-raised: #23242a;
+  /* The selected task row (#203): was --panel-raised, 1.12 on the
+     sidebar. Tint 1.22 on --panel-chrome, 1.16 on --panel-hover; the
+     --accent ring 7.44 on the sidebar, 6.08 on the tint. On it: --text
+     11.28, --text-strong 13.26, --muted 5.97, --faint 4.64, --add 7.80,
+     --warn 7.69, --danger 6.46, --accent 6.08, --status-idle 3.76 (UI);
+     --status-archived 2.79, so that glyph takes --status-idle there. */
+  --row-selected: #262a3c;
   /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
      --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
   --user-row: #1a1c26;
@@ -367,6 +471,10 @@
   --accent: #9aa2ff;                          /* 6.62 | 6.82 on --accent-soft */
   --accent-soft: #1f2130;
   --accent-soft-strong: #272a3d;
+  /* Text selection (#195): --panel 2.49, --panel-inset 2.63, --bg 2.59,
+     --panel-hover 2.22, --panel-raised 2.09 (was 1.03). --text-strong on
+     it 6.92; --faint would be 2.42, hence one text tier for a selection. */
+  --selection: #465094;
   --accent-line: #5560d0;
   --on-accent-soft: #bcc1ff;                  /* 8.22 on --accent-soft-strong, 9.26 on --accent-soft */
   --accent-btn: #5560d0;                      /* --on-accent on it 5.29 */
@@ -381,12 +489,41 @@
   --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
   --focus: #9aa2ff;                           /* 6.62 */
 
-  /* --- status (dark) --- */
+  /* --- status (dark) --- text worst first: --row-selected | --accent-soft-strong |
+     --panel-raised | --row-blocked-hover. Glyphs: -edge on --panel | --panel-chrome |
+     --row-selected | --panel-hover | --panel-raised; -ink on its -fill. */
   --status-idle: #80838f;      /* 4.10 (UI) */
-  --status-running: #9aa2ff;   /* 6.62 */
-  --status-blocked: #f2b35b;   /* 8.38 */
-  --status-done: #6fd496;      /* 8.50 */
+  --status-running: #facc15;   /* yellow  9.27 | 9.24 | 10.10 | 10.63 */
+  --status-blocked: #fb8a5c;   /* orange-red  6.01 | 5.99 |  6.55 |  6.90 */
+  --status-review: #67e8f9;    /* cyan        9.80 | 9.76 | 10.67 | 11.23 */
+  --status-done: #a5b4fc;      /* indigo  7.12 | 7.09 |  7.76 |  8.17 */
   --status-archived: #6b6e78;  /* 3.04 (UI) */
+  /* Light fills, so each is its own edge; dark ink on every one. */
+  --status-blocked-fill: #fb8a5c;
+  --status-blocked-edge: #fb8a5c;    /* 7.80 | 7.36 | 6.01 | 6.96 | 6.55; 7.36 / 6.90 */
+  --status-blocked-ink: #131417;     /* 7.80 */
+  --status-running-fill: #facc15;
+  --status-running-edge: #facc15;    /* 12.03 | 11.35 | 9.27 | 10.74 | 10.10 */
+  --status-running-ink: #131417;     /* 12.03 */
+  --status-review-fill: #67e8f9;
+  --status-review-edge: #67e8f9;     /* 12.71 | 11.99 | 9.80 | 11.35 | 10.67 */
+  --status-review-ink: #131417;      /* 12.71 */
+  --status-team-fill: #7cb4f5;
+  --status-team-edge: #7cb4f5;       /* 8.51 | 8.03 | 6.56 | 7.60 | 7.15 */
+  --status-team-ink: #131417;        /* 8.51 */
+  --status-approved-fill: #4ade80;
+  --status-approved-edge: #4ade80;   /* 10.57 | 9.98 | 8.15 | 9.44 | 8.88 */
+  --status-approved-ink: #131417;    /* 10.57 */
+  /* In Review apart from Ready to Review by lightness, not only by the ring:
+     a deep green body (2.0-2.6 on the grounds, so the bright edge carries the
+     glyph; 4.09 against its own edge) with a light ink. */
+  --status-idle-fill: #9ca3af;
+  --status-idle-edge: #9ca3af;       /* 7.25 | 6.85 | 5.59 | 6.48 | 6.09 */
+  --status-idle-ink: #131417;        /* 7.25 */
+  --status-done-fill: #a5b4fc;
+  --status-done-edge: #a5b4fc;       /* 9.24 | 8.72 | 7.12 | 8.25 | 7.76 */
+  --status-done-ink: #131417;        /* 9.24 */
+  --status-blocked-rgb: 251 138 92;
   --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
   --danger: #ff8f8a;           /* 7.03 */
   --warn-rgb: 242 179 91;
@@ -471,7 +608,9 @@ button {
   cursor: default;
 }
 
-::selection { background: var(--accent-soft); }
+/* Selected text carries its own tier (#195; tokens above): the fill has to
+   be strong enough to see, and a dim tier on it would not stay legible. */
+::selection { background: var(--selection); color: var(--text-strong); }
 
 /* 2px, not 1px: a hairline ring on a dark ground is easy to lose, and this is
    the only way round the app without a mouse. */
@@ -617,9 +756,6 @@ button {
 
 .placeholder p { margin: 0; max-width: 42ch; }
 
-/* A label, not a live row: its glyph stays still (the motion budget is the rows'). */
-.group-label .status-dot { animation: none; }
-
 
 /* Status glyph ------------------------------------------------------------ */
 /*
@@ -627,10 +763,16 @@ button {
  *   idle      ring
  *   running   ring, half filled
  *   blocked   solid dot with a halo
- *   review    ring around a dot -- a task list group (Ready to Review), not a
- *             TaskStatus: finished, in done's colour, and not yet looked at
  *   done      solid dot
  *   archived  thin ring
+ *
+ * A task's own status, where one task is shown (the task bar, a prompt
+ * card). The task list's groups have their own icon, a pie (GroupPie.tsx,
+ * #278), and its rows none.
+ *
+ * Colours are the glyph tier (#276): the ring is the status's -edge, which
+ * clears 3:1 on every ground a dot sits on; whatever is filled inside it is
+ * the -fill, the same body as the rail's circle.
  */
 
 .status-dot {
@@ -639,25 +781,17 @@ button {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 2px solid var(--status-idle);
+  border: 2px solid var(--status-idle-edge);
   background: transparent;
   flex: 0 0 auto;
   box-sizing: border-box;
 }
 
-.status-dot[data-status='idle'] { border-color: var(--status-idle); }
-.status-dot[data-status='done'] { border-color: var(--status-done); background: var(--status-done); }
-.status-dot[data-status='review'] { border-color: var(--status-done); }
-.status-dot[data-status='review']::after {
-  content: '';
-  position: absolute;
-  inset: 1px;
-  border-radius: 50%;
-  background: var(--status-done);
-}
+.status-dot[data-status='idle'] { border-color: var(--status-idle-edge); }
+.status-dot[data-status='done'] { border-color: var(--status-done-edge); background: var(--status-done-fill); }
 .status-dot[data-status='archived'] { border-width: 1px; border-color: var(--status-archived); }
 .status-dot[data-status='running'] {
-  border-color: var(--status-running);
+  border-color: var(--status-running-edge);
   animation: dot-breathe 1.9s ease-in-out infinite;
 }
 .status-dot[data-status='running']::after {
@@ -665,13 +799,13 @@ button {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: var(--status-running);
+  background: var(--status-running-fill);
   clip-path: inset(0 0 0 50%);
 }
 .status-dot[data-status='blocked'] {
-  border-color: var(--status-blocked);
-  background: var(--status-blocked);
-  box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0.55);
+  border-color: var(--status-blocked-edge);
+  background: var(--status-blocked-fill);
+  box-shadow: 0 0 0 0 rgb(var(--status-blocked-rgb) / 0.55);
   animation: dot-ping 1.6s ease-out infinite;
 }
 
@@ -682,9 +816,9 @@ button {
 }
 
 @keyframes dot-ping {
-  0% { box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0.5); }
-  70% { box-shadow: 0 0 0 5px rgb(var(--warn-rgb) / 0); }
-  100% { box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0); }
+  0% { box-shadow: 0 0 0 0 rgb(var(--status-blocked-rgb) / 0.5); }
+  70% { box-shadow: 0 0 0 5px rgb(var(--status-blocked-rgb) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--status-blocked-rgb) / 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -799,6 +933,33 @@ button {
   font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * What the task is about (#262), after its name. It has no claim on the bar:
+ * a zero basis, so it takes only the room left once the title, the branch
+ * and the PR have theirs (shared with the folder, the other leftover-only
+ * item), and never more than its own text. So it goes first when the bar is
+ * short, and the title is never cut for it. One line, cut to fit.
+ *
+ * Its -8px right margin takes back the bar's gap after it, so even at zero
+ * width it adds nothing to the row: the ⋯ after it is a 24px button with
+ * room of its own around the glyph.
+ *
+ * --muted, never opacity: the branch's tier, a step below the title's. On the
+ * task bar's --panel, light | dark: 7.15 | 7.74; --panel-raised 5.89 | 6.50
+ * (taskSummaryContrast.test.ts).
+ */
+.main-ident-summary {
+  flex: 1 1 0;
+  max-width: max-content;
+  min-width: 0;
+  margin-right: -8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -984,9 +1145,14 @@ select:disabled { cursor: default; }
   font-weight: 600;
   color: var(--text);
   background: var(--panel);
-  /* No line under a pane head: inside the card the only separator is the
-     task bar's: one line under the page header. */
+  /* No line under a pane head in general. The reading pane's tabs are the
+     exception (below). */
 }
+
+/* The reading pane's tabs (Transcript, Files, Guide, the editor's) are a
+   level of their own (#274): a hairline sets them apart from what the tab
+   shows, and a tab's own toolbar under it sits on --panel-chrome. */
+.pane-transcript > .pane-head { border-bottom: 1px solid var(--border); }
 
 /* The Files column's label starts where its section text does: the list's
    8px, the card's 1px border, the section head's 12px. */
@@ -1142,6 +1308,28 @@ select:disabled { cursor: default; }
 .pane-head .tabs button:hover { color: var(--text); background: var(--panel-hover); }
 .pane-head .tabs button[aria-selected='true'] { color: var(--text-strong); background: var(--panel-raised); }
 
+/* A tab with its own ✕ (#226): one pill, the ✕ at its right end. The pill
+   carries the selected and hover grounds, so tab and ✕ read as one tab; the
+   ✕ gets its own hover ground inside it, to show which part takes the click. */
+.pane-head .tabs .tab-closable { display: inline-flex; align-items: center; border-radius: var(--radius-sm); }
+.pane-head .tabs .tab-closable:hover { background: var(--panel-hover); }
+.pane-head .tabs .tab-closable[data-selected='true'] { background: var(--panel-raised); }
+.pane-head .tabs .tab-closable > button[role='tab'] { padding-right: 4px; background: transparent; }
+.pane-head .tabs .tab-closable:hover > button[role='tab'] { color: var(--text); }
+.pane-head .tabs .tab-closable[data-selected='true'] > button[role='tab'] { color: var(--text-strong); }
+.pane-head .tabs .tab-close {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.pane-head .tabs .tab-close:hover { color: var(--text-strong); background: var(--panel-active); }
+.pane-head .tabs .tab-close:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+
 .pane-head-close {
   flex: 0 0 auto;
   width: 26px;
@@ -1191,7 +1379,7 @@ select:disabled { cursor: default; }
 }
 
 .task-ctx-fill { display: block; height: 100%; background: var(--ctx-quiet-row); }
-.task-ctx[data-level='warn'] .task-ctx-fill { background: var(--status-blocked); opacity: 0.8; }
+.task-ctx[data-level='warn'] .task-ctx-fill { background: var(--warn); opacity: 0.8; }
 .task-ctx[data-level='high'] .task-ctx-fill { background: var(--danger); }
 
 .task-ctx[data-basis='inferred'] .task-ctx-fill {
@@ -1215,7 +1403,7 @@ select:disabled { cursor: default; }
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--status-blocked);
+  color: var(--warn);
 }
 .task-ctx-text[data-level='high'] { color: var(--danger); }
 
@@ -1233,7 +1421,7 @@ select:disabled { cursor: default; }
 }
 
 .ctx-fill { position: absolute; inset: 0 auto 0 0; background: var(--ctx-quiet-bar); }
-.ctx[data-level='warn'] .ctx-fill { background: var(--status-blocked); }
+.ctx[data-level='warn'] .ctx-fill { background: var(--warn); }
 .ctx[data-level='high'] .ctx-fill { background: var(--danger); }
 
 .ctx[data-basis='inferred'] .ctx-fill {
@@ -1250,7 +1438,7 @@ select:disabled { cursor: default; }
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
-.ctx[data-level='warn'] .ctx-text { color: var(--status-blocked); }
+.ctx[data-level='warn'] .ctx-text { color: var(--warn); }
 .ctx[data-level='high'] .ctx-text { color: var(--danger); }
 
 

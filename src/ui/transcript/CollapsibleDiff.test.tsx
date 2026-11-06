@@ -34,4 +34,15 @@ describe('CollapsibleDiff', () => {
     fireEvent.click(container.querySelector('.tx-d-stat')!);
     expect(screen.getByText('three')).toBeTruthy();
   });
+
+  it('opened, the transcript diff keeps its own header row: path, counts and the layout toggle (#264)', () => {
+    const { container } = render(<CollapsibleDiff diff={diff} defaultOpen />);
+    const head = container.querySelector('.tx-d-head')!;
+    expect(head.textContent).toContain('thing.ts');
+    expect(head.textContent).toContain('+1');
+    // jsdom measures 0 wide: unified, and the toggle offers Split.
+    fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+    expect(container.querySelector('.tx-d-split')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Unified' })).toBeTruthy();
+  });
 });

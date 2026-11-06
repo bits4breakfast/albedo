@@ -26,6 +26,17 @@ const OLD = 'target old';
 const NEW = 'target new';
 const fileNow = [...before, NEW, ...after].join('\n');
 
+/**
+ * The rows whose code reads exactly `text`. Not `getByText`: syntax colour
+ * arrives on its own schedule and splits a line into token spans ("before "
+ * then "1"), after which no single element holds the line's text. A query
+ * that ran before the colours passed, one that ran after failed (#213), and a
+ * `queryByText(...)` expected to be null passed whether or not the line was there.
+ */
+function codeLines(text: string): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('.tx-d-code')].filter((el) => el.textContent === text);
+}
+
 function renderDiff(text: string | null) {
   const read = vi.fn(async () => text);
   const diff = diffStrings(OLD, NEW, 'src/thing.ts');
@@ -49,10 +60,19 @@ describe('diff context expansion', () => {
     const read = renderDiff(fileNow);
     fireEvent.click(screen.getAllByRole('button', { name: /More Context/ })[0]!);
 
-    await waitFor(() => expect(screen.getByText('before 10')).toBeTruthy());
+    await waitFor(() => expect(codeLines('before 10')).toHaveLength(1));
     expect(read).toHaveBeenCalledWith('src/thing.ts');
     // 10 available, one step of 20 covers them all, so the bar retires.
-    expect(screen.getByText('before 1')).toBeTruthy();
+    expect(codeLines('before 1')).toHaveLength(1);
+    // And still once the colours have split the lines into tokens: the state
+    // the flaky version met by chance, here on purpose.
+    // (Coloured tokens, not the plain one-span-a-line fallback that renders while
+    // the grammar loads.)
+    await waitFor(() => expect(document.querySelector('.tx-d-code .tx-tok[style*="--shiki-light"]')).not.toBeNull(), {
+      timeout: 10_000,
+    });
+    expect(codeLines('before 1')).toHaveLength(1);
+    expect(codeLines('before 10')).toHaveLength(1);
   });
 
   it('says the file has changed rather than showing lines around a stale hunk', async () => {
@@ -62,7 +82,7 @@ describe('diff context expansion', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /More Context/ })[0]!);
 
     await waitFor(() => expect(screen.getByText(/This file has changed since/)).toBeTruthy());
-    expect(screen.queryByText('before 10')).toBeNull();
+    expect(codeLines('before 10')).toHaveLength(0);
   });
 
   it('offers no file context when contextPath is explicitly null', () => {

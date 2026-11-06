@@ -46,6 +46,7 @@ import { useTaskOpener } from '../openTask';
 import { dateText } from '../../reminders/when';
 import { ReminderGlyph } from '../reminders/ReminderGlyph';
 import { MentionChip } from './MentionChip';
+import { CopyButton } from './CopyButton';
 import type { Mention } from './mentions';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -1175,20 +1176,23 @@ export function parseInline(text: string, depth = 0, mentions: readonly Mention[
     if (codeText !== undefined) {
       const ref = codeSpanRef(codeText);
       const asUrl = safeHttpUrl(codeText);
+      // With a copy icon at its end, always (#242, #244), a sibling so a path
+      // chip or a link keeps its own click.
       out.push(
-        asUrl !== null && /^https?:\/\//i.test(codeText.trim()) ? (
-          <ExternalLink key={key++} url={asUrl} className="tx-md-code">
-            {codeText}
-          </ExternalLink>
-        ) : ref ? (
-          <PathLink key={key++} path={ref.path} line={ref.line} lookup={ref.bare === true} className="tx-md-code tx-md-code-link">
-            {codeText}
-          </PathLink>
-        ) : (
-          <code key={key++} className="tx-md-code">
-            {codeText}
-          </code>
-        ),
+        <span key={key++} className="tx-md-code-wrap">
+          {asUrl !== null && /^https?:\/\//i.test(codeText.trim()) ? (
+            <ExternalLink url={asUrl} className="tx-md-code">
+              {codeText}
+            </ExternalLink>
+          ) : ref ? (
+            <PathLink path={ref.path} line={ref.line} lookup={ref.bare === true} className="tx-md-code tx-md-code-link">
+              {codeText}
+            </PathLink>
+          ) : (
+            <code className="tx-md-code">{codeText}</code>
+          )}
+          <CopyButton text={codeText} inline />
+        </span>,
       );
     } else if (strongA !== undefined || strongB !== undefined) {
       out.push(<strong key={key++}>{parseInline(strongA ?? strongB ?? '', depth + 1, mentions)}</strong>);
@@ -1342,6 +1346,8 @@ function CodeBlock({ code, lang }: { code: string; lang: string }): ReactNode {
   return (
     <div className="tx-md-pre">
       {lang ? <div className="tx-md-pre-lang">{lang}</div> : null}
+      {/* Always at the block's right end (#242). */}
+      <CopyButton text={code} />
       <pre className="tx-pre tx-pre-code">
         {lines.map((line, i) => (
           <div className="tx-md-pre-line" key={i}>

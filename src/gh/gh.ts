@@ -12,7 +12,7 @@
  */
 
 import type { Task } from '../types';
-import { parsePrView, type PrStatus } from './prStatus';
+import { parsePrGraphql, PR_QUERY, type PrStatus } from './prStatus';
 import {
   parseAnnotations,
   parsePrChecks,
@@ -151,10 +151,6 @@ export function resetViewerLoginForTests(login: string | null = null): void {
   viewerFailedAt = -Infinity;
 }
 
-const PR_FIELDS =
-  'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,mergedAt,headRefName,baseRefName,headRefOid,' +
-  'latestReviews,reviewRequests,author';
-
 /**
  * Is there a PR for this task worth asking about? A resumed session often
  * runs on the repo's base branch, and `gh pr view main` can find some stray PR
@@ -173,24 +169,43 @@ export function prLookupBranch(task: Pick<Task, 'branch' | 'baseBranch'>): strin
  * worktree as asked, and falls back to the origin repo when the worktree is
  * gone (removed on archive) -- the branch lookup only needs the remote, which
  * both share.
+ *
+ * One `gh api graphql` request (#278): what `gh pr view <branch> --json …`
+ * asked before, plus the review threads, in the same single call, so the
+ * unresolved count adds nothing to the PR store's rate (prStore.ts).
+ * `{owner}` and `{repo}` are gh's own placeholders, filled from the folder's
+ * remote as `gh pr view` resolves it; they work only through -F. The branch
+ * goes through -f, raw: -F would turn a branch named `193` into a number.
+ * The Accept header is the preview `gh pr view` sends for mergeStateStatus.
  */
 export async function fetchPrStatus(
   task: Pick<Task, 'branch' | 'baseBranch' | 'worktreePath' | 'repoPath'>,
 ): Promise<PrStatus | null> {
   const branch = prLookupBranch(task);
   if (!branch) return null;
-  const args = ['pr', 'view', branch, '--json', PR_FIELDS];
+  const args = [
+    'api',
+    'graphql',
+    '-H',
+    'Accept: application/vnd.github.merge-info-preview+json',
+    '-F',
+    'owner={owner}',
+    '-F',
+    'repo={repo}',
+    '-f',
+    `branch=${branch}`,
+    '-f',
+    `query=${PR_QUERY}`,
+  ];
   for (const cwd of [task.worktreePath, task.repoPath]) {
     if (!cwd) continue;
     const r = await gh(args, cwd);
     if (!r) continue; // could not spawn here: the cwd may not exist
-    // Exit 1 covers "no pull requests found", "not logged in", "no remote",
-    // offline. None of them is something to shout about; all mean "no badge".
+    // Non-zero covers "not logged in", "no remote", offline and a GraphQL
+    // error. None of them is something to shout about; all mean "no badge".
     if (r.code !== 0) return null;
-    const pr = parsePrView(r.stdout);
-    // gh resolves a bare branch name loosely; be sure it is ours.
-    if (pr && pr.headRefName && pr.headRefName !== branch) return null;
-    return pr;
+    // Only a PR whose head is this branch: parsePrGraphql checks.
+    return parsePrGraphql(r.stdout, branch);
   }
   return null;
 }
@@ -294,4 +309,62 @@ export async function fetchAnnotations(ref: { host: string; repo: string; id: st
   const r = await gh(['api', ...hostArgs(ref), `repos/${ref.repo}/check-runs/${ref.id}/annotations`]);
   if (!r || r.code !== 0) return [];
   return parseAnnotations(r.stdout);
+}
+
+// ---------------------------------------------------------------------------
+// Squash and merge (#236): the one GitHub write Albedo makes itself
+// ---------------------------------------------------------------------------
+
+export type MergeOutcome =
+  | { ok: true; branchNotDeleted?: string }
+  | { ok: false; message: string };
+
+/**
+ * `gh pr merge <n> --squash`, by the owner's decision (#236), and only from
+ * the confirm dialog. Never `--admin`: when GitHub refuses, its message is the
+ * answer, shown in the dialog. Unlike the reads above, a failure is reported,
+ * not folded into null -- the person who pressed the button needs to know.
+ *
+ * Deleting the branch is GitHub's half only: the remote ref, through the API,
+ * after the merge. Not gh's `--delete-branch`, which also deletes the local
+ * branch and switches the checkout off it -- in a task's worktree that branch
+ * is checked out, so gh would fail half-way or move the worktree. The worktree
+ * and its branch stay as they are; Archive… is where they go.
+ *
+ * Runs where the PR lookup does: the worktree, else the main checkout (the
+ * worktree may be gone). gh finds the repository from the folder's remote.
+ */
+export async function mergePr(
+  pr: { number: number; headRefName: string; headSha?: string },
+  task: Pick<Task, 'worktreePath' | 'repoPath'>,
+  opts: { deleteBranch: boolean },
+): Promise<MergeOutcome> {
+  if (!Number.isInteger(pr.number) || pr.number <= 0) return { ok: false, message: 'Not a pull request number.' };
+  for (const cwd of [task.worktreePath, task.repoPath]) {
+    if (!cwd) continue;
+    // Only the head that was approved and shown: a push that lands while the
+    // dialog is open makes GitHub refuse, rather than merge unseen commits.
+    const head = pr.headSha && /^[0-9a-f]{7,64}$/i.test(pr.headSha) ? ['--match-head-commit', pr.headSha] : [];
+    const r = await gh(['pr', 'merge', String(pr.number), '--squash', ...head], cwd);
+    if (!r) continue; // could not spawn here: the cwd may not exist
+    if (r.code !== 0) return { ok: false, message: ghMessage(r) };
+    if (!opts.deleteBranch || !pr.headRefName) return { ok: true };
+    const ref = pr.headRefName.split('/').map(encodeURIComponent).join('/');
+    const d = await gh(['api', '-X', 'DELETE', `repos/{owner}/{repo}/git/refs/heads/${ref}`], cwd);
+    // Already gone (the repo deletes merged branches itself) is what was asked.
+    // Only "already gone" -- not any 422, which is also how GitHub refuses a
+    // protected branch.
+    if (!d || (d.code !== 0 && !/Reference does not exist/i.test(d.stderr + d.stdout))) {
+      return { ok: true, branchNotDeleted: d ? ghMessage(d) : 'GitHub CLI (gh) could not be run.' };
+    }
+    return { ok: true };
+  }
+  return { ok: false, message: 'GitHub CLI (gh) could not be run.' };
+}
+
+/** gh's own words for a failure, without colour codes; the exit code when it said nothing. */
+export function ghMessage(r: GhResult): string {
+  // eslint-disable-next-line no-control-regex
+  const text = (r.stderr || r.stdout).replace(/\x1b\[[0-9;]*m/g, '').trim();
+  return text || `gh exited with ${r.code ?? 'a signal'}.`;
 }

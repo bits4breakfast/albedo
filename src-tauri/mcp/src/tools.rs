@@ -1,4 +1,6 @@
-//! The three tools: what Claude is told about them, and what a call must hold.
+//! The four tools: what Claude is told about them, and what a call must hold.
+//! The fourth, `set_task_summary`, is by the owner's decision (issue #262):
+//! its one line is shown beside the task's title, never acted on.
 //!
 //! Every limit here is repeated in `src/capture/inbox.ts`, which checks each
 //! line again: this process runs inside the session, so the app never takes
@@ -17,6 +19,7 @@ pub const MAX_REASON: usize = 1_000;
 pub const MAX_PROJECT: usize = 200;
 pub const MAX_BRANCH: usize = 200;
 pub const MAX_MESSAGE: usize = 1_000;
+pub const MAX_TASK_SUMMARY: usize = 120;
 
 /// A reminder further out than this is a typo more often than a plan.
 pub const MAX_DUE_AHEAD_MS: i64 = 366 * 24 * 60 * 60 * 1000;
@@ -26,6 +29,15 @@ pub const DUE_PAST_SLACK_MS: i64 = 5 * 60 * 1000;
 pub const CREATE_REMINDER: &str = "create_reminder";
 pub const REQUEST_SESSION: &str = "request_session";
 pub const NOTIFY_BLOCKED: &str = "notify_blocked";
+pub const SET_TASK_SUMMARY: &str = "set_task_summary";
+
+/// Every tool, in the order `tools/list` gives them.
+pub const NAMES: [&str; 4] = [
+    CREATE_REMINDER,
+    REQUEST_SESSION,
+    NOTIFY_BLOCKED,
+    SET_TASK_SUMMARY,
+];
 
 /// The `tools/list` result's `tools`, in a fixed order.
 pub fn definitions() -> Value {
@@ -86,6 +98,22 @@ pub fn definitions() -> Value {
                     "message": {"type": "string", "description": "What you need from the user, one or two sentences.", "maxLength": MAX_MESSAGE}
                 },
                 "required": ["message"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": SET_TASK_SUMMARY,
+            "title": "Summarize this task in one line",
+            "description": "Give this task a one-line summary of what it is about, shown beside its \
+                title in Albedo (in the header, and when hovering the task in the list). Call it once you know, typically right after reading the ticket or issue the task is named \
+                after (from Linear, GitHub, Jira or similar), and again only if the task's purpose changes. Plain \
+                words, no ticket key (the title already has it), at most 120 characters.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "What the task is about, one line, e.g. \"Import pictures from a URL\".", "maxLength": MAX_TASK_SUMMARY}
+                },
+                "required": ["summary"],
                 "additionalProperties": false
             }
         }
@@ -181,6 +209,19 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
                 reply: "The user has been notified.".into(),
             })
         }
+        SET_TASK_SUMMARY => {
+            only(args, &["summary"])?;
+            let mut out = Map::new();
+            out.insert(
+                "summary".into(),
+                field(args, "summary", MAX_TASK_SUMMARY, Lines::One)?.into(),
+            );
+            Ok(Accepted {
+                tool: SET_TASK_SUMMARY,
+                args: out,
+                reply: "Albedo shows this beside the task's title.".into(),
+            })
+        }
         _ => Err(format!("Unknown tool: {name}")),
     }
 }
@@ -268,7 +309,7 @@ mod tests {
     const NOW: i64 = 1_793_692_800_000; // 2026-11-03T08:00:00Z
 
     #[test]
-    fn definitions_list_the_three_tools_in_order_with_strict_schemas() {
+    fn definitions_list_the_four_tools_in_order_with_strict_schemas() {
         let defs = definitions();
         let names: Vec<_> = defs
             .as_array()
@@ -276,7 +317,16 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, [CREATE_REMINDER, REQUEST_SESSION, NOTIFY_BLOCKED]);
+        assert_eq!(
+            names,
+            [
+                CREATE_REMINDER,
+                REQUEST_SESSION,
+                NOTIFY_BLOCKED,
+                SET_TASK_SUMMARY
+            ]
+        );
+        assert_eq!(names, NAMES);
         for t in defs.as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object");
             assert_eq!(t["inputSchema"]["additionalProperties"], false);
@@ -388,6 +438,60 @@ mod tests {
                 NOW,
             );
             assert!(r.is_err(), "{bad} should be refused");
+        }
+    }
+
+    #[test]
+    fn a_task_summary_is_one_trimmed_line() {
+        let a = validate(
+            SET_TASK_SUMMARY,
+            Some(&json!({"summary": "  Import pictures from a URL "})),
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(a.tool, SET_TASK_SUMMARY);
+        assert_eq!(
+            a.args,
+            json!({"summary": "Import pictures from a URL"})
+                .as_object()
+                .unwrap()
+                .clone()
+        );
+        assert_eq!(a.reply, "Albedo shows this beside the task's title.");
+    }
+
+    #[test]
+    fn a_task_summary_over_the_cap_or_on_two_lines_is_refused() {
+        let call = |v: Value| validate(SET_TASK_SUMMARY, Some(&json!({"summary": v})), NOW);
+        assert!(call(json!("é".repeat(MAX_TASK_SUMMARY))).is_ok());
+        let err = call(json!("a".repeat(MAX_TASK_SUMMARY + 1))).unwrap_err();
+        assert!(err.contains("at most 120"), "{err}");
+        assert!(call(json!("Import pictures\nfrom a URL"))
+            .unwrap_err()
+            .contains("(it is one line)"));
+        assert!(call(json!("tab\there")).unwrap_err().contains("control"));
+        assert!(call(json!("x \u{1b}[31m")).unwrap_err().contains("control"));
+        assert_eq!(call(json!("  ")).unwrap_err(), "`summary` is empty.");
+        assert_eq!(call(json!(7)).unwrap_err(), "`summary` must be a string.");
+        assert_eq!(
+            validate(SET_TASK_SUMMARY, None, NOW).unwrap_err(),
+            "`summary` is required."
+        );
+    }
+
+    #[test]
+    fn a_task_summary_names_no_task_and_takes_nothing_else() {
+        for extra in ["task", "taskId", "title"] {
+            let err = validate(
+                SET_TASK_SUMMARY,
+                Some(&json!({"summary": "s", extra: 4})),
+                NOW,
+            )
+            .unwrap_err();
+            assert!(
+                err.starts_with(&format!("Unknown argument `{extra}`")),
+                "{err}"
+            );
         }
     }
 }

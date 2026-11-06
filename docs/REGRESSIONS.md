@@ -52,12 +52,26 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Measure it with the message sent the way the composer sends it (bracketed paste, then Enter), and look for the `attachment` line of type `file` after the prompt in the transcript, not at what the model says.
 - **Unverified claims about Claude Code.** A PR stated that `--append-system-prompt` applies on every spawn. Measured with `claude -p`: it applies when the session is created, persists across `--resume`, and is ignored when passed on resume. **Rule:** measure Claude Code behaviour (version noted) before writing it in code or a PR. Say what wasn't measured (interactive mode, `/clear`).
 
+- **A question still waiting vanished after an hour.** Owner-reported (#246): two tasks asked an AskUserQuestion while the owner was away; on their return neither showed "Waiting on You", and they had to answer in the terminal without being told. Questions answered within the hour were prompted as always; only a long absence (the laptop closed) showed it. Measured: the hook's end marker came exactly 3630 s after the request (Claude Code's timeout for it), and `applyHookEvents` retired the request on any end marker. A hook that times out decides nothing (measured in #42's work: the dialog stays up), so the question was still waiting. The card's own "window closed" state was unreachable: the marker removed the prompt at the same moment. **Rule:**
+  - "The hook ended" is not "the prompt was answered". Only an end inside the window means the terminal answered (it kills the hook at once); an end at the window means the hook gave up.
+  - A state written for "after the timeout" gets a test that walks past the timeout with the real event sequence, not just a render at a late `now`.
+
 ## Shared helpers and scope
 
 - **Changing a shared helper for one feature.** Chat tasks made `taskBase('')` return null. That also changed the main-checkout browse diff, from "against upstream" to "against HEAD", which nobody asked for. **Rule:**
   - Before changing a shared function, list every caller: `git grep`.
   - If another caller's behaviour changes, don't. Scope the change to the feature instead.
 - **One rule, fixed in one place.** The header offered Create PR for a branch with no commits of its own, and the tooltip said "24 commits" (#82). The cause: the local `master` was 24 commits behind `origin/master`. `taskBase` already measured against the base's upstream for exactly this reason, but `commitsOnBranch` counted against the local base. **Rule:** everything that counts or diffs a branch against its base resolves the base through `baseOrUpstream` (`src/git/worktree.ts`). When you fix a rule like this, `git grep` for the other places that apply it.
+- **Two places, two answers about a task's base.** The Files pane said "No changes yet" on a branch with 560+ committed changes, while the header showed "⑂ feature-b → main" (#237). The task had been cut from another feature branch, so its stored base was `feature-a`. Its PR was later retargeted to `main`, and the local `feature-a` was deleted, leaving only `origin/feature-a`. The header follows the PR (`mergeTarget`), but the Files pane, the guide and the commit counts use the stored base through `taskBase`. `baseOrUpstream('feature-a')` found no local branch and so no upstream, `merge-base` failed, and `taskBase` returned null. Callers read null as "uncommitted changes only", so the failure looked like an empty change set. The fix:
+  - `measuredBase` (`src/ui/mergeTarget.ts`) applies `mergeTarget`'s order: the PR's base, then a stack parent, then the stored base.
+  - `useMeasuredBase` (`src/ui/useMeasuredBase.ts`) feeds that to the Files pane, the guide, the file diff and the Create PR count. The In Review probe (`reviewWork.ts`) uses the PR's base too.
+  - `baseOrUpstream` falls back to `origin/<base>`.
+  - The Files pane and the guide say "Can't find the base branch `X`".
+
+  **Rule:**
+  - What a task is measured against is decided in one place (`measuredBase`). The header, the Files pane, the guide and the counts all ask it, never `task.baseBranch` directly.
+  - A base that exists only as `origin/<base>` still counts.
+  - A base that can't be resolved is said out loud, never shown as "no changes".
 - **A one-file workaround hid the general case.** Opening `.claude/skills/x/SKILL.md` or `.github/workflows/ci.yml` in a worktree failed with "forbidden path", while the Files pane listed the folder (#93). On unix Tauri's fs scope matches with `require_literal_leading_dot: true` by default, so a `<dir>/**` grant never matches a path component that starts with a dot. #77 hit the same cause with `~/.albedo/.../.phpantom.toml` and fixed it with a literal scope entry for that one file, so nobody looked for the other dot-paths it broke. Turning the option off in `tauri.conf.json` was not enough either: the plugin applies it to capability scopes only, while `fs_scope().allow_directory` (the runtime grant) always keeps Tauri's default. **Rule:**
   - When a scope or permission refuses one path, find the rule that refused it and list what else it refuses, before adding an exception.
   - Read where a config option is applied before trusting that it applies: `allow_project_dir` grants through a runtime capability for this reason.
@@ -93,6 +107,11 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - `@tauri-apps/*` and their crates move together, in one PR; `scripts/check-tauri-versions.mjs` runs on every push and fails a one-sided bump.
   - A check the real build makes before compiling anything belongs in CI as its own fast step, when the build itself is not run per push.
 - **A test that passed only on the day it was written.** `ReminderCard.test.tsx` (#174) fixed a reminder at 2026-10-30 09:00 and expected "due today", but the card reads the real clock; from the next day CI on `main` and every PR failed. **Rule:** a test asserting relative time ("today", "in 2 hours", "Tue") pins the clock (`vi.useFakeTimers({ toFake: ['Date'] })` + `setSystemTime`), or passes `now` in.
+- **A text query on highlighted code: flaky when it should find, blind when it should not.** `DiffContext.test.tsx` failed now and then in CI with "Unable to find an element with the text: before 1", but every line was on screen (#213). Syntax colour loads on its own schedule and splits a line into token spans (`before ` then `1`), and `getByText` matches one element's own text. A query that ran before the colours passed; one that ran after failed. The same test's `queryByText('before 10')` toBeNull passed whether or not the line was there. **Rule:**
+  - Find a diff or code line by its code cell's whole text (`.tx-d-code` textContent), or by a region's text.
+  - A test about code lines waits for the coloured tokens once, so it meets the state the app ends in on purpose, not by chance.
+- **Asserting at once after a store notifies.** `GuidePane.test.tsx` (#218) sent a focus request inside `act` and checked focus on the next line. On the owner's `./build.sh` run it failed (1 in 5 runs under load): the pane's `useSyncExternalStore` subscription had not attached yet, so the request was picked up a moment later, after the check. **Rule:** after notifying an external store (guide store, focus requests, PR store), wait for the effect (`waitFor`), unless the render before it came from an async `act` that flushed every effect.
+- **A partial `vi.mock` of a shared module breaks when the module is read for more.** Four composer suites mocked `db/comments` as `{ markCommentsSent }` alone; once the composer also read the waiting code comments and the intro default from it (#222), 27 tests failed with "No "DEFAULT_COMMENTS_INTRO" export is defined on the mock". **Rule:** mock a shared module as `{ ...(await vi.importActual(...)), <the stubs> }`, so new exports come through real, and stub only the reads and writes the test means to control.
 - **Running tests while files change.** A vitest run started in the same command as a rebase reported 13 fewer tests. **Rule:** run the suite only after git has finished rewriting the tree, and rerun when a count looks wrong.
 
 ## Cleanup paths
@@ -142,6 +161,11 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Anything that writes `scrollTop` also fires a scroll event that decides `following`. Before writing it, the content must already be in its final state, or the event reads a stale distance.
   - A row the pane draws from its own state (the echo, the working line) is content like any other: a following reader stays at the end after every commit, not only after `messages` changes.
   - Scroll behaviour is tested with a layout model (heights, `scrollTop` clamping, scroll events and `requestAnimationFrame` in frame order), not by asserting a handler was called.
+
+- **A hover-revealed control nobody could reach.** Owner-reported (#244): the copy icon after inline code (#243) showed only while the code was hovered, and could never be clicked. It sat 1px to the right of the code (`margin-left: 1px`, absolutely positioned). Measured with `elementFromPoint`: that pixel belonged to the paragraph. Crossing it ended the hover, so the icon hid, and the pointer then rested on plain text, so it never came back. Tests passed: jsdom has no layout and no hover. **Rule:**
+  - Never reveal a control on hover unless the trigger and the control share one unbroken hit area: no margin, gap or offset between them.
+  - Prefer a control that is always there. Hiding it saves little, and an invisible target can't be found either.
+  - Geometry claims (touching, as tall as, inside) are checked in a real engine, with `elementFromPoint` across the boundary, before saying done.
 
 ## Shell scripts (for agents)
 

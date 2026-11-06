@@ -31,15 +31,7 @@ export function mustHold(taskId: number): boolean {
   return isOffline() || heldFor(taskId).length > 0 || isReleasing(taskId) || isTurnRunning(taskId);
 }
 
-/**
- * A Claude Code command: the trimmed text starts with `/` and its first word
- * is a command name (`/clear`, `/model opus`, `/review:pr`), not a path
- * (`/Users/me/shot.png look`).
- */
-export function isSlashCommand(body: string): boolean {
-  const first = body.trim().split(/\s+/, 1)[0] ?? '';
-  return /^\/[A-Za-z][\w:-]*$/.test(first);
-}
+export { isSlashCommand } from './slash';
 
 /**
  * For the command buttons (model picker, Clear / Compact): a send now would

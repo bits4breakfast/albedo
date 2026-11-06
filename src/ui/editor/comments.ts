@@ -12,6 +12,7 @@
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from '@codemirror/view';
 import type { ReviewComment } from '../../db/comments';
+import { ACTION_LABEL, cardState } from './commentLabels';
 
 /** A comment placed in this document. */
 export interface PlacedComment {
@@ -117,16 +118,34 @@ class CommentCard extends WidgetType {
   }
   toDOM(view: EditorView): HTMLElement {
     const c = this.placed.comment;
+    // The same card as the Diff mode's CommentCardView (#222): a state chip,
+    // one main action, and the rest behind ⋯.
+    const state = cardState(c);
     const card = el('div', 'ed-cmt');
+    card.dataset.state = state.state;
     const head = el('div', 'ed-cmt-head');
     head.append(el('span', 'ed-cmt-where', rangeLabel(view, this.placed.from, this.placed.to)));
-    head.append(el('span', c.sentAt ? 'ed-cmt-state ed-cmt-sent' : 'ed-cmt-state', c.sentAt ? 'Sent to Claude' : 'Not Sent'));
+    const chip = el('span', 'ed-cmt-chip', state.chip);
+    chip.dataset.state = state.state;
+    head.append(chip);
+    const run = { edit: () => this.actions.edit(c), resolve: () => this.actions.resolve(c), delete: () => this.actions.remove(c) };
+    const make = (a: 'edit' | 'resolve' | 'delete', primary: boolean) =>
+      button(ACTION_LABEL[a], run[a], a === 'delete' ? 'ed-cmt-btn ed-cmt-danger' : primary ? 'ed-cmt-btn ed-cmt-primary' : 'ed-cmt-btn');
     const actions = el('span', 'ed-cmt-actions');
-    actions.append(
-      button('Edit', () => this.actions.edit(c)),
-      button('Resolve', () => this.actions.resolve(c)),
-      button('Delete', () => this.actions.remove(c), 'ed-cmt-btn ed-cmt-danger'),
-    );
+    const more = button('⋯', () => {
+      const open = more.getAttribute('aria-expanded') !== 'true';
+      more.setAttribute('aria-expanded', String(open));
+      for (const b of extra) b.hidden = !open;
+    }, 'ed-cmt-btn ed-cmt-more');
+    more.setAttribute('aria-expanded', 'false');
+    more.setAttribute('aria-label', 'More actions');
+    more.title = 'More actions';
+    const extra = state.more.map((a) => {
+      const b = make(a, false);
+      b.hidden = true;
+      return b;
+    });
+    actions.append(make(state.main, state.state === 'sent'), ...extra, more);
     head.append(actions);
     card.append(head, el('div', 'ed-cmt-body', c.body));
     return card;

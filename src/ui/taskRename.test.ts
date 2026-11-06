@@ -36,6 +36,8 @@ import { __resetTurns, noteTaskSessions } from './transcript/turn';
 import { recordQueueOperations, seedQueue } from '../capture/queue';
 import {
   __resetSessionRename,
+  cleanSummary,
+  MAX_SUMMARY,
   MAX_TITLE,
   oneLine,
   pendingSessionRename,
@@ -104,6 +106,20 @@ describe('renamedTitle: what a rename saves', () => {
   it('says on the hint that the branch and folder stay', () => {
     expect(RENAME_HINT).toContain('branch and the folder stay');
     expect(RENAME_HINT).toContain('/rename');
+  });
+});
+
+describe('cleanSummary: what the summary field saves (#262)', () => {
+  it('one line, trimmed; empty clears', () => {
+    expect(cleanSummary('  Import pictures\nfrom a URL ')).toBe('Import pictures from a URL');
+    expect(cleanSummary('')).toBeNull();
+    expect(cleanSummary(' \t\n')).toBeNull();
+  });
+
+  it(`caps at ${MAX_SUMMARY} characters, the MCP tool's cap, never cutting an emoji in half`, () => {
+    expect(MAX_SUMMARY).toBe(120);
+    expect(cleanSummary('a'.repeat(MAX_SUMMARY + 9))).toBe('a'.repeat(MAX_SUMMARY));
+    expect(Array.from(cleanSummary('😀'.repeat(MAX_SUMMARY + 1)) ?? '')).toHaveLength(MAX_SUMMARY);
   });
 });
 

@@ -130,6 +130,12 @@ export type PendingPrompt =
        * {@link alwaysAllowRules}). Null hides the button.
        */
       alwaysAllow: SuggestedRule[] | null;
+      /**
+       * `ExitPlanMode` only: the plan Claude asks to start on, as markdown, at
+       * most {@link MAX_PLAN_CHARS}. Absent for every other tool. See
+       * PLAN_MODE below: the one field of a tool's input this module keeps.
+       */
+      plan?: string;
       at: number;
     }
   /**
@@ -202,6 +208,28 @@ export function parseHookLines(text: string, fallbackAt = Date.now()): HookEvent
 }
 
 const ASK_TOOL = 'AskUserQuestion';
+
+/*
+ * PLAN_MODE (#272). Claude Code's own plan mode ends in a PermissionRequest
+ * for `ExitPlanMode`, whose input is `{ plan }`: the plan, as markdown (its
+ * tool_use input in transcripts, Claude Code 2.1.308). The card shows that
+ * plan as a document so it can be read and commented on where it is
+ * answered. It is the one field of a tool's input kept past `summarize`, for
+ * this one tool, cut to MAX_PLAN_CHARS. HOOK_SCRIPT already keeps the whole
+ * request line (up to MAX_LINE_CHARS), so nothing new is written to disk:
+ * this is what the derived prompt keeps in memory. A widening of what this
+ * channel carries, approved by the owner (2026-11-06; CLAUDE.md, the seventh).
+ */
+export const PLAN_TOOL = 'ExitPlanMode';
+
+/** The most of a plan the card keeps, in characters. */
+export const MAX_PLAN_CHARS = 65_536;
+
+function planOf(toolName: string | null, input: Record<string, unknown> | null): { plan?: string } {
+  if (toolName !== PLAN_TOOL) return {};
+  const plan = str(input?.['plan']);
+  return plan === null ? {} : { plan: plan.length > MAX_PLAN_CHARS ? plan.slice(0, MAX_PLAN_CHARS) : plan };
+}
 
 /**
  * What HOOK_SCRIPT stamps as `albedo_req`: `<pid>-<epoch ms>`. Unique per
@@ -331,7 +359,9 @@ export function isQuiet(s: PendingState): boolean {
  * `PreToolUse` of AskUserQuestion. A request with a waiting hook is retired
  * ONLY by its own end marker (or by its tool_use_id finishing, for a question
  * that adopted one) -- never by an unrelated PostToolUse, which may be a
- * parallel subagent's. Stop, a new user prompt, and the session ending or
+ * parallel subagent's. An end marker at or past the answer window is the
+ * hook timing out, not an answer: the prompt stays, answerable only in the
+ * terminal (#246). Stop, a new user prompt, and the session ending or
  * restarting retire everything: none can happen while a dialog is up.
  *
  * `Notification` is only a fallback (see the `notice` kind): it fires for idle
@@ -366,6 +396,7 @@ export function applyHookEvents(s: PendingState, events: readonly HookEvent[]): 
             summary: summarize(e.toolName ?? 'a tool', e.toolInput),
             requestId: e.requestId,
             alwaysAllow: alwaysAllowRules(e.suggestions),
+            ...planOf(e.toolName, e.toolInput),
             at: e.at,
           };
         }
@@ -378,9 +409,19 @@ export function applyHookEvents(s: PendingState, events: readonly HookEvent[]): 
         }
         break;
       }
-      case REQ_END:
-        if (e.requestId !== null) s.open.delete(e.requestId);
+      case REQ_END: {
+        if (e.requestId === null) break;
+        const ended = s.open.get(e.requestId);
+        s.open.delete(e.requestId);
+        // A hook that ran out its window -- its own loop, or Claude Code's
+        // timeout for it -- decided nothing: the dialog is still up in the
+        // terminal (#246). Keep the prompt, now answerable only there, and let
+        // it go the way a prompt without a hook does: its tool finishing, Stop,
+        // a new prompt, or the session starting over. An end well inside the
+        // window is the terminal answering, which kills the hook at once.
+        if (ended && hookExpired(ended, e.at)) s.loose = ended;
         break;
+      }
       case 'PreToolUse':
         if (e.toolName === ASK_TOOL) {
           s.loose = {
@@ -457,6 +498,30 @@ export function derivePending(events: readonly HookEvent[], done?: ReadonlySet<s
  * The polling is a `sleep 0.5` loop, so the cost while waiting is negligible.
  */
 export const ANSWER_WINDOW_S = 3600;
+
+/**
+ * The card stops answering this long before the window closes: a click in the
+ * last seconds could land after the hook quit.
+ */
+export const ANSWER_MARGIN_S = 15;
+
+/**
+ * Whether a request's hook, ending at `endedAt`, ran out its window rather
+ * than being killed by an answer in the terminal (#246).
+ *
+ * By wall clock: Claude Code times the hook out at the window plus 30 s, and
+ * the hook's own `sleep` loop only runs longer, never shorter, across a Mac's
+ * sleep. A terminal answer given after the card stopped answering also lands
+ * here; the prompt then lingers, with no buttons, until its tool finishes.
+ */
+export function hookExpired(p: PendingPrompt, endedAt: number): boolean {
+  return endedAt - p.at >= (ANSWER_WINDOW_S - ANSWER_MARGIN_S) * 1000;
+}
+
+/** Whether the card's time to answer `p` is up: only the terminal can, now. */
+export function answerWindowClosed(p: PendingPrompt, now: number): boolean {
+  return now - p.at >= (ANSWER_WINDOW_S - ANSWER_MARGIN_S) * 1000;
+}
 
 /** Hook stdout: the documented `hookSpecificOutput` for PermissionRequest. */
 export interface HookDecision {
@@ -547,6 +612,53 @@ export function questionDecision(prompt: PendingPrompt, picks: ReadonlyArray<Que
 }
 
 /**
+ * The decision answering a one-question AskUserQuestion with typed text kept
+ * as written -- line breaks included -- or null for any other prompt, or empty
+ * text. For an answer the card composes itself (a plan's comments, #272);
+ * the "Other" field goes through {@link answerText}, which makes one line of it.
+ */
+export function typedAnswerDecision(prompt: PendingPrompt, text: string): HookDecision | null {
+  if (prompt.kind !== 'question' || prompt.questions.length !== 1) return null;
+  if (prompt.rawQuestions.length !== 1) return null;
+  const q = prompt.questions[0]!;
+  const answer = text.trim();
+  if (answer.length === 0) return null;
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: { behavior: 'allow', updatedInput: { questions: prompt.rawQuestions, answers: { [q.question]: answer } } },
+    },
+  };
+}
+
+export type PlanChoice = 'approve' | 'keep-planning';
+
+/** What Claude is told on Keep Planning with nothing to add. */
+export const KEEP_PLANNING_MESSAGE = 'The user wants to keep planning. Wait for them to say what to change.';
+
+/**
+ * The decision for Claude Code's own plan approval (`ExitPlanMode`), or null
+ * for any other prompt.
+ *
+ * Approve is a plain allow: the tool runs with the plan the user was shown.
+ * Keep Planning is a deny. With `feedback` (the comments the user collected)
+ * it does not interrupt: Claude reads the feedback as the reason and goes on
+ * planning with it. Without, it interrupts, as the terminal's "No, keep
+ * planning" does: Claude stops and waits to be told what to change.
+ */
+export function planDecision(prompt: PendingPrompt, choice: PlanChoice, feedback: string | null = null): HookDecision | null {
+  if (prompt.kind !== 'permission' || prompt.toolName !== PLAN_TOOL) return null;
+  const wrap = (decision: HookDecision['hookSpecificOutput']['decision']): HookDecision => ({
+    hookSpecificOutput: { hookEventName: 'PermissionRequest', decision },
+  });
+  if (choice === 'approve') return wrap({ behavior: 'allow' });
+  const message = feedback?.trim() ?? '';
+  return message.length > 0
+    ? wrap({ behavior: 'deny', message, interrupt: false })
+    : wrap({ behavior: 'deny', message: KEEP_PLANNING_MESSAGE, interrupt: true });
+}
+
+/**
  * True when `current` is still exactly the prompt the card showed as `shown`,
  * and a hook is still waiting for its answer.
  *
@@ -558,7 +670,7 @@ export function isAnswerable(current: PendingPrompt | null, shown: PendingPrompt
   if (current === null || shown.kind === 'notice' || current.kind !== shown.kind) return false;
   if (shown.requestId === null || current.requestId !== shown.requestId) return false;
   // Leave a margin: a click in the last seconds could land after the hook quit.
-  return now - shown.at < (ANSWER_WINDOW_S - 15) * 1000;
+  return !answerWindowClosed(shown, now);
 }
 
 /** The file the waiting hook polls for. Mirrors the name in HOOK_SCRIPT. */

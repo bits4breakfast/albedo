@@ -70,7 +70,8 @@ fn a_legacy_session_initializes_lists_and_calls() {
         [
             json!("create_reminder"),
             json!("request_session"),
-            json!("notify_blocked")
+            json!("notify_blocked"),
+            json!("set_task_summary")
         ]
     );
     assert_eq!(replies[2]["result"]["isError"], false);

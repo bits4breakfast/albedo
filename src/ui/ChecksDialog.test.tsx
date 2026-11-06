@@ -59,7 +59,18 @@ const pr: PrStatus = {
 };
 const task = { id: 7, worktreePath: '/w', repoPath: '/r' };
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The queued CI failure (#280) keeps a copy in storage: a fresh one per test.
+  const data = new Map<string, string>();
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+    },
+  });
+  (await import('./transcript/ciFailure')).__resetQueuedCi();
   clearCheckCachesForTests();
   calls.job = calls.log = calls.annotations = 0;
 });
@@ -106,6 +117,38 @@ describe('ChecksDialog', () => {
     expect(text).toContain('- src/ui/transcript/send.test.ts:67 ');
     expect(text).toContain('Error: Process completed with exit code 1.');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Ask Claude to Fix… takes the queued failure for the same commit out of the waiting items (#280)', async () => {
+    const { observeCiQueue, queuedCiOf } = await import('./transcript/ciFailure');
+    observeCiQueue(7, pr);
+    observeCiQueue(8, { ...pr, headSha: 'f00' });
+    expect(queuedCiOf(7)).not.toBeNull();
+    render(<ChecksDialog task={task} pr={pr} onClose={() => {}} />);
+    const ask = await screen.findByRole('button', { name: 'Ask Claude to Fix…' });
+    await waitFor(() => expect((ask as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(ask);
+    // It is in the box now, in more detail: sent once, not twice.
+    expect(queuedCiOf(7)).toBeNull();
+    expect(queuedCiOf(8)).not.toBeNull(); // another task's stays
+  });
+
+  it('Ask Claude to Fix… leaves a queued failure for another commit, and one no composer took', async () => {
+    const { observeCiQueue, queuedCiOf } = await import('./transcript/ciFailure');
+    observeCiQueue(7, { ...pr, headSha: 'newer' });
+    render(<ChecksDialog task={task} pr={pr} onClose={() => {}} />);
+    const ask = await screen.findByRole('button', { name: 'Ask Claude to Fix…' });
+    await waitFor(() => expect((ask as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(ask);
+    expect(queuedCiOf(7)?.sha).toBe('newer');
+    cleanup();
+    observeCiQueue(7, pr);
+    vi.mocked(insertIntoComposer).mockReturnValueOnce(false);
+    render(<ChecksDialog task={task} pr={pr} onClose={() => {}} />);
+    const again = await screen.findByRole('button', { name: 'Ask Claude to Fix…' });
+    await waitFor(() => expect((again as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(again);
+    expect(queuedCiOf(7)?.sha).toBe('#69');
   });
 
   it('says where the message box is when no composer took the text, and stays open', async () => {
