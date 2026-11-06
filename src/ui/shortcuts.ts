@@ -123,6 +123,19 @@
  * CodeMirror's default, history and search keymaps, editorKeys.ts,
  * focusAreas.ts and the native menu (only ⌘Q and ⌘W).
  *
+ * ## ⌥⌘T: collapse or expand the task list
+ *
+ * The list as a rail of group counts, or back (#266), as the ‹ beside New
+ * Task, the rail's › and the app ⋯ menu's item. Command and Option, from
+ * `code` (`KeyT`): Option turns `key` into `†` on macOS. Live while typing,
+ * as ⇧⌘T: it changes the frame, not the text. Taken from the terminals
+ * (TAKEN_FROM_TERMINAL), which treat Option as Meta. Checked: CodeMirror's
+ * default, history and search keymaps (their only T is Ctrl-T; their
+ * Mod-Alt keys are G, the arrows and backslash), the editor's own keys
+ * (FileEditor.tsx: Mod-Alt-M and ⌥⌘B; editorKeys.ts), focusAreas.ts, every
+ * other keydown listener in src (none reads T), and the native menu (only
+ * ⌘Q and ⌘W). Nothing else binds ⌥⌘T.
+ *
  * ## ⇧⌘S: send the waiting comments
  *
  * From anywhere (#258), as the Send beside them in Files and the guide: the
@@ -164,6 +177,7 @@ export type Combo =
   | 'mod+u'
   | 'mod+t'
   | 'mod+shift+t'
+  | 'mod+alt+t'
   | 'mod+shift+e'
   | 'mod+shift+s'
   | 'alt+f12'
@@ -213,6 +227,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+]', keys: '⌘]', description: 'Next Task' },
   { combo: 'mod+shift+[', keys: '⇧⌘[', description: 'Previous Project' },
   { combo: 'mod+shift+]', keys: '⇧⌘]', description: 'Next Project' },
+  { combo: 'mod+alt+t', keys: '⌥⌘T', description: 'Collapse / Expand the Task List' },
   { combo: 'mod+arrowleft', keys: '⌘←', description: 'Previous Reading Tab' },
   { combo: 'mod+arrowright', keys: '⌘→', description: 'Next Reading Tab' },
   { combo: 'mod+\\', keys: '⌘\\', description: 'Cycle PTY / Split / Transcript (not on the Editor tab)' },
@@ -338,6 +353,11 @@ export function comboOf(
   if (e.code === 'KeyT' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+t', digit: null };
   }
+  // Collapse or expand the task list (#266): Command and Option, from `code`
+  // (⌥T is † on macOS). Before the Alt check, which would refuse it.
+  if (e.code === 'KeyT' && e.metaKey && e.altKey && !e.shiftKey && !e.ctrlKey) {
+    return { combo: 'mod+alt+t', digit: null };
+  }
   if (e.code === 'KeyE' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'mod+shift+e', digit: null };
   }
@@ -417,6 +437,7 @@ const TAKEN_FROM_TERMINAL: ReadonlySet<Combo> = new Set([
   'mod+shift+r',
   'mod+shift+g',
   'mod+shift+t',
+  'mod+alt+t',
   'mod+shift+e',
   'mod+shift+s',
 ]);

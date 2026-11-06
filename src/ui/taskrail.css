@@ -1,0 +1,142 @@
+/* --------------------------------------------------------------------------
+   The task list, collapsed to a rail (#266). TaskRail.tsx.
+
+   The rail sits on the sidebar's own ground, --panel-chrome. Every pair below
+   was measured on it (railContrast.test.ts parses these tokens from
+   styles.css and checks them in all three theme blocks):
+
+     outlined count   --text on the circle's --panel   16.60 | 14.63
+                      (and on --panel-chrome itself     15.09 | 13.81)
+     filled count     --panel on --status-blocked        7.59 |  9.98
+                      --panel on --status-done           7.19 | 10.12
+     outlines (UI)    --status-idle on --panel-chrome    4.32 |  4.60
+                      --status-running                   5.87 |  7.44
+                      --status-blocked                   6.90 |  9.42
+                      --status-done                      6.53 |  9.55
+     selected ring    --accent on --panel-chrome         5.87 |  7.44
+                                                   light | dark
+
+   --panel carries a filled circle's count in both themes: white-ish on the
+   light fills, near-black on the dark ones. No opacity anywhere.
+   -------------------------------------------------------------------------- */
+
+/* The column narrows to the rail; the main pane takes the rest. The inline
+   width App sets for the list is dropped while collapsed. */
+.sidebar[data-collapsed='true'] {
+  width: 44px;
+  flex-basis: 44px;
+  min-width: 0;
+}
+
+.task-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Room for the selected ring (4px outside the circle) at the bottom. */
+  padding: 0 0 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* ＋ level with New Task in the expanded list's head. */
+.task-rail-head {
+  flex: 0 0 calc(var(--tab-h) + 2px);
+  display: flex;
+  align-items: center;
+  margin-bottom: -8px;
+}
+
+.task-rail-glyph { display: block; width: 16px; height: 16px; }
+
+/* A short hairline between the controls and the counts. Decorative. */
+.task-rail-sep {
+  flex: 0 0 1px;
+  width: 20px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
+/* One group: its count, in its colour. */
+.rail-circle {
+  --c: var(--status-idle);
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--c);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.rail-circle[data-group='blocked'] { --c: var(--status-blocked); }
+.rail-circle[data-group='active'] { --c: var(--status-running); }
+.rail-circle[data-group='review'],
+.rail-circle[data-group='reviewing'],
+.rail-circle[data-group='done'] { --c: var(--status-done); }
+.rail-circle[data-group='quiet'] { --c: var(--status-idle); }
+
+/* The groups that want you. */
+.rail-circle[data-fill='solid'] { background: var(--c); color: var(--panel); }
+/* Done: the third green, apart from the filled and the plain outline. */
+.rail-circle[data-fill='dotted'] { border-style: dotted; }
+
+/* The selected task's group: an accent ring round the circle, clear of it. */
+.rail-circle[aria-current='true']::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  pointer-events: none;
+}
+
+/* Hovered or open: a halo in a ground token, outside the circle, so neither
+   the fill nor the count's ground changes. */
+.rail-circle:hover,
+.rail-circle[data-open='true'] { box-shadow: 0 0 0 3px var(--panel-raised); }
+
+.rail-circle:focus-visible { outline-offset: 2px; }
+
+/* The popover: the app's menu shell (.row-menu), wide enough for a row. */
+.rail-pop {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  max-width: 280px;
+  max-height: min(440px, calc(100vh - 16px));
+}
+
+/* The group, as the list's label says it: its glyph on the rows' dot column
+   (10px padding, the dot's 3.5px margin), its name, its count. */
+.rail-pop-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 8px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.rail-pop-head > .status-dot { margin: 0 3.5px; animation: none; }
+.rail-pop-title { color: var(--text); font-weight: 600; }
+.rail-pop-count { margin-left: -4px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Long groups scroll here; the head stays. */
+.rail-pop-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* Rows are the list's (.task-row). The list hides the age on hover for its
+   ⌘N and ⋯; neither is here, so the age stays. */
+.rail-pop .task-row:hover .task-age { visibility: visible; }
+.rail-pop .task-row { cursor: default; }

@@ -343,3 +343,7 @@
 
 .task-row[data-status='archived'] .task-key { color: var(--faint); }
 .task-rest { overflow: hidden; text-overflow: ellipsis; }
+
+/* ‹ Collapse the list to the rail (#266): at the head's far end, whatever
+   else the head holds. */
+.tasklist-collapse { margin-left: auto; }
