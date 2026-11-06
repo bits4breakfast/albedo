@@ -22,12 +22,16 @@
   outline: none;
 }
 
+/* The guide's toolbar, one level under the reading pane's tabs (#274): on
+   --panel-chrome, as a tab's own row. Its text and totals are cleared there
+   (guideTotalsContrast.test.ts); Rewrite keeps its --panel-raised ground. */
 .gd-meta {
   flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 4px 12px;
+  background: var(--panel-chrome);
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
   color: var(--muted);

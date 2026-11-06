@@ -1063,9 +1063,14 @@ select:disabled { cursor: default; }
   font-weight: 600;
   color: var(--text);
   background: var(--panel);
-  /* No line under a pane head: inside the card the only separator is the
-     task bar's: one line under the page header. */
+  /* No line under a pane head in general. The reading pane's tabs are the
+     exception (below). */
 }
+
+/* The reading pane's tabs (Transcript, Files, Guide, the editor's) are a
+   level of their own (#274): a hairline sets them apart from what the tab
+   shows, and a tab's own toolbar under it sits on --panel-chrome. */
+.pane-transcript > .pane-head { border-bottom: 1px solid var(--border); }
 
 /* The Files column's label starts where its section text does: the list's
    8px, the card's 1px border, the section head's 12px. */
