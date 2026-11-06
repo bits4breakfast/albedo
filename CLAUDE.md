@@ -90,6 +90,24 @@ every count come from git, and Albedo checks the answer against them.
 only file that knows that output's shape. Nothing else may be built on this
 run without the same decision.
 
+A seventh, by the owner's decision (2026-11-06, issue #272): for Claude
+Code's plan mode only, the waiting prompt derived from a `PermissionRequest`
+for `ExitPlanMode` keeps its `plan` -- that one field of the tool's input, for
+that one tool, cut to 64K characters -- so the card can show the plan and
+take comments on it. Nothing new is written to disk (the hook line already
+holds the request), and it is still answered only by the user's click
+(Approve; Keep Planning, with the comments as the deny's message).
+`hookEvents.ts` stays the only file that knows it (`PLAN_MODE`).
+
+An eighth, by the owner's decision (2026-11-06, issue #272): the waiting card
+may read the one markdown file a question names, to show it as a document.
+`read_plan_file` (`src-tauri/src/fsscope.rs`) reads one absolute path ending
+in `.md` (also `.md` once symlinks are resolved), a regular file, at most 256
+KB, read only, and grants no fs scope; it refuses every place
+`allow_outside_file` refuses (`denied_roots()`: `~/.albedo`, `~/.claude`,
+`~/.claude.json`, secret stores, the app's own folders). Nothing else in a
+question is opened.
+
 ## Which session a task is on
 
 A restart resumes `tasks.session_id`, so that value is a fact, never a guess.

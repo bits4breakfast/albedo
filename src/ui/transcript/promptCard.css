@@ -16,17 +16,20 @@
 
 .pc-options {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
   margin-top: 6px;
 }
 
 .pc-option {
   display: flex;
+  flex: 0 1 auto;
   align-items: flex-start;
   gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
+  min-width: 150px;
+  max-width: 300px;
+  padding: 7px 10px;
   text-align: left;
   font: inherit;
   font-size: var(--fs-md);
@@ -37,6 +40,9 @@
   cursor: default; /* macOS HIG: controls do not use the pointing hand */
 }
 .pc-option:hover:not([disabled]) { background: var(--panel-hover); }
+/* The session's own suggestion: its label ends "(Recommended)". An accent
+   edge only; a picked option adds the inner ring and its mark (● ☑). */
+.pc-option-suggested { border-color: var(--accent); }
 .pc-option-on {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
@@ -44,6 +50,18 @@
 .pc-option[disabled] { color: var(--faint); }
 .pc-option[disabled] .pc-option-label,
 .pc-option[disabled] .pc-option-desc { color: var(--faint); }
+
+/* "Send N Comments": the one filled answer, first in the row while comments
+   wait. --on-accent on --accent-btn, 6.63 / 5.29, for both lines of it. */
+.pc-send {
+  color: var(--on-accent);
+  background: var(--accent-btn);
+  border-color: var(--accent-btn);
+}
+.pc-send .pc-option-label,
+.pc-send .pc-option-desc { color: var(--on-accent); }
+.pc-send:hover:not([disabled]) { background: var(--accent-btn-hover); }
+.pc-send[disabled] { background: var(--panel-inset); border-color: var(--border-strong); }
 
 .pc-option-mark { flex: none; color: var(--accent); font-size: var(--fs-md); line-height: inherit; }
 .pc-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
@@ -53,10 +71,9 @@
 .pc-multi { font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
 
 .pc-other {
-  display: block;
-  width: 100%;
+  flex: 1 1 200px;
+  min-width: 160px;
   box-sizing: border-box;
-  margin-top: 4px;
   padding: 5px 8px;
   font: inherit;
   font-size: var(--fs-md);
@@ -86,3 +103,272 @@
 
 .pc-note { margin-top: 6px; font-size: var(--fs-sm); color: var(--muted); }
 .pc-note-warn { color: var(--warn); }
+
+/* --- the card's frame (#272) ------------------------------------------------
+   Head, then the body (question, plan, comments), which scrolls, then the
+   foot (the answers and the notes), which never scrolls away. */
+.tx-prompt-head:not(:has(.pc-waited)) > .btn { margin-left: auto; }
+.pc-subject { font-size: var(--fs-xs); color: var(--warn); }
+/* --faint on --prompt-bg: 5.67 / 5.56. */
+.pc-waited {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.pc-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.pc-foot { flex: none; padding-top: 2px; }
+.pc-foot > .pc-options { margin-top: 10px; }
+
+/* --- the question: regular weight, markdown, three lines then Show All ---- */
+.pc-q { font-weight: 400; color: var(--text); }
+.pc-q .tx-md { font-size: var(--fs-md); line-height: 1.55; }
+.pc-q .tx-md-p { margin-bottom: 6px; }
+.pc-q-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+/* --accent on --prompt-bg: 6.16 / 7.28. */
+.pc-more {
+  display: inline-block;
+  margin: 0 0 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  cursor: default;
+}
+.pc-more:hover { text-decoration: underline; }
+.pc-more:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+
+/* --- the plan document -----------------------------------------------------
+   Its own --panel ground inside the card, so every text tier is the one
+   cleared on the flat grounds (--panel is lighter than --panel-raised in
+   light, darker in dark): --text 16.60 / 14.63, --text-strong 19.43 / 17.20,
+   --muted 7.15 / 7.74, --faint 5.94 / 6.02, --accent (Open) 6.46 / 7.88, and
+   hovered (--panel-hover) 5.62 / 7.04. Its edge is the card's own
+   --prompt-line, decorative. */
+.pc-doc {
+  margin-top: 8px;
+  background: var(--panel);
+  border: 1px solid var(--prompt-line);
+  border-radius: var(--radius);
+}
+.pc-doc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.pc-doc-name { flex: none; font-weight: 600; color: var(--text-strong); }
+.pc-doc-folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.pc-doc-open {
+  flex: none;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: default;
+}
+.pc-doc-open:hover { background: var(--panel-hover); }
+.pc-doc-open:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+/* The left padding is the pins' margin. */
+.pc-doc-body {
+  position: relative;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px 16px 12px 30px;
+}
+.pc-doc-md .tx-md { font-size: var(--fs-md); line-height: 1.55; }
+.pc-doc-md .tx-md-p { margin-bottom: 8px; }
+.pc-doc-md .tx-md-h { margin: 12px 0 4px; }
+.pc-doc-md .tx-md > :first-child { margin-top: 2px; }
+.pc-doc-note { margin-top: 8px; font-size: var(--fs-sm); color: var(--muted); }
+
+/* --- comments on it ---------------------------------------------------------
+   A passage with a comment: --accent-soft behind it, --text-strong on it
+   (15.26+ / 13.21+, whatever the token it was drawn in), an --accent
+   underline (5.56 / 6.82 on --accent-soft: 3:1 is the bar). The passage being
+   commented on is one step stronger, --accent-soft-strong. No alpha. */
+::highlight(albedo-plan-comment) {
+  background-color: var(--accent-soft);
+  color: var(--text-strong);
+  text-decoration: underline 2px var(--accent);
+  text-underline-offset: 3px;
+}
+::highlight(albedo-plan-comment-pending) {
+  background-color: var(--accent-soft-strong);
+  color: var(--text-strong);
+  text-decoration: underline 2px var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* A numbered pin: --on-accent on --accent-btn (6.63 / 5.29); the disc is a
+   UI mark, 3:1: on the document's --panel 6.46 / 3.48, on the tray's
+   --prompt-bg 6.16 / 3.22. */
+.pc-pin {
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent-btn);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.pc-doc-pin {
+  position: absolute;
+  left: 7px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.pc-sel-bar {
+  position: absolute;
+  z-index: 3;
+  padding: 2px;
+  transform: translateX(-100%);
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-menu);
+}
+.pc-sel-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: default;
+  white-space: nowrap;
+}
+.pc-sel-btn:hover { background: var(--panel-hover); }
+.pc-sel-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.pc-key { margin-left: 4px; color: var(--faint); }
+
+/* The comment box, under the passage, inside the document. */
+.pc-cbox {
+  position: absolute;
+  z-index: 2;
+  left: 24px;
+  right: 12px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-menu);
+  font-size: var(--fs-md);
+}
+.pc-cbox-quote {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-bottom: 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.pc-cbox-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 8px;
+  resize: vertical;
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--panel-inset);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+}
+.pc-cbox-input:focus { outline: none; border-color: var(--border-strong); }
+.pc-cbox-input::placeholder { color: var(--faint); }
+.pc-cbox-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+
+/* The tray: on the card's --prompt-bg. --warn 7.24 / 9.21 (its head), --text
+   15.83 / 13.51, --muted 6.82 / 7.15; hovered, --panel-hover: --muted 6.22 / 6.91. */
+.pc-tray {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--prompt-line);
+}
+.pc-tray-head { margin-bottom: 4px; font-size: var(--fs-sm); font-weight: 600; color: var(--warn); }
+.pc-tray-list { margin: 0; padding: 0; list-style: none; }
+.pc-tray-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: var(--fs-md);
+}
+.pc-tray-item > .pc-pin { transform: translateY(2px); }
+.pc-tray-text { min-width: 0; overflow-wrap: anywhere; }
+.pc-tray-comment { color: var(--text); white-space: pre-wrap; }
+.pc-tray-quote {
+  padding: 0 3px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  text-align: left;
+  cursor: default;
+}
+.pc-tray-quote:hover,
+.pc-tray-act:hover:not([disabled]) { background: var(--panel-hover); }
+.pc-tray-edit { margin-bottom: 4px; }
+.pc-tray-acts { display: flex; gap: 2px; white-space: nowrap; }
+.pc-tray-act {
+  padding: 1px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  cursor: default;
+}
+.pc-tray-act[disabled] { color: var(--faint); }
+.pc-tray-quote:focus-visible,
+.pc-tray-act:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+/* Inline code's copy icon (#242) stays out of the card: a question and a plan
+   are read here, and the icons broke every other line of them. ⌘C copies a
+   selection as ever; a code block keeps its own. */
+.tx-prompt .tx-copy-inline { display: none; }

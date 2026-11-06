@@ -72,7 +72,7 @@ import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, onShowTranscriptRequest, requestAttach, sendWaitingComments } from './ui/transcript/composerBridge';
 import GuidePane from './guide/GuidePane';
 import { onGuideRequest, requestGuide } from './guide/openGuide';
-import { FileOpenContext, FilePathContext, FileTextContext, type OpenFileOptions } from './ui/editor/openFile';
+import { FileOpenContext, FilePathContext, FileTextContext, markReadOnly, type OpenFileOptions } from './ui/editor/openFile';
 import { markUserActivated } from './ui/editor/outsideFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
@@ -708,6 +708,7 @@ export default function App() {
       // The exact object the editor gets: only it may grant a file outside
       // the worktree, and only because a person clicked (outsideFile.ts).
       if (options?.activated) markUserActivated(req);
+      if (options?.readOnly) markReadOnly(req);
       setOpenRequest({ taskId, request: req, step: options?.step });
       // A step keeps the Files tab on screen: the list is what is being walked.
       setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));

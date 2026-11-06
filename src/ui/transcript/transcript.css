@@ -1706,15 +1706,21 @@ ol.tx-md-list { list-style-type: decimal; }
    nothing composites against what happens to be behind it. */
 .tx-prompt {
   flex: none;
+  display: flex;
+  flex-direction: column;
   margin: 8px 14px 0;
   padding: 12px 16px;
   background: var(--prompt-bg);
   border: 1px solid var(--prompt-line);
   border-radius: var(--radius-lg);
   max-height: 40%;
-  overflow: auto;
+  /* The body scrolls (.pc-body); the head and the answers (.pc-foot) never
+     scroll away (promptCard.css, #272). */
+  overflow: hidden;
 }
-.tx-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+/* A plan to read: the card takes more of the pane while it waits on it. */
+.tx-prompt:has(.pc-doc) { max-height: 60%; }
+.tx-prompt-head { display: flex; flex: none; align-items: center; gap: 8px; margin-bottom: 4px; }
 .tx-prompt-tag {
   display: inline-flex;
   align-items: center;
