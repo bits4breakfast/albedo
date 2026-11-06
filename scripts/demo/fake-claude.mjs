@@ -22,6 +22,16 @@ const after = (flag) => {
   return i >= 0 ? args[i + 1] ?? null : null;
 };
 
+// `claude -p` is the Review Guide's one-shot run (src-tauri/src/oneshot.rs).
+// There is no model here to write a guide, so it fails as Claude Code does:
+// one JSON result line with is_error, exit 1. The guide shows it as an error.
+if (args.includes('-p') || args.includes('--print')) {
+  process.stdout.write(
+    `${JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: "The demo profile's stand-in claude cannot write a Review Guide." })}\n`,
+  );
+  process.exit(1);
+}
+
 const sessionId = after('--session-id') ?? after('--resume');
 let settings = {};
 try {

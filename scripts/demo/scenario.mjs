@@ -1,14 +1,21 @@
-// The demo profile's one fixed arrangement (#193): six tasks in two made-up
-// projects, in every state the task list has, for the README's hero shot and
-// the launch post. One idea at a glance: several pieces of work in parallel,
-// and one of them needs you.
+// The demo profile's one fixed arrangement (#193): seven tasks in two made-up
+// projects, spread over the task list's groups (src/ui/taskGroups.ts), for
+// the README's hero shot and the launch post. One idea at a glance: several
+// pieces of work in parallel, and one of them needs you.
 //
-//   recipe-app  Add dark mode to settings        waiting on you (Allow / Deny)
-//               Import recipes from a link       working
-//               Search recipes by ingredient     working
-//               Round amounts to kitchen …       PR open, approved, checks green
-//               Show cooking time on recipe …    done
-//   blog        Add an RSS feed                  finished on a question
+//   recipe-app  Add dark mode to settings        Needs You (Allow / Deny)
+//               Import recipes from a link       Running
+//               Search recipes by ingredient     Running
+//               Round amounts to kitchen …       Approved: PR open, approved, checks green
+//               Show cooking time on recipe …    Done
+//   blog        Add an RSS feed                  Ready to Review: unseen finish, on a question
+//               Show tags on each post           In Review: PR open, unresolved threads
+//
+// Idle, My Review and Archived are left out: Idle is the quiet rest, and the
+// other two need a Review Guide or an archive the hero has no room for.
+//
+// `summary` is the one line a session sets through Albedo's MCP server
+// (set_task_summary), shown on hover; demo tasks have it from the start.
 //
 // Everything here is invented. Never put a real project, company, customer,
 // issue key or worktree name in it.
@@ -28,6 +35,7 @@ const TASKS = [
     key: 'dark-mode',
     project: 'recipe-app',
     title: 'Add dark mode to settings',
+    summary: 'Theme setting on the settings page: follow the system, or pick Light or Dark',
     branch: 'add-dark-mode',
     sessionId: '5d0c6f2e-8b1a-4c57-9e1f-2a7b3c9d4e01',
     ago: 52 * MIN,
@@ -219,6 +227,7 @@ import { useSettings, type Settings } from './useSettings';`,
     key: 'import-link',
     project: 'recipe-app',
     title: 'Import recipes from a link',
+    summary: 'Paste a recipe page\'s link and get the recipe, from its schema.org data',
     branch: 'import-from-link',
     sessionId: '8a41e7b3-2f6d-4d0a-b5c8-71e9f03a6b12',
     ago: 30 * MIN,
@@ -266,6 +275,7 @@ function minutesOf(duration: string | undefined): number {
     key: 'search',
     project: 'recipe-app',
     title: 'Search recipes by ingredient',
+    summary: 'Search matches ingredients as well as titles',
     branch: 'search-by-ingredient',
     sessionId: 'c3b9d214-6e0f-47a8-8d35-9f4a1e2b7c63',
     ago: 22 * MIN,
@@ -302,15 +312,23 @@ export function searchRecipes(recipes: Recipe[], query: string): Recipe[] {
     key: 'fractions',
     project: 'recipe-app',
     title: 'Round amounts to kitchen fractions',
+    summary: 'Scaled amounts read as ⅓ cup or 1½ tbsp, not 0.33 or 1.5',
     branch: 'kitchen-fractions',
     sessionId: 'f72a05c8-9d3e-4b61-a0f4-3c8e6d1b9a24',
     ago: 75 * MIN,
-    seen: false,
+    // Looked at since it finished: an approved PR is in Approved. Unseen, it
+    // would be in Ready to Review, as any new finish is.
+    seen: true,
     pr: {
       number: 14,
       title: 'Round scaled amounts to kitchen fractions',
-      checks: ['test', 'lint', 'build'],
-      reviewer: 'alex-morgan',
+      checks: [
+        { name: 'test', state: 'pass' },
+        { name: 'lint', state: 'pass' },
+        { name: 'build', state: 'pass' },
+      ],
+      reviews: [{ author: 'alex-morgan', state: 'APPROVED', minutesAgo: 20 }],
+      threads: { total: 0, unresolved: 0 },
     },
     play: (w) =>
       w
@@ -384,6 +402,7 @@ it.each([
     key: 'cooking-time',
     project: 'recipe-app',
     title: 'Show cooking time on recipe cards',
+    summary: 'Each recipe card shows its total cooking time',
     branch: 'cooking-time',
     sessionId: '1e6b8d90-4a27-4f3c-8b5e-d2c7a9f01e35',
     ago: 3 * 60 * MIN,
@@ -407,10 +426,12 @@ it.each([
     key: 'rss',
     project: 'blog',
     title: 'Add an RSS feed',
+    summary: 'An RSS feed of the posts at /rss.xml',
     branch: 'rss-feed',
     sessionId: '9f3d1a6c-7b2e-48d5-a1c0-5e8f2b4d6a07',
     ago: 40 * MIN,
-    seen: true,
+    // Finished after it was last open, with a commit on its branch: Ready to Review.
+    seen: false,
     play: (w) =>
       w
         .prompt('Add an RSS feed for the posts.')
@@ -446,6 +467,75 @@ export async function GET(context: { site: URL }) {
         .end(
           'The feed is at `/rss.xml`, with each post\'s title, date and summary.\n\nOne choice before I finish: should the feed carry each post\'s **full text**, or only the **summary**? Full text lets people read in their feed reader; the summary brings them to the site.',
         ),
+  },
+  {
+    key: 'tags',
+    project: 'blog',
+    title: 'Show tags on each post',
+    summary: 'Posts get tags in their front matter, listed under the title',
+    branch: 'post-tags',
+    sessionId: '2b7e4c19-5a83-4f06-9d2e-6c1f8a3b0d58',
+    ago: 4 * 60 * MIN,
+    seen: true,
+    // Open, with a reviewer's inline comments not resolved yet: In Review.
+    pr: {
+      number: 9,
+      title: 'Show tags on each post',
+      checks: [
+        { name: 'test', state: 'pass' },
+        { name: 'build', state: 'pass' },
+      ],
+      reviews: [],
+      threads: { total: 3, unresolved: 2 },
+    },
+    play: (w) =>
+      w
+        .prompt('Posts should have tags. Put them in the front matter and list them under the title.')
+        .read('src/content/config.ts')
+        .edit(
+          'src/content/config.ts',
+          `    published: z.date(),
+  }),`,
+          `    published: z.date(),
+    tags: z.array(z.string()).default([]),
+  }),`,
+        )
+        .edit(
+          'src/content/posts/knife-skills.md',
+          `published: 2026-10-02
+---`,
+          `published: 2026-10-02
+tags: [technique, knives]
+---`,
+        )
+        .edit(
+          'src/content/posts/sourdough-starter.md',
+          `published: 2026-09-14
+---`,
+          `published: 2026-09-14
+tags: [baking, sourdough]
+---`,
+        )
+        .write(
+          'src/components/Tags.astro',
+          `---
+const { tags } = Astro.props as { tags: string[] };
+---
+{tags.length > 0 && (
+  <ul class="tags">
+    {tags.map((t) => <li>{t}</li>)}
+  </ul>
+)}
+`,
+        )
+        .commit('Tag posts in their front matter and list the tags under the title')
+        .run(
+          'git push -u origin post-tags',
+          'Push the branch',
+          "branch 'post-tags' set up to track 'origin/post-tags'.",
+        )
+        .run('gh pr create --fill', 'Open a pull request', 'https://github.com/example/blog/pull/9')
+        .end('Opened #9. Each post lists its tags under the title; a post without tags shows nothing there.'),
   },
 ];
 
@@ -486,6 +576,7 @@ export function buildScenario({ home, now }) {
       sessionId: t.sessionId,
       createdAt: now - t.ago - 2 * MIN,
       seen: t.seen,
+      summary: t.summary ?? null,
       done: t.done === true,
       pr: t.pr ?? null,
       ...w.done(),

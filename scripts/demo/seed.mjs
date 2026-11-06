@@ -76,8 +76,8 @@ export function seed(db, scenario, now) {
   }
   const addTask = db.prepare(
     `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree,
-                        created_branch, kind, status, created_at, last_activity_at, seen_at)
-     VALUES (?, ?, ?, 'main', ?, ?, ?, 1, 1, 'work', ?, ?, ?, ?)`,
+                        created_branch, kind, status, created_at, last_activity_at, seen_at, summary)
+     VALUES (?, ?, ?, 'main', ?, ?, ?, 1, 1, 'work', ?, ?, ?, ?, ?)`,
   );
   const taskIds = new Map();
   for (const t of scenario.tasks) {
@@ -94,6 +94,7 @@ export function seed(db, scenario, now) {
       t.createdAt,
       lastAt,
       t.seen ? now : null,
+      t.summary,
     );
     taskIds.set(t.key, Number(r.lastInsertRowid));
   }

@@ -29,9 +29,11 @@ import { deriveStatus } from '../../src/capture/status';
 import { listProjects } from '../../src/db/projects';
 import { listTasks, resetDb } from '../../src/db/index';
 import { createTestDb, toPositional } from '../../src/db/testkit';
-import { fetchPrChecks } from '../../src/gh/gh';
-import { fetchPrStatus, setGhRunner } from '../../src/gh/gh';
-import type { Message } from '../../src/types';
+import { fetchJob, fetchPrChecks, fetchPrStatus, setGhRunner } from '../../src/gh/gh';
+import { checkSource } from '../../src/gh/checks';
+import type { Message, Task } from '../../src/types';
+import { groupOf } from '../../src/ui/taskGroups';
+import { reviewChip } from '../../src/gh/prStatus';
 
 import { databasePath, demoEnv, setup } from './demo.mjs';
 import { migrate, migrationsFromLibRs } from './seed.mjs';
@@ -40,6 +42,8 @@ const ROOT = resolve(__dirname, '../..');
 const LIB_RS = join(ROOT, 'src-tauri/src/lib.rs');
 const FAKE_CLAUDE = join(__dirname, 'fake-claude.mjs');
 const FAKE_GH = join(__dirname, 'fake-gh.mjs');
+/** Each gh call starts a node process; several in one test pass the default 5 s under a full parallel run. */
+const GH_TEST_MS = 30_000;
 
 interface DemoTask {
   key: string;
@@ -53,6 +57,7 @@ interface DemoTask {
 
 let home: string;
 let now: number;
+let seeded: Task[] = [];
 let scenario: { projects: { name: string; repo: string }[]; tasks: DemoTask[] };
 const task = (key: string) => scenario.tasks.find((t) => t.key === key)!;
 
@@ -128,17 +133,21 @@ describe('the database', () => {
     file.close();
 
     expect(projects.map((p) => p.name).sort()).toEqual(['blog', 'recipe-app']);
-    expect(tasks).toHaveLength(6);
+    expect(tasks).toHaveLength(7);
     const recipeApp = projects.find((p) => p.name === 'recipe-app')!.id;
     expect(tasks.filter((t) => t.projectId === recipeApp)).toHaveLength(5);
     const byTitle = new Map(tasks.map((t) => [t.title, t]));
     expect(byTitle.get('Show cooking time on recipe cards')!.status).toBe('done');
-    expect(byTitle.get('Round amounts to kitchen fractions')!.seenAt).toBeNull();
+    expect(byTitle.get('Add an RSS feed')!.seenAt).toBeNull();
+    expect(byTitle.get('Round amounts to kitchen fractions')!.seenAt).not.toBeNull();
     for (const t of tasks) {
       expect(t.kind).toBe('work');
       expect(t.ownsWorktree).toBe(true);
       expect(t.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+      // One line, as set_task_summary and the rename field leave it.
+      expect(t.summary).toMatch(/^[^\n]{1,120}$/);
     }
+    seeded = tasks;
   });
 });
 
@@ -155,9 +164,10 @@ describe('the repositories', () => {
     expect(git(wt, 'status', '--porcelain')).toBe('M src/settings/SettingsPage.test.tsx');
   });
 
-  it('pushed the branch with a pull request, so it has nothing to push', () => {
-    const wt = task('fractions').worktree;
-    expect(git(wt, 'rev-list', '--count', '@{upstream}..HEAD')).toBe('0');
+  it('pushed the branches with a pull request, so they have nothing to push', () => {
+    for (const key of ['fractions', 'tags']) {
+      expect(git(task(key).worktree, 'rev-list', '--count', '@{upstream}..HEAD')).toBe('0');
+    }
   });
 });
 
@@ -169,7 +179,7 @@ describe('the transcripts', () => {
   });
 
   it('parse into rows for every line, with finished turns reading idle', () => {
-    for (const key of ['fractions', 'cooking-time', 'rss', 'dark-mode']) {
+    for (const key of ['fractions', 'cooking-time', 'rss', 'tags', 'dark-mode']) {
       const text = transcriptOf(task(key));
       const rows = messagesOf(text);
       expect(rows.length).toBeGreaterThan(3);
@@ -205,7 +215,9 @@ describe('the stand-in claude', () => {
     return existsSync(path) ? parseHookLines(readFileSync(path, 'utf8')) : [];
   };
 
-  async function until<T>(f: () => T | null | undefined | false, ms = 10_000): Promise<T> {
+  // Generous: under a full parallel run on Node 26, a stand-in has taken over
+  // 10 s to write its first line. A pass returns at once; only a hang waits.
+  async function until<T>(f: () => T | null | undefined | false, ms = 30_000): Promise<T> {
     const end = Date.now() + ms;
     for (;;) {
       const v = f();
@@ -231,7 +243,8 @@ describe('the stand-in claude', () => {
     } finally {
       child.kill('SIGTERM');
     }
-  });
+    // Above until's own limit, so a hang fails with its message.
+  }, 40_000);
 
   it('asks on the card, and Allow from the card finishes the turn', async () => {
     const t = task('dark-mode');
@@ -258,31 +271,82 @@ describe('the stand-in claude', () => {
     } finally {
       child.kill('SIGTERM');
     }
-  }, 20_000);
+  }, 40_000);
 });
 
-describe('the stand-in gh', () => {
+/** Albedo's gh calls, answered by the stand-in, for the describe it is called in. */
+function useFakeGh() {
+  beforeAll(() => {
+    setGhRunner(async (_program, args, cwd) => {
+      const r = spawnSync(process.execPath, [FAKE_GH, ...args], { cwd, env: demoEnv(home), encoding: 'utf8' });
+      return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
+    });
+  });
   afterAll(() => {
     setGhRunner(async () => {
       throw new Error('no gh in tests');
     });
   });
+}
 
-  it('answers the PR badge and the checks with an open, approved PR, all green', async () => {
-    setGhRunner(async (_program, args, cwd) => {
-      const r = spawnSync(process.execPath, [FAKE_GH, ...args], { cwd, env: demoEnv(home), encoding: 'utf8' });
-      return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
-    });
-    const t = task('fractions');
-    const where = { branch: t.branch, baseBranch: 'main', worktreePath: t.worktree, repoPath: scenario.projects[0]!.repo };
-    const pr = await fetchPrStatus(where);
+describe('the stand-in gh', () => {
+  useFakeGh();
+
+  const where = (key: string) => {
+    const t = task(key);
+    const repo = scenario.projects.find((p) => t.worktree.includes(`/${p.name}/`))!.repo;
+    return { branch: t.branch, baseBranch: 'main', worktreePath: t.worktree, repoPath: repo };
+  };
+
+  it('answers the PR query with an open, approved PR, all green, and its checks', async () => {
+    const pr = await fetchPrStatus(where('fractions'));
     expect(pr).toMatchObject({ number: 14, state: 'open', headRefName: 'kitchen-fractions', review: 'approved' });
     expect(pr!.headSha).toMatch(/^[0-9a-f]{40}$/);
     expect(pr!.lines.length).toBe(3);
     expect(pr!.lines.every((l) => l.bucket === 'pass')).toBe(true);
-    const checks = await fetchPrChecks(14, where);
-    expect(checks?.map((c) => c.state)).toEqual(['pass', 'pass', 'pass']);
+    expect(pr!.reviewThreads).toEqual({ total: 0, unresolved: 0 });
+    expect(reviewChip(pr!, 'sam-rivera')?.kind).toBe('approved');
 
-    expect(await fetchPrStatus({ ...where, branch: 'add-dark-mode', worktreePath: task('dark-mode').worktree })).toBeNull();
-  });
+    const checks = await fetchPrChecks(14, where('fractions'));
+    expect(checks?.map((c) => c.state)).toEqual(['pass', 'pass', 'pass']);
+    // A check's steps, for the Checks dialog.
+    const source = checks![0]!.source;
+    if (source?.kind !== 'actions') throw new Error(`not an Actions job: ${JSON.stringify(source)}`);
+    const job = await fetchJob(source);
+    expect(job).toMatchObject({ state: 'pass', completed: true });
+    expect(job!.steps.length).toBeGreaterThan(2);
+
+    expect(await fetchPrStatus(where('dark-mode'))).toBeNull();
+  }, GH_TEST_MS);
+
+  it('answers the second PR with review threads still open', async () => {
+    const pr = await fetchPrStatus(where('tags'));
+    expect(pr).toMatchObject({ number: 9, state: 'open', review: null, reviewThreads: { total: 3, unresolved: 2 } });
+    expect(pr!.checks).toEqual({ kind: 'passing', total: 2 });
+    expect(checkSource(pr!.lines[0]!.url)).toMatchObject({ kind: 'actions' });
+  }, GH_TEST_MS);
+});
+
+describe('the task list', () => {
+  useFakeGh();
+
+  it('puts the tasks in the groups the hero shows', async () => {
+    const groups: Record<string, string> = {};
+    for (const t of seeded) {
+      const d = scenario.tasks.find((s) => s.title === t.title)!;
+      const rows = messagesOf(transcriptOf(d));
+      const finished = [...rows].reverse().find((r) => r.role === 'assistant');
+      const pr = await fetchPrStatus(t);
+      // Every demo branch has commits, so the git probe's answer is known.
+      groups[d.key] = groupOf(t, { finishedAt: finished ? finished.ts : null, pr, work: true });
+    }
+    // Needs You and Running come from the stand-in once its terminal starts
+    // (tested above); these are the groups the seeded rows decide.
+    expect(groups).toMatchObject({
+      fractions: 'approved',
+      tags: 'team',
+      rss: 'review',
+      'cooking-time': 'done',
+    });
+  }, GH_TEST_MS);
 });
