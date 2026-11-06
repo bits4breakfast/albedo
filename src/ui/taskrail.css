@@ -1,23 +1,21 @@
 /* --------------------------------------------------------------------------
    The task list, collapsed to a rail (#266). TaskRail.tsx.
 
-   The rail sits on the sidebar's own ground, --panel-chrome. Every pair below
-   was measured on it (railContrast.test.ts parses these tokens from
-   styles.css and checks them in all three theme blocks):
+   The rail sits on the sidebar's own ground, --panel-chrome. Each circle is
+   its group's glyph tier from styles.css (#276): the -fill as its body, the
+   -edge as its border, the -ink as its count. taskRailContrast.test.ts parses
+   them in all three theme blocks and holds:
 
-     Done's count     --text on the circle's --panel   16.60 | 14.63
-     filled count     --panel on each --status-* fill (blocked, running,
-                      done, idle): 4.5 at the least, all three blocks
-     fill edges (UI)  --status-idle on --panel-chrome    4.32 |  4.60
-                      --status-running                   5.87 |  7.44
-                      --status-blocked                   6.90 |  9.42
-                      --status-done                      6.53 |  9.55
+     count            -ink on -fill                         4.5
+     edge (UI)        -edge on --panel-chrome, --panel,     3.0
+                      --panel-raised (the hover halo)
      selected ring    --accent on --panel-chrome         5.87 |  7.44
                                                    light | dark
 
-   --panel carries a filled circle's count in both themes: white-ish on the
-   light fills, near-black on the dark ones (white on the dark theme's
-   lighter fills is 2.4:1). No opacity anywhere.
+   Light fills are bright (1.7-2.2 on the rail), so the edge is what carries
+   the circle there; in dark each fill is its own edge, except In Review's
+   deep green, ringed in the bright one. No opacity on text anywhere: the
+   pulse below animates a decorative ring, never a count.
    -------------------------------------------------------------------------- */
 
 /* The column narrows to the rail; the main pane takes the rest. The inline
@@ -59,9 +57,11 @@
   margin: 2px 0;
 }
 
-/* One group: its count, in its colour. */
+/* One group: its count, on its colour. */
 .rail-circle {
-  --c: var(--status-idle);
+  --fill: var(--status-idle-fill);
+  --edge: var(--status-idle-edge);
+  --ink: var(--status-idle-ink);
   position: relative;
   flex: 0 0 auto;
   display: grid;
@@ -70,31 +70,27 @@
   height: 30px;
   box-sizing: border-box;
   border-radius: 50%;
-  border: 2px solid var(--c);
-  background: var(--panel);
-  color: var(--text);
+  border: 1.5px solid var(--edge);
+  background: var(--fill);
+  color: var(--ink);
   font-size: var(--fs-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
-.rail-circle[data-group='blocked'] { --c: var(--status-blocked); }
-.rail-circle[data-group='active'] { --c: var(--status-running); }
-.rail-circle[data-group='review'],
-.rail-circle[data-group='reviewing'],
-.rail-circle[data-group='done'] { --c: var(--status-done); }
-.rail-circle[data-group='quiet'] { --c: var(--status-idle); }
+.rail-circle[data-group='blocked'] { --fill: var(--status-blocked-fill); --edge: var(--status-blocked-edge); --ink: var(--status-blocked-ink); }
+.rail-circle[data-group='active'] { --fill: var(--status-running-fill); --edge: var(--status-running-edge); --ink: var(--status-running-ink); }
+.rail-circle[data-group='review'] { --fill: var(--status-review-fill); --edge: var(--status-review-edge); --ink: var(--status-review-ink); }
+.rail-circle[data-group='reviewing'] { --fill: var(--status-reviewing-fill); --edge: var(--status-reviewing-edge); --ink: var(--status-reviewing-ink); }
+.rail-circle[data-group='quiet'] { --fill: var(--status-idle-fill); --edge: var(--status-idle-edge); --ink: var(--status-idle-ink); }
+.rail-circle[data-group='done'] { --fill: var(--status-done-fill); --edge: var(--status-done-edge); --ink: var(--status-done-ink); }
 
-/* Filled, every group but Done (#276). Ready to Review keeps a ring of the
-   circle's --panel inside, so it stays apart from In Review's plain green. */
-.rail-circle[data-fill='solid'],
-.rail-circle[data-fill='ringed'] { background: var(--c); color: var(--panel); }
+/* Ready to Review keeps a ring of --panel inside, so it stays apart from In
+   Review's plain green (and, in dark, from its deeper body too). */
 .rail-circle[data-fill='ringed'] { box-shadow: inset 0 0 0 2px var(--panel); }
 .rail-circle[data-fill='ringed']:hover,
 .rail-circle[data-fill='ringed'][data-open='true'] { box-shadow: inset 0 0 0 2px var(--panel), 0 0 0 3px var(--panel-raised); }
-/* Done: a dotted outline, apart from the two filled greens. */
-.rail-circle[data-fill='dotted'] { border-style: dotted; }
 
 /* The selected task's group: an accent ring round the circle, clear of it. */
 .rail-circle[aria-current='true']::after {
@@ -112,6 +108,44 @@
 .rail-circle[data-open='true'] { box-shadow: 0 0 0 3px var(--panel-raised); }
 
 .rail-circle:focus-visible { outline-offset: 2px; }
+
+/* Needs You or Ready to Review went up (#276): a ring in the group's edge
+   grows from the circle to ~1.55x and fades, three times over 6s, then stops.
+   TaskRail.tsx sets data-pulse, alternating 'a' and 'b' so a new rise during a
+   pulse swaps the animation's name and starts it over, and clears it after
+   6s. Decorative: no text is under it, so its opacity dims nothing. */
+.rail-circle[data-pulse]::before {
+  content: '';
+  position: absolute;
+  /* Inside the border box, so 1.55x (42px) stays within the 44px rail. */
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--edge);
+  opacity: 0;
+  pointer-events: none;
+}
+.rail-circle[data-pulse='a']::before { animation: rail-pulse-a 2s ease-out 3; }
+.rail-circle[data-pulse='b']::before { animation: rail-pulse-b 2s ease-out 3; }
+@keyframes rail-pulse-a {
+  0% { transform: scale(1); opacity: 0.9; }
+  70%, 100% { transform: scale(1.55); opacity: 0; }
+}
+@keyframes rail-pulse-b {
+  0% { transform: scale(1); opacity: 0.9; }
+  70%, 100% { transform: scale(1.55); opacity: 0; }
+}
+/* Reduce Motion: nothing moves. The ring shows still, a little out from the
+   circle, for 2s, then goes. */
+@keyframes rail-still-a {
+  0%, 100% { transform: scale(1.3); opacity: 1; }
+}
+@keyframes rail-still-b {
+  0%, 100% { transform: scale(1.3); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-circle[data-pulse='a']::before { animation: rail-still-a 2s linear 1; }
+  .rail-circle[data-pulse='b']::before { animation: rail-still-b 2s linear 1; }
+}
 
 /* The popover: the app's menu shell (.row-menu), wide enough for a row. */
 .rail-pop {

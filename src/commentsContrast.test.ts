@@ -48,7 +48,7 @@ describe('comment states (#222)', () => {
     expect(cards).toMatch(/\.ed-cmt-chip\[data-state='waiting'\] \{ background: var\(--accent-soft\); color: var\(--on-accent-soft\); \}/);
     expect(cards).toMatch(/\.ed-cmt-chip\[data-state='sent'\] \{ color: var\(--muted\); box-shadow: inset 0 0 0 1px var\(--border-strong\); \}/);
     expect(cards).toMatch(/\.ed-cmt\[data-state='sent'\] \{ border-left-color: var\(--border-strong\); \}/);
-    expect(cards).toMatch(/\.ed-cmt-trace-mark \{ color: var\(--status-done\); \}/);
+    expect(cards).toMatch(/\.ed-cmt-trace-mark \{ color: var\(--status-review\); \}/);
     expect(list).toMatch(/\.tf-comments-sub \{[^}]*color: var\(--muted\)/);
     // The selection bar and the field's target line: on --panel (the bar's own
     // ground, the field's), text and note tiers measured below.
@@ -74,7 +74,7 @@ describe('comment states (#222)', () => {
       for (const [fg, bg] of text) expect(ratio(g(fg), g(bg)), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
       const ui: Array<[string, string]> = [
         ['--border-strong', '--panel'], // the Sent chip's outline, a sent card's edge
-        ['--status-done', '--panel'], // the trace's ✓
+        ['--status-review', '--panel'], // the trace's ✓
       ];
       for (const [fg, bg] of ui) expect(ratio(g(fg), g(bg)), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(3);
     });

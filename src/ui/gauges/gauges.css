@@ -175,7 +175,7 @@
 /* An inferred percentage is never allowed to read as measured: it is dimmer
    than the exact count it sits beside, and it carries an `approx` tag. */
 .gz-total-pct[data-approx='true'] { color: var(--faint); }
-.gz-total-pct[data-level='warn'] { color: var(--status-blocked); }
+.gz-total-pct[data-level='warn'] { color: var(--warn); }
 .gz-total-pct[data-level='high'] { color: var(--danger); }
 
 .gz-approx {
@@ -227,7 +227,7 @@
 .gz-seg[data-band='free'] { background: transparent; }
 
 .gz-bar[data-level='warn'] .gz-seg[data-band='conversation'],
-.gz-bar[data-level='warn'] .gz-seg[data-band='used'] { background: var(--status-blocked); }
+.gz-bar[data-level='warn'] .gz-seg[data-band='used'] { background: var(--warn); }
 .gz-bar[data-level='high'] .gz-seg[data-band='conversation'],
 .gz-bar[data-level='high'] .gz-seg[data-band='used'] { background: var(--danger); }
 /* Derived from the tokens so they track a palette change.
@@ -322,7 +322,7 @@
   line-height: 1.35;
   color: var(--faint);
 }
-.gz-note[data-tone='warn'] { color: var(--status-blocked); }
+.gz-note[data-tone='warn'] { color: var(--warn); }
 .gz-note[data-tone='danger'] { color: var(--danger); }
 
 .gz-unavailable {

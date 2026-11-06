@@ -19,8 +19,8 @@
      --text           11.42 / 10.72
      --muted           5.77 /  6.42
      --faint           4.71 /  4.64   (only on hints, never on the label)
-     --status-running  4.93 /  5.94
-     --status-blocked  4.98 /  7.69
+     --status-running  5.15 / 10.10
+     --status-blocked  5.10 /  6.84
    -------------------------------------------------------------------------- */
 
 .sa-bar {

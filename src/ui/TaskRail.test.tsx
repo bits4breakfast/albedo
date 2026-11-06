@@ -2,7 +2,8 @@
  * @vitest-environment jsdom
  *
  * The task list collapsed to a rail (#266): one count circle per non-empty
- * group, filled or outlined by group, the selected task's group ringed, and a
+ * group, each filled (Ready to Review ringed inside), the selected task's
+ * group ringed, a pulse when Needs You or Ready to Review goes up (#276), and a
  * circle's popover listing that group's rows -- opened, walked, chosen from
  * and closed the ways a person does it. The ‹ / › toggles never move the
  * selection.
@@ -98,14 +99,14 @@ describe('the rail (#266)', () => {
     expect(document.querySelector('[data-group="archived"]')).toBeNull();
   });
 
-  it('fills every group, rings Ready to Review, dots Done (#276)', () => {
+  it('fills every group, Done included, and rings Ready to Review (#276)', () => {
     renderRail();
     expect(Object.fromEntries(circles().map((c) => [c.dataset.group, c.dataset.fill]))).toEqual({
       blocked: 'solid',
       active: 'solid',
       review: 'ringed',
       quiet: 'solid',
-      done: 'dotted',
+      done: 'solid',
     });
   });
 
@@ -236,6 +237,84 @@ describe('a circle’s popover (#266)', () => {
     expect(document.activeElement).toBe(circle(/^Ready to Review/));
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
     expect(document.activeElement).toBe(running);
+  });
+});
+
+describe('the pulse on a rise (#276)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const props = { signals, selectedId: 5, onSelect: () => {}, onNew: () => {}, onCollapsedChange: () => {}, collapsed: true };
+  const pulseOf = (group: string) => document.querySelector(`.rail-circle[data-group="${group}"]`)?.getAttribute('data-pulse') ?? null;
+  const pulsing = () => circles().filter((c) => c.hasAttribute('data-pulse')).map((c) => c.dataset.group);
+  // Task 4 (Idle) now needs you: Needs You 1 -> 2.
+  const moreBlocked = tasks.map((t) => (t.id === 4 ? { ...t, status: 'blocked' as const } : t));
+  // A second open PR with an unseen finish: Ready to Review 1 -> 2.
+  const moreReview = [...tasks, row(10, 'ABC-1300 Second PR')];
+  const reviewSignals = new Map([...signals, [10, { agents: 0, question: false, finishedAt: 2_000 }]]);
+
+  it('pulses nothing on the first render', () => {
+    render(<TaskList tasks={tasks} {...props} />);
+    expect(pulsing()).toEqual([]);
+  });
+
+  it('pulses Needs You when its count goes up, for 6s', () => {
+    const { rerender } = render(<TaskList tasks={tasks} {...props} />);
+    rerender(<TaskList tasks={moreBlocked} {...props} />);
+    expect(pulsing()).toEqual(['blocked']);
+    act(() => vi.advanceTimersByTime(5_999));
+    expect(pulseOf('blocked')).not.toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(pulsing()).toEqual([]);
+  });
+
+  it('pulses Ready to Review when its count goes up', () => {
+    prs.set(10, 'open');
+    const { rerender } = render(<TaskList tasks={tasks} {...props} signals={reviewSignals} />);
+    rerender(<TaskList tasks={moreReview} {...props} signals={reviewSignals} />);
+    expect(circle(/^Ready to Review, 2 tasks$/)).toBeTruthy();
+    expect(pulsing()).toEqual(['review']);
+  });
+
+  it('does not pulse on a fall', () => {
+    const { rerender } = render(<TaskList tasks={moreBlocked} {...props} />);
+    rerender(<TaskList tasks={tasks} {...props} />);
+    expect(circle(/^Needs You, 1 task$/)).toBeTruthy();
+    expect(pulsing()).toEqual([]);
+  });
+
+  it('pulses no other group', () => {
+    const moreRunning = tasks.map((t) => (t.id === 4 ? { ...t, status: 'running' as const } : t));
+    const { rerender } = render(<TaskList tasks={tasks} {...props} />);
+    rerender(<TaskList tasks={moreRunning} {...props} />);
+    expect(circle(/^Running, 2 tasks$/)).toBeTruthy();
+    expect(pulsing()).toEqual([]);
+  });
+
+  it('a rise during a pulse starts it over', () => {
+    const evenMore = moreBlocked.map((t) => (t.id === 5 ? { ...t, status: 'blocked' as const } : t));
+    const { rerender } = render(<TaskList tasks={tasks} {...props} />);
+    rerender(<TaskList tasks={moreBlocked} {...props} />);
+    const first = pulseOf('blocked');
+    act(() => vi.advanceTimersByTime(3_000));
+    rerender(<TaskList tasks={evenMore} {...props} />);
+    // A new value swaps the animation's name, which restarts it.
+    expect(pulseOf('blocked')).not.toBe(first);
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(pulseOf('blocked')).not.toBeNull();
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(pulsing()).toEqual([]);
+  });
+
+  it('does not pulse when the list collapses into the rail with a higher count', () => {
+    const { rerender } = render(<TaskList tasks={tasks} {...props} collapsed={false} />);
+    rerender(<TaskList tasks={moreBlocked} {...props} collapsed />);
+    expect(circle(/^Needs You, 2 tasks$/)).toBeTruthy();
+    expect(pulsing()).toEqual([]);
   });
 });
 

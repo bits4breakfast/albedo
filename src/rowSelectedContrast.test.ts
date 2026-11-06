@@ -41,9 +41,16 @@ const themes = {
 };
 
 /** Text on a row: 4.5. */
-const TEXT = ['--text', '--text-strong', '--muted', '--faint', '--add', '--warn', '--danger', '--accent'];
+const TEXT = [
+  '--text', '--text-strong', '--muted', '--faint', '--add', '--warn', '--danger', '--accent',
+  // The status text tier (#276): a group's label or a subagent's word in its hue.
+  '--status-running', '--status-blocked', '--status-review', '--status-done',
+];
 /** Status glyphs: non-text, 3.0. Archived takes --status-idle on this row (tasklist.css). */
-const GLYPHS = ['--status-idle', '--status-running', '--status-blocked', '--status-done'];
+const GLYPHS = [
+  '--status-idle',
+  ...['blocked', 'running', 'review', 'reviewing', 'idle', 'done'].map((g) => `--status-${g}-edge`),
+];
 
 describe('the selected task row (#203)', () => {
   it('is the tint and the ring', () => {

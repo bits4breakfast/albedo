@@ -129,16 +129,53 @@
   --focus: #4650c0;                           /* 5.32 */
 
   /* --- status (light) ----------------------------------------------------- */
-  /* Status is a glyph first (ring, half ring, solid dot), colour second. */
+  /* Status is a glyph first (ring, half ring, solid dot), colour second.
+     One hue family per group (#276): Needs You orange, Running yellow, Ready
+     to Review and In Review green, Idle grey, Done indigo.
+
+     Text tier: a label in its group's colour (Needs You, Ready to Review, a
+     subagent's "running"). Cleared on every flat ground and tint text sits on;
+     worst first: --panel-active | --panel-raised | --row-selected |
+     --accent-soft-strong | --row-blocked-hover. */
   --status-idle: #6e717a;      /* 3.92 (UI) */
-  --status-running: #4650c0;   /* 5.32 */
-  --status-blocked: #744903;   /* 6.26 */
-  --status-done: #11632f;      /* 5.92 */
+  --status-running: #715708;   /* dark amber   5.15 | 5.50 | 5.29 | 5.24 | 5.93 */
+  --status-blocked: #8f480a;   /* dark orange  5.10 | 5.44 | 5.24 | 5.19 | 5.87 */
+  --status-review: #11632f;    /* green        5.55 | 5.92 | 5.69 | 5.65 | 6.38 */
+  --status-done: #404eca;      /* indigo       5.00 | 5.34 | 5.13 | 5.09 | 5.76 */
   --status-archived: #7d808a;  /* 3.17 (UI) */
+  /* Glyph tier: the rail's circles (taskrail.css) and the list's dots.
+     -fill   the bright body of a filled circle or dot. Never alone on a light
+             ground: 1.7-2.2 there, so it always sits inside its -edge.
+     -edge   the circle's or dot's border, a darker tone of the same hue: UI,
+             3:1 on --panel | --panel-chrome | --row-selected | --panel-hover |
+             --panel-raised (and --row-blocked / -hover for Needs You).
+     -ink    the count on the fill: text, 4.5:1 on that fill.
+     In Review shares Ready to Review's green here; dark parts them. */
+  --status-blocked-fill: #f2994a;
+  --status-blocked-edge: #be610e;    /* 4.18 | 3.79 | 3.31 | 3.63 | 3.44; 3.91 / 3.71 */
+  --status-blocked-ink: #1b1c20;     /* 7.65 on the fill */
+  --status-running-fill: #f2c94c;
+  --status-running-edge: #97750b;    /* 4.21 | 3.83 | 3.34 | 3.66 | 3.47 */
+  --status-running-ink: #1b1c20;     /* 10.73 */
+  --status-review-fill: #4cb782;
+  --status-review-edge: #378961;     /* 4.17 | 3.79 | 3.30 | 3.63 | 3.43 */
+  --status-review-ink: #1b1c20;      /* 6.81 */
+  --status-reviewing-fill: #4cb782;
+  --status-reviewing-edge: #378961;  /* as Ready to Review */
+  --status-reviewing-ink: #1b1c20;   /* 6.81 */
+  --status-idle-fill: #bec2c8;
+  --status-idle-edge: #727b87;       /* 4.18 | 3.80 | 3.31 | 3.64 | 3.44 */
+  --status-idle-ink: #1b1c20;        /* 9.52 */
+  --status-done-fill: #5e6ad2;
+  --status-done-edge: #5e6ad2;       /* 4.58 | 4.17 | 3.63 | 3.99 | 3.78: the fill clears on its own */
+  --status-done-ink: #ffffff;        /* 4.70 */
+  /* Channels of --status-blocked-edge, for the Needs You dot's ping (alpha
+     off one hue; carries no text). */
+  --status-blocked-rgb: 190 97 14;
   --warn: #744903;             /* 6.26 | 6.90 on --banner-bg, 7.24 on --prompt-bg */
   --danger: #a8241d;           /* 5.75 */
-  /* Channels, for the ping keyframes and the editor's search veil, which
-     vary alpha off one hue. Neither carries text. */
+  /* Channels, for the editor's search veil, which varies alpha off one hue.
+     It carries no text. (The Needs You ping has --status-blocked-rgb.) */
   --warn-rgb: 116 73 3;
 
   /* --- derived surfaces + marks (light) ----------------------------------- */
@@ -309,12 +346,38 @@
     --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
     --focus: #9aa2ff;                           /* 6.62 */
 
-    /* --- status (dark) --- */
+    /* --- status (dark) --- text worst first: --row-selected | --accent-soft-strong |
+       --panel-raised | --row-blocked-hover. Glyphs: -edge on --panel | --panel-chrome |
+       --row-selected | --panel-hover | --panel-raised; -ink on its -fill. */
     --status-idle: #80838f;      /* 4.10 (UI) */
-    --status-running: #9aa2ff;   /* 6.62 */
-    --status-blocked: #f2b35b;   /* 8.38 */
-    --status-done: #6fd496;      /* 8.50 */
+    --status-running: #facc15;   /* yellow  9.27 | 9.24 | 10.10 | 10.63 */
+    --status-blocked: #fb923c;   /* orange  6.27 | 6.25 |  6.84 |  7.20 */
+    --status-review: #6fd496;    /* green   7.80 | 7.77 |  8.50 |  8.94 */
+    --status-done: #a5b4fc;      /* indigo  7.12 | 7.09 |  7.76 |  8.17 */
     --status-archived: #6b6e78;  /* 3.04 (UI) */
+    /* Light fills, so each is its own edge; dark ink on every one. */
+    --status-blocked-fill: #fb923c;
+    --status-blocked-edge: #fb923c;    /* 8.14 | 7.68 | 6.27 | 7.27 | 6.84 */
+    --status-blocked-ink: #131417;     /* 8.14 */
+    --status-running-fill: #facc15;
+    --status-running-edge: #facc15;    /* 12.03 | 11.35 | 9.27 | 10.74 | 10.10 */
+    --status-running-ink: #131417;     /* 12.03 */
+    --status-review-fill: #4ade80;
+    --status-review-edge: #4ade80;     /* 10.57 | 9.98 | 8.15 | 9.44 | 8.88 */
+    --status-review-ink: #131417;      /* 10.57 */
+    /* In Review apart from Ready to Review by lightness, not only by the ring:
+       a deep green body (2.0-2.6 on the grounds, so the bright edge carries the
+       glyph; 4.09 against its own edge) with a light ink. */
+    --status-reviewing-fill: #166534;
+    --status-reviewing-edge: #4ade80;  /* 10.57 | 9.98 | 8.15 | 9.44 | 8.88 */
+    --status-reviewing-ink: #dcfce7;   /* 6.49 */
+    --status-idle-fill: #9ca3af;
+    --status-idle-edge: #9ca3af;       /* 7.25 | 6.85 | 5.59 | 6.48 | 6.09 */
+    --status-idle-ink: #131417;        /* 7.25 */
+    --status-done-fill: #a5b4fc;
+    --status-done-edge: #a5b4fc;       /* 9.24 | 8.72 | 7.12 | 8.25 | 7.76 */
+    --status-done-ink: #131417;        /* 9.24 */
+    --status-blocked-rgb: 251 146 60;
     --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
     --danger: #ff8f8a;           /* 7.03 */
     --warn-rgb: 242 179 91;
@@ -419,12 +482,38 @@
   --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
   --focus: #9aa2ff;                           /* 6.62 */
 
-  /* --- status (dark) --- */
+  /* --- status (dark) --- text worst first: --row-selected | --accent-soft-strong |
+     --panel-raised | --row-blocked-hover. Glyphs: -edge on --panel | --panel-chrome |
+     --row-selected | --panel-hover | --panel-raised; -ink on its -fill. */
   --status-idle: #80838f;      /* 4.10 (UI) */
-  --status-running: #9aa2ff;   /* 6.62 */
-  --status-blocked: #f2b35b;   /* 8.38 */
-  --status-done: #6fd496;      /* 8.50 */
+  --status-running: #facc15;   /* yellow  9.27 | 9.24 | 10.10 | 10.63 */
+  --status-blocked: #fb923c;   /* orange  6.27 | 6.25 |  6.84 |  7.20 */
+  --status-review: #6fd496;    /* green   7.80 | 7.77 |  8.50 |  8.94 */
+  --status-done: #a5b4fc;      /* indigo  7.12 | 7.09 |  7.76 |  8.17 */
   --status-archived: #6b6e78;  /* 3.04 (UI) */
+  /* Light fills, so each is its own edge; dark ink on every one. */
+  --status-blocked-fill: #fb923c;
+  --status-blocked-edge: #fb923c;    /* 8.14 | 7.68 | 6.27 | 7.27 | 6.84 */
+  --status-blocked-ink: #131417;     /* 8.14 */
+  --status-running-fill: #facc15;
+  --status-running-edge: #facc15;    /* 12.03 | 11.35 | 9.27 | 10.74 | 10.10 */
+  --status-running-ink: #131417;     /* 12.03 */
+  --status-review-fill: #4ade80;
+  --status-review-edge: #4ade80;     /* 10.57 | 9.98 | 8.15 | 9.44 | 8.88 */
+  --status-review-ink: #131417;      /* 10.57 */
+  /* In Review apart from Ready to Review by lightness, not only by the ring:
+     a deep green body (2.0-2.6 on the grounds, so the bright edge carries the
+     glyph; 4.09 against its own edge) with a light ink. */
+  --status-reviewing-fill: #166534;
+  --status-reviewing-edge: #4ade80;  /* 10.57 | 9.98 | 8.15 | 9.44 | 8.88 */
+  --status-reviewing-ink: #dcfce7;   /* 6.49 */
+  --status-idle-fill: #9ca3af;
+  --status-idle-edge: #9ca3af;       /* 7.25 | 6.85 | 5.59 | 6.48 | 6.09 */
+  --status-idle-ink: #131417;        /* 7.25 */
+  --status-done-fill: #a5b4fc;
+  --status-done-edge: #a5b4fc;       /* 9.24 | 8.72 | 7.12 | 8.25 | 7.76 */
+  --status-done-ink: #131417;        /* 9.24 */
+  --status-blocked-rgb: 251 146 60;
   --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
   --danger: #ff8f8a;           /* 7.03 */
   --warn-rgb: 242 179 91;
@@ -668,12 +757,16 @@ button {
  *   running   ring, half filled
  *   blocked   solid dot with a halo
  *   review    ring around a dot -- a task list group (Ready to Review), not a
- *             TaskStatus: finished, in done's colour, and not yet looked at
- *   reviewing ring, bottom half filled, in done's colour -- the In Review
+ *             TaskStatus: finished, in the review green, and not yet looked at
+ *   reviewing ring, bottom half filled, in the review green -- the In Review
  *             group (#219): half-way to done's solid dot, and filled across,
  *             where running's fill is down the side
  *   done      solid dot
  *   archived  thin ring
+ *
+ * Colours are the glyph tier (#276): the ring is the group's -edge, which
+ * clears 3:1 on every ground a dot sits on; whatever is filled inside it is
+ * the -fill, the same body as the rail's circle.
  */
 
 .status-dot {
@@ -682,34 +775,34 @@ button {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 2px solid var(--status-idle);
+  border: 2px solid var(--status-idle-edge);
   background: transparent;
   flex: 0 0 auto;
   box-sizing: border-box;
 }
 
-.status-dot[data-status='idle'] { border-color: var(--status-idle); }
-.status-dot[data-status='done'] { border-color: var(--status-done); background: var(--status-done); }
-.status-dot[data-status='review'] { border-color: var(--status-done); }
+.status-dot[data-status='idle'] { border-color: var(--status-idle-edge); }
+.status-dot[data-status='done'] { border-color: var(--status-done-edge); background: var(--status-done-fill); }
+.status-dot[data-status='review'] { border-color: var(--status-review-edge); }
 .status-dot[data-status='review']::after {
   content: '';
   position: absolute;
   inset: 1px;
   border-radius: 50%;
-  background: var(--status-done);
+  background: var(--status-review-fill);
 }
-.status-dot[data-status='reviewing'] { border-color: var(--status-done); }
+.status-dot[data-status='reviewing'] { border-color: var(--status-reviewing-edge); }
 .status-dot[data-status='reviewing']::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: var(--status-done);
+  background: var(--status-reviewing-fill);
   clip-path: inset(50% 0 0 0);
 }
 .status-dot[data-status='archived'] { border-width: 1px; border-color: var(--status-archived); }
 .status-dot[data-status='running'] {
-  border-color: var(--status-running);
+  border-color: var(--status-running-edge);
   animation: dot-breathe 1.9s ease-in-out infinite;
 }
 .status-dot[data-status='running']::after {
@@ -717,13 +810,13 @@ button {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: var(--status-running);
+  background: var(--status-running-fill);
   clip-path: inset(0 0 0 50%);
 }
 .status-dot[data-status='blocked'] {
-  border-color: var(--status-blocked);
-  background: var(--status-blocked);
-  box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0.55);
+  border-color: var(--status-blocked-edge);
+  background: var(--status-blocked-fill);
+  box-shadow: 0 0 0 0 rgb(var(--status-blocked-rgb) / 0.55);
   animation: dot-ping 1.6s ease-out infinite;
 }
 
@@ -734,9 +827,9 @@ button {
 }
 
 @keyframes dot-ping {
-  0% { box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0.5); }
-  70% { box-shadow: 0 0 0 5px rgb(var(--warn-rgb) / 0); }
-  100% { box-shadow: 0 0 0 0 rgb(var(--warn-rgb) / 0); }
+  0% { box-shadow: 0 0 0 0 rgb(var(--status-blocked-rgb) / 0.5); }
+  70% { box-shadow: 0 0 0 5px rgb(var(--status-blocked-rgb) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--status-blocked-rgb) / 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1297,7 +1390,7 @@ select:disabled { cursor: default; }
 }
 
 .task-ctx-fill { display: block; height: 100%; background: var(--ctx-quiet-row); }
-.task-ctx[data-level='warn'] .task-ctx-fill { background: var(--status-blocked); opacity: 0.8; }
+.task-ctx[data-level='warn'] .task-ctx-fill { background: var(--warn); opacity: 0.8; }
 .task-ctx[data-level='high'] .task-ctx-fill { background: var(--danger); }
 
 .task-ctx[data-basis='inferred'] .task-ctx-fill {
@@ -1321,7 +1414,7 @@ select:disabled { cursor: default; }
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--status-blocked);
+  color: var(--warn);
 }
 .task-ctx-text[data-level='high'] { color: var(--danger); }
 
@@ -1339,7 +1432,7 @@ select:disabled { cursor: default; }
 }
 
 .ctx-fill { position: absolute; inset: 0 auto 0 0; background: var(--ctx-quiet-bar); }
-.ctx[data-level='warn'] .ctx-fill { background: var(--status-blocked); }
+.ctx[data-level='warn'] .ctx-fill { background: var(--warn); }
 .ctx[data-level='high'] .ctx-fill { background: var(--danger); }
 
 .ctx[data-basis='inferred'] .ctx-fill {
@@ -1356,7 +1449,7 @@ select:disabled { cursor: default; }
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
-.ctx[data-level='warn'] .ctx-text { color: var(--status-blocked); }
+.ctx[data-level='warn'] .ctx-text { color: var(--warn); }
 .ctx[data-level='high'] .ctx-text { color: var(--danger); }
 
 

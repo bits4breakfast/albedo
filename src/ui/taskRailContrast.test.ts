@@ -1,10 +1,10 @@
 /**
- * The task rail's circles (#266), measured in every theme block of
- * styles.css: a count is text (4.5:1) on its own ground -- the fill for a
- * filled circle, the circle's --panel and the rail's --panel-chrome for an
- * outlined one -- and the outlines and the selected ring are UI (3:1) on the
- * rail. The CSS is checked to draw each with the token measured here, and to
- * dim nothing with opacity or a transparent mix.
+ * The task rail's circles (#266, #276), measured in every theme block of
+ * styles.css: a count is text (4.5:1) on its fill (the group's -ink on its
+ * -fill), and each -edge and the selected ring are UI (3:1) on the rail and
+ * the list's grounds. The CSS is checked to draw each with the tokens
+ * measured here, and to dim nothing with opacity (the pulse's decorative
+ * ring aside) or a transparent mix.
  */
 
 import { readFileSync } from 'node:fs';
@@ -45,29 +45,33 @@ const themes: Record<string, Map<string, string>> = {
   'dark (chosen)': new Map([...light, ...tokensIn(DARK_ATTR, css.length)]),
 };
 
-/** Each group's circle colour, as taskrail.css sets `--c`. */
-const GROUP_COLOUR = {
-  blocked: '--status-blocked',
-  active: '--status-running',
-  review: '--status-done',
-  reviewing: '--status-done',
-  quiet: '--status-idle',
-  done: '--status-done',
+/** Each group's glyph tokens, as taskrail.css sets `--fill`, `--edge`, `--ink`. */
+const GROUP_GLYPH = {
+  blocked: 'blocked',
+  active: 'running',
+  review: 'review',
+  reviewing: 'reviewing',
+  quiet: 'idle',
+  done: 'done',
 } as const;
-const FILLED = ['blocked', 'active', 'review', 'reviewing', 'quiet'] as const;
-const OUTLINED = ['done'] as const;
+/** The grounds a circle's or a dot's edge must clear 3:1 on. */
+const EDGE_GROUNDS = ['--panel', '--panel-chrome', '--row-selected', '--panel-hover', '--panel-raised'];
 
-describe('the task rail’s circles (#266)', () => {
-  it('draws each with the token measured below', () => {
-    for (const [group, token] of Object.entries(GROUP_COLOUR)) {
-      const sel = new RegExp(`\\.rail-circle\\[data-group='${group}'\\][^{]*\\{ --c: var\\(${token}\\); \\}`);
+describe('the task rail’s circles (#266, #276)', () => {
+  it('draws each with the tokens measured below', () => {
+    for (const [group, g] of Object.entries(GROUP_GLYPH)) {
+      const sel = new RegExp(
+        `\\.rail-circle\\[data-group='${group}'\\] \\{ --fill: var\\(--status-${g}-fill\\); --edge: var\\(--status-${g}-edge\\); --ink: var\\(--status-${g}-ink\\); \\}`,
+      );
       expect(rail, group).toMatch(sel);
     }
-    expect(rail).toMatch(/\.rail-circle \{[^}]*border: 2px solid var\(--c\);[^}]*background: var\(--panel\);[^}]*color: var\(--text\);/);
-    expect(rail).toMatch(/\.rail-circle\[data-fill='solid'\],\s*\.rail-circle\[data-fill='ringed'\] \{ background: var\(--c\); color: var\(--panel\); \}/);
+    expect(rail).toMatch(/\.rail-circle \{[^}]*border: 1\.5px solid var\(--edge\);[^}]*background: var\(--fill\);[^}]*color: var\(--ink\);/);
     expect(rail).toMatch(/\.rail-circle\[data-fill='ringed'\] \{ box-shadow: inset 0 0 0 2px var\(--panel\); \}/);
     expect(rail).toMatch(/\.rail-circle\[aria-current='true'\]::after \{[^}]*border: 1\.5px solid var\(--accent\)/);
-    expect(rail).not.toMatch(/opacity\s*:/);
+    // Opacity only on the pulse's decorative ring, never on a count.
+    for (const m of rail.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]*)\{([^{}]*opacity[^{}]*)\}/g)) {
+      expect(m[1]!.trim(), m[0]).toMatch(/^(\d+%|\d+%, \d+%|\.rail-circle\[data-pulse\]::before)$/);
+    }
     expect(rail).not.toMatch(/transparent\)/);
     // The rail is the sidebar's ground.
     expect(css).toMatch(/\.sidebar \{[^}]*background: var\(--panel-chrome\)/);
@@ -80,23 +84,21 @@ describe('the task rail’s circles (#266)', () => {
       return v!;
     };
 
-    it(`${name}: a filled circle's count clears 4.5 on its fill`, () => {
-      for (const g of FILLED) {
-        expect(ratio(tok('--panel'), tok(GROUP_COLOUR[g])), `${name} ${g}`).toBeGreaterThanOrEqual(4.5);
+    it(`${name}: each circle's count clears 4.5 on its fill`, () => {
+      for (const g of Object.values(GROUP_GLYPH)) {
+        expect(ratio(tok(`--status-${g}-ink`), tok(`--status-${g}-fill`)), `${name} ${g}`).toBeGreaterThanOrEqual(4.5);
       }
     });
 
-    it(`${name}: an outlined circle's count clears 4.5 on the circle and on the rail`, () => {
-      for (const ground of ['--panel', '--panel-chrome']) {
-        expect(ratio(tok('--text'), tok(ground)), `${name} on ${ground}`).toBeGreaterThanOrEqual(4.5);
+    it(`${name}: every edge clears 3:1 on the rail, the list's grounds and the hover halo`, () => {
+      for (const g of Object.values(GROUP_GLYPH)) {
+        for (const ground of EDGE_GROUNDS) {
+          expect(ratio(tok(`--status-${g}-edge`), tok(ground)), `${name} ${g} on ${ground}`).toBeGreaterThanOrEqual(3);
+        }
       }
-    });
-
-    it(`${name}: every outline, fill edge and the selected ring clear 3:1 on the rail`, () => {
-      for (const g of [...FILLED, ...OUTLINED]) {
-        expect(ratio(tok(GROUP_COLOUR[g]), tok('--panel-chrome')), `${name} ${g}`).toBeGreaterThanOrEqual(3);
-        // An outline also has to stand off the circle's own --panel inside it.
-        expect(ratio(tok(GROUP_COLOUR[g]), tok('--panel')), `${name} ${g} inside`).toBeGreaterThanOrEqual(3);
+      // A Needs You dot also sits on its row's tint.
+      for (const ground of ['--row-blocked', '--row-blocked-hover']) {
+        expect(ratio(tok('--status-blocked-edge'), tok(ground)), `${name} on ${ground}`).toBeGreaterThanOrEqual(3);
       }
       expect(ratio(tok('--accent'), tok('--panel-chrome')), `${name} ring`).toBeGreaterThanOrEqual(3);
     });
@@ -107,8 +109,39 @@ describe('the task rail’s circles (#266)', () => {
     });
   }
 
+  it('dark: In Review differs from Ready to Review by lightness, not only by the ring', () => {
+    for (const name of ['dark (system)', 'dark (chosen)']) {
+      const t = themes[name]!;
+      const review = t.get('--status-review-fill')!;
+      const reviewing = t.get('--status-reviewing-fill')!;
+      expect(ratio(review, reviewing), name).toBeGreaterThanOrEqual(3);
+      // Its deep body carries a light ink, ringed in the bright edge.
+      expect(ratio(t.get('--status-reviewing-edge')!, reviewing), name).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('the popover head draws with those tokens', () => {
     expect(rail).toMatch(/\.rail-pop-title \{ color: var\(--text\);/);
     expect(rail).toMatch(/\.rail-pop-count \{[^}]*color: var\(--muted\);/);
+  });
+});
+
+describe('the pulse (#276)', () => {
+  it('rings in the group’s edge, three 2s pulses, restarted by swapping a and b', () => {
+    expect(rail).toMatch(/\.rail-circle\[data-pulse\]::before \{[^}]*border: 2px solid var\(--edge\);[^}]*opacity: 0;/);
+    expect(rail).toMatch(/\.rail-circle\[data-pulse='a'\]::before \{ animation: rail-pulse-a 2s ease-out 3; \}/);
+    expect(rail).toMatch(/\.rail-circle\[data-pulse='b'\]::before \{ animation: rail-pulse-b 2s ease-out 3; \}/);
+    expect(rail).toMatch(/@keyframes rail-pulse-a \{[^@]*scale\(1\.55\)/);
+  });
+
+  it('with Reduce Motion, shows the ring still for 2s instead', () => {
+    const block = rail.slice(rail.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(block).toMatch(/\[data-pulse='a'\]::before \{ animation: rail-still-a 2s linear 1; \}/);
+    expect(block).toMatch(/\[data-pulse='b'\]::before \{ animation: rail-still-b 2s linear 1; \}/);
+    for (const k of ['a', 'b']) {
+      const frames = rail.match(new RegExp(`@keyframes rail-still-${k} \\{\\s*0%, 100% \\{ ([^}]*) \\}`));
+      // One frame for the whole run: nothing moves.
+      expect(frames?.[1]).toBe('transform: scale(1.3); opacity: 1;');
+    }
   });
 });
