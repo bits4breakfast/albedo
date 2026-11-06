@@ -218,7 +218,7 @@ const ASK_TOOL = 'AskUserQuestion';
  * this one tool, cut to MAX_PLAN_CHARS. HOOK_SCRIPT already keeps the whole
  * request line (up to MAX_LINE_CHARS), so nothing new is written to disk:
  * this is what the derived prompt keeps in memory. A widening of what this
- * channel carries, pending the owner's sign-off like the three before it.
+ * channel carries, approved by the owner (2026-11-06; CLAUDE.md, the seventh).
  */
 export const PLAN_TOOL = 'ExitPlanMode';
 
