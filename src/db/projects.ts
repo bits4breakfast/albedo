@@ -13,7 +13,7 @@
  * changed file fails startup rather than re-running.
  */
 
-import type { NewProject, Project } from '../types';
+import type { CiDetailsMode, NewProject, Project } from '../types';
 import { emitTasksChanged, getDb } from './index';
 
 // ---------------------------------------------------------------------------
@@ -57,12 +57,14 @@ interface ProjectRow {
   worktree_root: string;
   default_base_branch: string | null;
   task_prompt_template: string | null;
+  ci_details: string | null;
+  ci_details_command: string | null;
   created_at: number;
   archived_at: number | null;
 }
 
 const PROJECT_SELECT =
-  'id, name, repo_path, worktree_root, default_base_branch, task_prompt_template, created_at, archived_at';
+  'id, name, repo_path, worktree_root, default_base_branch, task_prompt_template, ci_details, ci_details_command, created_at, archived_at';
 
 const PROJECT_COLUMN: Readonly<Record<keyof NewProject, string>> = {
   name: 'name',
@@ -70,6 +72,8 @@ const PROJECT_COLUMN: Readonly<Record<keyof NewProject, string>> = {
   worktreeRoot: 'worktree_root',
   defaultBaseBranch: 'default_base_branch',
   taskPromptTemplate: 'task_prompt_template',
+  ciDetails: 'ci_details',
+  ciDetailsCommand: 'ci_details_command',
 };
 
 function toProject(r: ProjectRow): Project {
@@ -80,6 +84,8 @@ function toProject(r: ProjectRow): Project {
     worktreeRoot: r.worktree_root,
     defaultBaseBranch: r.default_base_branch,
     taskPromptTemplate: r.task_prompt_template,
+    ciDetails: ciDetailsFromColumn(r.ci_details),
+    ciDetailsCommand: normalizePromptTemplate(r.ci_details_command),
     createdAt: r.created_at,
     archivedAt: r.archived_at,
   };
@@ -114,6 +120,20 @@ export function normalizePromptTemplate(value: string | null | undefined): strin
   if (value === null || value === undefined) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * `projects.ci_details` (#280): NULL is name and link only. Anything the app
+ * does not know reads as that too -- the default does nothing, which is the
+ * safe direction for a column that decides whether a command runs.
+ */
+export function ciDetailsFromColumn(value: string | null): CiDetailsMode {
+  return value === 'actions' || value === 'command' ? value : 'link';
+}
+
+/** The column value for a mode: the default is stored as NULL, so it has one representation. */
+export function ciDetailsToColumn(mode: CiDetailsMode | null | undefined): string | null {
+  return mode === 'actions' || mode === 'command' ? mode : null;
 }
 
 /** Folder basename of a repo path. `/a/b/` -> `b`, not `''`. */
@@ -217,13 +237,15 @@ export async function createProject(p: NewProject): Promise<Project> {
   const createdAt = Date.now();
   const name = p.name.trim().length > 0 ? p.name.trim() : projectNameFor(repoPath);
   const taskPromptTemplate = normalizePromptTemplate(p.taskPromptTemplate);
+  const ciDetails = ciDetailsFromColumn(ciDetailsToColumn(p.ciDetails));
+  const ciDetailsCommand = normalizePromptTemplate(p.ciDetailsCommand);
   const db = await getDb();
   let res;
   try {
     res = await db.execute(
-      `INSERT INTO projects (name, repo_path, worktree_root, default_base_branch, task_prompt_template, created_at, archived_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NULL)`,
-      [name, repoPath, p.worktreeRoot, p.defaultBaseBranch, taskPromptTemplate, createdAt],
+      `INSERT INTO projects (name, repo_path, worktree_root, default_base_branch, task_prompt_template, ci_details, ci_details_command, created_at, archived_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)`,
+      [name, repoPath, p.worktreeRoot, p.defaultBaseBranch, taskPromptTemplate, ciDetailsToColumn(ciDetails), ciDetailsCommand, createdAt],
     );
   } catch (err: unknown) {
     // The check above races against another writer. The UNIQUE index is the
@@ -245,6 +267,8 @@ export async function createProject(p: NewProject): Promise<Project> {
     worktreeRoot: p.worktreeRoot,
     defaultBaseBranch: p.defaultBaseBranch,
     taskPromptTemplate,
+    ciDetails,
+    ciDetailsCommand,
     createdAt,
     archivedAt: null,
   };
@@ -267,6 +291,9 @@ export async function updateProject(id: number, patch: Partial<NewProject>): Pro
       // stores NULL rather than ''.
       value = normalizePromptTemplate(value as string | null | undefined);
     }
+    if (key === 'ciDetails') value = ciDetailsToColumn(value as CiDetailsMode | null);
+    // Trimmed, and '' stored as NULL, as the prompt is.
+    if (key === 'ciDetailsCommand') value = normalizePromptTemplate(value as string | null | undefined);
     if (key === 'repoPath') {
       const norm = normalizeRepoPath(String(value));
       // Moving a project onto another project's repo would violate the UNIQUE

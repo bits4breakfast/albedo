@@ -31,6 +31,8 @@ const project: Project = {
   worktreeRoot: '/Users/x/www/worktrees',
   defaultBaseBranch: null,
   taskPromptTemplate: null,
+  ciDetails: 'link',
+  ciDetailsCommand: null,
   createdAt: 1,
   archivedAt: null,
 };

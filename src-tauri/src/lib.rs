@@ -126,6 +126,9 @@ const M0009_SEEN_AT: &str = include_str!("../../src/db/migrations/0009_seen_at.s
 const M0010_REMINDERS: &str = include_str!("../../src/db/migrations/0010_reminders.sql");
 /// v11: tasks.summary -- one line on what the task is about, beside its title (#262).
 const M0011_TASK_SUMMARY: &str = include_str!("../../src/db/migrations/0011_task_summary.sql");
+/// v12: projects.ci_details and ci_details_command -- what a queued CI failure
+/// carries (#280).
+const M0012_CI_DETAILS: &str = include_str!("../../src/db/migrations/0012_ci_details.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -193,6 +196,12 @@ pub fn run() {
             version: 11,
             description: "tasks.summary",
             sql: M0011_TASK_SUMMARY,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 12,
+            description: "projects.ci_details",
+            sql: M0012_CI_DETAILS,
             kind: MigrationKind::Up,
         },
     ];

@@ -121,6 +121,8 @@ describe('projectOwningPath', () => {
     worktreeRoot,
     defaultBaseBranch: null,
     taskPromptTemplate: null,
+    ciDetails: 'link',
+    ciDetailsCommand: null,
     createdAt: 0,
     archivedAt: null,
   });

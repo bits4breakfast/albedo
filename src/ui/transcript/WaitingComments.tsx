@@ -12,7 +12,11 @@
  *
  * A PR's failing checks queued for Claude (#280, ciFailure.ts) are listed
  * here too, first, as the message carries them: "✗ CI failed · 2 checks" in
- * the head, and opened, each check with its conclusion and its link.
+ * the head, and opened, each check with its conclusion and its link. When
+ * the project fetches details (step 2), each check says which step failed,
+ * and its log tail folds open under it: the first check's open, the rest
+ * closed. "Fetching details…" while they come, one line on why when they
+ * could not.
  *
  * Frozen like the box while a send is under way: the list can be read and
  * jumped from, not changed.
@@ -32,7 +36,8 @@ import {
 } from '../../db/comments';
 import { useOpenFile } from '../editor/openFile';
 import { useCommentsIntro, writeIntro } from '../commentsIntro';
-import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi, type QueuedCiFailure } from './ciFailure';
+import { ciFailureLabel, detailOf, removeQueuedCi, shortSha, useQueuedCi, type QueuedCiFailure } from './ciFailure';
+import { failedDetailsLine, type CheckDetail } from '../../gh/ciDetails';
 import { openExternal } from '../../lib/openUrl';
 
 export function WaitingComments({
@@ -108,6 +113,11 @@ function ciTooltip(f: QueuedCiFailure): string {
 /** The queued CI failure: the PR and commit, each failing check with Open, and Remove. */
 function CiItem({ taskId, failure, frozen }: { taskId: number; failure: QueuedCiFailure; frozen: boolean }): ReactNode {
   const sha = shortSha(failure.sha);
+  const details = failure.details;
+  // Which logs are open, by check name; a check not named here takes the
+  // default: open for the first check that has a log, closed for the rest.
+  const [shown, setShown] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const firstWithLog = failure.checks.find((c) => (detailOf(failure, c.name)?.log.length ?? 0) > 0)?.name;
   return (
     <li className="tx-waiting-item" data-kind="ci">
       <div className="tx-waiting-row">
@@ -127,27 +137,71 @@ function CiItem({ taskId, failure, frozen }: { taskId: number; failure: QueuedCi
           Remove
         </button>
       </div>
+      {details?.state === 'fetching' ? (
+        <div className="tx-waiting-ci-note" role="status">
+          Fetching details…
+        </div>
+      ) : details?.state === 'failed' ? (
+        <div className="tx-waiting-ci-note">{failedDetailsLine(details.reason)}</div>
+      ) : null}
       <ul className="tx-waiting-checks">
-        {failure.checks.map((c) => (
-          <li key={c.name} className="tx-waiting-row">
-            <div className="tx-waiting-comment">
-              {c.name} <span className="tx-waiting-ci-conclusion">— {c.conclusion}</span>
-            </div>
-            {c.url ? (
-              <button
-                type="button"
-                className="tx-btn tx-queued-act"
-                title={c.url}
-                aria-label={`Open the details of ${c.name}`}
-                onClick={() => void openExternal(c.url!)}
-              >
-                Open
-              </button>
-            ) : null}
-          </li>
-        ))}
+        {failure.checks.map((c) => {
+          const d = detailOf(failure, c.name);
+          const hasLog = (d?.log.length ?? 0) > 0;
+          const open = hasLog && (shown.get(c.name) ?? c.name === firstWithLog);
+          return (
+            <li key={c.name}>
+              <div className="tx-waiting-row">
+                <div className="tx-waiting-comment">
+                  {c.name}{' '}
+                  <span className="tx-waiting-ci-conclusion">
+                    {d?.step ? `step “${d.step}” · ${c.conclusion}` : `— ${c.conclusion}`}
+                  </span>
+                </div>
+                {hasLog ? (
+                  <button
+                    type="button"
+                    className="tx-btn tx-queued-act"
+                    aria-expanded={open}
+                    aria-label={`${open ? 'Hide' : 'Show'} the log of ${c.name}`}
+                    onClick={() => setShown((m) => new Map(m).set(c.name, !open))}
+                  >
+                    <Disclosure open={open} /> Log
+                  </button>
+                ) : null}
+                {c.url ? (
+                  <button
+                    type="button"
+                    className="tx-btn tx-queued-act"
+                    title={c.url}
+                    aria-label={`Open the details of ${c.name}`}
+                    onClick={() => void openExternal(c.url!)}
+                  >
+                    Open
+                  </button>
+                ) : null}
+              </div>
+              {open && d ? <LogTail detail={d} /> : null}
+            </li>
+          );
+        })}
       </ul>
     </li>
+  );
+}
+
+/** The end of a check's log, as it goes to Claude; what was cut said first. */
+function LogTail({ detail }: { detail: CheckDetail }): ReactNode {
+  return (
+    <pre className="tx-waiting-ci-log" aria-label={`The end of the log of ${detail.name}`}>
+      {detail.more > 0 ? (
+        <span className="tx-waiting-ci-log-more">
+          … {detail.more} more line{detail.more === 1 ? '' : 's'}
+          {'\n'}
+        </span>
+      ) : null}
+      {detail.log.join('\n')}
+    </pre>
   );
 }
 

@@ -3,7 +3,9 @@
  * the failing tone, above the message box (--panel, the head hovered on
  * --panel-hover) and in the Files pane's Waiting group (--panel, a row
  * hovered on --panel-hover), measured from styles.css in all three theme
- * blocks, and checked to still use those tokens.
+ * blocks, and checked to still use those tokens. Step 2's details: the notes
+ * --muted on --panel, a check's log tail --text on --panel-inset, and its
+ * "… N more lines" --muted on --panel-inset.
  */
 
 import { readFileSync } from 'node:fs';
@@ -52,6 +54,16 @@ describe('the queued CI failure (#280)', () => {
     expect(list).toMatch(/\.tf-comment-drop:hover \{ color: var\(--text\); background: var\(--panel-hover\); \}/);
   });
 
+  it('draws its details (step 2) with the tokens measured here', () => {
+    expect(transcript).toMatch(/\.tx-waiting-ci-note \{[^}]*color: var\(--muted\)/);
+    const log = /\.tx-waiting-ci-log \{([^}]*)\}/.exec(transcript)?.[1] ?? '';
+    expect(log).toMatch(/background: var\(--panel-inset\);/);
+    expect(log).toMatch(/color: var\(--text\);/);
+    // Never dimmed after the token is chosen, never a wash over whatever is behind.
+    expect(log).not.toMatch(/opacity|transparent/);
+    expect(transcript).toMatch(/\.tx-waiting-ci-log-more \{ color: var\(--muted\); \}/);
+  });
+
   for (const [name, t] of Object.entries(themes)) {
     it(`${name}: text clears 4.5 on its grounds`, () => {
       const g = (k: string) => t.get(k)!;
@@ -61,6 +73,9 @@ describe('the queued CI failure (#280)', () => {
         ['--muted', '--panel'],
         ['--muted', '--panel-hover'],
         ['--text', '--panel-hover'],
+        // Step 2: the log tail and what was cut from it.
+        ['--text', '--panel-inset'],
+        ['--muted', '--panel-inset'],
       ];
       for (const [fg, bg] of text) expect(ratio(g(fg), g(bg)), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
     });

@@ -59,6 +59,8 @@ import {
   backfillProjectsFromTasks,
   createProject,
   findWorktreeProjects,
+  getProject,
+  updateProject,
   listUnclaimedRepos,
 } from './projects';
 
@@ -1483,6 +1485,54 @@ describe('tasks.seen_at (v9)', () => {
     expect(row.seen_at).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
     expect(row.seen_at).toBeLessThanOrEqual(Date.now());
     raw.close();
+  });
+});
+
+describe('projects.ci_details (v12, #280)', () => {
+  const NEW = { name: 'recipe-app', repoPath: '/repo/recipe-app', worktreeRoot: '/wt/recipe-app', defaultBaseBranch: null };
+
+  it('leaves every existing project on name and link only', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v12 = all.findIndex((m) => m.name.endsWith('0012_ci_details.sql'));
+    expect(v12).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v12)) raw.exec(m.sql);
+    raw
+      .prepare(`INSERT INTO projects (name, repo_path, worktree_root, created_at) VALUES ('old', '/repo/old', '/wt/old', 0)`)
+      .run();
+    raw.exec((all[v12] as { sql: string }).sql);
+    const row = raw.prepare(`SELECT ci_details, ci_details_command FROM projects WHERE name = 'old'`).get();
+    expect(row).toEqual({ ci_details: null, ci_details_command: null });
+    raw.close();
+  });
+
+  it('defaults a new project to name and link only, stored as NULL', async () => {
+    const p = await createProject(NEW);
+    expect(p.ciDetails).toBe('link');
+    expect(p.ciDetailsCommand).toBeNull();
+    expect(await getProject(p.id)).toEqual(p);
+    expect(db.raw.prepare('SELECT ci_details FROM projects WHERE id = ?').get(p.id)).toEqual({ ci_details: null });
+  });
+
+  it('round-trips each mode and the command, trimmed, and keeps the command across a mode change', async () => {
+    const p = await createProject({ ...NEW, ciDetails: 'command', ciDetailsCommand: '  ./scripts/ci-details.sh \n' });
+    expect((await getProject(p.id))?.ciDetails).toBe('command');
+    expect((await getProject(p.id))?.ciDetailsCommand).toBe('./scripts/ci-details.sh');
+    await updateProject(p.id, { ciDetails: 'actions' });
+    expect(await getProject(p.id)).toMatchObject({ ciDetails: 'actions', ciDetailsCommand: './scripts/ci-details.sh' });
+    await updateProject(p.id, { ciDetails: 'link', ciDetailsCommand: '   ' });
+    expect(await getProject(p.id)).toMatchObject({ ciDetails: 'link', ciDetailsCommand: null });
+    expect(db.raw.prepare('SELECT ci_details, ci_details_command FROM projects WHERE id = ?').get(p.id)).toEqual({
+      ci_details: null,
+      ci_details_command: null,
+    });
+  });
+
+  it('reads a value it does not know as name and link only', async () => {
+    const p = await createProject(NEW);
+    db.raw.prepare(`UPDATE projects SET ci_details = 'webhook' WHERE id = ?`).run(p.id);
+    expect((await getProject(p.id))?.ciDetails).toBe('link');
   });
 });
 

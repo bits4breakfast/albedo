@@ -2069,6 +2069,27 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
 .tx-waiting-checks { list-style: none; margin: 2px 0 0; padding: 0; }
 .tx-waiting-checks > li { margin-top: 2px; }
 .tx-waiting-ci-conclusion { color: var(--muted); }
+/* Its details, when the project fetches them (#280, step 2). "Fetching
+   details…" and why they could not be, --muted on --panel like the
+   conclusion. A check's log tail on the --panel-inset ground the Checks
+   dialog's log uses: --text, and what was cut --muted; measured in all
+   three theme blocks in ciQueueContrast.test.ts. */
+.tx-waiting-ci-note { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-xs); }
+.tx-waiting-ci-log {
+  margin: 2px 0 4px;
+  padding: 4px 8px;
+  background: var(--panel-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.tx-waiting-ci-log-more { color: var(--muted); }
 .tx-waiting-comment {
   flex: 1;
   min-width: 0;

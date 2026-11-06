@@ -21,7 +21,12 @@
  *
  * What it carries is what GitHub's checks say, whatever runs the CI: each
  * failing check's name, its conclusion and its link, with the PR number and
- * the head commit. Nothing is fetched (no logs, no steps).
+ * the head commit. A project may ask for more (step 2, `Project.ciDetails`):
+ * the failing step and the end of its log, fetched once when the failure is
+ * queued (`ciDetailsQueue.ts`) and kept on the item as `details`. The item
+ * shows at once and fills in; a fetch that fails leaves names and links and
+ * says why. A fetch happens again only when the failure changes: a new
+ * commit, or a check that was not failing before.
  *
  * One per task, keyed by the head commit. It leaves:
  *   - when a message carrying it is delivered or held (`takeQueuedCi`), or
@@ -40,6 +45,7 @@ import { useSyncExternalStore } from 'react';
 import { headKey } from '../../gh/ciTransition';
 import type { PrStatus } from '../../gh/prStatus';
 import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
+import { failedDetailsLine, formatCheckDetail, type CheckDetail, type CiDetailsState } from '../../gh/ciDetails';
 
 export interface FailedCheck {
   name: string;
@@ -54,6 +60,12 @@ export interface QueuedCiFailure {
   sha: string;
   checks: readonly FailedCheck[];
   queuedAt: number;
+  /**
+   * The step and log tail per check (#280, step 2). Absent: not asked yet.
+   * `fetching` is never kept across a restart, so a fetch the app quit in
+   * the middle of is asked again.
+   */
+  details?: CiDetailsState;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,8 +111,14 @@ export function ciQueueStep(prev: CiQueueEntry, pr: PrStatus | null, now: number
     const checks = failingChecks(pr);
     if (item) {
       // Still failing: keep the list current (a job rerun to green leaves
-      // it; one failing since joins it).
-      next = sameChecks(checks, item.checks) && item.prNumber === pr.number ? item : { ...item, prNumber: pr.number, checks };
+      // it; one failing since joins it). A check joining is a new failure,
+      // so its details are asked again; one leaving changes nothing to fetch.
+      if (sameChecks(checks, item.checks) && item.prNumber === pr.number) next = item;
+      else {
+        const known = new Set(item.checks.map((c) => c.name));
+        const { details, ...rest } = item;
+        next = { ...rest, prNumber: pr.number, checks, ...(details && checks.every((c) => known.has(c.name)) ? { details } : {}) };
+      }
     } else if (handled === undefined) {
       next = { prNumber: pr.number, sha, checks, queuedAt: now };
     }
@@ -121,12 +139,40 @@ export function ciFailureLabel(f: QueuedCiFailure): string {
   return `✗ CI failed · ${n} check${n === 1 ? '' : 's'}`;
 }
 
-/** What Claude reads, ahead of the code comments in the message. */
+/** A check's fetched details, when the item has them. */
+export function detailOf(f: QueuedCiFailure, name: string): CheckDetail | null {
+  return f.details?.state === 'ready' ? (f.details.checks.find((d) => d.name === name) ?? null) : null;
+}
+
+/**
+ * What Claude reads, ahead of the code comments in the message: each check
+ * with its step and log tail when they were fetched, and one line saying so
+ * when they could not be. Still being fetched at Send: names and links.
+ */
 export function formatCiFailure(f: QueuedCiFailure): string {
   const sha = shortSha(f.sha);
   const head = `CI failed on PR #${f.prNumber}${sha ? ` (${sha})` : ''}:`;
-  const lines = f.checks.map((c) => `- ${c.name}: ${c.conclusion}${c.url ? ` — ${c.url}` : ''}`);
-  return [head, ...lines].join('\n');
+  const lines = f.checks.flatMap((c) => {
+    const d = detailOf(f, c.name);
+    return [`- ${c.name}: ${c.conclusion}${c.url ? ` — ${c.url}` : ''}`, ...(d ? formatCheckDetail(d) : [])];
+  });
+  const failed = f.details?.state === 'failed' ? [failedDetailsLine(f.details.reason)] : [];
+  return [head, ...lines, ...failed].join('\n');
+}
+
+/**
+ * Which fetch a result belongs to: the commit and the checks it was asked
+ * for. A result lands only while the item is still that commit's and asks
+ * for no check the fetch did not.
+ */
+export function detailsKey(f: Pick<QueuedCiFailure, 'sha' | 'checks'>): string {
+  return [f.sha, ...f.checks.map((c) => c.name)].join('\n');
+}
+
+function keyCovers(key: string, f: QueuedCiFailure): boolean {
+  const [sha, ...names] = key.split('\n');
+  const asked = new Set(names);
+  return sha === f.sha && f.checks.every((c) => asked.has(c.name));
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +200,28 @@ function isFailure(value: unknown): value is QueuedCiFailure {
   );
 }
 
+function isDetail(value: unknown): value is CheckDetail {
+  if (typeof value !== 'object' || value === null) return false;
+  const d = value as Record<string, unknown>;
+  return (
+    typeof d.name === 'string' &&
+    (d.step === null || typeof d.step === 'string') &&
+    Array.isArray(d.log) &&
+    d.log.every((l) => typeof l === 'string') &&
+    typeof d.more === 'number'
+  );
+}
+
+/** A kept `details`, or undefined: malformed, or `fetching` (asked again). */
+function keptDetails(value: unknown): CiDetailsState | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const d = value as Record<string, unknown>;
+  if (d.state === 'none') return { state: 'none' };
+  if (d.state === 'failed' && typeof d.reason === 'string') return { state: 'failed', reason: d.reason };
+  if (d.state === 'ready' && Array.isArray(d.checks) && d.checks.every(isDetail)) return { state: 'ready', checks: d.checks };
+  return undefined;
+}
+
 function isEntry(value: unknown): value is CiQueueEntry {
   if (typeof value !== 'object' || value === null) return false;
   const e = value as Record<string, unknown>;
@@ -168,7 +236,13 @@ export const queuedCiCodec: Codec<QueueMap> = {
     const map = new Map<number, CiQueueEntry>();
     for (const [key, value] of Object.entries(parsed)) {
       const id = Number(key);
-      if (Number.isInteger(id) && isEntry(value) && (value.item || value.handled !== undefined)) map.set(id, value);
+      if (!Number.isInteger(id) || !isEntry(value) || (!value.item && value.handled === undefined)) continue;
+      if (value.item) {
+        const { details, ...item } = value.item;
+        const kept = keptDetails(details);
+        value.item = kept ? { ...item, details: kept } : item;
+      }
+      map.set(id, value);
     }
     return map;
   },
@@ -211,6 +285,27 @@ export function queuedCiOf(taskId: number): QueuedCiFailure | null {
  */
 export function observeCiQueue(taskId: number, pr: PrStatus | null, now = Date.now()): void {
   put(taskId, ciQueueStep(current().get(taskId) ?? {}, pr, now));
+}
+
+/**
+ * The task's queued failure when its details have not been asked for yet --
+ * just queued, changed, or brought back after a restart -- else null.
+ */
+export function ciDetailsWanted(taskId: number): QueuedCiFailure | null {
+  const item = queuedCiOf(taskId);
+  return item && item.details === undefined ? item : null;
+}
+
+/**
+ * A fetch's answer (or its `fetching` mark), for the failure `key` names
+ * (`detailsKey`). Dropped when the item has since moved on: sent, removed,
+ * another commit, or a check the fetch did not ask about.
+ */
+export function setQueuedCiDetails(taskId: number, key: string, details: CiDetailsState): void {
+  const entry = current().get(taskId);
+  const item = entry?.item;
+  if (!entry || !item || !keyCovers(key, item)) return;
+  put(taskId, { ...entry, item: { ...item, details } });
 }
 
 /**

@@ -1,0 +1,21 @@
+-- v12: what a queued CI failure carries, per project (#280, step 2).
+--
+-- Decided by the owner (schema.sql and migrations are a shared contract;
+-- issue #280, 2026-11-06). A PR's failing checks wait in the task's queue for
+-- Claude with their names and links; a project can ask for more:
+--
+--   ci_details          NULL       name and link only (the default: Claude
+--                                  reads the failure with its own tools)
+--                       'actions'  GitHub Actions: the job's failing step and
+--                                  the end of its log, as the Checks dialog
+--                                  fetches them
+--                       'command'  run ci_details_command, see below
+--   ci_details_command  the command the 'command' mode runs, through
+--                       `/bin/sh -c`, in the task's folder. Kept when the mode
+--                       changes, so switching away and back loses nothing.
+--                       This column is the ONLY source of a command Albedo
+--                       runs this way (CLAUDE.md, the ci-details-sh scope).
+--
+-- NULLABLE, no backfill: every project reads as it did before v12.
+ALTER TABLE projects ADD COLUMN ci_details TEXT;
+ALTER TABLE projects ADD COLUMN ci_details_command TEXT;
