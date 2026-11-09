@@ -9,12 +9,15 @@
 //   gh pr checks <n> --json …                              the Checks dialog
 //   gh run view <run> -R <repo> --json jobs                a job's steps
 //   gh api user --jq .login                                who is signed in
+//   gh api graphql … -F number=<n> -f query=<THREADS_QUERY>  a PR's review threads (#287)
+//   gh api -X POST repos/…/pulls/<n>/reviews --input <f>   Submit Review: recorded, and
+//   gh api -X POST repos/…/pulls/<n>/comments/<id>/replies  shown as threads from then on
 //
 // Anything else fails the way gh does when there is no PR, which Albedo reads
 // as "no badge" (or, for a merge, shows as the refusal).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +26,16 @@ const file = join(homedir(), '.albedo-demo', 'prs.json');
 const prs = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
 const reviewsFile = join(homedir(), '.albedo-demo', 'reviews.json');
 const reviews = existsSync(reviewsFile) ? JSON.parse(readFileSync(reviewsFile, 'utf8')) : {};
+// What Submit Review sent (#287), one JSON line per request, so a demo
+// review shows up as threads afterwards. Never sent anywhere.
+const postedFile = join(homedir(), '.albedo-demo', 'posted-reviews.jsonl');
+const posted = () =>
+  existsSync(postedFile)
+    ? readFileSync(postedFile, 'utf8')
+        .split('\n')
+        .filter((l) => l.trim() !== '')
+        .map((l) => JSON.parse(l))
+    : [];
 
 const fail = (msg) => {
   process.stderr.write(`${msg}\n`);
@@ -182,7 +195,7 @@ function reviewNode(repoName, r) {
     updatedAt: ago(Math.min(r.lastCommitMinutes, ...(r.talk ?? []).map((t) => t.minutesAgo))),
     additions: r.additions,
     deletions: r.deletions,
-    headRefOid: `${r.number}`.padStart(40, '0'),
+    headRefOid: r.head ?? `${r.number}`.padStart(40, '0'),
     baseRefName: 'main',
     author: { login: r.author },
     commits: { totalCount: r.commits, nodes: [{ commit: { committedDate: ago(r.lastCommitMinutes) } }] },
@@ -197,7 +210,69 @@ function reviewNode(repoName, r) {
   };
 }
 
+/** The hunk GitHub would quote for a line of a file the PR adds whole. */
+function hunkOf(text, line) {
+  const lines = (text ?? '').split('\n').slice(0, line);
+  return `@@ -0,0 +1,${line} @@\n${lines.map((l) => `+${l}`).join('\n')}`;
+}
+
+/** Comment ids: the scenario's from 7000, Submit Review's from 8000. */
+function threadsOf(r) {
+  const out = (r.threads ?? []).map((t, i) => ({
+    id: `PRRT_demo_${r.number}_${i}`,
+    isResolved: t.resolved === true,
+    isOutdated: false,
+    path: t.path,
+    line: t.line,
+    startLine: null,
+    originalLine: t.line,
+    diffSide: 'RIGHT',
+    comments: {
+      nodes: t.comments.map((c, j) => ({
+        databaseId: 7000 + r.number * 10 + i * 100 + j,
+        author: { login: c.author },
+        body: c.body,
+        createdAt: ago(c.minutesAgo),
+        diffHunk: hunkOf(r.files?.[t.path], t.line),
+      })),
+    },
+  }));
+  let id = 8000;
+  for (const p of posted().filter((x) => x.number === r.number)) {
+    if (p.kind === 'review') {
+      for (const c of p.review.comments ?? []) {
+        out.push({
+          id: `PRRT_demo_posted_${id}`,
+          isResolved: false,
+          isOutdated: false,
+          path: c.path,
+          line: c.line,
+          startLine: c.start_line ?? null,
+          originalLine: c.line,
+          diffSide: 'RIGHT',
+          comments: {
+            nodes: [{ databaseId: id, author: { login: 'sam-rivera' }, body: c.body, createdAt: p.at, diffHunk: hunkOf(r.files?.[c.path], c.line) }],
+          },
+        });
+        id += 1;
+      }
+    } else {
+      const t = out.find((x) => x.comments.nodes[0].databaseId === p.to);
+      t?.comments.nodes.push({ databaseId: id, author: { login: 'sam-rivera' }, body: p.body, createdAt: p.at, diffHunk: '' });
+      id += 1;
+    }
+  }
+  return out;
+}
+
+/** The review in the scenario a `repos/<owner>/<repo>/pulls/<n>` path names. */
+function reviewAt(repoName, number) {
+  const key = Object.keys(reviews).find((k) => k.split('/').pop() === repoName);
+  return (key ? reviews[key] : []).find((r) => r.number === Number(number)) ?? null;
+}
+
 const [a0, a1, a2] = args;
+const postPath = args.find((a) => /^repos\/[^/]+\/[^/]+\/pulls\/\d+\//.test(a));
 
 if (a0 === 'api' && a1 === 'graphql' && 'requested' in apiFields()) {
   // The Reviewing tab's one request: the PRs asking for your review here.
@@ -209,6 +284,28 @@ if (a0 === 'api' && a1 === 'graphql' && 'requested' in apiFields()) {
   print({
     data: { viewer: { login: 'sam-rivera' }, requested: { nodes: of('requested') }, reviewed: { nodes: of('reviewed') } },
   });
+} else if (a0 === 'api' && a1 === 'graphql' && /query Threads/.test(apiFields().query ?? '')) {
+  // A review task's threads (src/gh/reviewThreads.ts).
+  const { repo, number } = apiFields();
+  const r = reviewAt(repo, number);
+  if (!r) fail('GraphQL: Could not resolve to a PullRequest with the number of ' + number + '.');
+  print({ data: { repository: { pullRequest: { reviewThreads: { nodes: threadsOf(r) } } } } });
+} else if (a0 === 'api' && postPath) {
+  // Submit Review (src/gh/reviewSubmit.ts): recorded, never sent.
+  const [, , repoName, , number, rest, id] = postPath.split('/');
+  if (!reviewAt(repoName, number)) fail('gh: Not Found (HTTP 404)');
+  const at = new Date().toISOString();
+  if (rest === 'reviews') {
+    const review = JSON.parse(readFileSync(flag('--input'), 'utf8'));
+    appendFileSync(postedFile, `${JSON.stringify({ kind: 'review', number: Number(number), at, review })}\n`);
+    print({ id: 1, state: review.event === 'APPROVE' ? 'APPROVED' : review.event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'COMMENTED' });
+  } else if (rest === 'comments' && id) {
+    const body = apiFields().body ?? '';
+    appendFileSync(postedFile, `${JSON.stringify({ kind: 'reply', number: Number(number), at, to: Number(id), body })}\n`);
+    print({ id: 2, body });
+  } else {
+    fail('gh: Not Found (HTTP 404)');
+  }
 } else if (a0 === 'api' && a1 === 'graphql') {
   // The PR store's one request: the PRs whose head is the branch.
   const { branch } = apiFields();
