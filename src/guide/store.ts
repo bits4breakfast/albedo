@@ -358,6 +358,33 @@ export function useGuideStoreVersion(): number {
 }
 
 // ---------------------------------------------------------------------------
+// The Write Guide screen's lists, as typed (#295)
+// ---------------------------------------------------------------------------
+
+/** The two lists as typed on the Write Guide screen, one pattern per line. */
+export interface FocusDraft {
+  setAside: string;
+  careful: string;
+}
+
+/**
+ * Per task, in memory: what was typed into the Write Guide screen's lists and
+ * not yet written, kept, as the place is, while another task is on screen.
+ * None means the project's defaults (or, rewriting, the guide's own lists).
+ */
+const focusDrafts = new Map<number, FocusDraft>();
+
+export function focusDraftOf(taskId: number): FocusDraft | null {
+  return focusDrafts.get(taskId) ?? null;
+}
+
+export function setFocusDraft(taskId: number, draft: FocusDraft | null): void {
+  if (draft === null) focusDrafts.delete(taskId);
+  else focusDrafts.set(taskId, draft);
+  changed();
+}
+
+// ---------------------------------------------------------------------------
 // Where you are, and the last read of the branch (#199)
 // ---------------------------------------------------------------------------
 
@@ -415,5 +442,6 @@ export function resetGuideStoreForTests(): void {
   lastReads.clear();
   writes.clear();
   notesJobs.clear();
+  focusDrafts.clear();
   changed();
 }

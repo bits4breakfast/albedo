@@ -34,6 +34,7 @@ import {
 import { listTasks } from '../db';
 import { getPrStatus } from '../gh/prStore';
 import { runDetailsCommand } from '../gh/ciDetailsRun';
+import { DEFAULT_CAREFUL, DEFAULT_SET_ASIDE, formatPatterns, parsePatterns, samePatterns } from '../guide/focus';
 import { failedDetailsLine, type CiDetailsState } from '../gh/ciDetails';
 import { queuedCiOf, shortSha } from './transcript/ciFailure';
 import { lastFailureIn, type LastFailure } from './transcript/ciDetailsQueue';
@@ -88,6 +89,9 @@ interface Draft {
   ciDetails: CiDetailsMode;
   /** Kept while another mode is chosen, so switching back loses nothing. */
   ciDetailsCommand: string;
+  /** The Review Guide's defaults (#295), one pattern per line, as typed. */
+  guideSetAside: string;
+  guideCareful: string;
   /** Whether the user has hand-edited the root, so we stop re-deriving it. */
   rootTouched: boolean;
 }
@@ -270,6 +274,8 @@ export function ProjectsDialog({
         taskPromptTemplate: '',
         ciDetails: 'link',
         ciDetailsCommand: '',
+        guideSetAside: formatPatterns(DEFAULT_SET_ASIDE),
+        guideCareful: formatPatterns(DEFAULT_CAREFUL),
         rootTouched: false,
       });
       void loadBranches(repoPath);
@@ -293,6 +299,8 @@ export function ProjectsDialog({
         taskPromptTemplate: p.taskPromptTemplate ?? '',
         ciDetails: p.ciDetails,
         ciDetailsCommand: p.ciDetailsCommand ?? '',
+        guideSetAside: formatPatterns(p.guideSetAside ?? DEFAULT_SET_ASIDE),
+        guideCareful: formatPatterns(p.guideCareful ?? DEFAULT_CAREFUL),
         rootTouched: true,
       });
       void loadBranches(p.repoPath);
@@ -383,6 +391,9 @@ export function ProjectsDialog({
         taskPromptTemplate: draft.taskPromptTemplate.trim() || null,
         ciDetails: draft.ciDetails,
         ciDetailsCommand: command || null,
+        // Stored as NULL while equal to Albedo's set (db/projects.ts).
+        guideSetAside: parsePatterns(draft.guideSetAside),
+        guideCareful: parsePatterns(draft.guideCareful),
       };
 
       if (draft.id === null) {
@@ -645,6 +656,8 @@ export function ProjectsDialog({
                 </select>
               </div>
 
+              <GuideDefaultsFields draft={draft} busy={busy} onChange={(patch) => setDraft({ ...draft, ...patch })} />
+
               {saveError && (
                 <div className="wt-error">
                   <div className="wt-error-head">Could not save this project</div>
@@ -902,6 +915,74 @@ export function ProjectsDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The Review Guide's defaults (#295): what the Write Guide screen starts
+ * from. The same fields as that screen, so the two read as one setting.
+ */
+function GuideDefaultsFields({
+  draft,
+  busy,
+  onChange,
+}: {
+  draft: Draft;
+  busy: boolean;
+  onChange: (patch: Partial<Pick<Draft, 'guideSetAside' | 'guideCareful'>>) => void;
+}) {
+  const defaults =
+    samePatterns(parsePatterns(draft.guideSetAside), DEFAULT_SET_ASIDE) &&
+    samePatterns(parsePatterns(draft.guideCareful), DEFAULT_CAREFUL);
+  return (
+    <>
+      <div className="wt-field">
+        <label className="wt-label" htmlFor="wt-proj-guide-aside">
+          Review Guide: Set Aside <span className="wt-label-optional">Grouped last, not sent to Claude</span>
+        </label>
+        <textarea
+          id="wt-proj-guide-aside"
+          className="wt-input wt-textarea wt-mono"
+          value={draft.guideSetAside}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          disabled={busy}
+          onChange={(e) => onChange({ guideSetAside: e.target.value })}
+        />
+      </div>
+      <div className="wt-field">
+        <label className="wt-label" htmlFor="wt-proj-guide-careful">
+          Review Guide: Review Carefully <span className="wt-label-optional">Marked in the guide, with why</span>
+        </label>
+        <textarea
+          id="wt-proj-guide-careful"
+          className="wt-input wt-textarea wt-mono"
+          value={draft.guideCareful}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          disabled={busy}
+          onChange={(e) => onChange({ guideCareful: e.target.value })}
+        />
+        <div className="wt-hint">
+          One pattern per line, matched on the paths git reports: <span className="wt-mono">*.css</span> (any folder),{' '}
+          <span className="wt-mono">src/**</span>, <span className="wt-mono">*.{'{js,ts}'}</span>. A file in both lists is not
+          set aside. The Write Guide screen starts from these.
+        </div>
+        <div className="wt-confirm-actions wt-guide-actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || defaults}
+            onClick={() => onChange({ guideSetAside: formatPatterns(DEFAULT_SET_ASIDE), guideCareful: formatPatterns(DEFAULT_CAREFUL) })}
+          >
+            Use Albedo’s Defaults
+          </button>
+          {defaults ? <span className="wt-modal-sub">These are Albedo’s defaults.</span> : null}
+        </div>
+      </div>
+    </>
   );
 }
 

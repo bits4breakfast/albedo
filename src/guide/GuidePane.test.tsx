@@ -876,10 +876,10 @@ describe('the Map (#288)', () => {
       await written();
       await waitFor(() => expect(screen.queryByRole('group', { name: 'View' })).toBeNull());
       expect(screen.queryByLabelText('Uncommitted Only')).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'View and filter' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More guide actions' }));
       fireEvent.click(screen.getByRole('menuitemradio', { name: 'Map' }));
       expect(await screen.findByRole('region', { name: 'Map' })).toBeTruthy();
-      fireEvent.click(screen.getByRole('button', { name: 'View and filter' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More guide actions' }));
       expect(screen.getByRole('menuitemradio', { name: 'Map' }).getAttribute('aria-checked')).toBe('true');
       fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Uncommitted Only' }));
       await waitFor(() => expect(map().getAllByRole('button')).toHaveLength(1));

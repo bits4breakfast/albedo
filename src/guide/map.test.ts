@@ -146,7 +146,7 @@ describe('buildChangeMap (#288)', () => {
 });
 
 function node(id: string): MapNode {
-  return { id, kind: 'file', label: id, groups: [], colours: [], added: 1, removed: 0, change: 'modified', stat: null, comments: 0, files: 1, size: 1, importers: 0 };
+  return { id, kind: 'file', label: id, groups: [], colours: [], added: 1, removed: 0, change: 'modified', stat: null, comments: 0, files: 1, size: 1, importers: 0, careful: null };
 }
 
 describe('layoutMap (#288)', () => {

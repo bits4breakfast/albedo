@@ -1058,3 +1058,9 @@
 .wt-preview-body + .wt-preview-label {
   margin-top: 8px;
 }
+
+/* --- Review Guide defaults (#295): the reset and its note, on one line ---- */
+
+.wt-guide-actions {
+  align-items: center;
+}

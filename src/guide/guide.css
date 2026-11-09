@@ -551,3 +551,78 @@
   background: repeating-linear-gradient(to bottom, var(--muted) 0 3px, transparent 3px 6px);
 }
 .gd-map-swatch[data-colour='none'] { border: 2px dashed var(--muted); }
+
+/* --- Set aside and review carefully (#295) ---------------------------------
+
+   The careful mark is a flag in --warn, always with its reason in words,
+   never colour alone. --warn is text here: cleared at 4.5:1 on every ground a
+   file row and a Map box take -- --panel, --panel-hover, --accent-soft (the
+   current row and box) -- in both themes (carefulContrast.test.ts): light
+   7.59 / 6.60 / 6.54, dark 9.98 / 8.91 / 8.63. Its rule
+   under the diff's header is a graphic: 3:1 on --panel. Set Aside is grey in
+   the Map (--border-strong, 3:1 as the stripes are), never a hue, and dotted
+   in the rail. */
+.gd-careful-icon { flex: none; color: var(--warn); vertical-align: -2px; }
+
+/* In a file row: one line under the name, before the note's gist. */
+.gd-file-careful {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-top: -2px;
+  color: var(--warn);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+.gd-file-careful > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gd-pattern { font-family: var(--font-mono); font-size: var(--fs-xs); }
+
+/* At the top of a group: which of its files to read carefully, by name. */
+.gd-careful-head {
+  margin: 0 0 2px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.gd-careful-head .gd-link { font-size: var(--fs-sm); }
+
+/* Under the diff's header, before Why: a --warn rule and label. */
+.gd-diff-why-text + .gd-diff-why-text { margin-top: 6px; }
+.gd-diff-why-text[data-careful] { border-left-color: var(--warn); }
+.gd-diff-why-text[data-careful] .gd-diff-why-label { color: var(--warn); white-space: nowrap; }
+.gd-diff-why-text[data-careful] .gd-careful-icon { margin-right: 4px; }
+
+/* The rail: Set Aside last, after a gap, dotted (Unsorted stays dashed). */
+.gd-rail-mark[data-aside] { margin-top: 8px; }
+.gd-rail-mark[data-aside]::before { border-style: dotted; }
+
+/* The Map: Set Aside in grey; a careful box has the flag before its name;
+   the key lists the careful files under the groups. */
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='aside'] { background: var(--border-strong); }
+.gd-map-name .gd-careful-icon { margin-right: 4px; }
+.gd-map-subhead { margin: 8px 0 0; display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+.gd-file.gd-map-careful { grid-template-columns: 12px minmax(0, auto) minmax(0, 1fr); }
+
+/* The Write Guide screen (#295): the Projects dialog's fields, at the
+   intro's reading width. */
+.gd-intro .wt-field { align-self: stretch; margin-bottom: 4px; }
+.gd-intro .wt-textarea { min-height: 7.5em; font-size: var(--fs-sm); }
+.gd-intro .wt-hint { margin-top: 6px; }
+.gd-options-foot {
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 6px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.gd-options-name { font-weight: 500; color: var(--text); }
+.gd-options-error { color: var(--danger); }
+.gd-intro-actions { display: inline-flex; gap: 8px; }

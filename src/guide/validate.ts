@@ -450,7 +450,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
       key: 'set-aside',
       index: null,
       title: SET_ASIDE_TITLE,
-      summary: 'Files this guide sets aside: they rarely need a careful read, so Claude was not asked to sort them.',
+      summary: 'Files that rarely need a careful read, by this guide’s patterns. Claude was not asked to sort them.',
       unsorted: false,
       setAside: true,
       blocks,

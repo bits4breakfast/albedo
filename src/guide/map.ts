@@ -24,7 +24,7 @@ import type { ChangeKind } from '../git/fileDiff';
 import type { BranchDiff, StatReason } from './blocks';
 import type { CommentMarks } from './commentMarks';
 import { MAX_SCAN_FILES, type ImportGraph } from './imports';
-import type { GroupView } from './validate';
+import { carefulWhy, type GroupView } from './validate';
 
 /** How many group colours there are (`--group-1` .. `--group-8`); past that they repeat. */
 export const GROUP_COLOURS = 8;
@@ -33,9 +33,15 @@ export const MAX_FILE_NODES = 60;
 /** At most this many unchanged files, the most imported first. */
 export const MAX_UNCHANGED_NODES = 12;
 
-/** A group's colour slot, 1-based; null for Unsorted, which is drawn dashed in --muted. */
-export function groupColour(groups: readonly GroupView[], key: string): number | null {
-  const named = groups.filter((g) => !g.unsorted);
+/**
+ * A group's colour slot, 1-based; null for Unsorted, which is drawn dashed in
+ * --muted; 'aside' for Set Aside (#295), drawn grey, never a hue.
+ */
+export type GroupColourSlot = number | 'aside' | null;
+
+export function groupColour(groups: readonly GroupView[], key: string): GroupColourSlot {
+  if (groups.some((g) => g.setAside && g.key === key)) return 'aside';
+  const named = groups.filter((g) => !g.unsorted && !g.setAside);
   const i = named.findIndex((g) => g.key === key);
   return i < 0 ? null : (i % GROUP_COLOURS) + 1;
 }
@@ -49,7 +55,7 @@ export interface MapNode {
   /** Keys of the groups holding it, in guide order; empty for an unchanged file. */
   groups: string[];
   /** One colour slot per group in {@link groups}. */
-  colours: Array<number | null>;
+  colours: GroupColourSlot[];
   added: number;
   removed: number;
   change: ChangeKind | null;
@@ -61,6 +67,8 @@ export interface MapNode {
   size: number;
   /** For an unchanged file: how many changed files import it. */
   importers: number;
+  /** Why to review it carefully, in words (#295); null when it is not marked, and for folders. */
+  careful: string | null;
 }
 
 export interface MapEdge {
@@ -126,6 +134,7 @@ export function buildChangeMap(
       const comments = marks.get(g.key)?.get(f.path) ?? 0;
       const had = byPath.get(f.path);
       if (had) {
+        had.careful ??= f.careful ? carefulWhy(f.careful) : null;
         had.groups.push(g.key);
         had.colours.push(colour);
         had.added += f.added;
@@ -148,6 +157,7 @@ export function buildChangeMap(
         files: 1,
         size: 0,
         importers: 0,
+        careful: f.careful ? carefulWhy(f.careful) : null,
       });
     }
   }
@@ -191,6 +201,7 @@ export function buildChangeMap(
       files: 1,
       size: 0,
       importers: by.size,
+      careful: null,
     };
   });
   if (shared.length > MAX_UNCHANGED_NODES) {
@@ -264,6 +275,7 @@ function foldToFolders(
       files: 0,
       size: 0,
       importers: 0,
+      careful: null,
     };
     f.groups.forEach((g, i) => {
       if (!n.groups.includes(g)) {

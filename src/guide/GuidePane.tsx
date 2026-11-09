@@ -30,7 +30,11 @@ import { useWaitingCodeComments } from '../ui/transcript/codeComments';
 import { useComments } from '../ui/transcript/drafts';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
 import { useQueuedCi } from '../ui/transcript/ciFailure';
-import { viewGuide, type GroupFile, type GroupView, type Guide } from './validate';
+import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
+import { asFocus, firstMatch, projectFocus, type GuideFocus } from './focus';
+import { chosenFocus, draftOf, GuideOptions, useTaskProject } from './GuideOptions';
+import { FlagIcon } from '../ui/icons';
+import '../ui/worktree.css';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
 import {
   clearWriteError,
@@ -45,6 +49,7 @@ import {
   placeOf,
   retryNotes,
   reviewedKey,
+  setFocusDraft,
   setReviewed,
   startWrite,
   useGuideStoreVersion,
@@ -115,6 +120,11 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     return last ? { kind: 'ready', data: last, taskId: task.id, remembered: true } : { kind: 'loading' };
   });
   const [again, setAgain] = useState(0);
+  // The project's Guide defaults (#295), Albedo's without a project.
+  const project = useTaskProject(task.projectId ?? null);
+  const defaults = projectFocus(project);
+  /** Rewrite With Other Options… is open: the Write Guide screen over the guide (#295). */
+  const [editing, setEditing] = useState(false);
   /** Write or Rewrite was pressed and the branch is being read again first. */
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
@@ -178,7 +188,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   }
 
   const { diff } = load.data;
-  const writeNow = () => {
+  const writeNow = (focus: GuideFocus) => {
     if (startingRef.current || stored?.kind === 'writing') return;
     startingRef.current = true;
     setStarting(true);
@@ -196,15 +206,40 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
       // The branch cannot be read just now: write for what is on screen.
       .catch(() => diff)
       .then((d) => {
-        const run = startWrite(id, d, base);
+        const run = startWrite(id, d, base, focus);
         startingRef.current = false;
         setStarting(false);
         return run;
       });
   };
 
-  if (guide === null) {
-    return <GuideIntro task={task} diff={diff} write={write} onWrite={writeNow} active={active} />;
+  // What the guide was written with; a guide from before #295 rewrites with the project's.
+  const guideFocus = guide ? (asFocus(guide.focus) ?? defaults) : defaults;
+  if (guide === null || editing) {
+    const start = guide === null ? defaults : guideFocus;
+    return (
+      <GuideIntro
+        task={task}
+        diff={diff}
+        write={write}
+        onWrite={() => {
+          const focus = chosenFocus(task.id, start);
+          setFocusDraft(task.id, null);
+          setEditing(false);
+          writeNow(focus);
+        }}
+        onCancel={
+          editing && guide !== null
+            ? () => {
+                setFocusDraft(task.id, null);
+                setEditing(false);
+              }
+            : undefined
+        }
+        active={active}
+        options={<GuideOptions taskId={task.id} diff={diff} start={start} project={project} defaults={defaults} />}
+      />
+    );
   }
   return (
     <GuideBody
@@ -214,7 +249,11 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
       loaded={load.data}
       fresh={load.remembered !== true}
       write={write}
-      onRewrite={writeNow}
+      onRewrite={() => writeNow(guideFocus)}
+      onEditOptions={() => {
+        setFocusDraft(task.id, draftOf(guideFocus));
+        setEditing(true);
+      }}
       active={active}
     />
   );
@@ -267,13 +306,19 @@ function GuideIntro({
   diff,
   write,
   onWrite,
+  onCancel,
   active,
+  options,
 }: {
   task: Task;
   diff: BranchDiff;
   write: WriteState | null;
   onWrite: () => void;
+  /** Rewriting with other options (#295): back to the guide, nothing written. */
+  onCancel?: () => void;
   active: boolean;
+  /** The lists to set aside and mark (#295). */
+  options: ReactNode;
 }): ReactNode {
   const empty = diff.order.length === 0;
   // ⇧⌘G with no guide yet (#217): to Write Guide, or the intro itself when
@@ -300,10 +345,18 @@ function GuideIntro({
               diff.order.length === 1 ? 'block' : 'blocks'
             } · against ${task.baseBranch}, committed and uncommitted`}
       </p>
+      {empty ? null : options}
       {write === null ? (
-        <button type="button" ref={writeRef} className="gd-btn gd-btn-primary" onClick={onWrite} disabled={empty}>
-          Write Guide
-        </button>
+        <span className="gd-intro-actions">
+            <button type="button" ref={writeRef} className="gd-btn gd-btn-primary" onClick={onWrite} disabled={empty}>
+              {onCancel ? 'Rewrite Guide' : 'Write Guide'}
+            </button>
+            {onCancel ? (
+              <button type="button" className="gd-btn" onClick={onCancel}>
+                Cancel
+              </button>
+            ) : null}
+        </span>
       ) : null}
       <WriteStatus taskId={task.id} write={write} onRetry={onWrite} />
       <p className="gd-intro-note">
@@ -403,6 +456,7 @@ function GuideBody({
   fresh,
   write,
   onRewrite,
+  onEditOptions,
   active,
 }: {
   task: Task;
@@ -412,6 +466,8 @@ function GuideBody({
   fresh: boolean;
   write: WriteState | null;
   onRewrite: () => void;
+  /** Rewrite With Other Options… (#295). */
+  onEditOptions: () => void;
   active: boolean;
 }): ReactNode {
   const { diff, uncommitted } = loaded;
@@ -461,6 +517,11 @@ function GuideBody({
   const reviewed = loadReviewed(task.id);
   const isFileReviewed = (f: GroupFile) => reviewed.has(reviewedKey(f.path, f.blocks));
   const isGroupReviewed = (g: GroupView) => g.files.length > 0 && g.files.every(isFileReviewed);
+  // The reading the guide leads you through (#295): every group but Set
+  // Aside, which is listed last. Its count, "All reviewed" and Reviewed and
+  // Next leave it out; Next and the rail still reach it.
+  const led = groups.filter((g) => !g.setAside);
+  const focus = asFocus(guide.focus);
   // Ticked once, at other blocks: the file changed since it was reviewed (#248).
   const reviewedPaths = new Set([...reviewed].map((k) => k.slice(0, k.lastIndexOf('#'))));
   const changedSinceReview = (f: GroupFile) => !isFileReviewed(f) && reviewedPaths.has(f.path);
@@ -470,7 +531,7 @@ function GuideBody({
   const [place, setPlace] = useState(() => {
     const kept = placeOf(task.id, guide.writtenAt);
     if (kept) return kept;
-    const next = groups.find((g) => !isGroupReviewed(g)) ?? groups[0] ?? null;
+    const next = led.find((g) => !isGroupReviewed(g)) ?? groups[0] ?? null;
     return { writtenAt: guide.writtenAt, group: next?.key ?? null, picked: {} as Readonly<Record<string, string>> };
   });
   const picked = place.picked;
@@ -507,7 +568,7 @@ function GuideBody({
     const [g, path] = shownKey.split('\n') as [string, string];
     setPlace((p) => ({ ...p, picked: { ...p.picked, [g]: path } }));
   }, [shownKey]);
-  const reviewedCount = groups.filter(isGroupReviewed).length;
+  const reviewedCount = led.filter(isGroupReviewed).length;
 
   // The notes come after the groups, a call per group (#224): queue the
   // groups still without them -- after a restart too -- and keep the one in
@@ -584,9 +645,9 @@ function GuideBody({
   const advance = () => {
     const now = loadReviewed(task.id);
     const unread = (f: GroupFile) => !now.has(reviewedKey(f.path, f.blocks));
-    const i = nextToReview(groups, at, (g) => !g.files.some(unread));
+    const i = nextToReview(groups, at, (g) => g.setAside || !g.files.some(unread));
     if (i === null) {
-      setSaid(`All ${groups.length} groups reviewed`);
+      setSaid(`All ${led.length} groups reviewed`);
       return;
     }
     const g = groups[i]!;
@@ -707,16 +768,28 @@ function GuideBody({
           {write?.kind === 'writing' ? 'Rewriting…' : 'Rewrite'}
         </button>
         {view.stale ? null : sendButton}
-        {compact ? (
-          <OverflowMenu
-            label="View and filter"
-            items={[
-              { id: 'read', label: 'Read', radio: true, checked: shownView === 'read', title: VIEW_TITLE.read, onSelect: () => showView('read') },
-              { id: 'map', label: 'Map', radio: true, checked: shownView === 'map', title: VIEW_TITLE.map, onSelect: () => showView('map') },
-              { id: 'uncommitted', label: 'Uncommitted Only', checked: onlyUncommitted, group: true, onSelect: () => setOnlyUncommitted((on) => !on) },
-            ]}
-          />
-        ) : null}
+        {/* The rest in ⋯ (#295): Rewrite With Other Options… always; Read ·
+            Map and the filter too once the row has given way (#288). */}
+        <OverflowMenu
+          label="More guide actions"
+          items={[
+            ...(compact
+              ? [
+                  { id: 'read', label: 'Read', radio: true, checked: shownView === 'read', title: VIEW_TITLE.read, onSelect: () => showView('read') },
+                  { id: 'map', label: 'Map', radio: true, checked: shownView === 'map', title: VIEW_TITLE.map, onSelect: () => showView('map') },
+                  { id: 'uncommitted', label: 'Uncommitted Only', checked: onlyUncommitted, group: true, onSelect: () => setOnlyUncommitted((on) => !on) },
+                ]
+              : []),
+            {
+              id: 'options',
+              label: 'Rewrite With Other Options…',
+              group: compact,
+              disabled: write?.kind === 'writing',
+              title: 'Change what this guide sets aside and marks, then write it again',
+              onSelect: onEditOptions,
+            },
+          ]}
+        />
       </div>
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -753,20 +826,27 @@ function GuideBody({
           <section className="gd-left" aria-label="Group">
             <h2 className="gd-title">{group.title}</h2>
             <div className="gd-count-row">
-              <span className="gd-count">
-                {pad2(at + 1)} / {pad2(groups.length)}
-              </span>
+              {group.setAside ? (
+                <span className="gd-count" title="Set Aside is not in the guide’s count of groups to review">
+                  Not counted
+                </span>
+              ) : (
+                <span className="gd-count">
+                  {pad2(at + 1)} / {pad2(led.length)}
+                </span>
+              )}
               <label className="gd-check">
                 <input type="checkbox" checked={isGroupReviewed(group)} onChange={() => toggleGroup(group)} />
                 Reviewed
               </label>
-              {reviewedCount === groups.length ? (
+              {led.length > 0 && reviewedCount === led.length ? (
                 <span className="gd-all-done">
-                  All {groups.length} {groups.length === 1 ? 'group' : 'groups'} reviewed
+                  All {led.length} {led.length === 1 ? 'group' : 'groups'} reviewed
                 </span>
               ) : null}
             </div>
             {group.summary ? <p className="gd-summary">{group.summary}</p> : null}
+            <CarefulHead files={group.files} onPick={pickFile} />
             <ul className="gd-files" aria-label="Files in this group">
               {group.files.map((f) => {
                 const { name, dir } = splitPath(f.path);
@@ -797,11 +877,14 @@ function GuideBody({
                       </span>
                       <span className="gd-file-dir">{dir}</span>
                       <RowCounts file={f} comments={fileComments(group, f)} />
+                      {f.careful ? <CarefulLine mark={f.careful} /> : null}
                       {/* The note's gist, one short line (#264); the note itself
                           is under the diff's header. While it is being written, a
                           placeholder its size (#224). A guide from before #264 has no
                           line: nothing here, never the long note cut down. */}
-                      {f.line ? (
+                      {group.setAside ? (
+                        <AsideLine pattern={focus ? firstMatch(focus.setAside, f.path) : null} />
+                      ) : f.line ? (
                         <span className="gd-file-line" title={f.line}>
                           {f.line}
                         </span>
@@ -839,13 +922,13 @@ function GuideBody({
           </section>
 
           <nav className="gd-rail" aria-label="Groups">
-            <p className="gd-rail-count" title={`${reviewedCount} of ${groups.length} groups reviewed`}>
+            <p className="gd-rail-count" title={`${reviewedCount} of ${led.length} groups reviewed`}>
               <span aria-hidden="true">
                 {reviewedCount}
-                <span className="gd-rail-of">/{groups.length}</span>
+                <span className="gd-rail-of">/{led.length}</span>
               </span>
               <span className="sr-only">
-                {reviewedCount} of {groups.length} groups reviewed
+                {reviewedCount} of {led.length} groups reviewed
               </span>
             </p>
             <div className="gd-rail-marks">
@@ -857,10 +940,11 @@ function GuideBody({
                   aria-current={i === at ? 'true' : undefined}
                   data-reviewed={isGroupReviewed(g) || undefined}
                   data-unsorted={g.unsorted || undefined}
+                  data-aside={g.setAside || undefined}
                   data-comments={groupCommentCount(marks, g.key) > 0 || undefined}
                   onClick={() => goTo(i, false)}
-                  aria-label={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ', ')}`}
-                  title={`${pad2(i + 1)} ${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ' · ')}`}
+                  aria-label={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ', ')}`}
+                  title={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ' · ')}`}
                 />
               ))}
             </div>
@@ -883,6 +967,65 @@ function GuideBody({
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Review carefully and Set Aside (#295)
+// ---------------------------------------------------------------------------
+
+/** The full reason, for a tooltip: both sources when there are two. */
+function carefulTitle(m: CarefulMark): string {
+  return `Review carefully: ${carefulWhy(m)}${m.reason && m.pattern ? ` (also matches ${m.pattern})` : ''}`;
+}
+
+/** The reason in words: the writer's line, or the pattern in mono. */
+function CarefulWords({ mark }: { mark: CarefulMark }): ReactNode {
+  if (mark.reason) return <>{mark.reason}</>;
+  return (
+    <>
+      Matches <span className="gd-pattern">{mark.pattern}</span>
+    </>
+  );
+}
+
+/** A careful file's line in its group's list: the flag and why, in --warn. */
+function CarefulLine({ mark }: { mark: CarefulMark }): ReactNode {
+  return (
+    <span className="gd-file-careful" title={carefulTitle(mark)}>
+      <FlagIcon className="gd-careful-icon" />
+      <span>
+        <span className="sr-only">Review carefully: </span>
+        <CarefulWords mark={mark} />
+      </span>
+    </span>
+  );
+}
+
+/** A set-aside file's line: the pattern that set it aside, where a note's gist goes. */
+function AsideLine({ pattern }: { pattern: string | null }): ReactNode {
+  if (!pattern) return null;
+  return (
+    <span className="gd-file-line" title={`Set aside: matches ${pattern}`}>
+      Matches <span className="gd-pattern">{pattern}</span>
+    </span>
+  );
+}
+
+/** At the top of a group: its careful files by name, each opening it. Names only: the reasons are in the rows. */
+function CarefulHead({ files, onPick }: { files: readonly GroupFile[]; onPick: (path: string) => void }): ReactNode {
+  const careful = files.filter((f) => f.careful !== null);
+  if (careful.length === 0) return null;
+  return (
+    <p className="gd-careful-head">
+      <FlagIcon className="gd-careful-icon" />
+      <span>Review carefully:</span>
+      {careful.map((f) => (
+        <button key={f.path} type="button" className="gd-link" onClick={() => onPick(f.path)} title={`${f.path}: ${carefulWhy(f.careful!)}`}>
+          {splitPath(f.path).name}
+        </button>
+      ))}
+    </p>
   );
 }
 
@@ -980,12 +1123,23 @@ function GuideFileDiff({
       </div>
       {/* Why the file changes in this group (#224), under its header (#264):
           outside the scroll, so it stays with the header as the diff scrolls. */}
-      {file.note ? (
+      {file.note || file.careful ? (
         <div className="gd-diff-why">
-          <p className="gd-diff-why-text">
-            <span className="gd-diff-why-label">Why</span>
-            {file.note}
-          </p>
+          {file.careful ? (
+            <p className="gd-diff-why-text" data-careful="true" title={carefulTitle(file.careful)}>
+              <span className="gd-diff-why-label">
+                <FlagIcon className="gd-careful-icon" />
+                Careful
+              </span>
+              <CarefulWords mark={file.careful} />
+            </p>
+          ) : null}
+          {file.note ? (
+            <p className="gd-diff-why-text">
+              <span className="gd-diff-why-label">Why</span>
+              {file.note}
+            </p>
+          ) : null}
         </div>
       ) : null}
       {comments.notice ? (
