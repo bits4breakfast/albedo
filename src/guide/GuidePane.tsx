@@ -57,7 +57,20 @@ import { useOpenFile } from '../ui/editor/openFile';
 import { relativeTime } from '../ui/TaskList';
 import { FileIcon } from '../ui/fileIcons';
 import { takeGuideFocus, useGuideFocusRequests } from './openGuide';
+import { CommentCount, commentsSaid } from './CommentCount';
+import GuideMap from './GuideMap';
 import './guide.css';
+
+/**
+ * Read or Map (#288), per task, for this run of the app: coming back to a
+ * task, or a Rewrite, keeps the view it was left in.
+ */
+type PaneView = 'read' | 'map';
+const views = new Map<number, PaneView>();
+
+export function resetGuideViewsForTests(): void {
+  views.clear();
+}
 
 /** The working-tree side of one file; null when it does not exist. */
 async function readWorking(worktreePath: string, rel: string): Promise<string | null> {
@@ -313,29 +326,6 @@ function splitPath(path: string): { name: string; dir: string } {
   return i === -1 ? { name: path, dir: '' } : { name: path.slice(i + 1), dir: path.slice(0, i + 1) };
 }
 
-/** ", 2 comments": what a mark adds to its label (#252); nothing for none. */
-function commentsSaid(n: number, sep: string): string {
-  return n === 0 ? '' : `${sep}${n} ${n === 1 ? 'comment' : 'comments'}`;
-}
-
-/**
- * A speech bubble and a count (#252): open comments on this file, here.
- * --accent, the comments' own colour in the editor; measured on every ground
- * a file row has, the current one included (railContrast.test.ts).
- */
-function CommentCount({ n }: { n: number }): ReactNode {
-  if (n === 0) return null;
-  const said = commentsSaid(n, '');
-  return (
-    <span className="gd-cmt" title={said} aria-label={said} role="img">
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-        <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" strokeLinejoin="round" />
-      </svg>
-      {n}
-    </span>
-  );
-}
-
 /**
  * A file row's figures in three fixed columns -- comments, +, − -- each
  * right-aligned, so they line up from row to row whatever a row lacks.
@@ -430,6 +420,11 @@ function GuideBody({
   }, [view, onlyUncommitted, uncommitted]);
 
   const changed = view.changedFiles.length === 1 ? '1 file' : `${view.changedFiles.length} files`;
+  const [shownView, setShownView] = useState<PaneView>(() => views.get(task.id) ?? 'read');
+  const showView = (v: PaneView) => {
+    views.set(task.id, v);
+    setShownView(v);
+  };
 
   // Every comment waiting to go with the next message, the composer's queue:
   // on code (this guide, the editor, diffs) and on transcript passages (#254).
@@ -601,7 +596,8 @@ function GuideBody({
       sendComments();
       return;
     }
-    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    // The group and file keys are Read's; the map is moved through with Tab.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || shownView === 'map') return;
     if (e.altKey && (e.code === 'ArrowDown' || e.code === 'ArrowUp')) {
       e.preventDefault();
       stepGroup(e.code === 'ArrowDown' ? 1 : -1);
@@ -645,6 +641,16 @@ function GuideBody({
           </span>
         )}
         <ChangeTotals diff={diff} base={guide.base} />
+        {/* Read or Map (#288): which view of the same guide, so it leads the
+            controls; the filter applies to both. */}
+        <span className="gd-seg" role="group" aria-label="View">
+          <button type="button" aria-pressed={shownView === 'read'} onClick={() => showView('read')} title="The groups in reading order, with their diffs">
+            Read
+          </button>
+          <button type="button" aria-pressed={shownView === 'map'} onClick={() => showView('map')} title="The change's files and their imports, by group">
+            Map
+          </button>
+        </span>
         <label className="gd-filter">
           <input type="checkbox" checked={onlyUncommitted} onChange={(e) => setOnlyUncommitted(e.target.checked)} />
           Uncommitted Only
@@ -674,6 +680,22 @@ function GuideBody({
         <div className="gd-message">
           {onlyUncommitted ? 'Nothing uncommitted on this branch.' : 'No changes against the base.'}
         </div>
+      ) : shownView === 'map' ? (
+        <GuideMap
+          worktreePath={task.worktreePath}
+          diff={diff}
+          groups={groups}
+          marks={marks}
+          current={file?.path ?? null}
+          onOpen={(key, path) => {
+            setPlace((p) => ({ ...p, group: key, picked: { ...p.picked, [key]: path } }));
+            showView('read');
+          }}
+          onOpenGroup={(key) => {
+            setPlace((p) => ({ ...p, group: key }));
+            showView('read');
+          }}
+        />
       ) : (
         <div className="gd-body">
           <section className="gd-left" aria-label="Group">

@@ -26,11 +26,12 @@ vi.mock('../ui/transcript/codeComments', () => ({ useWaitingCodeComments: () => 
 vi.mock('../ui/transcript/drafts', () => ({ useComments: () => [] }));
 const sendAsked: number[] = [];
 vi.mock('../ui/transcript/composerBridge', () => ({ sendWaitingComments: (id: number) => (sendAsked.push(id), true) }));
+vi.mock('./repoFiles', () => ({ repoFiles: async () => new Set<string>() }));
 vi.mock('../ui/editor/diffComments', () => ({
   useDiffComments: () => ({ annotations: null, notice: null, clearNotice: () => {}, bar: null }),
 }));
 
-const { default: GuidePane, nextToReview } = await import('./GuidePane');
+const { default: GuidePane, nextToReview, resetGuideViewsForTests } = await import('./GuidePane');
 const { resetGuideStoreForTests, saveGuide } = await import('./store');
 const { setOneshotRunner } = await import('./writer');
 const queuedCi = await import('../ui/transcript/ciFailure');
@@ -64,6 +65,7 @@ beforeEach(() => {
     },
   });
   resetGuideStoreForTests();
+  resetGuideViewsForTests();
   queuedCi.__resetQueuedCi();
   openComments = [];
   waitingCode = [];
@@ -791,5 +793,67 @@ describe('⇧⌘G puts focus in the guide (#217)', () => {
     expect(takeGuideFocus(task.id, Date.now() + FOCUS_WINDOW_MS + 1)).toBe(false);
     // Taken (and lapsed) once: nothing left to take.
     expect(takeGuideFocus(task.id)).toBe(false);
+  });
+});
+
+describe('the Map (#288)', () => {
+  const map = () => within(screen.getByRole('region', { name: 'Map' }));
+  const key = () => within(screen.getByRole('region', { name: 'Map key' }));
+
+  it('Read · Map sits in the toolbar row; Map shows each file as a box, in its groups, and says why there are no arrows', async () => {
+    await written();
+    const view = screen.getByRole('group', { name: 'View' });
+    expect(within(view).getByRole('button', { name: 'Read' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(within(view).getByRole('button', { name: 'Map' }));
+    expect(within(view).getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => expect(map().getAllByRole('button')).toHaveLength(3));
+    // a.ts is in two groups: one box, both named.
+    expect(map().getByRole('button', { name: /^src\/a\.ts; Foundations and Wiring/ })).toBeTruthy();
+    expect(key().getAllByRole('button').map((b) => b.textContent)).toEqual(['Foundations2 files', 'Wiring1 file', 'Unsorted1 file']);
+    expect(key().getByText('None of these files imports another.')).toBeTruthy();
+    // No rail and no diff while the map is up.
+    expect(screen.queryByRole('navigation', { name: 'Groups' })).toBeNull();
+  });
+
+  it('a click on a box opens that file in Read, in its group', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    fireEvent.click(await map().findByRole('button', { name: /^src\/c\.ts;/ }));
+    expect(await screen.findByRole('heading', { name: 'Unsorted' })).toBeTruthy();
+    expect(left().getByRole('button', { name: /c\.ts/ }).getAttribute('aria-current')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Read' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('a click on a group in the key opens that group in Read', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    fireEvent.click(await key().findByRole('button', { name: /Wiring/ }));
+    expect(await screen.findByRole('heading', { name: 'Wiring' })).toBeTruthy();
+  });
+
+  it('the file open in Read is the current box', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    const a = await map().findByRole('button', { name: /^src\/a\.ts;/ });
+    expect(a.getAttribute('aria-current')).toBe('true');
+    expect(map().getByRole('button', { name: /^src\/b\.ts;/ }).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('Uncommitted Only applies to the map too, and the group keys stay Read’s', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    fireEvent.click(screen.getByLabelText('Uncommitted Only'));
+    await waitFor(() => expect(map().getAllByRole('button')).toHaveLength(1));
+    expect(map().getByRole('button', { name: /^src\/b\.ts;/ })).toBeTruthy();
+    fireEvent.keyDown(root(), { code: 'ArrowDown', key: 'ArrowDown', altKey: true });
+    expect(screen.getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('coming back to the task keeps the view it was left in', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    cleanup();
+    pane();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true'));
   });
 });

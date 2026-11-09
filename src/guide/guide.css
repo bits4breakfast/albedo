@@ -66,6 +66,34 @@
   white-space: nowrap;
 }
 
+/* Read or Map (#288), the row's first control: the app's segmented control
+   (.seg) drawn at a button's height, so the row is no taller for it. The
+   track has no ground of its own: it is the row's, --panel-chrome or, out of
+   date, --banner-bg, and --muted clears both (6.01 | 6.49 at the least). The
+   chosen half is lifted on --seg-on and carries --text-strong. */
+.gd-seg {
+  flex: none;
+  display: inline-flex;
+  padding: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.gd-seg > button {
+  padding: 2px 9px;
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.gd-seg > button:hover { color: var(--text); }
+.gd-seg > button[aria-pressed='true'] { color: var(--text-strong); background: var(--seg-on); box-shadow: var(--card-shadow); }
+.gd-seg > button:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+
 .gd-filter,
 .gd-check {
   display: inline-flex;
@@ -427,3 +455,115 @@
 }
 .gd-diff-scroll .tx-d { margin: 0; border: none; border-radius: 0; }
 .gd-diff-scroll .tx-d-body { font-size: var(--fs-md); }
+
+/* --- The Map (#288) ------------------------------------------------------
+
+   The key on the left is the Read view's column (.gd-left), its groups drawn
+   as its file rows; the boxes and arrows on the right, on the pane's own
+   --panel. Grounds and tiers, every theme (mapContrast.test.ts):
+   - A box is --panel with a --border-strong edge (3:1), --panel-hover under
+     the pointer, --accent-soft with an --accent edge when it is the file open
+     in Read: the file rows' three grounds, so its text tiers are theirs --
+     --text-strong name, --muted facts, --add / --del, --accent comments.
+   - Its group is a 4px stripe down its left edge in --group-N (3:1 on all
+     three grounds); a file in two groups is split between their colours.
+     Unsorted is a dashed --muted stripe, never a hue.
+   - Its size is a bar along its foot, in --border-strong: a graphic, 3:1.
+   - An unchanged file two or more import: dashed edge, no stripe, no bar.
+   - Arrows in --border-strong (3:1 on --panel), in --accent for the box
+     under the pointer or in focus. Nothing is dimmed. */
+
+.gd-map {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+.gd-map-canvas { position: relative; }
+.gd-map-edges { position: absolute; inset: 0; pointer-events: none; }
+.gd-map-edge path { fill: none; stroke: var(--border-strong); stroke-width: 1.25; }
+.gd-map-edge polygon { fill: var(--border-strong); }
+.gd-map-edge[data-hot] path { stroke: var(--accent); stroke-width: 1.75; }
+.gd-map-edge[data-hot] polygon { fill: var(--accent); }
+
+.gd-map-node {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 10px 0 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-ui);
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+}
+.gd-map-node:hover { background: var(--panel-hover); }
+.gd-map-node[aria-current='true'] { background: var(--accent-soft); border-color: var(--accent); }
+.gd-map-node:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.gd-map-node[data-kind='unchanged'] { border-style: dashed; padding-left: 10px; }
+.gd-map-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.gd-map-node[data-kind='unchanged'] .gd-map-name { font-weight: 400; color: var(--muted); }
+.gd-map-facts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.gd-map-facts > .gd-cmt { margin-left: auto; }
+.gd-map-tag { color: var(--muted); }
+.gd-map-stripe {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.gd-map-stripe > span { flex: 1 1 0; }
+.gd-map-size {
+  position: absolute;
+  left: 14px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 2px 2px 0 0;
+  background: var(--border-strong);
+}
+
+/* The key: a group row is a file row with a swatch where the tick goes. */
+.gd-map-lede { margin: 0 0 4px; font-size: var(--fs-sm); line-height: 1.45; color: var(--muted); }
+.gd-file.gd-map-group { grid-template-columns: 12px minmax(0, 1fr) auto; }
+.gd-map-swatch { width: 10px; height: 10px; box-sizing: border-box; border-radius: 3px; }
+.gd-map-notes { margin: 4px 6px 0; display: flex; flex-direction: column; gap: 4px; }
+.gd-map-notes p { margin: 0; font-size: var(--fs-xs); line-height: 1.45; color: var(--muted); }
+
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='1'] { background: var(--group-1); }
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='2'] { background: var(--group-2); }
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='3'] { background: var(--group-3); }
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='4'] { background: var(--group-4); }
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='5'] { background: var(--group-5); }
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='6'] { background: var(--group-6); }
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='7'] { background: var(--group-7); }
+:is(.gd-map-stripe > span, .gd-map-swatch)[data-colour='8'] { background: var(--group-8); }
+.gd-map-stripe > span[data-colour='none'] {
+  background: repeating-linear-gradient(to bottom, var(--muted) 0 3px, transparent 3px 6px);
+}
+.gd-map-swatch[data-colour='none'] { border: 2px dashed var(--muted); }
