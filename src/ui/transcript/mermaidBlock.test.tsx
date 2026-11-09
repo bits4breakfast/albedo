@@ -67,24 +67,56 @@ describe('a mermaid fence (#289)', () => {
     expect(config.startOnLoad).toBe(false);
     expect(config.theme).toBe('base');
     expect(config.themeVariables).toHaveProperty('primaryTextColor');
-    for (const key of ['securityLevel', 'theme', 'themeVariables', 'themeCSS', 'htmlLabels', 'fontFamily']) {
+    for (const key of ['securityLevel', 'theme', 'themeVariables', 'themeCSS', 'htmlLabels', 'fontFamily', 'look', 'layout', 'arrowMarkerAbsolute', 'dompurifyConfig', 'legacyMathML', 'forceLegacyMathML', 'deterministicIds', 'deterministicIDSeed', 'handDrawnSeed']) {
       expect(config.secure).toContain(key);
     }
     expect(SECURE_KEYS).toContain('secure');
+    // No neo look and no drop shadow: a grey no token chose.
+    expect(config.look).toBe('classic');
+    expect(config.themeVariables.dropShadow).toBe('none');
+    // An edge label's ground is the well, opaque, not mermaid's 50% wash.
+    expect(config.themeCSS).toMatch(/\.edgeLabel rect \{ opacity: 1; \}/);
+    // One text size for every kind.
+    expect(config.fontSize).toBe(14);
+    expect(config.themeVariables.fontSize).toBe('14px');
+    expect(config.sequence).toEqual({ actorFontSize: 14, messageFontSize: 14, noteFontSize: 14 });
   });
 
-  it('Source shows the text with its copy button, and again hides it', async () => {
+  it('keeps the code block’s copy column on the drawing, and uses the transcript’s own buttons', async () => {
+    const { container } = render(<Markdown text={fence(SEQ)} />);
+    await waitFor(() => expect(container.querySelector('img.tx-mermaid-img')).not.toBeNull());
+    // Where it is on every code block: the frame's right end, full height.
+    expect(container.querySelector('.tx-mermaid > .tx-copy-block')?.getAttribute('aria-label')).toBe('Copy');
+    const buttons = [...container.querySelectorAll('.tx-mermaid-bar button')];
+    expect(buttons.map((b) => b.textContent)).toEqual(['Source', 'Open in Window']);
+    for (const b of buttons) expect(b.className).toBe('tx-btn');
+  });
+
+  it('a wide diagram is never drawn below 0.8 of its size; past that the figure scrolls', async () => {
+    const { container } = render(<Markdown text={fence(SEQ)} />);
+    const img = await waitFor(() => {
+      const found = container.querySelector('img.tx-mermaid-img') as HTMLImageElement | null;
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(img.style.minWidth).toBe(`${Math.round(213 * 0.8)}px`);
+  });
+
+  it('Source shows the text as a code block shows it, and Diagram goes back', async () => {
     const { container, getByRole } = render(<Markdown text={fence(SEQ)} />);
     await waitFor(() => expect(container.querySelector('img.tx-mermaid-img')).not.toBeNull());
-    const source = getByRole('button', { name: 'Source' });
-    expect(source.getAttribute('aria-pressed')).toBe('false');
-    fireEvent.click(source);
-    expect(source.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(getByRole('button', { name: 'Source' }));
     expect(container.querySelector('img.tx-mermaid-img')).toBeNull();
-    expect(container.querySelector('.tx-mermaid-source .tx-pre-code')?.textContent).toContain('deliver->>endpoint');
-    expect(container.querySelector('.tx-mermaid-source > .tx-copy-block')).not.toBeNull();
-    fireEvent.click(source);
+    const pre = container.querySelector('.tx-mermaid-source pre.tx-pre-code')!;
+    expect(pre.textContent).toContain('deliver->>endpoint');
+    // The language where a code block keeps it: a comment on a selected
+    // passage reads it from the frame (PassageComments).
+    expect(pre.closest('.tx-md-pre')?.querySelector('.tx-md-pre-lang')?.textContent).toBe('mermaid');
+    // The one copy column, still at the frame's end.
+    expect(container.querySelectorAll('.tx-copy-block')).toHaveLength(1);
+    fireEvent.click(getByRole('button', { name: 'Diagram' }));
     expect(container.querySelector('img.tx-mermaid-img')).not.toBeNull();
+    expect(container.querySelector('.tx-md-pre-lang')).toBeNull();
   });
 
   it('a fence that does not parse stays code, with the error under it', async () => {
@@ -103,17 +135,23 @@ describe('a mermaid fence (#289)', () => {
     expect(container.querySelector('img')).toBeNull();
   });
 
-  it('Open in Window shows it larger in a dialog; Escape closes it and gives focus back', async () => {
+  it('Open in Window shows it larger in a dialog; Escape closes it before the app sees it, and gives focus back', async () => {
     const { container, getByRole } = render(<Markdown text={fence(SEQ)} />);
     await waitFor(() => expect(container.querySelector('img.tx-mermaid-img')).not.toBeNull());
     const open = getByRole('button', { name: 'Open in Window' });
+    open.focus();
     fireEvent.click(open);
     const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement;
     expect(dialog.getAttribute('aria-label')).toBe('Sequence diagram');
     expect(dialog.querySelector('.wt-modal-title')?.textContent).toBe('Sequence Diagram');
     expect(dialog.querySelector('img.tx-mermaid-img')).not.toBeNull();
     expect(document.activeElement).toBe(dialog);
+    // The editor closes its file on Escape from a window listener of its own.
+    const appSaw = vi.fn();
+    window.addEventListener('keydown', appSaw);
     fireEvent.keyDown(dialog, { key: 'Escape' });
+    window.removeEventListener('keydown', appSaw);
+    expect(appSaw).not.toHaveBeenCalled();
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(open);
   });

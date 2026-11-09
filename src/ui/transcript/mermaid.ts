@@ -127,22 +127,45 @@ export const SECURE_KEYS = [
   'fontSize',
   'htmlLabels',
   'flowchart',
+  'sequence',
   'look',
+  'layout',
+  'arrowMarkerAbsolute',
+  'dompurifyConfig',
+  'legacyMathML',
+  'forceLegacyMathML',
+  'deterministicIds',
+  'deterministicIDSeed',
+  'handDrawnSeed',
 ] as const;
+
+/** One text size for every kind: flowchart labels and sequence text alike. */
+export const DIAGRAM_FONT_PX = 14;
 
 export function mermaidConfig(theme: ResolvedTheme, token: (name: string) => string): Record<string, unknown> {
   const fontFamily = token('--font-ui') || 'system-ui, sans-serif';
+  const vars = themeVariables(token);
   return {
     startOnLoad: false,
     securityLevel: 'strict',
     htmlLabels: false,
     flowchart: { htmlLabels: false },
+    // Mermaid 12's "neo" look draws a fixed grey drop shadow under every
+    // node, a colour no token chose: the classic look, and no shadow.
+    look: 'classic',
+    sequence: { actorFontSize: DIAGRAM_FONT_PX, messageFontSize: DIAGRAM_FONT_PX, noteFontSize: DIAGRAM_FONT_PX },
     suppressErrorRendering: true,
     secure: [...SECURE_KEYS],
     theme: 'base',
     darkMode: theme === 'dark',
     fontFamily,
-    themeVariables: { ...themeVariables(token), darkMode: theme === 'dark', fontFamily, fontSize: '14px' },
+    // The root size is what sequence diagrams read (it overrides their own
+    // actor/message/note sizes when set, and mermaid's default is 16).
+    fontSize: DIAGRAM_FONT_PX,
+    // Mermaid washes an edge label's ground at 50% (an alpha, which lands
+    // differently per theme, CLAUDE.md Contrast rule 6): the well, opaque.
+    themeCSS: `.edgeLabel rect { opacity: 1; } .labelBkg { background-color: ${vars.edgeLabelBackground}; }`,
+    themeVariables: { ...vars, darkMode: theme === 'dark', fontFamily, fontSize: `${DIAGRAM_FONT_PX}px`, dropShadow: 'none' },
   };
 }
 

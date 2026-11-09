@@ -926,20 +926,24 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-md-pre .tx-pre-code { padding-right: 38px; }
 
 /* --- mermaid diagrams (#289) ----------------------------------------------
-   The code block's frame and well. One bar: the kind at the code's left
-   inset (8px, as .tx-pre), the two actions flush right; the drawing centred
-   below it, since mermaid draws its own margins inside the image. Text in
+   The code block's frame, well and copy column (full height at the right
+   end, as on every code block). One bar left of the column: the kind at the
+   code's left inset (8px, as .tx-pre), the transcript's own text buttons
+   (.tx-btn) flush right. The drawing is centred below it, since mermaid
+   draws its own margins inside the image; it fits the column down to 0.8 of
+   its size (MermaidBlock MIN_SCALE) and scrolls sideways past that. Text in
    the drawing is themed from tokens (mermaid.ts, mermaidContrast.test.ts). */
 .tx-mermaid-wrap { display: contents; }
 .tx-md > .tx-mermaid-wrap:last-child > .tx-md-pre { margin-bottom: 0; }
 .tx-mermaid-bar {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   height: 30px;
+  /* Stops at the copy column's hairline, so the two never cross. */
+  margin-right: 30px;
   padding: 0 4px 0 8px;
   border-bottom: 1px solid var(--border);
-  font-size: var(--fs-xs);
 }
 .tx-mermaid-kind {
   flex: 1 1 auto;
@@ -948,25 +952,12 @@ ol.tx-md-list { list-style-type: decimal; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--faint);
+  font-size: var(--fs-xs);
   user-select: none;
   -webkit-user-select: none;
 }
-.tx-mermaid-act {
-  flex: none;
-  height: 22px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  cursor: pointer;
-}
-.tx-mermaid-act:hover { color: var(--text); background: var(--panel-hover); }
-.tx-mermaid-act[aria-pressed='true'] { color: var(--text); background: var(--panel-raised); }
-.tx-mermaid-act:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
 .tx-mermaid-figure {
+  margin-right: 30px;
   padding: 8px;
   overflow-x: auto;
   text-align: center;
@@ -977,10 +968,10 @@ ol.tx-md-list { list-style-type: decimal; }
   height: auto;
   vertical-align: top;
 }
-/* Source: the code block's body under the bar; the copy column starts below it. */
+/* Source: a code block's body under the bar, its language where a code
+   block keeps it, the frame's copy column beside it. */
 .tx-mermaid-source,
 .tx-mermaid-code { position: relative; }
-.tx-mermaid-source > .tx-copy-block { border-radius: 0 0 var(--radius) 0; }
 /* A fence that does not parse stays code, the copy column beside the code
    alone; why, under it, in the same frame, at the code's left inset. */
 .tx-mermaid-code > .tx-copy-block { border-radius: 0 var(--radius) 0 0; }
@@ -1007,6 +998,15 @@ ol.tx-md-list { list-style-type: decimal; }
   border-radius: var(--radius);
   background: var(--panel-inset);
   text-align: center;
+}
+/* Fits the window's height too, so a tall diagram needs no scrolling at
+   first: the viewport less everything around the image, measured -- the
+   overlay's padding (72 + 24), the head (52.25) and foot (53), the body's
+   padding (16 + 16), the well's (12 + 12 + 2) and the dialog's border (2).
+   object-fit keeps the proportions when the height is the limit. */
+.tx-mermaid-window .tx-mermaid-img {
+  max-height: calc(100vh - 262px);
+  object-fit: contain;
 }
 
 /* --- copy (#242) ----------------------------------------------------------

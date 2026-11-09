@@ -12,6 +12,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { createPortal } from 'react-dom';
 import { useTheme } from '../theme';
 import { CodeBlock, CodeBody } from './CodeBlock';
+import { CopyButton } from './CopyButton';
+import { CodeLines } from './Diff';
 import { drawDiagram, peekDiagram, type DiagramImage, type DrawResult } from './mermaid';
 
 /** Within this many px of the end counts as reading the end (as TranscriptPane's STICK_PX). */
@@ -27,7 +29,6 @@ export function MermaidBlock({ code, lang }: { code: string; lang: string }): Re
   const [showSource, setShowSource] = useState(false);
   const [windowOpen, setWindowOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const openRef = useRef<HTMLButtonElement>(null);
   // Whether a reader at the end of the transcript should stay there when
   // this block changes height (the drawing replacing the code, or Source).
   const pinRef = useRef(false);
@@ -82,26 +83,27 @@ export function MermaidBlock({ code, lang }: { code: string; lang: string }): Re
   } else {
     const { image, kind } = result;
     body = (
+      // The code block's frame and its copy column, full height at the right
+      // end as on every code block (#242); the bar and the drawing stop at it.
       <div className="tx-md-pre tx-mermaid">
+        <CopyButton text={code} />
         <div className="tx-mermaid-bar">
           <span className="tx-mermaid-kind">{kind}</span>
           <button
             type="button"
-            className="tx-mermaid-act"
-            aria-pressed={showSource}
-            title={showSource ? 'Show the diagram' : 'Show the mermaid text'}
+            className="tx-btn"
+            // Says what it will show, as a toggle without a pressed style of its own.
             onClick={(e) => {
               e.stopPropagation();
               pinRef.current = readingEnd();
               setShowSource((s) => !s);
             }}
           >
-            Source
+            {showSource ? 'Diagram' : 'Source'}
           </button>
           <button
             type="button"
-            className="tx-mermaid-act"
-            ref={openRef}
+            className="tx-btn"
             onClick={(e) => {
               e.stopPropagation();
               setWindowOpen(true);
@@ -111,24 +113,18 @@ export function MermaidBlock({ code, lang }: { code: string; lang: string }): Re
           </button>
         </div>
         {showSource ? (
+          // A code block's body: its lines, and its language where a code
+          // block keeps it (a comment on a passage reads it from there).
           <div className="tx-mermaid-source">
-            <CodeBody code={code} lang={lang} />
+            {lang ? <div className="tx-md-pre-lang">{lang}</div> : null}
+            <CodeLines code={code} lang={lang.toLowerCase()} />
           </div>
         ) : (
           <div className="tx-mermaid-figure">
             <DiagramImg image={image} kind={kind} />
           </div>
         )}
-        {windowOpen ? (
-          <MermaidWindow
-            image={image}
-            kind={kind}
-            onClose={() => {
-              setWindowOpen(false);
-              openRef.current?.focus();
-            }}
-          />
-        ) : null}
+        {windowOpen ? <MermaidWindow image={image} kind={kind} onClose={() => setWindowOpen(false)} /> : null}
       </div>
     );
   }
@@ -140,6 +136,12 @@ export function MermaidBlock({ code, lang }: { code: string; lang: string }): Re
   );
 }
 
+/**
+ * Never drawn below this share of its natural size: past it the text is too
+ * small to read, so the figure scrolls sideways instead.
+ */
+export const MIN_SCALE = 0.8;
+
 /** Sized up front from the viewBox, so the row has its height before the image decodes. */
 function DiagramImg({ image, kind, large = false }: { image: DiagramImage; kind: string; large?: boolean }): ReactNode {
   return (
@@ -148,8 +150,10 @@ function DiagramImg({ image, kind, large = false }: { image: DiagramImage; kind:
       src={image.src}
       width={image.width}
       height={image.height}
-      // In the window a small diagram may grow, up to twice its size.
-      style={large ? { width: '100%', maxWidth: image.width * 2 } : undefined}
+      // In the transcript: fits the column down to MIN_SCALE, then scrolls.
+      // In the window: as large as the window allows in both directions, a
+      // small diagram up to twice its size (CSS fits the height).
+      style={large ? { width: '100%', maxWidth: image.width * 2 } : { minWidth: Math.round(image.width * MIN_SCALE) }}
       alt={`${kind} diagram`}
       draggable={false}
     />
@@ -160,6 +164,24 @@ function DiagramImg({ image, kind, large = false }: { image: DiagramImage; kind:
 function MermaidWindow({ image, kind, onClose }: { image: DiagramImage; kind: string; onClose: () => void }): ReactNode {
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => dialogRef.current?.focus(), []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      onClose();
+    };
+    // Capture, as the other dialogs: the editor closes its file on Escape
+    // from a window listener of its own.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+  // Give the keyboard back to wherever it was when the dialog appeared.
+  const [from] = useState(() => document.activeElement);
+  useEffect(() => {
+    return () => {
+      if (from instanceof HTMLElement && from.isConnected) from.focus();
+    };
+  }, [from]);
   return createPortal(
     <div className="wt-overlay" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
@@ -170,12 +192,6 @@ function MermaidWindow({ image, kind, onClose }: { image: DiagramImage; kind: st
         tabIndex={-1}
         ref={dialogRef}
         onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key !== 'Escape') return;
-          e.preventDefault();
-          e.stopPropagation();
-          onClose();
-        }}
       >
         <div className="wt-modal-head">
           <h2 className="wt-modal-title">{kind} Diagram</h2>

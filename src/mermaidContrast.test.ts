@@ -11,6 +11,7 @@ import { LINE_PAIRS, TEXT_PAIRS, THEME_TOKENS, themeVariables } from './ui/trans
 
 const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
 const tx = readFileSync(new URL('./ui/transcript/transcript.css', import.meta.url), 'utf8');
+const mermaidBlock = readFileSync(new URL('./ui/transcript/MermaidBlock.tsx', import.meta.url), 'utf8');
 const DARK_MEDIA = css.indexOf('@media (prefers-color-scheme: dark)');
 const DARK_ATTR = css.indexOf(":root[data-theme='dark']");
 
@@ -51,7 +52,9 @@ describe('the mermaid theme (#289)', () => {
     for (const name of Object.values(THEME_TOKENS)) expect(name).toMatch(/^--[a-z-]+$/);
     expect(tx).not.toMatch(/\.tx-mermaid[^{]*\{[^}]*opacity/);
     expect(rule('.tx-mermaid-kind')).toMatch(/color: var\(--faint\)/);
-    expect(rule('.tx-mermaid-act')).toMatch(/color: var\(--muted\)/);
+    // The bar's actions are the transcript's own text buttons, not a new kind.
+    expect(tx).not.toMatch(/\.tx-mermaid-act/);
+    expect(mermaidBlock).toMatch(/className="tx-btn"/);
     expect(rule('.tx-mermaid-error-text')).toMatch(/color: var\(--muted\)/);
   });
 
@@ -81,6 +84,26 @@ describe('the mermaid theme (#289)', () => {
       expect(ratio(g('--text'), g('--panel-hover'))).toBeGreaterThanOrEqual(4.5);
       expect(ratio(g('--text'), g('--panel-raised'))).toBeGreaterThanOrEqual(4.5);
       expect(ratio(g('--danger'), g('--panel-inset'))).toBeGreaterThanOrEqual(4.5);
+      // .tx-btn on its own ground, at rest and pointed at.
+      expect(ratio(g('--muted'), g('--panel'))).toBeGreaterThanOrEqual(4.5);
     });
   }
+});
+
+describe('the diagram wrapper draws no box (#289)', () => {
+  // It is display: contents, so a rule on `.tx-md > :first-child` or
+  // `:last-child` reaches the wrapper and not the frame: each needs its twin.
+  const sheets = ['./ui/transcript/transcript.css', './ui/transcript/promptCard.css'].map((f) => readFileSync(new URL(f, import.meta.url), 'utf8'));
+  it('every edge rule on .tx-md’s children has one for the diagram’s frame', () => {
+    expect(tx).toMatch(/\.tx-mermaid-wrap \{ display: contents; \}/);
+    let seen = 0;
+    for (const sheet of sheets) {
+      for (const m of sheet.matchAll(/^([^\n{]*)\.tx-md > :(first|last)-child \{([^}]*)\}/gm)) {
+        const twin = `${m[1]}.tx-md > .tx-mermaid-wrap:${m[2]}-child > .tx-md-pre {${m[3]}}`;
+        expect(sheet, twin).toContain(twin);
+        seen++;
+      }
+    }
+    expect(seen).toBeGreaterThanOrEqual(2);
+  });
 });
