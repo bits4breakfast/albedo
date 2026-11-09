@@ -925,6 +925,90 @@ ol.tx-md-list { list-style-type: decimal; }
 /* Room for the copy icon, so the last characters never run under it (#242). */
 .tx-md-pre .tx-pre-code { padding-right: 38px; }
 
+/* --- mermaid diagrams (#289) ----------------------------------------------
+   The code block's frame and well. One bar: the kind at the code's left
+   inset (8px, as .tx-pre), the two actions flush right; the drawing centred
+   below it, since mermaid draws its own margins inside the image. Text in
+   the drawing is themed from tokens (mermaid.ts, mermaidContrast.test.ts). */
+.tx-mermaid-wrap { display: contents; }
+.tx-md > .tx-mermaid-wrap:last-child > .tx-md-pre { margin-bottom: 0; }
+.tx-mermaid-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 4px 0 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+.tx-mermaid-kind {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tx-mermaid-act {
+  flex: none;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+.tx-mermaid-act:hover { color: var(--text); background: var(--panel-hover); }
+.tx-mermaid-act[aria-pressed='true'] { color: var(--text); background: var(--panel-raised); }
+.tx-mermaid-act:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+.tx-mermaid-figure {
+  padding: 8px;
+  overflow-x: auto;
+  text-align: center;
+}
+.tx-mermaid-img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  vertical-align: top;
+}
+/* Source: the code block's body under the bar; the copy column starts below it. */
+.tx-mermaid-source,
+.tx-mermaid-code { position: relative; }
+.tx-mermaid-source > .tx-copy-block { border-radius: 0 0 var(--radius) 0; }
+/* A fence that does not parse stays code, the copy column beside the code
+   alone; why, under it, in the same frame, at the code's left inset. */
+.tx-mermaid-code > .tx-copy-block { border-radius: 0 var(--radius) 0 0; }
+.tx-mermaid-error {
+  padding: 6px 8px 7px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+.tx-mermaid-error-head { color: var(--danger); font-weight: 500; }
+.tx-mermaid-error-text {
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Open in Window: wider than a form dialog, the drawing on the same well. */
+.wt-modal.tx-mermaid-window { max-width: min(1200px, 100%); }
+/* Focused on open so Escape reaches it; the dialog itself is not a control. */
+.tx-mermaid-window:focus { outline: none; }
+.tx-mermaid-well {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-inset);
+  text-align: center;
+}
+
 /* --- copy (#242) ----------------------------------------------------------
    An icon, never text: selecting a passage never picks it up. --muted at
    rest, --text-strong on --panel-hover when pointed at; both cleared on the
