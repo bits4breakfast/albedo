@@ -367,6 +367,15 @@ once on Haiku, with no tools (see "Good to know").
   transcript.
 - When the branch moves on, the guide says how many files changed since and
   offers **Rewrite**. New changes it does not know yet are under Unsorted.
+- **Read · Map** in the guide's toolbar switches to a map of the change: a
+  box per changed file in its group's colour, with a bar for its size and a
+  mark for open comments, and arrows for the imports between them (read from
+  the files themselves for TypeScript/JavaScript, PHP and Rust; no model).
+  An unchanged file shows, dashed, when two or more changed files import it.
+  Click a box to read its blocks, or a group in the key to open that group.
+  A change of more than 60 files is drawn one box per folder.
+  In a narrow pane the key goes above the map, and Read · Map and
+  Uncommitted Only move into the toolbar's **⋯**.
 
 ### Review the change, then send all your comments at once
 

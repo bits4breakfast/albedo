@@ -20,7 +20,7 @@
  * guide has no editor in it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
@@ -57,7 +57,25 @@ import { useOpenFile } from '../ui/editor/openFile';
 import { relativeTime } from '../ui/TaskList';
 import { FileIcon } from '../ui/fileIcons';
 import { takeGuideFocus, useGuideFocusRequests } from './openGuide';
+import { CommentCount, commentsSaid } from './CommentCount';
+import GuideMap from './GuideMap';
+import OverflowMenu from '../ui/OverflowMenu';
 import './guide.css';
+
+/**
+ * Read or Map (#288), per task, for this run of the app: coming back to a
+ * task, or a Rewrite, keeps the view it was left in.
+ */
+type PaneView = 'read' | 'map';
+const VIEW_TITLE: Record<PaneView, string> = {
+  read: 'The groups in reading order, with their diffs',
+  map: 'The change’s files and their imports, by group',
+};
+const views = new Map<number, PaneView>();
+
+export function resetGuideViewsForTests(): void {
+  views.clear();
+}
 
 /** The working-tree side of one file; null when it does not exist. */
 async function readWorking(worktreePath: string, rel: string): Promise<string | null> {
@@ -313,29 +331,6 @@ function splitPath(path: string): { name: string; dir: string } {
   return i === -1 ? { name: path, dir: '' } : { name: path.slice(i + 1), dir: path.slice(0, i + 1) };
 }
 
-/** ", 2 comments": what a mark adds to its label (#252); nothing for none. */
-function commentsSaid(n: number, sep: string): string {
-  return n === 0 ? '' : `${sep}${n} ${n === 1 ? 'comment' : 'comments'}`;
-}
-
-/**
- * A speech bubble and a count (#252): open comments on this file, here.
- * --accent, the comments' own colour in the editor; measured on every ground
- * a file row has, the current one included (railContrast.test.ts).
- */
-function CommentCount({ n }: { n: number }): ReactNode {
-  if (n === 0) return null;
-  const said = commentsSaid(n, '');
-  return (
-    <span className="gd-cmt" title={said} aria-label={said} role="img">
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-        <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" strokeLinejoin="round" />
-      </svg>
-      {n}
-    </span>
-  );
-}
-
 /**
  * A file row's figures in three fixed columns -- comments, +, − -- each
  * right-aligned, so they line up from row to row whatever a row lacks.
@@ -430,6 +425,11 @@ function GuideBody({
   }, [view, onlyUncommitted, uncommitted]);
 
   const changed = view.changedFiles.length === 1 ? '1 file' : `${view.changedFiles.length} files`;
+  const [shownView, setShownView] = useState<PaneView>(() => views.get(task.id) ?? 'read');
+  const showView = (v: PaneView) => {
+    views.set(task.id, v);
+    setShownView(v);
+  };
 
   // Every comment waiting to go with the next message, the composer's queue:
   // on code (this guide, the editor, diffs) and on transcript passages (#254).
@@ -531,6 +531,35 @@ function GuideBody({
   // background must not pull focus out of the message box or the terminal)
   // -- unless ⇧⌘G asked for it (#217).
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // The toolbar gives way (#288 review): the text shrinks to nothing first;
+  // past that, Read · Map and Uncommitted Only go into a ⋯ at the row's end
+  // rather than the row overflowing where it fit before the toggle. Measured,
+  // not guessed: the row's full width is what it needed when it overflowed.
+  const metaRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  const fullWidth = useRef(0);
+  const fitRow = useCallback(() => {
+    const el = metaRef.current;
+    if (!el) return;
+    setCompact((was) => {
+      if (!was && el.scrollWidth > el.clientWidth + 0.5) {
+        fullWidth.current = el.scrollWidth;
+        return true;
+      }
+      if (was && el.clientWidth >= fullWidth.current) return false;
+      return was;
+    });
+  }, []);
+  useLayoutEffect(fitRow);
+  useEffect(() => {
+    const el = metaRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(fitRow);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fitRow]);
+
   useEffect(() => {
     if (!active) return;
     const now = document.activeElement;
@@ -601,7 +630,8 @@ function GuideBody({
       sendComments();
       return;
     }
-    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    // The group and file keys are Read's; the map is moved through with Tab.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || shownView === 'map') return;
     if (e.altKey && (e.code === 'ArrowDown' || e.code === 'ArrowUp')) {
       e.preventDefault();
       stepGroup(e.code === 'ArrowDown' ? 1 : -1);
@@ -626,7 +656,7 @@ function GuideBody({
       {/* One row, one Rewrite (#197): a guide the branch has moved on from
           says so here, on the banner's ground, rather than in a second row
           with a second button. */}
-      <div className="gd-meta" data-stale={view.stale || undefined}>
+      <div className="gd-meta" ref={metaRef} data-stale={view.stale || undefined}>
         {/* Out of date, what matters leads: a narrow pane cuts from the end,
             so the base goes before the news does. Only the text is a live
             region, never the controls beside it. */}
@@ -645,10 +675,24 @@ function GuideBody({
           </span>
         )}
         <ChangeTotals diff={diff} base={guide.base} />
-        <label className="gd-filter">
-          <input type="checkbox" checked={onlyUncommitted} onChange={(e) => setOnlyUncommitted(e.target.checked)} />
-          Uncommitted Only
-        </label>
+        {/* Read or Map (#288): which view of the same guide, so it leads the
+            controls; the filter applies to both. */}
+        {compact ? null : (
+          <>
+            <span className="seg seg-compact" role="group" aria-label="View">
+              <button type="button" aria-pressed={shownView === 'read'} onClick={() => showView('read')} title={VIEW_TITLE.read}>
+                Read
+              </button>
+              <button type="button" aria-pressed={shownView === 'map'} onClick={() => showView('map')} title={VIEW_TITLE.map}>
+                Map
+              </button>
+            </span>
+            <label className="gd-filter">
+              <input type="checkbox" checked={onlyUncommitted} onChange={(e) => setOnlyUncommitted(e.target.checked)} />
+              Uncommitted Only
+            </label>
+          </>
+        )}
         {/* Out of date, Rewrite leads and Send Comments waits beside it;
             otherwise comments waiting make Send the row's action (#254). */}
         {view.stale ? sendButton : null}
@@ -663,6 +707,16 @@ function GuideBody({
           {write?.kind === 'writing' ? 'Rewriting…' : 'Rewrite'}
         </button>
         {view.stale ? null : sendButton}
+        {compact ? (
+          <OverflowMenu
+            label="View and filter"
+            items={[
+              { id: 'read', label: 'Read', radio: true, checked: shownView === 'read', title: VIEW_TITLE.read, onSelect: () => showView('read') },
+              { id: 'map', label: 'Map', radio: true, checked: shownView === 'map', title: VIEW_TITLE.map, onSelect: () => showView('map') },
+              { id: 'uncommitted', label: 'Uncommitted Only', checked: onlyUncommitted, group: true, onSelect: () => setOnlyUncommitted((on) => !on) },
+            ]}
+          />
+        ) : null}
       </div>
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -674,6 +728,26 @@ function GuideBody({
         <div className="gd-message">
           {onlyUncommitted ? 'Nothing uncommitted on this branch.' : 'No changes against the base.'}
         </div>
+      ) : shownView === 'map' ? (
+        <GuideMap
+          worktreePath={task.worktreePath}
+          diff={diff}
+          groups={groups}
+          marks={marks}
+          current={file?.path ?? null}
+          // The box or row pressed goes with the map: focus stays in the
+          // guide, so its keys work at once, never on the page's body.
+          onOpen={(key, path) => {
+            setPlace((p) => ({ ...p, group: key, picked: { ...p.picked, [key]: path } }));
+            showView('read');
+            rootRef.current?.focus({ preventScroll: true });
+          }}
+          onOpenGroup={(key) => {
+            setPlace((p) => ({ ...p, group: key }));
+            showView('read');
+            rootRef.current?.focus({ preventScroll: true });
+          }}
+        />
       ) : (
         <div className="gd-body">
           <section className="gd-left" aria-label="Group">

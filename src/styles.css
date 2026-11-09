@@ -241,6 +241,21 @@
   --icon-sql: #148a7b;        /* 4.14 / 3.60 / 3.41 teal */
   --icon-folder: #8a7b60;     /* 4.03 / 3.50 / 3.32 sand, restrained */
 
+  /* --- Review Guide groups (light) ----------------------------------------
+     One hue per group in the guide's Map (#288): a box's edge stripe and the
+     key's swatch, so 3:1 (UI), not 4.5. The file icons' hues, which already
+     clear 3.3 on --panel-raised, in an order that keeps the first groups far
+     apart. Ratios on the box's grounds, --panel / --panel-hover /
+     --accent-soft (mapContrast.test.ts). Unsorted has no hue: dashed --muted. */
+  --group-1: #387cdc;         /* 4.03 / 3.50 / 3.47 blue */
+  --group-2: #cb5b10;         /* 4.06 / 3.53 / 3.50 orange */
+  --group-3: #836acd;         /* 4.17 / 3.63 / 3.59 violet */
+  --group-4: #148a7b;         /* 4.14 / 3.60 / 3.56 teal */
+  --group-5: #cb4d9d;         /* 4.03 / 3.50 / 3.46 pink */
+  --group-6: #a47404;         /* 4.03 / 3.51 / 3.47 amber */
+  --group-7: #0d84a5;         /* 4.21 / 3.66 / 3.63 cyan */
+  --group-8: #5a871d;         /* 4.16 / 3.62 / 3.58 yellow-green */
+
   /* --- metrics ----------------------------------------------------------- */
   --titlebar-h: 44px;         /* macOS overlay title bar strip */
   /* Header space for the macOS stoplights. Zero elsewhere: Linux draws a
@@ -419,6 +434,15 @@
     --icon-shell: #5eba7d;    /* 7.71 / 6.89 / 6.48 */
     --icon-sql: #39c6b3;      /* 8.69 / 7.76 / 7.30 */
     --icon-folder: #b4a893;   /* 7.86 / 7.02 / 6.60 */
+    /* --- Review Guide groups (dark) --- on --panel / --panel-hover / --accent-soft */
+    --group-1: #74a4e7; /* 7.20 / 6.43 / 6.22 */
+    --group-2: #f08842; /* 7.28 / 6.51 / 6.30 */
+    --group-3: #ac9cde; /* 7.51 / 6.71 / 6.50 */
+    --group-4: #39c6b3; /* 8.69 / 7.76 / 7.51 */
+    --group-5: #df90c2; /* 7.81 / 6.98 / 6.75 */
+    --group-6: #ddae40; /* 8.95 / 7.99 / 7.74 */
+    --group-7: #47b3d1; /* 7.58 / 6.76 / 6.55 */
+    --group-8: #8ebc4e; /* 8.29 / 7.40 / 7.17 */
     --is-dark: 1;
   }
 }
@@ -558,6 +582,15 @@
   --icon-shell: #5eba7d;      /* 7.71 / 6.89 / 6.48 */
   --icon-sql: #39c6b3;        /* 8.69 / 7.76 / 7.30 */
   --icon-folder: #b4a893;     /* 7.86 / 7.02 / 6.60 */
+  /* --- Review Guide groups (dark) --- on --panel / --panel-hover / --accent-soft */
+  --group-1: #74a4e7;   /* 7.20 / 6.43 / 6.22 */
+  --group-2: #f08842;   /* 7.28 / 6.51 / 6.30 */
+  --group-3: #ac9cde;   /* 7.51 / 6.71 / 6.50 */
+  --group-4: #39c6b3;   /* 8.69 / 7.76 / 7.51 */
+  --group-5: #df90c2;   /* 7.81 / 6.98 / 6.75 */
+  --group-6: #ddae40;   /* 8.95 / 7.99 / 7.74 */
+  --group-7: #47b3d1;   /* 7.58 / 6.76 / 6.55 */
+  --group-8: #8ebc4e;   /* 8.29 / 7.40 / 7.17 */
   --is-dark: 1;
 }
 
@@ -1096,7 +1129,7 @@ select:disabled { cursor: default; }
 }
 
 .seg button {
-  height: 24px;
+  height: var(--seg-h, 24px);
   padding: 0 11px;
   font-size: var(--fs-sm);
   font-weight: 500;
@@ -1112,6 +1145,11 @@ select:disabled { cursor: default; }
   background: var(--seg-on);
   box-shadow: var(--card-shadow);
 }
+/* The same control in a toolbar of buttons (the Review Guide's Read · Map,
+   #288): as tall as a button beside it -- 1px track edge, 2px padding, and a
+   segment the height of a button's line plus its 2px of padding -- so the
+   row is no taller for it. Nothing else changes. */
+.seg-compact { --seg-h: calc(var(--fs-sm) * 1.4 + 2px); }
 
 .panes {
   /* Positions the no-task placeholder over the whole area. */
