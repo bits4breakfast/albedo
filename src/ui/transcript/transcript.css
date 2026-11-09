@@ -264,6 +264,12 @@
 .tx-queued-act { flex: none; height: 22px; padding: 0 8px; }
 /* "May already have been sent": the notice's own --warn (5.33 on --panel). */
 .tx-queued-note { flex: none; align-self: center; color: var(--warn); font-size: var(--fs-xs); }
+/* Send All Now (#290): the head's right end, where the hint was, so its right
+   edge lines up with the rows' Remove. Its "couldn't send" note sits just
+   before it, on the head's baseline like the rest of the head. */
+.tx-queued-head > .tx-queued-all,
+.tx-queued-head > .tx-queued-note { margin-left: auto; align-self: baseline; }
+.tx-queued-head > .tx-queued-note + .tx-queued-all { margin-left: 0; }
 .tx-queued-edit {
   flex: 1;
   min-width: 0;

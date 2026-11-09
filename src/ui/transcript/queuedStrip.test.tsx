@@ -24,7 +24,7 @@ vi.mock('../Terminal', () => ({
 }));
 
 const { QueuedStrip } = await import('./TranscriptPane');
-const { __resetOutbox, heldFor, holdMessage, releaseHeld } = await import('./outbox');
+const { __resetOutbox, heldFor, holdMessage, releaseHeld, sendHeldNow } = await import('./outbox');
 const { __resetConnectivity } = await import('../../lib/connectivity');
 const { hasLivePty, ptyLiveSince, submitPty } = await import('../Terminal');
 const { __resetTurns, noteTaskSessions } = await import('./turn');
@@ -119,8 +119,10 @@ describe('held messages', () => {
     holdMessage(1, 'and update the docs');
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     const band = screen.getByRole('status');
-    // Two go as one when the turn ends (#240), and the band says so.
-    expect(band.textContent).toMatch(/^Queued 2sent together when Claude finishes this turn/);
+    // Two go as one when the turn ends (#240), and the band says so: in Send
+    // All Now's tooltip, which takes the hint's place in the head (#290).
+    expect(band.textContent).toMatch(/^Queued 2Send All Now/);
+    expect(screen.getByRole('button', { name: 'Send All Now' }).title).toMatch(/sent together when Claude finishes this turn/);
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]!);
     expect(heldFor(1).map((h) => h.text)).toEqual(['and update the docs']);
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
@@ -186,6 +188,96 @@ describe('held messages', () => {
     finish(false);
     await act(async () => {
       await release;
+    });
+  });
+
+  it('offer Send All Now in the head, with the hint in its tooltip, and send them as one (#290)', async () => {
+    vi.mocked(submitPty).mockClear();
+    turnRunning();
+    holdMessage(1, 'in the pane tab');
+    holdMessage(1, 'in the mockup');
+    holdMessage(1, 'on the review');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const all = screen.getByRole('button', { name: 'Send All Now' }) as HTMLButtonElement;
+    // The head stays one row: the hint is in the button's tooltip, not beside it.
+    expect(all.closest('.tx-queued-head')).not.toBeNull();
+    expect(screen.queryByText('sent together when Claude finishes this turn')).toBeNull();
+    expect(all.title).toMatch(/as one message.*sent together when Claude finishes this turn/);
+    expect(all.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(all);
+    });
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'in the pane tab\n\nin the mockup\n\non the review']]);
+    expect(heldFor(1)).toEqual([]);
+  });
+
+  it('Send All Now leaves out a row being edited, and goes when two others remain', async () => {
+    vi.mocked(submitPty).mockClear();
+    turnRunning();
+    holdMessage(1, 'one');
+    holdMessage(1, 'two');
+    holdMessage(1, 'three');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[1]!);
+    const all = screen.getByRole('button', { name: 'Send All Now' }) as HTMLButtonElement;
+    expect(all.title).toMatch(/Send these 2 .*editing stays queued/);
+    await act(async () => {
+      fireEvent.click(all);
+    });
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'one\n\nthree']]);
+    expect(heldFor(1).map((h) => h.text)).toEqual(['two']);
+    // One left: its own Send Now is enough, and the head has no button.
+    expect(screen.queryByRole('button', { name: 'Send All Now' })).toBeNull();
+  });
+
+  it('Send All Now is offered only when every row could be sent now, and two or more could', () => {
+    turnRunning();
+    holdMessage(1, 'alone');
+    const { rerender } = render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.queryByRole('button', { name: 'Send All Now' })).toBeNull();
+    expect(screen.getByText('sent when Claude finishes this turn')).toBeTruthy();
+    holdMessage(1, '/compact');
+    holdMessage(1, 'after it');
+    rerender(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    // A command can only go into an idle session, so not all of them can go now.
+    expect(screen.queryByRole('button', { name: 'Send All Now' })).toBeNull();
+  });
+
+  it('Send All Now is shown but not usable without a live session, as Send Now', () => {
+    turnRunning();
+    holdMessage(1, 'one');
+    holdMessage(1, 'two');
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const all = screen.getByRole('button', { name: 'Send All Now' }) as HTMLButtonElement;
+    expect(all.disabled).toBe(true);
+    expect(all.title).toMatch(/^Not while Claude is asking you something/);
+  });
+
+  it('the head says so briefly when Send All Now could not go: a Send Now had the lock', async () => {
+    vi.mocked(submitPty).mockClear();
+    turnRunning();
+    const one = holdMessage(1, 'one')!;
+    holdMessage(1, 'two');
+    holdMessage(1, 'three');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    let finish: (ok: boolean) => void = () => {};
+    let single: Promise<boolean> = Promise.resolve(false);
+    // One row's Send Now, its write still in flight.
+    act(() => {
+      single = sendHeldNow(1, one.id, () => new Promise<boolean>((r) => (finish = r)));
+    });
+    const all = screen.getByRole('button', { name: 'Send All Now' }) as HTMLButtonElement;
+    expect(all.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(all);
+    });
+    const head = all.closest('.tx-queued-head') as HTMLElement;
+    expect(head.textContent).toContain('Couldn\u2019t send now — try again');
+    expect(submitPty).not.toHaveBeenCalled();
+    finish(false);
+    await act(async () => {
+      await single;
     });
   });
 

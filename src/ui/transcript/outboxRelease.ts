@@ -27,7 +27,17 @@ import { markCommentsSent } from '../../db/comments';
 import { isOffline, onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import type { TaskStatus } from '../../types';
 import { hasLivePty, onPtyPresenceChange, startPty } from '../Terminal';
-import { heldFor, lastReleaseFailed, onHeldReleased, onOutboxChange, releaseHeld, sendHeldNow, tasksWithHeld } from './outbox';
+import {
+  allNowSize,
+  heldFor,
+  lastReleaseFailed,
+  onHeldReleased,
+  onOutboxChange,
+  releaseHeld,
+  sendAllHeldNow,
+  sendHeldNow,
+  tasksWithHeld,
+} from './outbox';
 import { isSlashCommand, submitLocked } from './send';
 import { isTurnRunning, onTurnChange } from './turn';
 
@@ -74,7 +84,8 @@ export function heldLabel(c: ReleaseConditions): string {
 
 /**
  * The line beside `heldLabel` saying when they will go; null when it has
- * none. `together` is how many go as one message next (#240).
+ * none. `together` is how many go as one message next (#240). When the head
+ * offers Send All Now, it is that button's tooltip instead (#290).
  */
 export function heldHint(c: ReleaseConditions, together = 1): string | null {
   if (c.headMaybeSent) return null;
@@ -118,6 +129,26 @@ export function sendNow(taskId: number, id: string): Promise<boolean> {
     return Promise.resolve(false);
   }
   return sendHeldNow(taskId, id, (text) => submitLocked(taskId, text));
+}
+
+/**
+ * "Send All Now" in the band's head (#290): offered on the same terms as a
+ * row's Send Now, when `size` (`allNowSize`: every held message not being
+ * edited, each one sendable now) is two or more. Usable when Send Now is.
+ */
+export function sendAllNowOffered(c: ReleaseConditions, size: number): boolean {
+  return sendNowOffered(c) && size >= 2;
+}
+
+/**
+ * Send every held message not being edited into the running turn now, as one
+ * message, through the same gateway and lock as `sendNow`. Checked again
+ * here, since the band may be a render behind. False when it did not go.
+ */
+export function sendAllNow(taskId: number): Promise<boolean> {
+  const c = conditionsFor(taskId);
+  if (!sendAllNowOffered(c, allNowSize(taskId)) || !sendNowAllowed(c)) return Promise.resolve(false);
+  return sendAllHeldNow(taskId, (text) => submitLocked(taskId, text));
 }
 
 /** The status of the task on screen, the only one Albedo derives a status for here. */
