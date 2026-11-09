@@ -249,6 +249,13 @@ with word-level highlighting. Click any file path to open the file. Code
 blocks and inline code have a copy icon. **⌘↓** jumps to the latest
 message.
 
+When Claude answers with a diagram (a ` ```mermaid ` block: a sequence, flow
+or state chart), the transcript draws it, in the app's colours for light and
+dark. **Source** shows the text again and **Open in Window** shows it larger.
+A diagram that doesn't parse stays as text, with the error under it. Ask for
+one when you want it, for example "explain this change with a sequence
+diagram".
+
 While a turn runs, the line under it says what Claude is doing right now
 ("Running Bash npm test", "Thinking") with the turn's time and tokens.
 

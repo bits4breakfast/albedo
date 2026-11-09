@@ -204,6 +204,8 @@
 .pc-doc-md .tx-md-p { margin-bottom: 8px; }
 .pc-doc-md .tx-md-h { margin: 12px 0 4px; }
 .pc-doc-md .tx-md > :first-child { margin-top: 2px; }
+/* A diagram's wrapper draws no box (display: contents): its frame takes the margin. */
+.pc-doc-md .tx-md > .tx-mermaid-wrap:first-child > .tx-md-pre { margin-top: 2px; }
 .pc-doc-note { margin-top: 8px; font-size: var(--fs-sm); color: var(--muted); }
 
 /* --- comments on it ---------------------------------------------------------

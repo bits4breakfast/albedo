@@ -14,8 +14,10 @@
 import { memo, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
-import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
-import { CollapsibleDiff, Code, Disclosure, ExternalLink, LinkifiedText, PathLink, composePieces, useActivate, useCodeTokens } from './Diff';
+import { diffStrings, parseUnifiedDiff } from '../../lib/diff';
+import { CollapsibleDiff, Disclosure, ExternalLink, LinkifiedText, PathLink, useActivate } from './Diff';
+import { CodeBlock } from './CodeBlock';
+import { MermaidBlock } from './MermaidBlock';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
 import { lineCount } from './pastedText';
@@ -1242,7 +1244,12 @@ export function Markdown({ text, mentions = NO_MENTIONS }: { text: string; menti
       {blocks.map((b, i) => {
         switch (b.t) {
           case 'code':
-            return <CodeBlock key={i} code={b.code} lang={b.lang} />;
+            // A diagram is drawn (#289); any other fence is code.
+            return b.lang.toLowerCase() === 'mermaid' ? (
+              <MermaidBlock key={i} code={b.code} lang={b.lang} />
+            ) : (
+              <CodeBlock key={i} code={b.code} lang={b.lang} />
+            );
           case 'h': {
             const level = Math.min(4, Math.max(1, b.level));
             return (
@@ -1316,45 +1323,5 @@ function MdList({ list, mentions }: { list: Extract<Block, { t: 'list' }>; menti
     </ol>
   ) : (
     <ul className="tx-md-list">{items}</ul>
-  );
-}
-
-const CODE_LANG_ALIAS: Record<string, string> = {
-  ts: 'typescript',
-  js: 'javascript',
-  py: 'python',
-  rb: 'ruby',
-  rs: 'rust',
-  sh: 'shellscript',
-  bash: 'shellscript',
-  zsh: 'shellscript',
-  yml: 'yaml',
-  md: 'markdown',
-  'c++': 'cpp',
-  golang: 'go',
-};
-
-function CodeBlock({ code, lang }: { code: string; lang: string }): ReactNode {
-  const resolved = useMemo(() => {
-    const key = lang.toLowerCase();
-    if (key.length === 0) return 'text';
-    return CODE_LANG_ALIAS[key] ?? (key.includes('.') ? langForPath(key) : key);
-  }, [lang]);
-  const tokens = useCodeTokens(code, resolved);
-  const lines = useMemo(() => code.split('\n'), [code]);
-
-  return (
-    <div className="tx-md-pre">
-      {lang ? <div className="tx-md-pre-lang">{lang}</div> : null}
-      {/* Always at the block's right end (#242). */}
-      <CopyButton text={code} />
-      <pre className="tx-pre tx-pre-code">
-        {lines.map((line, i) => (
-          <div className="tx-md-pre-line" key={i}>
-            <Code pieces={composePieces(line, tokens[i], undefined)} />
-          </div>
-        ))}
-      </pre>
-    </div>
   );
 }

@@ -45,7 +45,22 @@ const TASKS = [
         .prompt('How does the settings page save what people choose?')
         .read('src/settings/useSettings.ts')
         .end(
-          'Settings live in `localStorage` under `recipe-app.settings`, as one JSON object. `useSettings()` loads them with defaults filled in and writes the whole object back on every change, so a new setting only needs a field in `Settings` and a default in `DEFAULTS`.',
+          [
+            'Settings live in `localStorage` under `recipe-app.settings`, as one JSON object. `useSettings()` loads them with defaults filled in and writes the whole object back on every change, so a new setting only needs a field in `Settings` and a default in `DEFAULTS`.',
+            '',
+            '```mermaid',
+            'sequenceDiagram',
+            '  participant P as SettingsPage',
+            '  participant H as useSettings()',
+            '  participant S as localStorage',
+            '  P->>H: mount',
+            '  H->>S: read recipe-app.settings',
+            '  S-->>H: saved JSON (or nothing)',
+            '  H-->>P: settings, with DEFAULTS filled in',
+            '  P->>H: update({ units: "metric" })',
+            '  H->>S: write the whole object',
+            '```',
+          ].join('\n'),
         )
         .live(9 * MIN)
         .prompt(
