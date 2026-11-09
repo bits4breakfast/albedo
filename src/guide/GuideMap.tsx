@@ -22,24 +22,40 @@ import { repoFiles } from './repoFiles';
 import type { GroupView } from './validate';
 import { useOpenFile } from '../ui/editor/openFile';
 
+/** Imports read, per worktree and change, as repoFiles keeps its list: flipping views costs nothing. */
+const graphs = new Map<string, ImportGraph>();
+
 /** The imports of the change, read once per change and worktree. */
 function useImportGraph(worktreePath: string, diff: BranchDiff): ImportGraph | null {
-  const [graph, setGraph] = useState<{ hash: string; graph: ImportGraph } | null>(null);
+  const key = `${worktreePath}\n${diff.hash}`;
+  const [graph, setGraph] = useState<{ key: string; graph: ImportGraph } | null>(() => {
+    const kept = graphs.get(key);
+    return kept ? { key, graph: kept } : null;
+  });
   useEffect(() => {
     let live = true;
+    const kept = graphs.get(key);
+    if (kept) {
+      setGraph({ key, graph: kept });
+      return;
+    }
     void repoFiles(worktreePath, diff.hash).then((repo) => {
-      if (!live) return;
       const files = diff.files.map((f) => ({
         path: f.path,
         text: f.result.kind === 'diff' && f.change !== 'deleted' ? f.result.newText : null,
+        deleted: f.change === 'deleted',
       }));
-      setGraph({ hash: diff.hash, graph: importGraph(files, repo) });
+      const read = importGraph(files, repo);
+      graphs.delete(key);
+      graphs.set(key, read);
+      while (graphs.size > 8) graphs.delete(graphs.keys().next().value!);
+      if (live) setGraph({ key, graph: read });
     });
     return () => {
       live = false;
     };
-  }, [worktreePath, diff]);
-  return graph && graph.hash === diff.hash ? graph.graph : null;
+  }, [key, worktreePath, diff]);
+  return graph && graph.key === key ? graph.graph : null;
 }
 
 /** The canvas's width, for where the map wraps; a fixed guess until measured. */
@@ -82,6 +98,8 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
   const layout = useMemo(() => layoutMap(map.nodes, map.edges, width), [map, width]);
   const [hot, setHot] = useState<string | null>(null);
   const openFile = useOpenFile();
+  const isHot = (r: { from: string; to: string }) => hot !== null && (r.from === hot || r.to === hot);
+  const nodeOf = useMemo(() => new Map(map.nodes.map((n) => [n.id, n] as const)), [map]);
 
   const titleOf = new Map(groups.map((g) => [g.key, g.title] as const));
   const linksOf = (id: string) => ({
@@ -126,7 +144,7 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
   };
 
   return (
-    <div className="gd-body">
+    <div className="gd-body gd-map-body">
       <section className="gd-left" aria-label="Map key">
         <h2 className="gd-title">Map</h2>
         <div className="gd-count-row">
@@ -170,16 +188,19 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
         ) : (
           <div className="gd-map-canvas" style={{ width: layout.width, height: layout.height }}>
             <svg className="gd-map-edges" width={layout.width} height={layout.height} aria-hidden="true">
-              {layout.routes.map((r) => (
-                <g key={`${r.from}\n${r.to}`} className="gd-map-edge" data-hot={hot !== null && (r.from === hot || r.to === hot) ? true : undefined}>
+              {/* The highlighted arrows last, so they are drawn over the rest. */}
+              {[...layout.routes.filter((r) => !isHot(r)), ...layout.routes.filter(isHot)].map((r) => (
+                <g key={`${r.from}\n${r.to}`} className="gd-map-edge" data-hot={isHot(r) || undefined}>
                   <path d={r.d} />
                   <polygon points={r.head} />
                 </g>
               ))}
             </svg>
-            {map.nodes.map((n) => {
-              const p = layout.at.get(n.id);
-              if (!p) return null;
+            {/* In reading order, so Tab follows the map as it is drawn. */}
+            {layout.order.map((id) => {
+              const n = nodeOf.get(id);
+              const p = layout.at.get(id);
+              if (!n || !p) return null;
               return (
                 <button
                   key={n.id}

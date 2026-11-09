@@ -49,11 +49,15 @@ describe('the guide map (#288)', () => {
     expect(guide).toMatch(/\.gd-map-edge\[data-hot\] path \{[^}]*stroke: var\(--accent\)/);
     expect(guide).toMatch(/\.gd-map-node \{[^}]*border: 1px solid var\(--border-strong\)/);
     expect(guide).toMatch(/\.gd-map-size \{[^}]*background: var\(--border-strong\)/);
-    expect(guide).toMatch(/\.gd-map-name \{[^}]*color: var\(--text-strong\)/);
+    expect(guide).toMatch(/\.gd-map-node \{[^}]*color: var\(--text\)/);
+    expect(guide).toMatch(/\.gd-map-node\[aria-current='true'\] \{[^}]*color: var\(--on-accent-soft\)/);
+    expect(guide).not.toMatch(/\.gd-map-name \{[^}]*font-weight/);
     expect(guide).toMatch(/\.gd-map-facts \{[^}]*color: var\(--muted\)/);
-    expect(guide).toMatch(/\.gd-seg > button \{[^}]*color: var\(--muted\)/);
-    expect(guide).not.toMatch(/\.gd-(map|seg)[^{]*\{[^}]*opacity/);
-    expect(guide).not.toMatch(/\.gd-(map|seg)[^{]*\{[^}]*color-mix/);
+    // Read · Map is the app's .seg, not one of its own.
+    expect(guide).not.toMatch(/\.gd-seg/);
+    expect(css).toMatch(/\.seg-compact \{ --seg-h:/);
+    expect(guide).not.toMatch(/\.gd-map[^{]*\{[^}]*opacity/);
+    expect(guide).not.toMatch(/\.gd-map[^{]*\{[^}]*color-mix/);
   });
 
   for (const [name, t] of Object.entries(themes)) {
@@ -70,16 +74,15 @@ describe('the guide map (#288)', () => {
 
     it(`${name}: a box’s text clears 4.5 on every ground it takes`, () => {
       for (const g of BOX_GROUNDS) {
-        for (const k of ['--text-strong', '--muted', '--add', '--del', '--accent']) {
+        for (const k of ['--text', '--muted', '--add', '--del', '--accent']) {
           expect(ratio(t.get(k)!, t.get(g)!), `${name} ${k} on ${g}`).toBeGreaterThanOrEqual(4.5);
         }
       }
     });
 
     it(`${name}: the Read · Map toggle reads on the row’s grounds and on its chosen half`, () => {
-      for (const g of ['--panel-chrome', '--banner-bg']) {
-        expect(ratio(t.get('--muted')!, t.get(g)!), `${name} --muted on ${g}`).toBeGreaterThanOrEqual(4.5);
-      }
+      expect(ratio(t.get('--muted')!, t.get('--panel-chrome')!), `${name} --muted on the track`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(t.get('--on-accent-soft')!, t.get('--accent-soft')!), `${name} current box`).toBeGreaterThanOrEqual(4.5);
       expect(ratio(t.get('--text-strong')!, t.get('--seg-on')!), `${name} chosen`).toBeGreaterThanOrEqual(4.5);
     });
   }

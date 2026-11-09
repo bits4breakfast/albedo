@@ -1129,7 +1129,7 @@ select:disabled { cursor: default; }
 }
 
 .seg button {
-  height: 24px;
+  height: var(--seg-h, 24px);
   padding: 0 11px;
   font-size: var(--fs-sm);
   font-weight: 500;
@@ -1145,6 +1145,11 @@ select:disabled { cursor: default; }
   background: var(--seg-on);
   box-shadow: var(--card-shadow);
 }
+/* The same control in a toolbar of buttons (the Review Guide's Read · Map,
+   #288): as tall as a button beside it -- 1px track edge, 2px padding, and a
+   segment the height of a button's line plus its 2px of padding -- so the
+   row is no taller for it. Nothing else changes. */
+.seg-compact { --seg-h: calc(var(--fs-sm) * 1.4 + 2px); }
 
 .panes {
   /* Positions the no-task placeholder over the whole area. */

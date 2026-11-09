@@ -798,7 +798,7 @@ describe('⇧⌘G puts focus in the guide (#217)', () => {
 
 describe('the Map (#288)', () => {
   const map = () => within(screen.getByRole('region', { name: 'Map' }));
-  const key = () => within(screen.getByRole('region', { name: 'Map key' }));
+  const mapKey = () => within(screen.getByRole('region', { name: 'Map key' }));
 
   it('Read · Map sits in the toolbar row; Map shows each file as a box, in its groups, and says why there are no arrows', async () => {
     await written();
@@ -809,8 +809,8 @@ describe('the Map (#288)', () => {
     await waitFor(() => expect(map().getAllByRole('button')).toHaveLength(3));
     // a.ts is in two groups: one box, both named.
     expect(map().getByRole('button', { name: /^src\/a\.ts; Foundations and Wiring/ })).toBeTruthy();
-    expect(key().getAllByRole('button').map((b) => b.textContent)).toEqual(['Foundations2 files', 'Wiring1 file', 'Unsorted1 file']);
-    expect(key().getByText('None of these files imports another.')).toBeTruthy();
+    expect(mapKey().getAllByRole('button').map((b) => b.textContent)).toEqual(['Foundations2 files', 'Wiring1 file', 'Unsorted1 file']);
+    expect(mapKey().getByText('None of these files imports another.')).toBeTruthy();
     // No rail and no diff while the map is up.
     expect(screen.queryByRole('navigation', { name: 'Groups' })).toBeNull();
   });
@@ -827,7 +827,7 @@ describe('the Map (#288)', () => {
   it('a click on a group in the key opens that group in Read', async () => {
     await written();
     fireEvent.click(screen.getByRole('button', { name: 'Map' }));
-    fireEvent.click(await key().findByRole('button', { name: /Wiring/ }));
+    fireEvent.click(await mapKey().findByRole('button', { name: /Wiring/ }));
     expect(await screen.findByRole('heading', { name: 'Wiring' })).toBeTruthy();
   });
 
@@ -847,6 +847,49 @@ describe('the Map (#288)', () => {
     expect(map().getByRole('button', { name: /^src\/b\.ts;/ })).toBeTruthy();
     fireEvent.keyDown(root(), { code: 'ArrowDown', key: 'ArrowDown', altKey: true });
     expect(screen.getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('opening from the map keeps focus in the guide, so its keys work at once (#288 review)', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    const box = await map().findByRole('button', { name: /^src\/b\.ts;/ });
+    box.focus();
+    fireEvent.click(box);
+    expect(document.activeElement).toBe(root());
+    // b.ts is the second of Foundations' files: ↑ goes to the first.
+    fireEvent.keyDown(document.activeElement!, { code: 'ArrowUp', key: 'ArrowUp' });
+    expect(left().getByRole('button', { name: /a\.ts/ }).getAttribute('aria-current')).toBe('true');
+    // From the key too.
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    const row = await within(screen.getByRole('region', { name: 'Map key' })).findByRole('button', { name: /Wiring/ });
+    row.focus();
+    fireEvent.click(row);
+    expect(document.activeElement).toBe(root());
+  });
+
+  it('a row too narrow for everything puts Read · Map and Uncommitted Only in a ⋯ (#288 review)', async () => {
+    const sw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+    const cw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get() { return this.classList.contains('gd-meta') ? 600 : 0; } });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get() { return this.classList.contains('gd-meta') ? 500 : 0; } });
+    try {
+      await written();
+      await waitFor(() => expect(screen.queryByRole('group', { name: 'View' })).toBeNull());
+      expect(screen.queryByLabelText('Uncommitted Only')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'View and filter' }));
+      fireEvent.click(screen.getByRole('menuitemradio', { name: 'Map' }));
+      expect(await screen.findByRole('region', { name: 'Map' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'View and filter' }));
+      expect(screen.getByRole('menuitemradio', { name: 'Map' }).getAttribute('aria-checked')).toBe('true');
+      fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Uncommitted Only' }));
+      await waitFor(() => expect(map().getAllByRole('button')).toHaveLength(1));
+    } finally {
+      // jsdom keeps both on Element.prototype: dropping the overrides restores them.
+      if (sw) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', sw);
+      else delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+      if (cw) Object.defineProperty(HTMLElement.prototype, 'clientWidth', cw);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
   });
 
   it('coming back to the task keeps the view it was left in', async () => {

@@ -48,9 +48,37 @@ const TS_PATTERNS = [
   /\b(?:require|import)\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g,
 ];
 
-/** Line and block comments blanked out, so a commented-out import is not one. */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
+/**
+ * Line and block comments blanked out, so a commented-out import is not one.
+ * String literals are stepped over whole, so a `/*` or `//` inside one
+ * (`import.meta.glob('./pages/*.tsx')`, a URL) never opens a comment.
+ */
+export function stripComments(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (ch === '/' && next === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end < 0 ? text.length : end + 2;
+      // Keep the newlines, so a statement after the comment still starts a line.
+      out += text.slice(i, stop).replace(/[^\n]/g, ' ');
+      i = stop;
+    } else if (ch === '/' && next === '/') {
+      const end = text.indexOf('\n', i);
+      i = end < 0 ? text.length : end;
+    } else if (ch === "'" || ch === '"' || ch === '`') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch && !(ch !== '`' && text[j] === '\n')) j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      out += ch;
+      i++;
+    }
+  }
+  return out;
 }
 
 /** The relative specifiers a TS/JS file imports, in order, each once. */
@@ -224,16 +252,29 @@ export function resolvePhp(name: string, index: ReadonlyMap<string, readonly str
   return best;
 }
 
+/**
+ * A file that is a crate's root: `lib.rs`, `main.rs`, `build.rs`, or a binary
+ * of its own in `src/bin/`. Its `mod x;` is a sibling, and `crate::` starts
+ * beside it.
+ */
+function isRustCrateRoot(path: string): boolean {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  return name === 'lib.rs' || name === 'main.rs' || name === 'build.rs' || /(^|\/)src\/bin\/[^/]+\.rs$/.test(path);
+}
+
 /** The folder a Rust file's child modules live in. */
 function rustModDir(path: string): string {
   const dir = dirOf(path);
   const name = path.slice(path.lastIndexOf('/') + 1);
-  if (name === 'mod.rs' || name === 'lib.rs' || name === 'main.rs') return dir;
+  if (name === 'mod.rs' || isRustCrateRoot(path)) return dir;
   return `${dir ? `${dir}/` : ''}${name.slice(0, -3)}`;
 }
 
-/** The crate's root folder: up to the last `src/` in the path, else the file's folder. */
+/** The crate's root folder: the root file's own, else up to the last `src/` in the path. */
 function rustCrateRoot(path: string): string {
+  if (isRustCrateRoot(path)) return dirOf(path);
+  const bin = /^(.*\/)?src\/bin\/[^/]+\//.exec(path);
+  if (bin) return bin[0].slice(0, -1);
   const i = path.lastIndexOf('/src/');
   if (i >= 0) return path.slice(0, i + 4);
   if (path.startsWith('src/')) return 'src';
@@ -276,15 +317,19 @@ export interface ScannedFile {
   path: string;
   /** The file as it is now; null when it is deleted, binary or too large. */
   text: string | null;
+  /** Gone from the working tree: never what an import points at. */
+  deleted?: boolean;
 }
 
 export interface ImportGraph {
   /** importer -> imported, both repository paths, each pair once. */
   edges: Array<[string, string]>;
   /** Files read for imports. */
-  scanned: number;
+  scanned: ReadonlySet<string>;
   /** Changed files in a language the scanner does not read. */
-  unsupported: number;
+  unsupported: ReadonlySet<string>;
+  /** Changed files in a language it reads, but with nothing to read: deleted, binary or too large. */
+  unread: ReadonlySet<string>;
   /** Set when no imports were read at all, and why. */
   skipped: 'too-many' | null;
 }
@@ -295,9 +340,14 @@ export interface ImportGraph {
  * between the changed files are found).
  */
 export function importGraph(files: readonly ScannedFile[], repoFiles: ReadonlySet<string> | null): ImportGraph {
-  const changed = new Set(files.map((f) => f.path));
-  if (files.length > MAX_SCAN_FILES) return { edges: [], scanned: 0, unsupported: 0, skipped: 'too-many' };
-  const exists = (p: string) => changed.has(p) || (repoFiles?.has(p) ?? false);
+  if (files.length > MAX_SCAN_FILES) {
+    return { edges: [], scanned: new Set(), unsupported: new Set(), unread: new Set(), skipped: 'too-many' };
+  }
+  // A deleted file is still in the index until the deletion is staged, and in
+  // the change: neither makes it something an import can point at.
+  const deleted = new Set(files.filter((f) => f.deleted).map((f) => f.path));
+  const changed = new Set(files.filter((f) => !f.deleted).map((f) => f.path));
+  const exists = (p: string) => !deleted.has(p) && (changed.has(p) || (repoFiles?.has(p) ?? false));
   let php: Map<string, string[]> | null = null;
   const edges: Array<[string, string]> = [];
   const seen = new Set<string>();
@@ -308,22 +358,26 @@ export function importGraph(files: readonly ScannedFile[], repoFiles: ReadonlySe
     seen.add(k);
     edges.push([from, to]);
   };
-  let scanned = 0;
-  let unsupported = 0;
+  const scanned = new Set<string>();
+  const unsupported = new Set<string>();
+  const unread = new Set<string>();
   for (const f of files) {
     const lang = languageOf(f.path);
     if (lang === null) {
-      unsupported++;
+      unsupported.add(f.path);
       continue;
     }
-    if (f.text === null || f.text.length > MAX_SCAN_CHARS) continue;
-    scanned++;
+    if (f.text === null || f.deleted || f.text.length > MAX_SCAN_CHARS) {
+      unread.add(f.path);
+      continue;
+    }
+    scanned.add(f.path);
     if (lang === 'ts') for (const s of scanTs(f.text)) add(f.path, resolveTs(f.path, s, exists));
     else if (lang === 'rust') for (const r of scanRust(f.text)) add(f.path, resolveRust(f.path, r, exists));
     else {
-      php ??= phpIndex(repoFiles ? new Set([...repoFiles, ...changed]) : changed);
+      php ??= phpIndex(new Set([...(repoFiles ?? []), ...changed].filter(exists)));
       for (const n of scanPhp(f.text)) add(f.path, resolvePhp(n, php));
     }
   }
-  return { edges, scanned, unsupported, skipped: null };
+  return { edges, scanned, unsupported, unread, skipped: null };
 }

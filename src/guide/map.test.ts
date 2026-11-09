@@ -3,7 +3,7 @@ import { buildBranchDiff } from './blocks';
 import { statReason } from './budget';
 import { edited } from './fixtures';
 import type { ImportGraph } from './imports';
-import { buildChangeMap, groupColour, GROUP_COLOURS, layoutMap, NODE_W, PAD, GAP_X, type MapNode } from './map';
+import { buildChangeMap, groupColour, GROUP_COLOURS, layoutMap, NODE_W, PAD_X, PAD_Y, GAP_X, GAP_Y, NODE_H, type MapNode } from './map';
 import type { GroupFile, GroupView } from './validate';
 
 function file(path: string, added = 1, removed = 0): GroupFile {
@@ -15,10 +15,12 @@ function group(key: string, files: GroupFile[], unsorted = false): GroupView {
 }
 
 const diff = buildBranchDiff([edited('src/a.ts', [3]), edited('src/b.ts', [3]), edited('src/c.ts', [3])], statReason);
+const ALL = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/ui/index.ts', 'src/db/index.ts'];
 const graph = (edges: Array<[string, string]>, extra: Partial<ImportGraph> = {}): ImportGraph => ({
   edges,
-  scanned: 3,
-  unsupported: 0,
+  scanned: new Set(ALL),
+  unsupported: new Set(),
+  unread: new Set(),
   skipped: null,
   ...extra,
 });
@@ -74,11 +76,44 @@ describe('buildChangeMap (#288)', () => {
 
   it('says why there are no arrows', () => {
     const groups = [group('g1', [file('src/a.ts'), file('src/b.ts')])];
-    expect(buildChangeMap(groups, diff, graph([], { scanned: 0, unsupported: 2 }), noMarks).notes[0]).toMatch(/^No arrows: imports are read from TypeScript/);
-    expect(buildChangeMap(groups, diff, graph([], { skipped: 'too-many', scanned: 0 }), noMarks).notes[0]).toMatch(/^No arrows: imports are read for up to/);
-    expect(buildChangeMap(groups, diff, graph([['src/a.ts', 'src/b.ts']], { unsupported: 1 }), noMarks).notes).toEqual([
-      'Imports are read from TypeScript, JavaScript, PHP and Rust files; 1 file in other languages has no arrows.',
-    ]);
+    const none = new Set<string>();
+    expect(buildChangeMap(groups, diff, graph([], { scanned: none, unsupported: new Set(['src/a.ts', 'src/b.ts']) }), noMarks).notes[0]).toMatch(
+      /^No arrows: imports are read from TypeScript/,
+    );
+    expect(buildChangeMap(groups, diff, graph([], { skipped: 'too-many', scanned: none }), noMarks).notes[0]).toMatch(/^No arrows: imports are read for up to/);
+    expect(
+      buildChangeMap(groups, diff, graph([['src/a.ts', 'src/b.ts']], { scanned: new Set(['src/a.ts']), unsupported: new Set(['src/b.ts', 'elsewhere.md']) }), noMarks).notes,
+    ).toEqual(['Imports are read from TypeScript, JavaScript, PHP and Rust files; 1 file in other languages has no arrows.']);
+  });
+
+  it('a file it reads the language of but could not read is not called another language (#288 review)', () => {
+    const groups = [group('g1', [file('src/a.ts'), file('src/b.ts')])];
+    const g = graph([], { scanned: new Set(), unsupported: new Set(['src/b.ts']), unread: new Set(['src/a.ts']) });
+    expect(buildChangeMap(groups, diff, g, noMarks).notes[0]).toBe(
+      'No arrows: the one file here in a language the map reads is deleted, binary or too large to read.',
+    );
+  });
+
+  it('counts only the files shown: one hidden by Uncommitted Only is not in the note', () => {
+    const groups = [group('g1', [file('src/a.ts'), file('src/b.ts')])];
+    const g = graph([['src/a.ts', 'src/b.ts']], { unsupported: new Set(['src/c.ts']) });
+    expect(buildChangeMap(groups, diff, g, noMarks).notes).toEqual([]);
+  });
+
+  it('a changed file the filter hides is never drawn as unchanged (#288 review)', () => {
+    // a.ts and b.ts are uncommitted and import c.ts, which is changed but committed.
+    const groups = [group('g1', [file('src/a.ts'), file('src/b.ts')])];
+    const map = buildChangeMap(
+      groups,
+      diff,
+      graph([
+        ['src/a.ts', 'src/c.ts'],
+        ['src/b.ts', 'src/c.ts'],
+      ]),
+      noMarks,
+    );
+    expect(map.nodes.map((n) => n.id)).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(map.edges).toEqual([]);
   });
 
   it('names a file by its folder too when two would read the same', () => {
@@ -119,10 +154,10 @@ describe('layoutMap (#288)', () => {
 
   it('lays a chain left to right, importer before imported, every box on the grid', () => {
     const l = layoutMap([node('a'), node('b'), node('c')], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }], 2000);
-    expect(['a', 'b', 'c'].map((id) => l.at.get(id)!.x)).toEqual([PAD, PAD + pitch, PAD + 2 * pitch]);
+    expect(['a', 'b', 'c'].map((id) => l.at.get(id)!.x)).toEqual([PAD_X, PAD_X + pitch, PAD_X + 2 * pitch]);
     expect(new Set(['a', 'b', 'c'].map((id) => l.at.get(id)!.y)).size).toBe(1);
     expect(l.routes).toHaveLength(2);
-    expect(l.routes[0]!.d.startsWith(`M${PAD + NODE_W},`)).toBe(true);
+    expect(l.routes[0]!.d.startsWith(`M${PAD_X + NODE_W},`)).toBe(true);
   });
 
   it('survives a cycle, and draws its closing arrow backwards', () => {
@@ -133,13 +168,64 @@ describe('layoutMap (#288)', () => {
 
   it('puts unlinked files after the linked ones, in a grid that wraps at the width', () => {
     const nodes = ['a', 'b', 'x1', 'x2', 'x3'].map(node);
-    const l = layoutMap(nodes, [{ from: 'a', to: 'b' }], PAD * 2 + pitch * 2);
+    const l = layoutMap(nodes, [{ from: 'a', to: 'b' }], PAD_X * 2 + pitch * 2);
     const linkedBottom = l.at.get('a')!.y;
     expect(l.at.get('x1')!.y).toBeGreaterThan(linkedBottom);
-    expect(l.at.get('x1')!.x).toBe(PAD);
-    expect(l.at.get('x2')!.x).toBe(PAD + pitch);
-    expect(l.at.get('x3')!.x).toBe(PAD);
+    expect(l.at.get('x1')!.x).toBe(PAD_X);
+    expect(l.at.get('x2')!.x).toBe(PAD_X + pitch);
+    expect(l.at.get('x3')!.x).toBe(PAD_X);
     expect(l.at.get('x3')!.y).toBeGreaterThan(l.at.get('x1')!.y);
-    for (const p of l.at.values()) expect((p.x - PAD) % pitch).toBe(0);
+    for (const p of l.at.values()) expect((p.x - PAD_X) % pitch).toBe(0);
+  });
+});
+
+/** Every point a route passes through, sampled along its straight runs. */
+function crossesABox(d: string, boxes: ReadonlyArray<{ x: number; y: number }>): boolean {
+  const pts = [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => [Number(m[1]), Number(m[2])] as const);
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1]!;
+    const [x1, y1] = pts[i]!;
+    for (let t = 0; t <= 1; t += 0.05) {
+      const x = x0 + (x1 - x0) * t;
+      const y = y0 + (y1 - y0) * t;
+      if (boxes.some((b) => x > b.x + 1 && x < b.x + NODE_W - 1 && y > b.y + 1 && y < b.y + NODE_H - 1)) return true;
+    }
+  }
+  return false;
+}
+
+describe('layoutMap routing and wrapping (#288 review)', () => {
+  const pitch = NODE_W + GAP_X;
+
+  it('an arrow that skips a column runs along the gaps, never behind the box between', () => {
+    // a -> b -> c, and a -> c skipping b: c is two columns on, b in the way.
+    const l = layoutMap(['a', 'b', 'c'].map(node), [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'a', to: 'c' }], 4000);
+    expect(l.at.get('c')!.x).toBe(l.at.get('a')!.x + 2 * pitch);
+    const boxes = [...l.at.values()];
+    for (const r of l.routes) expect(crossesABox(r.d, boxes), `${r.from} -> ${r.to}`).toBe(false);
+    const skip = l.routes.find((r) => r.from === 'a' && r.to === 'c')!;
+    // Through the gutter beside the row, not along the boxes' middle.
+    expect(skip.d).not.toMatch(/C/);
+  });
+
+  it('a chain longer than the width wraps onto further bands, and every arrow still clears every box', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+    const edges = ids.slice(1).map((id, i) => ({ from: ids[i]!, to: id }));
+    edges.push({ from: 'a', to: 'e' }, { from: 'g', to: 'b' });
+    const width = PAD_X * 2 + pitch * 3 - GAP_X;
+    const l = layoutMap(ids.map(node), edges, width);
+    expect(l.width).toBeLessThanOrEqual(width);
+    expect(new Set(ids.map((id) => l.at.get(id)!.y)).size).toBe(3);
+    expect(l.at.get('d')!.x).toBe(PAD_X);
+    const boxes = [...l.at.values()];
+    for (const r of l.routes) expect(crossesABox(r.d, boxes), `${r.from} -> ${r.to}`).toBe(false);
+  });
+
+  it('gives the boxes in reading order: set by set, column by column, then the rest row by row', () => {
+    const l = layoutMap(['a', 'b', 'c', 'x', 'y'].map(node), [{ from: 'a', to: 'b' }, { from: 'a', to: 'c' }], 4000);
+    expect(l.order).toEqual(['a', 'b', 'c', 'x', 'y']);
+    expect(l.at.get('b')!.x).toBe(l.at.get('c')!.x);
+    expect(l.at.get('x')!.y).toBeGreaterThan(l.at.get('c')!.y + NODE_H + GAP_Y);
+    expect(PAD_Y).toBe(16);
   });
 });

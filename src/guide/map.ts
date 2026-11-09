@@ -118,6 +118,7 @@ export function buildChangeMap(
   marks: CommentMarks,
   maxFileNodes: number = MAX_FILE_NODES,
 ): ChangeMap {
+  const inDiff = new Map(diff.files.map((f) => [f.path, f] as const));
   const byPath = new Map<string, MapNode>();
   for (const g of groups) {
     const colour = groupColour(groups, g.key);
@@ -132,7 +133,7 @@ export function buildChangeMap(
         had.comments += comments;
         continue;
       }
-      const file = diff.files.find((x) => x.path === f.path);
+      const file = inDiff.get(f.path);
       byPath.set(f.path, {
         id: f.path,
         kind: 'file',
@@ -158,12 +159,14 @@ export function buildChangeMap(
   }
 
   // Arrows between changed files, and to unchanged files two or more import.
+  // A changed file the filter hides (Uncommitted Only) is neither: it is not
+  // drawn at all, never as "unchanged".
   const edges: MapEdge[] = [];
   const outside = new Map<string, Set<string>>();
   for (const [from, to] of graph?.edges ?? []) {
     if (!byPath.has(from)) continue;
     if (byPath.has(to)) edges.push({ from, to });
-    else {
+    else if (!inDiff.has(to)) {
       const set = outside.get(to) ?? new Set<string>();
       set.add(from);
       outside.set(to, set);
@@ -201,22 +204,29 @@ export function buildChangeMap(
   );
   for (const n of all) n.label = names.get(n.id) ?? n.id;
 
-  if (graph !== null) notes.unshift(...arrowNotes(graph, edges.length, files.length));
+  if (graph !== null) notes.unshift(...arrowNotes(graph, edges.length, files.map((f) => f.id)));
   return { nodes: withSizes(all), edges, notes, folded: false };
 }
 
-/** Why there are no arrows, or fewer than one might expect. */
-function arrowNotes(graph: ImportGraph, edgeCount: number, fileCount: number): string[] {
+/** Why there are no arrows, or fewer than one might expect: about the files shown only. */
+function arrowNotes(graph: ImportGraph, edgeCount: number, shown: readonly string[]): string[] {
   if (graph.skipped === 'too-many') {
     return [`No arrows: imports are read for up to ${MAX_SCAN_FILES} changed files, and this change has more.`];
   }
-  if (graph.scanned === 0) {
-    return ['No arrows: imports are read from TypeScript, JavaScript, PHP and Rust files, and none of these changed files is one.'];
+  const count = (set: ReadonlySet<string>) => shown.filter((p) => set.has(p)).length;
+  const scanned = count(graph.scanned);
+  const unsupported = count(graph.unsupported);
+  const unread = count(graph.unread);
+  if (scanned === 0) {
+    if (unread === 0) {
+      return ['No arrows: imports are read from TypeScript, JavaScript, PHP and Rust files, and none of these changed files is one.'];
+    }
+    return [`No arrows: ${unread === 1 ? 'the one file' : `the ${unread} files`} here in a language the map reads ${unread === 1 ? 'is' : 'are'} deleted, binary or too large to read.`];
   }
   const out: string[] = [];
-  if (edgeCount === 0) out.push(fileCount === 1 ? 'One file, nothing to link.' : 'None of these files imports another.');
-  if (graph.unsupported > 0) {
-    out.push(`Imports are read from TypeScript, JavaScript, PHP and Rust files; ${plural(graph.unsupported, 'file')} in other languages ${graph.unsupported === 1 ? 'has' : 'have'} no arrows.`);
+  if (edgeCount === 0) out.push(shown.length === 1 ? 'One file, nothing to link.' : 'None of these files imports another.');
+  if (unsupported > 0) {
+    out.push(`Imports are read from TypeScript, JavaScript, PHP and Rust files; ${plural(unsupported, 'file')} in other languages ${unsupported === 1 ? 'has' : 'have'} no arrows.`);
   }
   return out;
 }
@@ -292,7 +302,7 @@ function foldToFolders(
   }
   const notes = [`${plural(files.length, 'file')} is more than the map draws one by one (${max}): one box per folder.`];
   if (graph !== null && graph.skipped === null) notes.push('Arrows are imports between folders; unchanged files are left out.');
-  else if (graph !== null) notes.push(...arrowNotes(graph, 0, files.length));
+  else if (graph !== null) notes.push(...arrowNotes(graph, 0, files.map((f) => f.id)));
   return { nodes: withSizes(nodes), edges, notes };
 }
 
@@ -305,7 +315,10 @@ export const NODE_H = 52;
 /** Room between columns for the arrows. */
 export const GAP_X = 48;
 export const GAP_Y = 14;
-export const PAD = 16;
+/** Left and right: room for an arrow's leg in the margin, beside the first and last column. */
+export const PAD_X = 32;
+/** Top and bottom: the first box's top lines up with the key's title. */
+export const PAD_Y = 16;
 /** Between one set of linked files and the next, below it. */
 export const SHELF_GAP = 28;
 
@@ -325,6 +338,8 @@ export interface Route {
 
 export interface MapLayout {
   at: ReadonlyMap<string, Placed>;
+  /** The boxes in the order a reader takes them: set by set, column by column, top to bottom. */
+  order: string[];
   routes: Route[];
   width: number;
   height: number;
@@ -406,11 +421,16 @@ function layerComponent(ids: readonly string[], edges: readonly MapEdge[]): Bloc
   return { cells, cols, rows };
 }
 
-/** Place `nodes` (already in reading order) within `maxWidth`, and route `edges`. */
+/**
+ * Place `nodes` (already in reading order) within `maxWidth`, and route `edges`.
+ *
+ * A set of linked files wider than the map wraps: its columns go on in a
+ * further band below, as a paragraph does.
+ */
 export function layoutMap(nodes: readonly MapNode[], edges: readonly MapEdge[], maxWidth: number): MapLayout {
   const pitchX = NODE_W + GAP_X;
   const pitchY = NODE_H + GAP_Y;
-  const maxCols = Math.max(1, Math.floor((maxWidth - 2 * PAD + GAP_X) / pitchX));
+  const maxCols = Math.max(1, Math.floor((maxWidth - 2 * PAD_X + GAP_X) / pitchX));
   const ids = nodes.map((n) => n.id);
   const known = new Set(ids);
   const links = edges.filter((e) => known.has(e.from) && known.has(e.to) && e.from !== e.to);
@@ -435,49 +455,107 @@ export function layoutMap(nodes: readonly MapNode[], edges: readonly MapEdge[], 
   const alone = [...comps.values()].filter((c) => c.length === 1).map((c) => c[0]!);
 
   const at = new Map<string, Placed>();
-  let y = PAD;
-  let width = 0;
+  const order: string[] = [];
+  let y = PAD_Y;
   // Linked sets side by side while they fit, then on the next shelf.
   let col = 0;
   let shelfRows = 0;
+  const closeShelf = () => {
+    if (shelfRows > 0) y += shelfRows * pitchY - GAP_Y + SHELF_GAP;
+    col = 0;
+    shelfRows = 0;
+  };
   for (const comp of linked) {
     const block = layerComponent(comp, links);
-    if (col > 0 && col + block.cols > maxCols) {
-      y += shelfRows * pitchY - GAP_Y + SHELF_GAP;
-      col = 0;
-      shelfRows = 0;
+    const cells = [...block.cells].sort(([, a], [, b]) => a.col - b.col || a.row - b.row);
+    if (block.cols > maxCols) {
+      closeShelf();
+      const band = block.rows * pitchY - GAP_Y + SHELF_GAP;
+      for (const [id, c] of cells) {
+        at.set(id, { x: PAD_X + (c.col % maxCols) * pitchX, y: y + Math.floor(c.col / maxCols) * band + c.row * pitchY });
+      }
+      const bands = Math.ceil(block.cols / maxCols);
+      // Band by band, then column by column: the order the eye takes.
+      cells.sort(([, a], [, b]) => Math.floor(a.col / maxCols) - Math.floor(b.col / maxCols) || a.col - b.col || a.row - b.row);
+      order.push(...cells.map(([id]) => id));
+      y += bands * band;
+      continue;
     }
-    for (const [id, c] of block.cells) at.set(id, { x: PAD + (col + c.col) * pitchX, y: y + c.row * pitchY });
+    if (col > 0 && col + block.cols > maxCols) closeShelf();
+    for (const [id, c] of cells) at.set(id, { x: PAD_X + (col + c.col) * pitchX, y: y + c.row * pitchY });
+    order.push(...cells.map(([id]) => id));
     col += block.cols;
     shelfRows = Math.max(shelfRows, block.rows);
   }
-  if (shelfRows > 0) y += shelfRows * pitchY - GAP_Y + (alone.length > 0 ? SHELF_GAP : 0);
+  closeShelf();
   // The rest in a grid, in reading order: one group's colour runs together.
   alone.forEach((id, i) => {
-    at.set(id, { x: PAD + (i % maxCols) * pitchX, y: y + Math.floor(i / maxCols) * pitchY });
+    at.set(id, { x: PAD_X + (i % maxCols) * pitchX, y: y + Math.floor(i / maxCols) * pitchY });
+    order.push(id);
   });
-  if (alone.length > 0) y += Math.ceil(alone.length / maxCols) * pitchY - GAP_Y;
-  for (const p of at.values()) width = Math.max(width, p.x + NODE_W + PAD);
 
-  const routes = links.map((e) => route(e, at.get(e.from)!, at.get(e.to)!));
-  return { at, routes, width: Math.max(width, 2 * PAD), height: nodes.length === 0 ? 2 * PAD : y + PAD };
+  let width = 2 * PAD_X;
+  let height = 2 * PAD_Y;
+  for (const p of at.values()) {
+    width = Math.max(width, p.x + NODE_W + PAD_X);
+    height = Math.max(height, p.y + NODE_H + PAD_Y);
+  }
+  const routes = links.map((e, i) => route(e, at.get(e.from)!, at.get(e.to)!, i));
+  return { at, order, routes, width, height };
 }
 
 const HEAD_L = 7;
 const HEAD_W = 4;
+const CORNER = 6;
 
-function route(e: MapEdge, a: Placed, b: Placed): Route {
+/** A polyline with its corners rounded, as an SVG path. */
+function roundedPath(points: ReadonlyArray<readonly [number, number]>): string {
+  let d = `M${points[0]![0]},${points[0]![1]}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [px, py] = points[i - 1]!;
+    const [x, y] = points[i]!;
+    const [nx, ny] = points[i + 1]!;
+    const r = Math.min(CORNER, Math.hypot(x - px, y - py) / 2, Math.hypot(nx - x, ny - y) / 2);
+    const inX = x - Math.sign(x - px) * r;
+    const inY = y - Math.sign(y - py) * r;
+    const outX = x + Math.sign(nx - x) * r;
+    const outY = y + Math.sign(ny - y) * r;
+    d += ` L${inX},${inY} Q${x},${y} ${outX},${outY}`;
+  }
+  const last = points[points.length - 1]!;
+  return `${d} L${last[0]},${last[1]}`;
+}
+
+/**
+ * Out of the importer's right edge, into the imported's left, the arrowhead
+ * pointing right. To the next column: one curve through the gap between
+ * them, which no box is in. Anywhere else (a column skipped, a cycle back, a
+ * band below): along the gaps only -- the column gap after the importer, the
+ * row gutter beside its row, the column gap before the imported -- so no
+ * arrow ever runs behind a box. `lane` spreads arrows sharing a gap apart.
+ */
+function route(e: MapEdge, a: Placed, b: Placed, lane: number): Route {
   const ay = a.y + NODE_H / 2;
   const by = b.y + NODE_H / 2;
-  const fwd = b.x > a.x;
-  // Forward: out of the importer's right edge into the imported's left.
-  // Backward (a cycle, or a set laid out the other way): left edge to right edge.
-  const x1 = fwd ? a.x + NODE_W : a.x;
-  const tip = fwd ? b.x : b.x + NODE_W;
-  const dir = fwd ? 1 : -1;
-  const x2 = tip - dir * HEAD_L;
-  const bend = Math.max(24, Math.abs(x2 - x1) / 2) * dir;
-  const d = `M${x1},${ay} C${x1 + bend},${ay} ${x2 - bend},${by} ${x2},${by}`;
+  const x1 = a.x + NODE_W;
+  const tip = b.x;
+  const x2 = tip - HEAD_L;
   const head = `${tip},${by} ${x2},${by - HEAD_W} ${x2},${by + HEAD_W}`;
+  if (b.x === a.x + NODE_W + GAP_X) {
+    const bend = (x2 - x1) / 2;
+    return { from: e.from, to: e.to, d: `M${x1},${ay} C${x1 + bend},${ay} ${x2 - bend},${by} ${x2},${by}`, head };
+  }
+  const off = ((lane % 5) - 2) * 2;
+  const gx1 = x1 + GAP_X / 2 + off;
+  const gx2 = tip - GAP_X / 2 + off;
+  const gy = (b.y < a.y ? a.y - GAP_Y / 2 : a.y + NODE_H + GAP_Y / 2) + off;
+  const d = roundedPath([
+    [x1, ay],
+    [gx1, ay],
+    [gx1, gy],
+    [gx2, gy],
+    [gx2, by],
+    [x2, by],
+  ]);
   return { from: e.from, to: e.to, d, head };
 }

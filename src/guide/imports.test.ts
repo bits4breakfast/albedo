@@ -51,6 +51,17 @@ describe('imports (#288): TS/JS', () => {
     expect(resolveTs('b.ts', '../../out', exists)).toBeNull();
   });
 
+  it('a comment marker inside a string opens no comment (#288 review)', () => {
+    const text = [
+      "const pages = import.meta.glob('./pages/*.tsx');",
+      "import { a } from './a';",
+      "const url = 'https://example.com/x';",
+      "import { b } from './b';",
+      "const s = \"it's // not a comment\"; import { c } from './c';",
+    ].join('\n');
+    expect(scanTs(text)).toEqual(['./a', './b', './c']);
+  });
+
   it('normalizes paths and refuses to climb out', () => {
     expect(normalizePath('a/b/../c/./d')).toBe('a/c/d');
     expect(normalizePath('../a')).toBeNull();
@@ -118,6 +129,13 @@ describe('imports (#288): Rust', () => {
     expect(resolveRust('src/retry.rs', { kind: 'use', path: 'crate::nothing::Here' }, exists)).toBeNull();
   });
 
+  it('treats a binary in src/bin and build.rs as crate roots (#288 review)', () => {
+    const exists = has('src/bin/tool.rs', 'src/bin/util.rs', 'src/util.rs', 'build.rs', 'gen.rs', 'src/lib.rs');
+    expect(resolveRust('src/bin/tool.rs', { kind: 'mod', path: 'util' }, exists)).toBe('src/bin/util.rs');
+    expect(resolveRust('src/bin/tool.rs', { kind: 'use', path: 'crate::util::f' }, exists)).toBe('src/bin/util.rs');
+    expect(resolveRust('build.rs', { kind: 'mod', path: 'gen' }, exists)).toBe('gen.rs');
+  });
+
   it('finds the crate root of a nested crate', () => {
     const exists = has('src-tauri/mcp/src/main.rs', 'src-tauri/mcp/src/tools.rs');
     expect(resolveRust('src-tauri/mcp/src/main.rs', { kind: 'use', path: 'crate::tools::run' }, exists)).toBe(
@@ -142,8 +160,9 @@ describe('importGraph (#288)', () => {
       ['src/retry.ts', 'src/clock.ts'],
       ['src/backoff.ts', 'src/clock.ts'],
     ]);
-    expect(g.scanned).toBe(2);
-    expect(g.unsupported).toBe(1);
+    expect([...g.scanned]).toEqual(['src/retry.ts', 'src/backoff.ts']);
+    expect([...g.unsupported]).toEqual(['README.md']);
+    expect([...g.unread]).toEqual(['src/gone.ts']);
     expect(g.skipped).toBeNull();
   });
 
@@ -156,6 +175,39 @@ describe('importGraph (#288)', () => {
       null,
     );
     expect(g.edges).toEqual([['a.ts', 'b.ts']]);
+  });
+
+  it('never points an import at a deleted file (#288 review)', () => {
+    // foo.js deleted, foo.ts added: `./foo.js` is foo.ts.
+    const ts = importGraph(
+      [
+        { path: 'src/foo.js', text: null, deleted: true },
+        { path: 'src/foo.ts', text: '' },
+        { path: 'src/main.ts', text: "import { f } from './foo.js';" },
+      ],
+      new Set(['src/foo.js', 'src/main.ts']),
+    );
+    expect(ts.edges).toEqual([['src/main.ts', 'src/foo.ts']]);
+    // x.rs deleted, x/mod.rs added.
+    const rs = importGraph(
+      [
+        { path: 'src/x.rs', text: null, deleted: true },
+        { path: 'src/x/mod.rs', text: '' },
+        { path: 'src/lib.rs', text: 'mod x;' },
+      ],
+      new Set(['src/x.rs', 'src/lib.rs']),
+    );
+    expect(rs.edges).toEqual([['src/lib.rs', 'src/x/mod.rs']]);
+    // A PHP class moved: the deleted copy is no candidate, so no tie.
+    const php = importGraph(
+      [
+        { path: 'old/Queue/Job.php', text: null, deleted: true },
+        { path: 'app/Queue/Job.php', text: '<?php' },
+        { path: 'app/Run.php', text: '<?php\nuse Queue\\Job;' },
+      ],
+      new Set(['old/Queue/Job.php', 'app/Run.php']),
+    );
+    expect(php.edges).toEqual([['app/Run.php', 'app/Queue/Job.php']]);
   });
 
   it('reads nothing for a change too large, and says so', () => {

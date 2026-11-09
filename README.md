@@ -373,6 +373,8 @@ once on Haiku, with no tools (see "Good to know").
   An unchanged file shows, dashed, when two or more changed files import it.
   Click a box to read its blocks, or a group in the key to open that group.
   A change of more than 60 files is drawn one box per folder.
+  In a narrow pane the key goes above the map, and Read · Map and
+  Uncommitted Only move into the toolbar's **⋯**.
 
 ### Review the change, then send all your comments at once
 
