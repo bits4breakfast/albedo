@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import type { Project, Task } from '../types';
 import { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
@@ -6,6 +6,7 @@ import { parseIssueKey } from '../lib/issueKey';
 import EmptyState from './EmptyState';
 import MoreGlyph from './MoreGlyph';
 import { wrapForTooltip } from './text';
+import { placeMenu, type MenuPlacement } from './menuPlacement';
 import type { ContextUsage } from '../capture';
 import type { TaskSignals } from './useTasks';
 import type { AttentionKind } from './attention';
@@ -202,6 +203,28 @@ export default function TaskList({
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Where the open menu goes so all of it is in the window (#285), measured
+   * before it paints. Kept with the menu it was measured for: a new menu is
+   * first laid out at the pointer, uncapped, so its natural size is what gets
+   * measured.
+   */
+  const [placed, setPlaced] = useState<{ for: RowMenu; at: MenuPlacement } | null>(null);
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!menu || !el) return;
+    const r = el.getBoundingClientRect();
+    setPlaced({
+      for: menu,
+      at: placeMenu(
+        { x: menu.x, y: menu.y },
+        { width: r.width, height: r.height },
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    });
+  }, [menu]);
+  const menuAt: MenuPlacement =
+    placed && placed.for === menu ? placed.at : { left: menu?.x ?? 0, top: menu?.y ?? 0 };
   const drafts = useDraftTaskIds();
   const reminderIds = useReminderTaskIds();
   /**
@@ -726,7 +749,11 @@ export default function TaskList({
         <div
           className="row-menu"
           ref={menuRef}
-          style={{ left: Math.min(menu.x, window.innerWidth - 180), top: menu.y }}
+          style={{
+            left: menuAt.left,
+            top: menuAt.top,
+            ...(menuAt.maxHeight !== undefined ? { maxHeight: menuAt.maxHeight, overflowY: 'auto' as const } : {}),
+          }}
           role="menu"
         >
           <div className="row-menu-head" title={wrapForTooltip(menu.task.title)}>
