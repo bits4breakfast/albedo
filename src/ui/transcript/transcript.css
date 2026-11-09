@@ -224,7 +224,11 @@
 }
 .tx-queued-head {
   display: flex;
-  align-items: baseline;
+  /* Every group's head is a button's height (#290), so a held group's head
+     doesn't grow when Send All Now appears and Claude Code's group head above
+     it is the same height. One size of text: centred reads as one baseline. */
+  min-height: 22px;
+  align-items: center;
   gap: 6px;
   margin-bottom: 4px;
   color: var(--muted);
@@ -266,11 +270,7 @@
 .tx-queued-note { flex: none; align-self: center; color: var(--warn); font-size: var(--fs-xs); }
 /* Send All Now (#290): the head's right end, where the hint was, so its right
    edge lines up with the rows' Remove. Its "couldn't send" note sits just
-   before it, on the head's line like the rest of the head.
-   The held group's head is always the button's height, so it doesn't grow
-   when a second message makes the button appear; its parts are one size of
-   text, so centring them reads as their shared baseline. */
-.tx-queued-head-held { min-height: 22px; align-items: center; }
+   before it, on the head's line like the rest of the head. */
 .tx-queued-head > .tx-queued-all,
 .tx-queued-head > .tx-queued-note { margin-left: auto; }
 .tx-queued-head > .tx-queued-note + .tx-queued-all { margin-left: 0; }

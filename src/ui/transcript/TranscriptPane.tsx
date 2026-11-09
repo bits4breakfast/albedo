@@ -865,7 +865,7 @@ function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessag
     : 'Not while Claude is asking you something, or the session is not running';
   return (
     <>
-      <div className="tx-queued-head tx-queued-head-held">
+      <div className="tx-queued-head">
         {heldLabel(conditions)} <span className="tx-queued-count">{held.length}</span>
         {allOffered ? (
           <>
