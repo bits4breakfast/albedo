@@ -266,9 +266,13 @@
 .tx-queued-note { flex: none; align-self: center; color: var(--warn); font-size: var(--fs-xs); }
 /* Send All Now (#290): the head's right end, where the hint was, so its right
    edge lines up with the rows' Remove. Its "couldn't send" note sits just
-   before it, on the head's baseline like the rest of the head. */
+   before it, on the head's line like the rest of the head.
+   The held group's head is always the button's height, so it doesn't grow
+   when a second message makes the button appear; its parts are one size of
+   text, so centring them reads as their shared baseline. */
+.tx-queued-head-held { min-height: 22px; align-items: center; }
 .tx-queued-head > .tx-queued-all,
-.tx-queued-head > .tx-queued-note { margin-left: auto; align-self: baseline; }
+.tx-queued-head > .tx-queued-note { margin-left: auto; }
 .tx-queued-head > .tx-queued-note + .tx-queued-all { margin-left: 0; }
 .tx-queued-edit {
   flex: 1;
