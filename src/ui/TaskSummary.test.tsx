@@ -26,7 +26,7 @@ afterEach(cleanup);
 const task = (id: number, title: string, summary: string | null): Task => ({
   id, title, projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: `b${id}`,
   worktreePath: `/w/b${id}`, sessionId: `s${id}`, ownsWorktree: true, createdBranch: true, kind: 'work',
-  status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary,
+  status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary, reviewUrl: null,
 });
 
 const name = () => screen.getByRole('textbox', { name: 'Task name' }) as HTMLInputElement;

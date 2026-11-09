@@ -270,6 +270,7 @@ export function ArchiveTaskDialog({
           // Re-checked here as well as in the render, like `owned`: a branch
           // the task did not create is never deleted.
           deleteBranch: mode === 'remove-delete-branch' && branchDeletable(probe),
+          branchIsCopy: !!task.reviewUrl,
           // What the tick was given for. removeWorktree probes again and
           // refuses if Claude has added to it since the dialog opened.
           acknowledged: {
@@ -307,9 +308,16 @@ export function ArchiveTaskDialog({
    */
   const chat = task.kind === 'chat';
 
+  /**
+   * A review task (#287) is on Albedo's copy of someone else's pull request:
+   * its commits ahead of the base are the PR's, and they are on GitHub, so
+   * deleting the copy loses none of them. Uncommitted changes still count.
+   */
+  const review = !!task.reviewUrl;
+
   const risk: WorkAtRisk = {
     files: probe.files,
-    ahead: probe.ahead,
+    ahead: review ? 0 : probe.ahead,
     aheadBase: probe.aheadBase,
     head: probe.head,
   };
@@ -320,7 +328,7 @@ export function ArchiveTaskDialog({
   const deleteBranch = mode === 'remove-delete-branch' && canDeleteBranch;
   const loss = assessLoss(risk, { deleteBranch });
   const needsAck = removing && loss.needsAck;
-  const hasUnmerged = probe.ahead !== null && probe.ahead > 0;
+  const hasUnmerged = !review && probe.ahead !== null && probe.ahead > 0;
   const fileCount = probe.files?.length ?? 0;
 
   const option = (value: ArchiveMode, label: string, detail: React.ReactNode) => (

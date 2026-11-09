@@ -55,6 +55,7 @@ const task: Task = {
   id: 7, title: 't', projectId: 1, repoPath: '/repo', baseBranch: 'feature-a', branch: 'feature-b',
   worktreePath: '/wt', sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
+  reviewUrl: null,
 };
 const retargeted = { number: 12, baseRefName: 'main', state: 'open' } as PrStatus;
 

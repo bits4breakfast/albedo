@@ -139,12 +139,14 @@ Albedo.
    **History** opens past sessions. **⋯** holds Projects, Worktrees, the theme
    (Auto, Light or Dark), Collapse Task List, Notify About PRs, Keyboard
    Shortcuts and What's New.
-3. **Task list.** Tasks grouped by what they need from you (see "See every
-   session at a glance"), with the time since their last activity. Hover a
-   task for its one-line summary. **⌘1–9** jumps to a task and **⌘[** /
+3. **Task list.** Two tabs. **Building** holds your tasks, grouped by what
+   they need from you (see "See every session at a glance"), with the time
+   since their last activity; **+** (**⌘N**) starts a new one. **Reviewing**
+   lists the pull requests asking for your review (see "Pull requests
+   waiting on your review"). Hover a task for its one-line summary. **⌘1–9** jumps to a task and **⌘[** /
    **⌘]** step through them. Each row's menu renames the task, marks it done
    or not done, copies the worktree path or session ID, moves, archives or
-   deletes it. **⌥⌘T**, or the **‹** beside New Task, collapses the list to
+   deletes it. **⌥⌘T**, or the **‹** beside **+**, collapses the list to
    a narrow rail with one circle per group and its count; click a circle for
    its tasks.
 4. **Task header.** Project, task title, the task's own menu (**⋯**), its
@@ -192,6 +194,38 @@ finished. When Needs You or Ready to Review grows, its group pulses briefly.
 When a task gets blocked or finishes while you are looking elsewhere, the dock
 icon bounces, the row pulses, and a system notification says which task and
 why.
+
+### Pull requests waiting on your review
+
+The task list's **Reviewing** tab lists the open pull requests in the project
+that ask for your review, by name or through one of your teams, and the ones
+you have reviewed that are now waiting on their author. Each row shows the
+author, the size of the change and what is new:
+
+| Group | A pull request is here when |
+| --- | --- |
+| **New Activity** | Something happened since you last opened it or reviewed it: new commits, a force-push, comments by others, or your review asked for again. Newest first, with a dot |
+| **Requested** | Your review is asked for and nothing is new. Newest request first |
+| **Reviewed · Waiting on Author** | You reviewed it and nothing has happened since |
+
+The tab's count is what waits on you: every request, plus reviewed pull
+requests with something new, and opening a pull request counts as having
+seen what is there.
+
+Click a pull request to review it in Albedo. The first click checks it out
+as a **review task**: Albedo fetches its head into a local branch
+`review/<number>` (forks included), with no upstream so nothing can be pushed
+from it, in a worktree of its own, measured against the pull request's base.
+After that a click selects the task. A review task has the Transcript, Files
+and Guide tabs like any other, and a Claude Code session to ask about the
+change, which is told to explain and answer and never to edit files, commit,
+push or post anything on GitHub. The task header links to the pull request.
+There is no Push, Create PR or Squash on it, and archiving removes the
+worktree and the `review/<number>` copy. Review tasks whose pull request is
+merged, closed or no longer asking for you stay at the end of the tab, so you
+can still read and archive them. Albedo asks GitHub once a
+minute through `gh`, in one request for the whole list, and not while the
+window is hidden.
 
 ### Answer permission prompts without hunting for the terminal
 
@@ -315,8 +349,9 @@ launch. Sessions can set one too (see "Good to know").
 
 ### Read the change in a Review Guide
 
-**⇧⌘G**, the book icon at the top of Files, or **⋯ › Review Guide** opens a
-guide to the task's branch: its changes grouped by what they do, in reading
+Every task on a branch has a **Guide** tab beside Transcript and Files;
+**⇧⌘G**, the book icon at the top of Files, or **⋯ › Review Guide** also
+switch to it. It is a guide to the task's branch: its changes grouped by what they do, in reading
 order, each group with a short summary, a line on why each larger file
 changes, and the group's diffs beside it. The header gives the change's
 total files and +/− lines against the base. **Write Guide** runs Claude Code

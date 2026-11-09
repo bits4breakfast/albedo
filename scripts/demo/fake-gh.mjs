@@ -4,6 +4,7 @@
 // checks and their review state without a GitHub repository:
 //
 //   gh api graphql … -f branch=<b> -f query=<PR_QUERY>   the PR badge and its group
+//   gh api graphql … -F requested=… -f query=<REVIEWS_QUERY>  the Reviewing tab (reviews.json)
 //   gh pr view <branch> --json …                           a branch's PR (New Task)
 //   gh pr checks <n> --json …                              the Checks dialog
 //   gh run view <run> -R <repo> --json jobs                a job's steps
@@ -13,13 +14,15 @@
 // as "no badge" (or, for a merge, shows as the refusal).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
 const file = join(homedir(), '.albedo-demo', 'prs.json');
 const prs = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+const reviewsFile = join(homedir(), '.albedo-demo', 'reviews.json');
+const reviews = existsSync(reviewsFile) ? JSON.parse(readFileSync(reviewsFile, 'utf8')) : {};
 
 const fail = (msg) => {
   process.stderr.write(`${msg}\n`);
@@ -165,9 +168,48 @@ function jobOf(pr, c, i) {
   };
 }
 
+/** A PR asking for your review, as REVIEWS_QUERY (src/gh/reviewRequests.ts) asks for it. */
+function reviewNode(repoName, r) {
+  const me = { __typename: 'User', login: 'sam-rivera' };
+  const reviewer = r.team ? { __typename: 'Team', slug: r.team } : me;
+  const requested = r.section === 'requested';
+  return {
+    number: r.number,
+    title: r.title,
+    url: `https://github.com/example/${repoName}/pull/${r.number}`,
+    isDraft: false,
+    createdAt: ago(r.lastCommitMinutes + 60),
+    updatedAt: ago(Math.min(r.lastCommitMinutes, ...(r.talk ?? []).map((t) => t.minutesAgo))),
+    additions: r.additions,
+    deletions: r.deletions,
+    headRefOid: `${r.number}`.padStart(40, '0'),
+    baseRefName: 'main',
+    author: { login: r.author },
+    commits: { totalCount: r.commits, nodes: [{ commit: { committedDate: ago(r.lastCommitMinutes) } }] },
+    comments: { nodes: (r.talk ?? []).map((t) => ({ author: { login: t.author }, createdAt: ago(t.minutesAgo) })) },
+    reviews: { nodes: [] },
+    reviewRequests: { nodes: requested ? [{ requestedReviewer: reviewer }] : [] },
+    timelineItems: {
+      nodes: requested
+        ? [{ __typename: 'ReviewRequestedEvent', createdAt: ago(r.requestedMinutes), requestedReviewer: reviewer }]
+        : [],
+    },
+  };
+}
+
 const [a0, a1, a2] = args;
 
-if (a0 === 'api' && a1 === 'graphql') {
+if (a0 === 'api' && a1 === 'graphql' && 'requested' in apiFields()) {
+  // The Reviewing tab's one request: the PRs asking for your review here.
+  // process.cwd() is the real path; the keys may go through a symlink (/var on macOS).
+  const repo = Object.keys(reviews).find((k) => existsSync(k) && realpathSync(k) === process.cwd());
+  const list = repo ? reviews[repo] : [];
+  const name = (repo ?? process.cwd()).split('/').pop();
+  const of = (section) => list.filter((r) => r.section === section).map((r) => reviewNode(name, r));
+  print({
+    data: { viewer: { login: 'sam-rivera' }, requested: { nodes: of('requested') }, reviewed: { nodes: of('reviewed') } },
+  });
+} else if (a0 === 'api' && a1 === 'graphql') {
   // The PR store's one request: the PRs whose head is the branch.
   const { branch } = apiFields();
   const pr = prs[branch];

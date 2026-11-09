@@ -65,6 +65,7 @@ import { openReplacementTask } from './reminders/replacement';
 import WhatsNewDialog from './ui/WhatsNewDialog';
 import useWhatsNew from './ui/app/useWhatsNew';
 import { PrBadge } from './ui/PrBadge';
+import { openExternal } from './lib/openUrl';
 import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
 import ProjectBar from './ui/ProjectBar';
@@ -388,6 +389,7 @@ export default function App() {
       lastActivityAt: null,
       seenAt: null,
       summary: null,
+      reviewUrl: null,
     };
   }, [selected, activeProject]);
   /** Whose main checkout the shell drawer is in: the project the list shows. */
@@ -501,6 +503,10 @@ export default function App() {
   const initialPromptFor = useCallback(
     (task: Task): string | null => {
       if (task.sessionId !== null) return null;
+      // A review task (#287) starts with no prompt: the project's Initial
+      // Prompt is for your own work (it may name a ticket key), not someone
+      // else's pull request. The session waits for your questions.
+      if (!!task.reviewUrl) return null;
       // A follow-up's prompt was written in the dialog; empty is "none".
       const override = promptOverrides.get(task.id);
       if (override !== undefined) return override || null;
@@ -833,21 +839,15 @@ export default function App() {
     [],
   );
 
-  /** Tasks whose Review Guide tab is open (#186): opened from Files or ⋯. */
-  const [guideIds, setGuideIds] = useState<ReadonlySet<number>>(() => new Set());
+  /** A guide asked for from Files, ⋯ or ⇧⌘G (#186): its tab, shown. */
   useEffect(
     () =>
-      onGuideRequest((taskId) => {
-        setGuideIds((prev) => (prev.has(taskId) ? prev : new Set([...prev, taskId])));
+      onGuideRequest(() => {
         setRightTab('guide');
         setMode((m) => (m === 'pty' ? 'split' : m));
       }),
     [],
   );
-  const closeGuide = useCallback((taskId: number) => {
-    setGuideIds((prev) => new Set([...prev].filter((id) => id !== taskId)));
-    setRightTab((t) => (t === 'guide' ? 'transcript' : t));
-  }, []);
 
   /** Bumped by ⌘W: the editor closes its active tab. */
   const [editorCloseSignal, setEditorCloseSignal] = useState(0);
@@ -893,8 +893,12 @@ export default function App() {
   // The project view has no transcript: Files, or the editor once a file is
   // open. With Files pinned as a column and nothing open, its 'transcript'
   // slot says how to open one.
-  /** The guide only exists for the selected task, once it was asked for. */
-  const guideTask = selected && guideIds.has(selected.id) ? selected : null;
+  /**
+   * Every task on a branch has its Guide tab, always (owner, #287): it used
+   * to appear only once asked for, from Files or ⋯, and closed with ✕. A
+   * chat has no branch to guide.
+   */
+  const guideTask = selected && selected.kind !== 'chat' ? selected : null;
   const activeTab: RightTab = projectView
     ? rightTab === 'editor' && editorTask
       ? 'editor'
@@ -1336,10 +1340,13 @@ export default function App() {
             attention={attention}
             projects={projects}
             activeProject={activeProject}
-            nameProject={!showTabs}
             emptyBrief={!selected}
             collapsed={taskListCollapsed}
             onCollapsedChange={setTaskListCollapsed}
+            onReviewOpened={(task) => {
+              upsertTask(task);
+              revealTask(task);
+            }}
           />
         </aside>
 
@@ -1529,7 +1536,21 @@ export default function App() {
                       the one place git and GitHub state shows. It never
                       shrinks; the title and the folder give way first. A chat
                       has neither, and nothing takes their place. */}
-                  {selected.kind !== 'chat' && (
+                  {/* A review task (#287): the pull request it is for, one
+                      click to GitHub. Its branch is Albedo's copy, which has
+                      no PR of its own, so the badge below would offer to
+                      create one. */}
+                  {!!selected.reviewUrl && (
+                    <button
+                      type="button"
+                      className="pr-badge"
+                      title={`${selected.reviewUrl}\nOpen on GitHub`}
+                      onClick={() => void openExternal(selected.reviewUrl!)}
+                    >
+                      #{/\/pull\/(\d+)/.exec(selected.reviewUrl)?.[1]} on GitHub
+                    </button>
+                  )}
+                  {selected.kind !== 'chat' && !selected.reviewUrl && (
                   <PrBadge
                     task={selected}
                     onEnd={(intent) => {
@@ -1724,28 +1745,14 @@ export default function App() {
                     </button>
                   )}
                   {guideTask && !projectView && (
-                    /* The tab and its ✕ in one pill (#226): the close sits on
-                       what it closes, not at the far end of the row. A sibling
-                       of the tab, never inside it (a button in a button). */
-                    <span className="tab-closable" data-selected={activeTab === 'guide'}>
-                      <button
-                        role="tab"
-                        aria-selected={activeTab === 'guide'}
-                        onClick={() => setRightTab('guide')}
-                        title="This branch’s changes, grouped by what they do"
-                      >
-                        Guide
-                      </button>
-                      <button
-                        type="button"
-                        className="tab-close"
-                        onClick={() => closeGuide(guideTask.id)}
-                        title="Close the guide"
-                        aria-label="Close the guide"
-                      >
-                        ✕
-                      </button>
-                    </span>
+                    <button
+                      role="tab"
+                      aria-selected={activeTab === 'guide'}
+                      onClick={() => setRightTab('guide')}
+                      title="This branch’s changes, grouped by what they do (⇧⌘G)"
+                    >
+                      Guide
+                    </button>
                   )}
                   {editorTask && (
                     <button

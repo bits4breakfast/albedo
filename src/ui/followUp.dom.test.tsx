@@ -72,6 +72,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   lastActivityAt: 1,
   seenAt: null,
   summary: null,
+  reviewUrl: null,
   ...over,
 });
 

@@ -41,6 +41,25 @@ export function Glyph({
   );
 }
 
+/** A plus: New Task, where there is no room for the words. */
+export function PlusIcon({ size }: { size?: number }) {
+  return (
+    <Glyph size={size}>
+      <path d="M8 3v10M3 8h10" />
+    </Glyph>
+  );
+}
+
+/** A circular arrow: ask again now. */
+export function RefreshIcon({ size }: { size?: number }) {
+  return (
+    <Glyph size={size}>
+      <path d="M13 8a5 5 0 1 1-1.46-3.54" />
+      <path d="M13 2.5v3h-3" />
+    </Glyph>
+  );
+}
+
 /** A git branch: two commits and a fork. */
 export function BranchIcon({ size }: { size?: number }) {
   return (

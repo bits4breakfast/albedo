@@ -42,6 +42,11 @@ import TaskTitleEdit from './TaskTitleEdit';
 import { RENAME_HINT } from './taskRename';
 import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
 import GroupPie from './GroupPie';
+import ReviewList from './ReviewList';
+import { PlusIcon, RefreshIcon } from './icons';
+import { KEYS, oneOfCodec, usePersisted } from './persisted';
+import { refreshReviews, seenMarks, useReviewList } from '../gh/reviewStore';
+import { reviewGroups, waitingCount } from '../gh/reviewActivity';
 import './tasklist.css';
 
 /** The row's word for a chat, in its tooltip where a branch would be. */
@@ -124,12 +129,6 @@ export interface TaskListProps {
    */
   activeProject?: Project | null;
   /**
-   * Whether this header is responsible for naming the project. False when a
-   * tab bar is above it already doing the naming — two labels saying the same
-   * thing is how a scope label stops being read.
-   */
-  nameProject?: boolean;
-  /**
    * The main area is showing the full empty state (no task selected), so the
    * list only needs its headline: a second explanation and a second New Task
    * button right under the ⌘N one said the same thing twice.
@@ -143,6 +142,12 @@ export interface TaskListProps {
   collapsed?: boolean;
   /** Collapse (true) or expand. Absent, the list offers neither. */
   onCollapsedChange?: (collapsed: boolean) => void;
+  /**
+   * A pull request was just opened for review (#287): its new task, to
+   * show. Absent, the Reviewing tab still lists PRs and selects review tasks
+   * that exist, but cannot open new ones.
+   */
+  onReviewOpened?: (task: Task) => void;
 }
 
 /** Row context menu. Destructive actions live here, never on the row itself. */
@@ -158,6 +163,9 @@ interface RowMenu {
  * waiting on me" must never be more than one glance deep. The groups and their
  * order are `taskGroups.ts`.
  */
+
+type ListTab = 'building' | 'reviewing';
+const TAB_CODEC = oneOfCodec<ListTab>(['building', 'reviewing']);
 
 /** Compact, glanceable age. "now", 45s, 12m, 3h, 6d. */
 export function relativeTime(ts: number | null, now: number): string {
@@ -175,7 +183,7 @@ export function relativeTime(ts: number | null, now: number): string {
 }
 
 export default function TaskList({
-  tasks,
+  tasks: allTasks,
   selectedId,
   onSelect,
   attention,
@@ -192,16 +200,45 @@ export default function TaskList({
   onManageProjects,
   projects,
   activeProject = null,
-  nameProject = false,
   emptyBrief = false,
   collapsed = false,
   onCollapsedChange,
+  onReviewOpened,
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
   /** The row whose title is being edited in place (#152). */
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  /*
+   * Review tasks (#287) live in the Reviewing tab, beside the PR they are
+   * for; everything else in this component is about your own tasks.
+   */
+  const tasks = useMemo(() => allTasks.filter((t) => !t.reviewUrl), [allTasks]);
+  const reviewTasks = useMemo(() => allTasks.filter((t) => !!t.reviewUrl), [allTasks]);
+  /** Building (your tasks) or Reviewing (PRs asked of you, #287). */
+  const [tab, setTab] = usePersisted(KEYS.taskListTab, TAB_CODEC, 'building');
+  /*
+   * Polled whichever tab is showing: the Reviewing tab's count is in the
+   * header either way. One request a minute for the project (reviewStore.ts).
+   */
+  /*
+   * A task chosen from elsewhere -- ⌘1–9, N Waiting, a notification -- is
+   * shown where it lives: a review task in Reviewing, any other in Building.
+   * Not on mount, so a remembered tab survives a restart.
+   */
+  const lastSelected = useRef(selectedId);
+  useEffect(() => {
+    if (lastSelected.current === selectedId) return;
+    lastSelected.current = selectedId;
+    const t = selectedId === null ? null : allTasks.find((x) => x.id === selectedId);
+    if (t) setTab(!!t.reviewUrl ? 'reviewing' : 'building');
+  }, [selectedId, allTasks, setTab]);
+  const liveCount = tasks.filter((t) => t.status !== 'archived').length;
+  const reviewState = useReviewList(activeProject?.repoPath ?? null);
+  const reviewList = reviewState.kind === 'ready' ? reviewState.list : null;
+  const reviewGroupsNow = reviewList ? reviewGroups(reviewList.prs, seenMarks(), reviewList.viewer) : [];
+  const reviewCount = reviewList ? waitingCount(reviewGroupsNow) : null;
   const menuRef = useRef<HTMLDivElement | null>(null);
   /**
    * Where the open menu goes so all of it is in the window (#285), measured
@@ -435,8 +472,6 @@ export default function TaskList({
     setMenu({ task, x: e.clientX, y: e.clientY });
   };
 
-  const blockedCount = tasks.filter((t) => t.status === 'blocked').length;
-  const liveCount = tasks.filter((t) => t.status !== 'archived').length;
 
   const contextOf = (task: Task) => (task.sessionId ? contextBySession?.get(task.sessionId) : undefined);
 
@@ -590,40 +625,60 @@ export default function TaskList({
   return (
     /* A stop of the Tab cycle (focusAreas.ts): the list itself takes focus,
        since it is where ↑/↓ are handled, and the selected row shows which. */
-    <div className="tasklist" tabIndex={0} onKeyDown={onKeyDown} role="listbox" aria-label="Tasks" data-focus-area="tasks">
-      <div className="tasklist-head" data-bare={!nameProject || undefined}>
-        {/* Identity lives here because this strip is always visible, never
-            scrolls, and is already the scope label for the list beneath it.
-            It is a control, not a caption: someone asking "which project am I
-            in" is usually one keystroke from "and how do I change it".
-            With project tabs in the title bar, the tab is the scope label and
-            already carries the count, so this strip keeps only New Task. */}
-        {nameProject && (
-        <button
-          className="tasklist-scope"
-          data-named={nameProject && !!activeProject}
-          onClick={onManageProjects}
-          disabled={!onManageProjects}
-          title={
-            nameProject && activeProject
-              ? `${activeProject.name} — ${activeProject.repoPath}\nManage projects`
-              : 'Manage projects'
-          }
-        >
-          {nameProject && activeProject ? activeProject.name : 'Tasks'}
-        </button>
+    <div
+      className="tasklist"
+      tabIndex={0}
+      onKeyDown={tab === 'building' ? onKeyDown : undefined}
+      role={tab === 'building' ? 'listbox' : undefined}
+      aria-label={tab === 'building' ? 'Tasks' : undefined}
+      data-focus-area="tasks"
+    >
+      <div className="tasklist-head">
+        {/* Two tabs (#287): your tasks, and PRs asked of you for review. The
+            project is named by its tab in the title bar, or, with one
+            project, by the title bar's Projects; this row has no room for a
+            third label at the sidebar's 200px minimum. Each tab counts its
+            list: Building its live tasks, Reviewing what waits on you. */}
+        <div className="seg tasklist-tabs" role="tablist" aria-label="Task list">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'building'}
+            onClick={() => setTab('building')}
+          >
+            Building
+            <span className="tasklist-tab-count">{liveCount}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'reviewing'}
+            onClick={() => setTab('reviewing')}
+          >
+            Reviewing
+            {reviewCount !== null && <span className="tasklist-tab-count">{reviewCount}</span>}
+          </button>
+        </div>
+        {/* One 28px action at the end, whichever tab is showing, so nothing
+            else in the row moves when switching: New Task in Building
+            (a review is not started from a blank form; ⌘N works from both),
+            Refresh in Reviewing. */}
+        {tab === 'building' ? (
+          <button type="button" className="icon-btn tasklist-action" onClick={onNew} aria-label="New Task" title="New task (⌘N)">
+            <PlusIcon size={16} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="icon-btn tasklist-action"
+            onClick={() => activeProject && void refreshReviews(activeProject.repoPath, { force: true })}
+            disabled={!activeProject}
+            aria-label="Refresh Review Requests"
+            title="Ask GitHub again now (it asks every minute)"
+          >
+            <RefreshIcon size={16} />
+          </button>
         )}
-        {nameProject && (
-          <span className="tasklist-count" title={`${blockedCount} blocked of ${liveCount}`}>
-            {blockedCount > 0 ? `${blockedCount}/${liveCount}` : liveCount}
-          </span>
-        )}
-        <button className="btn" onClick={onNew} title="New task (⌘N)">
-          New Task
-          <span className="kbd" aria-hidden="true">
-            ⌘N
-          </span>
-        </button>
         {/* Collapses the list to the rail of group counts (#266). */}
         {onCollapsedChange && (
           <button
@@ -639,6 +694,20 @@ export default function TaskList({
         )}
       </div>
 
+      {tab === 'reviewing' ? (
+        <div className="tasklist-scroll">
+          <ReviewList
+            project={activeProject}
+            state={reviewState}
+            groups={reviewGroupsNow}
+            reviewTasks={reviewTasks}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            onOpened={onReviewOpened}
+            age={(ts) => relativeTime(ts, now)}
+          />
+        </div>
+      ) : (
       <div className="tasklist-scroll" ref={scrollRef}>
         {ordered.length === 0 && (
           <EmptyState
@@ -744,6 +813,7 @@ export default function TaskList({
           </div>
         ))}
       </div>
+      )}
 
       {menu && (
         <div

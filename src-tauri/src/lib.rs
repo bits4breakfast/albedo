@@ -130,6 +130,8 @@ const M0011_TASK_SUMMARY: &str = include_str!("../../src/db/migrations/0011_task
 /// v12: projects.ci_details and ci_details_command -- what a queued CI failure
 /// carries (#280).
 const M0012_CI_DETAILS: &str = include_str!("../../src/db/migrations/0012_ci_details.sql");
+/// v13: tasks.review_url -- the pull request a review task is for (#287).
+const M0013_REVIEW_URL: &str = include_str!("../../src/db/migrations/0013_review_url.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -203,6 +205,12 @@ pub fn run() {
             version: 12,
             description: "projects.ci_details",
             sql: M0012_CI_DETAILS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 13,
+            description: "tasks.review_url",
+            sql: M0013_REVIEW_URL,
             kind: MigrationKind::Up,
         },
     ];

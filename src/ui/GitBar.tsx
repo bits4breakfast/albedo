@@ -105,7 +105,10 @@ export default function GitBar({
   // checkout, so Push, Create PR and Squash would act on whatever it is on.
   // None is offered, and nothing takes their place; the view toggles stay.
   const chat = task.kind === 'chat';
-  const actionable = !detached && !chat;
+  // A review task (#287) is someone else's pull request, on Albedo's copy of
+  // it: nothing here is yours to push, open a PR for or squash.
+  const review = !!task.reviewUrl;
+  const actionable = !detached && !chat && !review;
   const step = !actionable ? 'none' : nextStep({ dirty, unpushed, commits, hasPr: prKnown ? pr !== null : null, prable });
   // An existing PR is not this bar's to show: the task bar carries the branch
   // and its PR badge, the one place git and GitHub state appears. This bar

@@ -1,0 +1,16 @@
+-- v13: the pull request a review task is for (#287).
+--
+-- Decided by the owner (schema.sql and migrations are a shared contract;
+-- issue #287, 2026-11-09). A review task is a worktree on someone else's
+-- pull request, on a local branch `review/<number>` Albedo cut from
+-- `refs/pull/<number>/head`. Its PR is found by this URL, never by the
+-- branch name: the branch is Albedo's own name for the checkout, and no PR
+-- has it as its head.
+--
+-- The URL alone says host, owner, repo and number
+-- (`https://github.com/<owner>/<repo>/pull/<number>`), so one column carries
+-- what two would have.
+--
+-- NULLABLE, no backfill: NULL is "your own task", which every row before v13
+-- is.
+ALTER TABLE tasks ADD COLUMN review_url TEXT;

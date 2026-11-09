@@ -29,9 +29,21 @@ import type { TaskKind } from '../types';
 export const CHAT_SYSTEM_PROMPT =
   'This is a conversation about the code, not a change to it. Do not create, edit, move or delete files in this folder, and do not run commands that change them (no git commits, checkouts, installs or formatters). Read whatever you need. Making changes elsewhere through other tools is fine, for example tickets, documents or pages via MCP, when the user asks for it.';
 
-/** The flags a task's kind adds to every spawn: none for work. */
-export function kindFlags(kind: TaskKind): string[] {
-  return kind === 'chat' ? ['--append-system-prompt', CHAT_SYSTEM_PROMPT] : [];
+/**
+ * What a review task's `claude` is told on every start (#287): it is helping
+ * the user review someone else's pull request, checked out here. It explains
+ * and answers; it changes nothing, and it never speaks on GitHub for the user
+ * -- comments and the review go out only from Albedo's Submit, by the user.
+ */
+export function reviewSystemPrompt(reviewUrl: string): string {
+  return `You are helping the user review someone else's pull request, ${reviewUrl}, which is checked out in this folder at its head. Explain the change, answer the user's questions about it, and point out problems when asked. Do not create, edit, move or delete files here, and do not run commands that change them or the branch (no commits, checkouts, resets, pushes, installs or formatters). Never post anything on the pull request: no comments, reviews, approvals or labels, through gh or any other tool. The user writes and sends the review themselves.`;
+}
+
+/** The flags a task's kind adds to every spawn: none for your own work. */
+export function kindFlags(kind: TaskKind, reviewUrl: string | null = null): string[] {
+  if (kind === 'chat') return ['--append-system-prompt', CHAT_SYSTEM_PROMPT];
+  if (reviewUrl) return ['--append-system-prompt', reviewSystemPrompt(reviewUrl)];
+  return [];
 }
 
 export type SpawnMode =
@@ -63,6 +75,8 @@ export interface SpawnPlan {
 export interface SpawnInput {
   /** The task's kind: a chat adds {@link kindFlags} to whatever the mode is. */
   kind: TaskKind;
+  /** A review task's pull request (#287): its spawn says so, as a chat's does. */
+  reviewUrl?: string | null;
   /** The task's session now, or null if it never had one. */
   sessionId: string | null;
   /** History's argv for this task's first spawn (`--resume <id>` [`--fork-session`]). */
@@ -82,7 +96,7 @@ function valueAfter(args: readonly string[], flag: string): string | null {
 
 export function planSpawn(o: SpawnInput): SpawnPlan {
   const plan = planSession(o);
-  const extra = kindFlags(o.kind);
+  const extra = kindFlags(o.kind, o.reviewUrl ?? null);
   return extra.length === 0 ? plan : { ...plan, args: [...plan.args, ...extra] };
 }
 

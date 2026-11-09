@@ -47,6 +47,7 @@ function task(id: number, projectId: number, over: Partial<Task> = {}): Task {
     lastActivityAt: null,
     seenAt: null,
     summary: null,
+    reviewUrl: null,
     ...over,
   };
 }

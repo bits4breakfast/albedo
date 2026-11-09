@@ -34,6 +34,8 @@ import { checkSource } from '../../src/gh/checks';
 import type { Message, Task } from '../../src/types';
 import { groupOf } from '../../src/ui/taskGroups';
 import { reviewChip } from '../../src/gh/prStatus';
+import { fetchReviewRequests } from '../../src/gh/reviewRequests';
+import { activityWords, reviewGroups } from '../../src/gh/reviewActivity';
 
 import { databasePath, demoEnv, setup } from './demo.mjs';
 import { migrate, migrationsFromLibRs } from './seed.mjs';
@@ -327,6 +329,27 @@ describe('the stand-in gh', () => {
   }, GH_TEST_MS);
 });
 
+describe('the Reviewing tab', () => {
+  useFakeGh();
+
+  it('lists the PRs asking for a review: one with news, two requested, one quiet', async () => {
+    const repo = scenario.projects.find((p) => p.name === 'recipe-app')!.repo;
+    const list = await fetchReviewRequests(repo);
+    expect(list?.viewer).toBe('sam-rivera');
+    const groups = reviewGroups(list!.prs, new Map(), list!.viewer);
+    expect(groups.map((g) => [g.key, g.rows.map((r) => r.pr.number)])).toEqual([
+      ['activity', [34]],
+      ['requested', [36, 33]],
+      ['reviewed', [29]],
+    ]);
+    expect(activityWords(groups[0]!.rows[0]!.activity)).toEqual(['new commits', '1 new comment']);
+    expect(groups[1]!.rows[1]!.pr.teams).toEqual(['web']);
+
+    const blog = scenario.projects.find((p) => p.name === 'blog')!.repo;
+    expect((await fetchReviewRequests(blog))?.prs).toEqual([]);
+  }, GH_TEST_MS);
+});
+
 describe('the task list', () => {
   useFakeGh();
 
@@ -349,4 +372,16 @@ describe('the task list', () => {
       'cooking-time': 'done',
     });
   }, GH_TEST_MS);
+});
+
+describe('the Reviewing tab, checked out', () => {
+  it('has each PR head where GitHub keeps it, one commit on main', () => {
+    const p = scenario.projects.find((x) => x.name === 'recipe-app')!;
+    const remote = (p as unknown as { remote: string }).remote;
+    for (const n of [29, 33, 34, 36]) {
+      const log = spawnSync('git', ['log', '--format=%s', `main..refs/pull/${n}/head`], { cwd: remote, encoding: 'utf8' });
+      expect(log.status).toBe(0);
+      expect(log.stdout.trim().split('\n')).toHaveLength(1);
+    }
+  });
 });

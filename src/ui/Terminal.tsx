@@ -612,6 +612,7 @@ export default function Terminal({
       // A chat's instruction rides on every spawn, in the plan's flags.
       const plan = planSpawn({
         kind: live.kind,
+        reviewUrl: live.reviewUrl,
         sessionId: live.sessionId,
         pending,
         fresh,

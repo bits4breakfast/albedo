@@ -153,6 +153,7 @@ function task(id: number, projectId: number, title: string): Task {
     lastActivityAt: null,
     seenAt: null,
     summary: null,
+    reviewUrl: null,
   };
 }
 
@@ -200,12 +201,14 @@ async function settle() {
 }
 
 describe('opening the Review Guide', () => {
-  it('from the task’s ⋯ menu: a Guide tab in the reading pane, closed by its ✕', async () => {
+  it('the Guide tab is always there for a task on a branch, with no ✕; ⋯ › Review Guide switches to it', async () => {
     store.set(KEYS.activeProject, 'p1');
     store.set(KEYS.selectedTask, '10');
     render(<App />);
     await settle();
-    expect(screen.queryByRole('tab', { name: 'Guide' })).toBeNull();
+    const tab = screen.getByRole('tab', { name: 'Guide' });
+    expect(tab.getAttribute('aria-selected')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'Close the guide' })).toBeNull();
 
     fireEvent.click(within(document.querySelector<HTMLElement>('.main-bar')!).getByRole('button', { name: 'Actions for Fix the login retry' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: /Review Guide/ }));
@@ -213,30 +216,9 @@ describe('opening the Review Guide', () => {
     expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('guide').textContent).toBe('guide for 10');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close the guide' }));
-    await settle();
-    expect(screen.queryByRole('tab', { name: 'Guide' })).toBeNull();
-    expect(screen.getByRole('tab', { name: 'Transcript' }).getAttribute('aria-selected')).toBe('true');
-  });
-
-  it('its ✕ sits on the Guide tab, and closes it from another tab too (#226)', async () => {
-    store.set(KEYS.activeProject, 'p1');
-    store.set(KEYS.selectedTask, '10');
-    render(<App />);
-    await settle();
-    fireEvent.click(within(document.querySelector<HTMLElement>('.main-bar')!).getByRole('button', { name: 'Actions for Fix the login retry' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Review Guide/ }));
-    await settle();
-    const close = screen.getByRole('button', { name: 'Close the guide' });
-    // In the tab's own pill, right after the tab -- not at the row's far end.
-    expect(close.previousElementSibling).toBe(screen.getByRole('tab', { name: 'Guide' }));
-    expect(close.closest('[role="tablist"]')).not.toBeNull();
-
     fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
     await settle();
-    fireEvent.click(screen.getByRole('button', { name: 'Close the guide' }));
-    await settle();
-    expect(screen.queryByRole('tab', { name: 'Guide' })).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('false');
   });
 
   it('from the Files pane’s button', async () => {

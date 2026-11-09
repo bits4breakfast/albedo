@@ -27,6 +27,7 @@ const task: Task = {
   id: 7, title: 'Fix login', projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: 'fix-login',
   worktreePath: '/w/fix-login', sessionId: 's7', ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null,
+  reviewUrl: null,
 };
 
 /** jsdom lays nothing out: give the menu a real size and the window a known one. */
