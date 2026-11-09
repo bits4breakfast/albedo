@@ -31,8 +31,13 @@ export function migrationsFromLibRs(libRsPath) {
     out.push({ version: Number(m[1]), description: m[2], sql: readFileSync(path, 'utf8') });
   }
   if (out.length === 0) throw new Error('lib.rs: no migrations found; has the Migration list changed shape?');
+  // Increasing, from 1. Not necessarily contiguous: two branches can take
+  // the next numbers in parallel (#287's v15 beside #295's v14), and sqlx
+  // applies whatever it has not applied yet, in order.
   out.forEach((mig, i) => {
-    if (mig.version !== i + 1) throw new Error(`lib.rs: migration ${i + 1} is missing or out of order`);
+    if (i === 0 ? mig.version !== 1 : mig.version <= out[i - 1].version) {
+      throw new Error(`lib.rs: migration ${mig.version} is out of order`);
+    }
   });
   return out;
 }

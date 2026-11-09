@@ -391,7 +391,7 @@ describe('the words', () => {
 
   it('goes first in the message: CI, code comments, passages, then the box', () => {
     const code = [
-      { id: 1, taskId: 7, path: 'src/a.ts', lineStart: 3, lineEnd: 3, anchorText: 'x', body: 'Name it.', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null },
+      { id: 1, taskId: 7, path: 'src/a.ts', lineStart: 3, lineEnd: 3, anchorText: 'x', body: 'Name it.', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null },
     ];
     const body = composeMessage(code, 'Comments:', [], 'Please fix.', failure);
     const ci = body.indexOf('CI failed on PR #6102');

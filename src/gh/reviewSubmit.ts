@@ -22,8 +22,11 @@
  * `gh api --input`: gh's `-f`/`-F` flags cannot build an array of objects
  * reliably (measured on gh 2.97: raw and typed fields are grouped apart, so a
  * typed `line` lands on the wrong comment), and the Tauri shell cannot close
- * a child's stdin. The file holds only what the user wrote and is removed
- * after the request. Replies are one string each, sent with `-f` (raw: a body
+ * a child's stdin. The file holds only what the user wrote, and is emptied
+ * after the request, whether it succeeded or not. Emptied, not deleted:
+ * Albedo has no fs remove permission, and granting one would allow deletes
+ * across its whole fs scope, worktrees included (inbox.ts and hookEvents.ts
+ * empty their files the same way). Replies are one string each, sent with `-f` (raw: a body
  * starting with `@` is never read as a file).
  *
  * The planning half is pure and tested; `submitReview` takes its gh runner
@@ -52,6 +55,8 @@ export interface GithubDraft {
   body: string;
   /** A reply: the REST id of the thread's first comment. Null: a new line comment. */
   replyTo: number | null;
+  /** Its code is no longer in the file: it goes in the summary, at the line it was on. */
+  lost?: boolean;
 }
 
 /** path -> the new-side line ranges of the PR's diff hunks, inclusive. */
@@ -126,7 +131,7 @@ function where(d: Pick<GithubDraft, 'path' | 'lineStart' | 'lineEnd'>): string {
 export function reviewBody(summary: string, outside: readonly GithubDraft[]): string {
   const head = summary.trim();
   if (outside.length === 0) return head;
-  const items = outside.map((d) => `\`${where(d)}\`\n${d.body.trim().split('\n').map((l) => `> ${l}`).join('\n')}`);
+  const items = outside.map((d) => `\`${where(d)}\`${d.lost ? ' (this code has changed since)' : ''}\n${d.body.trim().split('\n').map((l) => `> ${l}`).join('\n')}`);
   return [head, `**On lines outside the diff:**\n\n${items.join('\n\n')}`].filter((p) => p !== '').join('\n\n');
 }
 
@@ -151,7 +156,7 @@ export function planReview(input: {
   const comments: ReviewLineComment[] = [];
   const outside: GithubDraft[] = [];
   for (const d of lines) {
-    if (!inDiff(input.ranges, d.path, d.lineStart, d.lineEnd)) {
+    if (d.lost || !inDiff(input.ranges, d.path, d.lineStart, d.lineEnd)) {
       outside.push(d);
       continue;
     }
@@ -223,7 +228,8 @@ export interface SubmitIo {
   gh(args: string[]): Promise<GhResult | null>;
   /** Write the review's JSON where gh can read it; returns its absolute path. */
   writeInput(json: string): Promise<string>;
-  removeInput(path: string): Promise<void>;
+  /** Done with it, sent or not: nothing of the review stays on disk. */
+  clearInput(path: string): Promise<void>;
   /** The drafts GitHub accepted: stored as sent before the next request. */
   markSent(ids: readonly number[]): Promise<void>;
 }
@@ -267,7 +273,7 @@ export async function submitReview(pr: PrRef, plan: ReviewPlan, io: SubmitIo): P
     try {
       r = await io.gh(['api', ...hostArgs(pr), '-X', 'POST', `${repoPath(pr)}/reviews`, '--input', file]);
     } finally {
-      await io.removeInput(file).catch((err: unknown) => console.warn('[review] could not remove the request file', err));
+      await io.clearInput(file).catch((err: unknown) => console.warn('[review] could not empty the request file', err));
     }
     if (!r) return fail(false, 0, 'GitHub CLI (gh) could not be run.');
     if (r.code !== 0) return fail(false, 0, ghText(r));

@@ -8,7 +8,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ReviewComment } from '../../db/comments';
-import { ACTION_LABEL, cardState, resolvedTrace } from './commentLabels';
+import type { ReviewThread } from '../../gh/reviewThreads';
+import { openExternal } from '../../lib/openUrl';
+import { ACTION_LABEL, DESTINATIONS, ago, cardState, draftPlaceholder, draftSaveLabel, resolvedTrace } from './commentLabels';
 
 function where(from: number, to: number): string {
   return from === to ? `Line ${from}` : `Lines ${from}–${to}`;
@@ -19,16 +21,19 @@ export function CommentCardView({
   onEdit,
   onResolve,
   onDelete,
+  outside = false,
 }: {
   comment: ReviewComment;
   onEdit: () => void;
   onResolve: () => void;
   onDelete: () => void;
+  /** #287: a draft for GitHub on lines outside the PR's diff. */
+  outside?: boolean;
 }): ReactNode {
   // One main action on the row, the rest under ⋯ (#222); the File mode's
   // widget draws the same from the same `cardState`.
   const [more, setMore] = useState(false);
-  const card = cardState(comment);
+  const card = cardState(comment, Date.now(), outside);
   const run = { edit: onEdit, resolve: onResolve, delete: onDelete };
   const action = (a: 'edit' | 'resolve' | 'delete', primary: boolean) => (
     <button
@@ -80,16 +85,20 @@ export function CommentsBar({
   onReopen,
   onResolve,
   onDelete,
+  aside = null,
 }: {
   traces: readonly ReviewComment[];
   outdated: readonly ReviewComment[];
   onReopen: (c: ReviewComment) => void;
   onResolve: (c: ReviewComment) => void;
   onDelete: (c: ReviewComment) => void;
+  /** #287: GitHub threads on this file that are not on its lines here. */
+  aside?: ReactNode;
 }): ReactNode {
-  if (traces.length === 0 && outdated.length === 0) return null;
+  if (traces.length === 0 && outdated.length === 0 && aside === null) return null;
   return (
     <div className="ed-cmt-bar">
+      {aside}
       {traces.map((c) => (
         <div key={`t${c.id}`} className="ed-cmt-trace" title={c.body}>
           <span className="ed-cmt-trace-mark" aria-hidden="true">
@@ -127,6 +136,37 @@ export function CommentsBar({
   );
 }
 
+/**
+ * Where the comment goes, on a review task only (#287): Ask Claude or
+ * Draft for GitHub. A small segmented switch at the head of the box.
+ */
+export function DestinationSwitch({
+  value,
+  onChange,
+}: {
+  value: 'draft' | null;
+  onChange: (github: 'draft' | null) => void;
+}): ReactNode {
+  return (
+    <div className="ed-cmt-head">
+      <span className="ed-cmt-where">Goes to</span>
+      <span className="seg-sm" role="group" aria-label="Where this comment goes">
+        {DESTINATIONS.map((d) => (
+          <button
+            key={d.label}
+            type="button"
+            aria-pressed={value === d.github}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onChange(d.github)}
+          >
+            {d.label}
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 export function CommentDraftView({
   from,
   to,
@@ -134,29 +174,38 @@ export function CommentDraftView({
   editing,
   onSave,
   onCancel,
+  destination,
 }: {
   from: number;
   to: number;
   initial: string;
   editing: boolean;
   /** Resolves once stored; the box stays (with its text) if it rejects. */
-  onSave: (text: string) => void;
+  onSave: (text: string, github: 'draft' | null) => void;
   onCancel: () => void;
+  /**
+   * #287: on a review task, where it goes to start with (the choice shows);
+   * undefined on every other task, where a comment is for Claude and no
+   * choice is drawn.
+   */
+  destination?: 'draft' | null;
 }): ReactNode {
   const [text, setText] = useState(initial);
+  const [github, setGithub] = useState<'draft' | null>(destination ?? null);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => ref.current?.focus(), []);
   const save = () => {
-    if (text.trim() !== '') onSave(text.trim());
+    if (text.trim() !== '') onSave(text.trim(), github);
   };
   return (
     <div className="ed-cmt ed-cmt-draft">
+      {destination !== undefined ? <DestinationSwitch value={github} onChange={setGithub} /> : null}
       <textarea
         ref={ref}
         className="ed-cmt-input"
         rows={3}
         value={text}
-        placeholder="Leave a comment for Claude — any number of lines. ⌘↵ to save, Esc to cancel."
+        placeholder={draftPlaceholder(github)}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -179,9 +228,234 @@ export function CommentDraftView({
           Cancel
         </button>
         <button type="button" className="ed-cmt-btn ed-cmt-primary" onClick={save}>
-          {editing ? 'Save' : 'Comment'}
+          {draftSaveLabel(github, editing)}
         </button>
       </div>
     </div>
+  );
+}
+
+/** A plain box for a reply's text: ⌘↵ saves, Esc cancels, Enter is a new line. */
+function ReplyBox({ initial, editing, onSave, onCancel }: { initial: string; editing: boolean; onSave: (text: string) => void; onCancel: () => void }): ReactNode {
+  const [text, setText] = useState(initial);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => ref.current?.focus(), []);
+  const save = () => {
+    if (text.trim() !== '') onSave(text.trim());
+  };
+  return (
+    <>
+      <textarea
+        ref={ref}
+        className="ed-cmt-input"
+        rows={3}
+        value={text}
+        aria-label="Reply"
+        placeholder="A reply on GitHub, sent with Submit Review. ⌘↵ to save, Esc to cancel."
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            save();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel();
+          } else {
+            e.stopPropagation();
+          }
+        }}
+      />
+      <div className="ed-cmt-foot">
+        <span className="ed-cmt-where">Reply</span>
+        <button type="button" className="ed-cmt-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="ed-cmt-btn ed-cmt-primary" onClick={save}>
+          {editing ? 'Save' : 'Add Reply'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** "2 comments", "1 comment". */
+function commentsCount(n: number): string {
+  return n === 1 ? '1 comment' : `${n} comments`;
+}
+
+/**
+ * Another reviewer's thread on GitHub (#287, step 4), read only, under the
+ * line it is on: the same card as a comment, its edge grey as a sent one's
+ * (it is not yours to send), each comment as author · age and its text.
+ * Reply is the one action; Open on GitHub is under ⋯. A resolved thread is
+ * folded to one line until Show. Your reply drafts hang under it, and go
+ * with Submit Review.
+ */
+export function ThreadCardView({
+  thread,
+  prUrl,
+  line,
+  replies,
+  onReply,
+  onEditReply,
+  onDeleteReply,
+}: {
+  thread: ReviewThread;
+  prUrl: string;
+  /** Where it is in the file here; null in the bar (not on this version's lines). */
+  line: number | null;
+  replies: readonly ReviewComment[];
+  onReply: (text: string) => Promise<unknown>;
+  onEditReply: (reply: ReviewComment, text: string) => Promise<unknown>;
+  onDeleteReply: (reply: ReviewComment) => void;
+}): ReactNode {
+  const [open, setOpen] = useState(!thread.isResolved);
+  const [more, setMore] = useState(false);
+  const [writing, setWriting] = useState<ReviewComment | 'new' | null>(null);
+  const [moreOf, setMoreOf] = useState<number | null>(null);
+  const first = thread.comments[0];
+  const state = thread.isResolved ? '✓ Resolved' : thread.isOutdated ? 'Outdated' : 'On GitHub';
+  const link = `${prUrl}#discussion_r${thread.replyTo}`;
+  const where = line !== null ? `Line ${line}` : thread.line !== null ? `Line ${thread.line} on GitHub` : thread.originalLine !== null ? `Was line ${thread.originalLine}` : 'On GitHub';
+  const save = (p: Promise<unknown>) => p.then(() => setWriting(null), () => {});
+  return (
+    <div className="ed-cmt" data-state="thread">
+      <div className="ed-cmt-head">
+        <span className="ed-cmt-where">{where}</span>
+        <span className="ed-cmt-chip" data-state="sent">
+          {state} · {commentsCount(thread.comments.length)}
+        </span>
+        {!open && first ? (
+          <span className="ed-cmt-fold" title={first.body}>
+            {first.author ?? 'someone'}: “{first.body.split('\n')[0]}”
+          </span>
+        ) : null}
+        <span className="ed-cmt-actions">
+          {open ? (
+            <button type="button" className="ed-cmt-btn" onClick={() => setWriting('new')} disabled={writing !== null}>
+              Reply
+            </button>
+          ) : (
+            <button type="button" className="ed-cmt-btn" onClick={() => setOpen(true)}>
+              Show
+            </button>
+          )}
+          {more ? (
+            <>
+              <button type="button" className="ed-cmt-btn" onClick={() => void openExternal(link)}>
+                Open on GitHub
+              </button>
+              {open && thread.isResolved ? (
+                <button type="button" className="ed-cmt-btn" onClick={() => setOpen(false)}>
+                  Fold
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          <button
+            type="button"
+            className="ed-cmt-btn ed-cmt-more"
+            aria-expanded={more}
+            aria-label="More actions"
+            title="More actions"
+            onClick={() => setMore((v) => !v)}
+          >
+            ⋯
+          </button>
+        </span>
+      </div>
+      {open
+        ? thread.comments.map((c, i) => (
+            <div key={i} className="ed-cmt-thread-item">
+              <div className="ed-cmt-by">
+                <span className="ed-cmt-author">{c.author ?? 'someone'}</span>
+                {c.createdAt > 0 ? ` · ${ago(c.createdAt, Date.now())}` : ''}
+              </div>
+              <div className="ed-cmt-body">{c.body}</div>
+            </div>
+          ))
+        : null}
+      {replies.map((r) =>
+        writing !== null && writing !== 'new' && writing.id === r.id ? (
+          <div key={r.id} className="ed-cmt-thread-item">
+            <ReplyBox initial={r.body} editing onSave={(t) => save(onEditReply(r, t))} onCancel={() => setWriting(null)} />
+          </div>
+        ) : (
+          <div key={r.id} className="ed-cmt-thread-item">
+            <div className="ed-cmt-head">
+              <span className="ed-cmt-where">Your reply</span>
+              <span className="ed-cmt-chip" data-state="waiting">
+                {cardState(r).chip}
+              </span>
+              <span className="ed-cmt-actions">
+                <button type="button" className="ed-cmt-btn" onClick={() => setWriting(r)}>
+                  {ACTION_LABEL.edit}
+                </button>
+                {moreOf === r.id ? (
+                  <button type="button" className="ed-cmt-btn ed-cmt-danger" onClick={() => onDeleteReply(r)}>
+                    {ACTION_LABEL.delete}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="ed-cmt-btn ed-cmt-more"
+                  aria-expanded={moreOf === r.id}
+                  aria-label="More actions"
+                  title="More actions"
+                  onClick={() => setMoreOf((v) => (v === r.id ? null : r.id))}
+                >
+                  ⋯
+                </button>
+              </span>
+            </div>
+            <div className="ed-cmt-body">{r.body}</div>
+          </div>
+        ),
+      )}
+      {writing === 'new' ? (
+        <div className="ed-cmt-thread-item">
+          <ReplyBox initial="" editing={false} onSave={(t) => save(onReply(t))} onCancel={() => setWriting(null)} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * GitHub threads on a file that are not on its lines here (#287): outdated,
+ * on a removed line, or their code is gone. One line in the bar above the
+ * file, as a resolved comment's trace is; Show lists them as cards there.
+ */
+export function ThreadsAside({
+  threads,
+  render,
+}: {
+  threads: readonly ReviewThread[];
+  render: (t: ReviewThread) => ReactNode;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const first = threads[0]?.comments[0];
+  return (
+    <>
+      <div className="ed-cmt-trace">
+        <span className="ed-cmt-trace-mark" aria-hidden="true">
+          ↗
+        </span>
+        <span className="ed-cmt-trace-text">
+          {threads.length === 1 ? '1 thread' : `${threads.length} threads`} on GitHub not on this version’s lines
+          {first && !open ? (
+            <span className="ed-cmt-trace-body">
+              {' '}
+              · {first.author ?? 'someone'}: “{first.body.split('\n')[0]}”
+            </span>
+          ) : null}
+        </span>
+        <button type="button" className="ed-cmt-btn" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? 'Hide' : 'Show'}
+        </button>
+      </div>
+      {open ? threads.map((t) => render(t)) : null}
+    </>
   );
 }

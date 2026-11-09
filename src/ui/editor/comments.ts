@@ -12,7 +12,7 @@
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from '@codemirror/view';
 import type { ReviewComment } from '../../db/comments';
-import { ACTION_LABEL, cardState } from './commentLabels';
+import { ACTION_LABEL, DESTINATIONS, cardState, draftPlaceholder, draftSaveLabel } from './commentLabels';
 
 /** A comment placed in this document. */
 export interface PlacedComment {
@@ -21,6 +21,8 @@ export interface PlacedComment {
   from: number;
   /** End of its last line. */
   to: number;
+  /** #287: a draft for GitHub on lines outside the PR's diff. */
+  outside?: boolean;
 }
 
 export interface Draft {
@@ -31,8 +33,13 @@ export interface Draft {
 }
 
 export interface CommentActions {
-  /** Save a draft's text: a new comment over [from, to], or an edit. */
-  save(draft: Draft, text: string, state: EditorState): void;
+  /** Save a draft's text: a new comment over [from, to], or an edit; `github` is where it goes (#287). */
+  save(draft: Draft, text: string, state: EditorState, github: 'draft' | null): void;
+  /**
+   * #287: on a review task, where a box starts (the choice is drawn); undefined
+   * on any other task, whose box has no choice and whose comments go to Claude.
+   */
+  destination?(editing: ReviewComment | null): 'draft' | null | undefined;
   edit(comment: ReviewComment): void;
   resolve(comment: ReviewComment): void;
   remove(comment: ReviewComment): void;
@@ -114,13 +121,20 @@ class CommentCard extends WidgetType {
   eq(other: CommentCard): boolean {
     const a = this.placed.comment;
     const b = other.placed.comment;
-    return a.id === b.id && a.updatedAt === b.updatedAt && a.sentAt === b.sentAt && a.body === b.body;
+    return (
+      a.id === b.id &&
+      a.updatedAt === b.updatedAt &&
+      a.sentAt === b.sentAt &&
+      a.body === b.body &&
+      a.github === b.github &&
+      this.placed.outside === other.placed.outside
+    );
   }
   toDOM(view: EditorView): HTMLElement {
     const c = this.placed.comment;
     // The same card as the Diff mode's CommentCardView (#222): a state chip,
     // one main action, and the rest behind ⋯.
-    const state = cardState(c);
+    const state = cardState(c, Date.now(), this.placed.outside === true);
     const card = el('div', 'ed-cmt');
     card.dataset.state = state.state;
     const head = el('div', 'ed-cmt-head');
@@ -171,14 +185,40 @@ class DraftBox extends WidgetType {
     const box = el('div', 'ed-cmt ed-cmt-draft');
     const area = el('textarea', 'ed-cmt-input');
     area.rows = 3;
-    area.placeholder = 'Leave a comment for Claude — any number of lines. ⌘↵ to save, Esc to cancel.';
+    // A review task's box chooses where the comment goes (#287), as the Diff
+    // mode's DestinationSwitch does; any other task's has no choice.
+    const start = this.actions.destination?.(this.draft.editing);
+    let github: 'draft' | null = start ?? null;
+    const editing = this.draft.editing !== null;
+    const primary = button(draftSaveLabel(github, editing), () => save(), 'ed-cmt-btn ed-cmt-primary');
+    area.placeholder = draftPlaceholder(github);
     area.value = this.draft.editing?.body ?? '';
     const save = () => {
       const text = area.value.trim();
       if (text === '') return;
       const draft = view.state.field(commentsField).draft;
-      if (draft) this.actions.save(draft, text, view.state);
+      if (draft) this.actions.save(draft, text, view.state, github);
     };
+    if (start !== undefined) {
+      const head = el('div', 'ed-cmt-head');
+      const seg = el('span', 'seg-sm');
+      seg.setAttribute('role', 'group');
+      seg.setAttribute('aria-label', 'Where this comment goes');
+      const options = DESTINATIONS.map((d) => {
+        const b = button(d.label, () => {
+          github = d.github;
+          for (const [o, x] of options) o.setAttribute('aria-pressed', String(x === github));
+          primary.textContent = draftSaveLabel(github, editing);
+          area.placeholder = draftPlaceholder(github);
+          area.focus();
+        }, '');
+        b.setAttribute('aria-pressed', String(d.github === github));
+        return [b, d.github] as const;
+      });
+      seg.append(...options.map(([b]) => b));
+      head.append(el('span', 'ed-cmt-where', 'Goes to'), seg);
+      box.append(head);
+    }
     const cancel = () => {
       view.dispatch({ effects: setDraft.of(null) });
       view.focus();
@@ -202,7 +242,7 @@ class DraftBox extends WidgetType {
     foot.append(
       el('span', 'ed-cmt-where', rangeLabel(view, this.draft.from, this.draft.to)),
       button('Cancel', cancel),
-      button(this.draft.editing ? 'Save' : 'Comment', save, 'ed-cmt-btn ed-cmt-primary'),
+      primary,
     );
     box.append(area, foot);
     setTimeout(() => area.focus(), 0);
@@ -243,7 +283,8 @@ const empty = new Slot(false);
  */
 export function commentsExtension(actions: () => CommentActions | null): Extension {
   const proxy: CommentActions = {
-    save: (d, t, s) => actions()?.save(d, t, s),
+    save: (d, t, s, g) => actions()?.save(d, t, s, g),
+    destination: (c) => actions()?.destination?.(c),
     edit: (c) => actions()?.edit(c),
     resolve: (c) => actions()?.resolve(c),
     remove: (c) => actions()?.remove(c),

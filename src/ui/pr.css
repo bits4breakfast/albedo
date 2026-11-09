@@ -130,6 +130,10 @@
 }
 .pr-action[data-tone='merge'] { color: var(--add); background: var(--add-soft); border-color: var(--add); }
 .pr-action[data-tone='conflicts'] { color: var(--warn); background: var(--banner-bg); border-color: var(--warn); }
+/* Submit Review on a review task (#287): the accent's soft pair, the text
+   pair the comment chips already use (--on-accent-soft on --accent-soft,
+   6.92 light; measured in commentsContrast.test.ts), edged in --accent-line. */
+.pr-action[data-tone='submit'] { color: var(--on-accent-soft); background: var(--accent-soft); border-color: var(--accent-line); }
 .pr-action:hover { border-color: var(--text-strong); }
 .pr-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* Approved but not mergeable yet: GitHub's reason in words, quiet. */

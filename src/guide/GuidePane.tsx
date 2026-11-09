@@ -1087,7 +1087,7 @@ function GuideFileDiff({
   const full = diff.files.find((f) => f.path === file.path) ?? null;
   const result = full?.result ?? null;
   const newText = result && result.kind === 'diff' && result.change !== 'deleted' ? result.newText : null;
-  const comments = useDiffComments(task.id, file.path, newText, false, fresh);
+  const comments = useDiffComments(task.id, file.path, newText, false, fresh, task);
   const { name, dir } = splitPath(file.path);
   const split = file.blocks.length < file.totalBlocks;
   // A stat-only file is one block standing for all of its hunks: it shows whole.

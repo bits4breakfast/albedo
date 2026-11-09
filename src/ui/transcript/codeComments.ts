@@ -29,7 +29,9 @@ export function useWaitingCodeComments(taskId: number | null): readonly ReviewCo
     const load = () =>
       void listComments(taskId).then(
         (rows) => {
-          if (live) setWaiting({ taskId, rows: rows.filter((c) => c.sentAt === null) });
+          // A draft for GitHub (#287) waits for Submit Review, never for a
+          // message to Claude.
+          if (live) setWaiting({ taskId, rows: rows.filter((c) => c.sentAt === null && c.github === null) });
         },
         (err: unknown) => console.warn('[comments] could not load the waiting ones', err),
       );

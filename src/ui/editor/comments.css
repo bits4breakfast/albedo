@@ -153,3 +153,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Another reviewer's thread on GitHub (#287): the comment card, its edge
+   grey as a sent comment's (it is not yours to send), each comment after a
+   hairline. Author in --text-strong, its age in --muted, on the card's
+   --panel: the tokens the card's head already uses. */
+.ed-cmt[data-state='thread'] { border-left-color: var(--border-strong); }
+.ed-cmt-thread-item + .ed-cmt-thread-item { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.ed-cmt-by { color: var(--muted); font-size: var(--fs-xs); }
+.ed-cmt-author { color: var(--text-strong); font-weight: 600; }
+/* A folded thread's first comment, on its head row: gives way first. */
+.ed-cmt-fold { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+/* Folded, the head is the whole card. */
+.ed-cmt[data-state='thread'] > .ed-cmt-head:last-child { margin-bottom: 0; }

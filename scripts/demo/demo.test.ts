@@ -394,7 +394,7 @@ describe('a review task, on GitHub (#287, steps 3 and 4)', () => {
         writeFileSync(f, json);
         return f;
       },
-      removeInput: async (f) => rmSync(f),
+      clearInput: async (f) => rmSync(f),
       markSent: async (ids) => void sent.push(...ids),
     });
     expect(out).toEqual({ ok: true, replies: 1 });

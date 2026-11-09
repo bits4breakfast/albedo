@@ -153,7 +153,7 @@ describe('submitReview', () => {
         written.push(json);
         return '/home/me/.albedo/reviews/review-34.json';
       },
-      removeInput: async (p) => {
+      clearInput: async (p) => {
         removed.push(p);
       },
       markSent: async (ids) => {
