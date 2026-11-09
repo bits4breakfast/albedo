@@ -48,6 +48,14 @@ export interface Project {
    * source of a command run this way (CLAUDE.md, the `ci-details-sh` scope).
    */
   ciDetailsCommand: string | null;
+  /**
+   * The Review Guide's defaults (#295): glob patterns of files it sets aside,
+   * and of files it marks "review carefully" (src/guide/focus.ts). Null is
+   * Albedo's starting set; [] is none. A list equal to the starting set is
+   * stored as null, so the default has one representation.
+   */
+  guideSetAside: string[] | null;
+  guideCareful: string[] | null;
   createdAt: number;
   archivedAt: number | null;
 }
@@ -71,7 +79,7 @@ export type CiDetailsMode = 'link' | 'actions' | 'command';
  */
 export type NewProject = Omit<
   Project,
-  'id' | 'createdAt' | 'archivedAt' | 'taskPromptTemplate' | 'ciDetails' | 'ciDetailsCommand'
+  'id' | 'createdAt' | 'archivedAt' | 'taskPromptTemplate' | 'ciDetails' | 'ciDetailsCommand' | 'guideSetAside' | 'guideCareful'
 > & {
   /** Omit, or pass null/'' , for no initial prompt. Normalised on write. */
   taskPromptTemplate?: string | null;
@@ -79,6 +87,9 @@ export type NewProject = Omit<
   ciDetails?: CiDetailsMode;
   /** Omit, or pass null/'', for none. Normalised on write. */
   ciDetailsCommand?: string | null;
+  /** Omit, or pass null, for Albedo's starting set (#295). */
+  guideSetAside?: string[] | null;
+  guideCareful?: string[] | null;
 };
 
 // ---------------------------------------------------------------------------

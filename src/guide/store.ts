@@ -30,6 +30,7 @@ import type { BranchDiff } from './blocks';
 import type { LoadedBranchDiff } from './branchDiff';
 import { GuideError, writeGuide, writeNotes, type GroupNotes, type GuideErrorKind, type Progress } from './writer';
 import { notableFiles } from './validate';
+import type { GuideFocus } from './focus';
 
 export const MAX_GUIDES = 40;
 /** Per task; a branch with more reviewed file-groups than this is not a review. */
@@ -189,16 +190,18 @@ export function writeStateOf(taskId: number): WriteState | null {
 }
 
 /**
- * Write a guide for `taskId`'s diff. A second request while one runs is
- * ignored. The result is saved for the task that asked, whatever is on screen.
+ * Write a guide for `taskId`'s diff, setting aside and marking by `focus`
+ * (#295). A second request while one runs is ignored. The result is saved
+ * for the task that asked, whatever is on screen.
  */
-export async function startWrite(taskId: number, diff: BranchDiff, base: string): Promise<void> {
+export async function startWrite(taskId: number, diff: BranchDiff, base: string, focus?: GuideFocus): Promise<void> {
   if (writes.get(taskId)?.kind === 'writing') return;
   writes.set(taskId, { kind: 'writing', progress: null });
   changed();
   try {
     const guide = await writeGuide(diff, {
       base,
+      focus,
       onProgress: (p) => {
         writes.set(taskId, { kind: 'writing', progress: p });
         changed();

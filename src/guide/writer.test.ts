@@ -349,3 +349,101 @@ describe('notes come after the groups (#224)', () => {
     expect(e.kind).toBe('invalid');
   });
 });
+
+describe('set aside and careful (#295)', () => {
+  const focus = { setAside: ['**/*.test.*', '*.css'], careful: ['**/migrations/**'] };
+
+  it('never sends a set-aside file, and keeps the focus with the guide', async () => {
+    const diff = diffOf('src/a.ts', 'src/a.test.ts', 'src/ui/x.css');
+    const id = (p: string) => diff.order.find((x) => diff.blocks.get(x)!.path === p)!;
+    const [a, t, c] = [id('src/a.ts'), id('src/a.test.ts'), id('src/ui/x.css')];
+    const calls = useRunner(() => ok({ groups: [{ title: 'A', summary: 'S', blocks: [a, t, c] }] }));
+    const guide = await writeGuide(diff, { base: 'main', focus });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.prompt).toContain('src/a.ts');
+    expect(calls[0]!.prompt).not.toContain('a.test.ts');
+    expect(calls[0]!.prompt).not.toContain('x.css');
+    expect(calls[0]!.prompt).toContain('The change: 1 file(s), 1 block(s).');
+    // Ids it was not sent are not the model's to place.
+    expect(guide.groups).toEqual([{ title: 'A', summary: 'S', blocks: [a] }]);
+    expect(guide.focus).toEqual(focus);
+  });
+
+  it('asks for at most 5 careful files with a reason, optional in the schema', async () => {
+    const diff = diffOf('src/a.ts');
+    const calls = useRunner(() => ok({ groups: [{ title: 'A', summary: '', blocks: diff.order }] }));
+    const guide = await writeGuide(diff, { base: 'main' });
+    const schema = JSON.parse(calls[0]!.jsonSchema);
+    expect(schema.required).toEqual(['groups']);
+    expect(schema.properties.careful.maxItems).toBe(5);
+    expect(schema.properties.careful.items.required).toEqual(['path', 'reason']);
+    expect(calls[0]!.systemPrompt).toContain('"careful"');
+    expect(calls[0]!.systemPrompt).toContain('at most 5');
+    // No reply about it, no flags, and no focus when none was given.
+    expect(guide.flags).toBeUndefined();
+    expect(guide.focus).toBeUndefined();
+  });
+
+  it('keeps flags on files it was sent only: unknown, set-aside and repeated paths are dropped, then capped', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const paths = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts', 'src/a.test.ts'];
+    const diff = diffOf(...paths);
+    useRunner(() =>
+      ok({
+        groups: [{ title: 'All', summary: '', blocks: diff.order }],
+        careful: [
+          { path: 'src/nope.ts', reason: 'not in the change' },
+          { path: 'src/a.test.ts', reason: 'set aside, never sent' },
+          { path: ' src/a.ts ', reason: '  changes the session id\n written on restart ' },
+          { path: 'src/a.ts', reason: 'second claim' },
+          { path: 'src/b.ts', reason: '' },
+          { path: 'src/c.ts', reason: 'x'.repeat(300) },
+          { path: 'src/d.ts', reason: 'd' },
+          { path: 'src/e.ts', reason: 'e' },
+          { path: 'src/f.ts', reason: 'f' },
+          { path: 'src/b.ts', reason: 'b at last' },
+          { path: 42, reason: 'not a path' },
+        ],
+      }),
+    );
+    const guide = await writeGuide(diff, { base: 'main', focus });
+    expect(Object.keys(guide.flags ?? {})).toEqual(['src/a.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts']);
+    expect(guide.flags?.['src/a.ts']).toBe('changes the session id written on restart');
+    expect(guide.flags?.['src/c.ts']).toHaveLength(120);
+  });
+
+  it('pass two (over budget) asks for flags too, and sends no set-aside block', async () => {
+    const paths = Array.from({ length: 6 }, (_, i) => `src/f${i}.ts`);
+    const diff = buildBranchDiff([...paths.map((p) => changed(p, null, text(lines(60, p)))), changed('src/z.test.ts', null, text(lines(60)))], statReason);
+    const texts = diff.order.map((id) => renderBlock(diff.blocks.get(id)!, diff));
+    const budget = estimateTokens(texts.slice(0, 3).join('\n\n')) + CALL_OVERHEAD_TOKENS + 10;
+    const calls = useRunner((req) =>
+      req.jsonSchema.includes('"line"')
+        ? ok({ blocks: [] })
+        : ok({ groups: [{ title: 'G', summary: '', blocks: diff.order }], careful: [{ path: 'src/f1.ts', reason: 'why' }] }),
+    );
+    const guide = await writeGuide(diff, { base: 'main', budget, focus });
+    expect(calls.length).toBeGreaterThan(1);
+    for (const c of calls) expect(c.prompt).not.toContain('z.test.ts');
+    expect(JSON.parse(calls.at(-1)!.jsonSchema).properties.careful).toBeDefined();
+    expect(guide.flags).toEqual({ 'src/f1.ts': 'why' });
+  });
+
+  it('every file set aside: no call, no groups, and the reason said', async () => {
+    const diff = diffOf('src/a.test.ts', 'b.css');
+    const calls = useRunner(() => ok({ groups: [] }));
+    const guide = await writeGuide(diff, { base: 'main', focus });
+    expect(calls).toHaveLength(0);
+    expect(guide.groups).toEqual([]);
+    expect(guide.fallback).toMatch(/Every changed file is set aside/);
+  });
+
+  it('folders, when nothing fits, leave set-aside files out of them', async () => {
+    const diff = diffOf('src/a.ts', 'src/a.test.ts', 'lib/b.ts');
+    const calls = useRunner(() => ok({ groups: [] }));
+    const guide = await writeGuide(diff, { base: 'main', budget: 1, focus });
+    expect(calls).toHaveLength(0);
+    const placed = guide.groups.flatMap((g) => g.blocks).map((x) => diff.blocks.get(x)!.path);
+    expect(placed.sort()).toEqual(['lib/b.ts', 'src/a.ts']);
+  });
+});
