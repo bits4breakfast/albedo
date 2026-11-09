@@ -13,6 +13,10 @@
  * that report reads as unknown rather than as its old figure. Token counts from
  * the transcripts are kept for the tooltip: they are what this machine spent,
  * not how much of the plan that is.
+ *
+ * Left of the meters, while Albedo keeps the Mac awake (#283, ui/keepAwake.ts),
+ * a note saying so and how many tasks it is for. Global too: one activity for
+ * the whole app.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -108,7 +112,29 @@ function PlanMeter({ label, name, win, reportedAt, tokens, tokensLabel, now }: M
   );
 }
 
-export default function StatusBar() {
+/** The note's tooltip: what it does, what it does not, and where the switch is. */
+export const KEEP_AWAKE_TITLE =
+  'Albedo keeps the Mac from sleeping while tasks run. Closing the lid still sleeps it. Turn off in ⋯.';
+
+/**
+ * "Keeping the Mac awake · 2 running" (#283), while Albedo holds the Mac
+ * awake (ui/keepAwake.ts). Nothing when it does not.
+ */
+export function KeepAwakeNote({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="keep-awake-note" title={KEEP_AWAKE_TITLE}>
+      Keeping the Mac awake · {count} running
+    </span>
+  );
+}
+
+export interface StatusBarProps {
+  /** Tasks running or with background work while the Mac is kept awake; 0 when it is not. */
+  awake?: number;
+}
+
+export default function StatusBar({ awake = 0 }: StatusBarProps = {}) {
   const [plan, setPlan] = useState<Plan>(() => planUsage());
   const [tokens, setTokens] = useState<{ five: WindowUsage | null; week: WindowUsage | null }>({ five: null, week: null });
   const [now, setNow] = useState(() => Date.now());
@@ -159,7 +185,8 @@ export default function StatusBar() {
   }, [loadTokens]);
 
   return (
-    <footer className="statusbar" aria-label="Plan usage">
+    <footer className="statusbar" aria-label="Status">
+      <KeepAwakeNote count={awake} />
       <PlanMeter
         label="Session"
         name="Current session (5-hour limit)"
