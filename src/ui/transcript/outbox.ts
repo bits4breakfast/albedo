@@ -130,6 +130,7 @@ const releasing = new Set<number>();
 const failing = new Set<number>();
 const listeners = new Set<(taskId: number) => void>();
 const releaseListeners = new Set<(taskId: number, held: HeldMessage) => void>();
+const editingListeners = new Set<(taskId: number) => void>();
 
 function current(): Outbox {
   if (outbox === null) {
@@ -204,11 +205,26 @@ export function removeHeld(taskId: number, id: string): void {
  */
 export function setEditing(taskId: number, id: string, on: boolean): void {
   if (on) {
+    if (editing.has(id)) return;
     editing.add(id);
+    for (const cb of [...editingListeners]) cb(taskId);
     return;
   }
   if (!editing.delete(id)) return;
+  for (const cb of [...editingListeners]) cb(taskId);
   for (const cb of [...listeners]) cb(taskId);
+}
+
+/**
+ * Called with the task whose held message was opened or closed for editing:
+ * what Send All Now covers changes with it (#290). Opening one is not an
+ * outbox change -- nothing can go that could not before -- so it is told here.
+ */
+export function onEditingChange(cb: (taskId: number) => void): () => void {
+  editingListeners.add(cb);
+  return () => {
+    editingListeners.delete(cb);
+  };
 }
 
 /**
@@ -270,6 +286,45 @@ export async function sendHeldNow(taskId: number, id: string, send: (text: strin
   } finally {
     releasing.delete(taskId);
   }
+}
+
+/**
+ * Send All Now (#290): every held message not open for editing, into the
+ * running turn at once, as one message -- in order, joined as a release joins
+ * a run (`RUN_JOINER`). What the turn's end would send, sent now. The same
+ * lock and discipline as `sendHeldNow`; does nothing while a release is under
+ * way, or when `allNowRun` offers nothing. Resolves with whether it went.
+ */
+export async function sendAllHeldNow(taskId: number, send: (text: string) => Promise<boolean>): Promise<boolean> {
+  const run = allNowRun(heldFor(taskId), editing);
+  if (run.length === 0 || releasing.has(taskId)) return false;
+  releasing.add(taskId);
+  try {
+    return await deliverRun(taskId, run, send);
+  } finally {
+    releasing.delete(taskId);
+  }
+}
+
+/**
+ * What Send All Now sends (#290): the held messages not open for editing, in
+ * order -- offered only when each of them could be sent now on its own (not
+ * a command, not `maybeSent`) and there are two or more; otherwise nothing,
+ * and a row's own Send Now is enough. One being edited is left out and stays
+ * held. One being written right now still counts, so the button stays put
+ * (disabled) while they go; the lock keeps a second send off them. Exported
+ * for tests.
+ */
+export function allNowRun(held: readonly HeldMessage[], editingIds: ReadonlySet<string> = new Set()): HeldMessage[] {
+  const run = held.filter((h) => !editingIds.has(h.id));
+  if (run.length < 2) return [];
+  if (run.some((h) => h.maybeSent || isSlashCommand(h.text))) return [];
+  return run;
+}
+
+/** How many held messages Send All Now would send as one; 0 when it is not offered (#290). */
+export function allNowSize(taskId: number): number {
+  return allNowRun(heldFor(taskId), editing).length;
 }
 
 /** Mark `entry` sending, send it, and take it out once delivered; a failure clears the mark. */
@@ -430,4 +485,5 @@ export function __resetOutbox(): void {
   failing.clear();
   listeners.clear();
   releaseListeners.clear();
+  editingListeners.clear();
 }

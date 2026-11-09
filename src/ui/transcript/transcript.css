@@ -224,7 +224,11 @@
 }
 .tx-queued-head {
   display: flex;
-  align-items: baseline;
+  /* Every group's head is a button's height (#290), so a held group's head
+     doesn't grow when Send All Now appears and Claude Code's group head above
+     it is the same height. One size of text: centred reads as one baseline. */
+  min-height: 22px;
+  align-items: center;
   gap: 6px;
   margin-bottom: 4px;
   color: var(--muted);
@@ -264,6 +268,12 @@
 .tx-queued-act { flex: none; height: 22px; padding: 0 8px; }
 /* "May already have been sent": the notice's own --warn (5.33 on --panel). */
 .tx-queued-note { flex: none; align-self: center; color: var(--warn); font-size: var(--fs-xs); }
+/* Send All Now (#290): the head's right end, where the hint was, so its right
+   edge lines up with the rows' Remove. Its "couldn't send" note sits just
+   before it, on the head's line like the rest of the head. */
+.tx-queued-head > .tx-queued-all,
+.tx-queued-head > .tx-queued-note { margin-left: auto; }
+.tx-queued-head > .tx-queued-note + .tx-queued-all { margin-left: 0; }
 .tx-queued-edit {
   flex: 1;
   min-width: 0;

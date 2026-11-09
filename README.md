@@ -276,8 +276,9 @@ and the context reading turns to "compacts soon" from 90%.
   the turn ends, so it can never land in a question Claude asks next.
   Several held messages go as one, as Claude Code's own queue does; a slash
   command always goes on its own. Held messages show in the Queued band
-  with **Send Now**, **Edit** and **Remove**. Offline, they are kept and
-  sent when the connection is back.
+  with **Send Now**, **Edit** and **Remove**; with two or more,
+  **Send All Now** sends them into the running turn at once, as one
+  message. Offline, they are kept and sent when the connection is back.
 
 ### Comment on the conversation, then answer in one go
 

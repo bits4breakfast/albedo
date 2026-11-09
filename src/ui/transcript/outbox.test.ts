@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KEYS } from '../persisted';
 import {
   __resetOutbox,
+  allNowRun,
   editHeld,
   heldFor,
   holdMessage,
@@ -20,7 +21,9 @@ import {
   onHeldReleased,
   outboxCodec,
   releaseHeld,
+  onEditingChange,
   removeHeld,
+  sendAllHeldNow,
   sendAnyway,
   setEditing,
   tasksWithHeld,
@@ -289,5 +292,68 @@ describe('releasing', () => {
     setEditing(1, b.id, false);
     await releaseHeld(1, send);
     expect(sent).toEqual(['one', 'two, edited\n\nthree']);
+  });
+});
+
+describe('Send All Now (#290)', () => {
+  const h = (text: string, o: Partial<HeldMessage> = {}): HeldMessage => ({ id: text, text, heldAt: 0, ...o });
+  it('covers every held message, in order, when there are two or more', () => {
+    expect(allNowRun([h('a'), h('b'), h('c')]).map((x) => x.text)).toEqual(['a', 'b', 'c']);
+    expect(allNowRun([h('a')])).toEqual([]);
+    expect(allNowRun([])).toEqual([]);
+  });
+  it('leaves out one being edited, and needs two besides it', () => {
+    expect(allNowRun([h('a'), h('b'), h('c')], new Set(['b'])).map((x) => x.text)).toEqual(['a', 'c']);
+    expect(allNowRun([h('a'), h('b')], new Set(['a']))).toEqual([]);
+  });
+  it('is not offered when any of them could not be sent now: a command, or one that may already have gone', () => {
+    expect(allNowRun([h('a'), h('/compact'), h('c')])).toEqual([]);
+    expect(allNowRun([h('a'), h('b', { maybeSent: true })])).toEqual([]);
+    // A command being edited is left out, so it no longer stands in the way.
+    expect(allNowRun([h('a'), h('/compact'), h('c')], new Set(['/compact'])).map((x) => x.text)).toEqual(['a', 'c']);
+  });
+  it('sends them as one message, joined as a release joins them, and announces each', async () => {
+    holdMessage(1, 'one', T0, [7]);
+    const b = holdMessage(1, 'two')!;
+    holdMessage(1, 'three', T0, [8]);
+    setEditing(1, b.id, true);
+    const sent: string[] = [];
+    const released = vi.fn();
+    onHeldReleased(released);
+    expect(await sendAllHeldNow(1, async (t) => (sent.push(t), true))).toBe(true);
+    expect(sent).toEqual(['one\n\nthree']);
+    expect(released.mock.calls.map(([, held]) => held.commentIds)).toEqual([[7], [8]]);
+    // The one being edited stays held.
+    expect(texts(1)).toEqual(['two']);
+  });
+  it('keeps them all, in order, when the write fails', async () => {
+    holdMessage(1, 'one');
+    holdMessage(1, 'two');
+    expect(await sendAllHeldNow(1, async () => false)).toBe(false);
+    expect(heldFor(1).map((x) => [x.text, x.sending])).toEqual([
+      ['one', undefined],
+      ['two', undefined],
+    ]);
+  });
+  it('does nothing while a release has the lock', async () => {
+    holdMessage(1, 'one');
+    holdMessage(1, 'two');
+    let finish: (ok: boolean) => void = () => {};
+    const release = releaseHeld(1, () => new Promise<boolean>((r) => (finish = r)));
+    expect(isReleasing(1)).toBe(true);
+    const send = vi.fn(async () => true);
+    expect(await sendAllHeldNow(1, send)).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    finish(false);
+    await release;
+  });
+  it('tells listeners when one is opened or closed for editing', () => {
+    const a = holdMessage(1, 'a')!;
+    const changed = vi.fn();
+    onEditingChange(changed);
+    setEditing(1, a.id, true);
+    setEditing(1, a.id, true);
+    setEditing(1, a.id, false);
+    expect(changed.mock.calls).toEqual([[1], [1]]);
   });
 });

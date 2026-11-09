@@ -61,6 +61,8 @@ import {
   heldHint,
   heldLabel,
   noteShownStatus,
+  sendAllNow,
+  sendAllNowOffered,
   sendNow,
   sendNowAllowed,
   sendNowOffered,
@@ -515,6 +517,37 @@ describe('a running turn (#61)', () => {
     expect(await sendNow(1, two!.id)).toBe(true);
     expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'two']]);
     expect(heldFor(1).map((h) => h.text)).toEqual(['one']);
+  });
+
+  it('Send All Now types every held message into the running turn as one, only when Send Now may go (#290)', async () => {
+    started(T - 1_000);
+    stop = startOutboxRelease();
+    holdMessage(1, 'one');
+    const two = holdMessage(1, 'two');
+    holdMessage(1, 'three');
+    expect(sendAllNowOffered(conditionsFor(1), 3)).toBe(true);
+    expect(sendAllNowOffered(conditionsFor(1), 1)).toBe(false);
+    hooks.__setPrompt(1, { kind: 'question' });
+    expect(await sendAllNow(1)).toBe(false);
+    hooks.__setPrompt(1, null);
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    expect(await sendAllNow(1)).toBe(false);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    setEditing(1, two!.id, true);
+    expect(await sendAllNow(1)).toBe(true);
+    // One write, through the same gateway as Send Now; the one being edited stays.
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'one\n\nthree']]);
+    expect(heldFor(1).map((h) => h.text)).toEqual(['two']);
+  });
+
+  it('Send All Now is not offered while the connection, not the turn, holds them', async () => {
+    started(T - 1_000);
+    await goOffline();
+    holdMessage(1, 'one');
+    holdMessage(1, 'two');
+    expect(sendAllNowOffered(conditionsFor(1), 2)).toBe(false);
+    expect(await sendAllNow(1)).toBe(false);
+    expect(submitPty).not.toHaveBeenCalled();
   });
 
   it('never offers or sends a command now: it only goes into an idle session', async () => {

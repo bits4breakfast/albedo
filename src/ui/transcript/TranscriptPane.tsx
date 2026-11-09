@@ -32,13 +32,27 @@ import { WaitingComments } from './WaitingComments';
 import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useWaitingCodeComments, type Carried } from './codeComments';
 import { queuedCiOf, useQueuedCi, type QueuedCiFailure } from './ciFailure';
 import { useCommentsIntro } from '../commentsIntro';
-import { editHeld, holdMessage, nextRunSize, onHeldReleased, removeHeld, sendAnyway, setEditing, useHeld, type HeldMessage } from './outbox';
+import {
+  allNowSize,
+  editHeld,
+  holdMessage,
+  nextRunSize,
+  onEditingChange,
+  onHeldReleased,
+  removeHeld,
+  sendAnyway,
+  setEditing,
+  useHeld,
+  type HeldMessage,
+} from './outbox';
 import {
   conditionsFor,
   heldHint,
   heldLabel,
   noteShownStatus,
   promptOpen,
+  sendAllNow,
+  sendAllNowOffered,
   sendNow,
   sendNowAllowed,
   sendNowOfferedFor,
@@ -826,16 +840,55 @@ export function QueuedStrip({
   );
 }
 
-/** The outbox's part of the band, headed by what its messages wait for. */
+/**
+ * The outbox's part of the band, headed by what its messages wait for.
+ *
+ * With two or more that could each be sent now, the head offers Send All Now
+ * on the right (#290), in place of the hint, which moves to its tooltip: they
+ * go into the running turn as one message, as the turn's end would send them.
+ * One open for editing is left out and stays held. If they could not go
+ * after all -- a release had the task's lock -- the head says so briefly.
+ */
 function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessage[] }): ReactNode {
   const conditions = useReleaseConditions(taskId);
+  const [notNow, showNotNow] = useBriefNote();
   // Held messages go together, as one (#240): the hint says so when they will.
   const hint = heldHint(conditions, nextRunSize(taskId));
+  const allSize = allNowSize(taskId);
+  const allOffered = sendAllNowOffered(conditions, allSize);
+  const allowed = sendNowAllowed(conditions);
+  const left = held.length - allSize;
+  const allTitle = allowed
+    ? `Send these ${allSize} into the running turn now, as one message: Claude takes it at its next step.` +
+      (hint !== null ? ` Left alone: ${hint}.` : '') +
+      (left === 1 ? ' The one you\u2019re editing stays queued.' : left > 1 ? ' The ones you\u2019re editing stay queued.' : '')
+    : 'Not while Claude is asking you something, or the session is not running';
   return (
     <>
       <div className="tx-queued-head">
         {heldLabel(conditions)} <span className="tx-queued-count">{held.length}</span>
-        {hint !== null ? <span className="tx-queued-hint">{hint}</span> : null}
+        {allOffered ? (
+          <>
+            {notNow ? <span className="tx-queued-note">Couldn{'\u2019'}t send now — try again</span> : null}
+            <button
+              type="button"
+              className="tx-btn tx-queued-act tx-queued-all"
+              onClick={() =>
+                void sendAllNow(taskId).then((went) => {
+                  if (!went) showNotNow();
+                })
+              }
+              // Disabled while its own write is on its way (every one it covers is
+              // being written), as a row's Send Now is while its row is.
+              disabled={!allowed || held.filter((h) => h.sending === true).length >= allSize}
+              title={allTitle}
+            >
+              Send All Now
+            </button>
+          </>
+        ) : hint !== null ? (
+          <span className="tx-queued-hint">{hint}</span>
+        ) : null}
       </div>
       {held.map((h) => (
         <HeldRow
@@ -849,10 +902,22 @@ function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessag
   );
 }
 
+/** "Couldn't send now", shown for `SEND_NOW_NOTE_MS` after `show()`. */
+function useBriefNote(): [boolean, () => void] {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!shown) return;
+    const t = window.setTimeout(() => setShown(false), SEND_NOW_NOTE_MS);
+    return () => window.clearTimeout(t);
+  }, [shown]);
+  return [shown, () => setShown(true)];
+}
+
 /**
  * What the task's held messages wait for. Re-read on the connection, a
- * prompt, the trust dialog or the turn changing, and on any render: the
- * outbox and the pty already re-render the band.
+ * prompt, the trust dialog or the turn changing, a held message opened or
+ * closed for editing (what goes next changes with it), and on any render:
+ * the outbox and the pty already re-render the band.
  */
 function useReleaseConditions(taskId: number): ReleaseConditions {
   const [, bump] = useState(0);
@@ -865,6 +930,7 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
       onPromptChange(mine),
       onTrustWaiting(mine),
       onTurnChange(mine),
+      onEditingChange(mine),
     ];
     return () => offs.forEach((off) => off());
   }, [taskId]);
@@ -896,12 +962,7 @@ function HeldRow({
   sendNow: boolean | null;
 }): ReactNode {
   const [draft, setDraft] = useState<string | null>(null);
-  const [notNow, setNotNow] = useState(false);
-  useEffect(() => {
-    if (!notNow) return;
-    const t = window.setTimeout(() => setNotNow(false), SEND_NOW_NOTE_MS);
-    return () => window.clearTimeout(t);
-  }, [notNow]);
+  const [notNow, showNotNow] = useBriefNote();
   const draftRef = useRef(draft);
   draftRef.current = draft;
   // A paste is edited as the box shows it, a token standing for its text,
@@ -994,7 +1055,7 @@ function HeldRow({
           className="tx-btn tx-queued-act"
           onClick={() =>
             void sendNow(taskId, held.id).then((went) => {
-              if (!went) setNotNow(true);
+              if (!went) showNotNow();
             })
           }
           disabled={sending || !sendNowEnabled}
@@ -1017,7 +1078,7 @@ function HeldRow({
   );
 }
 
-/** How long a held row says Send Now could not go. */
+/** How long a held row, or the head's Send All Now, says it could not go. */
 const SEND_NOW_NOTE_MS = 3_000;
 
 // ---------------------------------------------------------------------------
