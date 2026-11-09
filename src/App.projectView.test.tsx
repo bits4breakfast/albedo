@@ -144,6 +144,7 @@ function task(id: number, projectId: number, title: string): Task {
     lastActivityAt: null,
     seenAt: null,
     summary: null,
+    reviewUrl: null,
   };
 }
 

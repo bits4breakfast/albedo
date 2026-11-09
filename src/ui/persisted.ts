@@ -26,6 +26,8 @@ export const KEYS = {
   sidebarWidth: 'albedo.shell.sidebarWidth',
   /** The task list drawn as the rail of group counts (#266). Absent means expanded. */
   taskListCollapsed: 'albedo.shell.taskListCollapsed',
+  /** The task list's tab: Building or Reviewing (#287). Absent means Building. */
+  taskListTab: 'albedo.shell.taskListTab',
   paneMode: 'albedo.shell.paneMode',
   splitRatio: 'albedo.shell.splitRatio',
   orientation: 'albedo.shell.orientation',
@@ -79,6 +81,8 @@ export const KEYS = {
   reviewGuides: 'albedo.guide.guides',
   /** What the Review Guide has marked Reviewed, per task (guide/store.ts owns the shape). */
   reviewGuideReviewed: 'albedo.guide.reviewed',
+  /** What you saw of each PR you review, keyed by its url (gh/reviewStore.ts owns the shape, #287). */
+  reviewSeen: 'albedo.reviews.seen',
   /** Squash and Merge's "Delete the branch on GitHub" choice (ui/MergeDialog.tsx, #236). Absent means on. */
   mergeDeleteBranch: 'albedo.pr.mergeDeleteBranch',
   /** One per task: the model its session is launched on. */

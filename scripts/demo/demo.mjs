@@ -140,6 +140,16 @@ export function setup(home, now = Date.now()) {
     git(home, ['init', '-q', '--bare', p.remote]);
     git(p.repo, ['remote', 'add', 'origin', p.remote]);
     git(p.repo, ['push', '-q', '-u', 'origin', 'main']);
+    // The Reviewing tab's pull requests (#287): one commit each on main,
+    // pushed where GitHub keeps a PR's head, so opening one checks it out.
+    for (const r of scenario.reviews[p.repo] ?? []) {
+      git(p.repo, ['checkout', '-q', '-b', `pr-${r.number}`, 'main']);
+      writeFiles(p.repo, r.files ?? {});
+      commitAll(p.repo, r.title, now - r.lastCommitMinutes * 60_000);
+      git(p.repo, ['push', '-q', 'origin', `HEAD:refs/pull/${r.number}/head`]);
+      git(p.repo, ['checkout', '-q', 'main']);
+      git(p.repo, ['branch', '-q', '-D', `pr-${r.number}`]);
+    }
   }
 
   const hashes = new Map();
@@ -196,6 +206,8 @@ export function setup(home, now = Date.now()) {
     }
   });
   writeFileSync(join(home, '.albedo-demo', 'prs.json'), JSON.stringify(prs, null, 2));
+  // The Reviewing tab's PRs (#287), keyed by the folder gh is asked in.
+  writeFileSync(join(home, '.albedo-demo', 'reviews.json'), JSON.stringify(scenario.reviews, null, 2));
 
   // Claude Code's own record that these folders are trusted: without it,
   // Albedo would show the workspace trust prompt as waiting on you.

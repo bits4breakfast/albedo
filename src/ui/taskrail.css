@@ -174,7 +174,7 @@
 .rail-pop-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 /* A merged circle's two groups (#278), each under its own name: the list's
-   header geometry (icon at 10px, name at 34px over the rows' titles), --faint
+   header geometry (icon at 10px, the rows' titles under it), --faint
    as there. A hairline between the two, as between the list's groups. */
 .rail-pop-sub {
   display: flex;

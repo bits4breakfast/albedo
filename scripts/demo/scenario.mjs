@@ -540,6 +540,142 @@ const { tags } = Astro.props as { tags: string[] };
 ];
 
 /**
+ * Pull requests asking `sam-rivera` (the demo's signed-in user) for a review,
+ * for the task list's Reviewing tab (#287). Times are minutes before the
+ * moment gh is asked, so they stay fresh however long the demo runs. The
+ * demo cannot preset what you have opened in Albedo (that is the app's web
+ * storage), so New Activity comes from a PR you reviewed on GitHub and its
+ * author answering after.
+ */
+/** Each one's \`files\` are its one commit on main, pushed as \`refs/pull/<n>/head\`. */
+const REVIEWS = {
+  'recipe-app': [
+    {
+      number: 34,
+      title: 'Print-friendly recipe page',
+      files: {
+        'src/styles/print.css': `@media print {
+  .app-header,
+  .recipe-actions {
+    display: none;
+  }
+  .recipe-card {
+    break-inside: avoid;
+    border: none;
+  }
+}
+`,
+        'src/recipes/RecipeCard.tsx': `import type { Recipe } from './types';
+import '../styles/print.css';
+
+export function RecipeCard({ recipe }: { recipe: Recipe }) {
+  return (
+    <article className="recipe-card">
+      <h2>{recipe.title}</h2>
+      <p className="recipe-meta">Serves {recipe.servings}</p>
+      <div className="recipe-actions">
+        <button type="button" onClick={() => window.print()}>
+          Print
+        </button>
+      </div>
+    </article>
+  );
+}
+`,
+      },
+      author: 'priya-n',
+      section: 'reviewed',
+      additions: 96,
+      deletions: 14,
+      commits: 4,
+      lastCommitMinutes: 50,
+      talk: [
+        { author: 'sam-rivera', minutesAgo: 26 * 60 },
+        { author: 'priya-n', minutesAgo: 40 },
+      ],
+    },
+    {
+      number: 36,
+      title: 'Shopping list from a recipe',
+      files: {
+        'src/shopping/list.ts': `import type { Ingredient } from '../recipes/types';
+
+/** One line per ingredient, amounts of the same unit added together. */
+export function shoppingList(items: Ingredient[]): Ingredient[] {
+  const byKey = new Map<string, Ingredient>();
+  for (const i of items) {
+    const key = \`\${i.name}|\${i.unit}\`;
+    const prev = byKey.get(key);
+    byKey.set(key, prev ? { ...prev, amount: prev.amount + i.amount } : { ...i });
+  }
+  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+`,
+        'src/shopping/list.test.ts': `import { describe, expect, it } from 'vitest';
+import { shoppingList } from './list';
+
+describe('shoppingList', () => {
+  it('adds up the same ingredient in the same unit', () => {
+    const flour = { name: 'flour', amount: 250, unit: 'g' as const };
+    expect(shoppingList([flour, flour])).toEqual([{ ...flour, amount: 500 }]);
+  });
+});
+`,
+      },
+      author: 'jordan-lee',
+      section: 'requested',
+      additions: 142,
+      deletions: 18,
+      commits: 3,
+      lastCommitMinutes: 200,
+      requestedMinutes: 180,
+    },
+    {
+      number: 33,
+      title: 'Upgrade the image loader',
+      files: {
+        'src/recipes/RecipeImage.tsx': `export function RecipeImage({ src, alt }: { src: string; alt: string }) {
+  return <img src={src} alt={alt} loading="lazy" decoding="async" width={320} height={200} />;
+}
+`,
+      },
+      author: 'alex-kim',
+      section: 'requested',
+      team: 'web',
+      additions: 12,
+      deletions: 9,
+      commits: 1,
+      lastCommitMinutes: 26 * 60,
+      requestedMinutes: 25 * 60,
+    },
+    {
+      number: 29,
+      title: 'Remember the last search',
+      files: {
+        'src/recipes/lastSearch.ts': `const KEY = 'recipe-app.lastSearch';
+
+export function readLastSearch(): string {
+  return localStorage.getItem(KEY) ?? '';
+}
+
+export function saveLastSearch(query: string): void {
+  localStorage.setItem(KEY, query);
+}
+`,
+      },
+      author: 'priya-n',
+      section: 'reviewed',
+      additions: 38,
+      deletions: 4,
+      commits: 2,
+      lastCommitMinutes: 3 * 24 * 60,
+      talk: [{ author: 'sam-rivera', minutesAgo: 2 * 24 * 60 }],
+    },
+  ],
+  blog: [],
+};
+
+/**
  * Everything the setup writes, worked out without touching the disk.
  * `home` is the demo profile's home folder; `now` anchors every time.
  */
@@ -583,5 +719,6 @@ export function buildScenario({ home, now }) {
     };
   });
 
-  return { projects, tasks };
+  const reviews = Object.fromEntries(projects.map((p) => [p.repo, REVIEWS[p.name] ?? []]));
+  return { projects, tasks, reviews };
 }

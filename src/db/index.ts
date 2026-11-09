@@ -110,6 +110,7 @@ interface TaskRow {
   last_activity_at: number | null;
   seen_at: number | null;
   summary: string | null;
+  review_url?: string | null;
 }
 
 interface MessageRow {
@@ -144,10 +145,11 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   lastActivityAt: 'last_activity_at',
   seenAt: 'seen_at',
   summary: 'summary',
+  reviewUrl: 'review_url',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -182,6 +184,8 @@ function toTask(r: TaskRow): Task {
     seenAt: r.seen_at,
     // Absent only on a database older than v11 that a test hands over.
     summary: r.summary ?? null,
+    // Absent only on a database older than v13 that a test hands over.
+    reviewUrl: r.review_url ?? null,
   };
 }
 
@@ -233,8 +237,8 @@ export async function createTask(t: NewTask): Promise<Task> {
     // no insert from here is allowed to fall through to it.
     // created_branch likewise: NULL is reserved for pre-v6 rows. And kind:
     // its default backfills pre-v8 rows, and is not a decision for new ones.
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL, NULL)`,
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL, NULL, $11)`,
     [
       t.title,
       t.projectId,
@@ -246,6 +250,7 @@ export async function createTask(t: NewTask): Promise<Task> {
       createdAt,
       t.createdBranch === null ? null : t.createdBranch ? 1 : 0,
       t.kind === 'chat' ? 'chat' : 'work',
+      t.reviewUrl ?? null,
     ],
   );
   const id = res.lastInsertId;
@@ -270,6 +275,7 @@ export async function createTask(t: NewTask): Promise<Task> {
     lastActivityAt: null,
     seenAt: null,
     summary: null,
+    reviewUrl: t.reviewUrl ?? null,
   };
 }
 

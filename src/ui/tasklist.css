@@ -13,43 +13,45 @@
   padding: 0 8px;
 }
 
-/* Scope label AND the way to change scope. Quiet by default: this is an
-   identity label, not an alert — no motion, nothing that competes with the
-   blocked ping. It only has to be legible at a glance and silent otherwise. */
-.tasklist-scope {
-  flex: 1 1 auto;
+/* Building | Reviewing (#287). A .seg, as the pane switchers are; tabs, so
+   the selected one is aria-selected rather than aria-pressed.
+   Each tab is exactly its label and count plus 12px either side: a grid of
+   max-content columns, and buttons that never shrink. The first version let
+   the buttons shrink (flex 0 1 auto, min-width 0) and WebKit sized them
+   short, clipping the right padding away, so the selected pill sat off
+   centre (owner, #287). Too narrow a sidebar clips the control at its edge
+   rather than squeezing a label. */
+.tasklist-head .tasklist-tabs {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+.tasklist-head .tasklist-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
   white-space: nowrap;
-  text-align: left;
-  height: 28px;
-  padding: 0 6px;
-  margin-left: -2px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-md);
-  font-weight: 600;
+}
+.tasklist-tabs button[aria-selected='true'] {
   color: var(--text-strong);
+  background: var(--seg-on);
+  box-shadow: var(--card-shadow);
 }
-
-/* Carrying a real name. A project name is the user's own text, not a
-   caption, so it is never upper-cased ("MyRepo" stays "MyRepo"). */
-.tasklist-scope[data-named='true'] { color: var(--text-strong); }
-
-.tasklist-scope:not([disabled]):hover { background: var(--panel-hover); }
-
-.tasklist-count {
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--faint);
-}
+/* What waits on you in Reviewing. --muted, a tier the segment clears on
+   --panel-chrome and on --seg-on alike. */
+.tasklist-tab-count { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--muted); }
+.tasklist-tabs button[aria-selected='true'] .tasklist-tab-count { color: var(--text); }
 
 .tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 8px 8px; }
 
 /* A Title Case label after the group's icon (#278): "Needs You 1",
    "Running 2", "In Review 3". The icon is a pie in the group's edge colour
-   (GroupPie.tsx) in a 16px column, so the name starts at 34px: where the
-   rows' titles start. Rows carry no icon of their own. */
+   (GroupPie.tsx) in a 16px column at 12px, which is where the rows' titles
+   start. Rows carry no icon of their own. */
 .group-label {
   display: flex;
   align-items: center;
@@ -101,8 +103,10 @@
   width: 100%;
   min-height: var(--row-h);
   margin-bottom: 1px;
-  /* 34px: the title starts under the group header's name. */
-  padding: 6px 8px 6px 34px;
+  /* 12px: the title starts where the group header's icon does. It started
+     under the header's name (34px), which left a 22px empty strip down the
+     left of every row (owner, #287). */
+  padding: 6px 8px 6px 12px;
   text-align: left;
   border-radius: var(--radius);
   /* The attention mark (below). Transparent at rest, so it costs no width. */
@@ -398,3 +402,7 @@
 /* ‹ Collapse the list to the rail (#266): at the head's far end, whatever
    else the head holds. */
 .tasklist-collapse { margin-left: auto; }
+/* In the head, the free space goes before the tab's action (+ or Refresh),
+   so + and ‹ sit together at the end and the tabs stay where they are. */
+.tasklist-head .tasklist-action { margin-left: auto; }
+.tasklist-head .tasklist-action + .tasklist-collapse { margin-left: 0; }

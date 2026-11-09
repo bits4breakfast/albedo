@@ -1312,6 +1312,13 @@ export interface RemoveWorktreeOptions {
    * for the work it described. See {@link riskGrew}.
    */
   acknowledged?: { risk: WorkAtRisk; baseBranch: string | null };
+  /**
+   * The branch is Albedo's copy of a ref that lives elsewhere -- a review
+   * task's `review/<n>`, fetched from the pull request (#287) -- so deleting
+   * it loses nothing: `-D`, which `-d` would refuse for "not merged". Only a
+   * review task sets it; every other branch keeps `-d` unless forced.
+   */
+  branchIsCopy?: boolean;
 }
 
 /**
@@ -1370,7 +1377,7 @@ export async function removeWorktree(o: RemoveWorktreeOptions): Promise<void> {
   await gitOk(removeArgs, o.repoPath);
 
   if (o.deleteBranch && o.branch) {
-    const delArgs = ['branch', o.force ? '-D' : '-d', '--', o.branch];
+    const delArgs = ['branch', o.force || o.branchIsCopy ? '-D' : '-d', '--', o.branch];
     const r = await git(delArgs, o.repoPath);
     if (r.code !== 0) {
       // The worktree is already gone at this point, so we prune before

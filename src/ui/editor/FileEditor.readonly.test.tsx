@@ -38,6 +38,7 @@ const checkout: Task = {
   id: -3, title: 'app', projectId: 3, repoPath: '/repo', baseBranch: '', branch: '',
   worktreePath: '/repo', sessionId: null, ownsWorktree: false, createdBranch: false, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
+  reviewUrl: null,
 };
 
 afterEach(() => {

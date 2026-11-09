@@ -178,7 +178,10 @@ waiting card, Running and the plan meters come through the real pipe. Allow
 or Deny on the card is answered by the real hook script, and the session
 carries on accordingly. Its terminal says it is a stand-in. `gh` answers the
 PR badge, its review state and threads, and the Checks dialog with each job's
-steps, for the two made-up pull requests.
+steps, for the two made-up pull requests. It also answers the Reviewing
+tab: four made-up pull requests in `recipe-app` asking `sam-rivera` for a
+review, one with new activity, two requested (one through a team) and one
+reviewed and quiet.
 
 **A reset** rebuilds everything from the scenario, timed from now, and keeps
 the app's own preferences (zoom, theme, layout, the selected task), which

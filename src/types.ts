@@ -158,9 +158,19 @@ export interface Task {
    * wins. One line, trimmed, at most 120 characters. Null: none.
    */
   summary: string | null;
+  /**
+   * A review task's pull request (migration v13, #287): its URL,
+   * `https://github.com/<owner>/<repo>/pull/<number>`. The worktree is on
+   * Albedo's local `review/<number>`, cut from the PR's head; the PR is found
+   * by this, never by the branch. Null: your own task.
+   */
+  reviewUrl: string | null;
 }
 
-export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt' | 'summary'>;
+export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt' | 'summary' | 'reviewUrl'> & {
+  /** Set only by opening a pull request for review (#287); absent is your own task. */
+  reviewUrl?: string | null;
+};
 
 // ---------------------------------------------------------------------------
 // Messages
