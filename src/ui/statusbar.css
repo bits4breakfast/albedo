@@ -25,3 +25,12 @@
 .plan-meter .ctx-text { font-size: var(--fs-xs); }
 .plan-label { color: var(--muted); }
 .plan-reset { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* "Keeping the Mac awake · N running" (#283), left of the meters, in the
+   strip's own type and text token: --muted on --panel-chrome, 6.50 light / 7.31
+   dark (statusBarContrast.test.ts). */
+.keep-awake-note {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

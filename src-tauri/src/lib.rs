@@ -1,6 +1,7 @@
 mod attention;
 mod fsscope;
 mod fsx;
+mod keep_awake;
 mod mcp;
 mod oneshot;
 mod pty;
@@ -8,7 +9,7 @@ mod pty;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tauri::menu::{Menu, MenuItem, MenuItemKind, WINDOW_SUBMENU_ID};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 /// Event the webview listens for when the user presses the close shortcut.
@@ -252,6 +253,7 @@ pub fn run() {
         )
         .manage(pty::PtyRegistry::default())
         .manage(QuitGuard::default())
+        .manage(keep_awake::KeepAwake::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -266,10 +268,18 @@ pub fn run() {
             attention::notify_permission,
             attention::notify_post,
             set_busy_tasks,
+            keep_awake::set_keep_awake,
             quit_app,
             mcp::mcp_server_path,
             oneshot::claude_oneshot,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running albedo");
+        .build(tauri::generate_context!())
+        .expect("error while building albedo")
+        .run(|app, event| {
+            // Quit, or the last window closed: let the Mac sleep again. A
+            // crash needs nothing -- the OS ends the activity with the process.
+            if let RunEvent::Exit = event {
+                app.state::<keep_awake::KeepAwake>().release();
+            }
+        });
 }

@@ -48,6 +48,12 @@ export interface HeaderProps {
   ciNotify?: boolean;
   onCiNotifyChange?: (on: boolean) => void;
   /**
+   * "Keep the Mac Awake While Tasks Run" (ui/keepAwake.ts, #283). Optional;
+   * absent, the item is not shown.
+   */
+  keepAwake?: boolean;
+  onKeepAwakeChange?: (on: boolean) => void;
+  /**
    * The task list drawn as its rail (#266), and the switch: "Collapse Task
    * List" / "Expand Task List". Optional; absent, the item is not shown.
    */
@@ -83,6 +89,8 @@ export default function Header({
   onThemeChange,
   ciNotify,
   onCiNotifyChange,
+  keepAwake,
+  onKeepAwakeChange,
   taskListCollapsed,
   onTaskListCollapsedChange,
   tabs,
@@ -130,7 +138,7 @@ export default function Header({
         </button>
         <OverflowMenu
           label="More"
-          title="Projects, worktrees, task list, theme, notifications, keyboard shortcuts, what's new"
+          title="Projects, worktrees, task list, theme, notifications, keeping the Mac awake, keyboard shortcuts, what's new"
           items={[
             { id: 'projects', label: 'Projects…', onSelect: onProjects, title: 'Manage projects' },
             { id: 'worktrees', label: 'Worktrees…', onSelect: onReconcile, title: 'Reconcile git worktrees' },
@@ -170,6 +178,21 @@ export default function Header({
                     checked: ciNotify,
                     group: true,
                     onSelect: () => onCiNotifyChange(!ciNotify),
+                  },
+                ]
+              : []),
+            // In the same group as the notification switch: both are about
+            // Albedo reaching outside its window while you are away.
+            ...(onKeepAwakeChange && keepAwake !== undefined
+              ? [
+                  {
+                    id: 'keep-awake',
+                    label: 'Keep the Mac Awake While Tasks Run',
+                    title:
+                      'While a task runs or has work in the background, the Mac does not go to sleep on its own and Albedo is not napped. The display can still turn off, and closing the lid still sleeps the Mac.',
+                    checked: keepAwake,
+                    group: !(onCiNotifyChange && ciNotify !== undefined),
+                    onSelect: () => onKeepAwakeChange(!keepAwake),
                   },
                 ]
               : []),
