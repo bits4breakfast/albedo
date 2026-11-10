@@ -31,7 +31,9 @@ vi.mock('./ui/useTasks', () => {
     projects: h.projects,
     contextBySession: new Map(),
     refresh: async () => {},
-    upsertTask: () => {},
+    upsertTask: (t: Task) => {
+      h.tasks = [...h.tasks.filter((x) => x.id !== t.id), t];
+    },
     archive: async () => {},
     setDone: async () => {},
     rename: async () => true,
@@ -91,6 +93,15 @@ vi.mock('./guide/GuidePane', async () => {
   };
 });
 vi.mock('./ui/StatusBar', () => ({ default: () => null }));
+// Checking a PR out for review (#329): no git, the task it would make.
+vi.mock('./ui/openReview', async (orig) => ({
+  ...(await orig<typeof import('./ui/openReview')>()),
+  openReviewTask: async (_p: unknown, pr: { url: string; title: string }) => ({
+    ...task(99, 1, pr.title),
+    branch: 'review/7',
+    reviewUrl: pr.url,
+  }),
+}));
 vi.mock('./ui/TouchedFiles', async (orig) => ({
   ...(await orig<typeof import('./ui/TouchedFiles')>()),
   // The Files pane's Guide button, as GitBar wires it.
@@ -133,6 +144,7 @@ const { setGitRunner } = await import('./git/worktree');
 const { KEYS } = await import('./ui/persisted');
 const { default: App } = await import('./App');
 const { requestGuide } = await import('./guide/openGuide');
+const reviewStore = await import('./gh/reviewStore');
 requestGuideRef.current = (id) => void requestGuide(id);
 
 function project(id: number, name: string): Project {
@@ -307,6 +319,29 @@ describe('the reading tab, per task (#314)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
     await settle();
     expect(tabSelected('Guide')).toBe('true');
+  });
+
+  it('a PR opened from Reviewing lands on its Guide (#329)', async () => {
+    reviewStore.setReviewFetcherForTests(async () => ({
+      viewer: 'me',
+      prs: [
+        {
+          url: 'https://github.com/acme/api/pull/7', number: 7, title: 'Retry webhook delivery', isDraft: false, author: 'alice',
+          additions: 1, deletions: 1, headOid: 'h1', baseBranch: 'main', commitCount: 1, lastCommitAt: 0, createdAt: 0, updatedAt: 0,
+          requestedAt: 0, teams: [], talk: [], forcePushedAt: null, yourReview: null, approved: false, section: 'requested',
+        },
+      ],
+    }));
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: /Reviewing/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Retry webhook delivery/ }));
+    await settle();
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+    expect(screen.getByTestId('guide').textContent).toBe('guide for 99');
   });
 
   it('a guide asked for another task lands on that task, not on the one on screen', async () => {

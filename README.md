@@ -219,7 +219,8 @@ Click a pull request to review it in Albedo. The first click checks it out
 as a **review task**: Albedo fetches its head into a local branch
 `review/<number>` (forks included), with no upstream so nothing can be pushed
 from it, in a worktree of its own, measured against the pull request's base.
-After that a click selects the task. A review task has the Transcript, Files
+It opens on its **Guide**, ready to write. After that a click selects the
+task, on whichever tab you left it. A review task has the Transcript, Files
 and Guide tabs like any other, and a Claude Code session to ask about the
 change, which is told to explain and answer and never to edit files, commit,
 push or post anything on GitHub. The task header links to the pull request.
