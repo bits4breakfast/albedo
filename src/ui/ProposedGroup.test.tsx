@@ -50,6 +50,7 @@ const NOW = Date.now();
 const base = {
   projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false, baseBranch: 'main',
   ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1_000, summary: null, reviewUrl: null,
+  apiError: null, apiErrorText: null,
 } as const;
 const row = (id: number, title: string, over: Partial<Task> = {}): Task => ({
   ...base, id, title, branch: `b${id}`, worktreePath: `/w/${id}`, ...over,
