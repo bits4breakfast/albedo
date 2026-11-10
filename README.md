@@ -208,7 +208,7 @@ author, the size of the change and what is new:
 | **Review Started** | You have started reviewing it in Albedo and not submitted a review since: something ticked Reviewed in its Guide, or a comment on its review task (for Claude or a draft for GitHub, sent or not). The row says how far along you are, such as `2/4 groups · 3 drafts` |
 | **Requested** | Your review is asked for and nothing is new. Newest request first |
 | **Reviewed · Waiting on Author** | You reviewed it and nothing has happened since |
-| **Approved** | Your latest review on it is an approval, and nothing has happened since |
+| **Approved** | You approved it, and nothing has happened since. A later review of yours that only comments keeps it here, as GitHub keeps you under "approved by"; requesting changes moves it out |
 
 The tab's count is what waits on you: New Activity, Review Started and
 Requested. Opening a pull request counts as having seen what is there. A
