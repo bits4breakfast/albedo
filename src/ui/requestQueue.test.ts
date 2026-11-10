@@ -97,6 +97,14 @@ describe('admit (pure)', () => {
 });
 
 describe('the store', () => {
+  // The store drops requests a week old by the real clock when it reads them
+  // back; pin it to NOW so these requests stay fresh whatever day this runs.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
   it('queues a session request without starting anything, and survives a restart', () => {
     q.receiveRequest(session('a'), known, NOW);
     expect(q.pendingRequests().map((r) => r.id)).toEqual(['a']);
