@@ -43,6 +43,7 @@ import { RENAME_HINT } from './taskRename';
 import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
 import GroupPie from './GroupPie';
 import ReviewList from './ReviewList';
+import { useReviewStarts } from './reviewStarts';
 import { PlusIcon, RefreshIcon } from './icons';
 import { KEYS, oneOfCodec, usePersisted } from './persisted';
 import { refreshReviews, seenMarks, useReviewList } from '../gh/reviewStore';
@@ -237,7 +238,9 @@ export default function TaskList({
   const liveCount = tasks.filter((t) => t.status !== 'archived').length;
   const reviewState = useReviewList(activeProject?.repoPath ?? null);
   const reviewList = reviewState.kind === 'ready' ? reviewState.list : null;
-  const reviewGroupsNow = reviewList ? reviewGroups(reviewList.prs, seenMarks(), reviewList.viewer) : [];
+  // What you have begun reviewing in Albedo (#315), told the moment a tick or a comment changes.
+  const reviewStarts = useReviewStarts(reviewTasks);
+  const reviewGroupsNow = reviewList ? reviewGroups(reviewList.prs, seenMarks(), reviewList.viewer, reviewStarts) : [];
   const reviewCount = reviewList ? waitingCount(reviewGroupsNow) : null;
   const menuRef = useRef<HTMLDivElement | null>(null);
   /**

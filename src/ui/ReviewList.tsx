@@ -18,6 +18,7 @@ import type { Project, Task } from '../types';
 import {
   activityWords,
   REVIEW_GROUP_TITLE,
+  startWords,
   type ReviewGroup,
   type ReviewRow,
 } from '../gh/reviewActivity';
@@ -63,6 +64,8 @@ function Row({
 }) {
   const { pr, activity } = row;
   const news = activityWords(activity);
+  // How far into it you are (#315): only on Review Started's rows.
+  const progress = row.start ? startWords(row.start) : [];
   return (
     <>
       <button
@@ -89,6 +92,9 @@ function Row({
           {pr.isDraft && <span>Draft</span>}
           {pr.author && <span>{pr.author}</span>}
           {news.length > 0 && <span className="review-news">{news.join(' · ')}</span>}
+          {progress.map((p) => (
+            <span key={p}>{p}</span>
+          ))}
           {pr.teams.length > 0 && <span>team {pr.teams[0]}</span>}
           <span className="review-size">
             <span className="review-add">+{pr.additions}</span> <span className="review-del">−{pr.deletions}</span>

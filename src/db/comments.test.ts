@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 import { archiveTask, createTask, deleteTask, resetDb } from './index';
 import {
   addComment,
+  commentFacts,
   deleteComment,
   editComment,
   formatForClaude,
@@ -252,5 +253,35 @@ describe('drafts for GitHub on a review task (#287, v15)', () => {
     await setCommentGithub(t, id, null);
     expect(await listGithubDrafts(t)).toEqual([]);
     expect((await listComments(t))[0]).toMatchObject({ github: null, sentAt: null });
+  });
+});
+
+describe('what a review task has written, for Review Started (#315)', () => {
+  it('counts every comment and the drafts not yet submitted, with the latest change, in one read for several tasks', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const a = await task();
+      const b = await task();
+      const none = await task();
+      vi.setSystemTime(1000);
+      await comment(a, { github: 'draft' });
+      vi.setSystemTime(2000);
+      const posted = await comment(a, { github: 'draft' });
+      await markDraftsPosted(a, [posted]);
+      vi.setSystemTime(3000);
+      const forClaude = await comment(a);
+      await markCommentsSent(a, [forClaude]);
+      vi.setSystemTime(4000);
+      const edited = await comment(b);
+      vi.setSystemTime(5000);
+      await editComment(b, edited, 'changed');
+      const facts = await commentFacts([a, b, none]);
+      expect(facts.get(a)).toEqual({ total: 3, drafts: 1, latestAt: 3000 });
+      expect(facts.get(b)).toEqual({ total: 1, drafts: 0, latestAt: 5000 });
+      expect(facts.has(none)).toBe(false);
+      expect((await commentFacts([])).size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

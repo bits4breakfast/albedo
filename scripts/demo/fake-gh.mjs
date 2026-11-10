@@ -192,7 +192,7 @@ function reviewNode(repoName, r) {
     url: `https://github.com/example/${repoName}/pull/${r.number}`,
     isDraft: false,
     createdAt: ago(r.lastCommitMinutes + 60),
-    updatedAt: ago(Math.min(r.lastCommitMinutes, ...(r.talk ?? []).map((t) => t.minutesAgo))),
+    updatedAt: ago(Math.min(r.lastCommitMinutes, ...[...(r.talk ?? []), ...(r.reviews ?? [])].map((t) => t.minutesAgo))),
     additions: r.additions,
     deletions: r.deletions,
     headRefOid: r.head ?? `${r.number}`.padStart(40, '0'),
@@ -200,7 +200,23 @@ function reviewNode(repoName, r) {
     author: { login: r.author },
     commits: { totalCount: r.commits, nodes: [{ commit: { committedDate: ago(r.lastCommitMinutes) } }] },
     comments: { nodes: (r.talk ?? []).map((t) => ({ author: { login: t.author }, createdAt: ago(t.minutesAgo) })) },
-    reviews: { nodes: [] },
+    reviews: {
+      nodes: (r.reviews ?? []).map((v) => ({ author: { login: v.author }, submittedAt: ago(v.minutesAgo), state: v.state })),
+    },
+    // Yours, as GitHub answers them (#315): your latest review, and each
+    // writer's latest approve or request-changes.
+    viewerLatestReview: (() => {
+      const v = (r.reviews ?? []).filter((x) => x.author === me.login).sort((a, b) => a.minutesAgo - b.minutesAgo)[0];
+      return v ? { submittedAt: ago(v.minutesAgo), state: v.state } : null;
+    })(),
+    latestOpinionatedReviews: {
+      nodes: [...new Set((r.reviews ?? []).map((v) => v.author))].flatMap((author) => {
+        const v = (r.reviews ?? [])
+          .filter((x) => x.author === author && (x.state === 'APPROVED' || x.state === 'CHANGES_REQUESTED'))
+          .sort((a, b) => a.minutesAgo - b.minutesAgo)[0];
+        return v ? [{ author: { login: author }, state: v.state }] : [];
+      }),
+    },
     reviewRequests: { nodes: requested ? [{ requestedReviewer: reviewer }] : [] },
     timelineItems: {
       nodes: requested

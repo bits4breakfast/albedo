@@ -84,6 +84,8 @@ export const KEYS = {
   reviewGuides: 'albedo.guide.guides',
   /** What the Review Guide has marked Reviewed, per task (guide/store.ts owns the shape). */
   reviewGuideReviewed: 'albedo.guide.reviewed',
+  /** When something was last marked Reviewed, per task (guide/store.ts owns the shape, #315). */
+  reviewGuideReviewedAt: 'albedo.guide.reviewedAt',
   /** What you saw of each PR you review, keyed by its url (gh/reviewStore.ts owns the shape, #287). */
   reviewSeen: 'albedo.reviews.seen',
   /** Squash and Merge's "Delete the branch on GitHub" choice (ui/MergeDialog.tsx, #236). Absent means on. */

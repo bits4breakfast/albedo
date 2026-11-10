@@ -29,7 +29,7 @@ import {
   type SubmitOutcome,
 } from '../gh/reviewSubmit';
 import { refreshThreads } from '../gh/reviewThreads';
-import { reviewListState, useReviewsVersion } from '../gh/reviewStore';
+import { refreshReviews, reviewListState, useReviewsVersion } from '../gh/reviewStore';
 import { prepareSubmit, reviewPr, submitIo, useGithubDrafts, type SubmitInput } from './reviewDrafts';
 import { wrapForTooltip } from './text';
 import './worktree.css';
@@ -240,6 +240,9 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
       if (out.ok || out.reviewSent || out.repliesSent > 0) {
         void refreshThreads(task.reviewUrl!, pr, task.worktreePath, { force: true });
       }
+      // A submitted review or reply moves the PR out of Review Started
+      // (#315): ask for the list now rather than at the next minute's poll.
+      if (out.ok || out.reviewSent || out.repliesSent > 0) void refreshReviews(task.repoPath, { force: true });
       if (out.ok) {
         summaries.delete(id);
         reviewPosted.delete(id);

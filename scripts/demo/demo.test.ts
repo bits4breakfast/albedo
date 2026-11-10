@@ -134,11 +134,16 @@ describe('the database', () => {
     };
     resetDb();
     const projects = await listProjects();
-    const tasks = await listTasks();
+    const all = await listTasks();
     file.close();
+    // The review task a started review needs (#315) is checked below.
+    const tasks = all.filter((t) => !t.reviewUrl);
 
     expect(projects.map((p) => p.name).sort()).toEqual(['blog', 'recipe-app']);
     expect(tasks).toHaveLength(7);
+    expect(all.filter((t) => t.reviewUrl).map((t) => [t.reviewUrl, t.branch, t.status])).toEqual([
+      ['https://github.com/example/recipe-app/pull/36', 'review/36', 'idle'],
+    ]);
     const recipeApp = projects.find((p) => p.name === 'recipe-app')!.id;
     expect(tasks.filter((t) => t.projectId === recipeApp)).toHaveLength(5);
     const byTitle = new Map(tasks.map((t) => [t.title, t]));
@@ -335,7 +340,7 @@ describe('the stand-in gh', () => {
 describe('the Reviewing tab', () => {
   useFakeGh();
 
-  it('lists the PRs asking for a review: one with news, two requested, one quiet', async () => {
+  it('lists the PRs asking for a review: one with news, two requested, one quiet, one approved', async () => {
     const repo = scenario.projects.find((p) => p.name === 'recipe-app')!.repo;
     const list = await fetchReviewRequests(repo);
     expect(list?.viewer).toBe('sam-rivera');
@@ -344,9 +349,40 @@ describe('the Reviewing tab', () => {
       ['activity', [34]],
       ['requested', [36, 33]],
       ['reviewed', [29]],
+      ['approved', [31]],
     ]);
     expect(activityWords(groups[0]!.rows[0]!.activity)).toEqual(['new commits', '1 new comment']);
     expect(groups[1]!.rows[1]!.pr.teams).toEqual(['web']);
+  }, GH_TEST_MS);
+
+  it('has #36 started in Albedo: its review task holds a draft for GitHub (#315)', async () => {
+    const file = new BetterSqlite3(databasePath(home), { readonly: true });
+    const rows = file
+      .prepare(
+        `SELECT c.github, c.sent_at, c.anchor_text, c.updated_at FROM comments c JOIN tasks t ON t.id = c.task_id
+         WHERE t.review_url = 'https://github.com/example/recipe-app/pull/36'`,
+      )
+      .all() as { github: string; sent_at: number | null; anchor_text: string; updated_at: number }[];
+    file.close();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ github: 'draft', sent_at: null });
+    expect(rows[0]!.anchor_text).toContain('const key = ');
+    const repo = scenario.projects.find((p) => p.name === 'recipe-app')!.repo;
+    const list = await fetchReviewRequests(repo);
+    const url = 'https://github.com/example/recipe-app/pull/36';
+    const start = { at: rows[0]!.updated_at, groups: null, drafts: 1, comments: 0 };
+    const groups = reviewGroups(list!.prs, new Map(), list!.viewer, new Map([[url, start]]));
+    expect(groups.map((g) => [g.key, g.rows.map((r) => r.pr.number)])).toEqual([
+      ['activity', [34]],
+      ['started', [36]],
+      ['requested', [33]],
+      ['reviewed', [29]],
+      ['approved', [31]],
+    ]);
+    const wt = scenario.projects.find((p) => p.name === 'recipe-app')! as unknown as { worktreeRoot: string };
+    expect(spawnSync('git', ['branch', '--show-current'], { cwd: `${wt.worktreeRoot}/review-36`, encoding: 'utf8' }).stdout.trim()).toBe(
+      'review/36',
+    );
 
     const blog = scenario.projects.find((p) => p.name === 'blog')!.repo;
     expect((await fetchReviewRequests(blog))?.prs).toEqual([]);
@@ -435,7 +471,7 @@ describe('the Reviewing tab, checked out', () => {
   it('has each PR head where GitHub keeps it, one commit on main', () => {
     const p = scenario.projects.find((x) => x.name === 'recipe-app')!;
     const remote = (p as unknown as { remote: string }).remote;
-    for (const n of [29, 33, 34, 36]) {
+    for (const n of [29, 31, 33, 34, 36]) {
       const log = spawnSync('git', ['log', '--format=%s', `main..refs/pull/${n}/head`], { cwd: remote, encoding: 'utf8' });
       expect(log.status).toBe(0);
       expect(log.stdout.trim().split('\n')).toHaveLength(1);

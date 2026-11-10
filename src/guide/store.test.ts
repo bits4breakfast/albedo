@@ -9,6 +9,7 @@ import {
   clearWriteError,
   ensureNotes,
   focusNotes,
+  guideProgress,
   guidesCodec,
   keepLastRead,
   lastReadOf,
@@ -172,6 +173,51 @@ describe('which tasks are being reviewed (#219)', () => {
     saveGuide(1, { ...guide(10), files: { 'docs/c#/a.md': ['aaaa'] } });
     setReviewed(1, [reviewedKey('docs/c#/a.md', ['aaaa'])], true);
     expect([...reviewingTaskIds()]).toEqual([1]);
+  });
+});
+
+describe('guide progress, for the Reviewing tab (#315)', () => {
+  const four: Guide = {
+    ...guide(10),
+    groups: [
+      { title: 'A', summary: '', blocks: ['a1', 'a2'] },
+      { title: 'B', summary: '', blocks: ['b1'] },
+      { title: 'C', summary: '', blocks: ['c1'] },
+    ],
+    // u1 is in no group: Unsorted, a fourth. lock is set aside: not counted.
+    files: { 'a.ts': ['a1', 'a2', 'u1'], 'b.ts': ['b1'], 'c.ts': ['c1'], 'package-lock.json': ['l1'] },
+    focus: { setAside: ['package-lock.json'], careful: [] },
+  };
+
+  it('counts the groups all Reviewed, of the guide’s groups plus Unsorted, never Set Aside', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(5000);
+    saveGuide(1, four);
+    setReviewed(1, [reviewedKey('a.ts', ['a1', 'a2']), reviewedKey('b.ts', ['b1'])], true);
+    expect(guideProgress([1, 2]).get(1)).toEqual({ reviewing: true, tickedAt: 5000, reviewed: 2, total: 4 });
+    expect(guideProgress([1, 2]).has(2)).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('keeps when the last tick was, not an untick; a task whose marks go takes its time along', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    saveGuide(1, four);
+    vi.setSystemTime(1000);
+    setReviewed(1, [reviewedKey('b.ts', ['b1'])], true);
+    vi.setSystemTime(2000);
+    setReviewed(1, [reviewedKey('c.ts', ['c1'])], true);
+    vi.setSystemTime(3000);
+    setReviewed(1, [reviewedKey('c.ts', ['c1'])], false);
+    expect(guideProgress([1]).get(1)).toMatchObject({ reviewing: true, tickedAt: 2000, reviewed: 1 });
+    setReviewed(1, [reviewedKey('b.ts', ['b1'])], false);
+    expect(guideProgress([1]).get(1)).toMatchObject({ reviewing: false, tickedAt: null, reviewed: 0 });
+    vi.useRealTimers();
+  });
+
+  it('a tick from before #315 has no time: still reviewing, time unknown', () => {
+    saveGuide(1, four);
+    data.set(KEYS.reviewGuideReviewed, JSON.stringify({ 1: [reviewedKey('b.ts', ['b1'])] }));
+    expect(guideProgress([1]).get(1)).toMatchObject({ reviewing: true, tickedAt: null, reviewed: 1, total: 4 });
   });
 });
 

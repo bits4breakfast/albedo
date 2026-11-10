@@ -49,6 +49,25 @@ describe('the review list store', () => {
     expect(n).toBe(2);
   });
 
+  it('a forced refresh while a fetch is in flight fetches once more after it, and its answer stands (#315)', async () => {
+    const answers: ((v: ReviewRequests) => void)[] = [];
+    setReviewFetcherForTests(() => new Promise<ReviewRequests>((r) => answers.push(r)), () => t);
+    const first = refreshReviews('/r');
+    // Submit Review lands while the minute's fetch is still out: two forced calls, one more fetch.
+    const forced = Promise.all([refreshReviews('/r', { force: true }), refreshReviews('/r', { force: true })]);
+    expect(answers).toHaveLength(1);
+    const before: ReviewRequests = { viewer: 'me', prs: [] };
+    const after: ReviewRequests = { viewer: 'me', prs: [{ url: 'u/1' } as ReviewPr] };
+    answers[0]!(before);
+    await first;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(answers).toHaveLength(2);
+    answers[1]!(after);
+    await forced;
+    expect(reviewListState('/r')).toEqual({ kind: 'ready', list: after });
+    expect(answers).toHaveLength(2);
+  });
+
   it('seen marks persist, newest kept', () => {
     setReviewFetcherForTests(async () => list, () => t);
     const pr = (i: number) => ({ url: `u/${i}`, headOid: `h${i}`, commitCount: i }) as ReviewPr;
