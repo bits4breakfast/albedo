@@ -98,9 +98,14 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
   const [canvasRef, width] = useWidth();
   const layout = useMemo(() => layoutMap(map.nodes, map.edges, width), [map, width]);
   const [hot, setHot] = useState<string | null>(null);
+  // A group hovered or focused in the key (#308): its boxes are ringed and
+  // their arrows drawn as a hovered box's are.
+  const [hotGroup, setHotGroup] = useState<string | null>(null);
   const openFile = useOpenFile();
-  const isHot = (r: { from: string; to: string }) => hot !== null && (r.from === hot || r.to === hot);
   const nodeOf = useMemo(() => new Map(map.nodes.map((n) => [n.id, n] as const)), [map]);
+  const inHotGroup = (id: string) => hotGroup !== null && (nodeOf.get(id)?.groups.includes(hotGroup) ?? false);
+  const isHot = (r: { from: string; to: string }) =>
+    (hot !== null && (r.from === hot || r.to === hot)) || inHotGroup(r.from) || inHotGroup(r.to);
 
   const titleOf = new Map(groups.map((g) => [g.key, g.title] as const));
   const linksOf = (id: string) => ({
@@ -175,6 +180,10 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
                   type="button"
                   className="gd-file gd-map-group"
                   onClick={() => onOpenGroup(g.key)}
+                  onMouseEnter={() => setHotGroup(g.key)}
+                  onMouseLeave={() => setHotGroup((h) => (h === g.key ? null : h))}
+                  onFocus={() => setHotGroup(g.key)}
+                  onBlur={() => setHotGroup((h) => (h === g.key ? null : h))}
                   title={`Read ${g.title}`}
                 >
                   <span className="gd-map-swatch" data-colour={colour ?? 'none'} aria-hidden="true" />
@@ -257,6 +266,7 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
                   className="gd-map-node"
                   data-kind={n.kind}
                   aria-current={n.kind === 'file' && n.id === current ? 'true' : undefined}
+                  data-group-hot={inHotGroup(n.id) || undefined}
                   style={{ left: p.x, top: p.y, width: NODE_W, height: NODE_H }}
                   onClick={() => open(n)}
                   onMouseEnter={() => setHot(n.id)}

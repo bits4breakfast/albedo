@@ -492,6 +492,9 @@
 }
 .gd-map-node:hover { background: var(--panel-hover); }
 .gd-map-node[aria-current='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--on-accent-soft); }
+/* Its group hovered or focused in the key (#308): the current box's --accent
+   edge, doubled to 2px so it still reads beside the current box's tint. */
+.gd-map-node[data-group-hot] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .gd-map-node:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 .gd-map-node[data-kind='unchanged'] { border-style: dashed; padding-left: 10px; }
 .gd-map-name {
