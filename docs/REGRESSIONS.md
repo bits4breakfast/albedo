@@ -169,6 +169,8 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Prefer a control that is always there. Hiding it saves little, and an invisible target can't be found either.
   - Geometry claims (touching, as tall as, inside) are checked in a real engine, with `elementFromPoint` across the boundary, before saying done.
 
+- **A fix measured only at one width.** Owner-reported, a fourth round on the same control (2026-11-10): the Building · Reviewing tabs (#291) still cut Reviewing off at the right edge of the track, count and padding gone. The tab padding was measured even in Chrome, but only in a sidebar wide enough for both tabs. They need 207px of track; at the sidebar's default 260px there are 170px, and the track's `overflow: hidden` clipped the second tab. **Rule:** a fix to anything in a resizable pane is measured at that pane's minimum, its default and its maximum (`src/ui/app/useLayout.ts`), and with the longest content it can hold. Report all three, not the width that happened to be open.
+
 ## Shell scripts (for agents)
 
 - **zsh `path` is `PATH`.** `while read path …` in zsh wipes the command search path, and every later command is "not found". Use another variable name.

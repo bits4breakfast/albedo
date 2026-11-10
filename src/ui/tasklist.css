@@ -24,7 +24,9 @@
 .tasklist-head .tasklist-tabs {
   display: inline-grid;
   grid-auto-flow: column;
-  grid-auto-columns: max-content;
+  /* Each tab as wide as its content while both fit; when they don't, both
+     shrink by the same amount from there (#306), keeping their padding. */
+  grid-auto-columns: minmax(0, max-content);
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -33,9 +35,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 0 12px;
   white-space: nowrap;
 }
+/* The label gives way, never the count or the padding (#306). */
+.tasklist-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tasklist-tabs button[aria-selected='true'] {
   color: var(--text-strong);
   background: var(--seg-on);
@@ -43,7 +48,7 @@
 }
 /* What waits on you in Reviewing. --muted, a tier the segment clears on
    --panel-chrome and on --seg-on alike. */
-.tasklist-tab-count { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--muted); }
+.tasklist-tab-count { flex: none; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--muted); }
 .tasklist-tabs button[aria-selected='true'] .tasklist-tab-count { color: var(--text); }
 
 .tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 8px 8px; }

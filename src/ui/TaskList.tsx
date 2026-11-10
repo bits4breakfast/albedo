@@ -637,16 +637,20 @@ export default function TaskList({
         {/* Two tabs (#287): your tasks, and PRs asked of you for review. The
             project is named by its tab in the title bar, or, with one
             project, by the title bar's Projects; this row has no room for a
-            third label at the sidebar's 200px minimum. Each tab counts its
-            list: Building its live tasks, Reviewing what waits on you. */}
+            third label. Each tab counts its list: Building its live tasks,
+            Reviewing what waits on you. Both fit whole at the sidebar's 300px
+            minimum (#306); past that -- a three-digit count, a larger text
+            size -- they shrink together and their labels end in "…", never
+            cut at the track's edge. The full name is in the tooltip. */}
         <div className="seg tasklist-tabs" role="tablist" aria-label="Task list">
           <button
             type="button"
             role="tab"
             aria-selected={tab === 'building'}
             onClick={() => setTab('building')}
+            title="Building"
           >
-            Building
+            <span className="tasklist-tab-label">Building</span>
             <span className="tasklist-tab-count">{liveCount}</span>
           </button>
           <button
@@ -654,8 +658,9 @@ export default function TaskList({
             role="tab"
             aria-selected={tab === 'reviewing'}
             onClick={() => setTab('reviewing')}
+            title="Reviewing"
           >
-            Reviewing
+            <span className="tasklist-tab-label">Reviewing</span>
             {reviewCount !== null && <span className="tasklist-tab-count">{reviewCount}</span>}
           </button>
         </div>
