@@ -213,6 +213,8 @@ export default function TaskList({
   const [menu, setMenu] = useState<RowMenu | null>(null);
   /** The row whose title is being edited in place (#152). */
   const [renamingId, setRenamingId] = useState<number | null>(null);
+  /** The list root itself has focus (not a row, a field or a button in it): see `data-focus-stop`. */
+  const [rootFocused, setRootFocused] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /*
    * Review tasks (#287) live in the Reviewing tab, beside the PR they are
@@ -622,10 +624,17 @@ export default function TaskList({
       role={tab === 'building' ? 'listbox' : undefined}
       aria-label={tab === 'building' ? 'Tasks' : undefined}
       data-focus-area="tasks"
-      /* With proposals showing (#332), Tab walks from the list into their
-         buttons before it leaves for the next area (focusAreas.ts); without,
-         nothing changes. */
-      data-focus-stop={tab === 'building' && proposals.length > 0 ? '' : undefined}
+      /* With proposals showing (#332), Tab from the list itself walks into
+         their buttons before it leaves for the next area (focusAreas.ts).
+         Only while the list root has focus: a stop's descendants count as
+         the stop, so a stop held any longer would send Tab from the rename
+         field, the head's buttons or a row to the proposals instead of on
+         to the next area. Without proposals, nothing changes. */
+      data-focus-stop={tab === 'building' && proposals.length > 0 && rootFocused ? '' : undefined}
+      onFocus={(e) => setRootFocused(e.target === e.currentTarget)}
+      onBlur={(e) => {
+        if (e.target === e.currentTarget) setRootFocused(false);
+      }}
     >
       <div className="tasklist-head">
         {/* Two tabs (#287): your tasks, and PRs asked of you for review. The

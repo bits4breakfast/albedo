@@ -70,10 +70,19 @@ const ask = (id: string, over: Partial<SessionRequest> = {}): SessionRequest => 
 });
 
 /** The list as App wires it: the queue, scoped (no tab bar here), Deny dropping the request. */
-function Harness({ onApprove, collapsed = false }: { onApprove: (r: SessionRequest) => void; collapsed?: boolean }) {
+function Harness({
+  onApprove,
+  collapsed = false,
+  onRename,
+}: {
+  onApprove: (r: SessionRequest) => void;
+  collapsed?: boolean;
+  onRename?: (t: Task, title: string) => void;
+}) {
   const items = q.useRequests();
   return (
     <TaskList
+      onRename={onRename}
       tasks={tasks}
       selectedId={null}
       onSelect={() => {}}
@@ -188,7 +197,7 @@ describe('the Proposed group (#332)', () => {
     renderHook(() => useFocusAreaCycle());
     setup([ask('s1'), ask('s2', { title: 'Ticket triage', at: NOW - 3_600_000 })]);
     const list = document.querySelector<HTMLElement>('.tasklist')!;
-    list.focus();
+    act(() => list.focus());
     const order: string[] = [];
     for (let i = 0; i < 6; i++) {
       fireEvent.keyDown(document.activeElement!, { key: 'Tab', code: 'Tab' });
@@ -198,6 +207,30 @@ describe('the Proposed group (#332)', () => {
     // A button's Enter is its click.
     fireEvent.click(trigger('Ticket triage'));
     expect(screen.getByRole('dialog', { name: 'Ticket triage' })).not.toBeNull();
+  });
+
+  it.each([
+    ['with', [ask('s1')]],
+    ['without', []],
+  ])('Tab from a task’s rename field leaves the list for the next area, %s proposals', (_, reqs) => {
+    renderHook(() => useFocusAreaCycle());
+    for (const r of reqs) q.receiveRequest(r, { title: 'Video player rewrite', archived: false });
+    render(
+      <>
+        <div data-focus-area="composer">
+          <textarea aria-label="Message" />
+        </div>
+        <Harness onApprove={() => {}} onRename={() => {}} />
+      </>,
+    );
+    fireEvent.contextMenu(document.querySelector('[data-task-id="2"]') as HTMLElement);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Rename Task…/ }));
+    const field = document.querySelector<HTMLInputElement>('[data-task-id="2"] input')!;
+    act(() => field.focus());
+    expect(document.activeElement).toBe(field);
+    fireEvent.keyDown(field, { key: 'Tab', code: 'Tab' });
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' }));
+    expect(document.activeElement?.closest('.proposal-row')).toBeNull();
   });
 
   it('the list is no Tab stop of its own without proposals', () => {
