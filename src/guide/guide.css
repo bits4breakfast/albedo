@@ -583,19 +583,38 @@
 .gd-careful-head {
   margin: 0 0 2px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 6px;
+  align-items: flex-start;
+  gap: 6px;
   font-size: var(--fs-sm);
+  line-height: 1.5;
   color: var(--text);
 }
-.gd-careful-head .gd-link { font-size: var(--fs-sm); }
+/* Centred on the first line: (line height - icon) / 2. */
+.gd-careful-head > .gd-careful-icon { margin-top: calc((1.5em - 13px) / 2); }
+.gd-careful-head-label { flex: none; white-space: nowrap; }
+/* The names are one item: a second line hangs under the first name. */
+.gd-careful-names { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 0 6px; }
+.gd-careful-head .gd-link { font-size: var(--fs-sm); line-height: 1.5; }
+/* A name longer than the column ellipsizes; its tooltip has the path. */
+.gd-careful-names > .gd-link { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 
 /* Under the diff's header, before Why: a --warn rule and label. */
 .gd-diff-why-text + .gd-diff-why-text { margin-top: 6px; }
 .gd-diff-why-text[data-careful] { border-left-color: var(--warn); }
 .gd-diff-why-text[data-careful] .gd-diff-why-label { color: var(--warn); white-space: nowrap; }
 .gd-diff-why-text[data-careful] .gd-careful-icon { margin-right: 4px; }
+/* Careful and Why together (#295 review): one label column for both, so
+   their texts start at one x; each note keeps its own rule. Alone, a note
+   is as before: its text flows on from its label. */
+.gd-diff-why[data-both] { display: grid; grid-template-columns: max-content minmax(0, 1fr); row-gap: 6px; }
+.gd-diff-why[data-both] > .gd-diff-why-text { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: baseline; }
+.gd-diff-why[data-both] > .gd-diff-why-text + .gd-diff-why-text { margin-top: 0; }
+/* A narrow diff column: each label on its own line above its text, so the
+   two texts still start at one x without a label column eating the width. */
+.gd-diff { container: gd-diff / inline-size; }
+@container gd-diff (max-width: 360px) {
+  .gd-diff-why[data-both] > .gd-diff-why-text { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* The rail: Set Aside last, after a gap, dotted (Unsorted stays dashed). */
 .gd-rail-mark[data-aside] { margin-top: 8px; }
@@ -626,3 +645,7 @@
 .gd-options-name { font-weight: 500; color: var(--text); }
 .gd-options-error { color: var(--danger); }
 .gd-intro-actions { display: inline-flex; gap: 8px; }
+.gd-link:disabled { color: var(--faint); cursor: default; text-decoration: none; }
+/* Every file set aside: said where "All N groups reviewed" goes, in the
+   count row's quiet tier. */
+.gd-none-to-review { font-size: var(--fs-sm); color: var(--muted); }

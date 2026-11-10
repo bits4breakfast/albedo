@@ -209,6 +209,9 @@ export async function startWrite(taskId: number, diff: BranchDiff, base: string,
     });
     saveGuide(taskId, guide);
     writes.delete(taskId);
+    // The lists as typed are done with only now (#295 review): a failed write
+    // keeps them, so Try Again writes with what was typed, never the defaults.
+    focusDrafts.delete(taskId);
     // The guide is on screen from here; its notes follow (#224).
     ensureNotes(taskId, guide, diff);
   } catch (err) {
@@ -370,7 +373,10 @@ export interface FocusDraft {
 /**
  * Per task, in memory: what was typed into the Write Guide screen's lists and
  * not yet written, kept, as the place is, while another task is on screen.
- * None means the project's defaults (or, rewriting, the guide's own lists).
+ * None means the project's defaults. A task with a guide AND a draft is in
+ * Rewrite With Other Options…: the screen is shown over the guide, so it
+ * survives the pane remounting on a task switch. Cleared when a write
+ * succeeds (startWrite) or the screen is cancelled, never when one starts.
  */
 const focusDrafts = new Map<number, FocusDraft>();
 

@@ -429,13 +429,13 @@ describe('set aside and careful (#295)', () => {
     expect(guide.flags).toEqual({ 'src/f1.ts': 'why' });
   });
 
-  it('every file set aside: no call, no groups, and the reason said', async () => {
+  it('every file set aside: no call and no groups', async () => {
     const diff = diffOf('src/a.test.ts', 'b.css');
     const calls = useRunner(() => ok({ groups: [] }));
     const guide = await writeGuide(diff, { base: 'main', focus });
     expect(calls).toHaveLength(0);
     expect(guide.groups).toEqual([]);
-    expect(guide.fallback).toMatch(/Every changed file is set aside/);
+    expect(guide.fallback).toBeNull();
   });
 
   it('folders, when nothing fits, leave set-aside files out of them', async () => {

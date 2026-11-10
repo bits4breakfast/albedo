@@ -53,6 +53,8 @@ const task = {
 const PATHS = ['src/a.ts', 'src/a.test.ts', 'src/db/migrations/1.sql', 'src/ui/x.css'];
 let diff: BranchDiff;
 let calls: OneshotRequest[];
+/** The next this many grouping calls fail, as Claude Code reports an error. */
+let failGroups = 0;
 let prevRunner: ReturnType<typeof setOneshotRunner>;
 
 beforeEach(() => {
@@ -75,8 +77,13 @@ beforeEach(() => {
   diff = buildBranchDiff(PATHS.map((p) => edited(p, [3, 4, 5, 6])), statReason);
   loaded = { diff, base: 'b', fromMergeBase: true, uncommitted: new Set() };
   calls = [];
+  failGroups = 0;
   prevRunner = setOneshotRunner(async (req) => {
     calls.push(req);
+    if (failGroups > 0 && JSON.parse(req.jsonSchema).required[0] === 'groups') {
+      failGroups--;
+      return { code: 1, stdout: JSON.stringify({ type: 'result', is_error: true, result: 'Overloaded.' }), stderr: '', timedOut: false };
+    }
     const sent = diff.order.filter((x) => req.prompt.includes(`[${x}]`));
     return {
       code: 0,
@@ -241,5 +248,66 @@ describe('Rewrite (#295)', () => {
     await waitFor(() => expect(groupCalls()).toHaveLength(2));
     expect(groupCalls()[1]!.prompt).toContain('x.css');
     await screen.findByRole('heading', { name: 'Code' });
+  });
+});
+
+describe('the typed lists are kept until a write succeeds (#295 review)', () => {
+  it('Try Again after a failed write uses the lists as typed, not the defaults', async () => {
+    failGroups = 1;
+    pane();
+    fireEvent.change(await screen.findByLabelText(/^Set Aside/), { target: { value: '*.css' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Write Guide' }));
+    await screen.findByText('Couldn’t write the guide');
+    expect((screen.getByLabelText(/^Set Aside/) as HTMLTextAreaElement).value).toBe('*.css');
+    fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+    await screen.findByRole('heading', { name: 'Code' });
+    expect(groupCalls()).toHaveLength(2);
+    expect(groupCalls()[1]!.prompt).toContain('a.test.ts');
+    expect(groupCalls()[1]!.prompt).not.toContain('x.css');
+    expect(loadGuide(task.id)?.focus?.setAside).toEqual(['*.css']);
+  });
+
+  it('a failed Rewrite With Other Options… stays on its screen, and Try Again uses what was typed', async () => {
+    await write();
+    fireEvent.click(screen.getByRole('button', { name: 'More guide actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rewrite With Other Options…' }));
+    failGroups = 1;
+    fireEvent.change(await screen.findByLabelText(/^Set Aside/), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite Guide' }));
+    await screen.findByText('Couldn’t write the guide');
+    expect((screen.getByLabelText(/^Set Aside/) as HTMLTextAreaElement).value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+    await waitFor(() => expect(loadGuide(task.id)?.focus?.setAside).toEqual([]));
+    expect(groupCalls().at(-1)!.prompt).toContain('x.css');
+    await screen.findByRole('heading', { name: 'Code' });
+    expect(screen.queryByLabelText(/^Set Aside/)).toBeNull();
+  });
+
+  it('Rewrite With Other Options… survives a task switch (the pane remounts), with what was typed', async () => {
+    await write();
+    fireEvent.click(screen.getByRole('button', { name: 'More guide actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rewrite With Other Options…' }));
+    fireEvent.change(await screen.findByLabelText(/^Set Aside/), { target: { value: '*.snap' } });
+    cleanup();
+    pane();
+    expect(((await screen.findByLabelText(/^Set Aside/)) as HTMLTextAreaElement).value).toBe('*.snap');
+    expect(screen.getByRole('button', { name: 'Rewrite Guide' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('heading', { name: 'Code' });
+  });
+});
+
+describe('every file set aside (#295 review)', () => {
+  it('says there is nothing to review, with no rail count and no “All 0”', async () => {
+    diff = buildBranchDiff(['src/a.test.ts', 'src/ui/x.css'].map((p) => edited(p, [3])), statReason);
+    loaded = { diff, base: 'b', fromMergeBase: true, uncommitted: new Set() };
+    pane();
+    fireEvent.click(await screen.findByRole('button', { name: 'Write Guide' }));
+    await screen.findByRole('heading', { name: 'Set Aside' });
+    expect(groupCalls()).toHaveLength(0);
+    expect(left().getByText('Nothing to review: every file is set aside')).toBeTruthy();
+    expect(screen.queryByText(/All 0/)).toBeNull();
+    expect(document.querySelector('.gd-rail-count')).toBeNull();
+    expect(document.querySelector('.gd-banner')).toBeNull();
   });
 });

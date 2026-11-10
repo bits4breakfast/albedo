@@ -20,8 +20,9 @@
  *   `**`     any number of folders, none included: `**` then `/x` matches `x` too
  *   `{a,b}`  either alternative
  * A pattern with no `/` is matched against the file's name in any folder
- * (`*.css`, `package.json`), as in .gitignore. Blank lines and `#` comments
- * are ignored. No dependency: a glob library is not worth the embargo here.
+ * (`*.css`, `package.json`), as in .gitignore; a leading `/` anchors it to
+ * the repository's root (`/package.json`). An unclosed `{` is literal.
+ * Blank lines and `#` comments are ignored. No dependency: a glob library is not worth the embargo here.
  */
 
 export interface GuideFocus {
@@ -111,79 +112,141 @@ export function projectFocus(p: { guideSetAside: string[] | null; guideCareful: 
   };
 }
 
-const compiled = new Map<string, RegExp | null>();
+/**
+ * A pattern, compiled: its `{a,b}` alternatives expanded, each split into
+ * segments. No regular expression: a segment is matched by a linear
+ * wildcard scan and the segments by a small table, so no pattern can make
+ * matching slow (#295 review).
+ */
+type Segment = string | typeof GLOBSTAR;
+const GLOBSTAR = Symbol('**');
 
-function escape(ch: string): string {
-  return /[\\^$.|+()[\]{}]/.test(ch) ? `\\${ch}` : ch;
+/** At most this many alternatives per pattern; past it the rest are dropped. */
+export const MAX_ALTERNATIVES = 64;
+/** Compiled patterns kept, the oldest dropped first. */
+export const MAX_COMPILED = 256;
+const compiled = new Map<string, Segment[][] | null>();
+
+/** The index of the `}` closing the `{` at `open`, or -1 when it is never closed. */
+function closing(p: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < p.length; i++) {
+    if (p[i] === '{') depth++;
+    else if (p[i] === '}' && --depth === 0) return i;
+  }
+  return -1;
 }
 
-/** The body of one glob, without anchors. `{a,b}` nests; an unclosed `{` is literal. */
-function globBody(p: string): string {
-  let out = '';
-  let i = 0;
-  const alts: number[] = []; // depth of open braces
-  while (i < p.length) {
-    const c = p[i]!;
-    if (c === '*') {
-      if (p[i + 1] === '*') {
-        const atStart = i === 0 || p[i - 1] === '/';
-        const atEnd = i + 2 === p.length || p[i + 2] === '/';
-        if (atStart && atEnd) {
-          if (p[i + 2] === '/') {
-            out += '(?:[^/]*/)*'; // `**` and its slash: zero or more folders
-            i += 3;
-          } else {
-            out += '.*'; // trailing `**`: everything below
-            i += 2;
-          }
-          continue;
-        }
-        out += '[^/]*';
-        i += 2;
-        continue;
+/** `{a,b}` expanded, nested ones too. An unclosed `{` is literal, and so is a `}` with no `{`. */
+export function expandBraces(p: string, max = MAX_ALTERNATIVES): string[] {
+  for (let i = 0; i < p.length; i++) {
+    if (p[i] !== '{') continue;
+    const end = closing(p, i);
+    if (end < 0) continue; // unclosed: literal, look further on
+    const body = p.slice(i + 1, end);
+    const parts: string[] = [];
+    let depth = 0;
+    let from = 0;
+    for (let j = 0; j < body.length; j++) {
+      if (body[j] === '{') depth++;
+      else if (body[j] === '}') depth--;
+      else if (body[j] === ',' && depth === 0) {
+        parts.push(body.slice(from, j));
+        from = j + 1;
       }
-      out += '[^/]*';
-      i += 1;
-      continue;
     }
-    if (c === '?') out += '[^/]';
-    else if (c === '{' && p.indexOf('}', i) > i) {
-      alts.push(i);
-      out += '(?:';
-    } else if (c === '}' && alts.length > 0) {
-      alts.pop();
-      out += ')';
-    } else if (c === ',' && alts.length > 0) out += '|';
-    else out += escape(c);
-    i += 1;
+    parts.push(body.slice(from));
+    if (parts.length < 2) continue; // `{a}`: literal, as in a shell
+    const head = p.slice(0, i);
+    const out: string[] = [];
+    for (const part of parts) {
+      for (const tail of expandBraces(part + p.slice(end + 1), max)) {
+        out.push(head + tail);
+        if (out.length >= max) return out;
+      }
+    }
+    return out;
   }
-  while (alts.length > 0) {
-    alts.pop();
-    out += ')';
-  }
-  return out;
+  return [p];
 }
 
-/** The pattern as a RegExp over a whole path; null for an empty one. */
-export function globToRegExp(pattern: string): RegExp | null {
+function compile(pattern: string): Segment[][] | null {
+  let p = pattern.trim().replace(/^\.\//, '');
+  // A leading `/` anchors it to the repository's root, as in .gitignore;
+  // otherwise a pattern with no `/` is the name, in any folder.
+  const anchored = p.startsWith('/');
+  p = p.replace(/^\/+/, '');
+  if (!p) return null;
+  return expandBraces(p).map((alt) => {
+    const segs: Segment[] = alt
+      .split('/')
+      .filter((x) => x !== '')
+      .map((x) => (x === '**' ? GLOBSTAR : x.replace(/\*+/g, '*')));
+    return !anchored && !alt.includes('/') ? [GLOBSTAR, ...segs] : segs;
+  });
+}
+
+function compiledOf(pattern: string): Segment[][] | null {
   if (compiled.has(pattern)) return compiled.get(pattern)!;
-  let p = pattern.trim().replace(/^\.\//, '').replace(/^\/+/, '');
-  let re: RegExp | null = null;
-  if (p) {
-    // No `/`: the name, in any folder.
-    if (!p.includes('/')) p = `**/${p}`;
-    try {
-      re = new RegExp(`^${globBody(p)}$`);
-    } catch {
-      re = null;
-    }
-  }
-  compiled.set(pattern, re);
-  return re;
+  const c = compile(pattern);
+  compiled.set(pattern, c);
+  while (compiled.size > MAX_COMPILED) compiled.delete(compiled.keys().next().value!);
+  return c;
 }
 
+/**
+ * One name against one segment of a pattern: `*` any run, `?` one
+ * character. The classic linear scan with one remembered star: no
+ * backtracking beyond it, so O(name x segment) at worst.
+ */
+export function matchSegment(seg: string, name: string): boolean {
+  let s = 0;
+  let n = 0;
+  let star = -1;
+  let mark = 0;
+  while (n < name.length) {
+    if (s < seg.length && (seg[s] === '?' || seg[s] === name[n])) {
+      s++;
+      n++;
+    } else if (s < seg.length && seg[s] === '*') {
+      star = s++;
+      mark = n;
+    } else if (star >= 0) {
+      s = star + 1;
+      n = ++mark;
+    } else return false;
+  }
+  while (s < seg.length && seg[s] === '*') s++;
+  return s === seg.length;
+}
+
+/** The segments against the path's: `**` takes any number of them, none included. */
+function matchSegments(segs: readonly Segment[], parts: readonly string[]): boolean {
+  // can[j]: the pattern so far matches the first j parts of the path.
+  let can = new Array<boolean>(parts.length + 1).fill(false);
+  can[0] = true;
+  for (const seg of segs) {
+    const next = new Array<boolean>(parts.length + 1).fill(false);
+    if (seg === GLOBSTAR) {
+      let seen = false;
+      for (let j = 0; j <= parts.length; j++) {
+        seen ||= can[j]!;
+        next[j] = seen;
+      }
+    } else {
+      for (let j = 1; j <= parts.length; j++) next[j] = can[j - 1]! && matchSegment(seg, parts[j - 1]!);
+    }
+    can = next;
+  }
+  return can[parts.length]!;
+}
+
+/** Whether `path` matches `pattern`; an empty pattern matches nothing. */
 export function matchGlob(pattern: string, path: string): boolean {
-  return globToRegExp(pattern)?.test(path) ?? false;
+  const alts = compiledOf(pattern);
+  if (!alts) return false;
+  const parts = path.split('/').filter((x) => x !== '');
+  return alts.some((segs) => matchSegments(segs, parts));
 }
 
 /** The first of `patterns` that `path` matches, or null. */

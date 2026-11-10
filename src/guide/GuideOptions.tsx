@@ -77,6 +77,7 @@ export function GuideOptions({
   start,
   project,
   defaults,
+  disabled = false,
 }: {
   taskId: number;
   diff: BranchDiff;
@@ -85,6 +86,8 @@ export function GuideOptions({
   project: Project | null;
   /** The project's defaults (Albedo's without a project): what Save and Reset compare with. */
   defaults: GuideFocus;
+  /** A write is running: the lists it was given stay as they are. */
+  disabled?: boolean;
 }): ReactNode {
   const draft = focusDraftOf(taskId) ?? draftOf(start);
   const focus = focusFromDraft(draft);
@@ -122,6 +125,7 @@ export function GuideOptions({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
+          disabled={disabled}
           onChange={(e) => edit({ setAside: e.target.value })}
         />
         <div className="wt-hint">{matchedHere(asideHere)}</div>
@@ -137,6 +141,7 @@ export function GuideOptions({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
+          disabled={disabled}
           onChange={(e) => edit({ careful: e.target.value })}
         />
         <div className="wt-hint">{matchedHere(carefulHere)}</div>
@@ -157,11 +162,11 @@ export function GuideOptions({
           <>
             <span>Changed for this guide only.</span>
             {project ? (
-              <button type="button" className="gd-btn" onClick={() => void save()} disabled={saving}>
+              <button type="button" className="gd-btn" onClick={() => void save()} disabled={saving || disabled}>
                 {saving ? 'Saving…' : 'Save as Project Defaults'}
               </button>
             ) : null}
-            <button type="button" className="gd-link" onClick={() => setFocusDraft(taskId, draftOf(defaults))}>
+            <button type="button" className="gd-link" onClick={() => setFocusDraft(taskId, draftOf(defaults))} disabled={disabled}>
               Reset
             </button>
           </>

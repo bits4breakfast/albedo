@@ -4,9 +4,10 @@ import {
   DEFAULT_CAREFUL,
   DEFAULT_SET_ASIDE,
   firstMatch,
-  globToRegExp,
+  expandBraces,
   isSetAside,
   matchGlob,
+  MAX_COMPILED,
   MAX_PATTERNS,
   parsePatterns,
   patternsFromJson,
@@ -38,6 +39,9 @@ describe('matchGlob (#295)', () => {
     ['package.json', 'apps/web/package.json', true],
     ['package.json', 'package.json5', false],
     ['/package.json', 'package.json', true],
+    ['/package.json', 'a/package.json', false],
+    ['/src/*.ts', 'src/a.ts', true],
+    ['/*.md', 'docs/a.md', false],
     ['./src/*.ts', 'src/a.ts', true],
     ['.github/workflows/**', '.github/workflows/ci.yml', true],
     ['.github/workflows/**', 'x/.github/workflows/ci.yml', false],
@@ -45,13 +49,45 @@ describe('matchGlob (#295)', () => {
     ['a+b(c).ts', 'a+b(c).ts', true],
     ['a+b(c).ts', 'aab(c).ts', false],
     ['{a,b', '{a,b', true],
+    ['{a,b', 'a', false],
+    ['x{a,b', 'x{a,b', true],
+    ['{x{a,b}', '{xa', true],
+    ['{x{a,b}', '{x{a,b}', false],
+    ['a}.ts', 'a}.ts', true],
+    ['{a}.ts', '{a}.ts', true],
+    ['src/{db,ui}/**/*.{ts,tsx}', 'src/ui/x/y.tsx', true],
+    ['src/{db,ui}/**/*.{ts,tsx}', 'src/git/y.ts', false],
+    ['***.css', 'a/b.css', true],
+    ['src/**', 'src/a/b/c.ts', true],
+    ['**', 'a/b.ts', true],
   ])('%s against %s: %s', (pattern, path, want) => {
     expect(matchGlob(pattern, path)).toBe(want);
   });
 
   it('an empty pattern matches nothing', () => {
-    expect(globToRegExp('   ')).toBeNull();
+    expect(matchGlob('   ', 'a.ts')).toBe(false);
     expect(matchGlob('', 'a.ts')).toBe(false);
+    expect(matchGlob('/', 'a.ts')).toBe(false);
+  });
+
+  it('expands braces, nested ones too, and caps the alternatives', () => {
+    expect(expandBraces('*.{css,scss}')).toEqual(['*.css', '*.scss']);
+    expect(expandBraces('{a,{b,c}}x')).toEqual(['ax', 'bx', 'cx']);
+    expect(expandBraces('{a,b')).toEqual(['{a,b']);
+    expect(expandBraces('{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}', 10)).toHaveLength(10);
+  });
+
+  it('stays fast on a pattern that would make a backtracking regex explode', () => {
+    const t = performance.now();
+    expect(matchGlob('*a*a*a*a*a*a*a*a*a*a*a*a*b', 'a'.repeat(60))).toBe(false);
+    expect(matchGlob(`${'*'.repeat(12)}b`, 'a'.repeat(60))).toBe(false);
+    expect(matchGlob('**/**/**/**/**/**/**/**/x', `${'a/'.repeat(60)}y`)).toBe(false);
+    expect(performance.now() - t).toBeLessThan(50);
+  });
+
+  it('keeps at most MAX_COMPILED patterns compiled, and still matches past it', () => {
+    for (let i = 0; i < MAX_COMPILED + 50; i++) matchGlob(`f${i}.ts`, 'x.ts');
+    expect(matchGlob('f0.ts', 'src/f0.ts')).toBe(true);
   });
 
   it('firstMatch names the first pattern that matches', () => {

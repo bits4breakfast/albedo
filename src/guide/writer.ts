@@ -425,7 +425,8 @@ export async function writeGuide(diff: BranchDiff, o: WriteOptions): Promise<Gui
   const focus = o.focus;
   const sent = focus ? diff.order.filter((id) => !isSetAside(focus, diff.blocks.get(id)!.path)) : diff.order;
   if (sent.length === 0) {
-    return guideFrom(diff, [], o, 'Every changed file is set aside, so Claude was not asked: they are all under Set Aside.');
+    // Nothing to send, so no call. The pane says so in the group's count row.
+    return guideFrom(diff, [], o, null);
   }
   const sentFiles = new Set(sent.map((id) => diff.blocks.get(id)!.path)).size;
   const texts = new Map(sent.map((id) => [id, renderBlock(diff.blocks.get(id)!, diff)] as const));
