@@ -1383,6 +1383,11 @@ export default function App() {
             onReviewOpened={(task) => {
               upsertTask(task);
               revealTask(task);
+              // A PR just checked out for review opens on its Guide (#329):
+              // reading the change is the first thing to do, not the empty
+              // session. The Write Guide screen shows until one is written.
+              setRightTab('guide', task.id);
+              setMode((m) => (m === 'pty' ? 'split' : m));
             }}
           />
         </aside>
