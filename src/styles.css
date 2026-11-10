@@ -956,6 +956,15 @@ button {
 .main-ident-sep { flex: none; color: var(--faint); }
 /* The task's ⋯ sits against its name, a step smaller than the bar's own. */
 .main-ident-more { flex: none; width: 24px; height: 24px; }
+/*
+ * The ⋯ right after the title (#312). A cut title ends in "…", whose dots sit
+ * on the text's baseline, 4.1px below the centre where the drawn ⋯ puts its
+ * own (Inter 600 at --fs-md, measured). Side by side the two rows of dots
+ * didn't line up. Here the glyph sits on the title's baseline, scaled to the
+ * text's dot spacing (4.3px against 5), so the two read as one line. The button and its hover
+ * ground stay centred with the bar's other controls.
+ */
+.main-ident-more .more-glyph { transform: translateY(4.1px) scale(0.86); }
 
 .main-ident-title {
   /* Gives way last: the branch and folder shrink four and eight times as
