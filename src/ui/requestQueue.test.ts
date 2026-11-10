@@ -36,15 +36,8 @@ beforeEach(() => {
     },
   });
   q.__resetRequests();
-  // The fixtures are dated NOW, and a request older than a week is dropped:
-  // the clock is pinned, or the suite fails a week after it was written.
-  vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(NOW);
 });
-afterEach(() => {
-  vi.useRealTimers();
-  vi.clearAllMocks();
-});
+afterEach(() => vi.clearAllMocks());
 
 const session = (id: string, taskId = 3, at = NOW): Req => ({
   id,
