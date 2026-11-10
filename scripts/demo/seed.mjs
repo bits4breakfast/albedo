@@ -31,15 +31,9 @@ export function migrationsFromLibRs(libRsPath) {
     out.push({ version: Number(m[1]), description: m[2], sql: readFileSync(path, 'utf8') });
   }
   if (out.length === 0) throw new Error('lib.rs: no migrations found; has the Migration list changed shape?');
-  // Contiguous from 1, but for one known gap: #287 takes v15 while #295's
-  // v14 (PR #297) is not on main yet. Remove KNOWN_GAPS once v14 is there.
-  const KNOWN_GAPS = new Set([14]);
-  let want = 1;
-  for (const mig of out) {
-    while (mig.version !== want && KNOWN_GAPS.has(want)) want += 1;
-    if (mig.version !== want) throw new Error(`lib.rs: migration ${want} is missing or out of order`);
-    want += 1;
-  }
+  out.forEach((mig, i) => {
+    if (mig.version !== i + 1) throw new Error(`lib.rs: migration ${i + 1} is missing or out of order`);
+  });
   return out;
 }
 
