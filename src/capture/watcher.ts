@@ -26,7 +26,17 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { exists, open, readDir, SeekMode, stat, watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
 
-import { countLines, cwdOf, lastTitleIn, parseTranscript, permissionModesIn, queueFactsIn, SEQ_STRIDE } from './adapter';
+import {
+  countLines,
+  cwdOf,
+  lastTitleIn,
+  parseTranscript,
+  permissionModesIn,
+  queueFactsIn,
+  remoteSessionFactsIn,
+  SEQ_STRIDE,
+} from './adapter';
+import { recordRemoteSessions } from './remoteSession';
 import { recordPermissionModes } from './permissionMode';
 import { recordQueueOperations, seedQueue } from './queue';
 import {
@@ -752,6 +762,8 @@ class Capture implements CaptureHandle {
       recordQueueOperations(queueFactsIn(text));
       // So is the permission mode, kept in memory for the composer's label.
       recordPermissionModes(permissionModesIn(text));
+      // And whether Remote Control is on (#343): an attachment, never a row.
+      recordRemoteSessions(remoteSessionFactsIn(text));
 
       // Resolve identity from the rows themselves. sessionId can change
       // mid-file after a resume or compaction, so the LAST row wins and the
@@ -1007,6 +1019,8 @@ async function seedQueueFrom(path: string, upTo: number, sessionId: string): Pro
     let text = new TextDecoder().decode(await readRange(path, start, upTo - start));
     if (start > 0) text = text.slice(text.indexOf('\n') + 1);
     seedQueue([sessionId], queueFactsIn(text));
+    // The same replay brings back whether Remote Control is on (#343).
+    recordRemoteSessions(remoteSessionFactsIn(text));
   } catch {
     /* a queue we cannot rebuild just starts empty */
   }

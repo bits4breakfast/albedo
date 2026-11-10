@@ -49,7 +49,7 @@ import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
 import Terminal, { focusPty, hasLivePty } from './ui/Terminal';
 import { focusArea, useFocusAreaCycle } from './ui/focusAreas';
-import { RemoteLink, remoteControlItem } from './ui/RemoteMark';
+import { RemoteLink, remoteControlItem, useRemotePending } from './ui/RemoteMark';
 import { taskMenuItems, type TaskActions } from './ui/taskMenuItems';
 import { useTaskMenuFacts } from './ui/useTaskMenuFacts';
 import ModelPicker from './ui/ModelPicker';
@@ -356,6 +356,7 @@ export default function App() {
   /** Remote Control on the selected task: the task bar's mark, ⇧⌘R and its confirmation. */
   const remoteUrl = selectedFacts.remoteUrl;
   const remoteItem = selected ? remoteControlItem(selected, selectedFacts.live, remoteUrl) : null;
+  const remotePending = useRemotePending(selected?.id ?? null);
   /**
    * The task whose name is being edited in the task bar (#152): from the ⋯
    * item, a double-click on the name, or ⇧F6 / F2. Only ever the selected
@@ -1568,7 +1569,7 @@ export default function App() {
                   />
                   {/* Reachable through Remote Control, against the name: it
                       is about the session, not the branch after it. */}
-                  <RemoteLink url={remoteUrl} variant="bar" />
+                  <RemoteLink url={remoteUrl} variant="bar" pending={remotePending} />
                   {/* The branch and folder live here and nowhere else on screen:
                       the sidebar row repeats the branch only when it adds to
                       the title, the Files bar not at all. Icons say which is

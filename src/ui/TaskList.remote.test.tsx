@@ -25,7 +25,7 @@ vi.mock('./Terminal', async (importOriginal) => ({
 }));
 vi.mock('../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db')>()),
-  remoteControlUrlSince: async () => URL,
+  remoteControlLineSince: async () => ({ url: URL, ts: 6_000 }),
 }));
 const opened = vi.hoisted(() => [] as string[]);
 vi.mock('../lib/openUrl', () => ({ openExternal: async (url: string) => void opened.push(url) }));

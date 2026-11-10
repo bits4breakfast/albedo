@@ -73,6 +73,19 @@ export function withPtyLock<T>(taskId: number, fn: () => Promise<T>): Promise<T>
   return run;
 }
 
+const submitted = new Set<(taskId: number, text: string) => void>();
+
+/**
+ * Hear every text delivered to a session, whichever path sent it: the
+ * composer, a button, the outbox's release. Called once the write succeeded,
+ * before the caller learns it did. For what follows a particular command
+ * (remoteWait.ts: `/remote-control`); nothing here changes how text is sent.
+ */
+export function onSessionSubmit(cb: (taskId: number, text: string) => void): () => void {
+  submitted.add(cb);
+  return () => void submitted.delete(cb);
+}
+
 /**
  * `submitPty`, after any other submit to the same task has finished. A
  * delivered submit starts a turn as far as turn.ts knows, until the
@@ -81,7 +94,16 @@ export function withPtyLock<T>(taskId: number, fn: () => Promise<T>): Promise<T>
 export function submitLocked(taskId: number, text: string): Promise<boolean> {
   return withPtyLock(taskId, async () => {
     const ok = await submitPty(taskId, text);
-    if (ok) noteSubmitted(taskId);
+    if (ok) {
+      noteSubmitted(taskId);
+      for (const cb of [...submitted]) {
+        try {
+          cb(taskId, text);
+        } catch (err) {
+          console.warn('[send] a submit listener failed', err);
+        }
+      }
+    }
     return ok;
   });
 }

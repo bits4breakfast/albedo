@@ -374,3 +374,7 @@
    are read here, and the icons broke every other line of them. ⌘C copies a
    selection as ever; a code block keeps its own. */
 .tx-prompt .tx-copy-inline { display: none; }
+
+/* Remote Control's menu (#343, RemoteMenuNotice): Show Terminal and Dismiss
+   sit together at the head's end; only the first takes the auto margin. */
+.rc-menu .tx-prompt-head > .btn + .btn { margin-left: 0; }

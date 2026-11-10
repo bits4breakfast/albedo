@@ -28,7 +28,7 @@ vi.mock('./Terminal', async (importOriginal) => ({
 }));
 vi.mock('../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db')>()),
-  remoteControlUrlSince: async () => null,
+  remoteControlLineSince: async () => null,
   backgroundRowsSince: async (): Promise<Message[]> =>
     [...backgroundShell('t1', 'b1', SPAWNED + 1_000), ...wakeup('w1', SPAWNED + 2_000, 600)].flatMap((line, i) =>
       parseLine(JSON.stringify(line), i).map((m) => ({ ...m, id: i + 1, taskId: 1, agentId: null })),

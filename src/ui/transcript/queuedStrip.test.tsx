@@ -13,6 +13,7 @@ vi.mock('../../capture', () => ({
   queuedFor: () => queue.entries,
   queueSettlesAt: () => null,
   onQueueChange: () => () => {},
+  onCaptureUpdate: () => () => {},
 }));
 vi.mock('../Terminal', () => ({
   submitPty: vi.fn(async () => true),
@@ -30,6 +31,7 @@ const { hasLivePty, ptyLiveSince, submitPty } = await import('../Terminal');
 const { __resetTurns, noteTaskSessions } = await import('./turn');
 const { recordQueueOperations, seedQueue } = await import('../../capture/queue');
 const { markPastes, placeholderFor } = await import('./pastedText');
+const { __resetRemoteWaits, __setRemoteWait } = await import('../remoteWait');
 
 let online = true;
 
@@ -64,6 +66,7 @@ afterEach(() => {
   __resetConnectivity();
   __resetOutbox();
   __resetTurns();
+  __resetRemoteWaits();
   vi.mocked(ptyLiveSince).mockReturnValue(null);
   vi.mocked(hasLivePty).mockReturnValue(false);
 });
@@ -98,6 +101,38 @@ describe("Claude Code's queue", () => {
     queue.entries = [{ text: 'never taken', ts: T, injected: false }];
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={null} />);
     expect(screen.queryByRole('status')).toBeNull();
+  });
+});
+
+describe("while Remote Control's menu is up (#343)", () => {
+  const MENU_HINT = 'waiting on Remote Control\u2019s menu in the terminal';
+
+  it("Claude Code's queue says it waits on the menu, not on the current step", () => {
+    queue.entries = [{ text: 'sent meanwhile', ts: T, injected: false }];
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.getByText('sent when Claude Code finishes its current step')).toBeTruthy();
+    act(() => __setRemoteWait(1, { phase: 'menu', at: T }));
+    expect(screen.getByText(MENU_HINT)).toBeTruthy();
+    expect(screen.queryByText('sent when Claude Code finishes its current step')).toBeNull();
+    act(() => __setRemoteWait(1, null));
+    expect(screen.getByText('sent when Claude Code finishes its current step')).toBeTruthy();
+  });
+
+  it('held messages say the same, in place of the turn', () => {
+    turnRunning();
+    holdMessage(1, 'next');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    act(() => __setRemoteWait(1, { phase: 'menu', at: T }));
+    expect(screen.getByText(MENU_HINT)).toBeTruthy();
+    expect(screen.queryByText('sent when Claude finishes this turn')).toBeNull();
+  });
+
+  it('only once it is taken to be the menu, and only for its own task', () => {
+    queue.entries = [{ text: 'sent meanwhile', ts: T, injected: false }];
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    act(() => __setRemoteWait(1, { phase: 'sent', at: T }));
+    act(() => __setRemoteWait(2, { phase: 'menu', at: T }));
+    expect(screen.queryByText(MENU_HINT)).toBeNull();
   });
 });
 

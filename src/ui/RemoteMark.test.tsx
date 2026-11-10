@@ -23,6 +23,10 @@ const h = vi.hoisted(() => ({
 vi.mock('./Terminal', async () => {
   const { useEffect, useState } = await import('react');
   return {
+    onPtyPresenceChange: (cb: (id: number, live: boolean) => void) => {
+      h.presence.add(cb);
+      return () => void h.presence.delete(cb);
+    },
     hasLivePty: (id: number) => h.liveSince.has(id),
     ptyLiveSince: (id: number) => h.liveSince.get(id) ?? null,
     usePtyLiveSince: (id: number | null) => {
@@ -40,9 +44,10 @@ vi.mock('./Terminal', async () => {
 });
 const lookups = vi.hoisted(() => [] as [string, number][]);
 vi.mock('../db', () => ({
-  remoteControlUrlSince: vi.fn(async (sessionId: string, since: number) => {
+  remoteControlLineSince: vi.fn(async (sessionId: string, since: number) => {
     lookups.push([sessionId, since]);
-    return h.found.get(sessionId) ?? null;
+    const url = h.found.get(sessionId) ?? null;
+    return url === null ? null : { url, ts: since + 100 };
   }),
 }));
 vi.mock('../capture', () => ({
@@ -56,6 +61,7 @@ vi.mock('../lib/openUrl', () => ({ openExternal: vi.fn(async (url: string) => vo
 const sent = vi.hoisted(() => [] as [number, string][]);
 const composed = vi.hoisted(() => [] as string[]);
 vi.mock('./transcript/send', () => ({
+  onSessionSubmit: () => () => {},
   mustHold: () => h.holding,
   sendToSession: vi.fn(async (id: number, text: string) => {
     sent.push([id, text]);
@@ -69,9 +75,17 @@ vi.mock('./transcript/composerBridge', () => ({
   }),
 }));
 
-const { default: RemoteMark, REMOTE_CONTROL_COMMAND, REMOTE_CONTROL_KEYS, REMOTE_TITLE, remoteControlItem } = await import(
-  './RemoteMark'
-);
+const {
+  default: RemoteMark,
+  REMOTE_CONTROL_COMMAND,
+  REMOTE_CONTROL_KEYS,
+  REMOTE_PENDING_TEXT,
+  REMOTE_PENDING_TITLE,
+  REMOTE_TITLE,
+  remoteControlItem,
+} = await import('./RemoteMark');
+const { __resetRemoteWaits, __setRemoteWait, remoteWaitFor } = await import('./remoteWait');
+const { __resetRemoteSessions, recordRemoteSessions } = await import('../capture/remoteSession');
 const { default: RemoteControlDialog, REMOTE_CONFIRM_TITLE } = await import('./RemoteControlDialog');
 
 const task = { id: 1, sessionId: 's1', status: 'idle' } as Task;
@@ -97,7 +111,11 @@ beforeEach(() => {
   sent.length = 0;
   composed.length = 0;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  __resetRemoteWaits();
+  __resetRemoteSessions();
+});
 
 describe('RemoteMark', () => {
   it('shows nothing, and asks nothing, with no live pty', async () => {
@@ -183,6 +201,56 @@ describe('RemoteMark', () => {
     await act(async () => {});
     expect(container.innerHTML).toBe('');
   });
+
+  it('shows the mark for a session resumed with Remote Control on: the link written with its first prompt (#343)', async () => {
+    spawn(1, 5_000);
+    render(<RemoteMark task={task} variant="row" />);
+    await act(async () => {});
+    expect(screen.queryByRole('button')).toBeNull();
+    // No "is active" line in this process; the attachment carries the link.
+    await act(async () => {
+      recordRemoteSessions([{ sessionId: 's1', url: URL, ts: 6_000 }]);
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    expect(screen.getByRole('button', { name: REMOTE_TITLE })).toBeTruthy();
+  });
+
+  it('a link from an earlier process does not count, and a newer "off" outweighs an older line', async () => {
+    recordRemoteSessions([{ sessionId: 's1', url: URL, ts: 4_000 }]);
+    spawn(1, 5_000);
+    const { container } = render(<RemoteMark task={task} variant="row" />);
+    await act(async () => {});
+    expect(container.innerHTML).toBe('');
+
+    h.found.set('s1', URL); // an "is active" line at 5_100
+    await act(async () => {
+      recordRemoteSessions([{ sessionId: 's1', url: null, ts: 9_000 }]);
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('says "Turning on Remote…" while it is asked for, and not once it is taken to be the menu', async () => {
+    spawn(1, 5_000);
+    const { container } = render(<RemoteMark task={task} variant="row" />);
+    await act(async () => {});
+    act(() => __setRemoteWait(1, { phase: 'sent', at: 6_000 }));
+    const pending = screen.getByRole('status');
+    expect(pending.textContent).toBe(REMOTE_PENDING_TEXT.row);
+    expect(pending.getAttribute('title')).toBe(REMOTE_PENDING_TITLE);
+    // A word, not a button: nothing to open yet.
+    expect(screen.queryByRole('button')).toBeNull();
+
+    act(() => __setRemoteWait(1, { phase: 'menu', at: 6_000 }));
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('the bar says it in words', async () => {
+    spawn(1, 5_000);
+    render(<RemoteMark task={task} variant="bar" />);
+    act(() => __setRemoteWait(1, { phase: 'asked' }));
+    expect(screen.getByRole('status').textContent).toBe('Turning on Remote…');
+  });
 });
 
 describe('remoteControlItem', () => {
@@ -194,6 +262,38 @@ describe('remoteControlItem', () => {
     // The ⋯ menu shows the shortcut that asks for the same thing.
     expect(item?.aside).toBe(REMOTE_CONTROL_KEYS);
     expect(REMOTE_CONTROL_KEYS).toBe('⇧⌘R');
+  });
+
+  it('is not offered again while one is asked for, sent or answered by the menu (#343)', () => {
+    __setRemoteWait(1, { phase: 'asked' });
+    expect(remoteControlItem(task, true, null)).toBeNull();
+    __setRemoteWait(1, { phase: 'sent', at: 6_000 });
+    expect(remoteControlItem(task, true, null)).toBeNull();
+    __setRemoteWait(1, { phase: 'menu', at: 6_000 });
+    expect(remoteControlItem(task, true, null)).toBeNull();
+    __setRemoteWait(1, null);
+    expect(remoteControlItem(task, true, null)).not.toBeNull();
+    // Another task's wait is its own.
+    __setRemoteWait(2, { phase: 'menu', at: 6_000 });
+    expect(remoteControlItem(task, true, null)).not.toBeNull();
+  });
+
+  it('asking marks the task at once, and a second select sends nothing', async () => {
+    h.liveSince.set(1, 5_000);
+    const item = remoteControlItem(task, true, null)!;
+    item.onSelect();
+    expect(remoteWaitFor(1)).toEqual({ phase: 'asked' });
+    item.onSelect();
+    await waitFor(() => expect(sent).toEqual([[1, '/remote-control']]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toHaveLength(1);
+  });
+
+  it('left in the message box, it is no longer waited on', async () => {
+    h.liveSince.set(1, 5_000);
+    remoteControlItem({ ...task, status: 'blocked' }, true, null)?.onSelect();
+    await waitFor(() => expect(composed).toEqual(['/remote-control']));
+    await waitFor(() => expect(remoteWaitFor(1)).toBeNull());
   });
 
   it('sends /remote-control through the send gateway', async () => {
@@ -245,6 +345,15 @@ describe('RemoteControlDialog (⇧⌘R)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Make Available Remotely' }));
     await waitFor(() => expect(sent).toEqual([[1, '/remote-control']]));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirming marks the task, so ⇧⌘R has nothing to offer until it settles (#343)', async () => {
+    h.liveSince.set(1, 5_000);
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'Make Available Remotely' }));
+    expect(remoteWaitFor(1)).toEqual({ phase: 'asked' });
+    expect(remoteControlItem(titled, true, null)).toBeNull();
+    await waitFor(() => expect(sent).toEqual([[1, '/remote-control']]));
   });
 
   it('confirming during a running turn holds it, and says so', async () => {

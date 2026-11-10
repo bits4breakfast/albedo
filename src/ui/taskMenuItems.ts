@@ -54,6 +54,8 @@ export interface TaskMenuFacts {
   live: boolean;
   /** Its Remote Control link while that is on, else null. */
   remoteUrl: string | null;
+  /** Remote Control was asked for and has not settled (remoteWait.ts). */
+  remoteWaiting?: boolean;
   /** Reminders still to come, counted beside "Remind Me…". */
   pendingReminders: number;
   /** Its PR as last polled, or null. */

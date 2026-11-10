@@ -37,7 +37,7 @@ vi.mock('./transcript/send', async (orig) => ({
 }));
 vi.mock('../db', async (orig) => ({
   ...(await orig<typeof import('../db')>()),
-  remoteControlUrlSince: async () => null,
+  remoteControlLineSince: async () => null,
 }));
 Element.prototype.scrollIntoView = () => {};
 
