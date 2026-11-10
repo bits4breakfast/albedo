@@ -132,14 +132,15 @@ export function branchRepeatsTitle(title: string, branch: string): boolean {
 
 /**
  * The pane layouts (#317): the terminal alone, terminal and reading pane
- * split, the reading pane alone. One frame each, so the three read as one set
- * beside the bar's other icons.
+ * split, the reading pane alone. They draw panes, not programs: a solid block
+ * is the terminal, lines are the transcript. So PTY is not the terminal glyph
+ * the Shell button beside it uses (the owner's pick, option A).
  */
 export function PtyLayoutIcon({ size = 16 }: { size?: number }) {
   return (
     <Glyph size={size}>
       <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
-      <path d="M4.5 6.5 6.5 8l-2 1.5M8 10h3.5" />
+      <rect x="4" y="5" width="8" height="6" rx="0.75" fill="currentColor" stroke="none" />
     </Glyph>
   );
 }
@@ -149,6 +150,8 @@ export function SplitLayoutIcon({ size = 16 }: { size?: number }) {
     <Glyph size={size}>
       <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
       <path d="M8 3v10" />
+      <rect x="3.75" y="5" width="2.75" height="6" rx="0.5" fill="currentColor" stroke="none" />
+      <path d="M10 6h2M10 8.5h2M10 11h1.25" />
     </Glyph>
   );
 }
