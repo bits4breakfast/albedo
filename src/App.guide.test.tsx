@@ -358,3 +358,76 @@ describe('the reading tab, per task (#314)', () => {
     expect(tabSelected('Guide')).toBe('true');
   });
 });
+
+describe('the task’s two ⋯ menus (#331)', () => {
+  const row = (title: string) => screen.getByRole('option', { name: new RegExp(title) });
+  /** What a menu offers: each item's label, shortcut, greyed or not, tooltip, and where a group starts. */
+  const offered = () =>
+    [...screen.getByRole('menu').querySelectorAll('[role=menuitem]')].map((b) => ({
+      label: b.querySelector('.row-menu-label')?.textContent,
+      aside: b.querySelector('.row-menu-aside')?.textContent ?? null,
+      disabled: (b as HTMLButtonElement).disabled,
+      group: b.getAttribute('data-group') === 'true',
+      title: b.getAttribute('title'),
+    }));
+  const barMenu = () =>
+    fireEvent.click(within(document.querySelector<HTMLElement>('.main-bar')!).getByRole('button', { name: /^Actions for / }));
+  const rowMenu = (title: string) => fireEvent.contextMenu(row(title));
+
+  it.each([
+    ['a task on a branch', task(10, 1, 'Fix the login retry')],
+    ['a chat', { ...task(10, 1, 'Fix the login retry'), kind: 'chat' as const, branch: '', worktreePath: '/code/x' }],
+    ['a task marked done', { ...task(10, 1, 'Fix the login retry'), status: 'done' as const }],
+  ])('offer the same items, in the same order, for %s', async (_, t) => {
+    h.tasks = [t];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+
+    barMenu();
+    const fromBar = offered();
+    expect(screen.getByRole('menu').querySelector('.row-menu-head')).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await settle();
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    rowMenu('Fix the login retry');
+    const fromRow = offered();
+    // The row's menu says which task was right-clicked; the bar's sits beside the name.
+    expect(screen.getByRole('menu').querySelector('.row-menu-head')?.textContent).toBe('Fix the login retry');
+    expect(fromRow).toEqual(fromBar);
+    expect(fromRow.length).toBeGreaterThan(5);
+  });
+
+  it('Review Guide from another task’s row selects that task and shows its Guide', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    expect(row('Speed up the build').getAttribute('aria-selected')).toBe('false');
+
+    rowMenu('Speed up the build');
+    fireEvent.click(screen.getByRole('menuitem', { name: /Review Guide/ }));
+    await settle();
+    expect(row('Speed up the build').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('guide').textContent).toBe('guide for 11');
+  });
+
+  it('another item from a row acts on that row’s task and leaves the selection alone', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+
+    rowMenu('Speed up the build');
+    fireEvent.click(screen.getByRole('menuitem', { name: /Remind Me/ }));
+    await settle();
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Speed up the build')).toBeTruthy();
+    expect(row('Fix the login retry').getAttribute('aria-selected')).toBe('true');
+  });
+});

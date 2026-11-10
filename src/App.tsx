@@ -43,16 +43,18 @@ import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
-import Terminal, { focusPty, hasLivePty, usePtyLiveSince } from './ui/Terminal';
+import Terminal, { focusPty, hasLivePty } from './ui/Terminal';
 import { focusArea, useFocusAreaCycle } from './ui/focusAreas';
-import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
+import { RemoteLink, remoteControlItem } from './ui/RemoteMark';
+import { taskMenuItems, type TaskActions } from './ui/taskMenuItems';
+import { useTaskMenuFacts } from './ui/useTaskMenuFacts';
 import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, PtyLayoutIcon, SplitLayoutIcon, TranscriptLayoutIcon, homeRelative } from './ui/icons';
 import BranchChip from './ui/BranchChip';
 import { ReviewBadge } from './ui/SubmitReview';
 import OverflowMenu from './ui/OverflowMenu';
 import TaskTitleEdit from './ui/TaskTitleEdit';
-import { RENAME_KEYS, renameMenuItem, renameTaskAndSession } from './ui/taskRename';
+import { RENAME_KEYS, renameTaskAndSession } from './ui/taskRename';
 import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
 import WorktreeReconcile from './ui/WorktreeReconcile';
@@ -60,8 +62,6 @@ import TranscriptPane from './ui/transcript/TranscriptPane';
 import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
 import RemoteControlDialog from './ui/RemoteControlDialog';
 import RemindDialog from './ui/reminders/RemindDialog';
-import { usePendingReminders } from './ui/reminders/useReminders';
-import { remindMenuItem } from './ui/reminders/menuItem';
 import { sessionResumable, startReminders } from './reminders';
 import { openReplacementTask } from './reminders/replacement';
 
@@ -81,8 +81,7 @@ import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
-import { COMPACT, ContextClear, useCommandBlocker } from './ui/ClearContextButton';
-import { sendToSession } from './ui/transcript/send';
+import { ContextClear } from './ui/ClearContextButton';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
@@ -93,7 +92,6 @@ import { composeWorktreePath, listBranches, listWorktrees, probePath, unmergedCo
 import ImportProjects from './ui/ImportProjects';
 import MoveTaskDialog from './ui/MoveTaskDialog';
 import MoreGlyph from './ui/MoreGlyph';
-import { normalizePath } from './git/reconcile';
 import PanelToggle from './ui/PanelToggle';
 import { displayName, wrapForTooltip } from './ui/text';
 import { fillPromptTemplate } from './lib/issueKey';
@@ -349,12 +347,11 @@ export default function App() {
    * terminal-only view shows that question in the terminal).
    */
   const whatsNew = useWhatsNew({ hold: selected?.status === 'blocked' });
-  /** Why Compact Now in the task's ⋯ menu cannot go now, or null. */
-  const compactBlocker = useCommandBlocker(selected);
-  /** Remote Control on the selected task: the task bar's mark and the ⋯ item. */
-  const selectedLive = usePtyLiveSince(selected?.id ?? null) !== null;
-  const remoteUrl = useRemoteControlUrl(selected);
-  const remoteItem = selected ? remoteControlItem(selected, selectedLive, remoteUrl) : null;
+  /** What the task bar's ⋯ items read about the selected task (#331). */
+  const selectedFacts = useTaskMenuFacts(selected, true);
+  /** Remote Control on the selected task: the task bar's mark, ⇧⌘R and its confirmation. */
+  const remoteUrl = selectedFacts.remoteUrl;
+  const remoteItem = selected ? remoteControlItem(selected, selectedFacts.live, remoteUrl) : null;
   /**
    * The task whose name is being edited in the task bar (#152): from the ⋯
    * item, a double-click on the name, or ⇧F6 / F2. Only ever the selected
@@ -714,7 +711,6 @@ export default function App() {
   );
   /** The task "Remind Me…" was opened on; null when the dialog is closed. */
   const [remindFor, setRemindFor] = useState<Task | null>(null);
-  const selectedPendingReminders = usePendingReminders(selected?.id ?? null).length;
 
   const { startupError, unclaimed, worktreeProjects, dismiss } = useLaunchNotices();
 
@@ -1230,6 +1226,34 @@ export default function App() {
 
   const banner = loadError ?? startupError ?? captureError;
 
+  /**
+   * What the task's ⋯ actions do (#331), for both menus: the row's and the
+   * task bar's. Each acts on the task it is given -- from a row, maybe not
+   * the selected one, which it leaves selected. Only Review Guide moves the
+   * selection, the way a click on the row does, to show that task's Guide.
+   */
+  const taskActions = useMemo<TaskActions>(
+    () => ({
+      remind: (task) => setRemindFor(task),
+      guide: (task) => {
+        select(task.id);
+        requestGuide(task.id);
+      },
+      move: (task) => setMoveTarget(task),
+      setDone: (task, done) => void setDone(task.id, done),
+      followUp: (task) => void openFollowUp(task),
+      archive: (task) => {
+        setEndIntent('archive');
+        setArchiveTarget(task);
+      },
+      delete: (task) => {
+        setEndIntent('delete');
+        setArchiveTarget(task);
+      },
+    }),
+    [select, setMoveTarget, setDone, openFollowUp, setEndIntent, setArchiveTarget],
+  );
+
   return (
     <FileOpenContext.Provider value={openFile}>
     <FileTextContext.Provider value={readFileText}>
@@ -1356,16 +1380,7 @@ export default function App() {
             selectedId={selectedId}
             onSelect={select}
             onNew={() => setNewTaskOpen(true)}
-            onArchive={(task) => {
-              setEndIntent('archive');
-              setArchiveTarget(task);
-            }}
-            onDelete={(task) => {
-              setEndIntent('delete');
-              setArchiveTarget(task);
-            }}
-            onFollowUp={(task) => void openFollowUp(task)}
-            onSetDone={(task, done) => void setDone(task.id, done)}
+            actions={taskActions}
             onRename={saveTitle}
             onSummary={saveSummary}
             onRenameClosed={() => {
@@ -1480,78 +1495,11 @@ export default function App() {
                     label={`Actions for ${selected.title}`}
                     title="Task actions"
                     trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
-                    items={[
-                        renameMenuItem(() => setRenaming({ id: selected.id, by: 'pointer' })),
-                        // The same /compact as the button by the message box,
-                        // which appears only past 70%; here at any fill.
-                        {
-                          id: 'compact',
-                          label: COMPACT.label,
-                          disabled: compactBlocker !== null,
-                          title: compactBlocker ?? COMPACT.hint,
-                          onSelect: () => void sendToSession(selected.id, COMPACT.command),
-                        },
-                        // Hidden, not disabled, while on or with no session:
-                        // the mark beside the title says the first.
-                        ...(remoteItem ? [remoteItem] : []),
-                        // Set one, and see or change the ones to come (#156).
-                        remindMenuItem(selectedPendingReminders, () => setRemindFor(selected)),
-                        // A branch's changes, grouped by what they do (#186).
-                        // A chat has no branch of its own to guide.
-                        ...(selected.kind === 'chat' ? [] : [{
-                          id: 'guide',
-                          label: 'Review Guide',
-                          aside: '⇧⌘G',
-                          title: 'This branch’s changes against its base, grouped by what they do',
-                          onSelect: () => requestGuide(selected.id),
-                        }]),
-                        {
-                          id: 'copy-path',
-                          label: 'Copy Worktree Path',
-                          onSelect: () => {
-                            void navigator.clipboard?.writeText(selected.worktreePath).catch(() => {});
-                          },
-                        },
-                        {
-                          id: 'copy-session',
-                          label: 'Copy Session ID',
-                          disabled: selected.sessionId === null,
-                          title: selected.sessionId ?? 'No session yet',
-                          onSelect: () => {
-                            if (selected.sessionId) void navigator.clipboard?.writeText(selected.sessionId).catch(() => {});
-                          },
-                        },
-                        // Moving a chat to a worktree would turn it into work
-                        // on a branch: out of scope (#49), so not offered.
-                        ...(selected.kind === 'chat' ? [] : [{
-                          id: 'move',
-                          label:
-                            normalizePath(selected.worktreePath) === normalizePath(selected.repoPath)
-                              ? 'Move to a Worktree…'
-                              : 'Move to Main Checkout…',
-                          title: 'Same branch, same conversation; uncommitted changes come along',
-                          onSelect: () => setMoveTarget(selected),
-                        }]),
-                        {
-                          id: 'archive',
-                          label: 'Archive Task…',
-                          title: 'Out of the active list (opens the archive dialog)',
-                          onSelect: () => {
-                            setEndIntent('archive');
-                            setArchiveTarget(selected);
-                          },
-                        },
-                        {
-                          id: 'delete',
-                          label: 'Delete Task…',
-                          tone: 'danger' as const,
-                          title: 'Worktree optional, conversation kept (opens the delete dialog)',
-                          onSelect: () => {
-                            setEndIntent('delete');
-                            setArchiveTarget(selected);
-                          },
-                        },
-                    ]}
+                    // The same list as the row's menu (#331), with no heading:
+                    // the task's name is right beside it.
+                    items={taskMenuItems(selected, selectedFacts, taskActions, () =>
+                      setRenaming({ id: selected.id, by: 'pointer' }),
+                    )}
                   />
                   {/* Reachable through Remote Control, against the name: it
                       is about the session, not the branch after it. */}

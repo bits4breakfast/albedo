@@ -78,7 +78,7 @@ async function renderList(onSetDone = vi.fn()) {
   prs.set(3, 'open');
   prs.set(6, 'merged');
   const view = render(
-    <TaskList tasks={tasks} signals={signals} selectedId={null} onSelect={() => {}} onNew={() => {}} onSetDone={onSetDone} onArchive={() => {}} />,
+    <TaskList tasks={tasks} signals={signals} selectedId={null} onSelect={() => {}} onNew={() => {}} actions={{ setDone: onSetDone, archive: () => {} }} />,
   );
   // The git probe answers asynchronously.
   await act(async () => {

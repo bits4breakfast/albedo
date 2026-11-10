@@ -65,7 +65,7 @@ export const RENAME_KEYS = '⇧F6';
 export const RENAME_HINT =
   'Renames the task in Albedo and its Claude Code session (/rename). The branch and the folder stay as they are.';
 
-/** "Rename Task…" for the task bar's ⋯ menu: opens the name for editing in place. */
+/** "Rename Task…" for the task's ⋯ menus (#331): opens the name for editing where the menu is. */
 export function renameMenuItem(onSelect: () => void): OverflowItem {
   return { id: 'rename', label: 'Rename Task…', aside: RENAME_KEYS, title: RENAME_HINT, onSelect };
 }
