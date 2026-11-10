@@ -285,7 +285,9 @@ describe('GuidePane', () => {
     expect(within(left().getByRole('button', { name: /a\.ts/ })).queryByRole('img', { name: /comment/ })).toBeNull();
     // Open src/b.ts: its diff header says it too.
     fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
-    expect(right().getByRole('img', { name: '2 comments' })).toBeTruthy();
+    // The diff header's count arrives after the file's comments load, which
+    // is a tick later under a busy full-suite run: wait for it, don't assume.
+    expect(await right().findByRole('img', { name: '2 comments' })).toBeTruthy();
   });
 
   describe('Send Comments (#254)', () => {
