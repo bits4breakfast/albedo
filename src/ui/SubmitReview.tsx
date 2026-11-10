@@ -240,9 +240,9 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
       if (out.ok || out.reviewSent || out.repliesSent > 0) {
         void refreshThreads(task.reviewUrl!, pr, task.worktreePath, { force: true });
       }
-      // A submitted review moves the PR out of Review Started (#315): ask
-      // for the list now rather than at the next minute's poll.
-      if (out.ok || out.reviewSent) void refreshReviews(task.repoPath, { force: true });
+      // A submitted review or reply moves the PR out of Review Started
+      // (#315): ask for the list now rather than at the next minute's poll.
+      if (out.ok || out.reviewSent || out.repliesSent > 0) void refreshReviews(task.repoPath, { force: true });
       if (out.ok) {
         summaries.delete(id);
         reviewPosted.delete(id);

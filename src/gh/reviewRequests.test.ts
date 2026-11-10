@@ -85,6 +85,44 @@ describe('parseReviewRequests', () => {
     expect(reviews([{ author: { login: 'carol' }, submittedAt: '2026-11-07T09:00:00Z', state: 'APPROVED' }])).toBeNull();
   });
 
+  it('knows your latest review from viewerLatestReview when it is not among the last ten (#315)', () => {
+    const others = Array.from({ length: 10 }, (_, i) => ({
+      author: { login: 'carol' },
+      submittedAt: `2026-11-0${Math.min(9, i + 1)}T09:00:00Z`,
+      state: 'COMMENTED',
+    }));
+    const parsed = (over: Record<string, unknown>) => parseReviewRequests(answer([node({ reviews: { nodes: others }, ...over })]))!.prs[0]!;
+    expect(REVIEWS_QUERY).toContain('viewerLatestReview { submittedAt state }');
+    expect(parsed({ viewerLatestReview: { submittedAt: '2026-10-30T09:00:00Z', state: 'COMMENTED' } }).yourReview).toEqual({
+      at: Date.parse('2026-10-30T09:00:00Z'),
+      state: 'COMMENTED',
+    });
+    // A pending review with no submittedAt says nothing: the last ten decide.
+    expect(parsed({ viewerLatestReview: { submittedAt: null, state: 'PENDING' } }).yourReview).toBeNull();
+    expect(parsed({ viewerLatestReview: null }).yourReview).toBeNull();
+  });
+
+  it('approved: your latest opinionated review is an approval; a later comment keeps it, a change request ends it (#315)', () => {
+    const approvedWith = (nodes: unknown[], reviews: unknown[] = []) =>
+      parseReviewRequests(answer([node({ latestOpinionatedReviews: { nodes }, reviews: { nodes: reviews } })]))!.prs[0]!.approved;
+    expect(REVIEWS_QUERY).toContain('latestOpinionatedReviews(first: 10, writersOnly: true) { nodes { author { login } state } }');
+    // Approved, then a comment-only review: GitHub's opinionated list still says APPROVED.
+    expect(
+      approvedWith(
+        [{ author: { login: 'me' }, state: 'APPROVED' }],
+        [
+          { author: { login: 'me' }, submittedAt: '2026-11-04T09:00:00Z', state: 'APPROVED' },
+          { author: { login: 'me' }, submittedAt: '2026-11-06T09:00:00Z', state: 'COMMENTED' },
+        ],
+      ),
+    ).toBe(true);
+    // Changes requested after approving replaces it there.
+    expect(approvedWith([{ author: { login: 'me' }, state: 'CHANGES_REQUESTED' }])).toBe(false);
+    // Someone else's approval is not yours.
+    expect(approvedWith([{ author: { login: 'carol' }, state: 'APPROVED' }])).toBe(false);
+    expect(approvedWith([])).toBe(false);
+  });
+
   it('a request through a team names the team and takes that team request time', () => {
     const r = parseReviewRequests(
       answer([

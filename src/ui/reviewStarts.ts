@@ -3,8 +3,8 @@
  * tab: per review task, its Guide's Reviewed marks (guide/store.ts) and its
  * comments (db/comments.ts), as a {@link ReviewStart} keyed by the PR's url.
  *
- * Both are read when they change, never on a timer: the guide store's own
- * notification for a tick, and `onCommentsChanged` for a comment, which
+ * Both are read when they change, never on a timer: the guide store's
+ * notification for a written guide or tick (useGuideReviewedVersion), and `onCommentsChanged` for a comment, which
  * re-reads that one task's comments in one query. Whether the PR is Started
  * -- these against your last submitted review -- is reviewActivity.ts's call.
  */
@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Task } from '../types';
 import type { ReviewStart } from '../gh/reviewActivity';
 import { commentFacts, onCommentsChanged, type CommentFacts } from '../db/comments';
-import { guideProgress, useGuideStoreVersion } from '../guide/store';
+import { guideProgress, useGuideReviewedVersion } from '../guide/store';
 
 /** The live review tasks among `tasks`: id -> PR url. */
 function reviewIds(tasks: readonly Task[]): Map<number, string> {
@@ -79,7 +79,7 @@ export function useReviewStarts(tasks: readonly Task[]): ReadonlyMap<string, Rev
     };
   }, [idsKey]);
 
-  const guideVersion = useGuideStoreVersion();
+  const guideVersion = useGuideReviewedVersion();
   return useMemo(() => {
     const progress = guideProgress([...ids.keys()]);
     const out = new Map<string, ReviewStart>();
@@ -88,6 +88,7 @@ export function useReviewStarts(tasks: readonly Task[]): ReadonlyMap<string, Rev
       if (s) out.set(url, s);
     }
     return out;
-    // guideVersion stands for the guide store read through guideProgress.
+    // guideVersion stands for the guides and marks read through guideProgress;
+    // it moves only when they are written, not on a write's progress.
   }, [ids, comments, guideVersion]);
 }

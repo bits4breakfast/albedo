@@ -11,9 +11,9 @@
  *
  * `{owner}/{repo}` is gh's own placeholder, filled from the folder's remote as
  * `gh pr view` resolves it. It works inside an -F value, so the repo needs no
- * second call to name it. Measured on a live repo: `rateLimit { cost }` 2 for
- * this query at these page sizes. A review's `state` (#315) is a field on
- * nodes already fetched, so it costs nothing more.
+ * second call to name it. Measured on a live repo: `rateLimit { cost }` 3 for
+ * this query at these page sizes, with or without what #315 added (a
+ * review's `state`, `viewerLatestReview`, `latestOpinionatedReviews`).
  *
  * Like gh.ts, nothing here throws at its callers: no gh, logged out, offline,
  * a folder with no GitHub remote -- each is null, "cannot tell".
@@ -32,6 +32,8 @@ fragment ReviewPr on PullRequest {
   commits(last: 1) { totalCount nodes { commit { committedDate } } }
   comments(last: 10) { nodes { author { login } createdAt } }
   reviews(last: 10) { nodes { author { login } submittedAt state } }
+  viewerLatestReview { submittedAt state }
+  latestOpinionatedReviews(first: 10, writersOnly: true) { nodes { author { login } state } }
   reviewRequests(first: 10) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } }
   timelineItems(last: 10, itemTypes: [REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT]) { nodes {
     __typename
@@ -83,6 +85,13 @@ export interface ReviewPr {
    * `DISMISSED`). Null when none of them is yours.
    */
   yourReview: { at: number; state: string } | null;
+  /**
+   * Your standing opinion on the PR is an approval (#315): GitHub's latest
+   * opinionated review of yours (approve or request changes; a later
+   * comment-only review does not replace it) is APPROVED. The owner's rule,
+   * matching GitHub's own "approved by".
+   */
+  approved: boolean;
   section: ReviewSection;
 }
 
@@ -175,6 +184,16 @@ function prOf(raw: unknown, section: ReviewSection, viewer: string | null): Revi
       yourReview = { at, state: str(obj(r)?.state) ?? '' };
     }
   }
+  // GitHub's own answer, whatever the last ten reviews hold. A pending review
+  // may come back here with no submittedAt: then the last ten have to do.
+  const latest = obj(n.viewerLatestReview);
+  const latestAt = time(latest?.submittedAt);
+  if (latestAt !== null && (yourReview === null || latestAt >= yourReview.at)) {
+    yourReview = { at: latestAt, state: str(latest?.state) ?? '' };
+  }
+  const approved =
+    viewer !== null &&
+    nodesOf(n.latestOpinionatedReviews).some((r) => login(obj(r)?.author) === viewer && obj(r)?.state === 'APPROVED');
   talk.sort((a, b) => a.at - b.at);
 
   const commits = obj(n.commits);
@@ -197,6 +216,7 @@ function prOf(raw: unknown, section: ReviewSection, viewer: string | null): Revi
     talk,
     forcePushedAt,
     yourReview,
+    approved,
     section,
   };
 }

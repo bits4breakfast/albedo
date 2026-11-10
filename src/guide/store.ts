@@ -109,6 +109,12 @@ export const reviewedAtCodec: Codec<Record<string, number>> = {
 
 const listeners = new Set<() => void>();
 let version = 0;
+/**
+ * Bumped only when a guide or a Reviewed mark is written (#315): what
+ * {@link guideProgress} reads. A write's progress or a focus draft changes
+ * `version` alone, so the Reviewing tab does not read storage again for them.
+ */
+let reviewedVersion = 0;
 function changed(): void {
   version++;
   for (const l of listeners) l();
@@ -131,6 +137,7 @@ export function capGuides(all: Record<string, Guide>, max = MAX_GUIDES): Record<
 export function saveGuide(taskId: number, guide: Guide): void {
   const all = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
   writePersisted(KEYS.reviewGuides, guidesCodec, capGuides({ ...all, [String(taskId)]: guide }));
+  reviewedVersion++;
   changed();
 }
 
@@ -159,16 +166,19 @@ export function reviewingTaskIds(): ReadonlySet<number> {
   const out = new Set<number>();
   for (const [id, keys] of Object.entries(marks)) {
     const guide = guides[id];
-    if (!guide) continue;
-    const current = keys.some((k) => {
-      const at = k.lastIndexOf('#');
-      const known = at > 0 ? guide.files[k.slice(0, at)] : undefined;
-      const blocks = at > 0 ? k.slice(at + 1).split(',').filter(Boolean) : [];
-      return known !== undefined && blocks.length > 0 && blocks.every((b) => known.includes(b));
-    });
-    if (current) out.add(Number(id));
+    if (guide && marksCurrent(guide, keys)) out.add(Number(id));
   }
   return out;
+}
+
+/** Whether any of a task's marks still names blocks in its guide (#219). Pure. */
+function marksCurrent(guide: Guide, keys: readonly string[]): boolean {
+  return keys.some((k) => {
+    const at = k.lastIndexOf('#');
+    const known = at > 0 ? guide.files[k.slice(0, at)] : undefined;
+    const blocks = at > 0 ? k.slice(at + 1).split(',').filter(Boolean) : [];
+    return known !== undefined && blocks.length > 0 && blocks.every((b) => known.includes(b));
+  });
 }
 
 export function setReviewed(taskId: number, keys: readonly string[], on: boolean): void {
@@ -194,6 +204,7 @@ export function setReviewed(taskId: number, keys: readonly string[], on: boolean
   for (const [k, v] of Object.entries(times)) if (k in next) keptTimes[k] = v;
   if (on && keys.length > 0 && String(taskId) in next) keptTimes[String(taskId)] = Date.now();
   writePersisted(KEYS.reviewGuideReviewedAt, reviewedAtCodec, keptTimes);
+  reviewedVersion++;
   changed();
 }
 
@@ -213,20 +224,21 @@ export interface GuideProgress {
  * from the guide alone, without the diff: the guide's groups, plus Unsorted
  * when it left blocks out, never Set Aside -- what the pane counts as "N of M
  * reviewed" while the branch is where the guide was written. A group is
- * Reviewed when every one of its blocks is in a Reviewed mark. Three reads of
- * storage, whatever the task count.
+ * Reviewed when every one of its blocks is in a Reviewed mark. Each key is
+ * read once, whatever the task count; callers re-read only on
+ * {@link useGuideReviewedVersion}.
  */
 export function guideProgress(taskIds: readonly number[]): ReadonlyMap<number, GuideProgress> {
   const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
   const marks = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
   const times = readPersisted(KEYS.reviewGuideReviewedAt, reviewedAtCodec, {} as Record<string, number>);
-  const reviewing = reviewingTaskIds();
   const out = new Map<number, GuideProgress>();
   for (const id of taskIds) {
     const guide = guides[String(id)];
     if (!guide) continue;
+    const mine = marks[String(id)] ?? [];
     const ticked = new Set<string>();
-    for (const k of marks[String(id)] ?? []) {
+    for (const k of mine) {
       const at = k.lastIndexOf('#');
       if (at > 0) for (const b of k.slice(at + 1).split(',')) if (b) ticked.add(b);
     }
@@ -238,7 +250,7 @@ export function guideProgress(taskIds: readonly number[]): ReadonlyMap<number, G
     );
     if (rest.length > 0) sets.push(rest);
     out.set(id, {
-      reviewing: reviewing.has(id),
+      reviewing: marksCurrent(guide, mine),
       tickedAt: times[String(id)] ?? null,
       reviewed: sets.filter((b) => b.every((x) => ticked.has(x))).length,
       total: sets.length,
@@ -425,6 +437,11 @@ async function pump(taskId: number, job: NotesJob): Promise<void> {
       changed();
     }
   }
+}
+
+/** Re-renders only when a guide or a Reviewed mark is written (#315). */
+export function useGuideReviewedVersion(): number {
+  return useSyncExternalStore(subscribe, () => reviewedVersion);
 }
 
 /** Re-renders on any change to guides, Reviewed or a write. */

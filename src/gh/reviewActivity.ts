@@ -184,7 +184,8 @@ const NO_STARTS: ReadonlyMap<string, ReviewStart> = new Map();
  *   Requested       the rest of what you are asked to review; newest request first
  *   Reviewed        reviewed, nothing new, your latest review not an
  *                   approval; most recently updated first
- *   Approved        your latest review approved it (#315); most recently updated first
+ *   Approved        your standing review is an approval (#315): a later
+ *                   comment-only review keeps it here; most recently updated first
  * `starts` is keyed by PR url, and has an entry only for a PR with a review task.
  */
 export function reviewGroups(
@@ -200,7 +201,7 @@ export function reviewGroups(
     if (activity.unseen) groups.activity.push({ pr, activity, at: activity.at });
     else if (start && isStarted(pr, start)) groups.started.push({ pr, activity, at: start.at ?? pr.updatedAt, start });
     else if (pr.section === 'requested') groups.requested.push({ pr, activity, at: pr.requestedAt ?? pr.createdAt });
-    else if (pr.yourReview?.state === 'APPROVED') groups.approved.push({ pr, activity, at: pr.updatedAt });
+    else if (pr.approved) groups.approved.push({ pr, activity, at: pr.updatedAt });
     else groups.reviewed.push({ pr, activity, at: pr.updatedAt });
   }
   return GROUP_ORDER.map((key) => ({ key, rows: groups[key].sort((a, b) => b.at - a.at || b.pr.number - a.pr.number) })).filter(

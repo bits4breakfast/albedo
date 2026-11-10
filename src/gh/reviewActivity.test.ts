@@ -34,6 +34,7 @@ function pr(over: Partial<ReviewPr> = {}): ReviewPr {
     talk: [],
     forcePushedAt: null,
     yourReview: null,
+    approved: false,
     section: 'requested',
     ...over,
   };
@@ -155,7 +156,7 @@ describe('Review Started and Approved (#315)', () => {
   it('your latest review approving the PR puts it in Approved, after Waiting on Author', () => {
     const approved = pr({
       url: 'u/a', number: 20, section: 'reviewed', updatedAt: 5 * H,
-      yourReview: { at: 5 * H, state: 'APPROVED' }, talk: [{ author: 'me', at: 5 * H }],
+      yourReview: { at: 5 * H, state: 'APPROVED' }, approved: true, talk: [{ author: 'me', at: 5 * H }],
     });
     const changes = pr({
       url: 'u/b', number: 21, section: 'reviewed', updatedAt: 4 * H,
@@ -169,16 +170,25 @@ describe('Review Started and Approved (#315)', () => {
     expect(REVIEW_GROUP_TITLE.approved).toBe('Approved');
   });
 
+  it('stays Approved when your later review only comments (the owner\'s rule, as GitHub\'s "approved by")', () => {
+    const p = pr({
+      url: 'u/a', number: 20, section: 'reviewed',
+      yourReview: { at: 6 * H, state: 'COMMENTED' }, approved: true, talk: [{ author: 'me', at: 6 * H }],
+    });
+    expect(keys(reviewGroups([p], new Map(), 'me'))).toEqual([['approved', [20]]]);
+    expect(keys(reviewGroups([{ ...p, approved: false }], new Map(), 'me'))).toEqual([['reviewed', [20]]]);
+  });
+
   it('New Activity wins over Started and Approved', () => {
     const news: ReviewPr['talk'] = [{ author: 'me', at: 5 * H }, { author: 'alice', at: 9 * H }];
     const started = pr({ url: 'u/s', number: 1, talk: news });
-    const approved = pr({ url: 'u/a', number: 2, section: 'reviewed', yourReview: { at: 5 * H, state: 'APPROVED' }, talk: news });
+    const approved = pr({ url: 'u/a', number: 2, section: 'reviewed', yourReview: { at: 5 * H, state: 'APPROVED' }, approved: true, talk: news });
     const groups = reviewGroups([started, approved], new Map(), 'me', new Map([['u/s', start({ at: 6 * H })]]));
     expect(keys(groups)).toEqual([['activity', [2, 1]]]);
   });
 
   it('groups in the owner order, and the count is New Activity, Review Started and Requested', () => {
-    const mine = (at: number, state: string) => ({ yourReview: { at, state }, talk: [{ author: 'me', at }] });
+    const mine = (at: number, state: string) => ({ yourReview: { at, state }, approved: state === 'APPROVED', talk: [{ author: 'me', at }] });
     const prs = [
       pr({ url: 'u/approved', number: 5, section: 'reviewed', ...mine(3 * H, 'APPROVED') }),
       pr({ url: 'u/waiting', number: 4, section: 'reviewed', ...mine(3 * H, 'COMMENTED') }),

@@ -62,7 +62,7 @@ function pr(over: Partial<ReviewPr>): ReviewPr {
   return {
     url: 'https://github.com/acme/relay/pull/1', number: 1, title: 'One', isDraft: false, author: 'alice',
     additions: 84, deletions: 12, headOid: 'h1', baseBranch: 'main', commitCount: 2, lastCommitAt: NOW - 30 * H, createdAt: NOW - 30 * H,
-    updatedAt: NOW - 30 * H, requestedAt: NOW - 20 * H, teams: [], talk: [], forcePushedAt: null, yourReview: null, section: 'requested',
+    updatedAt: NOW - 30 * H, requestedAt: NOW - 20 * H, teams: [], talk: [], forcePushedAt: null, yourReview: null, approved: false, section: 'requested',
     ...over,
   };
 }
@@ -317,7 +317,7 @@ describe('Review Started and Approved (#315)', () => {
       viewer: 'me',
       prs: [
         pr({ url: 'u/420', number: 420, title: 'Cache the index' }),
-        pr({ url: 'u/418', number: 418, title: 'Rename the queue', section: 'reviewed', yourReview: { at, state: 'APPROVED' }, talk: [{ author: 'me', at }] }),
+        pr({ url: 'u/418', number: 418, title: 'Rename the queue', section: 'reviewed', yourReview: { at, state: 'APPROVED' }, approved: true, talk: [{ author: 'me', at }] }),
         pr({ url: 'u/417', number: 417, title: 'Split the worker', section: 'reviewed', yourReview: { at, state: 'CHANGES_REQUESTED' }, talk: [{ author: 'me', at }] }),
       ],
     };
