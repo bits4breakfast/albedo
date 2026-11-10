@@ -1,0 +1,177 @@
+/* --------------------------------------------------------------------------
+   Proposed (#332): new tasks sessions asked for, at the top of the Building
+   tab, and the popover beside a row.
+
+   Grounds are existing tokens only: the list's --panel-chrome, --panel-hover
+   under a hovered row, --panel-raised under the row whose popover is open
+   (as a row with its menu open), --panel for the popover. Text tiers,
+   measured (light | dark) on the worst ground each one sits on:
+     row title  --text   on --panel-raised  13.68 | 12.29
+     from line  --muted  on --panel-raised   5.89 |  6.50
+     label      --accent on --panel-chrome   5.87 |  7.44
+     popover    --text 16.60 | 14.63, --muted 7.15 | 7.74 on --panel
+   Deny is .btn-ghost (--muted, 5.89 | 6.50 on --panel-raised), Approve…
+   .btn-primary, its own measured pair. No tints, no opacity.
+   -------------------------------------------------------------------------- */
+
+/* The group's name in the accent, as the icon is: it waits on you. */
+.group-label[data-tone='proposed'] { color: var(--accent); }
+/* Dashed ring, in the accent: 3:1 and up on every ground it sits on
+   (--panel-chrome 5.87 | 7.44). */
+.proposed-ring { color: var(--accent); }
+
+/* Title on the first line, whole width; "from …" and the buttons under it. */
+.proposal-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  margin-bottom: 1px;
+  /* 12px: the title starts where the group header's icon does, as on task rows. */
+  padding: 6px 8px 6px 12px;
+  border-radius: var(--radius);
+  cursor: default;
+}
+.proposal-row:hover { background: var(--panel-hover); }
+.proposal-row[data-open] { background: var(--panel-raised); }
+
+/* The disclosure: the title, as a button with no chrome of its own. */
+.proposal-title {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-self: start;
+  max-width: 100%;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+.proposal-row[data-open] .proposal-title { color: var(--text-strong); }
+
+.proposal-from {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposal-actions {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  gap: 4px;
+}
+.proposal-actions .btn { height: 24px; padding: 0 9px; font-size: var(--fs-xs); }
+
+/* Popover ----------------------------------------------------------------- */
+
+.proposal-pop {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  max-width: calc(100vw - 16px);
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+  outline: none;
+}
+
+/* The arrow, pointing left at the row's centre (--arrow-y, placeBeside). A
+   square turned 45°, its two outer edges in the popover's border. */
+.proposal-pop::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: calc(var(--arrow-y, 20px) - 6px);
+  width: 12px;
+  height: 12px;
+  background: var(--panel);
+  border-left: 1px solid var(--border-mid);
+  border-bottom: 1px solid var(--border-mid);
+  transform: rotate(45deg);
+}
+
+/* Scrolls inside, so a capped popover keeps its arrow. */
+.proposal-pop-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+}
+
+.proposal-pop-kind { font-size: var(--fs-xs); color: var(--muted); }
+
+.proposal-pop-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.proposal-pop-from {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.proposal-pop-section { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+
+.proposal-pop-label { font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
+
+.proposal-pop-text {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The brief as it would be sent: monospace, kept short, edge on the left. */
+.proposal-pop-brief {
+  margin: 0;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--border-mid);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.proposal-pop-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.proposal-pop-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}

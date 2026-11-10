@@ -38,3 +38,51 @@ function fit(p: number, size: number, extent: number, margin: number): number {
   if (end - size >= margin) return end - size;
   return Math.max(margin, Math.min(p, extent - margin - size));
 }
+
+/** Where a popover beside an anchor goes, and where its arrow points. */
+export interface BesidePlacement {
+  left: number;
+  top: number;
+  /** The arrow's centre, from the popover's top edge: level with the anchor's centre. */
+  arrowY: number;
+  /** Set only when the popover is taller than the window allows. */
+  maxHeight?: number;
+}
+
+/** How far the arrow sits from the popover's top (or bottom, flipped) by preference. */
+export const ARROW_INSET = 20;
+/** The arrow never comes closer than this to the popover's corners. */
+const ARROW_MIN = 12;
+
+/**
+ * A popover to the right of an anchor (a task list row, #332), with an arrow
+ * pointing at the anchor's vertical centre, kept in the window. Pure.
+ *
+ * Its top sits {@link ARROW_INSET} above the anchor's centre when it fits
+ * below that; otherwise it flips, its bottom {@link ARROW_INSET} below the
+ * centre; otherwise it is pushed inside the window's edges. A popover taller
+ * than the window is capped and scrolls, as {@link placeMenu}'s menus do.
+ * The arrow follows the anchor's centre wherever the popover lands, kept off
+ * its corners.
+ */
+export function placeBeside(
+  anchor: { top: number; bottom: number; right: number },
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+  gap = 10,
+  margin = MENU_MARGIN,
+): BesidePlacement {
+  const cy = (anchor.top + anchor.bottom) / 2;
+  const left = Math.max(margin, Math.min(anchor.right + gap, viewport.width - margin - size.width));
+  const room = viewport.height - 2 * margin;
+  const arrow = (top: number, height: number) => Math.max(ARROW_MIN, Math.min(height - ARROW_MIN, cy - top));
+  if (size.height > room) {
+    const height = Math.max(0, room);
+    return { left, top: margin, arrowY: arrow(margin, height), maxHeight: height };
+  }
+  const below = cy - ARROW_INSET;
+  const above = cy + ARROW_INSET - size.height;
+  const preferred = below + size.height <= viewport.height - margin ? below : above;
+  const top = Math.max(margin, Math.min(preferred, viewport.height - margin - size.height));
+  return { left, top, arrowY: arrow(top, size.height) };
+}

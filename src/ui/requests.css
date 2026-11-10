@@ -83,26 +83,6 @@
   overflow-wrap: anywhere;
 }
 
-/* The prompt, as it would be sent: monospace, kept short, edge on the left. */
-.requests-prompt {
-  margin: 2px 0 0;
-  padding: 4px 0 4px 10px;
-  border-left: 2px solid var(--border-mid);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.requests-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  font-size: var(--fs-xs);
-  color: var(--muted);
-}
-
 .requests-note { font-size: var(--fs-xs); color: var(--muted); }
 
 .requests-actions {
