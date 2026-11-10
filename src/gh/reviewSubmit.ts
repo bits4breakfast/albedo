@@ -214,9 +214,9 @@ export function classifySubmitError(text: string): SubmitFailure {
 export function failureAdvice(kind: SubmitFailure): string {
   switch (kind) {
     case 'line':
-      return 'GitHub would not place a comment on its line. The pull request may have changed: update the review, then submit again.';
+      return 'GitHub would not place a comment on its line: the pull request may have changed since this copy was checked out.';
     case 'head':
-      return 'The commit you reviewed is no longer part of the pull request (it was force-pushed). Update the review, check your comments, then submit again.';
+      return 'The commit you reviewed is no longer part of the pull request (it was force-pushed). Your drafts are kept here; GitHub takes them once this copy is on the new head.';
     case 'pending':
       return 'You have a review in progress on GitHub for this pull request. Submit or discard it there, then submit again here.';
     case 'other':

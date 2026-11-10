@@ -111,7 +111,7 @@ describe('a draft for GitHub', () => {
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, REVIEW));
     await waitFor(() => expect(result.current.annotations!.after(2)).not.toBeNull());
     render(<>{result.current.annotations!.after(2)}</>);
-    expect(screen.getByText('Draft · not in the diff: goes in the summary')).toBeTruthy();
+    expect(screen.getByText('Draft · not in the diff: in the summary')).toBeTruthy();
   });
 });
 

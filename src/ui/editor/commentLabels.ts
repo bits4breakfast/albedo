@@ -41,7 +41,7 @@ export function cardState(
   if (c.github === 'draft' && c.sentAt === null) {
     return {
       state: 'waiting',
-      chip: outside ? 'Draft · not in the diff: goes in the summary' : 'Draft · goes with Submit Review',
+      chip: outside ? 'Draft · not in the diff: in the summary' : 'Draft · goes with Submit Review',
       main: 'edit',
       more: ['delete'],
     };

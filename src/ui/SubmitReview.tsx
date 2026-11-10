@@ -352,7 +352,7 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
         </div>
 
         <div className="wt-modal-foot">
-          <span className="wt-modal-sub">{why ?? 'Posted as you, through gh. Ask Claude comments stay here.'}</span>
+          <span className="wt-modal-sub">{why ?? 'Posted as you, through gh.'}</span>
           <span className="wt-foot-spacer" />
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
             {outcome ? 'Close' : 'Cancel'}
