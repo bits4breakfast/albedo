@@ -288,8 +288,9 @@ function commentsCount(n: number): string {
  * Another reviewer's thread on GitHub (#287, step 4), read only, under the
  * line it is on: the same card as a comment, its edge grey as a sent one's
  * (it is not yours to send), each comment as author · age and its text.
- * Reply is the one action; Open on GitHub is under ⋯. A resolved thread is
- * folded to one line until Show. Your reply drafts hang under it, and go
+ * Reply and Open on GitHub, both always shown (#327: Open on GitHub sat
+ * under ⋯ while the chip's "On GitHub" read as a second link). A resolved
+ * thread is folded to one line until Show. Your reply drafts hang under it, and go
  * with Submit Review.
  */
 export function ThreadCardView({
@@ -311,11 +312,11 @@ export function ThreadCardView({
   onDeleteReply: (reply: ReviewComment) => void;
 }): ReactNode {
   const [open, setOpen] = useState(!thread.isResolved);
-  const [more, setMore] = useState(false);
   const [writing, setWriting] = useState<ReviewComment | 'new' | null>(null);
   const [moreOf, setMoreOf] = useState<number | null>(null);
   const first = thread.comments[0];
-  const state = thread.isResolved ? '✓ Resolved' : thread.isOutdated ? 'Outdated' : 'On GitHub';
+  // The chip says what state the thread is in; where it lives is the link's job.
+  const state = thread.isResolved ? '✓ Resolved' : thread.isOutdated ? 'Outdated' : null;
   const link = `${prUrl}#discussion_r${thread.replyTo}`;
   const where = line !== null ? `Line ${line}` : thread.line !== null ? `Line ${thread.line} on GitHub` : thread.originalLine !== null ? `Was line ${thread.originalLine}` : 'On GitHub';
   const save = (p: Promise<unknown>) => p.then(() => setWriting(null), () => {});
@@ -324,7 +325,8 @@ export function ThreadCardView({
       <div className="ed-cmt-head">
         <span className="ed-cmt-where">{where}</span>
         <span className="ed-cmt-chip" data-state="sent">
-          {state} · {commentsCount(thread.comments.length)}
+          {state ? `${state} · ` : ''}
+          {commentsCount(thread.comments.length)}
         </span>
         {!open && first ? (
           <span className="ed-cmt-fold" title={first.body}>
@@ -341,27 +343,13 @@ export function ThreadCardView({
               Show
             </button>
           )}
-          {more ? (
-            <>
-              <button type="button" className="ed-cmt-btn" onClick={() => void openExternal(link)}>
-                Open on GitHub
-              </button>
-              {open && thread.isResolved ? (
-                <button type="button" className="ed-cmt-btn" onClick={() => setOpen(false)}>
-                  Fold
-                </button>
-              ) : null}
-            </>
+          {open && thread.isResolved ? (
+            <button type="button" className="ed-cmt-btn" onClick={() => setOpen(false)}>
+              Fold
+            </button>
           ) : null}
-          <button
-            type="button"
-            className="ed-cmt-btn ed-cmt-more"
-            aria-expanded={more}
-            aria-label="More actions"
-            title="More actions"
-            onClick={() => setMore((v) => !v)}
-          >
-            ⋯
+          <button type="button" className="ed-cmt-btn" onClick={() => void openExternal(link)} title={link}>
+            Open on GitHub
           </button>
         </span>
       </div>
