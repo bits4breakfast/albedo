@@ -36,6 +36,9 @@ import { groupOf } from '../../src/ui/taskGroups';
 import { reviewChip } from '../../src/gh/prStatus';
 import { fetchReviewRequests } from '../../src/gh/reviewRequests';
 import { activityWords, reviewGroups } from '../../src/gh/reviewActivity';
+import { fetchThreads, placeThread } from '../../src/gh/reviewThreads';
+import { gh } from '../../src/gh/gh';
+import { planReview, submitReview } from '../../src/gh/reviewSubmit';
 
 import { databasePath, demoEnv, setup } from './demo.mjs';
 import { migrate, migrationsFromLibRs } from './seed.mjs';
@@ -347,6 +350,60 @@ describe('the Reviewing tab', () => {
 
     const blog = scenario.projects.find((p) => p.name === 'blog')!.repo;
     expect((await fetchReviewRequests(blog))?.prs).toEqual([]);
+  }, GH_TEST_MS);
+});
+
+describe('a review task, on GitHub (#287, steps 3 and 4)', () => {
+  useFakeGh();
+  const PR = { host: 'github.com', owner: 'example', repo: 'recipe-app', number: 34 };
+
+  it('shows other reviewers\' threads on #34, found at their lines in the PR\'s files', async () => {
+    const repo = scenario.projects.find((p) => p.name === 'recipe-app')!.repo;
+    const threads = await fetchThreads(PR, repo);
+    expect(threads?.map((t) => [t.path, t.line, t.isResolved, t.comments.length])).toEqual([
+      ['src/recipes/RecipeCard.tsx', 10, false, 2],
+      ['src/styles/print.css', 8, true, 2],
+    ]);
+    const card = spawnSync('git', ['show', 'refs/pull/34/head:src/recipes/RecipeCard.tsx'], {
+      cwd: (scenario.projects.find((p) => p.name === 'recipe-app') as unknown as { remote: string }).remote,
+      encoding: 'utf8',
+    }).stdout;
+    expect(placeThread(threads![0]!, card)).toBe(10);
+  }, GH_TEST_MS);
+
+  it('records a submitted review and its reply, which then read back as threads', async () => {
+    const repo = scenario.projects.find((p) => p.name === 'recipe-app')!.repo;
+    const before = (await fetchThreads(PR, repo))!;
+    const plan = planReview({
+      drafts: [
+        { id: 1, path: 'src/recipes/RecipeCard.tsx', lineStart: 9, lineEnd: 9, body: 'A class name here?', replyTo: null },
+        { id: 2, path: 'x', lineStart: 1, lineEnd: 1, body: 'Hide it there, yes.', replyTo: before[0]!.replyTo },
+      ],
+      ranges: new Map([['src/recipes/RecipeCard.tsx', [[1, 16]]]]),
+      summary: 'Nearly there.',
+      verdict: 'COMMENT',
+      commitId: 'abc',
+    });
+    const dir = join(home, '.albedo', 'reviews');
+    mkdirSync(dir, { recursive: true });
+    const sent: number[] = [];
+    const out = await submitReview(PR, plan, {
+      gh: (args) => gh(args, repo),
+      writeInput: async (json) => {
+        const f = join(dir, 'review-test.json');
+        writeFileSync(f, json);
+        return f;
+      },
+      clearInput: async (f) => rmSync(f),
+      markSent: async (ids) => void sent.push(...ids),
+    });
+    expect(out).toEqual({ ok: true, replies: 1 });
+    expect(sent).toEqual([1, 2]);
+    const after = (await fetchThreads(PR, repo))!;
+    expect(after).toHaveLength(3);
+    expect(after[0]!.comments.at(-1)).toMatchObject({ author: 'sam-rivera', body: 'Hide it there, yes.' });
+    expect(after[2]).toMatchObject({ path: 'src/recipes/RecipeCard.tsx', line: 9 });
+    rmSync(join(home, '.albedo-demo', 'posted-reviews.jsonl'));
   }, GH_TEST_MS);
 });
 

@@ -13,7 +13,10 @@ import {
   editComment,
   formatForClaude,
   listComments,
+  listGithubDrafts,
   markCommentsSent,
+  markDraftsPosted,
+  setCommentGithub,
   moveComment,
   onCommentsChanged,
   relocate,
@@ -117,7 +120,7 @@ describe('relocate', () => {
 describe('formatForClaude', () => {
   const base: ReviewComment = {
     id: 1, taskId: 1, path: 'src/A.php', lineStart: 3, lineEnd: 4, anchorText: 'a\nb',
-    body: 'Rename this.\nAnd add a test.', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null,
+    body: 'Rename this.\nAnd add a test.', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null,
   };
 
   it('numbers each comment with its place, code and text', () => {
@@ -199,5 +202,55 @@ describe('the life of a comment (#222)', () => {
     await resolveComment(t, id);
     await reopenComment(t, id);
     expect((await listComments(t))[0]).toMatchObject({ id, sentAt: null, resolvedAt: null });
+  });
+});
+
+describe('drafts for GitHub on a review task (#287, v15)', () => {
+  it('a plain comment is for Claude, as every comment before v15', async () => {
+    const t = await task();
+    await comment(t);
+    const [c] = await listComments(t);
+    expect(c).toMatchObject({ github: null, replyTo: null });
+    expect(await listGithubDrafts(t)).toEqual([]);
+  });
+
+  it('keeps a draft and a reply until GitHub takes them; a reply is never on the code', async () => {
+    const t = await task();
+    const line = await comment(t, { github: 'draft' });
+    const reply = await comment(t, { anchorText: '', body: 'Agreed.', replyTo: 9001 });
+    await comment(t, { body: 'for Claude' });
+    // The code's comments: the draft and Claude's, never the reply.
+    expect((await listComments(t)).map((c) => c.id).sort()).not.toContain(reply);
+    const drafts = await listGithubDrafts(t);
+    expect(drafts.map((d) => [d.id, d.github, d.replyTo])).toEqual([
+      [line, 'draft', null],
+      [reply, 'draft', 9001],
+    ]);
+
+    await markDraftsPosted(t, [line]);
+    expect((await listGithubDrafts(t)).map((d) => d.id)).toEqual([reply]);
+    const posted = (await listComments(t, { includeResolved: true })).find((c) => c.id === line)!;
+    expect(posted.sentAt).not.toBeNull();
+    expect(posted.resolvedAt).toBe(posted.sentAt);
+  });
+
+  it('a message to Claude delivered late never marks a comment switched to GitHub since as sent', async () => {
+    const t = await task();
+    const id = await comment(t);
+    // Held in the outbox with this comment, then the comment became a draft.
+    await setCommentGithub(t, id, 'draft');
+    await markCommentsSent(t, [id]);
+    expect((await listGithubDrafts(t)).map((d) => d.id)).toEqual([id]);
+  });
+
+  it('moves a comment between Ask Claude and Draft for GitHub, as unsent', async () => {
+    const t = await task();
+    const id = await comment(t);
+    await markCommentsSent(t, [id]);
+    await setCommentGithub(t, id, 'draft');
+    expect((await listGithubDrafts(t)).map((d) => d.id)).toEqual([id]);
+    await setCommentGithub(t, id, null);
+    expect(await listGithubDrafts(t)).toEqual([]);
+    expect((await listComments(t))[0]).toMatchObject({ github: null, sentAt: null });
   });
 });

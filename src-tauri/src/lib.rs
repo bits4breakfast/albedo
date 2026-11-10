@@ -135,6 +135,9 @@ const M0013_REVIEW_URL: &str = include_str!("../../src/db/migrations/0013_review
 /// v14: projects.guide_set_aside and guide_careful -- a project's Review Guide
 /// defaults (#295).
 const M0014_GUIDE_FOCUS: &str = include_str!("../../src/db/migrations/0014_guide_focus.sql");
+/// v15: comments.github and reply_to -- drafts for GitHub on a review task
+/// (#287).
+const M0015_COMMENT_GITHUB: &str = include_str!("../../src/db/migrations/0015_comment_github.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -220,6 +223,12 @@ pub fn run() {
             version: 14,
             description: "projects.guide_set_aside",
             sql: M0014_GUIDE_FOCUS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 15,
+            description: "comments.github",
+            sql: M0015_COMMENT_GITHUB,
             kind: MigrationKind::Up,
         },
     ];

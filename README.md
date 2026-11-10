@@ -227,6 +227,41 @@ can still read and archive them. Albedo asks GitHub once a
 minute through `gh`, in one request for the whole list, and not while the
 window is hidden.
 
+#### Review comments go to GitHub, on Submit
+
+On a review task, the comment box in the Guide, the Diff and the editor
+asks where a comment goes: **Draft for GitHub** (the default) or **Ask
+Claude**, which goes to the review session as on any other task and never
+to GitHub. Drafts stay on your machine, in Albedo's database, until you
+press **Submit Review**, beside `#n on GitHub` in the task header. The
+button shows how many drafts are waiting, and the Files tab lists them
+under **For GitHub**.
+
+Submit Review asks for an optional summary and a verdict (**Comment**,
+**Approve** or **Request Changes**). It then sends one GitHub review with your
+comments on their lines, against the commit you checked out:
+
+- A draft on a line GitHub does not take, outside the pull request's diff,
+  goes in the review's summary with its `path:line`. Its card says so when
+  you write it.
+- If the pull request has moved on GitHub since you checked it out, the
+  dialog says so. Your comments still go on the commit you reviewed, and
+  GitHub marks any whose lines changed as outdated.
+- If GitHub refuses, the dialog shows `gh`'s message and every draft is
+  kept.
+- If the review went out but a reply did not, the next click sends only
+  what is left, so nothing is posted twice.
+
+Albedo posts only from that click; the review session never posts.
+
+Other reviewers' threads appear at their lines in the Guide and the Diff,
+read only, with each comment's author and age. Resolved threads are folded
+to one line. A thread whose code is not in your copy, because it is outdated
+or on a removed line, is listed above the file instead. **Reply** writes a
+draft that goes out with Submit Review, right after the review itself.
+Threads are fetched when a view of the task opens, then again after the
+Reviewing list's own refresh, at most once a minute.
+
 ### Answer permission prompts without hunting for the terminal
 
 When Claude Code asks for permission, the question appears as a card under the

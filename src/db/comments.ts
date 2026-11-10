@@ -28,6 +28,13 @@ export interface ReviewComment {
   updatedAt: number;
   sentAt: number | null;
   resolvedAt: number | null;
+  /**
+   * Where it goes (#287, migration v15): null for Claude, as on every task;
+   * 'draft' for GitHub, sent with Submit Review on a review task.
+   */
+  github: 'draft' | null;
+  /** A reply to another reviewer's thread: the REST id of its first comment. Null otherwise. */
+  replyTo: number | null;
 }
 
 interface Row {
@@ -42,6 +49,8 @@ interface Row {
   updated_at: number;
   sent_at: number | null;
   resolved_at: number | null;
+  github?: string | null;
+  reply_to?: number | null;
 }
 
 function fromRow(r: Row): ReviewComment {
@@ -57,6 +66,8 @@ function fromRow(r: Row): ReviewComment {
     updatedAt: r.updated_at,
     sentAt: r.sent_at,
     resolvedAt: r.resolved_at,
+    github: r.github === 'draft' ? 'draft' : null,
+    replyTo: typeof r.reply_to === 'number' ? r.reply_to : null,
   };
 }
 
@@ -88,15 +99,52 @@ function changed(taskId: number): void {
 // Reads and writes
 // ---------------------------------------------------------------------------
 
-/** A task's comments, by file then line. Resolved ones only when asked. */
+/**
+ * A task's comments on its code, by file then line. Resolved ones only when
+ * asked. Replies to GitHub threads (#287) are not on the code and are never
+ * here: they hang on their thread ({@link listGithubDrafts}).
+ */
 export async function listComments(taskId: number, opts: { includeResolved?: boolean } = {}): Promise<ReviewComment[]> {
   const db = await getDb();
   const open = opts.includeResolved ? '' : ' AND resolved_at IS NULL';
   const rows = await db.select<Row[]>(
-    `SELECT * FROM comments WHERE task_id = $1${open} ORDER BY path, line_start, id`,
+    `SELECT * FROM comments WHERE task_id = $1 AND reply_to IS NULL${open} ORDER BY path, line_start, id`,
     [taskId],
   );
   return rows.map(fromRow);
+}
+
+/**
+ * A review task's drafts for GitHub not yet sent (#287): line comments and
+ * replies, by file then line. What Submit Review sends, and its count.
+ */
+export async function listGithubDrafts(taskId: number): Promise<ReviewComment[]> {
+  const db = await getDb();
+  const rows = await db.select<Row[]>(
+    `SELECT * FROM comments WHERE task_id = $1 AND github = 'draft' AND sent_at IS NULL AND resolved_at IS NULL
+     ORDER BY path, line_start, id`,
+    [taskId],
+  );
+  return rows.map(fromRow);
+}
+
+/**
+ * GitHub accepted these drafts (#287): sent, and resolved at once -- the
+ * thread GitHub now has for each takes its place on the code.
+ */
+export async function markDraftsPosted(taskId: number, ids: readonly number[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  const now = Date.now();
+  for (const id of ids) await db.execute(`UPDATE comments SET sent_at = $2, resolved_at = $2 WHERE id = $1`, [id, now]);
+  changed(taskId);
+}
+
+/** Ask Claude or Draft for GitHub, changed on an existing comment (#287). */
+export async function setCommentGithub(taskId: number, id: number, github: 'draft' | null): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE comments SET github = $2, sent_at = NULL, updated_at = $3 WHERE id = $1`, [id, github, Date.now()]);
+  changed(taskId);
 }
 
 export async function addComment(c: {
@@ -106,13 +154,19 @@ export async function addComment(c: {
   lineEnd: number;
   anchorText: string;
   body: string;
+  /** #287: a draft for GitHub. Absent: for Claude. */
+  github?: 'draft' | null;
+  /** #287: a reply to the GitHub thread whose first comment has this id. */
+  replyTo?: number | null;
 }): Promise<number> {
   const db = await getDb();
   const now = Date.now();
+  // A reply always goes to GitHub: it answers someone there.
+  const github = c.replyTo != null ? 'draft' : (c.github ?? null);
   const res = await db.execute(
-    `INSERT INTO comments (task_id, path, line_start, line_end, anchor_text, body, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-    [c.taskId, c.path, c.lineStart, c.lineEnd, c.anchorText, c.body, now],
+    `INSERT INTO comments (task_id, path, line_start, line_end, anchor_text, body, created_at, updated_at, github, reply_to)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
+    [c.taskId, c.path, c.lineStart, c.lineEnd, c.anchorText, c.body, now, github, c.replyTo ?? null],
   );
   changed(c.taskId);
   return Number(res.lastInsertId ?? 0);
@@ -132,11 +186,16 @@ export async function moveComment(taskId: number, id: number, lineStart: number,
   changed(taskId);
 }
 
+/**
+ * A message to Claude carrying these was delivered. Only comments for Claude:
+ * one switched to Draft for GitHub (#287) while a held message carried it was
+ * not sent anywhere, and stays a draft.
+ */
 export async function markCommentsSent(taskId: number, ids: readonly number[]): Promise<void> {
   if (ids.length === 0) return;
   const db = await getDb();
   const now = Date.now();
-  for (const id of ids) await db.execute(`UPDATE comments SET sent_at = $2 WHERE id = $1`, [id, now]);
+  for (const id of ids) await db.execute(`UPDATE comments SET sent_at = $2 WHERE id = $1 AND github IS NULL`, [id, now]);
   changed(taskId);
 }
 

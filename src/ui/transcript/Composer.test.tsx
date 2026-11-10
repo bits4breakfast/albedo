@@ -94,7 +94,7 @@ const pressEnter = () => fireEvent.keyDown(box(), { key: 'Enter' });
 function codeComment(id: number, over: Partial<import('../../db/comments').ReviewComment> = {}): import('../../db/comments').ReviewComment {
   return {
     id, taskId: 1, path: 'src/a.ts', lineStart: 3, lineEnd: 3, anchorText: 'const x = 1;', body: 'Name it.',
-    createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, ...over,
+    createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null, ...over,
   };
 }
 
@@ -1122,6 +1122,19 @@ describe('(o) offline, a send waits in the outbox', () => {
     expect(vi.mocked(submitPty).mock.calls[0]![1]).toContain('1. src/a.ts:3');
     codeRows.rows = [];
     stop();
+  });
+
+  it('never carries a draft for GitHub to Claude (#287): it waits for Submit Review', async () => {
+    codeRows.rows = [codeComment(7), codeComment(8, { github: 'draft', body: 'For the PR.' })];
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    type('go');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalled());
+    const sent = vi.mocked(submitPty).mock.calls[0]![1];
+    expect(sent).toContain('Name it.');
+    expect(sent).not.toContain('For the PR.');
+    codeRows.rows = [];
   });
 
   it('a code comment a held message carries is not carried again by the next one; removing the held one brings it back (#222)', async () => {

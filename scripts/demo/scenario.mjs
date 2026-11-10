@@ -608,6 +608,36 @@ export function RecipeCard({ recipe }: { recipe: Recipe }) {
         { author: 'sam-rivera', minutesAgo: 26 * 60 },
         { author: 'priya-n', minutesAgo: 40 },
       ],
+      // Review threads at their lines (#287, step 4): one still open, with
+      // the author's answer, and one resolved.
+      threads: [
+        {
+          path: 'src/recipes/RecipeCard.tsx',
+          line: 10,
+          resolved: false,
+          comments: [
+            {
+              author: 'sam-rivera',
+              minutesAgo: 26 * 60,
+              body: 'Should Print show where the page cannot be printed, like the embedded app view?',
+            },
+            {
+              author: 'priya-n',
+              minutesAgo: 40,
+              body: 'Good point. The app view has its own share sheet, so I could hide the button there. Worth it?',
+            },
+          ],
+        },
+        {
+          path: 'src/styles/print.css',
+          line: 8,
+          resolved: true,
+          comments: [
+            { author: 'sam-rivera', minutesAgo: 26 * 60, body: '`border: none` drops the card outline in print. Intended?' },
+            { author: 'priya-n', minutesAgo: 25 * 60, body: 'Yes: it saves ink, and the page break already separates cards.' },
+          ],
+        },
+      ],
     },
     {
       number: 36,

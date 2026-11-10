@@ -47,6 +47,7 @@ import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteM
 import ModelPicker from './ui/ModelPicker';
 import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
 import BranchChip from './ui/BranchChip';
+import { ReviewBadge } from './ui/SubmitReview';
 import OverflowMenu from './ui/OverflowMenu';
 import TaskTitleEdit from './ui/TaskTitleEdit';
 import { RENAME_KEYS, renameMenuItem, renameTaskAndSession } from './ui/taskRename';
@@ -65,7 +66,6 @@ import { openReplacementTask } from './reminders/replacement';
 import WhatsNewDialog from './ui/WhatsNewDialog';
 import useWhatsNew from './ui/app/useWhatsNew';
 import { PrBadge } from './ui/PrBadge';
-import { openExternal } from './lib/openUrl';
 import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
 import ProjectBar from './ui/ProjectBar';
@@ -1540,16 +1540,10 @@ export default function App() {
                       click to GitHub. Its branch is Albedo's copy, which has
                       no PR of its own, so the badge below would offer to
                       create one. */}
-                  {!!selected.reviewUrl && (
-                    <button
-                      type="button"
-                      className="pr-badge"
-                      title={`${selected.reviewUrl}\nOpen on GitHub`}
-                      onClick={() => void openExternal(selected.reviewUrl!)}
-                    >
-                      #{/\/pull\/(\d+)/.exec(selected.reviewUrl)?.[1]} on GitHub
-                    </button>
-                  )}
+                  {/* Submit Review (#287, step 3) beside it: the review
+                      task's one main action, as Merge is beside your own
+                      PR's badge. */}
+                  {!!selected.reviewUrl && <ReviewBadge task={selected} />}
                   {selected.kind !== 'chat' && !selected.reviewUrl && (
                   <PrBadge
                     task={selected}

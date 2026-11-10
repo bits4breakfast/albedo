@@ -146,6 +146,9 @@ export function setup(home, now = Date.now()) {
       git(p.repo, ['checkout', '-q', '-b', `pr-${r.number}`, 'main']);
       writeFiles(p.repo, r.files ?? {});
       commitAll(p.repo, r.title, now - r.lastCommitMinutes * 60_000);
+      // The head GitHub would report, so a review task checked out from it
+      // reads as up to date.
+      r.head = git(p.repo, ['rev-parse', 'HEAD']);
       git(p.repo, ['push', '-q', 'origin', `HEAD:refs/pull/${r.number}/head`]);
       git(p.repo, ['checkout', '-q', 'main']);
       git(p.repo, ['branch', '-q', '-D', `pr-${r.number}`]);
