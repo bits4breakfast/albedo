@@ -174,6 +174,7 @@ function task(id: number, projectId: number, title: string): Task {
     reviewUrl: null,
     apiError: null,
     apiErrorText: null,
+    spunFromTaskId: null,
   };
 }
 

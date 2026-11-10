@@ -141,6 +141,8 @@ const M0015_COMMENT_GITHUB: &str = include_str!("../../src/db/migrations/0015_co
 /// v16: tasks.api_error and api_error_text -- the last turn stopped on an API
 /// error (#338).
 const M0016_API_ERROR: &str = include_str!("../../src/db/migrations/0016_api_error.sql");
+/// v17: tasks.spun_from_task_id -- the task a task was spun out of (#332).
+const M0017_SPUN_FROM: &str = include_str!("../../src/db/migrations/0017_spun_from.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -238,6 +240,12 @@ pub fn run() {
             version: 16,
             description: "tasks.api_error",
             sql: M0016_API_ERROR,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 17,
+            description: "tasks.spun_from_task_id",
+            sql: M0017_SPUN_FROM,
             kind: MigrationKind::Up,
         },
     ];

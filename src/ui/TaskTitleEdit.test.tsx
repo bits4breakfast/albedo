@@ -116,6 +116,7 @@ describe('the task row: Rename Task…', () => {
     reviewUrl: null,
     apiError: null,
     apiErrorText: null,
+    spunFromTaskId: null,
   };
 
   it('is in the row menu, edits on the row without selecting it, and saves through onRename', () => {
@@ -266,6 +267,7 @@ describe('TaskTitleEdit: where focus goes after', () => {
       reviewUrl: null,
       apiError: null,
       apiErrorText: null,
+      spunFromTaskId: null,
     };
     const { container } = render(
       <TaskList tasks={[task]} selectedId={null} onSelect={() => {}} onNew={() => {}} onRename={() => {}} onRenameClosed={closed} />,

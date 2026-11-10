@@ -58,6 +58,7 @@ const task: Task = {
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 };
 const retargeted = { number: 12, baseRefName: 'main', state: 'open' } as PrStatus;
 

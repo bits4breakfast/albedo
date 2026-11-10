@@ -1696,6 +1696,47 @@ describe('tasks.api_error (v16, #338)', () => {
   });
 });
 
+describe('tasks.spun_from_task_id (v17, #332)', () => {
+  const work = {
+    title: 'Refund not applied', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'refund',
+    worktreePath: '/wt/refund', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
+  };
+
+  it('is null on a task created without it', async () => {
+    const t = await createTask(work);
+    expect(t.spunFromTaskId).toBeNull();
+    expect((await getTask(t.id))?.spunFromTaskId).toBeNull();
+  });
+
+  it('is written at creation and read back by every reader, the source archived or not', async () => {
+    const source = await createTask({ ...work, title: 'Ticket triage', branch: 'triage', worktreePath: '/wt/triage' });
+    const t = await createTask({ ...work, spunFromTaskId: source.id });
+    expect(t.spunFromTaskId).toBe(source.id);
+    expect((await getTask(t.id))?.spunFromTaskId).toBe(source.id);
+    await archiveTask(source.id);
+    expect((await listTasks()).find((x) => x.id === t.id)?.spunFromTaskId).toBe(source.id);
+  });
+
+  it('leaves every existing row not spun out', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v17 = all.findIndex((m) => m.name.endsWith('0017_spun_from.sql'));
+    expect(v17).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v17)) raw.exec(m.sql);
+    raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    raw.exec((all[v17] as { sql: string }).sql);
+    const row = raw.prepare(`SELECT spun_from_task_id FROM tasks WHERE title = 'old'`).get();
+    expect(row).toEqual({ spun_from_task_id: null });
+    raw.close();
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 describe('which task a transcript belongs to — session first, never a shared folder', () => {

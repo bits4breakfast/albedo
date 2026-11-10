@@ -78,6 +78,7 @@ const task: Task = {
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 const MISSING = /using text search: PHPantom isn’t installed/;

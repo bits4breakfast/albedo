@@ -7,7 +7,8 @@
  * what they read out of `rawJson` lives in src/capture/adapter.ts.
  */
 
-import { useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
+import { REQUEST_SESSION_TOOL, SpinOutContext } from '../spinOut';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
 import {
@@ -145,6 +146,9 @@ export function summaryOf(message: Message): string | null {
       const args = firstLine(str(input.args) ?? '');
       return args ? `${skill} · ${args}` : skill;
     }
+    case REQUEST_SESSION_TOOL:
+      // The proposed task's title (#332): the brief's first line said less.
+      return firstLine(str(input.title) ?? str(input.prompt) ?? '');
     default: {
       const command = str(input.command);
       if (command) return firstLine(command);
@@ -233,6 +237,7 @@ export function ToolChip({ message, result = null, defaultOpen = false, more = n
             {chosen}
           </span>
         ) : null}
+        {message.toolName === REQUEST_SESSION_TOOL ? <SpinOutNote input={input} /> : null}
         <span className="tx-chip-state" title={state}>
           {pending ? '…' : error ? '✕' : '✓'}
         </span>
@@ -285,6 +290,45 @@ export function ToolChip({ message, result = null, defaultOpen = false, more = n
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * What a session's request for a new task became (#332), after the chip's
+ * title: "Proposed · in the task list", "Spun out as <task>", or "Not spun
+ * out". No buttons: Approve… and Deny are on the Proposed row only. The task
+ * is a link while it is in the list; an archived or deleted one is named.
+ * Nothing at all when the status is unknown (an expired request).
+ */
+function SpinOutNote({ input }: { input: Obj }): ReactNode {
+  const lookup = useContext(SpinOutContext);
+  const status = lookup?.statusOf({ title: input.title, prompt: input.prompt }) ?? null;
+  if (!lookup || !status) return null;
+  if (status.kind === 'pending') return <span className="tx-spinout">Proposed · in the task list</span>;
+  if (status.kind === 'denied') return <span className="tx-spinout">Not spun out</span>;
+  return (
+    <span className="tx-spinout">
+      Spun out as{' '}
+      {status.live ? (
+        <button
+          type="button"
+          className="tx-spinout-link"
+          title={`Show ${status.title}`}
+          // The head toggles the chip on click; this one opens the task only.
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            lookup.openTask(status.taskId);
+          }}
+        >
+          {status.title}
+        </button>
+      ) : (
+        <span className="tx-spinout-gone" title="Archived or deleted">
+          {status.title}
+        </span>
+      )}
+    </span>
   );
 }
 

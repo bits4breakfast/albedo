@@ -27,6 +27,7 @@ const ask = (id: string, over: Partial<SessionRequest> = {}): SessionRequest => 
   reason: 'r',
   project: null,
   branch: null,
+  start: 'brief',
   ...over,
 });
 const notice: QueuedRequest = { id: 'n', taskId: 3, at: 5_000, tool: 'notify_blocked', message: 'VPN' };

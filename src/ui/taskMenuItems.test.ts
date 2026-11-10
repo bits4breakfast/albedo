@@ -15,7 +15,7 @@ function task(over: Partial<Task> = {}): Task {
   return {
     id: 7, title: 'Fix login retry', projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: 'fix-login',
     worktreePath: '/w/fix-login', sessionId: 's7', ownsWorktree: true, createdBranch: true, kind: 'work',
-    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null,
+    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null, spunFromTaskId: null,
     ...over,
   };
 }
@@ -38,6 +38,7 @@ function allActions(): Required<TaskActions> {
   return {
     remind: vi.fn(),
     guide: vi.fn(),
+    fork: vi.fn(),
     move: vi.fn(),
     setDone: vi.fn(),
     followUp: vi.fn(),
@@ -55,7 +56,7 @@ describe('taskMenuItems', () => {
   it('lists every action in the agreed order and groups', () => {
     const items = taskMenuItems(task(), facts(), allActions(), () => {});
     expect(shape(items)).toBe(
-      'rename remind guide / compact remote-control copy-session / copy-path move / mark-done archive delete',
+      'rename remind guide / compact fork remote-control copy-session / copy-path move / mark-done archive delete',
     );
     expect(byId(items, 'rename')?.aside).toBe('⇧F6');
     expect(byId(items, 'guide')?.aside).toBe('⇧⌘G');
@@ -78,7 +79,7 @@ describe('taskMenuItems', () => {
     const items = taskMenuItems(task({ kind: 'chat', worktreePath: '/r/app', branch: '' }), facts(), allActions(), () => {});
     expect(ids(items)).not.toContain('guide');
     expect(ids(items)).not.toContain('move');
-    expect(shape(items)).toBe('rename remind / compact remote-control copy-session / copy-path / mark-done archive delete');
+    expect(shape(items)).toBe('rename remind / compact fork remote-control copy-session / copy-path / mark-done archive delete');
   });
 
   it('says Move to a Worktree… for a task in the main checkout', () => {
@@ -90,6 +91,14 @@ describe('taskMenuItems', () => {
     const items = taskMenuItems(task({ sessionId: null }), facts({ compactBlocker: 'No session is running for this task.' }), allActions());
     expect(byId(items, 'copy-session')).toMatchObject({ disabled: true, title: 'No session yet' });
     expect(byId(items, 'compact')).toMatchObject({ disabled: true, title: 'No session is running for this task.' });
+  });
+
+  it('offers Fork Conversation… beside Compact Now only on a task with a session (#332)', () => {
+    const items = taskMenuItems(task(), facts(), allActions());
+    expect(byId(items, 'fork')).toMatchObject({ label: 'Fork Conversation…', title: expect.stringMatching(/^A copy of this conversation/) });
+    expect(ids(taskMenuItems(task({ sessionId: null }), facts(), allActions()))).not.toContain('fork');
+    // Not offered at all without a handler, like every other action.
+    expect(ids(taskMenuItems(task(), facts(), { archive: vi.fn() }))).not.toContain('fork');
   });
 
   it('offers Make Available Remotely only on a live session with Remote Control off', () => {
@@ -126,10 +135,11 @@ describe('taskMenuItems', () => {
     const actions = allActions();
     const t = task({ id: 42 });
     const items = taskMenuItems(t, facts(), actions);
-    for (const id of ['remind', 'guide', 'move', 'follow-up', 'archive', 'delete']) byId(items, id)?.onSelect();
+    for (const id of ['remind', 'guide', 'fork', 'move', 'follow-up', 'archive', 'delete']) byId(items, id)?.onSelect();
     byId(items, 'mark-done')!.onSelect();
     expect(actions.remind).toHaveBeenCalledWith(t);
     expect(actions.guide).toHaveBeenCalledWith(t);
+    expect(actions.fork).toHaveBeenCalledWith(t);
     expect(actions.move).toHaveBeenCalledWith(t);
     expect(actions.archive).toHaveBeenCalledWith(t);
     expect(actions.delete).toHaveBeenCalledWith(t);

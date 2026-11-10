@@ -69,6 +69,9 @@ export const CAPS = {
   taskSummary: 120,
 } as const;
 
+/** `request_session`'s `start` (`tools::START_BRIEF` / `START_FORK`). */
+export type SessionStart = 'brief' | 'fork';
+
 export type InboxTool = 'create_reminder' | 'request_session' | 'notify_blocked' | 'set_task_summary';
 
 interface Base {
@@ -89,6 +92,12 @@ export type InboxRequest =
       reason: string;
       project: string | null;
       branch: string | null;
+      /**
+       * How Claude suggests the new session begins (#332): a fresh session
+       * from the brief, or a copy of this conversation. Absent reads as
+       * 'brief'. Only a suggestion: New Task preselects it, the user picks.
+       */
+      start: SessionStart;
     })
   | (Base & { tool: 'notify_blocked'; message: string })
   | (Base & { tool: 'set_task_summary'; summary: string });
@@ -172,7 +181,7 @@ export function parseInboxLine(line: string, fileTaskId: number): InboxRequest |
       return { ...base, tool: 'create_reminder', text: t, due, dueMs, summary };
     }
     case 'request_session': {
-      if (!onlyKeys(a, ['title', 'prompt', 'reason', 'project', 'branch'])) return null;
+      if (!onlyKeys(a, ['title', 'prompt', 'reason', 'project', 'branch', 'start'])) return null;
       const title = text(a, 'title', CAPS.title, false);
       const prompt = text(a, 'prompt', CAPS.prompt, true);
       const reason = text(a, 'reason', CAPS.reason, true);
@@ -181,7 +190,10 @@ export function parseInboxLine(line: string, fileTaskId: number): InboxRequest |
       if (title === null || prompt === null || reason === null) return null;
       if (project === undefined || branch === undefined) return null;
       if (branch !== null && !branchOk(branch)) return null;
-      return { ...base, tool: 'request_session', title, prompt, reason, project, branch };
+      // Absent is the default; anything but the two values is not a request.
+      const start = a.start === undefined ? 'brief' : a.start;
+      if (start !== 'brief' && start !== 'fork') return null;
+      return { ...base, tool: 'request_session', title, prompt, reason, project, branch, start };
     }
     case 'notify_blocked': {
       if (!onlyKeys(a, ['message'])) return null;
@@ -228,6 +240,7 @@ export function encodeRequest(r: InboxRequest): string {
             reason: r.reason,
             ...(r.project !== null ? { project: r.project } : {}),
             ...(r.branch !== null ? { branch: r.branch } : {}),
+            ...(r.start !== 'brief' ? { start: r.start } : {}),
           }
         : r.tool === 'notify_blocked'
           ? { message: r.message }

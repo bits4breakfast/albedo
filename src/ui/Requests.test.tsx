@@ -28,6 +28,7 @@ const session: QueuedRequest = {
   reason: 'Unrelated to this task.',
   project: 'acme-store',
   branch: 'fix/flaky-export',
+  start: 'brief',
 };
 const notice: QueuedRequest = { id: 'n1', taskId: 4, at: NOW, tool: 'notify_blocked', message: 'I need the VPN on.' };
 const reminder: QueuedRequest = {
@@ -124,7 +125,7 @@ describe('prefillFor', () => {
     { id: 1, name: 'albedo' },
     { id: 2, name: 'Acme-Store' },
   ] as Project[];
-  const tasks = [{ id: 3, projectId: 1 }] as Task[];
+  const tasks = [{ id: 3, projectId: 1, title: 'Ticket triage', sessionId: 'sess-3', kind: 'work' }] as Task[];
 
   it('uses the project the request names, ignoring case, else the requesting task\'s', () => {
     expect(prefillFor(session as never, tasks, projects)).toEqual({
@@ -132,8 +133,13 @@ describe('prefillFor', () => {
       title: 'Fix the flaky export test',
       prompt: 'ExportTest fails one run in five.\nFind out why.',
       request: { id: 's1' },
+      // The asking task (#332): what a fork copies, and what the new task is spun out of.
+      from: { taskId: 3, title: 'Ticket triage', sessionId: 'sess-3', kind: 'work', start: 'brief' },
     });
     expect(prefillFor({ ...session, project: 'nope' } as never, tasks, projects).projectId).toBe(1);
     expect(prefillFor({ ...session, project: null, taskId: 99 } as never, tasks, projects).projectId).toBeNull();
+    // Claude's suggestion is carried; an unknown asking task gives no source.
+    expect(prefillFor({ ...session, start: 'fork' } as never, tasks, projects).from?.start).toBe('fork');
+    expect(prefillFor({ ...session, taskId: 99 } as never, tasks, projects).from).toBeUndefined();
   });
 });

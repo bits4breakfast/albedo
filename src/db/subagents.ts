@@ -288,7 +288,12 @@ export function buildRuns(
       // A subagent's tool call with no result yet is work in progress, not a
       // prompt: its permission requests reach the user through the parent
       // task, which is where "waiting on you" is reported.
-      const opts = { unansweredToolUseBlocks: false };
+      // Between steps an agent writes nothing for minutes (#344): a tail that
+      // leaves the move to Claude is work, until the parent hears it stopped.
+      // Only for a run the parent started or resumed: one that woke by itself
+      // after waiting on its own work and falls quiet is waiting again (#139).
+      const parentRun = lastStop === null || (resumedAt !== null && resumedAt > lastStop.ts);
+      const opts = { unansweredToolUseBlocks: false, openTurnRunning: parentRun };
       status = deriveStatus(rows, now, opts);
       expiresAt = statusExpiresAt(rows, now, opts);
       // Went on by itself after "waiting", and is quiet again before the

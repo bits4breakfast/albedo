@@ -12,7 +12,10 @@ import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
 import useSessionRequests from './ui/app/useSessionRequests';
 import { proposalsInScope } from './ui/proposals';
-import { resolveRequest } from './ui/requestQueue';
+import { resolveRequest, useSessionOutcomes } from './ui/requestQueue';
+import { SpinOutContext, spinOutStatus, type SpinOutLookup } from './ui/spinOut';
+import SpunFromChip from './ui/SpunFromChip';
+import { newSessionId } from './capture/sessionLink';
 import useProjectTabs from './ui/app/useProjectTabs';
 import useSelection from './ui/app/useSelection';
 import ProjectTabs from './ui/app/ProjectTabs';
@@ -424,6 +427,7 @@ export default function App() {
       reviewUrl: null,
       apiError: null,
       apiErrorText: null,
+      spunFromTaskId: null,
     };
   }, [selected, activeProject]);
   /** Whose main checkout the shell drawer is in: the project the list shows. */
@@ -1242,6 +1246,49 @@ export default function App() {
    * the selected one, which it leaves selected. Only Review Guide moves the
    * selection, the way a click on the row does, to show that task's Guide.
    */
+  /** A task by id, shown (the "from" chip, a spun-out task in the transcript). */
+  const openTaskById = useCallback(
+    (taskId: number) => {
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) revealTask(task);
+    },
+    [tasks, revealTask],
+  );
+
+  /*
+   * What a request in the selected task's transcript became (#332): its
+   * Proposed row, the decision recorded on Deny or Create, or a task spun out
+   * of it under the same title (spinOut.ts).
+   */
+  const sessionOutcomes = useSessionOutcomes();
+  const transcriptTaskId = selected?.id ?? null;
+  const spinOutLookup = useMemo<SpinOutLookup | null>(
+    () =>
+      transcriptTaskId === null
+        ? null
+        : {
+            statusOf: (call) => spinOutStatus(call, transcriptTaskId, requests.items, sessionOutcomes, tasks),
+            openTask: openTaskById,
+          },
+    [transcriptTaskId, requests.items, sessionOutcomes, tasks, openTaskById],
+  );
+
+  /**
+   * Fork Conversation… (#332): New Task, in fork mode from `task`, with the
+   * message box empty and nothing sent unless the user asks. Nothing is
+   * created until Create.
+   */
+  const openFork = useCallback((task: Task) => {
+    followUpSeq.current++;
+    setNewTaskPrefill({
+      projectId: task.projectId,
+      title: `${task.title} (fork)`,
+      prompt: '',
+      from: { taskId: task.id, title: task.title, sessionId: task.sessionId, kind: task.kind, start: 'fork' },
+    });
+    setNewTaskOpen(true);
+  }, []);
+
   const taskActions = useMemo<TaskActions>(
     () => ({
       remind: (task) => setRemindFor(task),
@@ -1249,6 +1296,7 @@ export default function App() {
         select(task.id);
         requestGuide(task.id);
       },
+      fork: openFork,
       move: (task) => setMoveTarget(task),
       setDone: (task, done) => void setDone(task.id, done),
       followUp: (task) => void openFollowUp(task),
@@ -1261,7 +1309,7 @@ export default function App() {
         setArchiveTarget(task);
       },
     }),
-    [select, setMoveTarget, setDone, openFollowUp, setEndIntent, setArchiveTarget],
+    [select, setMoveTarget, setDone, openFollowUp, openFork, setEndIntent, setArchiveTarget],
   );
 
   return (
@@ -1488,6 +1536,10 @@ export default function App() {
                       >
                         {selected.title}
                       </span>
+                      {/* Where it came from (#332): against the name, which
+                          it qualifies, and before the summary, which goes
+                          first when the bar is short. */}
+                      <SpunFromChip task={selected} tasks={tasks} onOpen={openTaskById} />
                       {/* What the task is about (#262), after its name: it
                           takes only room nothing else wants, so it goes
                           first when the bar is short and never cuts the
@@ -1809,6 +1861,7 @@ export default function App() {
                     <Subagents sessionId={selected?.sessionId ?? null} taskTitle={selected?.title ?? null} />
                   </PaneErrorBoundary>
                   <PaneErrorBoundary key={`tx-${selected?.id ?? 'none'}`} label="Transcript">
+                    <SpinOutContext.Provider value={spinOutLookup}>
                     <TranscriptPane
                       taskId={selected?.id ?? null}
                       sessionId={selected?.sessionId ?? null}
@@ -1836,6 +1889,7 @@ export default function App() {
                         window.requestAnimationFrame(() => focusPty(id));
                       }}
                     />
+                    </SpinOutContext.Provider>
                   </PaneErrorBoundary>
                   </>
                   )}
@@ -1992,9 +2046,19 @@ export default function App() {
             setNewTaskOpen(false);
             setNewTaskPrefill(null);
           }}
-          onCreated={(task: Task, initialPrompt?: string) => {
-            // An approved session request is done once its task exists.
-            if (newTaskPrefill?.request) resolveRequest(newTaskPrefill.request.id);
+          onCreated={(task: Task, initialPrompt?: string, forkOf?: string) => {
+            // An approved session request is done once its task exists, and
+            // its transcript says which task it became (#332).
+            if (newTaskPrefill?.request) resolveRequest(newTaskPrefill.request.id, task);
+            // A fork (#332): the first spawn copies the source's session under
+            // a new id, as History's fork does; the first message, if any,
+            // goes after the copy (Terminal). The id is chosen here so the
+            // spawn plan and `--name … (fork)` both see a fork.
+            if (forkOf) {
+              setPendingResume((prev) =>
+                new Map(prev).set(task.id, ['--resume', forkOf, '--fork-session', '--session-id', newSessionId()]),
+              );
+            }
             if (initialPrompt !== undefined) {
               setPromptOverrides((prev) => new Map(prev).set(task.id, initialPrompt));
             }
