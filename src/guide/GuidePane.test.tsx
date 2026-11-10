@@ -10,7 +10,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { Task } from '../types';
 import { buildBranchDiff, fileBlockIndex, type BranchDiff } from './blocks';
 import { statReason } from './budget';
-import { edited } from './fixtures';
+import { changed, edited, lines, text } from './fixtures';
 import type { LoadedBranchDiff } from './branchDiff';
 import type { Guide } from './validate';
 
@@ -923,5 +923,28 @@ describe('the Map (#288)', () => {
     cleanup();
     pane();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true'));
+  });
+});
+
+describe('a new file (#337)', () => {
+  it('is one column, with no layout toggle', async () => {
+    const fresh = buildBranchDiff([changed('src/new.ts', null, text(lines(5)))], statReason);
+    loaded = { ...loaded, diff: fresh };
+    saveGuide(task.id, {
+      diffHash: fresh.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [{ title: 'New', summary: 'S.', blocks: [...fresh.order] }],
+      files: fileBlockIndex(fresh),
+      fallback: null,
+    });
+    pane();
+    await screen.findByRole('heading', { name: 'New' });
+    const region = screen.getByRole('region', { name: 'Diff' });
+    await waitFor(() => expect(region.querySelector('.tx-d-code')).not.toBeNull());
+    expect(region.querySelector('.tx-d-unified')).not.toBeNull();
+    expect(region.querySelector('.tx-d-split')).toBeNull();
+    expect(right().queryByRole('button', { name: 'Split View' })).toBeNull();
+    expect(right().queryByRole('button', { name: 'Unified View' })).toBeNull();
   });
 });
