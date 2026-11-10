@@ -55,6 +55,7 @@ import { deriveStatus } from '../capture/status';
 import { usageBreakdown, usageSummary, windowUsage } from '../capture/usage';
 import { contextUsage } from '../capture/context';
 import { touchedFiles } from './touched';
+import { DEFAULT_CAREFUL, DEFAULT_SET_ASIDE, projectFocus } from '../guide/focus';
 import {
   backfillProjectsFromTasks,
   createProject,
@@ -1533,6 +1534,56 @@ describe('projects.ci_details (v12, #280)', () => {
     const p = await createProject(NEW);
     db.raw.prepare(`UPDATE projects SET ci_details = 'webhook' WHERE id = ?`).run(p.id);
     expect((await getProject(p.id))?.ciDetails).toBe('link');
+  });
+});
+
+describe('projects.guide_set_aside / guide_careful (v14, #295)', () => {
+  const NEW = { name: 'recipe-app', repoPath: '/repo/recipe-app', worktreeRoot: '/wt/recipe-app', defaultBaseBranch: null };
+
+  it('leaves every existing project on Albedo’s starting set (NULL)', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v14 = all.findIndex((m) => m.name.endsWith('0014_guide_focus.sql'));
+    expect(v14).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v14)) raw.exec(m.sql);
+    raw
+      .prepare(`INSERT INTO projects (name, repo_path, worktree_root, created_at) VALUES ('old', '/repo/old', '/wt/old', 0)`)
+      .run();
+    raw.exec((all[v14] as { sql: string }).sql);
+    expect(raw.prepare(`SELECT guide_set_aside, guide_careful FROM projects WHERE name = 'old'`).get()).toEqual({
+      guide_set_aside: null,
+      guide_careful: null,
+    });
+    raw.close();
+  });
+
+  it('a new project has none of its own: null, which reads as Albedo’s set', async () => {
+    const p = await createProject(NEW);
+    expect(p).toMatchObject({ guideSetAside: null, guideCareful: null });
+    expect(await getProject(p.id)).toEqual(p);
+    expect(projectFocus(p)).toEqual({ setAside: [...DEFAULT_SET_ASIDE], careful: [...DEFAULT_CAREFUL] });
+  });
+
+  it('round-trips its own lists as JSON, cleaned; [] is none; the starting set is stored as NULL', async () => {
+    const p = await createProject({ ...NEW, guideSetAside: [' *.css ', '', '*.css', '**/*.test.*'] });
+    expect((await getProject(p.id))?.guideSetAside).toEqual(['*.css', '**/*.test.*']);
+    expect(db.raw.prepare('SELECT guide_set_aside FROM projects WHERE id = ?').get(p.id)).toEqual({
+      guide_set_aside: '["*.css","**/*.test.*"]',
+    });
+    await updateProject(p.id, { guideCareful: [] });
+    expect(await getProject(p.id)).toMatchObject({ guideSetAside: ['*.css', '**/*.test.*'], guideCareful: [] });
+    await updateProject(p.id, { guideSetAside: [...DEFAULT_SET_ASIDE], guideCareful: null });
+    expect(db.raw.prepare('SELECT guide_set_aside, guide_careful FROM projects WHERE id = ?').get(p.id)).toEqual({
+      guide_set_aside: null,
+      guide_careful: null,
+    });
+  });
+
+  it('reads a column that is not a list of strings as the starting set', async () => {
+    const p = await createProject(NEW);
+    db.raw.prepare(`UPDATE projects SET guide_careful = '{"x":1}' WHERE id = ?`).run(p.id);
+    expect((await getProject(p.id))?.guideCareful).toBeNull();
   });
 });
 

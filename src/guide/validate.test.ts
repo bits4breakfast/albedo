@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildBranchDiff, fileBlockIndex } from './blocks';
 import { statReason } from './budget';
 import { edited } from './fixtures';
-import { changedSince, cleanNotes, NOTE_LINE_MAX_CHARS, NOTE_MAX_CHARS, normalizeId, validateProposal, viewGuide, type Guide } from './validate';
+import { carefulWhy, changedSince, cleanFlags, cleanNotes, MAX_FLAGS, NOTE_LINE_MAX_CHARS, NOTE_MAX_CHARS, normalizeId, validateProposal, viewGuide, type Guide } from './validate';
 
 describe('validateProposal', () => {
   const known = ['aaaa', 'bbbb', 'cccc', 'dddd'];
@@ -246,5 +246,78 @@ describe('cleanNotes', () => {
     expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_LINE_MAX_CHARS) }], allowed, NOTE_LINE_MAX_CHARS).a).toHaveLength(NOTE_LINE_MAX_CHARS);
     // The default cap is still the note's.
     expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_MAX_CHARS + 1) }], allowed).a).toHaveLength(NOTE_MAX_CHARS);
+  });
+});
+
+describe('Set Aside and careful marks (#295)', () => {
+  const focus = { setAside: ['**/*.test.*', '*.css'], careful: ['**/migrations/**'] };
+  const diff = buildBranchDiff(
+    [edited('src/a.ts', [3]), edited('src/a.test.ts', [3]), edited('src/db/migrations/1.sql', [3]), edited('src/x.css', [3])],
+    statReason,
+  );
+  const id = (p: string) => diff.order.find((x) => diff.blocks.get(x)!.path === p)!;
+  const base = (over: Partial<Guide> = {}): Guide => ({
+    diffHash: diff.hash,
+    writtenAt: 1,
+    base: 'main',
+    groups: [{ title: 'Code', summary: '', blocks: [id('src/a.ts')] }],
+    files: fileBlockIndex(diff),
+    fallback: null,
+    focus,
+    ...over,
+  });
+
+  it('puts set-aside files in their own group, after Unsorted, and never in Unsorted', () => {
+    const view = viewGuide(base(), diff);
+    expect(view.groups.map((g) => [g.title, g.unsorted, g.setAside])).toEqual([
+      ['Code', false, false],
+      ['Unsorted', true, false],
+      ['Set Aside', false, true],
+    ]);
+    expect(view.groups[1]!.files.map((f) => f.path)).toEqual(['src/db/migrations/1.sql']);
+    expect(view.groups[2]!.files.map((f) => f.path)).toEqual(['src/a.test.ts', 'src/x.css']);
+    expect(view.groups[2]).toMatchObject({ key: 'set-aside', index: null });
+  });
+
+  it('a set-aside block a group somehow names is still set aside', () => {
+    const view = viewGuide(base({ groups: [{ title: 'Code', summary: '', blocks: [id('src/a.ts'), id('src/x.css')] }] }), diff);
+    expect(view.groups[0]!.files.map((f) => f.path)).toEqual(['src/a.ts']);
+    expect(view.groups.at(-1)!.files.map((f) => f.path)).toEqual(['src/a.test.ts', 'src/x.css']);
+  });
+
+  it('marks careful files by pattern and by the writer, with the reason in words', () => {
+    const view = viewGuide(base({ flags: { 'src/a.ts': 'changes the session id written on restart' } }), diff);
+    const all = view.groups.flatMap((g) => g.files);
+    const of = (p: string) => all.find((f) => f.path === p)!.careful;
+    expect(of('src/a.ts')).toEqual({ reason: 'changes the session id written on restart', pattern: null });
+    expect(of('src/db/migrations/1.sql')).toEqual({ reason: null, pattern: '**/migrations/**' });
+    expect(of('src/x.css')).toBeNull();
+    expect(carefulWhy(of('src/a.ts')!)).toBe('changes the session id written on restart');
+    expect(carefulWhy(of('src/db/migrations/1.sql')!)).toBe('Matches **/migrations/**');
+  });
+
+  it('a guide from before #295 sets nothing aside and marks nothing; a malformed focus or flags count as none', () => {
+    const { focus: _f, ...old } = base();
+    const view = viewGuide(old, diff);
+    expect(view.groups.some((g) => g.setAside)).toBe(false);
+    expect(view.groups.flatMap((g) => g.files).every((f) => f.careful === null)).toBe(true);
+    const bad = viewGuide({ ...base(), focus: { setAside: 'x' } as unknown as Guide['focus'], flags: 'y' as unknown as Guide['flags'] }, diff);
+    expect(bad.groups.some((g) => g.setAside)).toBe(false);
+  });
+
+  it('cleanFlags keeps allowed paths only, the first each, cut and capped', () => {
+    const allowed = new Set(['a', 'b', 'c', 'd', 'e', 'f']);
+    const got = cleanFlags(
+      [
+        { path: 'zz', reason: 'unknown' },
+        { path: 'a', reason: 'one' },
+        { path: 'a', reason: 'again' },
+        ...['b', 'c', 'd', 'e', 'f'].map((p) => ({ path: p, reason: p })),
+      ],
+      allowed,
+    );
+    expect(Object.keys(got)).toHaveLength(MAX_FLAGS);
+    expect(got).toMatchObject({ a: 'one', b: 'b' });
+    expect(got.f).toBeUndefined();
   });
 });

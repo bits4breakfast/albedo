@@ -30,6 +30,7 @@ import type { BranchDiff } from './blocks';
 import type { LoadedBranchDiff } from './branchDiff';
 import { GuideError, writeGuide, writeNotes, type GroupNotes, type GuideErrorKind, type Progress } from './writer';
 import { notableFiles } from './validate';
+import type { GuideFocus } from './focus';
 
 export const MAX_GUIDES = 40;
 /** Per task; a branch with more reviewed file-groups than this is not a review. */
@@ -189,16 +190,18 @@ export function writeStateOf(taskId: number): WriteState | null {
 }
 
 /**
- * Write a guide for `taskId`'s diff. A second request while one runs is
- * ignored. The result is saved for the task that asked, whatever is on screen.
+ * Write a guide for `taskId`'s diff, setting aside and marking by `focus`
+ * (#295). A second request while one runs is ignored. The result is saved
+ * for the task that asked, whatever is on screen.
  */
-export async function startWrite(taskId: number, diff: BranchDiff, base: string): Promise<void> {
+export async function startWrite(taskId: number, diff: BranchDiff, base: string, focus?: GuideFocus): Promise<void> {
   if (writes.get(taskId)?.kind === 'writing') return;
   writes.set(taskId, { kind: 'writing', progress: null });
   changed();
   try {
     const guide = await writeGuide(diff, {
       base,
+      focus,
       onProgress: (p) => {
         writes.set(taskId, { kind: 'writing', progress: p });
         changed();
@@ -206,6 +209,9 @@ export async function startWrite(taskId: number, diff: BranchDiff, base: string)
     });
     saveGuide(taskId, guide);
     writes.delete(taskId);
+    // The lists as typed are done with only now (#295 review): a failed write
+    // keeps them, so Try Again writes with what was typed, never the defaults.
+    focusDrafts.delete(taskId);
     // The guide is on screen from here; its notes follow (#224).
     ensureNotes(taskId, guide, diff);
   } catch (err) {
@@ -355,6 +361,36 @@ export function useGuideStoreVersion(): number {
 }
 
 // ---------------------------------------------------------------------------
+// The Write Guide screen's lists, as typed (#295)
+// ---------------------------------------------------------------------------
+
+/** The two lists as typed on the Write Guide screen, one pattern per line. */
+export interface FocusDraft {
+  setAside: string;
+  careful: string;
+}
+
+/**
+ * Per task, in memory: what was typed into the Write Guide screen's lists and
+ * not yet written, kept, as the place is, while another task is on screen.
+ * None means the project's defaults. A task with a guide AND a draft is in
+ * Rewrite With Other Options…: the screen is shown over the guide, so it
+ * survives the pane remounting on a task switch. Cleared when a write
+ * succeeds (startWrite) or the screen is cancelled, never when one starts.
+ */
+const focusDrafts = new Map<number, FocusDraft>();
+
+export function focusDraftOf(taskId: number): FocusDraft | null {
+  return focusDrafts.get(taskId) ?? null;
+}
+
+export function setFocusDraft(taskId: number, draft: FocusDraft | null): void {
+  if (draft === null) focusDrafts.delete(taskId);
+  else focusDrafts.set(taskId, draft);
+  changed();
+}
+
+// ---------------------------------------------------------------------------
 // Where you are, and the last read of the branch (#199)
 // ---------------------------------------------------------------------------
 
@@ -412,5 +448,6 @@ export function resetGuideStoreForTests(): void {
   lastReads.clear();
   writes.clear();
   notesJobs.clear();
+  focusDrafts.clear();
   changed();
 }

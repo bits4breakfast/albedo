@@ -12,6 +12,7 @@
  */
 
 import { fnv1a, type BranchDiff, type StatReason } from './blocks';
+import { asFocus, firstMatch, isSetAside, type GuideFocus } from './focus';
 
 /**
  * A file's note in a group (#202) is shown only when the group has more than
@@ -58,11 +59,44 @@ export interface Guide {
    * The groups then have no summaries.
    */
   fallback: string | null;
+  /**
+   * What it was written with (#295): the files it set aside (never sent to
+   * the writer) and the patterns it marks "review carefully". Rewrite writes
+   * with these again. Absent on guides from before #295: nothing set aside,
+   * nothing marked.
+   */
+  focus?: GuideFocus;
+  /**
+   * path -> why the writer asks for a careful read (#295), at most
+   * {@link MAX_FLAGS}, for paths it was sent only (cleanFlags).
+   */
+  flags?: Record<string, string>;
 }
 
 /** What the model returned, before anything is trusted. */
 export interface Proposal {
   groups: Array<{ title: string; summary: string; blocks: string[]; notes?: Array<{ path: string; note: string }> }>;
+  /** Files it asks to be read carefully, with why (#295). */
+  careful?: Array<{ path: string; reason: string }>;
+}
+
+/** The writer flags at most this many files (#295). */
+export const MAX_FLAGS = 5;
+/** A flag's reason longer than this is cut; the model is asked for under 80. */
+export const FLAG_MAX_CHARS = 120;
+
+/**
+ * The writer's flags, held to the rule (#295): only paths it was sent
+ * (`allowed`, git's own list), the first per path, on one line, cut at
+ * {@link FLAG_MAX_CHARS}, at most {@link MAX_FLAGS}. Anything else is dropped.
+ */
+export function cleanFlags(raw: ReadonlyArray<{ path: string; reason: string }>, allowed: ReadonlySet<string>): Record<string, string> {
+  const out = cleanNotes(
+    raw.map((f) => ({ path: f.path.trim(), note: f.reason })),
+    allowed,
+    FLAG_MAX_CHARS,
+  );
+  return Object.fromEntries(Object.entries(out).slice(0, MAX_FLAGS));
 }
 
 /** A note longer than this is cut (#224). Shown in full under the file's header in the diff (#264). */
@@ -175,6 +209,25 @@ export interface GroupFile {
   line: string | null;
   /** The rule allows this file a note here, written or not (#224). */
   notable: boolean;
+  /** Marked "review carefully" (#295), and why; null when it is not. */
+  careful: CarefulMark | null;
+}
+
+/**
+ * Why a file is marked "review carefully" (#295): the writer's reason, the
+ * project pattern it matches, or both. Never only a colour: the pane shows
+ * {@link carefulWhy} beside the icon.
+ */
+export interface CarefulMark {
+  /** The Guide writer's one line. */
+  reason: string | null;
+  /** The first "review carefully" pattern the path matches. */
+  pattern: string | null;
+}
+
+/** What a careful mark says, in words: the writer's reason first, else the pattern. */
+export function carefulWhy(m: CarefulMark): string {
+  return m.reason ?? `Matches ${m.pattern ?? ''}`;
 }
 
 export interface GroupView {
@@ -184,6 +237,12 @@ export interface GroupView {
   title: string;
   summary: string;
   unsorted: boolean;
+  /**
+   * The Set Aside group (#295): files matching the guide's set-aside
+   * patterns, listed last, never sent to the writer, and not in the reading
+   * the guide leads you through (its count, "All reviewed", Reviewed and Next).
+   */
+  setAside: boolean;
   blocks: string[];
   files: GroupFile[];
 }
@@ -196,6 +255,7 @@ export interface GuideView {
 }
 
 export const UNSORTED_TITLE = 'Unsorted';
+export const SET_ASIDE_TITLE = 'Set Aside';
 
 function filesOf(blockIds: readonly string[], diff: BranchDiff): GroupFile[] {
   const byPath = new Map<string, Set<string>>();
@@ -218,7 +278,7 @@ function filesOf(blockIds: readonly string[], diff: BranchDiff): GroupFile[] {
       added += b?.added ?? 0;
       removed += b?.removed ?? 0;
     }
-    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat, note: null, line: null, notable: false });
+    out.push({ path, blocks, totalBlocks: file.blocks.length, added, removed, stat: file.stat, note: null, line: null, notable: false, careful: null });
   }
   return out;
 }
@@ -327,7 +387,12 @@ function placeBlocks(guide: Guide, diff: BranchDiff): Map<string, number | null>
 
 /** The guide's groups over the diff as it is now, with Unsorted last. */
 export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
-  const place = placeBlocks(guide, diff);
+  const focus = asFocus(guide.focus);
+  // Set aside by the patterns the guide was written with, against the diff as
+  // it is now: a file new since is set aside too, never left in Unsorted.
+  const aside = new Set(focus ? diff.order.filter((id) => isSetAside(focus, diff.blocks.get(id)?.path ?? '')) : []);
+  const placed = placeBlocks(guide, diff);
+  const place = new Map([...placed].filter(([id]) => !aside.has(id)));
   const pathOf = new Map<string, string>();
   for (const [path, ids] of Object.entries(guide.files)) for (const id of ids) pathOf.set(id, path);
   const groups: GroupView[] = [];
@@ -343,6 +408,7 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
       blocks.push(id);
     };
     for (const id of g.blocks) {
+      if (aside.has(id)) continue;
       if (place.get(id) === i) add(id);
       else if (!diff.blocks.has(id)) {
         const path = pathOf.get(id);
@@ -357,11 +423,12 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
       title: g.title,
       summary: g.summary,
       unsorted: false,
+      setAside: false,
       blocks,
       files: withNotes(filesOf(blocks, diff), g.notes, g.lines),
     });
   });
-  const rest = diff.order.filter((id) => place.get(id) === null);
+  const rest = diff.order.filter((id) => !aside.has(id) && (place.get(id) ?? null) === null);
   if (rest.length > 0) {
     groups.push({
       key: 'unsorted',
@@ -372,10 +439,32 @@ export function viewGuide(guide: Guide, diff: BranchDiff): GuideView {
           ? 'Changes the guide did not place in a group.'
           : 'Files the guide did not place in a group, or new since it was written.',
       unsorted: true,
+      setAside: false,
       blocks: rest,
       files: filesOf(rest, diff),
     });
   }
+  if (aside.size > 0) {
+    const blocks = diff.order.filter((id) => aside.has(id));
+    groups.push({
+      key: 'set-aside',
+      index: null,
+      title: SET_ASIDE_TITLE,
+      summary: 'Files that rarely need a careful read, by this guide’s patterns. Claude was not asked to sort them.',
+      unsorted: false,
+      setAside: true,
+      blocks,
+      files: filesOf(blocks, diff),
+    });
+  }
+  const careful = (path: string): CarefulMark | null => {
+    const flags: unknown = guide.flags;
+    const said = typeof flags === 'object' && flags !== null && Object.hasOwn(flags, path) ? (flags as Record<string, unknown>)[path] : null;
+    const reason = typeof said === 'string' ? said : null;
+    const pattern = focus ? firstMatch(focus.careful, path) : null;
+    return reason || pattern ? { reason: reason || null, pattern } : null;
+  };
+  for (const g of groups) g.files = g.files.map((f) => ({ ...f, careful: careful(f.path) }));
   const changedFiles = guide.diffHash === diff.hash ? [] : changedSince(guide, diff);
   return { groups, changedFiles, stale: guide.diffHash !== diff.hash };
 }

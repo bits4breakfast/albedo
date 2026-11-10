@@ -19,12 +19,27 @@
  *  - `claude` missing is the shell's exit 127 ("command not found").
  *
  * Albedo owns the facts (blocks.ts) and checks the answer against them
- * (validate.ts); the model only proposes groups and words.
+ * (validate.ts); the model only proposes groups and words, and (#295, owner
+ * decision 2026-11-09) up to MAX_FLAGS files to read carefully, each a path
+ * it was given and a one-line reason. Files the guide sets aside (focus.ts)
+ * are never sent.
  */
 
 import type { BranchDiff } from './blocks';
 import { estimateTokens, groupByFolder, INPUT_BUDGET_TOKENS, planInput, renderBlock } from './budget';
-import { cleanNotes, NOTE_LINE_MAX_CHARS, normalizeId, notableFiles, validateProposal, type Guide, type GuideGroup, type Proposal } from './validate';
+import {
+  cleanFlags,
+  cleanNotes,
+  MAX_FLAGS,
+  NOTE_LINE_MAX_CHARS,
+  normalizeId,
+  notableFiles,
+  validateProposal,
+  type Guide,
+  type GuideGroup,
+  type Proposal,
+} from './validate';
+import { isSetAside, type GuideFocus } from './focus';
 import { fileBlockIndex } from './blocks';
 
 /**
@@ -171,6 +186,16 @@ const GROUPS_SCHEMA = {
         required: ['title', 'summary', 'blocks'],
       },
     },
+    // #295: optional, so a reply without it is still a guide.
+    careful: {
+      type: 'array',
+      maxItems: MAX_FLAGS,
+      items: {
+        type: 'object',
+        properties: { path: { type: 'string' }, reason: { type: 'string' } },
+        required: ['path', 'reason'],
+      },
+    },
   },
   required: ['groups'],
 };
@@ -198,6 +223,12 @@ export const GROUP_SYSTEM = [
   'sentence case) and a summary of one or two sentences saying what the group changes and why.',
   'Put every block id in exactly one group. Use the ids exactly as given, bare (for example "a1b2"),',
   'with nothing added. Do not invent ids. Write plainly; do not praise or judge the code.',
+  `Then, under "careful", list at most ${MAX_FLAGS} files a reviewer should read with extra care because a`,
+  'mistake there would be costly or easy to miss: stored data or its shape, security or permissions,',
+  'money, concurrency, a contract other code relies on. For each give its file path exactly as shown',
+  'and a reason of one short line (under 80 characters) saying what makes it risky, for example',
+  '"changes the session id written on restart". Do not list a file just because it is large or new.',
+  'Leave "careful" empty when nothing stands out.',
 ].join(' ');
 
 const NOTES_SCHEMA = {
@@ -251,7 +282,18 @@ export const LINES_SYSTEM = [
 export const CALL_OVERHEAD_TOKENS = estimateTokens(GROUP_SYSTEM) + 200;
 const NOTES_OVERHEAD_TOKENS = estimateTokens(NOTES_SYSTEM) + 200;
 
-function asProposal(v: unknown): Proposal | null {
+/** The reply's "careful" entries (#295); anything not in the shape asked for is skipped. */
+function asCareful(v: unknown): Array<{ path: string; reason: string }> {
+  if (!Array.isArray(v)) return [];
+  const out: Array<{ path: string; reason: string }> = [];
+  for (const c of v) {
+    const { path, reason } = (typeof c === 'object' && c !== null ? c : {}) as { path?: unknown; reason?: unknown };
+    if (typeof path === 'string' && typeof reason === 'string') out.push({ path, reason });
+  }
+  return out;
+}
+
+export function asProposal(v: unknown): Proposal | null {
   if (typeof v !== 'object' || v === null) return null;
   const groups = (v as { groups?: unknown }).groups;
   if (!Array.isArray(groups)) return null;
@@ -266,7 +308,7 @@ function asProposal(v: unknown): Proposal | null {
       blocks: blocks.filter((b): b is string => typeof b === 'string'),
     });
   }
-  return { groups: out };
+  return { groups: out, careful: asCareful((v as { careful?: unknown }).careful) };
 }
 
 function asLines(v: unknown): Map<string, string> | null {
@@ -325,13 +367,21 @@ export interface WriteOptions {
   onProgress?: (p: Progress) => void;
   now?: () => number;
   budget?: number;
+  /** What to set aside and mark (#295); none when absent. Kept with the guide. */
+  focus?: GuideFocus;
 }
 
-function intro(diff: BranchDiff): string {
-  return `The change: ${diff.files.length} file(s), ${diff.order.length} block(s).\n\n`;
+function intro(files: number, blocks: number): string {
+  return `The change: ${files} file(s), ${blocks} block(s).\n\n`;
 }
 
-function guideFrom(diff: BranchDiff, groups: GuideGroup[], o: WriteOptions, fallback: string | null): Guide {
+function guideFrom(
+  diff: BranchDiff,
+  groups: GuideGroup[],
+  o: WriteOptions,
+  fallback: string | null,
+  flags: Record<string, string> = {},
+): Guide {
   return {
     diffHash: diff.hash,
     writtenAt: (o.now ?? Date.now)(),
@@ -339,18 +389,28 @@ function guideFrom(diff: BranchDiff, groups: GuideGroup[], o: WriteOptions, fall
     groups,
     files: fileBlockIndex(diff),
     fallback,
+    ...(o.focus ? { focus: { setAside: [...o.focus.setAside], careful: [...o.focus.careful] } } : {}),
+    ...(Object.keys(flags).length > 0 ? { flags } : {}),
   };
 }
 
-/** The validated groups, or an error when the reply placed nothing at all. */
-function accept(diff: BranchDiff, proposal: Proposal | null): GuideGroup[] {
+/**
+ * The validated groups and flags, or an error when the reply placed nothing
+ * at all. `sent` is what the writer was given: the only ids a group may hold
+ * and the only files a flag may name (#295).
+ */
+function accept(diff: BranchDiff, sent: readonly string[], proposal: Proposal | null): { groups: GuideGroup[]; flags: Record<string, string> } {
   if (proposal === null) throw new GuideError('invalid', 'The reply did not have the groups Albedo asked for.');
-  const v = validateProposal(proposal, diff.order, new Map([...diff.blocks].map(([id, b]) => [id, b.path])));
+  const v = validateProposal(proposal, sent, new Map([...diff.blocks].map(([id, b]) => [id, b.path])));
   if (v.groups.length === 0) {
     throw new GuideError('invalid', 'The reply named none of the changed blocks, so there is no guide to show.');
   }
   if (v.unknown.length > 0) console.warn('[guide] dropped ids the diff does not have', v.unknown);
-  return v.groups;
+  const paths = new Set(sent.map((id) => diff.blocks.get(id)!.path));
+  const flags = cleanFlags(proposal.careful ?? [], paths);
+  const dropped = (proposal.careful ?? []).filter((c) => !Object.hasOwn(flags, c.path.trim()));
+  if (dropped.length > 0) console.warn('[guide] dropped flags on files it was not sent, or past the limit', dropped.map((c) => c.path));
+  return { groups: v.groups, flags };
 }
 
 /**
@@ -361,17 +421,26 @@ function accept(diff: BranchDiff, proposal: Proposal | null): GuideGroup[] {
 export async function writeGuide(diff: BranchDiff, o: WriteOptions): Promise<Guide> {
   if (diff.order.length === 0) throw new GuideError('invalid', 'This branch has no changes to guide.');
   const budget = o.budget ?? INPUT_BUDGET_TOKENS;
-  const texts = new Map(diff.order.map((id) => [id, renderBlock(diff.blocks.get(id)!, diff)] as const));
+  // Set aside (#295): never sent, so the budget goes to the files that matter.
+  const focus = o.focus;
+  const sent = focus ? diff.order.filter((id) => !isSetAside(focus, diff.blocks.get(id)!.path)) : diff.order;
+  if (sent.length === 0) {
+    // Nothing to send, so no call. The pane says so in the group's count row.
+    return guideFrom(diff, [], o, null);
+  }
+  const sentFiles = new Set(sent.map((id) => diff.blocks.get(id)!.path)).size;
+  const texts = new Map(sent.map((id) => [id, renderBlock(diff.blocks.get(id)!, diff)] as const));
   // Groups only: the notes come after, a call per group (writeNotes, #224).
   const overhead = CALL_OVERHEAD_TOKENS;
-  const plan = planInput(diff.order, texts, budget, overhead);
+  const plan = planInput(sent, texts, budget, overhead);
 
-  if (plan.kind === 'folders') return folderGuide(diff, o, plan.reason);
+  if (plan.kind === 'folders') return folderGuide(diff, sent, o, plan.reason);
 
   if (plan.kind === 'single') {
     o.onProgress?.({ step: 1, of: 1, label: 'Grouping the changes' });
-    const prompt = intro(diff) + plan.ids.map((id) => texts.get(id)).join('\n\n');
-    return guideFrom(diff, accept(diff, asProposal(await call(GROUP_SYSTEM, GROUPS_SCHEMA, prompt))), o, null);
+    const prompt = intro(sentFiles, sent.length) + plan.ids.map((id) => texts.get(id)).join('\n\n');
+    const got = accept(diff, sent, asProposal(await call(GROUP_SYSTEM, GROUPS_SCHEMA, prompt)));
+    return guideFrom(diff, got.groups, o, null, got.flags);
   }
 
   // Pass one: a line per block, batch by batch.
@@ -390,21 +459,25 @@ export async function writeGuide(diff: BranchDiff, o: WriteOptions): Promise<Gui
   }
 
   // Pass two: group from the lines. A block without one is still listed.
-  const summary = diff.order.map((id) => {
+  const summary = sent.map((id) => {
     const b = diff.blocks.get(id)!;
     return `[${id}] ${b.path} +${b.added} -${b.removed}: ${lines.get(id) ?? '(no summary)'}`;
   });
-  const prompt = intro(diff) + summary.join('\n');
+  const prompt = intro(sentFiles, sent.length) + summary.join('\n');
   if (estimateTokens(prompt) + overhead > budget) {
-    return folderGuide(diff, o, `${diff.order.length} changed blocks are too many to group in one call, even as one line each.`);
+    return folderGuide(diff, sent, o, `${sent.length} changed blocks are too many to group in one call, even as one line each.`);
   }
   o.onProgress?.({ step: of, of, label: 'Grouping the changes' });
-  return guideFrom(diff, accept(diff, asProposal(await call(GROUP_SYSTEM, GROUPS_SCHEMA, prompt))), o, null);
+  const got = accept(diff, sent, asProposal(await call(GROUP_SYSTEM, GROUPS_SCHEMA, prompt)));
+  return guideFrom(diff, got.groups, o, null, got.flags);
 }
 
-/** Albedo's own grouping, by folder, with the reason it was not asked for. */
-function folderGuide(diff: BranchDiff, o: WriteOptions, reason: string): Guide {
-  const groups = groupByFolder(diff).map((g) => ({ title: g.title, summary: '', blocks: g.blocks }));
+/** Albedo's own grouping of the `sent` blocks, by folder, with the reason it was not asked for. */
+function folderGuide(diff: BranchDiff, sent: readonly string[], o: WriteOptions, reason: string): Guide {
+  const keep = new Set(sent);
+  const groups = groupByFolder(diff)
+    .map((g) => ({ title: g.title, summary: '', blocks: g.blocks.filter((id) => keep.has(id)) }))
+    .filter((g) => g.blocks.length > 0);
   return guideFrom(diff, groups, o, `${reason} Grouped by folder instead, with no summaries.`);
 }
 

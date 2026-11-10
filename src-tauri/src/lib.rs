@@ -132,6 +132,9 @@ const M0011_TASK_SUMMARY: &str = include_str!("../../src/db/migrations/0011_task
 const M0012_CI_DETAILS: &str = include_str!("../../src/db/migrations/0012_ci_details.sql");
 /// v13: tasks.review_url -- the pull request a review task is for (#287).
 const M0013_REVIEW_URL: &str = include_str!("../../src/db/migrations/0013_review_url.sql");
+/// v14: projects.guide_set_aside and guide_careful -- a project's Review Guide
+/// defaults (#295).
+const M0014_GUIDE_FOCUS: &str = include_str!("../../src/db/migrations/0014_guide_focus.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -211,6 +214,12 @@ pub fn run() {
             version: 13,
             description: "tasks.review_url",
             sql: M0013_REVIEW_URL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
+            description: "projects.guide_set_aside",
+            sql: M0014_GUIDE_FOCUS,
             kind: MigrationKind::Up,
         },
     ];

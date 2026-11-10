@@ -50,6 +50,19 @@ export function PlusIcon({ size }: { size?: number }) {
   );
 }
 
+/**
+ * A flag: "review carefully" in the Review Guide (#295). Always beside the
+ * reason in words, never the only sign.
+ */
+export function FlagIcon({ size, className }: { size?: number; className?: string }) {
+  return (
+    <Glyph size={size} className={className}>
+      <path d="M4 14.5V2" />
+      <path d="M4 2.5h8l-2 3 2 3H4" />
+    </Glyph>
+  );
+}
+
 /** A circular arrow: ask again now. */
 export function RefreshIcon({ size }: { size?: number }) {
   return (

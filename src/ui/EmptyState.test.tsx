@@ -33,6 +33,8 @@ const project: Project = {
   taskPromptTemplate: null,
   ciDetails: 'link',
   ciDetailsCommand: null,
+  guideSetAside: null,
+  guideCareful: null,
   createdAt: 1,
   archivedAt: null,
 };

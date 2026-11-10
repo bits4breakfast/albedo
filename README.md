@@ -374,6 +374,19 @@ once on Haiku, with no tools (see "Good to know").
   transcript.
 - When the branch moves on, the guide says how many files changed since and
   offers **Rewrite**. New changes it does not know yet are under Unsorted.
+- **Set aside** and **review carefully**: the Write Guide screen has two
+  pattern lists, prefilled from the project. Files matching **Set Aside**
+  (tests, styles, lockfiles, snapshots, generated files to start with) go in
+  a group of their own, listed last and never hidden; they are not sent to
+  Claude and not in the guide's count. Files matching **Review Carefully**
+  (migrations, schema, auth, CI and build config, dependency manifests) are
+  marked with a flag and why, in their group, at its top and on the map;
+  Claude may flag up to five more, each with a one-line reason. A file in both
+  lists is not set aside. Edits on that screen apply to that guide;
+  **Save as Project Defaults** keeps them, and the Projects dialog edits the
+  defaults too. Rewrite keeps a guide's lists; **⋯ › Rewrite With Other
+  Options…** changes them. Patterns are globs on the paths git reports
+  (`*.css` matches in any folder, `src/**`, `*.{js,ts}`).
 - **Read · Map** in the guide's toolbar switches to a map of the change: a
   box per changed file in its group's colour, with a bar for its size and a
   mark for open comments, and arrows for the imports between them (read from
@@ -461,8 +474,9 @@ of your Claude subscription.
 
 **The Review Guide is the one time Albedo runs Claude Code itself.** Write
 Guide and Rewrite run `claude -p` on Haiku, with no tools, MCP servers or
-hooks, and nothing saved as a session: one call for the groups, then one per
-group for its file notes. It runs under your own Claude Code login, and only
+hooks, and nothing saved as a session: one call for the groups (and up to
+five files to review carefully), then one per group for its file notes. Files
+the guide sets aside are not sent. It runs under your own Claude Code login, and only
 for a guide you asked for.
 
 **Albedo sees your shell's PATH.** It starts `claude` through your login

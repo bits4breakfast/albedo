@@ -7,11 +7,11 @@ import { buildChangeMap, groupColour, GROUP_COLOURS, layoutMap, NODE_W, PAD_X, P
 import type { GroupFile, GroupView } from './validate';
 
 function file(path: string, added = 1, removed = 0): GroupFile {
-  return { path, blocks: [], totalBlocks: 1, added, removed, stat: null, note: null, line: null, notable: false };
+  return { path, blocks: [], totalBlocks: 1, added, removed, stat: null, note: null, line: null, notable: false, careful: null };
 }
 
 function group(key: string, files: GroupFile[], unsorted = false): GroupView {
-  return { key, index: unsorted ? null : 0, title: key, summary: '', unsorted, blocks: [], files };
+  return { key, index: unsorted ? null : 0, title: key, summary: '', unsorted, setAside: false, blocks: [], files };
 }
 
 const diff = buildBranchDiff([edited('src/a.ts', [3]), edited('src/b.ts', [3]), edited('src/c.ts', [3])], statReason);
@@ -146,7 +146,7 @@ describe('buildChangeMap (#288)', () => {
 });
 
 function node(id: string): MapNode {
-  return { id, kind: 'file', label: id, groups: [], colours: [], added: 1, removed: 0, change: 'modified', stat: null, comments: 0, files: 1, size: 1, importers: 0 };
+  return { id, kind: 'file', label: id, groups: [], colours: [], added: 1, removed: 0, change: 'modified', stat: null, comments: 0, files: 1, size: 1, importers: 0, careful: null };
 }
 
 describe('layoutMap (#288)', () => {
