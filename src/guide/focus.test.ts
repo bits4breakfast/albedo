@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   asFocus,
   DEFAULT_CAREFUL,
+  DEFAULT_FOCUS,
   DEFAULT_SET_ASIDE,
   firstMatch,
   expandBraces,
@@ -140,5 +141,27 @@ describe('isSetAside, with Albedo’s starting set', () => {
     ['package.json', false],
   ])('%s: %s', (path, want) => {
     expect(isSetAside(focus, path)).toBe(want);
+  });
+});
+
+describe('the starting set covers tests in other languages (#310)', () => {
+  const aside = (path: string) => isSetAside(DEFAULT_FOCUS, path);
+  it('sets aside PHPUnit, Go, pytest and test folders', () => {
+    expect(aside('tests/Unit/Webhook/PublishRoomUpgradeWebhookTest.php')).toBe(true);
+    expect(aside('src/Domain/FooTest.php')).toBe(true);
+    expect(aside('internal/queue/queue_test.go')).toBe(true);
+    expect(aside('pkg/test_parser.py')).toBe(true);
+    expect(aside('pkg/parser_test.py')).toBe(true);
+    expect(aside('spec/models/user_spec.rb')).toBe(true);
+    expect(aside('src/test/java/AppTest.java')).toBe(true);
+  });
+  it('leaves source files whose names only contain the words', () => {
+    expect(aside('src/Domain/TestRunner.php')).toBe(false);
+    expect(aside('src/Testing/Factory.php')).toBe(false);
+    expect(aside('src/attestation.ts')).toBe(false);
+    expect(aside('src/contest/entry.go')).toBe(false);
+  });
+  it('careful still wins: a migration inside tests/ is not set aside', () => {
+    expect(aside('tests/migrations/0001_init.sql')).toBe(false);
   });
 });

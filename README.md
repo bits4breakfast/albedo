@@ -411,7 +411,8 @@ once on Haiku, with no tools (see "Good to know").
   offers **Rewrite**. New changes it does not know yet are under Unsorted.
 - **Set aside** and **review carefully**: the Write Guide screen has two
   pattern lists, prefilled from the project. Files matching **Set Aside**
-  (tests, styles, lockfiles, snapshots, generated files to start with) go in
+  (to start with: tests in JS/TS, PHP, Go, Python, Ruby and Java, styles,
+  lockfiles, snapshots, generated files) go in
   a group of their own, listed last and never hidden; they are not sent to
   Claude and not in the guide's count. Files matching **Review Carefully**
   (migrations, schema, auth, CI and build config, dependency manifests) are
@@ -419,7 +420,8 @@ once on Haiku, with no tools (see "Good to know").
   Claude may flag up to five more, each with a one-line reason. A file in both
   lists is not set aside. Edits on that screen apply to that guide;
   **Save as Project Defaults** keeps them, and the Projects dialog edits the
-  defaults too. Rewrite keeps a guide's lists; **⋯ › Rewrite With Other
+  defaults too. A guide written before these lists existed sets nothing
+  aside until it is rewritten. Rewrite keeps a guide's lists; **⋯ › Rewrite With Other
   Options…** changes them. Patterns are globs on the paths git reports
   (`*.css` matches in any folder, `src/**`, `*.{js,ts}`).
 - **Read · Map** in the guide's toolbar switches to a map of the change: a
