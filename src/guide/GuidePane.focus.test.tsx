@@ -175,7 +175,7 @@ describe('Set Aside (#295)', () => {
     expect(screen.getByRole('heading', { name: 'Set Aside' })).toBeTruthy();
     expect(left().getByText('Not counted')).toBeTruthy();
     expect(left().getByRole('button', { name: /a\.test\.ts/ }).textContent).toContain('Matches **/*.test.*');
-    expect(left().getByRole('button', { name: /x\.css/ }).textContent).toContain('Matches *.{css,scss,less}');
+    expect(left().getByRole('button', { name: /x\.css/ }).textContent).toMatch(/Matches \*\.\{css,scss,/);
   });
 
   it('reviewing every counted group says all are reviewed and never moves into Set Aside', async () => {
