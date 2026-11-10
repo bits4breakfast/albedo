@@ -47,6 +47,7 @@ const task: Task = {
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 afterEach(() => {

@@ -18,6 +18,7 @@ const db = await import('../db');
 const { KEYS } = await import('./persisted');
 const q = await import('./requestQueue');
 type Req = import('./requestQueue').QueuedRequest;
+type QueueState = import('./requestQueue').QueueState;
 
 const NOW = 1_793_692_800_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -49,6 +50,7 @@ const session = (id: string, taskId = 3, at = NOW): Req => ({
   reason: 'Separate work',
   project: null,
   branch: null,
+  start: 'brief',
 });
 const notice = (id: string, taskId = 3, at = NOW): Req => ({ id, taskId, at, tool: 'notify_blocked', message: `m ${id}` });
 const reminder = (id: string, taskId = 3): Req => ({
@@ -63,11 +65,11 @@ const reminder = (id: string, taskId = 3): Req => ({
 });
 
 describe('admit (pure)', () => {
-  const empty = { items: [], handled: [] };
+  const empty: QueueState = { items: [], handled: [], outcomes: [] };
 
   it('turns away a seen id, an unknown or archived task, and anything a week old', () => {
-    expect(q.admit({ items: [session('a')], handled: [] }, session('a'), known, NOW)).toEqual({ add: false, why: 'seen' });
-    expect(q.admit({ items: [], handled: ['a'] }, session('a'), known, NOW)).toEqual({ add: false, why: 'seen' });
+    expect(q.admit({ items: [session('a')], handled: [], outcomes: [] }, session('a'), known, NOW)).toEqual({ add: false, why: 'seen' });
+    expect(q.admit({ items: [], handled: ['a'], outcomes: [] }, session('a'), known, NOW)).toEqual({ add: false, why: 'seen' });
     expect(q.admit(empty, session('a'), { title: undefined, archived: false }, NOW)).toEqual({ add: false, why: 'unknown-task' });
     expect(q.admit(empty, session('a'), { title: 'x', archived: true }, NOW)).toEqual({ add: false, why: 'unknown-task' });
     expect(q.admit(empty, session('a', 3, NOW - 7 * DAY), known, NOW)).toEqual({ add: false, why: 'expired' });
@@ -207,7 +209,7 @@ describe('the store', () => {
     q.receiveRequest(session('a'), known, NOW);
     q.receiveRequest(session('b'), known, NOW);
     q.dismissRequest('a');
-    q.resolveRequest('b');
+    q.resolveRequest('b', { id: 41, title: 'Title b' });
     expect(q.pendingRequests()).toEqual([]);
     q.receiveRequest(session('a'), known, NOW);
     expect(q.pendingRequests()).toEqual([]);
@@ -228,5 +230,56 @@ describe('the store', () => {
     q.__resetRequests();
     data.set(KEYS.requestQueue, JSON.stringify({ items: ['{"task":3}', 7], handled: ['x', 1] }));
     expect(q.pendingRequests()).toEqual([]);
+  });
+});
+
+describe('what became of a request for a new session (#332)', () => {
+  const known = { title: 'Ticket triage', archived: false };
+
+  it('Deny records "denied" under the task and the request\'s key, and it leaves the queue', () => {
+    q.receiveRequest(session('a'), known, NOW);
+    q.denyRequest('a');
+    expect(q.pendingRequests()).toEqual([]);
+    expect(q.sessionOutcomes()).toEqual([
+      {
+        id: 'a',
+        taskId: 3,
+        key: q.requestKey('Title a', 'Do the thing'),
+        outcome: 'denied',
+        spunTaskId: null,
+        spunTitle: null,
+      },
+    ]);
+  });
+
+  it('Create records the task it became, and both survive a restart', () => {
+    q.receiveRequest(session('b'), known, NOW);
+    q.resolveRequest('b', { id: 40, title: 'Refund not applied' });
+    q.__resetRequests();
+    expect(q.sessionOutcomes()).toMatchObject([
+      { id: 'b', outcome: 'spun', spunTaskId: 40, spunTitle: 'Refund not applied' },
+    ]);
+  });
+
+  it('a dismissed notice records nothing', () => {
+    q.receiveRequest({ id: 'n', taskId: 3, at: NOW, tool: 'notify_blocked', message: 'Need the key' }, known, NOW);
+    q.dismissRequest('n');
+    q.denyRequest('n');
+    expect(q.sessionOutcomes()).toEqual([]);
+  });
+
+  it('keeps the last few hundred', () => {
+    let s: QueueState = { items: [], handled: [], outcomes: [] };
+    for (let i = 0; i < q.OUTCOMES_MAX + 5; i++) {
+      s = q.withRequest(s, session(`r${i}`, 3 + (i % 50)), { title: 't', archived: false }, NOW);
+      s = q.decided(s, `r${i}`, null);
+    }
+    expect(s.outcomes).toHaveLength(q.OUTCOMES_MAX);
+    expect(s.outcomes[0]!.id).toBe('r5');
+  });
+
+  it('the key is the trimmed title and brief', () => {
+    expect(q.requestKey(' Videos stuck at 0:00 ', '\nBrief\n')).toBe(q.requestKey('Videos stuck at 0:00', 'Brief'));
+    expect(q.requestKey('A', 'one brief')).not.toBe(q.requestKey('A', 'another brief'));
   });
 });

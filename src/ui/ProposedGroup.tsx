@@ -305,10 +305,13 @@ function ProposalPopover({
           <div className="proposal-pop-label">Brief</div>
           <pre className="proposal-pop-brief">{promptPreview(req.prompt)}</pre>
         </section>
-        {(req.project || req.branch) && (
+        {(req.project || req.branch || req.start === 'fork') && (
           <div className="proposal-pop-meta">
             {req.project && <span>Project: {req.project}</span>}
             {req.branch && <span>Branch: {req.branch}</span>}
+            {/* Only a fork is a suggestion worth naming: a brief is the default,
+                and an absent `start` reads as one. */}
+            {req.start === 'fork' && <span title="Claude suggests starting from a copy of this conversation">Suggests: fork</span>}
           </div>
         )}
         <div className="proposal-pop-note">Approve… on the row opens New Task with the whole brief. Nothing starts until you press Create.</div>

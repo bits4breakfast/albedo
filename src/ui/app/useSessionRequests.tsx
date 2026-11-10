@@ -4,7 +4,7 @@ import type { Project, Task } from '../../types';
 import { startInbox, stopInbox } from '../../capture/inbox';
 import type { NewTaskPrefill } from '../followUp';
 import Requests from '../Requests';
-import { dismissRequest, receiveRequest, useRequests, type QueuedRequest, type SessionRequest } from '../requestQueue';
+import { denyRequest, dismissRequest, receiveRequest, useRequests, type QueuedRequest, type SessionRequest } from '../requestQueue';
 import { proposalProjectId } from '../proposals';
 
 /**
@@ -13,11 +13,25 @@ import { proposalProjectId } from '../proposals';
  * else the requesting task's. Pure for tests.
  */
 export function prefillFor(req: SessionRequest, tasks: readonly Task[], projects: readonly Project[]): NewTaskPrefill {
+  const asking = tasks.find((t) => t.id === req.taskId);
   return {
     projectId: proposalProjectId(req, tasks, projects),
     title: req.title,
     prompt: req.prompt,
     request: { id: req.id },
+    // The asking task (#332): the new one is spun out of it, and a fork
+    // copies its session. Claude's `start` is only the preselected choice.
+    ...(asking
+      ? {
+          from: {
+            taskId: asking.id,
+            title: asking.title,
+            sessionId: asking.sessionId,
+            kind: asking.kind,
+            start: req.start,
+          },
+        }
+      : {}),
   };
 }
 
@@ -81,6 +95,7 @@ export default function useSessionRequests(opts: {
     ),
     items,
     approve: (req) => openNewTask(prefillFor(req, tasks, projects)),
-    deny: dismissRequest,
+    // Recorded, so the asking task's transcript can say "Not spun out" (#332).
+    deny: denyRequest,
   };
 }

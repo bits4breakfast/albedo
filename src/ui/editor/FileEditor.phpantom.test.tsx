@@ -52,6 +52,7 @@ const task: Task = {
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 const NOTICE = /using text search: PHPantom couldn’t start/;

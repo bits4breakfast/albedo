@@ -80,6 +80,7 @@ const task: Task = {
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 let opened: [OpenFileRequest, OpenFileOptions | undefined][] = [];

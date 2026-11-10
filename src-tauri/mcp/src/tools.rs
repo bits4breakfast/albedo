@@ -31,6 +31,11 @@ pub const REQUEST_SESSION: &str = "request_session";
 pub const NOTIFY_BLOCKED: &str = "notify_blocked";
 pub const SET_TASK_SUMMARY: &str = "set_task_summary";
 
+/// `request_session`'s `start` (#332): a fresh session from the brief, or a
+/// copy of the asking conversation. Only a suggestion; the user picks.
+pub const START_BRIEF: &str = "brief";
+pub const START_FORK: &str = "fork";
+
 /// Every tool, in the order `tools/list` gives them.
 pub const NAMES: [&str; 4] = [
     CREATE_REMINDER,
@@ -68,10 +73,13 @@ pub fn definitions() -> Value {
             "description": "Ask the user to start a separate Albedo task for work that does not belong in this session \
                 (a follow-up, an unrelated bug you found, work in another project). Nothing starts on its own: the \
                 request waits in Albedo until the user approves or denies it, and you are not told which. If they \
-                approve, `prompt` becomes the new task's first message, unsent, for them to edit. Write `prompt` so \
-                that it stands alone -- the new session has none of this conversation: carry over what was already \
-                found, the links and identifiers, what was checked and what is left. Do not use it to hand off the \
-                work of this session, and do not ask twice for the same thing.",
+                approve, the new task starts from `prompt`, which they can edit and which is sent as its first message \
+                unless they untick that. Write `prompt` so that it stands alone -- by default the new session has \
+                none of this conversation: carry over what was already found, the links and identifiers, what was \
+                checked and what is left. `start` suggests how it begins: \"brief\" (the default) is a fresh \
+                session from `prompt`; \"fork\" is a copy of this conversation, with `prompt` sent after it -- for \
+                when the history matters more than the noise it brings. The user picks either way. Do not use it to \
+                hand off the work of this session, and do not ask twice for the same thing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -79,7 +87,8 @@ pub fn definitions() -> Value {
                     "prompt": {"type": "string", "description": "The new session's opening message, self-contained.", "maxLength": MAX_PROMPT},
                     "reason": {"type": "string", "description": "Why it should be a separate session, for the user deciding.", "maxLength": MAX_REASON},
                     "project": {"type": "string", "description": "Albedo project name, if not this task's project.", "maxLength": MAX_PROJECT},
-                    "branch": {"type": "string", "description": "A branch to suggest for the new task.", "maxLength": MAX_BRANCH}
+                    "branch": {"type": "string", "description": "A branch to suggest for the new task.", "maxLength": MAX_BRANCH},
+                    "start": {"type": "string", "enum": [START_BRIEF, START_FORK], "description": "How the new session should begin: \"brief\" (default), a fresh session from `prompt`; \"fork\", a copy of this conversation."}
                 },
                 "required": ["title", "prompt", "reason"],
                 "additionalProperties": false
@@ -168,7 +177,10 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
             })
         }
         REQUEST_SESSION => {
-            only(args, &["title", "prompt", "reason", "project", "branch"])?;
+            only(
+                args,
+                &["title", "prompt", "reason", "project", "branch", "start"],
+            )?;
             let mut out = Map::new();
             out.insert(
                 "title".into(),
@@ -188,6 +200,17 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
             if let Some(b) = optional(args, "branch", MAX_BRANCH)? {
                 check_branch(&b)?;
                 out.insert("branch".into(), b.into());
+            }
+            match args.get("start") {
+                None | Some(Value::Null) => {}
+                Some(Value::String(s)) if s == START_BRIEF || s == START_FORK => {
+                    out.insert("start".into(), s.as_str().into());
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "`start` must be \"{START_BRIEF}\" or \"{START_FORK}\"."
+                    ))
+                }
             }
             Ok(Accepted {
                 tool: REQUEST_SESSION,
@@ -428,6 +451,51 @@ mod tests {
         assert_eq!(b.args["project"], "albedo");
         assert_eq!(b.args["branch"], "fix/login-2");
         assert!(b.reply.starts_with("Queued for the user's approval"));
+    }
+
+    #[test]
+    fn a_session_request_may_suggest_how_it_starts() {
+        let call = |start: Value| {
+            validate(
+                REQUEST_SESSION,
+                Some(&json!({"title": "T", "prompt": "P", "reason": "R", "start": start})),
+                NOW,
+            )
+        };
+        assert_eq!(call(json!("fork")).unwrap().args["start"], "fork");
+        assert_eq!(call(json!("brief")).unwrap().args["start"], "brief");
+        assert!(!call(Value::Null).unwrap().args.contains_key("start"));
+        for bad in [json!("Fork"), json!("copy"), json!(""), json!(1)] {
+            let err = call(bad.clone()).unwrap_err();
+            assert_eq!(err, "`start` must be \"brief\" or \"fork\".", "{bad}");
+        }
+        let without = validate(
+            REQUEST_SESSION,
+            Some(&json!({"title": "T", "prompt": "P", "reason": "R"})),
+            NOW,
+        )
+        .unwrap();
+        assert!(!without.args.contains_key("start"));
+    }
+
+    #[test]
+    fn the_schema_offers_start_as_brief_or_fork() {
+        let defs = definitions();
+        let req = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == REQUEST_SESSION)
+            .unwrap();
+        assert_eq!(
+            req["inputSchema"]["properties"]["start"]["enum"],
+            json!(["brief", "fork"])
+        );
+        assert!(!req["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("start")));
+        assert!(req["description"].as_str().unwrap().contains("\"fork\""));
     }
 
     #[test]

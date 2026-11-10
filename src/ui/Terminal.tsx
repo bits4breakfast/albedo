@@ -297,7 +297,9 @@ export interface TerminalProps {
   /**
    * Full argv for `claude`, e.g. `['--resume', '<id>']`. Takes precedence over
    * `initialPrompt` — a resumed session already has its context and must not
-   * also be handed the project's opening prompt.
+   * also be handed the project's opening prompt. The one exception is a fork
+   * New Task made (#332) for a task that never had a session: its first
+   * message is sent after the copied conversation.
    */
   spawnArgs?: string[];
   /**
@@ -634,7 +636,11 @@ export default function Terminal({
       const title = displayName(live.title);
       const creating = plan.mode === 'new' || plan.mode === 'reuse' || plan.mode === 'fork';
       const name = fresh ? title : creating ? (sessionNameRef.current ?? title) : undefined;
-      const prompt = plan.mode === 'new' && neverStarted ? initialPromptRef.current?.trim() : undefined;
+      // A fork made by New Task (#332) is a task that never started, too: its
+      // first message goes after the copied conversation. History's fork
+      // records its session before the first spawn, so it never gets one.
+      const opening = neverStarted && (plan.mode === 'new' || plan.mode === 'fork');
+      const prompt = opening ? initialPromptRef.current?.trim() : undefined;
       const args = composeArgs({ name, flags: plan.args, prompt });
 
       // The task's chosen model, on every spawn: a resume after restart would

@@ -247,6 +247,7 @@ describe('NewTaskDialog chat', () => {
       ownsWorktree: false,
       createdBranch: false,
       kind: 'chat',
+      spunFromTaskId: null,
     });
   });
 

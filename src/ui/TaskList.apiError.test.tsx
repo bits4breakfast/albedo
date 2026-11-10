@@ -55,7 +55,7 @@ function task(id: number, title: string, over: Partial<Task> = {}): Task {
   return {
     id, title, projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: `b-${id}`,
     worktreePath: `/w/${id}`, sessionId: `s${id}`, ownsWorktree: true, createdBranch: true, kind: 'work',
-    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null,
+    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null, spunFromTaskId: null,
     ...over,
   };
 }
