@@ -90,6 +90,16 @@
 .rail-circle[data-hue='idle'] { --fill: var(--status-idle-fill); --edge: var(--status-idle-edge); --ink: var(--status-idle-ink); }
 .rail-circle[data-hue='done'] { --fill: var(--status-done-fill); --edge: var(--status-done-edge); --ink: var(--status-done-ink); }
 
+/* The rail's Proposed circle: a dashed accent ring on the rail's own ground,
+   its count in the accent (--panel-chrome 5.87 | 7.44). Not a status hue:
+   nothing in it is a task yet. */
+.rail-circle[data-hue='proposed'] {
+  --fill: var(--panel-chrome);
+  --edge: var(--accent);
+  --ink: var(--accent);
+  border-style: dashed;
+}
+
 /* The selected task's group: an accent ring round the circle, clear of it. */
 .rail-circle[aria-current='true']::after {
   content: '';
