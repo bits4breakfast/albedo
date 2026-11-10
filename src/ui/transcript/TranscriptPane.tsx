@@ -93,6 +93,8 @@ import { compactionAt, isPromptRow, type Compaction } from './compaction';
 import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
 import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
+import { REMOTE_MENU_HINT, RemoteMenuNotice } from './RemoteMenuNotice';
+import { useRemoteWait } from '../remoteWait';
 import ReminderCards from '../reminders/ReminderCard';
 import BackgroundStrip from './BackgroundStrip';
 import { backgroundShown, useBackgroundWork } from '../BackgroundWork';
@@ -634,6 +636,8 @@ export function TranscriptPane({
       <BackgroundStrip items={background} onReveal={setReveal} />
       <QueuedStrip sessionId={sessionId} taskId={taskId} liveSince={liveSince} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
+      {/* Remote Control's menu, up in the terminal with nothing written (#343). */}
+      {taskId !== null ? <RemoteMenuNotice taskId={taskId} onShowTerminal={onAnswerInTerminal} /> : null}
       {/* A reminder that came back (#156): its own card, never text in the box. */}
       {taskId !== null ? <ReminderCards taskId={taskId} status={status} /> : null}
       {taskId !== null ? (
@@ -823,6 +827,8 @@ export function QueuedStrip({
 
   const held = useHeld(taskId);
   const mine = shownQueue(entries, liveSince);
+  // Claude Code takes nothing from its queue while Remote Control's menu is up (#343).
+  const menu = useRemoteWait(taskId)?.phase === 'menu';
   // Claude Code's entries are on their way to the API: watch it.
   const waiting = mine.length > 0;
   useEffect(() => (waiting ? watchConnectivity() : undefined), [waiting]);
@@ -834,7 +840,7 @@ export function QueuedStrip({
         <>
           <div className="tx-queued-head">
             Queued <span className="tx-queued-count">{mine.length}</span>
-            <span className="tx-queued-hint">sent when Claude Code finishes its current step</span>
+            <span className="tx-queued-hint">{menu ? REMOTE_MENU_HINT : 'sent when Claude Code finishes its current step'}</span>
           </div>
           {mine.map((e, i) => (
             <div key={`${e.ts}-${i}`} className="tx-queued-item" title={foldPastes(e.text)}>
@@ -861,7 +867,10 @@ function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessag
   const conditions = useReleaseConditions(taskId);
   const [notNow, showNotNow] = useBriefNote();
   // Held messages go together, as one (#240): the hint says so when they will.
-  const hint = heldHint(conditions, nextRunSize(taskId));
+  // While Remote Control's menu is up (#343), what they wait on is that menu.
+  const menu = useRemoteWait(taskId)?.phase === 'menu';
+  const turnHint = heldHint(conditions, nextRunSize(taskId));
+  const hint = menu && turnHint !== null && !conditions.offline ? REMOTE_MENU_HINT : turnHint;
   const allSize = allNowSize(taskId);
   const allOffered = sendAllNowOffered(conditions, allSize);
   const allowed = sendNowAllowed(conditions);

@@ -6,7 +6,14 @@
 import { describe, expect, it } from 'vitest';
 import BetterSqlite3 from 'better-sqlite3';
 
-import { parseLine, remoteControlSqlPredicate, remoteControlUrlOf } from './adapter';
+import {
+  parseLine,
+  remoteControlSqlPredicate,
+  remoteControlUrlOf,
+  remoteSessionFactOf,
+  remoteSessionFactsIn,
+} from './adapter';
+import remoteSession from './fixtures/remote-session.jsonl?raw';
 
 const URL = 'https://claude.ai/code/session_example';
 
@@ -67,5 +74,59 @@ describe('remoteControlUrlOf', () => {
     const hits = db.prepare(`SELECT raw_json FROM t WHERE ${remoteControlSqlPredicate()}`).all();
     expect(hits).toHaveLength(1);
     db.close();
+  });
+});
+
+/**
+ * The other fact (#343): the link Claude Code writes with the first prompt of
+ * each process. A session resumed with Remote Control on writes only this.
+ * The fixture has both shapes in order: off, the "is active" line after
+ * `/remote-control`, the link at the next prompt, and a resumed process that
+ * comes back on with the link alone.
+ */
+describe('remoteSessionFactsIn', () => {
+  const SID = '44444444-5555-6666-7777-888888888888';
+  const LINK = 'https://example.com/code/session_example';
+  const ms = (iso: string) => Date.parse(iso);
+
+  it('reads every main-thread fact in file order: off, then the link', () => {
+    expect(remoteSessionFactsIn(remoteSession)).toEqual([
+      { sessionId: SID, url: null, ts: ms('2026-10-29T13:32:08.183Z') },
+      { sessionId: SID, url: LINK, ts: ms('2026-10-29T15:33:43.905Z') },
+      { sessionId: SID, url: LINK, ts: ms('2026-11-10T12:10:22.613Z') },
+    ]);
+  });
+
+  it('the same fixture carries the older "is active" line, read by its own reader', () => {
+    const urls = remoteSession
+      .split('\n')
+      .filter(Boolean)
+      .map(remoteControlUrlOf)
+      .filter((u) => u !== null);
+    expect(urls).toEqual([LINK]);
+  });
+
+  it('is never stored as a row: a new kind of row would read as the session’s last word', () => {
+    const line = remoteSession.split('\n').find((l) => l.includes('"remote_session_change"'))!;
+    expect(parseLine(line, 0)).toEqual([]);
+  });
+
+  it('is null for a sidechain, another attachment, or no session', () => {
+    const line = (over: Record<string, unknown>, att: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        type: 'attachment',
+        isSidechain: false,
+        sessionId: 's1',
+        timestamp: '2026-11-10T12:00:00.000Z',
+        attachment: { type: 'remote_session_change', url: URL, ...att },
+        ...over,
+      });
+    expect(remoteSessionFactOf(line({}))).toEqual({ sessionId: 's1', url: URL, ts: ms('2026-11-10T12:00:00.000Z') });
+    expect(remoteSessionFactOf(line({}, { url: '' }))?.url).toBeNull();
+    expect(remoteSessionFactOf(line({ isSidechain: true }))).toBeNull();
+    expect(remoteSessionFactOf(line({}, { type: 'date' }))).toBeNull();
+    expect(remoteSessionFactOf(line({ sessionId: '' }))).toBeNull();
+    expect(remoteSessionFactOf(line({ type: 'user' }))).toBeNull();
+    expect(remoteSessionFactOf('{"remote_session_change": broken')).toBeNull();
   });
 });

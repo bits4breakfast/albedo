@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
   default: { load: async () => harness.db },
 }));
 
-import { insertMessages, remoteControlUrlSince, resetDb } from './index';
+import { insertMessages, remoteControlLineSince, remoteControlUrlSince, resetDb } from './index';
 import { parseLine } from '../capture/adapter';
 
 const URL = 'https://claude.ai/code/session_example';
@@ -75,5 +75,13 @@ describe('remoteControlUrlSince', () => {
   it('is off with no such row at all', async () => {
     await seed([{ type: 'system', subtype: 'turn_duration', durationMs: 5, timestamp: at(SPAWNED + 1_000), uuid: 't' }]);
     expect(await remoteControlUrlSince('s1', SPAWNED)).toBeNull();
+  });
+});
+
+describe('remoteControlLineSince', () => {
+  it('gives the row’s time with its link, to weigh it against the link attachment (#343)', async () => {
+    await seed([active(SPAWNED + 1_000, 'https://claude.ai/code/session_old'), active(SPAWNED + 2_000)]);
+    expect(await remoteControlLineSince('s1', SPAWNED)).toEqual({ url: URL, ts: SPAWNED + 2_000 });
+    expect(await remoteControlLineSince('s1', SPAWNED + 5_000)).toBeNull();
   });
 });

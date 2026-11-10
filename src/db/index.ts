@@ -735,13 +735,20 @@ export async function findToolResults(toolName: string, needle: string, limit = 
 /**
  * The claude.ai link of the newest "Remote Control is active" row in the
  * session written at or after `sinceTs`, or null. The caller passes when its
- * pty was spawned: Remote Control ends with the process, so a row from before
- * that describes a process that is gone.
+ * pty was spawned: a row from before that describes a process that is gone.
  */
 export async function remoteControlUrlSince(sessionId: string, sinceTs: number): Promise<string | null> {
+  return (await remoteControlLineSince(sessionId, sinceTs))?.url ?? null;
+}
+
+/** {@link remoteControlUrlSince} with the row's time, for weighing it against newer facts. */
+export async function remoteControlLineSince(
+  sessionId: string,
+  sinceTs: number,
+): Promise<{ url: string; ts: number } | null> {
   const db = await getDb();
-  const rows = await db.select<{ raw_json: string }[]>(
-    `SELECT raw_json FROM messages
+  const rows = await db.select<{ raw_json: string; ts: number }[]>(
+    `SELECT raw_json, ts FROM messages
       WHERE session_id = $1 AND ts >= $2 AND role = 'system' AND +agent_id IS NULL
         AND ${remoteControlSqlPredicate('raw_json')}
       ORDER BY ts DESC, id DESC LIMIT 10`,
@@ -749,7 +756,7 @@ export async function remoteControlUrlSince(sessionId: string, sinceTs: number):
   );
   for (const row of rows) {
     const url = remoteControlUrlOf(row.raw_json);
-    if (url !== null) return url;
+    if (url !== null) return { url, ts: row.ts };
   }
   return null;
 }

@@ -2,6 +2,7 @@ import type { Task } from '../types';
 import { getPrStatus } from '../gh/prStore';
 import { useCommandBlocker } from './ClearContextButton';
 import { useRemoteControlUrl } from './RemoteMark';
+import { useRemoteWait } from './remoteWait';
 import { usePendingReminders } from './reminders/useReminders';
 import { usePtyLiveSince } from './Terminal';
 import { useSendsWait } from './transcript/send';
@@ -17,12 +18,15 @@ export function useTaskMenuFacts(task: Task | null, shown: boolean): TaskMenuFac
   const compactBlocker = useCommandBlocker(task);
   const live = usePtyLiveSince(id) !== null;
   const remoteUrl = useRemoteControlUrl(task);
+  // Make Available Remotely reads it (`remoteControlItem`): re-render on it.
+  const remoteWaiting = useRemoteWait(id) !== null;
   const pendingReminders = usePendingReminders(id).length;
   const sendsWait = useSendsWait(id);
   return {
     compactBlocker,
     live,
     remoteUrl,
+    remoteWaiting,
     pendingReminders,
     pr: id === null ? null : (getPrStatus(id) ?? null),
     shown,

@@ -3,32 +3,37 @@
  * phone or claude.ai (#114). On the task row and in the task bar; a click
  * opens the session there.
  *
- * Read from the transcript, never from the terminal: turning it on writes a
- * "Remote Control is active" line carrying the session's link
- * (`remoteControlUrlOf`, capture/adapter.ts). Nothing is written when it goes
- * off; it ends with the claude process. So it counts as on only while the
- * task has a live pty and that line was written in the task's current session
- * at or after the pty was spawned. Not measured: whether a second
- * `/remote-control` inside the session turns it off. If it does, the mark
- * stays until the session ends.
+ * Read from the transcript, never from the terminal (capture/remoteSession.ts):
+ * the "Remote Control is active" line `/remote-control` writes, and the link
+ * Claude Code writes with the first prompt of each process -- a session
+ * resumed with Remote Control on comes back on, and writes only that (#343).
+ * Only what was written since the task's live pty was spawned counts: before
+ * the first prompt of a resumed process nothing says it is on yet.
+ *
+ * Between asking for it and either the mark or the menu notice
+ * (remoteWait.ts), the same place says "Turning on Remote…" (#343).
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { onCaptureUpdate } from '../capture';
-import { remoteControlUrlSince } from '../db';
+import { onRemoteSessionChange, remoteControlSince } from '../capture/remoteSession';
 import { openExternal } from '../lib/openUrl';
 import { safeHttpUrl } from '../lib/urls';
 import type { Task } from '../types';
 import type { OverflowItem } from './OverflowMenu';
 import { sendPrompt } from './sendPrompt';
 import { usePtyLiveSince } from './Terminal';
+import { noteRemoteAskOutcome, noteRemoteAsked, REMOTE_CONTROL_COMMAND, remoteWaitFor, useRemoteWait } from './remoteWait';
 import './remote.css';
 
-/** What the ⋯ item sends: the command as typed in Claude Code. */
-export const REMOTE_CONTROL_COMMAND = '/remote-control';
+export { REMOTE_CONTROL_COMMAND };
 
 export const REMOTE_TITLE = 'Available through Remote Control. Open on claude.ai';
+
+/** While it is asked for and not yet on: the bar's words, and the row's. */
+export const REMOTE_PENDING_TEXT = { bar: 'Turning on Remote…', row: 'Remote…' } as const;
+export const REMOTE_PENDING_TITLE = 'Turning on Remote Control: sent /remote-control, waiting for Claude Code to say it is on';
 
 /** The shortcut that asks to turn it on (shortcuts.ts, `mod+shift+r`). */
 export const REMOTE_CONTROL_KEYS = '⇧⌘R';
@@ -53,7 +58,7 @@ export function useRemoteControlUrl(task: Pick<Task, 'id' | 'sessionId'> | null)
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const look = () => {
-      remoteControlUrlSince(sessionId, liveSince).then(
+      remoteControlSince(sessionId, liveSince).then(
         (url) => {
           if (alive) setFound({ key, url: url === null ? null : safeHttpUrl(url) });
         },
@@ -63,18 +68,19 @@ export function useRemoteControlUrl(task: Pick<Task, 'id' | 'sessionId'> | null)
       );
     };
     look();
-    const off = onCaptureUpdate((u) => {
-      if (u?.sessionId !== sessionId) return;
+    const soon = (sid: string | undefined) => {
+      if (sid !== sessionId) return;
       if (timer !== null) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
         look();
       }, COALESCE_MS);
-    });
+    };
+    const offs = [onCaptureUpdate((u) => soon(u?.sessionId)), onRemoteSessionChange(soon)];
     return () => {
       alive = false;
       if (timer !== null) clearTimeout(timer);
-      off();
+      for (const off of offs) off();
     };
     // `key` carries everything the lookup reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,11 +94,36 @@ export function useRemoteControlUrl(task: Pick<Task, 'id' | 'sessionId'> | null)
  * task row's caption, `bar` in the task bar beside the title.
  */
 export default function RemoteMark({ task, variant }: { task: Pick<Task, 'id' | 'sessionId'>; variant: 'row' | 'bar' }): ReactNode {
-  return <RemoteLink url={useRemoteControlUrl(task)} variant={variant} />;
+  return <RemoteLink url={useRemoteControlUrl(task)} variant={variant} pending={useRemotePending(task.id)} />;
 }
 
-/** {@link RemoteMark} for a caller that already looked the link up. */
-export function RemoteLink({ url, variant }: { url: string | null; variant: 'row' | 'bar' }): ReactNode {
+/** Asked for or sent, and not yet on, nor taken to be the menu (remoteWait.ts). */
+export function useRemotePending(taskId: number | null): boolean {
+  const wait = useRemoteWait(taskId);
+  return wait !== null && wait.phase !== 'menu';
+}
+
+/**
+ * {@link RemoteMark} for a caller that already looked the link up. While
+ * `pending`, with no link yet, a plain word where the mark will be: not a
+ * button, there is nothing to open yet.
+ */
+export function RemoteLink({
+  url,
+  variant,
+  pending = false,
+}: {
+  url: string | null;
+  variant: 'row' | 'bar';
+  pending?: boolean;
+}): ReactNode {
+  if (url === null && pending) {
+    return (
+      <span className={`remote-mark remote-mark-${variant} remote-mark-pending`} role="status" title={REMOTE_PENDING_TITLE}>
+        {REMOTE_PENDING_TEXT[variant]}
+      </span>
+    );
+  }
   if (url === null) return null;
   const open = (e: ReactMouseEvent) => {
     // On the row: opening the session is not selecting the task.
@@ -108,7 +139,9 @@ export function RemoteLink({ url, variant }: { url: string | null; variant: 'row
 
 /**
  * "Make Available Remotely" for the task's ⋯ menu, or null where it has
- * nothing to do: no live pty (no session to send it to), or already on.
+ * nothing to do: no live pty (no session to send it to), already on, or
+ * already asked for and not settled (`remoteWaitFor`): a second
+ * `/remote-control` on a session where it is on opens Claude Code's menu.
  *
  * It sends `/remote-control` the way the buttons send a prompt
  * (`sendPrompt`): through the one send gateway, held in the outbox while a
@@ -125,12 +158,19 @@ export function remoteControlItem(
   url: string | null,
   send: typeof sendPrompt = sendPrompt,
 ): OverflowItem | null {
-  if (!live || url !== null) return null;
+  if (!live || url !== null || remoteWaitFor(task.id) !== null) return null;
   return {
     id: 'remote-control',
     label: 'Make Available Remotely',
     aside: REMOTE_CONTROL_KEYS,
     title: 'Send /remote-control: continue this session on your phone or on claude.ai',
-    onSelect: () => void send(task, REMOTE_CONTROL_COMMAND),
+    onSelect: () => {
+      if (remoteWaitFor(task.id) !== null) return;
+      noteRemoteAsked(task.id);
+      void send(task, REMOTE_CONTROL_COMMAND).then(
+        (outcome) => noteRemoteAskOutcome(task.id, outcome),
+        () => noteRemoteAskOutcome(task.id, 'failed'),
+      );
+    },
   };
 }

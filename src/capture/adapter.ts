@@ -721,9 +721,11 @@ export function isNoticeLine(rawJson: string): boolean {
  * Stored as a `system` row; the `bridge-session` lines that follow are
  * bookkeeping and are not.
  *
- * Measured on Claude Code 2.1.296-2.1.312: 11 such lines, all "is active", all
- * with `url`. No line is written when it goes off -- it ends with the process
- * -- so this says only that it came on, and when (the row's `ts`).
+ * Measured on Claude Code 2.1.282-2.1.316: 10 such lines, all "is active", all
+ * with `url`; none on 2.1.317 or later here, where no `/remote-control`
+ * was recorded at all (no command envelope either). It says only that it came on in this process, and when (the row's `ts`). A
+ * process that comes back with Remote Control already on (a resume) writes no
+ * such line: see {@link RemoteSessionFact}.
  */
 export const REMOTE_CONTROL_SUBTYPE = 'bridge_status';
 
@@ -739,6 +741,57 @@ export function remoteControlUrlOf(rawJson: string): string | null {
   if (typeof url === 'string' && url.trim() !== '') return url.trim();
   // A build that carries the link only in the text.
   return /https?:\/\/\S+/.exec(content)?.[0] ?? null;
+}
+
+/**
+ * Which claude.ai link the session is reachable at, as Claude Code tells the
+ * model: `{type: "attachment", attachment: {type: "remote_session_change",
+ * url: "https://claude.ai/code/session_…" | null, commit, pr, …}}`. `url` is
+ * the Remote Control link while Remote Control is on, null while it is off.
+ *
+ * Measured across the transcripts on this machine, Claude Code 2.1.282-2.1.322
+ * (201 such lines, 12 sessions with a link): it is written with the first
+ * prompt of every `claude` process -- null, or the link when the process came
+ * back with Remote Control already on -- and again with the first prompt after
+ * the link changes. A session resumed after `/remote-control` was used in it
+ * comes back on: every later process in those sessions wrote the link at its
+ * first prompt, with no "is active" line and no `/remote-control` anywhere
+ * after. Every link matched the session's own "is active" line where there was
+ * one. It is an attachment, a bookkeeping line: never stored as a row (a new
+ * kind of row is read as the session's last word -- see REGRESSIONS.md), only
+ * read as it is ingested (capture/remoteSession.ts).
+ */
+export interface RemoteSessionFact {
+  sessionId: string;
+  /** The link while Remote Control is on; null while it is off. */
+  url: string | null;
+  ts: number;
+}
+
+const REMOTE_SESSION_ATTACHMENT = 'remote_session_change';
+
+/** The {@link RemoteSessionFact} a raw line carries, or null. Main thread only. */
+export function remoteSessionFactOf(rawLine: string): RemoteSessionFact | null {
+  if (!rawLine.includes(`"${REMOTE_SESSION_ATTACHMENT}"`)) return null;
+  const line = safeParse(rawLine);
+  if (!line || line['type'] !== 'attachment' || line['isSidechain'] === true) return null;
+  const att = line['attachment'];
+  if (!isRecord(att) || att['type'] !== REMOTE_SESSION_ATTACHMENT) return null;
+  const sessionId = stringOr(line['sessionId'], '');
+  if (sessionId === '') return null;
+  const url = typeof att['url'] === 'string' && att['url'].trim() !== '' ? att['url'].trim() : null;
+  return { sessionId, url, ts: parseTs(line['timestamp']) };
+}
+
+/** Every {@link RemoteSessionFact} in a chunk, in file order. */
+export function remoteSessionFactsIn(text: string): RemoteSessionFact[] {
+  const out: RemoteSessionFact[] = [];
+  if (!text.includes(`"${REMOTE_SESSION_ATTACHMENT}"`)) return out;
+  for (const line of text.split('\n')) {
+    const fact = line.length === 0 ? null : remoteSessionFactOf(line);
+    if (fact) out.push(fact);
+  }
+  return out;
 }
 
 /**
