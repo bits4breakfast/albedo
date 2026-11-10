@@ -232,3 +232,55 @@ describe('opening the Review Guide', () => {
     expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('true');
   });
 });
+
+describe('the reading tab, per task (#314)', () => {
+  const tabSelected = (name: string) => screen.getByRole('tab', { name }).getAttribute('aria-selected');
+  const row = (title: string) => screen.getByRole('option', { name: new RegExp(title) });
+
+  it('each task comes back on the tab it was left on', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+
+    // A task not looked at yet opens on Transcript, not on the Guide just chosen.
+    fireEvent.click(row('Speed up the build'));
+    await settle();
+    expect(tabSelected('Transcript')).toBe('true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
+    await settle();
+
+    fireEvent.click(row('Fix the login retry'));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+
+    fireEvent.click(row('Speed up the build'));
+    await settle();
+    expect(tabSelected('Files')).toBe('true');
+
+    // Kept across a restart.
+    expect(JSON.parse(store.get(KEYS.taskTabs)!)).toEqual([
+      [10, 'guide'],
+      [11, 'files'],
+    ]);
+  });
+
+  it('a guide asked for another task lands on that task, not on the one on screen', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    act(() => void requestGuide(11));
+    await settle();
+    expect(tabSelected('Transcript')).toBe('true');
+    fireEvent.click(row('Speed up the build'));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+  });
+});

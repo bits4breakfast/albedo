@@ -35,7 +35,10 @@ export const KEYS = {
   activeProject: 'albedo.shell.activeProject',
   /** Where each project tab was last left: a task, or the project view (app/useSelection.ts owns the shape). */
   projectPlaces: 'albedo.shell.projectPlaces',
+  /** The reading pane's tab in the project view. Tasks keep theirs in taskTabs. */
   rightTab: 'albedo.shell.rightTab',
+  /** The reading pane's tab, per task (app/useTaskTabs.ts owns the shape, #314). */
+  taskTabs: 'albedo.shell.taskTabs',
   filesPinned: 'albedo.shell.filesPinned',
   filesWidth: 'albedo.shell.filesWidth',
   shellOpen: 'albedo.shell.shellDrawerOpen',
