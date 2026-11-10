@@ -123,6 +123,7 @@ const task = (): Task => ({
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 });
 
 /** Open `path`, put the cursor inside `name` on its declaration, and press ⌥⌘B. */

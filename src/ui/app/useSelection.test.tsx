@@ -50,6 +50,7 @@ function task(id: number, projectId: number, over: Partial<Task> = {}): Task {
     reviewUrl: null,
     apiError: null,
     apiErrorText: null,
+    spunFromTaskId: null,
     ...over,
   };
 }

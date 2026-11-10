@@ -53,7 +53,8 @@ import { readLastProjectId, writeLastProjectId } from './projectPrefs';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { setTaskModel } from './taskModel';
 import { saveDraft } from './transcript/drafts';
-import { nameFollowUp, type NewTaskPrefill } from './followUp';
+import { nameFollowUp, type NewTaskPrefill, type SpinOutSource } from './followUp';
+import type { SessionStart } from '../capture/inbox';
 import { BranchPicker } from './BranchPicker';
 import { orderBranches } from './branchPickerModel';
 import './worktree.css';
@@ -65,8 +66,10 @@ export interface NewTaskDialogProps {
    * `initialPrompt` is set only when the dialog showed a prompt field (a
    * follow-up): it replaces the project's template for this task, and an
    * empty string means the user cleared it and wants no prompt at all.
+   * `forkOf` (#332) is the session the new task's first spawn forks, when
+   * the user chose to start from a copy of the conversation.
    */
-  onCreated: (t: Task, initialPrompt?: string) => void;
+  onCreated: (t: Task, initialPrompt?: string, forkOf?: string) => void;
   /**
    * Opens the dialog filled in -- "Follow-up…" uses it. Everything stays
    * editable; nothing is created until the user presses Create. A new object
@@ -146,6 +149,11 @@ export function NewTaskDialog({
    * the prompt was read in this dialog, and approving it means starting on it.
    */
   const [sendNow, setSendNow] = useState(true);
+  /**
+   * A spin-out (#332): a fresh session from the brief, or a fork of the
+   * source task's session. Preselected from the request's `start`.
+   */
+  const [start, setStart] = useState<SessionStart>('brief');
   /** The prompt last put there by a prefill, to tell it from the user's edit. */
   const appliedPrompt = useRef<string | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -249,6 +257,7 @@ export function NewTaskDialog({
     setTitle('');
     setPrompt('');
     setSendNow(true);
+    setStart('brief');
     appliedPrompt.current = null;
     setError(null);
     setBusy(false);
@@ -267,14 +276,29 @@ export function NewTaskDialog({
     if (!open || !prefill) return;
     // Read now: the updater runs after the ref below has moved on.
     const applied = appliedPrompt.current;
-    if (applied === null) setTitle(prefill.title);
+    if (applied === null) {
+      setTitle(prefill.title);
+      const from = prefill.from;
+      if (from) {
+        // Nothing to copy without a session: the brief, whatever was suggested.
+        setStart(from.sessionId ? from.start : 'brief');
+        // An approved request was already decided on (#188): sent by default.
+        // Fork Conversation… brings no message, so nothing is sent unasked.
+        setSendNow(!!prefill.request);
+        // Fork Conversation… asks the kind, starting from the source's.
+        if (!prefill.request) setKind(from.kind);
+      }
+    }
     setPrompt((current) => (applied === null || current === applied ? prefill.prompt : current));
     appliedPrompt.current = prefill.prompt;
   }, [open, prefill]);
 
+  /** Fork Conversation… (#332): a spin-out with no request, always a fork. */
+  const forkOnly = !!prefill?.from && !prefill.request;
   // A follow-up's title is already right; what only the user knows is the
-  // bug, and the prompt ends on the empty line it goes in.
-  const focusPrompt = prefill !== null;
+  // bug, and the prompt ends on the empty line it goes in. A fork's message
+  // is optional; its title is what the user names.
+  const focusPrompt = prefill !== null && !forkOnly;
   // The fields mount only once projects have loaded, so that is the moment.
   const formShown = projects.length > 0;
   useEffect(() => {
@@ -514,8 +538,12 @@ export function NewTaskDialog({
   /** The existing branch is what the main checkout is on: nothing to switch. */
   const mainHasBranch = source === 'existing' && branch !== '' && mainCheckout?.current === branch;
   const mainUsable = mainOk || mainHasBranch;
-  // A follow-up is work on the shipped branch's base; it is never a chat.
-  const isChat = kind === 'chat' && !isFollowUp;
+  // A follow-up is work on the shipped branch's base; it is never a chat. A
+  // fork of a conversation (#332) may be either, as the task it copies.
+  const kindAsked = !isFollowUp || forkOnly;
+  const isChat = kind === 'chat' && kindAsked;
+  /** The session a fork copies; null when starting from the brief. */
+  const forkOf = prefill?.from && start === 'fork' ? prefill.from.sessionId : null;
   const onMain = place === 'main' || isChat;
   const alreadyThere = onMain && mainHasBranch;
   const worktreePath = useMemo(() => {
@@ -579,7 +607,8 @@ export function NewTaskDialog({
     (taskId: number): string => {
       const text = prompt.trim();
       if (sendNow) return text;
-      saveDraft(taskId, text, new Map());
+      // A fork's empty message box (#332) leaves no draft behind.
+      if (text) saveDraft(taskId, text, new Map());
       return '';
     },
     [prompt, sendNow],
@@ -607,6 +636,7 @@ export function NewTaskDialog({
             ownsWorktree: false,
             createdBranch: false,
             kind: 'chat',
+            spunFromTaskId: prefill?.from?.taskId ?? null,
           });
         } catch (e) {
           setError({
@@ -619,7 +649,9 @@ export function NewTaskDialog({
         setBusy(false);
         writeLastProjectId(project.id);
         setTaskModel(task.id, model || null);
-        onCreated(task);
+        // Only a fork of a conversation reaches here with a prefill (#332).
+        if (prefill?.from) onCreated(task, requestPrompt(task.id), forkOf ?? undefined);
+        else onCreated(task);
         return;
       }
       const existing = source === 'existing' || useExistingBranch;
@@ -678,6 +710,7 @@ export function NewTaskDialog({
           // local copy of a colleague's branch is theirs, even though cut now.
           createdBranch: !existing,
           kind: 'work',
+          spunFromTaskId: prefill?.from?.taskId ?? null,
         });
       } catch (e) {
         // The worktree exists but no task names it, so a retry would fail on
@@ -704,11 +737,15 @@ export function NewTaskDialog({
       writeLastProjectId(project.id);
       // Before onCreated: that is what mounts the terminal, which reads it.
       setTaskModel(task.id, model || null);
-      onCreated(task, prefill?.request ? requestPrompt(task.id) : prefill ? prompt.trim() : undefined);
+      onCreated(
+        task,
+        prefill?.request || prefill?.from ? requestPrompt(task.id) : prefill ? prompt.trim() : undefined,
+        forkOf ?? undefined,
+      );
     },
     [
       busy, project, source, checkout, baseBranch, branch, worktreePath, onMain, alreadyThere,
-      taskTitle, model, onCreated, prefill, prompt, isChat, title, requestPrompt,
+      taskTitle, model, onCreated, prefill, prompt, isChat, title, requestPrompt, forkOf,
     ],
   );
 
@@ -742,7 +779,13 @@ export function NewTaskDialog({
         >
           <div className="wt-modal-head">
             <h2 className="wt-modal-title" id="wt-newtask-title">
-              {prefill?.request ? 'New Task from Request' : prefill ? 'New Follow-Up Task' : 'New Task'}
+              {prefill?.request
+                ? 'New Task from Request'
+                : forkOnly
+                  ? 'Fork Conversation'
+                  : prefill
+                    ? 'New Follow-Up Task'
+                    : 'New Task'}
             </h2>
             <span className="wt-modal-sub">
               {!project
@@ -824,7 +867,7 @@ export function NewTaskDialog({
                     The same segmented control as Branch and Location, so a chat
                     reads as one of the dialog's choices. A follow-up is always
                     work, so it is not asked there. */}
-                {!isFollowUp && (
+                {kindAsked && (
                   <div className="wt-field">
                     <span className="wt-label">Kind</span>
                     <Segmented<TaskKind>
@@ -1058,10 +1101,20 @@ export function NewTaskDialog({
                   </div>
                 </div>
 
+                {prefill?.from && (
+                  <StartFrom
+                    from={prefill.from}
+                    start={start}
+                    choose={!!prefill.request}
+                    disabled={busy}
+                    onChange={setStart}
+                  />
+                )}
+
                 {prefill && (
                   <div className="wt-field">
                     <label className="wt-label" htmlFor="wt-prompt">
-                      Initial Prompt
+                      {prefill.from ? 'First Message' : 'Initial Prompt'}
                     </label>
                     <textarea
                       id="wt-prompt"
@@ -1073,7 +1126,7 @@ export function NewTaskDialog({
                       disabled={busy}
                       onChange={(e) => setPrompt(e.target.value)}
                     />
-                    {prefill.request ? (
+                    {prefill.request || prefill.from ? (
                       <>
                         <label className="wt-check">
                           <input
@@ -1082,12 +1135,14 @@ export function NewTaskDialog({
                             disabled={busy}
                             onChange={(e) => setSendNow(e.target.checked)}
                           />
-                          Send it when the session starts
+                          Send the first message
                         </label>
                         <div className="wt-hint">
-                          {sendNow
-                            ? 'Sent once, when the session starts.'
-                            : 'Left unsent in the new task’s message box, for you to edit and send.'}
+                          {!sendNow
+                            ? 'Left unsent in the new task’s message box, for you to edit and send.'
+                            : forkOf
+                              ? 'Sent once, after the copied conversation.'
+                              : 'Sent once, when the session starts.'}
                         </div>
                       </>
                     ) : (
@@ -1241,6 +1296,59 @@ export function NewTaskDialog({
 }
 
 export default NewTaskDialog;
+
+/**
+ * Where a spun-out task's session starts (#332): a fresh one from the brief,
+ * or a copy of the source task's conversation. From a request it is a choice,
+ * preselected from Claude's suggestion; from Fork Conversation… it is always
+ * a fork, so it is said, not asked. A fork needs the source's session:
+ * without one the option is off, and says why.
+ *
+ * A fork may land in another folder (a new worktree): `claude --resume <id>
+ * --fork-session` finds the session wherever it was started (measured on
+ * Claude Code 2.1.322 in print mode), as Move to a Worktree relies on.
+ */
+function StartFrom({
+  from,
+  start,
+  choose,
+  disabled,
+  onChange,
+}: {
+  from: SpinOutSource;
+  start: SessionStart;
+  choose: boolean;
+  disabled: boolean;
+  onChange: (s: SessionStart) => void;
+}) {
+  const noSession = `“${from.title}” has no session to copy yet.`;
+  const copy = `A copy of “${from.title}”’s conversation, under a new session; the original is untouched.`;
+  return (
+    <div className="wt-field">
+      <span className="wt-label">Start From</span>
+      {choose && (
+        <Segmented<SessionStart>
+          label="Start From"
+          value={start}
+          disabled={disabled}
+          options={[
+            { value: 'brief', label: 'The Brief' },
+            {
+              value: 'fork',
+              label: 'Fork This Conversation',
+              disabled: from.sessionId === null,
+              title: from.sessionId === null ? noSession : copy,
+            },
+          ]}
+          onChange={onChange}
+        />
+      )}
+      <div className="wt-hint">
+        {start === 'fork' ? copy : choose ? 'A fresh session that knows only the message below.' : noSession}
+      </div>
+    </div>
+  );
+}
 
 /**
  * One line under Base Branch, only when there is something to say: an

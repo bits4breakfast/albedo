@@ -39,8 +39,8 @@ describe('parseInboxLine: the server\'s own lines', () => {
       dueMs: NOW + 1.5 * 3_600_000, // 09:30Z
       summary: 'Deployed build 41.\nNext: smoke test /checkout, then close the PR.',
     });
-    expect(reqs[1]).toMatchObject({ project: 'albedo', branch: 'fix/flaky-export' });
-    expect(reqs[2]).toMatchObject({ title: 'Short one', project: null, branch: null });
+    expect(reqs[1]).toMatchObject({ project: 'albedo', branch: 'fix/flaky-export', start: 'fork' });
+    expect(reqs[2]).toMatchObject({ title: 'Short one', project: null, branch: null, start: 'brief' });
     expect(reqs[3]).toMatchObject({ message: 'I need the staging database password to go on.' });
     expect(reqs[4]).toEqual({
       id: 'fixture-5',
@@ -111,6 +111,20 @@ describe('parseInboxLine: what is dropped', () => {
       line({ tool: 'request_session' }, { title: 't', prompt: 'p', reason: 'r', branch });
     expect(parseInboxLine(session('feat/x-1'), 12)).not.toBeNull();
     for (const bad of ['-rf', 'a b', 'a..b', 'x/', '/x', 'a;b']) expect(parseInboxLine(session(bad), 12)).toBeNull();
+  });
+
+  it('a session request\'s start: brief or fork, absent reads as brief (#332)', () => {
+    const session = (extra: Record<string, unknown>) =>
+      parseInboxLine(line({ tool: 'request_session' }, { title: 't', prompt: 'p', reason: 'r', ...extra }), 12);
+    expect(session({})).toMatchObject({ start: 'brief' });
+    expect(session({ start: 'brief' })).toMatchObject({ start: 'brief' });
+    expect(session({ start: 'fork' })).toMatchObject({ start: 'fork' });
+    for (const bad of ['Fork', 'copy', '', 1, null]) expect(session({ start: bad })).toBeNull();
+    // Stored as given, and the default is not written out.
+    const forked = session({ start: 'fork' })!;
+    expect(JSON.parse(encodeRequest(forked)).args.start).toBe('fork');
+    expect(JSON.parse(encodeRequest(session({})!)).args).not.toHaveProperty('start');
+    expect(decodeStoredRequest(encodeRequest(forked))).toEqual(forked);
   });
 
   it('a reminder whose due time and milliseconds disagree', () => {

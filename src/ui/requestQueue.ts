@@ -27,6 +27,11 @@
  * A request older than a week is dropped. The ids of handled requests are
  * kept too (the last few hundred), so a line the inbox hands on twice -- a
  * crash between reading and compacting -- is not queued again.
+ *
+ * What became of a request for a new session is kept as well (#332), the last
+ * few hundred: denied, or spun out as which task. The asking task's
+ * transcript says so on the `request_session` call (spinOut.ts). Like the
+ * queue, it is the user's own state, not history, so it stays here.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -55,30 +60,87 @@ export const HANDLED_MAX = 500;
  */
 export const NOTICE_FRESH_MS = 10 * 60 * 1000;
 
+/**
+ * What became of a request for a new session (#332). Matched to the call in
+ * the asking task's transcript by task and {@link requestKey}, since the call
+ * carries no request id.
+ */
+export interface SessionOutcome {
+  /** The request's id. */
+  id: string;
+  /** The task that asked. */
+  taskId: number;
+  /** {@link requestKey} of its title and brief. */
+  key: string;
+  outcome: 'denied' | 'spun';
+  /** The task created from it, and its title then; null when denied. */
+  spunTaskId: number | null;
+  spunTitle: string | null;
+}
+
 export interface QueueState {
   /** Oldest first. */
   items: readonly QueuedRequest[];
   handled: readonly string[];
+  /** Oldest first; at most {@link OUTCOMES_MAX}. */
+  outcomes: readonly SessionOutcome[];
 }
 
-const EMPTY: QueueState = { items: [], handled: [] };
+/** Outcomes remembered. */
+export const OUTCOMES_MAX = 300;
+
+const EMPTY: QueueState = { items: [], handled: [], outcomes: [] };
+
+/** FNV-1a, 32 bits, as hex: a brief is up to 16 000 characters, the key need not be. */
+function hash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * What identifies a request among one task's: its title and its brief, as
+ * the server stores them (trimmed). The same pair twice is "asking twice",
+ * which the tool's description forbids; both would then read the same.
+ */
+export function requestKey(title: string, prompt: string): string {
+  return `${title.trim()}\n${hash(prompt.trim())}`;
+}
+
+function isOutcome(o: unknown): o is SessionOutcome {
+  if (typeof o !== 'object' || o === null) return false;
+  const x = o as Record<string, unknown>;
+  return (
+    typeof x.id === 'string' &&
+    typeof x.taskId === 'number' &&
+    typeof x.key === 'string' &&
+    (x.outcome === 'denied' || x.outcome === 'spun') &&
+    (x.spunTaskId === null || typeof x.spunTaskId === 'number') &&
+    (x.spunTitle === null || typeof x.spunTitle === 'string')
+  );
+}
 
 export const queueCodec: Codec<QueueState> = {
   decode: (raw) => {
     const o: unknown = JSON.parse(raw);
     if (typeof o !== 'object' || o === null) return null;
-    const { items, handled } = o as { items?: unknown; handled?: unknown };
+    const { items, handled, outcomes } = o as { items?: unknown; handled?: unknown; outcomes?: unknown };
     return {
       items: Array.isArray(items)
         ? items.map(decodeStoredRequest).filter((r): r is QueuedRequest => r !== null && r.tool !== 'set_task_summary')
         : [],
       handled: Array.isArray(handled) ? handled.filter((h): h is string => typeof h === 'string') : [],
+      // Absent in what a build before #332 stored.
+      outcomes: Array.isArray(outcomes) ? outcomes.filter(isOutcome) : [],
     };
   },
   encode: (s) =>
-    s.items.length === 0 && s.handled.length === 0
+    s.items.length === 0 && s.handled.length === 0 && s.outcomes.length === 0
       ? null
-      : JSON.stringify({ items: s.items.map(encodeRequest), handled: s.handled }),
+      : JSON.stringify({ items: s.items.map(encodeRequest), handled: s.handled, outcomes: s.outcomes }),
 };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +185,7 @@ export function withRequest(state: QueueState, req: QueuedRequest, task: TaskInf
   }
   const items = a.replaces === null ? state.items : state.items.filter((r) => r.id !== a.replaces);
   return {
+    ...state,
     items: [...items, req],
     handled: a.replaces === null ? state.handled : remember(state.handled, [a.replaces]),
   };
@@ -132,7 +195,31 @@ export function withRequest(state: QueueState, req: QueuedRequest, task: TaskInf
 export function without(state: QueueState, drop: (r: QueuedRequest) => boolean): QueueState {
   const gone = state.items.filter(drop).map((r) => r.id);
   if (gone.length === 0) return state;
-  return { items: state.items.filter((r) => !drop(r)), handled: remember(state.handled, gone) };
+  return { ...state, items: state.items.filter((r) => !drop(r)), handled: remember(state.handled, gone) };
+}
+
+/**
+ * `state` with request `id` decided (#332): out of the queue and, when it was
+ * a request for a new session, what became of it remembered. `spun` is the
+ * task created from it; null means denied.
+ */
+export function decided(state: QueueState, id: string, spun: { id: number; title: string } | null): QueueState {
+  const req = state.items.find((r) => r.id === id);
+  const next = without(state, (r) => r.id === id);
+  if (!req || req.tool !== 'request_session') return next;
+  const outcome: SessionOutcome = {
+    id,
+    taskId: req.taskId,
+    key: requestKey(req.title, req.prompt),
+    outcome: spun ? 'spun' : 'denied',
+    spunTaskId: spun?.id ?? null,
+    spunTitle: spun?.title ?? null,
+  };
+  const outcomes = [...state.outcomes.filter((o) => o.id !== id), outcome];
+  return {
+    ...next,
+    outcomes: outcomes.length > OUTCOMES_MAX ? outcomes.slice(outcomes.length - OUTCOMES_MAX) : outcomes,
+  };
 }
 
 /** Requests older than a week go. */
@@ -256,13 +343,20 @@ export function receiveRequest(
   }
 }
 
-/** The user denied or dismissed it. */
+/** The user dismissed it (a notice, a reminder that could not be set). */
 export function dismissRequest(id: string): void {
   commit(without(current(), (r) => r.id === id));
 }
 
-/** A request was carried out (its task created). */
-export const resolveRequest = dismissRequest;
+/** Deny on a proposed task (#332): it leaves, and its transcript says "Not spun out". */
+export function denyRequest(id: string): void {
+  commit(decided(current(), id, null));
+}
+
+/** A request was carried out: `task` was created from it. */
+export function resolveRequest(id: string, task: { id: number; title: string }): void {
+  commit(decided(current(), id, task));
+}
 
 /** Drop the requests of tasks that are gone or archived, and any older than a week. */
 export function keepRequestsFor(liveTaskIds: Iterable<number>, now = Date.now()): void {
@@ -272,6 +366,11 @@ export function keepRequestsFor(liveTaskIds: Iterable<number>, now = Date.now())
 
 export function pendingRequests(): readonly QueuedRequest[] {
   return current().items;
+}
+
+/** What became of requests for new sessions (#332), oldest first. */
+export function sessionOutcomes(): readonly SessionOutcome[] {
+  return current().outcomes;
 }
 
 function subscribe(cb: () => void): () => void {
@@ -288,6 +387,15 @@ function snapshot(): readonly QueuedRequest[] {
 /** The queue, re-rendering on every change. */
 export function useRequests(): readonly QueuedRequest[] {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+
+function outcomesSnapshot(): readonly SessionOutcome[] {
+  return current().outcomes;
+}
+
+/** What became of requests for new sessions (#332), re-rendering on every change. */
+export function useSessionOutcomes(): readonly SessionOutcome[] {
+  return useSyncExternalStore(subscribe, outcomesSnapshot, outcomesSnapshot);
 }
 
 /** Test seam: forget everything in memory, so the next read comes from storage. */

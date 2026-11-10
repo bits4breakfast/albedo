@@ -1290,6 +1290,31 @@ ol.tx-md-list { list-style-type: decimal; }
   white-space: nowrap;
 }
 
+/* What a request for a new task became (#332), after the chip's title. Text
+   tokens only, each already cleared on the chip's grounds (--panel, and
+   --panel-chrome when open): --muted for the words, --accent for the task
+   that is a link, --faint (the floor tier) for one archived or deleted. */
+.tx-spinout {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx-spinout-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.tx-spinout-link:hover { text-decoration: underline; }
+.tx-spinout-gone { color: var(--faint); }
+
 .tx-questions { display: flex; flex-direction: column; gap: 8px; }
 .tx-question + .tx-question { border-top: 1px solid var(--border); padding-top: 7px; }
 

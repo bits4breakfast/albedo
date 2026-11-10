@@ -20,7 +20,7 @@ fn lines() -> String {
         ),
         (
             "request_session",
-            json!({"title": "Fix the flaky export test", "prompt": "ExportTest::testCsv fails about one run in five.\n\nFind out why and fix it.", "reason": "Unrelated to this task.", "project": "albedo", "branch": "fix/flaky-export"}),
+            json!({"title": "Fix the flaky export test", "prompt": "ExportTest::testCsv fails about one run in five.\n\nFind out why and fix it.", "reason": "Unrelated to this task.", "project": "albedo", "branch": "fix/flaky-export", "start": "fork"}),
         ),
         (
             "request_session",

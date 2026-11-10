@@ -75,6 +75,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
   ...over,
 });
 

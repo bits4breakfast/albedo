@@ -50,7 +50,7 @@ const NOW = Date.now();
 const base = {
   projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false, baseBranch: 'main',
   ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1_000, summary: null, reviewUrl: null,
-  apiError: null, apiErrorText: null,
+  apiError: null, apiErrorText: null, spunFromTaskId: null,
 } as const;
 const row = (id: number, title: string, over: Partial<Task> = {}): Task => ({
   ...base, id, title, branch: `b${id}`, worktreePath: `/w/${id}`, ...over,
@@ -67,6 +67,7 @@ const ask = (id: string, over: Partial<SessionRequest> = {}): SessionRequest => 
   reason: 'A separate bug, found while testing this one.',
   project: 'video-player',
   branch: 'fix/stuck-at-zero',
+  start: 'brief',
   ...over,
 });
 
@@ -146,6 +147,15 @@ describe('the Proposed group (#332)', () => {
     expect(pop.textContent).toContain('Branch: fix/stuck-at-zero');
     expect(within(pop).queryAllByRole('button')).toEqual([]);
     expect(document.activeElement).toBe(pop);
+    // A brief is the default: not named as a suggestion.
+    expect(pop.textContent).not.toContain('Suggests');
+  });
+
+  it('names a fork when Claude suggests one (#332)', () => {
+    setup([ask('s1', { start: 'fork' })]);
+    fireEvent.click(trigger());
+    const pop = screen.getByRole('dialog', { name: 'Videos stuck at 0:00' });
+    expect(pop.textContent).toContain('Suggests: fork');
   });
 
   it('closes on the row again, on Esc and on a click elsewhere; Esc and the row give focus back to the row', () => {
@@ -173,7 +183,7 @@ describe('the Proposed group (#332)', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('group', { name: /^Proposed/ })).not.toBeNull();
     // New Task's Create resolves it (resolveRequest): then it goes.
-    act(() => q.resolveRequest('s1'));
+    act(() => q.resolveRequest('s1', { id: 40, title: 'Videos stuck at 0:00' }));
     expect(screen.queryByRole('group', { name: /^Proposed/ })).toBeNull();
   });
 

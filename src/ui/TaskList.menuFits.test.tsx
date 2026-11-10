@@ -30,6 +30,7 @@ const task: Task = {
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 /** jsdom lays nothing out: give the menu a real size and the window a known one. */

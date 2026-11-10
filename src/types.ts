@@ -207,14 +207,33 @@ export interface Task {
    * would make the row look changed on every transcript append.
    */
   apiErrorText: string | null;
+  /**
+   * The task this one was spun out of (migration v17, #332): set once, when
+   * it was created from a session's approved `request_session` or from Fork
+   * Conversation… on that task, and never changed. The source may since be
+   * archived or deleted. Null: not spun out.
+   */
+  spunFromTaskId: number | null;
 }
 
 export type NewTask = Omit<
   Task,
-  'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt' | 'summary' | 'reviewUrl' | 'apiError' | 'apiErrorText'
+  | 'id'
+  | 'sessionId'
+  | 'status'
+  | 'createdAt'
+  | 'lastActivityAt'
+  | 'seenAt'
+  | 'summary'
+  | 'reviewUrl'
+  | 'apiError'
+  | 'apiErrorText'
+  | 'spunFromTaskId'
 > & {
   /** Set only by opening a pull request for review (#287); absent is your own task. */
   reviewUrl?: string | null;
+  /** Set only by a spin-out (#332): an approved request, or Fork Conversation…. */
+  spunFromTaskId?: number | null;
 };
 
 // ---------------------------------------------------------------------------

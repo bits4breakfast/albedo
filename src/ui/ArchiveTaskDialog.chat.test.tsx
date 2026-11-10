@@ -35,6 +35,7 @@ const chat: Task = {
   reviewUrl: null,
   apiError: null,
   apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 describe('ArchiveTaskDialog on a chat', () => {

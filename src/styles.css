@@ -1041,6 +1041,34 @@ button {
   white-space: nowrap;
 }
 
+/* "from <source>" after the title (#332). A pill with a load-bearing edge,
+   since it is a control; --muted text, cleared at 5.6+ on every bar ground,
+   on --panel-hover when hovered (a token from the block, not a local wash).
+   An archived source is not a link: --faint text, the floor tier, and a
+   hairline edge. Shrinks only after the summary has gone. */
+.main-ident-from {
+  flex: 0 2 auto;
+  min-width: 0;
+  max-width: 24ch;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.main-ident-from { cursor: pointer; }
+button.main-ident-from:hover { background: var(--panel-hover); color: var(--text); }
+.main-ident-from[data-gone='true'] {
+  border-color: var(--border);
+  color: var(--faint);
+}
+
 .main-ident-branch {
   flex: 0 1 auto;
   min-width: 0;

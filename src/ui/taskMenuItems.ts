@@ -32,6 +32,8 @@ export interface TaskActions {
   remind?: (task: Task) => void;
   /** Shows the task's Review Guide, selecting the task first. */
   guide?: (task: Task) => void;
+  /** Opens the new-task dialog to fork the task's conversation (#332). */
+  fork?: (task: Task) => void;
   /** Opens the move dialog: to the main checkout, or to a worktree. */
   move?: (task: Task) => void;
   /** Mark as Done, or with false, Mark as Not Done. */
@@ -87,7 +89,7 @@ export function taskMenuItems(
   rename?: () => void,
 ): OverflowItem[] {
   const chat = task.kind === 'chat';
-  const { remind, guide, move, setDone, followUp, archive, delete: del } = actions;
+  const { remind, guide, fork, move, setDone, followUp, archive, delete: del } = actions;
 
   const remote = remoteControlItem(task, facts.live, facts.remoteUrl);
   const remoteWhy = remote ? remoteBlocker(task, facts) : null;
@@ -118,6 +120,16 @@ export function taskMenuItems(
         title: facts.compactBlocker ?? COMPACT.hint,
         onSelect: () => void sendToSession(task.id, COMPACT.command),
       },
+      // A copy of this conversation as a new task (#332). Hidden, not
+      // disabled, with no session: there is nothing to copy, and Copy
+      // Session ID below already says "No session yet".
+      fork &&
+        task.sessionId !== null && {
+          id: 'fork',
+          label: 'Fork Conversation…',
+          title: 'A copy of this conversation, as a new task (opens the new-task dialog)',
+          onSelect: () => fork(task),
+        },
       // Hidden, not disabled, while on or with no session: the Remote mark
       // beside the title says the first.
       remote && (remoteWhy ? { ...remote, disabled: true, title: remoteWhy } : remote),

@@ -113,6 +113,7 @@ interface TaskRow {
   review_url?: string | null;
   api_error?: string | null;
   api_error_text?: string | null;
+  spun_from_task_id?: number | null;
 }
 
 interface MessageRow {
@@ -150,10 +151,11 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   reviewUrl: 'review_url',
   apiError: 'api_error',
   apiErrorText: 'api_error_text',
+  spunFromTaskId: 'spun_from_task_id',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url, api_error, api_error_text';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url, api_error, api_error_text, spun_from_task_id';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
 
 const API_ERROR_KINDS: ReadonlySet<string> = new Set<ApiErrorKind>([
@@ -210,6 +212,8 @@ function toTask(r: TaskRow): Task {
     // text is kept only beside a kind: null together, as the type says.
     apiError: apiErrorKind(r.api_error),
     apiErrorText: apiErrorKind(r.api_error) === null ? null : (r.api_error_text ?? ''),
+    // Absent only on a database older than v17 that a test hands over.
+    spunFromTaskId: r.spun_from_task_id ?? null,
   };
 }
 
@@ -261,8 +265,8 @@ export async function createTask(t: NewTask): Promise<Task> {
     // no insert from here is allowed to fall through to it.
     // created_branch likewise: NULL is reserved for pre-v6 rows. And kind:
     // its default backfills pre-v8 rows, and is not a decision for new ones.
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL, NULL, $11)`,
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url, spun_from_task_id)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL, NULL, $11, $12)`,
     [
       t.title,
       t.projectId,
@@ -275,6 +279,7 @@ export async function createTask(t: NewTask): Promise<Task> {
       t.createdBranch === null ? null : t.createdBranch ? 1 : 0,
       t.kind === 'chat' ? 'chat' : 'work',
       t.reviewUrl ?? null,
+      t.spunFromTaskId ?? null,
     ],
   );
   const id = res.lastInsertId;
@@ -302,6 +307,7 @@ export async function createTask(t: NewTask): Promise<Task> {
     reviewUrl: t.reviewUrl ?? null,
     apiError: null,
     apiErrorText: null,
+    spunFromTaskId: t.spunFromTaskId ?? null,
   };
 }
 

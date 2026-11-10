@@ -1,0 +1,16 @@
+-- v17: tasks.spun_from_task_id -- the task a task was spun out of (#332).
+--
+-- Decided by the owner (schema.sql and migrations are a shared contract;
+-- 2026-11-10). Set once, when a task is created from a session's approved
+-- `request_session` or from Fork Conversation… on another task, and never
+-- changed after. The new task's bar shows "from <source>", and the source's
+-- transcript says what its request became.
+--
+-- spun_from_task_id  NULL, or the id of the task it came from. A reference
+--                    in name only (foreign keys are not enforced, see
+--                    CLAUDE.md): the source may since be archived or
+--                    deleted, and a reader that cannot find it shows the
+--                    link without one.
+--
+-- Nothing is backfilled: every existing task reads "not spun out".
+ALTER TABLE tasks ADD COLUMN spun_from_task_id INTEGER;

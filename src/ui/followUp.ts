@@ -11,7 +11,8 @@
  * itself; Albedo only names them.
  */
 
-import type { Task } from '../types';
+import type { Task, TaskKind } from '../types';
+import type { SessionStart } from '../capture/inbox';
 import type { PrStatus } from '../gh/prStatus';
 import { parseIssueKey } from '../lib/issueKey';
 import { nameTask, type TaskNaming } from '../git/slug';
@@ -26,12 +27,34 @@ export interface NewTaskPrefill {
   /** True while the PR is still being looked up (archived tasks). */
   pending?: boolean;
   /**
-   * Set when the prefill is a session's request, approved from Requests
-   * (#157). The prompt then becomes the new task's unsent draft unless the
-   * user ticks "send when the session starts", and the request leaves the
-   * queue once the task is created.
+   * Set when the prefill is a session's request, approved on its Proposed row
+   * (#157, #332). The prompt is sent as the first message unless the user
+   * unticks "Send the first message", when it becomes the new task's unsent
+   * draft; the request leaves the queue once the task is created.
    */
   request?: { id: string };
+  /**
+   * The task the new one is spun out of (#332): the one whose session asked
+   * (with `request`), or the one Fork Conversation… was chosen on (without).
+   * Its id becomes the new task's `spunFromTaskId`, and its session is what a
+   * fork copies.
+   */
+  from?: SpinOutSource;
+}
+
+/** See {@link NewTaskPrefill.from}. */
+export interface SpinOutSource {
+  taskId: number;
+  title: string;
+  /** Null: no session yet, so there is nothing to fork. */
+  sessionId: string | null;
+  kind: TaskKind;
+  /**
+   * What New Task starts on: a fresh session from the brief, or a copy of
+   * this task's conversation. A request's suggestion; always 'fork' from Fork
+   * Conversation….
+   */
+  start: SessionStart;
 }
 
 /**
