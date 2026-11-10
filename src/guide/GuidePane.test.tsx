@@ -595,7 +595,7 @@ describe('file notes (#202, #264)', () => {
     expect(why()).toBeNull();
   });
 
-  it('the diff has one header row: the layout toggle sits beside the size, and the diff draws no head of its own', async () => {
+  it('the diff has one header row: the layout toggle leads the actions at its end (#320), and the diff draws no head of its own', async () => {
     save({});
     pane();
     await screen.findByRole('heading', { name: 'Both' });
@@ -605,7 +605,9 @@ describe('file notes (#202, #264)', () => {
     const toggle = right().getByRole('button', { name: 'Split View' });
     expect(toggle.textContent).toBe('Split');
     expect(toggle.parentElement!.className).toBe('gd-diff-head');
-    expect(toggle.previousElementSibling!.className).toBe('gd-counts');
+    // Past the gap, with Open after it: the actions stay together (#320).
+    expect(toggle.previousElementSibling!.className).toBe('gd-diff-gap');
+    expect(toggle.nextElementSibling!.textContent).toBe('Open');
     expect(region.querySelector('.tx-d-unified')).not.toBeNull();
     fireEvent.click(toggle);
     expect(region.querySelector('.tx-d-split')).not.toBeNull();

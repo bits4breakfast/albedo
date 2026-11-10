@@ -1108,6 +1108,11 @@ function GuideFileDiff({
         <span className="gd-diff-name">{name}</span>
         <span className="gd-diff-dir">{dir}</span>
         <Counts file={file} />
+        <CommentCount n={commentCount} />
+        {/* Everything that acts on the file together at the end (#320): the
+            layout toggle sat by the size, so a short path left a gap between
+            it and Open that read as two unrelated groups. */}
+        <span className="gd-diff-gap" />
         {hasLines ? (
           <button
             type="button"
@@ -1119,8 +1124,6 @@ function GuideFileDiff({
             {layoutToggleLabel(layout.resolved)}
           </button>
         ) : null}
-        <CommentCount n={commentCount} />
-        <span className="gd-diff-gap" />
         {split ? (
           <button type="button" className="gd-link" onClick={() => setWhole((w) => !w)} aria-pressed={whole}>
             {whole ? `Only This Group’s ${file.blocks.length} of ${file.totalBlocks}` : `Whole File (${file.totalBlocks} blocks)`}
