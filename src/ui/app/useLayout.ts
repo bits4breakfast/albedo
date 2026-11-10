@@ -15,9 +15,15 @@ export type Orientation = 'row' | 'column';
 export type RightTab = 'transcript' | 'files' | 'editor' | 'guide';
 export type Dragging = null | 'sidebar' | 'split' | 'files' | 'shell';
 
-const SIDEBAR_MIN = 200;
+/**
+ * The task list. 300px is the narrowest at which its header shows both tabs
+ * whole -- "Building 13" and "Reviewing 2" need 207px of track, and at 300px
+ * there are 210px beside New Task and Collapse (#306). A width saved narrower
+ * before that opens at 300px.
+ */
+export const SIDEBAR_MIN = 300;
 const SIDEBAR_MAX = 480;
-const SIDEBAR_DEFAULT = 260;
+const SIDEBAR_DEFAULT = 300;
 /**
  * The pinned files column. Narrow by nature — paths, counts, a status chip —
  * which is why it works where a fourth READING pane does not.
@@ -44,7 +50,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 
 // Stored as they always were (see ui/persisted.ts): widths as whole pixels,
 // the ratio to three places, flags as '1'/'0'.
-const sidebarCodec: Codec<number> = {
+export const sidebarCodec: Codec<number> = {
   decode: (raw) => clamp(Number(raw) || SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX),
   encode: (w) => String(Math.round(w)),
 };
