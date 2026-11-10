@@ -101,6 +101,29 @@ describe('deriveStatus — rule 4: nothing to go on', () => {
   });
 });
 
+describe('deriveStatus — openTurnRunning (#344)', () => {
+  it('keeps a tool result running past 90 s while the next step is written', () => {
+    reset();
+    const rows = [
+      row('user', { ageMs: 400_000, text: 'go' }),
+      row('tool_use', { ageMs: 300_000, toolId: 'a' }),
+      row('tool_result', { ageMs: 200_000, toolId: 'a' }),
+    ];
+    expect(200_000).toBeGreaterThan(RUNNING_WINDOW_MS);
+    expect(deriveStatus(rows, NOW)).toBe('idle');
+    expect(deriveStatus(rows, NOW, { openTurnRunning: true })).toBe('running');
+  });
+
+  it('still ends at the turn-ending line, and past the long window', () => {
+    reset();
+    const ended = [row('tool_result', { ageMs: 10_000, toolId: 'a' }), row('assistant', { ageMs: 5_000, text: 'done', stopReason: 'end_turn' })];
+    expect(deriveStatus(ended, NOW, { openTurnRunning: true })).toBe('idle');
+    reset();
+    const stale = [row('tool_result', { ageMs: UNANSWERED_RUNNING_WINDOW_MS + 1_000, toolId: 'a' })];
+    expect(deriveStatus(stale, NOW, { openTurnRunning: true })).toBe('idle');
+  });
+});
+
 describe('deriveStatus — unansweredToolUseBlocks: false', () => {
   it('reads a tool call with no result as running (it may just be slow)', () => {
     reset();

@@ -86,6 +86,23 @@ describe('buildRuns', () => {
     expect(runs[0]?.status).toBe('running');
   });
 
+  it('keeps an agent running for minutes between steps, until it is told to have stopped (#344)', () => {
+    const quiet = now - 200_000;
+    const runs = buildRuns(
+      [agg('aaa', 3, now - 300_000, quiet)],
+      [
+        tail('aaa', 0, 'user', now - 300_000, 'go'),
+        tail('aaa', 1, 'tool_use', now - 250_000, null, {
+          message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: {} }] },
+        }),
+        tail('aaa', 2, 'tool_result', quiet, 'ok', {
+          message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] },
+        }),
+      ],
+    );
+    expect(runs[0]?.status).toBe('running');
+  });
+
   it('survives an agent with aggregates but no tail rows', () => {
     // The tail is capped, so a long-idle agent can fall out of it entirely.
     const runs = buildRuns([agg('old', 900, 1, 2)], []);
