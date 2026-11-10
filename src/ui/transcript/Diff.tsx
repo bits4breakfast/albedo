@@ -574,6 +574,26 @@ export function useDiffLayout(): {
   return { ref, resolved, toggle };
 }
 
+/**
+ * Only one side has lines (#337): a new file, every line added, or a deleted
+ * one, every line removed, with no context either way. Side by side would put
+ * the whole file in one column beside an empty one, so such a diff is always
+ * unified and offers no toggle. A file that only gained lines but kept some
+ * as context is an edit, and keeps both.
+ */
+export function isOneSided(diff: FileDiff): boolean {
+  let add = false;
+  let del = false;
+  for (const hunk of diff.hunks) {
+    for (const line of hunk.lines) {
+      if (line.kind === 'context') return false;
+      if (line.kind === 'add') add = true;
+      else if (line.kind === 'del') del = true;
+    }
+  }
+  return add !== del;
+}
+
 /** The toggle's words: the layout a click switches to. */
 export function layoutToggleLabel(resolved: 'split' | 'unified'): string {
   return resolved === 'split' ? 'Unified' : 'Split';
@@ -672,7 +692,10 @@ export function Diff({
   const oldTokens = useCodeTokens(model.oldBlob, diff.lang);
   const newTokens = useCodeTokens(model.newBlob, diff.lang);
 
-  const resolved: 'split' | 'unified' = layout !== 'auto' ? layout : auto.resolved;
+  // A forced layout is the caller's call: the Guide judges one-sidedness on
+  // the whole file, not on the slice it hands over (#337).
+  const oneSided = useMemo(() => layout === 'auto' && isOneSided(diff), [layout, diff]);
+  const resolved: 'split' | 'unified' = oneSided ? 'unified' : layout !== 'auto' ? layout : auto.resolved;
 
   // Per-line links only when the numbers are real file lines (see `absoluteLines`).
   // A rename's destination is the file that exists.
@@ -899,7 +922,7 @@ export function Diff({
           diff={diff}
           model={model}
           resolved={resolved}
-          onToggle={layout === 'auto' ? auto.toggle : null}
+          onToggle={layout === 'auto' && !oneSided ? auto.toggle : null}
           showPath={showPath}
           disclosure={onCollapse ? { open: true, onToggle: onCollapse } : null}
         />
