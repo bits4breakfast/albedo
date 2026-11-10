@@ -2,10 +2,12 @@ import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
 import { KEYS, numberListCodec, writePersisted } from './ui/persisted';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { SetStateAction } from 'react';
 import type { OpenFileRequest, Project, Task } from './types';
 import { useTheme } from './ui/theme';
 import useTasks from './ui/useTasks';
 import useLayout, { type RightTab } from './ui/app/useLayout';
+import useTaskTabs from './ui/app/useTaskTabs';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
 import useSessionRequests from './ui/app/useSessionRequests';
@@ -176,8 +178,8 @@ export default function App() {
     orientation,
     setOrientation,
     ratio,
-    rightTab,
-    setRightTab,
+    rightTab: projectRightTab,
+    setRightTab: setProjectRightTab,
     filesPinned,
     setFilesPinned,
     filesWidth,
@@ -306,6 +308,25 @@ export default function App() {
   const selected = useMemo(
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
+  );
+
+  /**
+   * The reading pane's tab: the selected task's own (#314), or the project
+   * view's. Setting it changes the selected task's unless a task is named --
+   * a request about a task that is not on screen yet (revealing it, its
+   * guide, its transcript) must land on that task, not on the one leaving.
+   */
+  const { tabFor, setTabFor } = useTaskTabs();
+  const rightTab: RightTab = selectedId !== null ? tabFor(selectedId) : projectRightTab;
+  const tabTaskRef = useRef(selectedId);
+  tabTaskRef.current = selectedId;
+  const setRightTab = useCallback(
+    (action: SetStateAction<RightTab>, taskId?: number) => {
+      const id = taskId ?? tabTaskRef.current;
+      if (id === null) setProjectRightTab(action);
+      else setTabFor(id, action);
+    },
+    [setProjectRightTab, setTabFor],
   );
   /** What the selected task merges into, for its Create PR (#237): the header's base. */
   const selectedBase = useMeasuredBase(selected);
@@ -785,9 +806,9 @@ export default function App() {
 
       selectTab(projectId !== null ? `p${projectId}` : 'orphans');
       select(task.id);
-      setRightTab((t) => (t === 'transcript' ? t : 'transcript'));
+      setRightTab('transcript', task.id);
     },
-    [hiddenProjectIds, selectTab, select],
+    [hiddenProjectIds, selectTab, select, setRightTab],
   );
 
   /**
@@ -823,8 +844,8 @@ export default function App() {
   // transcript, where the composer is, the way opening a file shows the editor.
   useEffect(
     () =>
-      onComposerInsert(() => {
-        setRightTab('transcript');
+      onComposerInsert((insert) => {
+        setRightTab('transcript', insert.taskId);
         setMode((m) => (m === 'pty' ? 'split' : m));
       }),
     [],
@@ -832,8 +853,8 @@ export default function App() {
   // Comments just sent (#254, #258): the transcript, where they land.
   useEffect(
     () =>
-      onShowTranscriptRequest(() => {
-        setRightTab('transcript');
+      onShowTranscriptRequest((taskId) => {
+        setRightTab('transcript', taskId);
         setMode((m) => (m === 'pty' ? 'split' : m));
       }),
     [],
@@ -842,8 +863,8 @@ export default function App() {
   /** A guide asked for from Files, ⋯ or ⇧⌘G (#186): its tab, shown. */
   useEffect(
     () =>
-      onGuideRequest(() => {
-        setRightTab('guide');
+      onGuideRequest((taskId) => {
+        setRightTab('guide', taskId);
         setMode((m) => (m === 'pty' ? 'split' : m));
       }),
     [],

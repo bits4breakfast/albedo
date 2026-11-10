@@ -138,6 +138,7 @@ describe('KEYS', () => {
       projectPlaces: 'albedo.shell.projectPlaces',
       activeProject: 'albedo.shell.activeProject',
       rightTab: 'albedo.shell.rightTab',
+      taskTabs: 'albedo.shell.taskTabs',
       filesPinned: 'albedo.shell.filesPinned',
       filesWidth: 'albedo.shell.filesWidth',
       shellOpen: 'albedo.shell.shellDrawerOpen',
