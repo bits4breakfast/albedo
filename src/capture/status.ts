@@ -83,6 +83,17 @@ export interface DeriveOptions {
    * just work in progress.
    */
   unansweredToolUseBlocks?: boolean;
+  /**
+   * Whether a tail that leaves the move to Claude -- a tool result or a
+   * prompt, the turn not ended -- keeps the session `running` for
+   * {@link UNANSWERED_RUNNING_WINDOW_MS} rather than {@link RUNNING_WINDOW_MS}.
+   * Default false. Claude Code writes the next assistant line only once it is
+   * complete, so a subagent thinking or writing a long step adds nothing for
+   * minutes (measured: 112-303 s, every few minutes, #344) and read idle after
+   * 90 s. Subagents turn it on: the parent's stop notification settles a run
+   * as soon as it ends, so the longer window never outlives one.
+   */
+  openTurnRunning?: boolean;
 }
 
 /**
@@ -118,6 +129,16 @@ export function deriveStatus(
   // `user` row, so without this the task read `running` for the whole window
   // and the composer's controls stayed disabled after a /clear.
   if (endsLocalCommand(lastNonMeta(rows).rawJson)) return 'idle';
+
+  // rule 2c — the move is Claude's (see `openTurnRunning`).
+  if (
+    opts.openTurnRunning === true &&
+    (last.role === 'tool_result' || last.role === 'user') &&
+    !isMetaLine(last.rawJson) &&
+    now - last.ts <= UNANSWERED_RUNNING_WINDOW_MS
+  ) {
+    return 'running';
+  }
 
   // rule 3 — fallback for lines with no usable stop_reason. A background
   // task's end taken into the running turn is stored as a `system` row
