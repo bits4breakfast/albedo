@@ -98,6 +98,27 @@ export function seed(db, scenario, now) {
     );
     taskIds.set(t.key, Number(r.lastInsertRowid));
   }
+  // Review tasks (#287), as openReviewTask writes them, with the comments a
+  // started review has (#315), as addComment writes them.
+  const addReview = db.prepare(
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree,
+                        created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url)
+     VALUES (?, ?, ?, 'main', ?, ?, NULL, 1, 1, 'work', 'idle', ?, NULL, ?, NULL, ?)`,
+  );
+  const addComment = db.prepare(
+    `INSERT INTO comments (task_id, path, line_start, line_end, anchor_text, body, created_at, updated_at, github, reply_to)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+  );
+  for (const t of scenario.reviewTasks ?? []) {
+    const r = addReview.run(t.title, projectIds.get(t.project), t.repo, t.branch, t.worktree, t.createdAt, now, t.url);
+    const id = Number(r.lastInsertRowid);
+    taskIds.set(`review-${t.number}`, id);
+    const files = scenario.reviews[t.repo].find((x) => x.number === t.number)?.files ?? {};
+    for (const c of t.comments) {
+      const anchor = (files[c.path] ?? '').split('\n')[c.line - 1] ?? '';
+      addComment.run(id, c.path, c.line, c.line, anchor, c.body, c.at, c.at, c.github ?? null);
+    }
+  }
   return { projectIds, taskIds };
 }
 

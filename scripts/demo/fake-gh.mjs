@@ -192,7 +192,7 @@ function reviewNode(repoName, r) {
     url: `https://github.com/example/${repoName}/pull/${r.number}`,
     isDraft: false,
     createdAt: ago(r.lastCommitMinutes + 60),
-    updatedAt: ago(Math.min(r.lastCommitMinutes, ...(r.talk ?? []).map((t) => t.minutesAgo))),
+    updatedAt: ago(Math.min(r.lastCommitMinutes, ...[...(r.talk ?? []), ...(r.reviews ?? [])].map((t) => t.minutesAgo))),
     additions: r.additions,
     deletions: r.deletions,
     headRefOid: r.head ?? `${r.number}`.padStart(40, '0'),
@@ -200,7 +200,9 @@ function reviewNode(repoName, r) {
     author: { login: r.author },
     commits: { totalCount: r.commits, nodes: [{ commit: { committedDate: ago(r.lastCommitMinutes) } }] },
     comments: { nodes: (r.talk ?? []).map((t) => ({ author: { login: t.author }, createdAt: ago(t.minutesAgo) })) },
-    reviews: { nodes: [] },
+    reviews: {
+      nodes: (r.reviews ?? []).map((v) => ({ author: { login: v.author }, submittedAt: ago(v.minutesAgo), state: v.state })),
+    },
     reviewRequests: { nodes: requested ? [{ requestedReviewer: reviewer }] : [] },
     timelineItems: {
       nodes: requested

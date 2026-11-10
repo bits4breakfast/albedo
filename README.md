@@ -204,13 +204,16 @@ author, the size of the change and what is new:
 
 | Group | A pull request is here when |
 | --- | --- |
-| **New Activity** | Something happened since you last opened it or reviewed it: new commits, a force-push, comments by others, or your review asked for again. Newest first, with a dot |
+| **New Activity** | Something happened since you last opened it or reviewed it: new commits, a force-push, comments by others, or your review asked for again. Newest first, with a dot. This wins over every group below |
+| **Review Started** | You have started reviewing it in Albedo and not submitted a review since: something ticked Reviewed in its Guide, or a comment on its review task (for Claude or a draft for GitHub, sent or not). The row says how far along you are, such as `2/4 groups · 3 drafts` |
 | **Requested** | Your review is asked for and nothing is new. Newest request first |
 | **Reviewed · Waiting on Author** | You reviewed it and nothing has happened since |
+| **Approved** | Your latest review on it is an approval, and nothing has happened since |
 
-The tab's count is what waits on you: every request, plus reviewed pull
-requests with something new, and opening a pull request counts as having
-seen what is there.
+The tab's count is what waits on you: New Activity, Review Started and
+Requested. Opening a pull request counts as having seen what is there. A
+tick or a comment moves a pull request to Review Started at once, and
+submitting a review moves it on at once, to wherever GitHub's state puts it.
 
 Click a pull request to review it in Albedo. The first click checks it out
 as a **review task**: Albedo fetches its head into a local branch

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { activityOf, activityWords, reviewGroups, waitingCount, type SeenMark } from './reviewActivity';
+import {
+  activityOf,
+  activityWords,
+  isStarted,
+  REVIEW_GROUP_TITLE,
+  reviewGroups,
+  startWords,
+  waitingCount,
+  type ReviewStart,
+  type SeenMark,
+} from './reviewActivity';
 import type { ReviewPr } from './reviewRequests';
 
 const H = 3_600_000;
@@ -23,6 +33,7 @@ function pr(over: Partial<ReviewPr> = {}): ReviewPr {
     teams: [],
     talk: [],
     forcePushedAt: null,
+    yourReview: null,
     section: 'requested',
     ...over,
   };
@@ -100,5 +111,95 @@ describe('reviewGroups', () => {
     const groups = reviewGroups([p], new Map(), 'me');
     expect(groups[0]!.key).toBe('activity');
     expect(waitingCount(groups)).toBe(1);
+  });
+});
+
+describe('Review Started and Approved (#315)', () => {
+  const start = (over: Partial<ReviewStart> = {}): ReviewStart => ({ at: 6 * H, groups: null, drafts: 0, comments: 0, ...over });
+  const keys = (groups: ReturnType<typeof reviewGroups>) => groups.map((g) => [g.key, g.rows.map((r) => r.pr.number)]);
+
+  it('a Reviewed tick or a comment, with no review of yours yet, starts a requested PR', () => {
+    const ticked = pr({ url: 'u/t', number: 1 });
+    const commented = pr({ url: 'u/c', number: 2 });
+    const quiet = pr({ url: 'u/q', number: 3 });
+    const starts = new Map([
+      ['u/t', start({ at: 7 * H, groups: { reviewed: 2, total: 4 } })],
+      ['u/c', start({ at: 6 * H, drafts: 3 })],
+    ]);
+    const groups = reviewGroups([ticked, commented, quiet], new Map(), 'me', starts);
+    // Most recently worked on first, and its age is that work.
+    expect(keys(groups)).toEqual([
+      ['started', [1, 2]],
+      ['requested', [3]],
+    ]);
+    expect(groups[0]!.rows[0]!.at).toBe(7 * H);
+    expect(groups[0]!.rows[0]!.start?.groups).toEqual({ reviewed: 2, total: 4 });
+  });
+
+  it('a PR with no review task has no start, so it is never Started', () => {
+    expect(keys(reviewGroups([pr({ url: 'u/a' })], new Map(), 'me', new Map([['u/other', start()]])))).toEqual([
+      ['requested', [1]],
+    ]);
+  });
+
+  it('a review submitted after the last tick or comment ends it; work after the review starts it again', () => {
+    const reviewed = { at: 8 * H, state: 'COMMENTED' };
+    const p = pr({ url: 'u/a', section: 'reviewed', updatedAt: 8 * H, yourReview: reviewed, talk: [{ author: 'me', at: 8 * H }] });
+    expect(keys(reviewGroups([p], new Map(), 'me', new Map([['u/a', start({ at: 7 * H })]])))).toEqual([['reviewed', [1]]]);
+    expect(keys(reviewGroups([p], new Map(), 'me', new Map([['u/a', start({ at: 9 * H })]])))).toEqual([['started', [1]]]);
+    // A tick whose time was never kept (before #315) cannot be newer than a review.
+    expect(isStarted(p, start({ at: null }))).toBe(false);
+    expect(isStarted({ ...p, yourReview: null }, start({ at: null }))).toBe(true);
+  });
+
+  it('your latest review approving the PR puts it in Approved, after Waiting on Author', () => {
+    const approved = pr({
+      url: 'u/a', number: 20, section: 'reviewed', updatedAt: 5 * H,
+      yourReview: { at: 5 * H, state: 'APPROVED' }, talk: [{ author: 'me', at: 5 * H }],
+    });
+    const changes = pr({
+      url: 'u/b', number: 21, section: 'reviewed', updatedAt: 4 * H,
+      yourReview: { at: 4 * H, state: 'CHANGES_REQUESTED' }, talk: [{ author: 'me', at: 4 * H }],
+    });
+    const groups = reviewGroups([approved, changes], new Map(), 'me');
+    expect(keys(groups)).toEqual([
+      ['reviewed', [21]],
+      ['approved', [20]],
+    ]);
+    expect(REVIEW_GROUP_TITLE.approved).toBe('Approved');
+  });
+
+  it('New Activity wins over Started and Approved', () => {
+    const news: ReviewPr['talk'] = [{ author: 'me', at: 5 * H }, { author: 'alice', at: 9 * H }];
+    const started = pr({ url: 'u/s', number: 1, talk: news });
+    const approved = pr({ url: 'u/a', number: 2, section: 'reviewed', yourReview: { at: 5 * H, state: 'APPROVED' }, talk: news });
+    const groups = reviewGroups([started, approved], new Map(), 'me', new Map([['u/s', start({ at: 6 * H })]]));
+    expect(keys(groups)).toEqual([['activity', [2, 1]]]);
+  });
+
+  it('groups in the owner order, and the count is New Activity, Review Started and Requested', () => {
+    const mine = (at: number, state: string) => ({ yourReview: { at, state }, talk: [{ author: 'me', at }] });
+    const prs = [
+      pr({ url: 'u/approved', number: 5, section: 'reviewed', ...mine(3 * H, 'APPROVED') }),
+      pr({ url: 'u/waiting', number: 4, section: 'reviewed', ...mine(3 * H, 'COMMENTED') }),
+      pr({ url: 'u/requested', number: 3 }),
+      pr({ url: 'u/started', number: 2 }),
+      pr({ url: 'u/news', number: 1, section: 'reviewed', talk: [{ author: 'me', at: 3 * H }, { author: 'bob', at: 4 * H }] }),
+    ];
+    const groups = reviewGroups(prs, new Map(), 'me', new Map([['u/started', start()]]));
+    expect(groups.map((g) => REVIEW_GROUP_TITLE[g.key])).toEqual([
+      'New Activity',
+      'Review Started',
+      'Requested',
+      'Reviewed · Waiting on Author',
+      'Approved',
+    ]);
+    expect(waitingCount(groups)).toBe(3);
+  });
+
+  it('says how far along: groups when there is a guide, drafts when there are some, else the comments', () => {
+    expect(startWords(start({ groups: { reviewed: 2, total: 4 }, drafts: 3, comments: 1 }))).toEqual(['2/4 groups', '3 drafts']);
+    expect(startWords(start({ groups: { reviewed: 0, total: 1 }, drafts: 1 }))).toEqual(['0/1 group', '1 draft']);
+    expect(startWords(start({ comments: 2 }))).toEqual(['2 comments']);
   });
 });

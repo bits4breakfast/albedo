@@ -71,6 +71,20 @@ describe('parseReviewRequests', () => {
     ]);
   });
 
+  it('keeps your latest submitted review and its state, never a pending one or someone else\'s (#315)', () => {
+    const reviews = (nodes: unknown[]) => parseReviewRequests(answer([node({ reviews: { nodes } })]))!.prs[0]!.yourReview;
+    expect(REVIEWS_QUERY).toContain('reviews(last: 10) { nodes { author { login } submittedAt state } }');
+    expect(
+      reviews([
+        { author: { login: 'me' }, submittedAt: '2026-11-04T09:00:00Z', state: 'CHANGES_REQUESTED' },
+        { author: { login: 'me' }, submittedAt: '2026-11-06T09:00:00Z', state: 'APPROVED' },
+        { author: { login: 'carol' }, submittedAt: '2026-11-07T09:00:00Z', state: 'COMMENTED' },
+        { author: { login: 'me' }, submittedAt: null, state: 'PENDING' },
+      ]),
+    ).toEqual({ at: Date.parse('2026-11-06T09:00:00Z'), state: 'APPROVED' });
+    expect(reviews([{ author: { login: 'carol' }, submittedAt: '2026-11-07T09:00:00Z', state: 'APPROVED' }])).toBeNull();
+  });
+
   it('a request through a team names the team and takes that team request time', () => {
     const r = parseReviewRequests(
       answer([

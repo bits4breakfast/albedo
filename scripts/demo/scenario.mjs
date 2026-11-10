@@ -674,6 +674,20 @@ describe('shoppingList', () => {
       commits: 3,
       lastCommitMinutes: 200,
       requestedMinutes: 180,
+      // Checked out as a review task, with a draft for GitHub not yet
+      // submitted: Review Started (#315). Seeded in the database, as the app
+      // would have written it.
+      started: {
+        comments: [
+          {
+            path: 'src/shopping/list.ts',
+            line: 7,
+            body: 'Should "flour|g" and "flour|kg" add up too, or is that out of scope here?',
+            github: 'draft',
+            minutesAgo: 25,
+          },
+        ],
+      },
     },
     {
       number: 33,
@@ -715,6 +729,29 @@ export function saveLastSearch(query: string): void {
       commits: 2,
       lastCommitMinutes: 3 * 24 * 60,
       talk: [{ author: 'sam-rivera', minutesAgo: 2 * 24 * 60 }],
+    },
+    {
+      number: 31,
+      title: 'Metric and US units side by side',
+      files: {
+        'src/recipes/units.ts': `export type Unit = 'g' | 'ml' | 'oz' | 'cup';
+
+const GRAMS_PER_OUNCE = 28.35;
+
+/** Grams as ounces, to one decimal: what the US column shows. */
+export function toOunces(grams: number): number {
+  return Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10;
+}
+`,
+      },
+      author: 'alex-kim',
+      section: 'reviewed',
+      additions: 24,
+      deletions: 6,
+      commits: 2,
+      lastCommitMinutes: 6 * 60,
+      // Your latest review approved it: Approved (#315).
+      reviews: [{ author: 'sam-rivera', state: 'APPROVED', minutesAgo: 5 * 60 }],
     },
   ],
   blog: [],
@@ -765,5 +802,22 @@ export function buildScenario({ home, now }) {
   });
 
   const reviews = Object.fromEntries(projects.map((p) => [p.repo, REVIEWS[p.name] ?? []]));
-  return { projects, tasks, reviews };
+  // The review tasks a started review needs (#315), as openReview.ts makes
+  // them: a worktree `review-<n>` on the branch `review/<n>`.
+  const reviewTasks = projects.flatMap((p) =>
+    (REVIEWS[p.name] ?? [])
+      .filter((r) => r.started)
+      .map((r) => ({
+        project: p.name,
+        repo: p.repo,
+        number: r.number,
+        title: r.title,
+        branch: `review/${r.number}`,
+        worktree: `${p.worktreeRoot}/review-${r.number}`,
+        url: `https://github.com/example/${p.name}/pull/${r.number}`,
+        createdAt: now - 60 * MIN,
+        comments: r.started.comments.map((c) => ({ ...c, at: now - c.minutesAgo * MIN })),
+      })),
+  );
+  return { projects, tasks, reviews, reviewTasks };
 }

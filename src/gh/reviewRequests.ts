@@ -12,7 +12,8 @@
  * `{owner}/{repo}` is gh's own placeholder, filled from the folder's remote as
  * `gh pr view` resolves it. It works inside an -F value, so the repo needs no
  * second call to name it. Measured on a live repo: `rateLimit { cost }` 2 for
- * this query at these page sizes.
+ * this query at these page sizes. A review's `state` (#315) is a field on
+ * nodes already fetched, so it costs nothing more.
  *
  * Like gh.ts, nothing here throws at its callers: no gh, logged out, offline,
  * a folder with no GitHub remote -- each is null, "cannot tell".
@@ -30,7 +31,7 @@ fragment ReviewPr on PullRequest {
   author { login }
   commits(last: 1) { totalCount nodes { commit { committedDate } } }
   comments(last: 10) { nodes { author { login } createdAt } }
-  reviews(last: 10) { nodes { author { login } submittedAt } }
+  reviews(last: 10) { nodes { author { login } submittedAt state } }
   reviewRequests(first: 10) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } }
   timelineItems(last: 10, itemTypes: [REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT]) { nodes {
     __typename
@@ -76,6 +77,12 @@ export interface ReviewPr {
   talk: ReviewEvent[];
   /** The latest force-push, or null. */
   forcePushedAt: number | null;
+  /**
+   * Your latest submitted review among the newest ten (#315): when, and its
+   * state as GitHub says it (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`,
+   * `DISMISSED`). Null when none of them is yours.
+   */
+  yourReview: { at: number; state: string } | null;
   section: ReviewSection;
 }
 
@@ -157,10 +164,16 @@ function prOf(raw: unknown, section: ReviewSection, viewer: string | null): Revi
     const at = time(obj(c)?.createdAt);
     if (at !== null) talk.push({ author: login(obj(c)?.author), at });
   }
+  let yourReview: ReviewPr['yourReview'] = null;
   for (const r of nodesOf(n.reviews)) {
     // A pending review (yours, unsubmitted) has no submittedAt: not activity.
     const at = time(obj(r)?.submittedAt);
-    if (at !== null) talk.push({ author: login(obj(r)?.author), at });
+    if (at === null) continue;
+    const author = login(obj(r)?.author);
+    talk.push({ author, at });
+    if (viewer !== null && author === viewer && (yourReview === null || at >= yourReview.at)) {
+      yourReview = { at, state: str(obj(r)?.state) ?? '' };
+    }
   }
   talk.sort((a, b) => a.at - b.at);
 
@@ -183,6 +196,7 @@ function prOf(raw: unknown, section: ReviewSection, viewer: string | null): Revi
     teams,
     talk,
     forcePushedAt,
+    yourReview,
     section,
   };
 }

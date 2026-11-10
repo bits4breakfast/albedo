@@ -128,6 +128,39 @@ export async function listGithubDrafts(taskId: number): Promise<ReviewComment[]>
   return rows.map(fromRow);
 }
 
+/** What a review task's comments say about its review (#315): how many, of which kind, and the latest change. */
+export interface CommentFacts {
+  /** Drafts for GitHub not yet submitted (line comments and replies). */
+  drafts: number;
+  /** Every comment, of either kind, sent or not, resolved or not. */
+  total: number;
+  /** The latest a comment was written or edited. */
+  latestAt: number;
+}
+
+/**
+ * {@link CommentFacts} for each of `taskIds` that has a comment, in one
+ * query. Read again when {@link onCommentsChanged} names one of them, never
+ * on a timer.
+ */
+export async function commentFacts(taskIds: readonly number[]): Promise<Map<number, CommentFacts>> {
+  const out = new Map<number, CommentFacts>();
+  if (taskIds.length === 0) return out;
+  const db = await getDb();
+  const params = taskIds.map((_, i) => `$${i + 1}`).join(', ');
+  const rows = await db.select<Array<{ task_id: number; total: number; drafts: number | null; latest: number | null }>>(
+    `SELECT task_id, COUNT(*) AS total,
+            SUM(CASE WHEN github = 'draft' AND sent_at IS NULL AND resolved_at IS NULL THEN 1 ELSE 0 END) AS drafts,
+            MAX(updated_at) AS latest
+     FROM comments WHERE task_id IN (${params}) GROUP BY task_id`,
+    [...taskIds],
+  );
+  for (const r of rows) {
+    out.set(Number(r.task_id), { total: Number(r.total), drafts: Number(r.drafts ?? 0), latestAt: Number(r.latest ?? 0) });
+  }
+  return out;
+}
+
 /**
  * GitHub accepted these drafts (#287): sent, and resolved at once -- the
  * thread GitHub now has for each takes its place on the code.

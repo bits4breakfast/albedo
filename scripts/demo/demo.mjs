@@ -155,6 +155,15 @@ export function setup(home, now = Date.now()) {
     }
   }
 
+  // A started review's task (#315): its worktree on `review/<n>`, at the
+  // head pushed above, as openReview.ts checks one out.
+  for (const t of scenario.reviewTasks) {
+    const r = scenario.reviews[t.repo].find((x) => x.number === t.number);
+    git(t.repo, ['branch', '-q', t.branch, r.head]);
+    mkdirSync(dirname(t.worktree), { recursive: true });
+    git(t.repo, ['worktree', 'add', '-q', t.worktree, t.branch]);
+  }
+
   const hashes = new Map();
   for (const t of scenario.tasks) {
     mkdirSync(dirname(t.worktree), { recursive: true });

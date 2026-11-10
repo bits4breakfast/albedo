@@ -11,6 +11,9 @@
  *
  * Activity is new commits (or a force-push), new comments and reviews by
  * anyone but you, and your review being asked for again.
+ *
+ * Review Started and Approved (#315) come after New Activity: a PR with news
+ * is there whatever else is true of it.
  */
 
 import type { ReviewPr } from './reviewRequests';
@@ -101,19 +104,68 @@ export function activityWords(a: ReviewActivity): string[] {
   return out;
 }
 
-export type ReviewGroupKey = 'activity' | 'requested' | 'reviewed';
+/**
+ * How far you are into a PR's review in Albedo (#315), from its review task:
+ * the Guide's Reviewed marks and the task's comments. Local facts, never
+ * GitHub's.
+ */
+export interface ReviewStart {
+  /**
+   * The latest of them: the last Reviewed tick or comment. Null when there is
+   * one but its time is not known (a tick from before #315 kept no time).
+   */
+  at: number | null;
+  /** The Guide's groups all Reviewed, of how many; null with no guide. */
+  groups: { reviewed: number; total: number } | null;
+  /** Drafts for GitHub not yet submitted. */
+  drafts: number;
+  /** Every other comment on the task: for Claude, or already posted. */
+  comments: number;
+}
+
+/**
+ * Started (#315): there is something to show for it -- a Reviewed mark or a
+ * comment -- and you have not submitted a review since. With no submitted
+ * review of yours, anything counts; otherwise only what is newer than it.
+ */
+export function isStarted(pr: ReviewPr, start: ReviewStart | undefined): boolean {
+  if (!start) return false;
+  if (pr.yourReview === null) return true;
+  return start.at !== null && start.at > pr.yourReview.at;
+}
+
+/** Started's progress in words, for the row: "2/4 groups", "3 drafts", or the comments when neither says anything. */
+export function startWords(s: ReviewStart): string[] {
+  const out: string[] = [];
+  if (s.groups) out.push(`${s.groups.reviewed}/${s.groups.total} group${s.groups.total === 1 ? '' : 's'}`);
+  if (s.drafts > 0) out.push(`${s.drafts} draft${s.drafts === 1 ? '' : 's'}`);
+  if (out.length === 0 && s.comments > 0) out.push(`${s.comments} comment${s.comments === 1 ? '' : 's'}`);
+  return out;
+}
+
+export type ReviewGroupKey = 'activity' | 'started' | 'requested' | 'reviewed' | 'approved';
 
 export const REVIEW_GROUP_TITLE: Record<ReviewGroupKey, string> = {
   activity: 'New Activity',
+  started: 'Review Started',
   requested: 'Requested',
   reviewed: 'Reviewed · Waiting on Author',
+  approved: 'Approved',
 };
+
+/** The owner's order (#315). */
+const GROUP_ORDER: readonly ReviewGroupKey[] = ['activity', 'started', 'requested', 'reviewed', 'approved'];
+
+/** The groups that wait on you, and so make the tab's count. */
+const WAITING: ReadonlySet<ReviewGroupKey> = new Set(['activity', 'started', 'requested']);
 
 export interface ReviewRow {
   pr: ReviewPr;
   activity: ReviewActivity;
   /** The time the row sorts by and shows as its age. */
   at: number;
+  /** Review Started's progress; only on its rows. */
+  start?: ReviewStart;
 }
 
 export interface ReviewGroup {
@@ -121,37 +173,45 @@ export interface ReviewGroup {
   rows: ReviewRow[];
 }
 
+const NO_STARTS: ReadonlyMap<string, ReviewStart> = new Map();
+
 /**
- * The Reviewing tab's groups, in order, empty ones left out:
- *   New Activity  anything new since you last looked; newest activity first
- *   Requested     the rest of what you are asked to review; newest request first
- *   Reviewed      reviewed, nothing new; most recently updated first
+ * The Reviewing tab's groups, in order, empty ones left out. Each PR goes to
+ * the first that takes it:
+ *   New Activity    anything new since you last looked; newest activity first
+ *   Review Started  begun in Albedo since your last submitted review (#315);
+ *                   most recently worked on first
+ *   Requested       the rest of what you are asked to review; newest request first
+ *   Reviewed        reviewed, nothing new, your latest review not an
+ *                   approval; most recently updated first
+ *   Approved        your latest review approved it (#315); most recently updated first
+ * `starts` is keyed by PR url, and has an entry only for a PR with a review task.
  */
 export function reviewGroups(
   prs: readonly ReviewPr[],
   marks: ReadonlyMap<string, SeenMark>,
   viewer: string | null,
+  starts: ReadonlyMap<string, ReviewStart> = NO_STARTS,
 ): ReviewGroup[] {
-  const groups: Record<ReviewGroupKey, ReviewRow[]> = { activity: [], requested: [], reviewed: [] };
+  const groups: Record<ReviewGroupKey, ReviewRow[]> = { activity: [], started: [], requested: [], reviewed: [], approved: [] };
   for (const pr of prs) {
     const activity = activityOf(pr, marks.get(pr.url), viewer);
+    const start = starts.get(pr.url);
     if (activity.unseen) groups.activity.push({ pr, activity, at: activity.at });
+    else if (start && isStarted(pr, start)) groups.started.push({ pr, activity, at: start.at ?? pr.updatedAt, start });
     else if (pr.section === 'requested') groups.requested.push({ pr, activity, at: pr.requestedAt ?? pr.createdAt });
+    else if (pr.yourReview?.state === 'APPROVED') groups.approved.push({ pr, activity, at: pr.updatedAt });
     else groups.reviewed.push({ pr, activity, at: pr.updatedAt });
   }
-  const order: ReviewGroupKey[] = ['activity', 'requested', 'reviewed'];
-  return order
-    .map((key) => ({ key, rows: groups[key].sort((a, b) => b.at - a.at || b.pr.number - a.pr.number) }))
-    .filter((g) => g.rows.length > 0);
+  return GROUP_ORDER.map((key) => ({ key, rows: groups[key].sort((a, b) => b.at - a.at || b.pr.number - a.pr.number) })).filter(
+    (g) => g.rows.length > 0,
+  );
 }
 
 /**
- * The tab's count: what is waiting on you -- every PR you are asked to
- * review, plus reviewed ones with something new.
+ * The tab's count: what is waiting on you -- New Activity, Review Started
+ * and Requested (#315). Waiting on Author and Approved wait on someone else.
  */
 export function waitingCount(groups: readonly ReviewGroup[]): number {
-  return groups.reduce(
-    (n, g) => n + g.rows.filter((r) => r.pr.section === 'requested' || r.activity.unseen).length,
-    0,
-  );
+  return groups.reduce((n, g) => n + (WAITING.has(g.key) ? g.rows.length : 0), 0);
 }
