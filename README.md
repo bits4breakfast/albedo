@@ -154,9 +154,9 @@ Albedo.
    pull request. The menu holds **Rename Task…** (**⇧F6** or **F2**, or
    double-click the title), **Remind Me…**, **Make Available Remotely**
    (**⇧⌘R**) and **Compact Now**.
-5. **Layout.** **PTY** shows only the terminal, **Transcript** only the
-   reading pane, **Split** both, side by side or stacked. **⌘\\** cycles
-   through them. The icon next to it opens a shell in the main checkout (**⌥F12**).
+5. **Layout.** Three icons: **PTY** shows only the terminal, **Transcript**
+   only the reading pane, **Split** both, side by side or stacked; each names
+   itself on hover. **⌘\\** cycles through them. The icon next to it opens a shell in the main checkout (**⌥F12**).
 6. **Transcript.** The conversation, read from Claude Code's session files:
    your messages, Claude's replies, tool calls and diffs.
 7. **Files.** What this task changed: uncommitted changes, then commits on
@@ -233,7 +233,8 @@ On a review task, the comment box in the Guide, the Diff and the editor
 asks where a comment goes: **Draft for GitHub** (the default) or **Ask
 Claude**, which goes to the review session as on any other task and never
 to GitHub. Drafts stay on your machine, in Albedo's database, until you
-press **Submit Review**, beside `#n on GitHub` in the task header. The
+press **Submit Review**, beside the PR's GitHub link (GitHub's mark and `#n`) in
+the task header. The
 button shows how many drafts are waiting, and the Files tab lists them
 under **For GitHub**.
 

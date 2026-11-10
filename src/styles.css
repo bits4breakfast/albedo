@@ -1150,6 +1150,9 @@ select:disabled { cursor: default; }
    segment the height of a button's line plus its 2px of padding -- so the
    row is no taller for it. Nothing else changes. */
 .seg-compact { --seg-h: calc(var(--fs-sm) * 1.4 + 2px); }
+/* Icons in place of words (#317, the pane layout): square segments the
+   height of the words' ones, the glyph centred. */
+.seg-icons button { display: inline-grid; place-items: center; width: 30px; padding: 0; }
 
 .panes {
   /* Positions the no-task placeholder over the whole area. */

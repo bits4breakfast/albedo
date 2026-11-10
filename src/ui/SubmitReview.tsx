@@ -14,6 +14,7 @@
  * the next click sends only the replies, so nothing is posted twice.
  */
 
+import { GitHubIcon } from './icons';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import type { Task } from '../types';
@@ -113,9 +114,13 @@ export function ReviewBadge({ task }: { task: Task }): ReactNode {
         type="button"
         className="pr-badge"
         title={`${task.reviewUrl}\nOpen on GitHub`}
+        aria-label={`#${number} on GitHub`}
         onClick={() => void openExternal(task.reviewUrl!)}
       >
-        #{number} on GitHub
+        {/* GitHub's mark where "on GitHub" was (#317): the bar's room goes
+            to the title and branch; the label still says it. */}
+        <GitHubIcon />
+        <span className="pr-num">#{number}</span>
       </button>
       <button
         type="button"

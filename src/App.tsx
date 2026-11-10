@@ -45,7 +45,7 @@ import Terminal, { focusPty, hasLivePty, usePtyLiveSince } from './ui/Terminal';
 import { focusArea, useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemoteControlUrl } from './ui/RemoteMark';
 import ModelPicker from './ui/ModelPicker';
-import { ChatIcon, FolderIcon, homeRelative } from './ui/icons';
+import { ChatIcon, FolderIcon, PtyLayoutIcon, SplitLayoutIcon, TranscriptLayoutIcon, homeRelative } from './ui/icons';
 import BranchChip from './ui/BranchChip';
 import { ReviewBadge } from './ui/SubmitReview';
 import OverflowMenu from './ui/OverflowMenu';
@@ -1579,19 +1579,22 @@ export default function App() {
 
             {/* The project view has one pane: nothing to lay out. */}
             {!editorShowing && !projectView && (
-              <div className="seg" role="group" aria-label="Pane layout">
-                <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} title="Terminal only (⌘\)">
-                  PTY
+              /* Icons (#317): the words took 192px of a bar the title and
+                 branch need; the names are each button's label and tooltip. */
+              <div className="seg seg-icons" role="group" aria-label="Pane layout">
+                <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} aria-label="PTY" title="Terminal only (⌘\)">
+                  <PtyLayoutIcon />
                 </button>
-                <button aria-pressed={mode === 'split'} onClick={() => setMode('split')} title="Split (⌘\)">
-                  Split
+                <button aria-pressed={mode === 'split'} onClick={() => setMode('split')} aria-label="Split" title="Split (⌘\)">
+                  <SplitLayoutIcon />
                 </button>
                 <button
                   aria-pressed={mode === 'transcript'}
                   onClick={() => setMode('transcript')}
+                  aria-label="Transcript"
                   title="Transcript only (⌘\)"
                 >
-                  Transcript
+                  <TranscriptLayoutIcon />
                 </button>
               </div>
             )}
