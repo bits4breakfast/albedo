@@ -288,9 +288,10 @@ function commentsCount(n: number): string {
  * Another reviewer's thread on GitHub (#287, step 4), read only, under the
  * line it is on: the same card as a comment, its edge grey as a sent one's
  * (it is not yours to send), each comment as author · age and its text.
- * Reply and Open on GitHub, both always shown (#327: Open on GitHub sat
- * under ⋯ while the chip's "On GitHub" read as a second link). A resolved
- * thread is folded to one line until Show. Your reply drafts hang under it, and go
+ * Two actions, always shown: Reply, and one button that says what the
+ * thread holds and opens it on GitHub ("1 comment · Open on GitHub"; #327,
+ * where a chip saying "On GitHub" and a link under ⋯ read as two). A
+ * resolved thread is folded to one line until Show. Your reply drafts hang under it, and go
  * with Submit Review.
  */
 export function ThreadCardView({
@@ -315,7 +316,7 @@ export function ThreadCardView({
   const [writing, setWriting] = useState<ReviewComment | 'new' | null>(null);
   const [moreOf, setMoreOf] = useState<number | null>(null);
   const first = thread.comments[0];
-  // The chip says what state the thread is in; where it lives is the link's job.
+  // Its state, when it has one, leads the GitHub button's words.
   const state = thread.isResolved ? '✓ Resolved' : thread.isOutdated ? 'Outdated' : null;
   const link = `${prUrl}#discussion_r${thread.replyTo}`;
   const where = line !== null ? `Line ${line}` : thread.line !== null ? `Line ${thread.line} on GitHub` : thread.originalLine !== null ? `Was line ${thread.originalLine}` : 'On GitHub';
@@ -324,10 +325,6 @@ export function ThreadCardView({
     <div className="ed-cmt" data-state="thread">
       <div className="ed-cmt-head">
         <span className="ed-cmt-where">{where}</span>
-        <span className="ed-cmt-chip" data-state="sent">
-          {state ? `${state} · ` : ''}
-          {commentsCount(thread.comments.length)}
-        </span>
         {!open && first ? (
           <span className="ed-cmt-fold" title={first.body}>
             {first.author ?? 'someone'}: “{first.body.split('\n')[0]}”
@@ -348,8 +345,10 @@ export function ThreadCardView({
               Fold
             </button>
           ) : null}
+          {/* One button for where it lives and what it holds (#327). */}
           <button type="button" className="ed-cmt-btn" onClick={() => void openExternal(link)} title={link}>
-            Open on GitHub
+            {state ? `${state} · ` : ''}
+            {commentsCount(thread.comments.length)} · Open on GitHub
           </button>
         </span>
       </div>

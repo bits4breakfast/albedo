@@ -138,21 +138,20 @@ describe('other reviewers’ threads', () => {
     expect(screen.getByText('↑ Draft · goes with Submit Review')).toBeTruthy();
   });
 
-  it('one Open on GitHub, always shown, and no ⋯; the chip says the state only when it has one (#327)', () => {
+  it('two buttons: Reply, and one that says what the thread holds and opens it on GitHub (#327)', () => {
     state.threads = [thread()];
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, REVIEW));
     render(<>{result.current.annotations!.after(3)}</>);
-    expect(screen.getAllByRole('button', { name: 'Open on GitHub' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Reply' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /Open on GitHub/ }).map((b) => b.textContent)).toEqual(['1 comment · Open on GitHub']);
     expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
-    expect(screen.getByText('1 comment')).toBeTruthy();
-    expect(screen.queryByText(/On GitHub ·/)).toBeNull();
   });
 
   it('a resolved one says so in its chip, and folds again from the head', () => {
     state.threads = [thread({ isResolved: true })];
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, REVIEW));
     render(<>{result.current.annotations!.after(3)}</>);
-    expect(screen.getByText('✓ Resolved · 1 comment')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '✓ Resolved · 1 comment · Open on GitHub' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show' }));
     fireEvent.click(screen.getByRole('button', { name: 'Fold' }));
     expect(screen.queryByText('Why three?')).toBeNull();
