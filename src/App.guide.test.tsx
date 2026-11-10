@@ -74,9 +74,22 @@ vi.mock('./ui/editor/EditorTabs', () => ({
   forgetEditorTabs: () => {},
 }));
 vi.mock('./ui/Subagents', () => ({ default: () => null }));
-vi.mock('./guide/GuidePane', () => ({
-  default: ({ task }: { task: Task }) => <div data-testid="guide">{`guide for ${task.id}`}</div>,
-}));
+vi.mock('./guide/GuidePane', async () => {
+  const { useOpenFile } = await import('./ui/editor/openFile');
+  return {
+    default: function GuidePane({ task }: { task: Task }) {
+      const openFile = useOpenFile();
+      return (
+        <>
+          <div data-testid="guide">{`guide for ${task.id}`}</div>
+          <button type="button" onClick={() => openFile({ path: 'src/a.ts' })}>
+            Open a.ts
+          </button>
+        </>
+      );
+    },
+  };
+});
 vi.mock('./ui/StatusBar', () => ({ default: () => null }));
 vi.mock('./ui/TouchedFiles', async (orig) => ({
   ...(await orig<typeof import('./ui/TouchedFiles')>()),
@@ -268,6 +281,32 @@ describe('the reading tab, per task (#314)', () => {
       [10, 'guide'],
       [11, 'files'],
     ]);
+  });
+
+  it('closing a file opened from the Guide goes back to the Guide, not to Transcript (#322)', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open a.ts' }));
+    await settle();
+    expect(tabSelected('Editor')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+    // From Files, the same: back to Files.
+    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Open a.ts' }));
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
   });
 
   it('a guide asked for another task lands on that task, not on the one on screen', async () => {

@@ -320,11 +320,23 @@ export default function App() {
   const rightTab: RightTab = selectedId !== null ? tabFor(selectedId) : projectRightTab;
   const tabTaskRef = useRef(selectedId);
   tabTaskRef.current = selectedId;
+  /**
+   * The tab each task (or the project view, under -1) was on when the editor
+   * took the pane (#322), so closing the editor goes back there rather than
+   * always to Transcript.
+   */
+  const beforeEditorRef = useRef(new Map<number, RightTab>());
   const setRightTab = useCallback(
     (action: SetStateAction<RightTab>, taskId?: number) => {
       const id = taskId ?? tabTaskRef.current;
-      if (id === null) setProjectRightTab(action);
-      else setTabFor(id, action);
+      const key = id ?? -1;
+      const tracked = (current: RightTab): RightTab => {
+        const next = typeof action === 'function' ? action(current) : action;
+        if (next === 'editor' && current !== 'editor') beforeEditorRef.current.set(key, current);
+        return next;
+      };
+      if (id === null) setProjectRightTab(tracked);
+      else setTabFor(id, tracked);
     },
     [setProjectRightTab, setTabFor],
   );
@@ -838,8 +850,12 @@ export default function App() {
     const open = openRequestRef.current;
     if (open) forgetEditorTabs(open.taskId);
     setOpenRequest(null);
-    setRightTab((t) => (t === 'editor' ? 'transcript' : t));
-  }, []);
+    // Back to where the file was opened from (#322): the Guide, Files or
+    // Transcript. App's derivation still turns a tab with nothing to show
+    // (a Guide for a chat) into Transcript.
+    const key = tabTaskRef.current ?? -1;
+    setRightTab((t) => (t === 'editor' ? (beforeEditorRef.current.get(key) ?? 'transcript') : t));
+  }, [setRightTab]);
   // Text handed to the composer from elsewhere (review comments): show the
   // transcript, where the composer is, the way opening a file shows the editor.
   useEffect(
