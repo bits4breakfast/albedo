@@ -85,6 +85,10 @@ describe('anchorOfHunk', () => {
     expect(anchorOfHunk('@@ -1 +1 @@\n a\n+b')).toBe('b');
     expect(anchorOfHunk('@@ -1 +1 @@\n a\n x\n')).toBe('x');
   });
+  it('skips "\\ No newline at end of file" to the line it is about', () => {
+    expect(anchorOfHunk('@@ -1 +1 @@\n a\n+last\n\\ No newline at end of file\n')).toBe('last');
+  });
+
   it('is nothing for a removed line, a header, or no hunk', () => {
     expect(anchorOfHunk('@@ -1 +1 @@\n-a')).toBeNull();
     expect(anchorOfHunk('@@ -1 +1 @@')).toBeNull();
@@ -109,9 +113,14 @@ describe('placeThread', () => {
     expect(placeThread({ ...t, side: 'LEFT' }, '  const attempts = 3;')).toBeNull();
   });
 
-  it('falls back to its line when it has no code to look for', () => {
-    expect(placeThread({ ...t, anchor: null }, file(30).join('\n'))).toBe(14);
-    expect(placeThread({ ...t, anchor: null }, file(3).join('\n'))).toBeNull();
+  it('is in the bar when it has no code to look for: GitHub\'s line is on GitHub\'s head, not this copy', () => {
+    expect(placeThread({ ...t, anchor: null }, file(30).join('\n'))).toBeNull();
+  });
+
+  it('finds its code in a file with CRLF line ends', () => {
+    const lines = file(20);
+    lines[13] = '  const attempts = 3;';
+    expect(placeThread(t, lines.join('\r\n'))).toBe(14);
   });
 });
 
@@ -170,5 +179,21 @@ describe('refreshThreads', () => {
     expect(threadsFor(url)).toEqual(one);
     await refreshThreads(url, PR, '/wt', { force: true });
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('a forced fetch while one is going follows it with a fresh one, so a post just made shows', async () => {
+    let release: (v: ReviewThread[]) => void = () => {};
+    const fetch = vi
+      .fn<() => Promise<ReviewThread[] | null>>()
+      .mockImplementationOnce(() => new Promise((r) => (release = r)))
+      .mockImplementation(async () => one);
+    setThreadsFetcherForTests(fetch, () => 5_000_000);
+    const first = refreshThreads(url, PR, '/wt');
+    const forced = refreshThreads(url, PR, '/wt', { force: true });
+    release([]);
+    await first;
+    await forced;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(threadsFor(url)).toEqual(one);
   });
 });

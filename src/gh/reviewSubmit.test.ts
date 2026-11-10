@@ -52,6 +52,27 @@ describe('parseDiffRanges', () => {
   });
 });
 
+describe('parseDiffRanges, inside a hunk', () => {
+  it('reads an added line that begins with "++ " as a line, not a file header', () => {
+    const diff = [
+      'diff --git a/notes.md b/notes.md',
+      '--- a/notes.md',
+      '+++ b/notes.md',
+      '@@ -1,2 +1,4 @@',
+      ' keep',
+      '+++ b/elsewhere.md',
+      '--- a/oops',
+      '+added',
+      ' keep',
+      '\\ No newline at end of file',
+      '@@ -9 +11,2 @@',
+      '+x',
+      ' y',
+    ].join('\n');
+    expect([...parseDiffRanges(diff)]).toEqual([['notes.md', [[1, 4], [11, 12]]]]);
+  });
+});
+
 describe('inDiff', () => {
   const r = parseDiffRanges(DIFF);
   it('takes a line or a range inside one hunk', () => {
@@ -104,6 +125,12 @@ describe('planReview', () => {
     expect(plan.review).toBeNull();
     expect(plan.replies).toEqual([reply]);
     expect(plan.inReview).toEqual([]);
+  });
+
+  it('with the diff not known (no base), takes every line as in it and lets GitHub decide', () => {
+    const plan = planReview({ drafts: [draft({ path: 'README.md', lineStart: 400, lineEnd: 400 })], ranges: null, summary: '', verdict: 'COMMENT', commitId: 'abc' });
+    expect(plan.review?.comments).toEqual([{ path: 'README.md', line: 400, side: 'RIGHT', body: 'Why three?' }]);
+    expect(plan.outside).toEqual([]);
   });
 
   it('still sends an Approve with nothing else', () => {

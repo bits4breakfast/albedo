@@ -70,21 +70,49 @@ export type DiffRanges = ReadonlyMap<string, ReadonlyArray<readonly [number, num
 export function parseDiffRanges(diff: string): Map<string, Array<[number, number]>> {
   const out = new Map<string, Array<[number, number]>>();
   let path: string | null = null;
+  // Lines still to come in the hunk being read, per side. Inside a hunk a
+  // line is content whatever it starts with: an added `++ x` reads `+++ x`.
+  let oldLeft = 0;
+  let newLeft = 0;
+  let prev = '';
   for (const line of diff.split('\n')) {
-    if (line.startsWith('+++ ')) {
-      const name = line.slice(4).replace(/\t.*$/, '');
-      path = name === '/dev/null' ? null : name.replace(/^b\//, '');
+    // A content line always starts with ' ', '+', '-' or '\\', so a hunk or
+    // file header ends a hunk cut short; only `+++ `/`--- ` need the counts.
+    if ((oldLeft > 0 || newLeft > 0) && (line.startsWith('@@ ') || line.startsWith('diff --git '))) {
+      oldLeft = 0;
+      newLeft = 0;
+    }
+    if (oldLeft > 0 || newLeft > 0) {
+      const mark = line[0];
+      if (mark === '+') newLeft -= 1;
+      else if (mark === '-') oldLeft -= 1;
+      else if (mark === ' ' || line === '') {
+        oldLeft -= 1;
+        newLeft -= 1;
+      }
+      // `\ No newline at end of file` counts for neither side.
+      prev = line;
       continue;
     }
-    if (path === null || !line.startsWith('@@ ')) continue;
-    const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (!m) continue;
-    const start = Number(m[1]);
-    const count = m[2] === undefined ? 1 : Number(m[2]);
-    if (count === 0) continue; // a pure deletion: nothing on the new side
-    const ranges = out.get(path) ?? [];
-    ranges.push([start, start + count - 1]);
-    out.set(path, ranges);
+    if (line.startsWith('+++ ') && prev.startsWith('--- ')) {
+      const name = line.slice(4).replace(/\t.*$/, '');
+      path = name === '/dev/null' ? null : name.replace(/^b\//, '');
+    } else if (line.startsWith('@@ ')) {
+      const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (m) {
+        const start = Number(m[2]);
+        const count = m[3] === undefined ? 1 : Number(m[3]);
+        oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+        newLeft = count;
+        // A pure deletion has nothing on the new side.
+        if (path !== null && count > 0) {
+          const ranges = out.get(path) ?? [];
+          ranges.push([start, start + count - 1]);
+          out.set(path, ranges);
+        }
+      }
+    }
+    prev = line;
   }
   return out;
 }
@@ -146,7 +174,8 @@ export function cannotSubmit(drafts: readonly GithubDraft[], summary: string, ve
 
 export function planReview(input: {
   drafts: readonly GithubDraft[];
-  ranges: DiffRanges;
+  /** Null: the PR's diff is not known here, so every line is taken as in it and GitHub decides. */
+  ranges: DiffRanges | null;
   summary: string;
   verdict: ReviewVerdict;
   commitId: string;
@@ -156,7 +185,7 @@ export function planReview(input: {
   const comments: ReviewLineComment[] = [];
   const outside: GithubDraft[] = [];
   for (const d of lines) {
-    if (d.lost || !inDiff(input.ranges, d.path, d.lineStart, d.lineEnd)) {
+    if (d.lost || (input.ranges !== null && !inDiff(input.ranges, d.path, d.lineStart, d.lineEnd))) {
       outside.push(d);
       continue;
     }

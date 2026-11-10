@@ -186,11 +186,16 @@ export async function moveComment(taskId: number, id: number, lineStart: number,
   changed(taskId);
 }
 
+/**
+ * A message to Claude carrying these was delivered. Only comments for Claude:
+ * one switched to Draft for GitHub (#287) while a held message carried it was
+ * not sent anywhere, and stays a draft.
+ */
 export async function markCommentsSent(taskId: number, ids: readonly number[]): Promise<void> {
   if (ids.length === 0) return;
   const db = await getDb();
   const now = Date.now();
-  for (const id of ids) await db.execute(`UPDATE comments SET sent_at = $2 WHERE id = $1`, [id, now]);
+  for (const id of ids) await db.execute(`UPDATE comments SET sent_at = $2 WHERE id = $1 AND github IS NULL`, [id, now]);
   changed(taskId);
 }
 

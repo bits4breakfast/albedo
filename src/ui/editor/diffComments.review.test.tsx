@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 const NOW = 'one\ntwo\nthree\nfour\n';
-const REVIEW = { id: 1, reviewUrl: 'https://github.com/example/relay/pull/34', worktreePath: '/wt', baseBranch: 'main' };
+const REVIEW = { id: 1, reviewUrl: 'https://github.com/example/relay/pull/34', worktreePath: '/wt', baseBranch: 'main', kind: 'work' as const, branch: 'review/34' };
 
 const row = (over: Partial<ReviewComment>): ReviewComment => ({
   id: 5, taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'two', body: 'Rename.',
@@ -111,7 +111,18 @@ describe('a draft for GitHub', () => {
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, REVIEW));
     await waitFor(() => expect(result.current.annotations!.after(2)).not.toBeNull());
     render(<>{result.current.annotations!.after(2)}</>);
-    expect(screen.getByText('Draft · not in the diff: in the summary')).toBeTruthy();
+    expect(screen.getByText('↑ Draft · not in the diff: in the summary')).toBeTruthy();
+  });
+});
+
+describe('a draft for GitHub, with the PR’s diff not known', () => {
+  it('is taken as in the diff, as Submit Review takes it: GitHub decides', async () => {
+    state.rows = [row({ github: 'draft' })];
+    state.ranges = null;
+    const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, REVIEW));
+    await waitFor(() => expect(result.current.annotations!.after(2)).not.toBeNull());
+    render(<>{result.current.annotations!.after(2)}</>);
+    expect(screen.getByText('↑ Draft · goes with Submit Review')).toBeTruthy();
   });
 });
 
@@ -124,7 +135,7 @@ describe('other reviewers’ threads', () => {
     expect(screen.getByText('Why three?')).toBeTruthy();
     expect(screen.getByText('alice')).toBeTruthy();
     expect(screen.getByText('Because of the retries.')).toBeTruthy();
-    expect(screen.getByText('Draft · goes with Submit Review')).toBeTruthy();
+    expect(screen.getByText('↑ Draft · goes with Submit Review')).toBeTruthy();
   });
 
   it('a reply is stored as a draft for that thread', async () => {

@@ -31,14 +31,15 @@ export function migrationsFromLibRs(libRsPath) {
     out.push({ version: Number(m[1]), description: m[2], sql: readFileSync(path, 'utf8') });
   }
   if (out.length === 0) throw new Error('lib.rs: no migrations found; has the Migration list changed shape?');
-  // Increasing, from 1. Not necessarily contiguous: two branches can take
-  // the next numbers in parallel (#287's v15 beside #295's v14), and sqlx
-  // applies whatever it has not applied yet, in order.
-  out.forEach((mig, i) => {
-    if (i === 0 ? mig.version !== 1 : mig.version <= out[i - 1].version) {
-      throw new Error(`lib.rs: migration ${mig.version} is out of order`);
-    }
-  });
+  // Contiguous from 1, but for one known gap: #287 takes v15 while #295's
+  // v14 (PR #297) is not on main yet. Remove KNOWN_GAPS once v14 is there.
+  const KNOWN_GAPS = new Set([14]);
+  let want = 1;
+  for (const mig of out) {
+    while (mig.version !== want && KNOWN_GAPS.has(want)) want += 1;
+    if (mig.version !== want) throw new Error(`lib.rs: migration ${want} is missing or out of order`);
+    want += 1;
+  }
   return out;
 }
 

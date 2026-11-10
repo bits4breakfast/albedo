@@ -69,9 +69,14 @@ function int(v: unknown): number | null {
 /** The last line of a diff hunk, without its +/space marker; null for a removed line or none. */
 export function anchorOfHunk(hunk: unknown): string | null {
   if (typeof hunk !== 'string' || hunk === '') return null;
-  const lines = hunk.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n');
+  // `\ No newline at end of file` follows the line it is about: skip it.
+  const lines = hunk
+    .replace(/\r\n/g, '\n')
+    .replace(/\n+$/, '')
+    .split('\n')
+    .filter((l) => !l.startsWith('\\'));
   const last = lines[lines.length - 1] ?? '';
-  if (last.startsWith('@@') || last.startsWith('-') || last.startsWith('\\')) return null;
+  if (last === '' || last.startsWith('@@') || last.startsWith('-')) return null;
   return last.slice(1);
 }
 
@@ -145,9 +150,10 @@ export async function fetchThreads(pr: PrRef, cwd: string): Promise<ReviewThread
  * then it is listed in the bar above the file, never pinned to a guess.
  */
 export function placeThread(t: ReviewThread, text: string): number | null {
-  if (t.side !== 'RIGHT' || t.isOutdated || t.line === null) return null;
-  const lines = text.split('\n');
-  if (t.anchor === null) return t.line <= lines.length ? t.line : null;
+  // Without its code there is nothing to find it by: GitHub's line is on
+  // GitHub's head, which may not be this copy, so it goes to the bar.
+  if (t.side !== 'RIGHT' || t.isOutdated || t.line === null || t.anchor === null) return null;
+  const lines = text.split(/\r?\n/);
   let best: number | null = null;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i] !== t.anchor) continue;
@@ -202,7 +208,9 @@ const NONE: readonly ReviewThread[] = [];
  */
 export function refreshThreads(url: string, pr: PrRef, cwd: string, opts: { force?: boolean } = {}): Promise<void> {
   const already = inflight.get(url);
-  if (already) return already;
+  // Forced (right after Submit Review): a fetch already going may have
+  // left before the post landed, so a fresh one follows it.
+  if (already) return opts.force ? already.then(() => refreshThreads(url, pr, cwd, opts)) : already;
   const prev = cache.get(url);
   if (prev && !opts.force && now() - prev.fetchedAt < THREADS_MIN_AGE_MS) return Promise.resolve();
   const p = fetcher(pr, cwd)

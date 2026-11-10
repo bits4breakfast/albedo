@@ -168,6 +168,10 @@
   overflow: hidden;
 }
 
+/* A dialog that takes the keyboard itself (Submit Review, #287) shows no
+   ring for that: its fields show theirs. As .ck-dialog. */
+.wt-modal:focus { outline: none; }
+
 .wt-modal[data-wide='true'] {
   max-width: 820px;
 }

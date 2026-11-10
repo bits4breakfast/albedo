@@ -39,36 +39,56 @@ import './worktree.css';
 
 let requested: number | null = null;
 const listeners = new Set<() => void>();
+let version = 0;
+
+function notify(): void {
+  version += 1;
+  for (const l of [...listeners]) l();
+}
 
 /** Open the Submit Review dialog for this task (from anywhere that lists its drafts). */
 export function requestSubmitReview(taskId: number): void {
   requested = taskId;
-  for (const l of [...listeners]) l();
+  notify();
 }
 
-function useRequested(): number | null {
+function useSubmitState(): number {
   return useSyncExternalStore(
     (cb) => {
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
-    () => requested,
+    () => version,
   );
 }
 
-/** @internal Test seam: no dialog asked for. */
+/** @internal Test seam: no dialog asked for, nothing in flight. */
 export function resetSubmitRequestForTests(): void {
   requested = null;
   summaries.clear();
+  sending.clear();
+  reviewPosted.clear();
 }
 
-function clearRequest(): void {
+/** Close the dialog -- only if it is still this task's: a send that ends late never closes another's. */
+function clearRequest(taskId: number): void {
+  if (requested !== taskId) return;
   requested = null;
-  for (const l of [...listeners]) l();
+  notify();
 }
 
 /** What you typed in the summary, per task, until it is sent or the app quits. */
 const summaries = new Map<number, string>();
+/**
+ * Tasks whose review is being sent right now. Kept per task, not per
+ * dialog: the dialog unmounts when you switch task, and a send it started
+ * keeps running. Back on the task, a fresh dialog must see that send still
+ * going -- Submit off, "Sending…" -- or a second click would post the same
+ * review twice.
+ */
+const sending = new Set<number>();
+/** Tasks whose review went out while some replies did not: only replies are left. */
+const reviewPosted = new Set<number>();
 
 // ---------------------------------------------------------------------------
 // The badge and the action
@@ -80,7 +100,11 @@ const summaries = new Map<number, string>();
  */
 export function ReviewBadge({ task }: { task: Task }): ReactNode {
   const drafts = useGithubDrafts(task);
-  const open = useRequested() === task.id;
+  useSubmitState();
+  const open = requested === task.id;
+  // Another task selected: its dialog is not asked for any more. Coming
+  // back does not open it again on its own.
+  useEffect(() => () => clearRequest(task.id), [task.id]);
   const number = /\/pull\/(\d+)/.exec(task.reviewUrl ?? '')?.[1];
   if (!task.reviewUrl) return null;
   return (
@@ -106,7 +130,7 @@ export function ReviewBadge({ task }: { task: Task }): ReactNode {
       >
         Submit Review{drafts.length > 0 ? ` · ${drafts.length}` : ''}
       </button>
-      {open ? <SubmitReviewDialog task={task} onClose={clearRequest} /> : null}
+      {open ? <SubmitReviewDialog task={task} onClose={() => clearRequest(task.id)} /> : null}
     </span>
   );
 }
@@ -127,13 +151,14 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
   const [loaded, setLoaded] = useState<Loaded>({ kind: 'loading' });
   const [summary, setSummaryState] = useState(() => summaries.get(task.id) ?? '');
   const [verdict, setVerdict] = useState<ReviewVerdict>('COMMENT');
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
+  useSubmitState();
+  const busy = sending.has(task.id);
   const [outcome, setOutcome] = useState<Extract<SubmitOutcome, { ok: false }> | null>(null);
   // Once the review itself is on GitHub, only replies are left to send.
-  const [reviewDone, setReviewDone] = useState(false);
+  const reviewDone = reviewPosted.has(task.id);
   const pr = reviewPr(task);
   useReviewsVersion();
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const setSummary = (v: string) => {
     summaries.set(task.id, v);
@@ -152,14 +177,25 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !busyRef.current) {
-        e.stopPropagation();
-        onClose();
-      }
+      if (e.key !== 'Escape') return;
+      // Ours either way: the editor closes its file on Escape from a window
+      // listener of its own. Capture, as the other dialogs do.
+      e.stopPropagation();
+      if (!sending.has(task.id)) onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose, task.id]);
+
+  // The keyboard comes into the dialog, and goes back to where it was when
+  // the dialog closes (as What's New does).
+  const [from] = useState(() => document.activeElement);
+  useEffect(() => {
+    dialogRef.current?.focus();
+    return () => {
+      if (from instanceof HTMLElement && from.isConnected) from.focus();
+    };
+  }, [from]);
 
   const input = loaded.kind === 'ready' ? loaded.input : null;
   const plan = useMemo(() => {
@@ -175,6 +211,11 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
     return s.kind === 'ready' ? (s.list.prs.find((p) => p.url === task.reviewUrl) ?? null) : null;
   })();
   const moved = input !== null && listed !== null && listed.headOid !== '' && listed.headOid !== input.commitId;
+  // How it moved, from what the list and git already have: more commits on
+  // GitHub than here is "N new commits"; anything else is a rewrite.
+  const newCommits = moved && input.localCommits !== null ? listed.commitCount - input.localCommits : 0;
+  const movedWords =
+    newCommits > 0 ? `${plural(newCommits, 'new commit', 'new commits')} on GitHub` : 'The pull request has moved on GitHub';
 
   const lines = plan?.review?.comments.length ?? 0;
   const outside = plan?.outside.length ?? 0;
@@ -183,9 +224,10 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
   const nothing = plan !== null && plan.review === null && replies === 0;
 
   const send = async () => {
-    if (busyRef.current || !plan || !pr) return;
-    busyRef.current = true;
-    setBusy(true);
+    if (sending.has(task.id) || !plan || !pr) return;
+    const id = task.id;
+    sending.add(id);
+    notify();
     setOutcome(null);
     try {
       const out = await submitReview(pr, plan, submitIo(task));
@@ -194,19 +236,20 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
         void refreshThreads(task.reviewUrl!, pr, task.worktreePath, { force: true });
       }
       if (out.ok) {
-        summaries.delete(task.id);
-        onClose();
+        summaries.delete(id);
+        reviewPosted.delete(id);
+        clearRequest(id);
         return;
       }
       if (out.reviewSent && plan.review !== null) {
-        setReviewDone(true);
-        summaries.delete(task.id);
+        reviewPosted.add(id);
+        summaries.delete(id);
       }
       setOutcome(out);
       load();
     } finally {
-      busyRef.current = false;
-      setBusy(false);
+      sending.delete(id);
+      notify();
     }
   };
 
@@ -217,7 +260,7 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
       className="wt-overlay"
       role="presentation"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busyRef.current) onClose();
+        if (e.target === e.currentTarget && !sending.has(task.id)) onClose();
       }}
     >
       <div
@@ -225,6 +268,8 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
         role="dialog"
         aria-modal="true"
         aria-labelledby="submit-review-title"
+        ref={dialogRef}
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="wt-modal-head">
@@ -321,7 +366,7 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
 
           {moved && !reviewDone ? (
             <div className="wt-notice">
-              <strong>The pull request has moved on GitHub</strong> since this copy was checked out. Your comments go on{' '}
+              <strong>{movedWords}</strong> since this copy was checked out. Your comments go on{' '}
               {input!.commitId.slice(0, 7)}; GitHub marks any whose lines have changed since as outdated, as it does for anyone.
             </div>
           ) : null}

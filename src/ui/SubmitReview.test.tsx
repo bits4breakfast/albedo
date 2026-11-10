@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
   calls: [] as string[][],
   sent: [] as number[][],
   drafts: 0,
+  /** While set, gh waits for it. */
+  hold: null as Promise<void> | null,
 }));
 
 vi.mock('./reviewDrafts', async () => {
@@ -27,6 +29,7 @@ vi.mock('./reviewDrafts', async () => {
     submitIo: () => ({
       gh: async (args: string[]) => {
         state.calls.push(args);
+        if (state.hold) await state.hold;
         return state.results.shift() ?? { code: 0, stdout: '', stderr: '' };
       },
       writeInput: async () => '/home/me/.albedo/reviews/review-1.json',
@@ -41,6 +44,7 @@ vi.mock('../gh/reviewThreads', async () => {
 });
 
 const { ReviewBadge, requestSubmitReview, resetSubmitRequestForTests } = await import('./SubmitReview');
+const { setReviewFetcherForTests, refreshReviews } = await import('../gh/reviewStore');
 
 const TASK = {
   id: 1,
@@ -59,6 +63,7 @@ const INPUT: SubmitInput = {
   lost: 0,
   ranges: new Map([['src/a.ts', [[1, 10]]]]),
   commitId: 'abc1234def',
+  localCommits: 1,
 };
 
 afterEach(() => {
@@ -69,6 +74,7 @@ afterEach(() => {
   state.calls = [];
   state.sent = [];
   state.drafts = 0;
+  state.hold = null;
 });
 
 describe('the action', () => {
@@ -142,5 +148,73 @@ describe('the dialog', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(state.calls.filter((c) => c.some((a) => a.endsWith('/reviews')))).toHaveLength(1);
     expect(state.sent).toEqual([[1], [2]]);
+  });
+});
+
+describe('across a task switch', () => {
+  it('a send still going when you come back: Submit stays off, and the review is posted once', async () => {
+    state.input = INPUT;
+    let release = () => {};
+    state.hold = new Promise<void>((r) => (release = r));
+    const first = render(<ReviewBadge task={TASK} />);
+    requestSubmitReview(1);
+    const d = within(await screen.findByRole('dialog'));
+    await d.findByText('1 comment');
+    fireEvent.click(d.getByRole('button', { name: 'Submit Review' }));
+    await waitFor(() => expect(state.calls).toHaveLength(1));
+    // Another task selected: the badge and its dialog go.
+    first.unmount();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // Back: the dialog does not open on its own.
+    render(<ReviewBadge task={TASK} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // Opened again while the first send runs: it says so, and cannot send.
+    requestSubmitReview(1);
+    const again = within(await screen.findByRole('dialog'));
+    await again.findByText('1 comment');
+    const button = again.getByRole('button', { name: 'Sending…' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    release();
+    await waitFor(() => expect(state.sent).toEqual([[1], [2]]));
+    expect(state.calls.filter((c) => c.some((a) => a.endsWith('/reviews')))).toHaveLength(1);
+  });
+});
+
+describe('keys and focus', () => {
+  it('Escape closes the dialog and nothing behind it, and the keyboard goes back where it was', async () => {
+    state.input = INPUT;
+    const behind = vi.fn();
+    window.addEventListener('keydown', behind);
+    render(
+      <>
+        <button type="button">before</button>
+        <ReviewBadge task={TASK} />
+      </>,
+    );
+    const before = screen.getByRole('button', { name: 'before' });
+    before.focus();
+    requestSubmitReview(1);
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(behind).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(before);
+    window.removeEventListener('keydown', behind);
+  });
+});
+
+describe('a pull request that moved on GitHub', () => {
+  it('says how many new commits there are', async () => {
+    setReviewFetcherForTests(async () => ({
+      viewer: 'me',
+      prs: [{ url: TASK.reviewUrl!, headOid: 'ffff', commitCount: 3 } as never],
+    }));
+    await refreshReviews('/repo', { force: true });
+    state.input = INPUT;
+    render(<ReviewBadge task={TASK} />);
+    requestSubmitReview(1);
+    expect(await screen.findByText('2 new commits on GitHub')).toBeTruthy();
   });
 });

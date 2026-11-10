@@ -41,7 +41,9 @@ export function cardState(
   if (c.github === 'draft' && c.sentAt === null) {
     return {
       state: 'waiting',
-      chip: outside ? 'Draft · not in the diff: in the summary' : 'Draft · goes with Submit Review',
+      // ↑, as Push's count: it goes out to the remote. Where it goes is not
+      // carried by the words alone.
+      chip: outside ? '↑ Draft · not in the diff: in the summary' : '↑ Draft · goes with Submit Review',
       main: 'edit',
       more: ['delete'],
     };

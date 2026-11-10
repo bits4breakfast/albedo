@@ -234,6 +234,15 @@ describe('drafts for GitHub on a review task (#287, v15)', () => {
     expect(posted.resolvedAt).toBe(posted.sentAt);
   });
 
+  it('a message to Claude delivered late never marks a comment switched to GitHub since as sent', async () => {
+    const t = await task();
+    const id = await comment(t);
+    // Held in the outbox with this comment, then the comment became a draft.
+    await setCommentGithub(t, id, 'draft');
+    await markCommentsSent(t, [id]);
+    expect((await listGithubDrafts(t)).map((d) => d.id)).toEqual([id]);
+  });
+
   it('moves a comment between Ask Claude and Draft for GitHub, as unsent', async () => {
     const t = await task();
     const id = await comment(t);

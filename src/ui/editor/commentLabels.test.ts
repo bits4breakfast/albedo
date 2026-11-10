@@ -5,14 +5,14 @@ describe('a draft for GitHub (#287)', () => {
   it('says it goes with Submit Review, with Edit and only Delete behind ⋯', () => {
     expect(cardState({ sentAt: null, github: 'draft' })).toEqual({
       state: 'waiting',
-      chip: 'Draft · goes with Submit Review',
+      chip: '↑ Draft · goes with Submit Review',
       main: 'edit',
       more: ['delete'],
     });
   });
 
   it('says so when its lines are outside the diff', () => {
-    expect(cardState({ sentAt: null, github: 'draft' }, 0, true).chip).toBe('Draft · not in the diff: in the summary');
+    expect(cardState({ sentAt: null, github: 'draft' }, 0, true).chip).toBe('↑ Draft · not in the diff: in the summary');
   });
 
   it('leaves a comment for Claude exactly as before', () => {

@@ -13,9 +13,12 @@ import { listGithubDrafts, markDraftsPosted, moveComment, onCommentsChanged, rel
 import { parsePrUrl, type PrRef } from '../git/reviewCheckout';
 import { git, gitOk, taskBase } from '../git/worktree';
 import { gh } from '../gh/gh';
+import { getPrStatus } from '../gh/prStore';
+import { detectStackBase } from '../git/stackBase';
+import { measuredBase } from './mergeTarget';
 import { parseDiffRanges, type DiffRanges, type GithubDraft, type SubmitIo } from '../gh/reviewSubmit';
 
-export type ReviewTask = Pick<Task, 'id' | 'reviewUrl' | 'worktreePath' | 'baseBranch'>;
+export type ReviewTask = Pick<Task, 'id' | 'reviewUrl' | 'worktreePath' | 'baseBranch' | 'kind' | 'branch'>;
 
 /** The PR a review task is for; null for any other task. */
 export function reviewPr(task: Pick<Task, 'reviewUrl'> | null | undefined): PrRef | null {
@@ -27,15 +30,27 @@ export function reviewPr(task: Pick<Task, 'reviewUrl'> | null | undefined): PrRe
 // ---------------------------------------------------------------------------
 
 /**
- * The new-side ranges of `git diff -U3 -M <merge-base> HEAD`: the PR as
- * GitHub diffs it (three lines of context, renames found). Null when the
- * base cannot be found -- then nothing is judged outside the diff, and
- * GitHub has the last word.
+ * What a review task is measured against (#237): `measuredBase`'s order --
+ * the PR's base when gh has one, then a stack parent, then the stored base
+ * -- as the Guide and the Files pane measure it, so a card and the Guide
+ * never disagree about what is in the diff.
  */
-export async function prDiffRanges(worktreePath: string, baseBranch: string): Promise<DiffRanges | null> {
-  const base = await taskBase(worktreePath, baseBranch);
+export async function reviewBase(task: ReviewTask): Promise<string> {
+  const pr = getPrStatus(task.id) ?? null;
+  const stack = task.branch ? await detectStackBase(task.worktreePath, task.branch, task.baseBranch).catch(() => null) : null;
+  return measuredBase({ kind: task.kind, branch: task.branch, baseBranch: task.baseBranch }, pr, stack);
+}
+
+/**
+ * The new-side ranges of `git diff -U3 -M <merge-base> HEAD`: the PR as
+ * GitHub diffs it (three lines of context, renames found), against
+ * {@link reviewBase}. Null when the base cannot be found -- then nothing is
+ * judged outside the diff, and GitHub has the last word.
+ */
+export async function prDiffRanges(task: ReviewTask): Promise<DiffRanges | null> {
+  const base = await taskBase(task.worktreePath, await reviewBase(task));
   if (!base) return null;
-  const r = await git(['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-U3', '-M', base, 'HEAD'], worktreePath);
+  const r = await git(['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-U3', '-M', base, 'HEAD'], task.worktreePath);
   return r.code === 0 ? parseDiffRanges(r.stdout) : null;
 }
 
@@ -43,11 +58,15 @@ export async function prDiffRanges(worktreePath: string, baseBranch: string): Pr
 const RANGES_TTL_MS = 30_000;
 const rangesCache = new Map<string, { at: number; p: Promise<DiffRanges | null> }>();
 
-function cachedRanges(worktreePath: string, baseBranch: string): Promise<DiffRanges | null> {
-  const key = `${worktreePath}\n${baseBranch}`;
+function rangesKey(task: ReviewTask): string {
+  return `${task.id}\n${task.worktreePath}\n${task.baseBranch}`;
+}
+
+function cachedRanges(task: ReviewTask): Promise<DiffRanges | null> {
+  const key = rangesKey(task);
   const hit = rangesCache.get(key);
   if (hit && Date.now() - hit.at < RANGES_TTL_MS) return hit.p;
-  const p = prDiffRanges(worktreePath, baseBranch).catch(() => null);
+  const p = prDiffRanges(task).catch(() => null);
   rangesCache.set(key, { at: Date.now(), p });
   return p;
 }
@@ -60,20 +79,22 @@ export function clearRangesCacheForTests(): void {
 /** The PR's diff ranges for a review task's cards; null elsewhere, or until known. */
 export function usePrRanges(task: ReviewTask | null | undefined): DiffRanges | null {
   const review = !!task?.reviewUrl;
-  const wt = task?.worktreePath ?? '';
-  const base = task?.baseBranch ?? '';
+  const key = task ? rangesKey(task) : '';
   const [ranges, setRanges] = useState<{ key: string; value: DiffRanges | null } | null>(null);
-  const key = `${wt}\n${base}`;
   useEffect(() => {
-    if (!review || !wt) return;
+    if (!review || !task?.worktreePath) return;
     let live = true;
-    void cachedRanges(wt, base).then((value) => {
+    void cachedRanges(task).then((value) => {
       if (live) setRanges({ key, value });
     });
     return () => {
       live = false;
     };
-  }, [review, wt, base, key]);
+    // The key carries everything the diff reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [review, key]);
+  // Null until known, and null when unknown: either way nothing is judged
+  // outside the diff, as the dialog does.
   return review && ranges?.key === key ? ranges.value : null;
 }
 
@@ -109,6 +130,14 @@ export function useGithubDrafts(task: Pick<Task, 'id' | 'reviewUrl'> | null | un
 
 const NONE: readonly ReviewComment[] = [];
 
+async function localCommitCount(task: ReviewTask): Promise<number | null> {
+  const base = await taskBase(task.worktreePath, await reviewBase(task)).catch(() => null);
+  if (!base) return null;
+  const r = await git(['rev-list', '--count', `${base}..HEAD`], task.worktreePath);
+  const n = Number(r.stdout.trim());
+  return r.code === 0 && Number.isInteger(n) ? n : null;
+}
+
 /** A file at HEAD, or null when HEAD has no such file. */
 async function fileAtHead(worktreePath: string, path: string): Promise<string | null> {
   const r = await git(['show', `HEAD:${path}`], worktreePath);
@@ -119,8 +148,11 @@ export interface SubmitInput {
   drafts: GithubDraft[];
   /** Line drafts whose code is no longer at HEAD: sent in the summary, at their last line. */
   lost: number;
-  ranges: DiffRanges;
+  /** Null: the base could not be found, so nothing is judged outside the diff (GitHub decides). */
+  ranges: DiffRanges | null;
   commitId: string;
+  /** Commits on this copy ahead of its base, for "N new commits" when GitHub has more; null when unknown. */
+  localCommits: number | null;
 }
 
 /**
@@ -131,7 +163,7 @@ export interface SubmitInput {
 export async function prepareSubmit(task: ReviewTask): Promise<SubmitInput> {
   const rows = await listGithubDrafts(task.id);
   const commitId = (await gitOk(['rev-parse', 'HEAD'], task.worktreePath)).trim();
-  const ranges = (await prDiffRanges(task.worktreePath, task.baseBranch)) ?? new Map();
+  const ranges = await prDiffRanges(task);
   const texts = new Map<string, string | null>();
   let lost = 0;
   const drafts: GithubDraft[] = [];
@@ -156,7 +188,7 @@ export async function prepareSubmit(task: ReviewTask): Promise<SubmitInput> {
     }
     drafts.push(d);
   }
-  return { drafts, lost, ranges, commitId };
+  return { drafts, lost, ranges, commitId, localCommits: await localCommitCount(task) };
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +208,9 @@ export function submitIo(task: ReviewTask): SubmitIo {
       const dir = await reviewsDir();
       await mkdir(dir, { recursive: true });
       const path = `${dir}/review-${task.id}.json`;
-      await writeTextFile(path, json);
+      // Yours alone: 0600 when the file is made (mode applies on creation;
+      // the file is emptied after each request, never deleted).
+      await writeTextFile(path, json, { mode: 0o600 });
       return path;
     },
     clearInput: async (path) => {
