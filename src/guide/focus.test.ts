@@ -165,3 +165,20 @@ describe('the starting set covers tests in other languages (#310)', () => {
     expect(aside('tests/migrations/0001_init.sql')).toBe(false);
   });
 });
+
+describe('the starting set covers stylesheets and PHPUnit files (#325)', () => {
+  const aside = (path: string) => isSetAside(DEFAULT_FOCUS, path);
+  it('sets aside every common stylesheet syntax', () => {
+    for (const p of ['web/app.css', 'src/a.scss', 'src/b.sass', 'src/c.less', 'src/d.styl', 'src/e.pcss']) expect(aside(p)).toBe(true);
+    expect(aside('src/style.ts')).toBe(false);
+  });
+  it('sets aside PHPUnit tests in tests/ or Tests/, and its config', () => {
+    expect(aside('tests/Unit/Billing/InvoiceTest.php')).toBe(true);
+    expect(aside('src/Bundle/Tests/Controller/HomeControllerTest.php')).toBe(true);
+    expect(aside('src/Bundle/Tests/Fixtures/orders.yaml')).toBe(true);
+    expect(aside('phpunit.xml.dist')).toBe(true);
+    expect(aside('phpunit.xml')).toBe(true);
+    expect(aside('.phpunit.result.cache')).toBe(true);
+    expect(aside('src/Billing/Invoice.php')).toBe(false);
+  });
+});

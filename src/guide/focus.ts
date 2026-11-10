@@ -42,11 +42,17 @@ export const DEFAULT_SET_ASIDE: readonly string[] = [
   'test_*.py',
   '*_test.py',
   '**/tests/**',
+  '**/Tests/**',
   '**/test/**',
   '**/spec/**',
+  // PHPUnit's own files (#325): its config and result cache.
+  'phpunit.xml',
+  'phpunit.xml.dist',
+  '.phpunit.result.cache',
   '**/__snapshots__/**',
   '*.snap',
-  '*.{css,scss,less}',
+  // Stylesheets, in every common syntax (#325).
+  '*.{css,scss,sass,less,styl,pcss}',
   '*.lock',
   'package-lock.json',
   'pnpm-lock.yaml',

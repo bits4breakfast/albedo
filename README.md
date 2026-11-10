@@ -412,8 +412,8 @@ once on Haiku, with no tools (see "Good to know").
   offers **Rewrite**. New changes it does not know yet are under Unsorted.
 - **Set aside** and **review carefully**: the Write Guide screen has two
   pattern lists, prefilled from the project. Files matching **Set Aside**
-  (to start with: tests in JS/TS, PHP, Go, Python, Ruby and Java, styles,
-  lockfiles, snapshots, generated files) go in
+  (to start with: tests in JS/TS, PHP, Go, Python, Ruby and Java, PHPUnit's
+  config, stylesheets in any syntax, lockfiles, snapshots, generated files) go in
   a group of their own, listed last and never hidden; they are not sent to
   Claude and not in the guide's count. Files matching **Review Carefully**
   (migrations, schema, auth, CI and build config, dependency manifests) are
