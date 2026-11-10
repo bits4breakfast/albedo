@@ -1,13 +1,16 @@
 /**
  * What sessions asked for through Albedo's MCP server (#157), waiting on the
- * user: the "Requests" button in the header and its list.
+ * user: a request for a new session in the task list's Proposed group
+ * (#332, ProposedGroup.tsx), the rest behind the "Requests" button in the
+ * header.
  *
  * Each request arrives once from the inbox (capture/inbox.ts) and stays here
  * until the user acts on it:
  *
- *   - `request_session`: Approve opens New Task filled in from the request;
- *     the request leaves the queue only once that task is created. Deny drops
- *     it. Nothing starts without the click -- the queue never creates a task.
+ *   - `request_session`: a row in the Proposed group. Approve… opens New Task
+ *     filled in from the request; the request leaves the queue only once that
+ *     task is created. Deny drops it. Nothing starts without the click -- the
+ *     queue never creates a task.
  *   - `create_reminder`: set at once by {@link handleCreateReminder}, as a
  *     reminder on the asking task (#156); it never waits here. Only one Albedo
  *     could not set -- its task gone, say -- is kept, saying so, until dismissed.

@@ -57,7 +57,7 @@ import {
   writeStateOf,
   type WriteState,
 } from './store';
-import { Diff, DiffAnnotationsContext, layoutToggleLabel, useDiffLayout } from '../ui/transcript/Diff';
+import { Diff, DiffAnnotationsContext, isOneSided, layoutToggleLabel, useDiffLayout } from '../ui/transcript/Diff';
 import { useDiffComments } from '../ui/editor/diffComments';
 import { useOpenFile } from '../ui/editor/openFile';
 import { relativeTime } from '../ui/TaskList';
@@ -1100,6 +1100,9 @@ function GuideFileDiff({
   // diff's own header uses, measured on the scroll it is drawn in.
   const layout = useDiffLayout();
   const hasLines = shown !== null && shown.hunks.length > 0;
+  // A new or deleted file is one column, whatever the toggle says (#337): judged
+  // on the whole file, so one group's slice of an edit is never mistaken for it.
+  const oneSided = useMemo(() => (result?.kind === 'diff' ? isOneSided(result.diff) : false), [result]);
 
   return (
     <div className="gd-diff">
@@ -1113,7 +1116,7 @@ function GuideFileDiff({
             layout toggle sat by the size, so a short path left a gap between
             it and Open that read as two unrelated groups. */}
         <span className="gd-diff-gap" />
-        {hasLines ? (
+        {hasLines && !oneSided ? (
           <button
             type="button"
             className="gd-link gd-diff-layout"
@@ -1189,7 +1192,7 @@ function GuideFileDiff({
               <Diff
                 key={`${file.path}:${whole}`}
                 diff={shown}
-                layout={layout.resolved}
+                layout={oneSided ? 'unified' : layout.resolved}
                 head={false}
                 expand={{ oldText: result.oldText, newText: result.newText }}
                 absoluteLines={result.change !== 'deleted'}

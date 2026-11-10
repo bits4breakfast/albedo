@@ -11,6 +11,7 @@ import useTaskTabs from './ui/app/useTaskTabs';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
 import useSessionRequests from './ui/app/useSessionRequests';
+import { proposalsInScope } from './ui/proposals';
 import { resolveRequest } from './ui/requestQueue';
 import useProjectTabs from './ui/app/useProjectTabs';
 import useSelection from './ui/app/useSelection';
@@ -729,6 +730,12 @@ export default function App() {
       setNewTaskOpen(true);
     },
   });
+  // Requests for a new session, as the list's Proposed group (#332): scoped
+  // to the active project tab the way its tasks are, newest first.
+  const proposals = useMemo(
+    () => proposalsInScope(requests.items, activeProjectTab, tasks, projects),
+    [requests.items, activeProjectTab, tasks, projects],
+  );
 
   // File-open entry point handed to every renderer via context. Reads the
   // selection through a ref so the context value stays referentially stable --
@@ -1270,7 +1277,7 @@ export default function App() {
         onShortcuts={() => setShortcutsOpen(true)}
         onWhatsNew={whatsNew.available ? whatsNew.reopen : undefined}
         blockedCount={tasks.filter((t) => t.status === 'blocked').length}
-        requests={requests}
+        requests={requests.button}
         theme={themeChoice}
         onThemeChange={setThemeChoice}
         ciNotify={ciNotify}
@@ -1394,6 +1401,10 @@ export default function App() {
             attention={attention}
             projects={projects}
             activeProject={activeProject}
+            proposals={proposals}
+            titleOf={(id) => tasks.find((t) => t.id === id)?.title ?? null}
+            onApproveProposal={requests.approve}
+            onDenyProposal={requests.deny}
             emptyBrief={!selected}
             collapsed={taskListCollapsed}
             onCollapsedChange={setTaskListCollapsed}

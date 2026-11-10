@@ -14,6 +14,10 @@ import './taskrail.css';
  * whose groups share a colour; their popover lists the tasks under the two
  * groups' names.
  *
+ * Proposed tasks (#332) have a dashed circle of their own above the rest,
+ * counting what waits on approval; it has no popover, and a click expands
+ * the list, where their rows and buttons are.
+ *
  * Presentation only. The groups, their order and their rows are the list's
  * (TaskList.tsx hands them over as they are drawn there), so the rail can
  * never disagree with the list it stands in for, and the list's shortcuts
@@ -137,7 +141,22 @@ export interface TaskRailProps {
   onNew: () => void;
   onExpand: () => void;
   row: (task: Task, group: GroupKey) => RailRow;
+  /**
+   * Proposed tasks waiting on approval (#332), drawn as a dashed circle above
+   * the others; 0 or absent, no circle. Not a task group: it has no popover,
+   * and a click calls `onProposed`, which expands the list to them.
+   */
+  proposed?: number;
+  onProposed?: () => void;
 }
+
+/** The Proposed circle's name: "Proposed, 2 new tasks to approve". */
+export function proposedLabel(count: number): string {
+  return `Proposed, ${count} new task${count === 1 ? '' : 's'} to approve`;
+}
+
+/** Its key among the circles' refs; not a group key. */
+const PROPOSED = 'proposed';
 
 const POP_GAP = 6;
 const EDGE = 8;
@@ -149,7 +168,16 @@ interface Circle {
   count: number;
 }
 
-export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpand, row }: TaskRailProps) {
+export default function TaskRail({
+  sections,
+  selectedId,
+  onSelect,
+  onNew,
+  onExpand,
+  row,
+  proposed = 0,
+  onProposed,
+}: TaskRailProps) {
   const counts: Partial<Record<GroupKey, number>> = Object.fromEntries(sections.map((g) => [g.key, g.tasks.length]));
   const circles: Circle[] = RAIL_CIRCLES.flatMap((circle) => {
     const parts = circle.groups.flatMap((key) => {
@@ -273,8 +301,8 @@ export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpa
   const onRailKey = (e: ReactKeyboardEvent<HTMLElement>) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-    const buttons = circles
-      .map((c) => circleRefs.current.get(c.circle.key))
+    const buttons = [PROPOSED, ...circles.map((c) => c.circle.key)]
+      .map((key) => circleRefs.current.get(key))
       .filter((c): c is HTMLButtonElement => !!c);
     const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (i === -1) return;
@@ -307,6 +335,23 @@ export default function TaskRail({ sections, selectedId, onSelect, onNew, onExpa
         <ChevronGlyph dir="right" />
       </button>
       <span className="task-rail-sep" aria-hidden="true" />
+      {proposed > 0 && (
+        <button
+          ref={(el) => {
+            if (el) circleRefs.current.set(PROPOSED, el);
+            else circleRefs.current.delete(PROPOSED);
+          }}
+          type="button"
+          className="rail-circle"
+          data-group={PROPOSED}
+          data-hue={PROPOSED}
+          aria-label={proposedLabel(proposed)}
+          title={`${proposedLabel(proposed)}. Expands the task list to them.`}
+          onClick={() => (onProposed ?? onExpand)()}
+        >
+          {proposed}
+        </button>
+      )}
       {circles.map(({ circle, count }, i) => (
         <button
           key={circle.key}

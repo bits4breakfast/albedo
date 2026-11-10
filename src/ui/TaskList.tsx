@@ -44,6 +44,8 @@ import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
 import GroupPie from './GroupPie';
 import { API_ERROR_LABEL, TryAgainButton } from './TryAgain';
 import ReviewList from './ReviewList';
+import ProposedGroup from './ProposedGroup';
+import type { SessionRequest } from './requestQueue';
 import { useReviewStarts } from './reviewStarts';
 import { PlusIcon, RefreshIcon } from './icons';
 import { KEYS, oneOfCodec, usePersisted } from './persisted';
@@ -136,7 +138,22 @@ export interface TaskListProps {
    * that exist, but cannot open new ones.
    */
   onReviewOpened?: (task: Task) => void;
+  /**
+   * New tasks sessions asked for (#332), newest first and already scoped to
+   * the active project: the Proposed group at the top of Building, and a
+   * dashed circle on the rail. Not tasks: never selected, never in ↑/↓ or
+   * ⌘1–9. Absent or empty, no group.
+   */
+  proposals?: readonly SessionRequest[];
+  /** The requesting task's title, for a proposal's "from …". */
+  titleOf?: (taskId: number) => string | null;
+  /** Approve…: New Task opens filled in from the request. */
+  onApproveProposal?: (req: SessionRequest) => void;
+  /** Deny: the request leaves the queue. */
+  onDenyProposal?: (id: string) => void;
 }
+
+const NO_PROPOSALS: readonly SessionRequest[] = [];
 
 /** Row context menu. Destructive actions live here, never on the row itself. */
 interface RowMenu {
@@ -189,11 +206,17 @@ export default function TaskList({
   collapsed = false,
   onCollapsedChange,
   onReviewOpened,
+  proposals = NO_PROPOSALS,
+  titleOf,
+  onApproveProposal,
+  onDenyProposal,
 }: TaskListProps) {
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<RowMenu | null>(null);
   /** The row whose title is being edited in place (#152). */
   const [renamingId, setRenamingId] = useState<number | null>(null);
+  /** The list root itself has focus (not a row, a field or a button in it): see `data-focus-stop`. */
+  const [rootFocused, setRootFocused] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /*
    * Review tasks (#287) live in the Reviewing tab, beside the PR they are
@@ -593,6 +616,12 @@ export default function TaskList({
         onNew={onNew}
         onExpand={() => toggleHere(false)}
         row={railRow}
+        proposed={proposals.length}
+        onProposed={() => {
+          // Where the Proposed group is.
+          setTab('building');
+          toggleHere(false);
+        }}
       />
     );
   }
@@ -607,6 +636,17 @@ export default function TaskList({
       role={tab === 'building' ? 'listbox' : undefined}
       aria-label={tab === 'building' ? 'Tasks' : undefined}
       data-focus-area="tasks"
+      /* With proposals showing (#332), Tab from the list itself walks into
+         their buttons before it leaves for the next area (focusAreas.ts).
+         Only while the list root has focus: a stop's descendants count as
+         the stop, so a stop held any longer would send Tab from the rename
+         field, the head's buttons or a row to the proposals instead of on
+         to the next area. Without proposals, nothing changes. */
+      data-focus-stop={tab === 'building' && proposals.length > 0 && rootFocused ? '' : undefined}
+      onFocus={(e) => setRootFocused(e.target === e.currentTarget)}
+      onBlur={(e) => {
+        if (e.target === e.currentTarget) setRootFocused(false);
+      }}
     >
       <div className="tasklist-head">
         {/* Two tabs (#287): your tasks, and PRs asked of you for review. The
@@ -689,6 +729,15 @@ export default function TaskList({
         </div>
       ) : (
       <div className="tasklist-scroll" ref={scrollRef}>
+        {/* Above Needs You (#332): what sessions propose waits on you
+            before anything else can. Not tasks, so not options. */}
+        <ProposedGroup
+          proposals={proposals}
+          titleOf={titleOf ?? (() => null)}
+          age={(ts) => relativeTime(ts, now)}
+          onApprove={(req) => onApproveProposal?.(req)}
+          onDeny={(id) => onDenyProposal?.(id)}
+        />
         {ordered.length === 0 && (
           <EmptyState
             projectCount={projects?.length ?? 0}

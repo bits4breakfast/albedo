@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeMenu } from './menuPlacement';
+import { placeBeside, placeMenu } from './menuPlacement';
 
 const view = { width: 1200, height: 800 };
 const menu = { width: 340, height: 420 };
@@ -40,5 +40,41 @@ describe('placeMenu (#285)', () => {
       expect(p.left + menu.width).toBeLessThanOrEqual(view.width - 8);
       expect(p.top + menu.height).toBeLessThanOrEqual(view.height - 8);
     }
+  });
+});
+
+describe('placeBeside (#332)', () => {
+  const pop = { width: 360, height: 240 };
+  // A row of the task list: 300px wide sidebar, 48px tall.
+  const row = (top: number) => ({ top, bottom: top + 48, right: 300 });
+
+  it('opens to the right of the row, its arrow level with the row', () => {
+    const p = placeBeside(row(100), pop, view);
+    expect(p).toEqual({ left: 310, top: 104, arrowY: 20 });
+    expect(p.top + p.arrowY).toBe(124); // the row's centre
+  });
+
+  it('flips upward near the bottom, the arrow still on the row', () => {
+    const p = placeBeside(row(700), pop, view);
+    expect(p.top + pop.height).toBeLessThanOrEqual(view.height - 8);
+    expect(p.top + p.arrowY).toBe(724);
+    expect(p.arrowY).toBe(pop.height - 20);
+  });
+
+  it('keeps the arrow off the corners when pushed inside the window', () => {
+    const p = placeBeside({ top: 0, bottom: 10, right: 300 }, pop, view);
+    expect(p.top).toBe(8);
+    expect(p.arrowY).toBe(12);
+  });
+
+  it('caps a popover taller than the window', () => {
+    const p = placeBeside(row(100), { width: 360, height: 900 }, view);
+    expect(p.maxHeight).toBe(784);
+    expect(p.top).toBe(8);
+  });
+
+  it('stays inside a narrow window', () => {
+    const p = placeBeside(row(100), pop, { width: 500, height: 800 });
+    expect(p.left + pop.width).toBeLessThanOrEqual(492);
   });
 });
