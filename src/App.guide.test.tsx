@@ -2,9 +2,9 @@
  * @vitest-environment jsdom
  *
  * The Review Guide's way in, in the real shell (#186): App.tsx rendered whole
- * (harness as in App.projectView.test.tsx), the task's ⋯ menu and the Files
- * pane's button opening a Guide tab in the reading pane, and its ✕ closing
- * it. The pane itself is GuidePane.test.tsx's.
+ * (harness as in App.projectView.test.tsx), its tab and the task's ⋯ menu
+ * opening it (the Files pane's button is gone, #335). The pane itself is
+ * GuidePane.test.tsx's.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +12,6 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 
 import type { Project, Task } from './types';
 
-const requestGuideRef = vi.hoisted(() => ({ current: null as ((id: number) => void) | null }));
 const h = vi.hoisted(() => ({
   tasks: [] as Task[],
   projects: [] as Project[],
@@ -104,12 +103,7 @@ vi.mock('./ui/openReview', async (orig) => ({
 }));
 vi.mock('./ui/TouchedFiles', async (orig) => ({
   ...(await orig<typeof import('./ui/TouchedFiles')>()),
-  // The Files pane's Guide button, as GitBar wires it.
-  default: ({ task }: { task: Task }) => (
-    <button type="button" onClick={() => requestGuideRef.current?.(task.id)}>
-      Files Guide
-    </button>
-  ),
+  default: () => <div data-testid="files" />,
 }));
 vi.mock('./git/branchSync', async (orig) => ({
   ...(await orig<typeof import('./git/branchSync')>()),
@@ -145,7 +139,6 @@ const { KEYS } = await import('./ui/persisted');
 const { default: App } = await import('./App');
 const { requestGuide } = await import('./guide/openGuide');
 const reviewStore = await import('./gh/reviewStore');
-requestGuideRef.current = (id) => void requestGuide(id);
 
 function project(id: number, name: string): Project {
   return {
@@ -244,17 +237,6 @@ describe('opening the Review Guide', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
     await settle();
     expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('false');
-  });
-
-  it('from the Files pane’s button', async () => {
-    store.set(KEYS.activeProject, 'p1');
-    store.set(KEYS.selectedTask, '10');
-    render(<App />);
-    await settle();
-    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Files Guide' }));
-    await settle();
-    expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('true');
   });
 });
 
