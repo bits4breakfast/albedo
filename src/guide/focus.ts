@@ -35,6 +35,15 @@ export const DEFAULT_SET_ASIDE: readonly string[] = [
   '**/*.test.*',
   '**/*.spec.*',
   '**/__tests__/**',
+  // Other languages' test conventions (#310): PHPUnit, Go, pytest, and the
+  // test folders of PHP, Ruby, Java and Rust projects.
+  '*Test.php',
+  '*_test.go',
+  'test_*.py',
+  '*_test.py',
+  '**/tests/**',
+  '**/test/**',
+  '**/spec/**',
   '**/__snapshots__/**',
   '*.snap',
   '*.{css,scss,less}',
