@@ -393,8 +393,9 @@
 .gd-diff-head > * { flex: none; white-space: nowrap; }
 .gd-diff-name { color: var(--text-strong); font-weight: 600; }
 .gd-diff-head > .gd-diff-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); }
-/* The size, then the layout toggle beside it (#264); Open and Reviewed sit
-   right, past the gap. */
+/* The size and comment count follow the path; past the gap, everything that
+   acts on the file sits together at the right: the layout toggle, Whole File,
+   Open, Reviewed (#320; the toggle sat by the size before). */
 .gd-diff-head > .gd-diff-gap { flex: 1 1 0; }
 .gd-diff-check { margin-left: 4px; }
 /* Why the file changes in this group (#264): a note under the header, in
