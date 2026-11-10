@@ -833,6 +833,24 @@ describe('the Map (#288)', () => {
     expect(await screen.findByRole('heading', { name: 'Wiring' })).toBeTruthy();
   });
 
+  it('hovering or focusing a group in the key rings its boxes, and only those (#308)', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    const wiring = await mapKey().findByRole('button', { name: /Wiring/ });
+    const box = (name: RegExp) => map().getByRole('button', { name });
+    fireEvent.mouseEnter(wiring);
+    expect(box(/^src\/a\.ts;/).hasAttribute('data-group-hot')).toBe(true);
+    expect(box(/^src\/b\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+    expect(box(/^src\/c\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+    fireEvent.mouseLeave(wiring);
+    expect(box(/^src\/a\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+    // Focus does the same, for the keyboard.
+    fireEvent.focus(mapKey().getByRole('button', { name: /Foundations/ }));
+    expect(box(/^src\/a\.ts;/).hasAttribute('data-group-hot')).toBe(true);
+    expect(box(/^src\/b\.ts;/).hasAttribute('data-group-hot')).toBe(true);
+    expect(box(/^src\/c\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+  });
+
   it('the file open in Read is the current box', async () => {
     await written();
     fireEvent.click(screen.getByRole('button', { name: 'Map' }));
