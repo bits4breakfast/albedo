@@ -2191,3 +2191,23 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* An API error Claude Code wrote into the session (#338): its own tinted box,
+   so it reads as an error and not as Claude's reply. Opaque --danger-soft
+   with a --danger edge; the text tiers on it are measured in the token block
+   (light | dark): --text 14.53 | 13.51, --danger 6.11 | 7.73, and a disabled
+   Try Again's --faint 5.20 | 5.56. */
+.tx-api-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.tx-api-error-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.tx-api-error-head { color: var(--danger); font-weight: 600; }
+.tx-api-error > .try-again { flex: 0 0 auto; }

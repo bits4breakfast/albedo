@@ -121,6 +121,8 @@ const task = (): Task => ({
   worktreePath: root, sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
 });
 
 /** Open `path`, put the cursor inside `name` on its declaration, and press ⌥⌘B. */

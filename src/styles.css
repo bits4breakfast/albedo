@@ -176,11 +176,24 @@
   --status-done-fill: #5e6ad2;
   --status-done-edge: #5e6ad2;       /* 4.58 | 4.17 | 3.63 | 3.99 | 3.78: the fill clears on its own */
   --status-done-ink: #ffffff;        /* 4.70 */
+  /* Stopped on an Error (#338): an empty ring, not a filled circle, in the
+     --danger red -- next to Needs You's orange-red a red fill read as the
+     same circle, so the shape carries it as the group's pie does. The fill
+     is the rail's own ground (--panel-chrome); edge and count are --danger.
+     -edge 6.98 | 6.34 | 5.53 | 6.07 | 5.75 on --panel | --panel-chrome |
+     --row-selected | --panel-hover | --panel-raised; -ink 6.34 on the fill. */
+  --status-errored-fill: #f1f1f3;
+  --status-errored-edge: #a8241d;
+  --status-errored-ink: #a8241d;
   /* Channels of --status-blocked-edge, for the Needs You dot's ping (alpha
      off one hue; carries no text). */
   --status-blocked-rgb: 194 80 31;
   --warn: #744903;             /* 6.26 | 6.90 on --banner-bg, 7.24 on --prompt-bg */
   --danger: #a8241d;           /* 5.75 */
+  /* A transcript line that is an API error (#338): opaque, the same tint as
+     --del-soft, and measured on it: --danger 6.11, --text 14.53, --muted
+     6.26, --faint 5.20 (a disabled button's label). */
+  --danger-soft: #fbe9e8;
   /* Channels, for the editor's search veil, which varies alpha off one hue.
      It carries no text. (The Needs You ping has --status-blocked-rgb.) */
   --warn-rgb: 116 73 3;
@@ -399,9 +412,16 @@
     --status-done-fill: #a5b4fc;
     --status-done-edge: #a5b4fc;       /* 9.24 | 8.72 | 7.12 | 8.25 | 7.76 */
     --status-done-ink: #131417;        /* 9.24 */
+    /* Stopped on an Error: the empty ring, see light. -edge 8.37 | 7.91 |
+       6.46 | 7.48 | 7.03; -ink 7.91 on the fill (--panel-chrome). */
+    --status-errored-fill: #191a1e;
+    --status-errored-edge: #ff8f8a;
+    --status-errored-ink: #ff8f8a;
     --status-blocked-rgb: 251 138 92;
     --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
     --danger: #ff8f8a;           /* 7.03 */
+    /* --danger 7.73, --text 13.51, --muted 7.15, --faint 5.56 on it. */
+    --danger-soft: #2a1719;
     --warn-rgb: 242 179 91;
 
     /* --- derived surfaces + marks (dark) --- */
@@ -547,9 +567,16 @@
   --status-done-fill: #a5b4fc;
   --status-done-edge: #a5b4fc;       /* 9.24 | 8.72 | 7.12 | 8.25 | 7.76 */
   --status-done-ink: #131417;        /* 9.24 */
+  /* Stopped on an Error: the empty ring, see light. -edge 8.37 | 7.91 |
+     6.46 | 7.48 | 7.03; -ink 7.91 on the fill (--panel-chrome). */
+  --status-errored-fill: #191a1e;
+  --status-errored-edge: #ff8f8a;
+  --status-errored-ink: #ff8f8a;
   --status-blocked-rgb: 251 138 92;
   --warn: #f2b35b;             /* 8.38 | 8.51 on --banner-bg, 9.21 on --prompt-bg */
   --danger: #ff8f8a;           /* 7.03 */
+  /* --danger 7.73, --text 13.51, --muted 7.15, --faint 5.56 on it. */
+  --danger-soft: #2a1719;
   --warn-rgb: 242 179 91;
 
   /* --- derived surfaces + marks (dark) --- */
@@ -724,6 +751,13 @@ button {
 
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
 .btn-ghost:hover { background: var(--panel-hover); color: var(--text); border-color: transparent; }
+
+/* Try Again (#338), on a task row and on a transcript's API error line: a
+   compact .btn, so it fits a list row without making it a toolbar. Its label
+   is --text on --panel (16.60 | 14.63); disabled, --faint on whatever is
+   behind it: 4.59 at worst light (--panel-active), 5.20 | 5.56 on
+   --danger-soft. */
+.btn.try-again { height: 22px; padding: 0 8px; font-size: var(--fs-xs); }
 
 /* Last, so a disabled primary or a hovered disabled button reads disabled. */
 .btn[disabled],

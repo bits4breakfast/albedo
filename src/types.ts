@@ -111,6 +111,21 @@ export type TaskStatus = 'idle' | 'running' | 'blocked' | 'done' | 'archived';
  */
 export type TaskKind = 'work' | 'chat';
 
+/**
+ * Which API error a session's last turn stopped on (migration v16, #338),
+ * sorted from what Claude Code records on the error line
+ * (`capture/adapter.ts` `apiErrorOf` is the only code that reads it):
+ *
+ *  - `stopped`      the response stopped arriving (a stream idle timeout)
+ *  - `slept`        the computer went to sleep mid-response
+ *  - `offline`      the API server could not be reached
+ *  - `overloaded`   the API was overloaded
+ *  - `rate-limited` a rate or usage limit was hit
+ *  - `signed-out`   the login expired or failed
+ *  - `other`        anything else, and any value this build does not know
+ */
+export type ApiErrorKind = 'stopped' | 'slept' | 'offline' | 'overloaded' | 'rate-limited' | 'signed-out' | 'other';
+
 export interface Task {
   id: number;
   title: string;
@@ -176,9 +191,28 @@ export interface Task {
    * by this, never by the branch. Null: your own task.
    */
   reviewUrl: string | null;
+  /**
+   * The session's last main-thread turn stopped on an API error (migration
+   * v16, #338): which kind, or null when it did not. Derived from the
+   * transcript like `status` (`capture/status.ts` `lastApiError`), and kept
+   * only while the task is idle: a new prompt, from anywhere, clears it, and
+   * so do Mark as Done and Archive. Puts the task in Stopped on an Error.
+   */
+  apiError: ApiErrorKind | null;
+  /**
+   * Claude Code's own text for that error ("API Error: The response stopped
+   * arriving. …"), shown in the row's tooltip. Null exactly when `apiError` is.
+   * Two flat fields, not one object: a Task is compared field by field on
+   * every reload (useTasks `shallowEqual`), and an object read fresh each time
+   * would make the row look changed on every transcript append.
+   */
+  apiErrorText: string | null;
 }
 
-export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt' | 'summary' | 'reviewUrl'> & {
+export type NewTask = Omit<
+  Task,
+  'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt' | 'summary' | 'reviewUrl' | 'apiError' | 'apiErrorText'
+> & {
   /** Set only by opening a pull request for review (#287); absent is your own task. */
   reviewUrl?: string | null;
 };

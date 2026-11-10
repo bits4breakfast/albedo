@@ -48,6 +48,8 @@ function task(id: number, projectId: number, over: Partial<Task> = {}): Task {
     seenAt: null,
     summary: null,
     reviewUrl: null,
+    apiError: null,
+    apiErrorText: null,
     ...over,
   };
 }

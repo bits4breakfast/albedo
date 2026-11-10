@@ -18,7 +18,7 @@
  *    into several rows without renumbering anything that came before.
  */
 
-import type { Message, MessageRole, ParsedMessage } from '../types';
+import type { ApiErrorKind, Message, MessageRole, ParsedMessage } from '../types';
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -391,6 +391,64 @@ export const TURN_ENDING_STOP_REASONS: ReadonlySet<string> = new Set([
   'end_turn',
   'stop_sequence',
 ]);
+
+/** An API error line, as {@link apiErrorOf} reads it. */
+export interface ApiErrorLine {
+  kind: ApiErrorKind;
+  /** Claude Code's own text ("API Error: The response stopped arriving. …"). */
+  text: string;
+}
+
+/**
+ * The API error an assistant line records, or null for any other line (#338).
+ *
+ * Claude Code writes a failed request into the transcript as an assistant
+ * line of its own: `isApiErrorMessage: true`, model `<synthetic>`, one text
+ * block with what it shows in the terminal, `error` (the class:
+ * `server_error`, `rate_limit`, `authentication_failed`, `invalid_request`,
+ * …) and, on newer builds, `apiError` (the cause: `stream_idle_timeout`,
+ * `computer_slept`, `connection_failed`). Measured across this machine's
+ * transcripts (2.1.30x-2.1.322), main thread and subagents:
+ *
+ *   apiError             error                  text
+ *   stream_idle_timeout  server_error           API Error: The response stopped arriving. …
+ *   computer_slept       server_error           API Error: Your computer went to sleep mid-response. …
+ *   connection_failed    server_error           API Error: Can't reach the API server — … (ENOTFOUND)
+ *   (none)               server_error           the same two, on older builds
+ *   (none)               server_error           API Error: Connection lost while your computer was asleep
+ *   (none)               authentication_failed  Login expired · Please run /login
+ *   (none)               invalid_request        API Error: … safeguards flagged this message …
+ *
+ * Overloaded and rate-limit errors did not occur here; they are read from
+ * `error: rate_limit` and from the words, which is all there is to go on.
+ * Anything not recognised is `other`, never dropped: the row still says the
+ * turn stopped on an error.
+ */
+export function apiErrorOf(rawJson: string): ApiErrorLine | null {
+  if (!rawJson.includes('isApiErrorMessage')) return null;
+  const line = safeParse(rawJson);
+  if (!line || line['type'] !== 'assistant' || line['isApiErrorMessage'] !== true) return null;
+  const blocks = contentBlocksOf(line);
+  const message = line['message'];
+  const text = (
+    blocks
+      ? blocks.flatMap((b) => (isRecord(b) && b['type'] === 'text' && typeof b['text'] === 'string' ? [b['text']] : [])).join('\n')
+      : isRecord(message) && typeof message['content'] === 'string'
+        ? message['content']
+        : ''
+  ).trim();
+  return { kind: apiErrorKindOf(stringOr(line['apiError'], ''), stringOr(line['error'], ''), text), text };
+}
+
+function apiErrorKindOf(cause: string, error: string, text: string): ApiErrorKind {
+  if (cause === 'stream_idle_timeout' || /response stopped arriving/i.test(text)) return 'stopped';
+  if (cause === 'computer_slept' || /computer (?:went to sleep|was asleep)/i.test(text)) return 'slept';
+  if (cause === 'connection_failed' || /reach the API server/i.test(text)) return 'offline';
+  if (error === 'authentication_failed' || /\/login\b/.test(text)) return 'signed-out';
+  if (error === 'rate_limit' || /rate.?limit|usage limit/i.test(text)) return 'rate-limited';
+  if (cause === 'overloaded' || /overloaded|\b529\b/i.test(text)) return 'overloaded';
+  return 'other';
+}
 
 /**
  * True for the line that closes a slash command Claude Code ran itself, with

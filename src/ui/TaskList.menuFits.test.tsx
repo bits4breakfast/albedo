@@ -28,6 +28,8 @@ const task: Task = {
   worktreePath: '/w/fix-login', sessionId: 's7', ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
 };
 
 /** jsdom lays nothing out: give the menu a real size and the window a known one. */

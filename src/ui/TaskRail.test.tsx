@@ -44,7 +44,7 @@ afterEach(cleanup);
 
 const base = {
   projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false, baseBranch: 'main',
-  ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1_000, summary: null, reviewUrl: null,
+  ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1_000, summary: null, reviewUrl: null, apiError: null, apiErrorText: null,
 } as const;
 const row = (id: number, title: string, over: Partial<Task> = {}): Task => ({
   ...base, id, title, branch: `b${id}`, worktreePath: `/w/${id}`, ...over,
@@ -475,6 +475,24 @@ describe('collapsing (#266)', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Collapse Task List' }));
     expect(document.querySelector('[data-task-id="5"]')?.getAttribute('data-selected')).toBe('true');
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('gives Stopped on an Error its own circle, right after Needs You; its popover row says which error (#338)', () => {
+    const stopped = row(8, 'Ticket triage', { apiError: 'rate-limited', apiErrorText: 'API Error: Rate limit reached' });
+    render(
+      <TaskList tasks={[...tasks, stopped]} signals={signals} selectedId={5} onSelect={vi.fn()} onNew={() => {}} collapsed onCollapsedChange={vi.fn()} />,
+    );
+    expect(circles().map((c) => [c.dataset.group, c.dataset.hue, c.textContent]).slice(0, 2)).toEqual([
+      ['blocked', 'blocked', '1'],
+      ['errored', 'errored', '1'],
+    ]);
+    fireEvent.click(circle(/^Stopped on an Error, 1 task$/));
+    const pop = screen.getByRole('menu', { name: 'Stopped on an Error' });
+    const item = within(pop).getByRole('menuitem');
+    expect(item.querySelector('.task-why')?.textContent).toBe('Rate limited');
+    expect(pop.querySelector('.rail-pop-head .group-pie')?.getAttribute('data-pie')).toBe('ring');
+    // The popover's row is itself a button: no Try Again inside it.
+    expect(within(item).queryByRole('button')).toBeNull();
   });
 
   it('offers no ‹ when nobody handles it', () => {

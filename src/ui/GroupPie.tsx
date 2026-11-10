@@ -4,9 +4,11 @@ import { GROUP_HUE, GROUP_PIE, type GroupKey } from './taskGroups';
  * A task group's icon (#278): a ring in the group's edge colour, with a pie
  * inside that fills as work moves along (Running a quarter, Approved almost
  * full). Needs You is a solid dot, Done a solid dot with a check, Idle the
- * empty ring, Archived a thin one. Drawn on the group headers, and in the
- * rail's popover, never on a task row. Decorative: the group's name is next
- * to it, so it is hidden from assistive tech.
+ * empty ring, Archived a thin one, Stopped on an Error a heavier empty one
+ * (2px, r 5), so it is told from Idle by more than its colour (#338). Drawn
+ * on the group headers, and in the rail's popover, never on a task row.
+ * Decorative: the group's name is next to it, so it is hidden from
+ * assistive tech.
  *
  * Inline SVG on a 12px grid: a 1.5px ring (r 5.25), a 1.5px gap, and a pie
  * of radius 3 starting at twelve o'clock, clockwise.
@@ -30,10 +32,10 @@ export default function GroupPie({ group }: { group: GroupKey }) {
         <circle
           cx="6"
           cy="6"
-          r={shape === 'thin' ? 5.5 : 5.25}
+          r={shape === 'thin' ? 5.5 : shape === 'ring' ? 5 : 5.25}
           fill="none"
           stroke="currentColor"
-          strokeWidth={shape === 'thin' ? 1 : 1.5}
+          strokeWidth={shape === 'thin' ? 1 : shape === 'ring' ? 2 : 1.5}
         />
       )}
       {shape === 'check' && (

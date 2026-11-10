@@ -36,6 +36,7 @@ export interface RailCircle {
 /** One circle per colour (#278), in the list's order. Archived has none. */
 export const RAIL_CIRCLES: readonly RailCircle[] = [
   { key: 'blocked', title: GROUP_TITLE.blocked, hue: GROUP_HUE.blocked, groups: ['blocked'] },
+  { key: 'errored', title: GROUP_TITLE.errored, hue: GROUP_HUE.errored, groups: ['errored'] },
   { key: 'active', title: GROUP_TITLE.active, hue: GROUP_HUE.active, groups: ['active'] },
   { key: 'yours', title: 'Your Review', hue: GROUP_HUE.review, groups: ['review', 'mine'] },
   { key: 'team', title: 'Team Review', hue: GROUP_HUE.team, groups: ['team', 'awaiting'] },
@@ -121,6 +122,11 @@ export function circleLabel(circle: RailCircle, counts: Partial<Record<GroupKey,
 /** What a popover row shows, built by the list so its rows and these match. */
 export interface RailRow {
   title: ReactNode;
+  /**
+   * Which API error the task stopped on (#338), under the title, or null.
+   * Try Again is not here: the popover's row is itself a button.
+   */
+  why?: ReactNode;
   /** The list row's marks (Checks, Draft, Reminder, …). */
   meta: ReactNode;
   age: string;
@@ -411,6 +417,7 @@ export default function TaskRail({
                     <span className="task-title">{r.title}</span>
                     <span className="task-age">{r.age}</span>
                     {r.meta}
+                    {r.why}
                   </button>
                 );
               });

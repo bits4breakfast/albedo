@@ -41,7 +41,7 @@ const { KEYS } = await import('./persisted');
 
 const base = {
   projectId: 1, repoPath: '/r/app', createdBranch: false, kind: 'work', baseBranch: 'main',
-  ownsWorktree: true, createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null,
+  ownsWorktree: true, createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null,
   branch: 'b', worktreePath: '/w/b', title: 'T',
 } as const;
 const mk = (id: number, status: Task['status']): Task => ({ ...base, id, status, sessionId: `s${id}` });

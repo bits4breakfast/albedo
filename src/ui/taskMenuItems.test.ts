@@ -15,7 +15,7 @@ function task(over: Partial<Task> = {}): Task {
   return {
     id: 7, title: 'Fix login retry', projectId: 1, repoPath: '/r/app', baseBranch: 'main', branch: 'fix-login',
     worktreePath: '/w/fix-login', sessionId: 's7', ownsWorktree: true, createdBranch: true, kind: 'work',
-    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null,
+    status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null,
     ...over,
   };
 }

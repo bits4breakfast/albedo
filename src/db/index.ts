@@ -10,7 +10,7 @@
  */
 
 import Database from '@tauri-apps/plugin-sql';
-import type { Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
+import type { ApiErrorKind, Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
 import {
   backgroundFactsOf,
   backgroundSqlPredicate,
@@ -111,6 +111,8 @@ interface TaskRow {
   seen_at: number | null;
   summary: string | null;
   review_url?: string | null;
+  api_error?: string | null;
+  api_error_text?: string | null;
 }
 
 interface MessageRow {
@@ -146,11 +148,29 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   seenAt: 'seen_at',
   summary: 'summary',
   reviewUrl: 'review_url',
+  apiError: 'api_error',
+  apiErrorText: 'api_error_text',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url, api_error, api_error_text';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
+
+const API_ERROR_KINDS: ReadonlySet<string> = new Set<ApiErrorKind>([
+  'stopped',
+  'slept',
+  'offline',
+  'overloaded',
+  'rate-limited',
+  'signed-out',
+  'other',
+]);
+
+/** A stored `api_error`: null stays null, a value this build does not know reads as 'other'. */
+function apiErrorKind(v: string | null | undefined): ApiErrorKind | null {
+  if (v === null || v === undefined) return null;
+  return (API_ERROR_KINDS.has(v) ? v : 'other') as ApiErrorKind;
+}
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   'idle',
@@ -186,6 +206,10 @@ function toTask(r: TaskRow): Task {
     summary: r.summary ?? null,
     // Absent only on a database older than v13 that a test hands over.
     reviewUrl: r.review_url ?? null,
+    // Absent only on a database older than v16 that a test hands over. The
+    // text is kept only beside a kind: null together, as the type says.
+    apiError: apiErrorKind(r.api_error),
+    apiErrorText: apiErrorKind(r.api_error) === null ? null : (r.api_error_text ?? ''),
   };
 }
 
@@ -276,6 +300,8 @@ export async function createTask(t: NewTask): Promise<Task> {
     seenAt: null,
     summary: null,
     reviewUrl: t.reviewUrl ?? null,
+    apiError: null,
+    apiErrorText: null,
   };
 }
 
@@ -408,7 +434,8 @@ export async function purgeTaskHistory(id: number): Promise<void> {
  */
 export async function archiveTask(id: number): Promise<void> {
   const db = await getDb();
-  await db.execute(`UPDATE tasks SET status = 'archived' WHERE id = $1`, [id]);
+  // An archived task has stopped on nothing (#338): its error mark goes with it.
+  await db.execute(`UPDATE tasks SET status = 'archived', api_error = NULL, api_error_text = NULL WHERE id = $1`, [id]);
   emitTasksChanged();
   await purgeTaskHistory(id);
 }

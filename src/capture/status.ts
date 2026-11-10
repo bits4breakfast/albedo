@@ -34,6 +34,7 @@
 
 import type { Message, TaskStatus } from '../types';
 import {
+  apiErrorOf,
   endsLocalCommand,
   isBackgroundNotice,
   isMetaLine,
@@ -41,6 +42,7 @@ import {
   toolCallIdOf,
   TURN_ENDING_STOP_REASONS,
 } from './adapter';
+import type { ApiErrorLine } from './adapter';
 
 /** How recent transcript activity must be for a session to read as running. */
 export const RUNNING_WINDOW_MS = 90_000;
@@ -239,6 +241,40 @@ export function questionIn(text: string): string | null {
     if (/\?[\s*_"'\u201d\u2019)\]]*$/u.test(line)) return line.replace(/[*_`]+/g, '').trim();
   }
   return null;
+}
+
+/**
+ * The API error the session's last turn stopped on, or null (#338).
+ *
+ * The newest row decides, looking past what Claude Code writes around a turn
+ * rather than into it: `system` lines (the `turn_duration` after every turn,
+ * a local command's output, a compaction notice) and `isMeta` lines. So it is
+ * set the moment the error line lands and clears with the next row that is
+ * the session doing something -- a prompt typed in the terminal, one sent
+ * from Albedo, a `/model`, a background task waking it, Claude's next reply.
+ *
+ * An error line whose stop_reason is `tool_use` is not the end of the turn:
+ * measured, Claude Code goes on to run the tool, so the next row (its result)
+ * clears it anyway; while that row is still to come it is not reported.
+ *
+ * Pass the main thread's rows only (subagents are rows of their own): a
+ * subagent's error is handled by its parent, which goes on.
+ */
+export function lastApiError(messages: readonly StatusInput[]): ApiErrorLine | null {
+  const tail = apiErrorTail(messages);
+  return tail === null ? null : apiErrorOf(tail.rawJson);
+}
+
+/** The row {@link lastApiError} reads its error from, or null. */
+export function apiErrorTail<T extends StatusInput>(messages: readonly T[]): T | null {
+  let last: T | null = null;
+  for (const m of messages) {
+    if (m.role === 'system' || isMetaLine(m.rawJson)) continue;
+    if (last === null || m.ts > last.ts || (m.ts === last.ts && m.seq > last.seq)) last = m;
+  }
+  if (last === null || last.role !== 'assistant') return null;
+  if (stopReasonOf(last.rawJson) === 'tool_use') return null;
+  return apiErrorOf(last.rawJson) === null ? null : last;
 }
 
 /** The newest row that is not an `isMeta` line Claude Code added on its own. */

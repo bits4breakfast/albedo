@@ -97,6 +97,8 @@ describe('the harness itself', () => {
     expect(taskCols).toContain('kind');
     expect(taskCols).toContain('seen_at');
     expect(taskCols).toContain('summary');
+    expect(taskCols).toContain('api_error');
+    expect(taskCols).toContain('api_error_text');
   });
 
   it('rewrites $n placeholders positionally, including reuse and reordering', () => {
@@ -1633,6 +1635,63 @@ describe('tasks.summary (v11, #262)', () => {
     raw.exec((all[v11] as { sql: string }).sql);
     const row = raw.prepare(`SELECT summary FROM tasks WHERE title = 'old'`).get() as { summary: string | null };
     expect(row.summary).toBeNull();
+    raw.close();
+  });
+});
+
+describe('tasks.api_error (v16, #338)', () => {
+  const work = {
+    title: 'Ticket triage', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'triage',
+    worktreePath: '/wt/triage', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
+  };
+  const STOPPED = 'API Error: The response stopped arriving. The response above may be incomplete.';
+
+  it('starts null on a new task', async () => {
+    const t = await createTask(work);
+    expect(t).toMatchObject({ apiError: null, apiErrorText: null });
+    expect(await getTask(t.id)).toMatchObject({ apiError: null, apiErrorText: null });
+  });
+
+  it('is written and cleared by updateTask, and read back by every reader', async () => {
+    const t = await createTask(work);
+    await updateTask(t.id, { apiError: 'stopped', apiErrorText: STOPPED });
+    expect(await getTask(t.id)).toMatchObject({ apiError: 'stopped', apiErrorText: STOPPED });
+    expect((await listTasks()).find((x) => x.id === t.id)).toMatchObject({ apiError: 'stopped', apiErrorText: STOPPED });
+    await updateTask(t.id, { apiError: null, apiErrorText: null });
+    expect(await getTask(t.id)).toMatchObject({ apiError: null, apiErrorText: null });
+  });
+
+  it('reads a kind this build does not know as "other", and never a text without a kind', async () => {
+    const t = await createTask(work);
+    db.raw.prepare(`UPDATE tasks SET api_error = 'brand_new', api_error_text = 'API Error: new' WHERE id = ?`).run(t.id);
+    expect(await getTask(t.id)).toMatchObject({ apiError: 'other', apiErrorText: 'API Error: new' });
+    db.raw.prepare(`UPDATE tasks SET api_error = NULL WHERE id = ?`).run(t.id);
+    expect(await getTask(t.id)).toMatchObject({ apiError: null, apiErrorText: null });
+  });
+
+  it('is cleared by archiving', async () => {
+    const t = await createTask(work);
+    await updateTask(t.id, { apiError: 'overloaded', apiErrorText: 'API Error: Overloaded' });
+    await archiveTask(t.id);
+    expect(await getTask(t.id)).toMatchObject({ status: 'archived', apiError: null, apiErrorText: null });
+  });
+
+  it('leaves every existing row without one', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v16 = all.findIndex((m) => m.name.endsWith('0016_api_error.sql'));
+    expect(v16).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v16)) raw.exec(m.sql);
+    raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    raw.exec((all[v16] as { sql: string }).sql);
+    const row = raw.prepare(`SELECT api_error, api_error_text FROM tasks WHERE title = 'old'`).get();
+    expect(row).toEqual({ api_error: null, api_error_text: null });
     raw.close();
   });
 });

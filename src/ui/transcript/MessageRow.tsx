@@ -35,6 +35,7 @@ import {
   type UserBlock,
 } from './envelopes';
 import {
+  apiErrorOf,
   fullBodyOf,
   harnessInputOf,
   imageAt,
@@ -50,6 +51,8 @@ import { ReminderGlyph } from '../reminders/ReminderGlyph';
 import { MentionChip } from './MentionChip';
 import { CopyButton } from './CopyButton';
 import type { Mention } from './mentions';
+import { ApiErrorRetryContext } from './apiErrorRetry';
+import { TryAgainButton } from '../TryAgain';
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -80,7 +83,9 @@ export function MessageRow({ message, result = null, extras = [] }: MessageRowPr
     case 'user':
       return <UserRow message={message} extras={extras} />;
     case 'assistant':
-      return message.toolName === 'thinking' ? <ThinkingRow message={message} /> : <AssistantRow message={message} />;
+      if (message.toolName === 'thinking') return <ThinkingRow message={message} />;
+      // Claude Code's own line for a failed request (#338), not Claude's reply.
+      return apiErrorOf(message.rawJson) !== null ? <ApiErrorRow message={message} /> : <AssistantRow message={message} />;
     case 'system':
       return isLocalCommandLine(message.rawJson) ? <LocalCommandRow message={message} /> : <SystemRow message={message} />;
     case 'tool_use':
@@ -607,6 +612,38 @@ function AssistantRow({ message }: { message: Message }): ReactNode {
       <div className="tx-gutter" />
       <div className="tx-content">
         <Markdown text={text} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * An API error Claude Code wrote into the session (#338): "API Error: The
+ * response stopped arriving. …". Tinted (--danger-soft, a --danger edge) so it
+ * reads as an error and not as Claude's reply. The error the task's last turn
+ * stopped on carries Try Again (`ApiErrorRetryContext`); an older one, which
+ * more work followed, does not.
+ */
+function ApiErrorRow({ message }: { message: Message }): ReactNode {
+  const retry = useContext(ApiErrorRetryContext);
+  const text = apiErrorOf(message.rawJson)?.text || (message.body ?? '');
+  const head = /^API Error:\s*/.exec(text);
+  return (
+    <div className="tx-row tx-row-assistant" data-message-id={message.id}>
+      <div className="tx-gutter" />
+      <div className="tx-content">
+        <div className="tx-api-error" role="note" aria-label="API error">
+          <span className="tx-api-error-text">
+            {head ? (
+              <>
+                <b className="tx-api-error-head">API Error:</b> {text.slice(head[0].length)}
+              </>
+            ) : (
+              text
+            )}
+          </span>
+          {retry !== null && retry.messageId === message.id && <TryAgainButton task={retry.task} />}
+        </div>
       </div>
     </div>
   );

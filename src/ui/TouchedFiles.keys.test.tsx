@@ -78,6 +78,8 @@ const task: Task = {
   worktreePath: '/wt', sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
 };
 
 let opened: [OpenFileRequest, OpenFileOptions | undefined][] = [];

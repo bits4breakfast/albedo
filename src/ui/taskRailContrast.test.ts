@@ -46,7 +46,7 @@ const themes: Record<string, Map<string, string>> = {
 };
 
 /** Each circle's colour (#278), as taskrail.css sets `--fill`, `--edge`, `--ink` from it. */
-const HUES = ['blocked', 'running', 'review', 'team', 'approved', 'idle', 'done'] as const;
+const HUES = ['blocked', 'errored', 'running', 'review', 'team', 'approved', 'idle', 'done'] as const;
 /** The grounds a circle's or a dot's edge must clear 3:1 on. */
 const EDGE_GROUNDS = ['--panel', '--panel-chrome', '--row-selected', '--panel-hover', '--panel-raised'];
 

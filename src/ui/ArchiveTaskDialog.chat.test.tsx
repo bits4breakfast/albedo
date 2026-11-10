@@ -33,6 +33,8 @@ const chat: Task = {
   worktreePath: '/r/app', sessionId: 's', ownsWorktree: false, createdBranch: false, kind: 'chat',
   status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
 };
 
 describe('ArchiveTaskDialog on a chat', () => {

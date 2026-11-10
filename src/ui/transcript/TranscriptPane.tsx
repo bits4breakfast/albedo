@@ -88,6 +88,7 @@ import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath 
 import { Disclosure } from './Diff';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import CompactionRow from './CompactionRow';
+import { ApiErrorRetryContext, apiErrorRetryOf } from './apiErrorRetry';
 import { compactionAt, isPromptRow, type Compaction } from './compaction';
 import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
 import { formatDuration } from '../../lib/duration';
@@ -445,6 +446,11 @@ export function TranscriptPane({
 
   const items = useMemo(() => groupRows(messages), [messages]);
 
+  // The API error the last turn stopped on (#338), on the session's own
+  // thread, while the task is idle -- the task list's Stopped on an Error,
+  // read the same way: its line in the transcript carries Try Again.
+  const retry = useMemo(() => apiErrorRetryOf(messages, taskId, sessionId, status), [messages, taskId, sessionId, status]);
+
   // A Background line was clicked: bring its call's row into view. The row
   // may be older than the window holds, so the window grows a page at a time
   // until it is in, or there is nothing older; then this gives up quietly.
@@ -585,15 +591,17 @@ export function TranscriptPane({
           ) : null}
 
           <PassageRevealContext.Provider value={revealPassage}>
-            {items.map((item) =>
-              item.kind === 'sidechain' ? (
-                <SidechainGroup key={item.key} rows={item.rows} results={item.results} extras={item.extras} />
-              ) : item.kind === 'compaction' ? (
-                <CompactionRow key={item.key} compaction={item.compaction} />
-              ) : (
-                <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
-              ),
-            )}
+            <ApiErrorRetryContext.Provider value={retry}>
+              {items.map((item) =>
+                item.kind === 'sidechain' ? (
+                  <SidechainGroup key={item.key} rows={item.rows} results={item.results} extras={item.extras} />
+                ) : item.kind === 'compaction' ? (
+                  <CompactionRow key={item.key} compaction={item.compaction} />
+                ) : (
+                  <MessageRow key={item.key} message={item.message} result={item.result} extras={item.extras} />
+                ),
+              )}
+            </ApiErrorRetryContext.Provider>
           </PassageRevealContext.Provider>
 
           {echo ? (

@@ -61,7 +61,7 @@ function task(over: Partial<Task> = {}): Task {
   return {
     id: 1, title: 't', projectId: null, repoPath: '/r', baseBranch: 'main', branch: 'b',
     worktreePath: '/wt/1', sessionId: 's1', ownsWorktree: true, createdBranch: true, kind: 'work', status: 'idle',
-    createdAt: 0, lastActivityAt: null, seenAt: null, summary: null, reviewUrl: null, ...over,
+    createdAt: 0, lastActivityAt: null, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null, ...over,
   };
 }
 
@@ -388,5 +388,77 @@ describe('Done, and when a turn last ended', () => {
     await tick();
     expect(result.current.tasks[0]?.seenAt).toBe(T0);
     expect(h.rows[0]?.seenAt).toBe(T0);
+  });
+});
+
+describe('a last turn that stopped on an API error (#338)', () => {
+  const STOPPED = 'API Error: The response stopped arriving. The response above may be incomplete.';
+
+  function stopped(sessionId: string, ts: number): Message {
+    return {
+      id: ts, taskId: 1, sessionId, seq: 2, role: 'assistant', toolName: null, targetPath: null, body: STOPPED,
+      rawJson: JSON.stringify({
+        type: 'assistant',
+        apiError: 'stream_idle_timeout',
+        error: 'server_error',
+        isApiErrorMessage: true,
+        message: { role: 'assistant', model: '<synthetic>', stop_reason: 'stop_sequence', content: [{ type: 'text', text: STOPPED }] },
+      }),
+      agentId: null, ts,
+    };
+  }
+
+  it('is derived with the status, idle, and stored', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), stopped('s1', T0 - 60_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    expect(result.current.tasks[0]).toMatchObject({ status: 'idle', apiError: 'stopped', apiErrorText: STOPPED });
+    expect(h.rows[0]).toMatchObject({ apiError: 'stopped', apiErrorText: STOPPED });
+  });
+
+  it('clears as soon as a new prompt goes in, from anywhere, and the clear is stored', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), stopped('s1', T0 - 60_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    expect(result.current.tasks[0]?.apiError).toBe('stopped');
+    // Typed in the terminal: it arrives as a transcript row like any other.
+    h.messages.set('s1', [...(h.messages.get('s1') ?? []), prompt('s1', T0 - 1_000)]);
+    act(() => emitCapture('s1'));
+    await tick(300);
+    expect(result.current.tasks[0]).toMatchObject({ status: 'running', apiError: null, apiErrorText: null });
+    expect(h.rows[0]).toMatchObject({ apiError: null, apiErrorText: null });
+  });
+
+  it('Mark as Done clears it; Mark as Not Done puts back what the transcript still ends on', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), stopped('s1', T0 - 60_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    await act(async () => {
+      await result.current.setDone(1, true);
+    });
+    expect(result.current.tasks[0]).toMatchObject({ status: 'done', apiError: null });
+    expect(h.rows[0]).toMatchObject({ status: 'done', apiError: null, apiErrorText: null });
+    // A re-derivation keeps it done, and cleared.
+    act(() => emitCapture('s1'));
+    await tick(300);
+    expect(result.current.tasks[0]).toMatchObject({ status: 'done', apiError: null });
+    await act(async () => {
+      await result.current.setDone(1, false);
+    });
+    expect(result.current.tasks[0]).toMatchObject({ status: 'idle', apiError: 'stopped', apiErrorText: STOPPED });
+  });
+
+  it('Archive clears it', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), stopped('s1', T0 - 60_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    await act(async () => {
+      await result.current.archive(1);
+    });
+    expect(result.current.tasks[0]).toMatchObject({ status: 'archived', apiError: null, apiErrorText: null });
   });
 });
