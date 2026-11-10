@@ -33,7 +33,6 @@ import { useMeasuredBase } from './useMeasuredBase';
 import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
-import { requestGuide } from '../guide/openGuide';
 import ProjectTree from './ProjectTree';
 import { Disclosure } from './Disclosure';
 import { FileIcon } from './fileIcons';
@@ -45,6 +44,7 @@ import { adjacent, useListOpen, type ListOpen } from './filesListOpen';
 import { relativeTime } from './TaskList';
 import { useActivate } from './transcript/Diff';
 import { KEYS, oneOfCodec, readPersisted, writePersisted } from './persisted';
+import { useFilesView } from './filesView';
 import './touched.css';
 
 type ViewMode = 'branch' | 'commit';
@@ -60,13 +60,7 @@ function writeMode(m: ViewMode): ViewMode {
 }
 
 /** What the pane lists: the change set, or every file in the worktree. */
-export type FilesView = 'changes' | 'project';
-const viewCodec = oneOfCodec<FilesView>(['changes', 'project']);
-
-function writeView(v: FilesView): FilesView {
-  writePersisted(KEYS.touchedView, viewCodec, v);
-  return v;
-}
+export type { FilesView } from './filesView';
 
 /** Capture fires per batch of rows; coalesce bursts into one reload. */
 const REFRESH_DEBOUNCE_MS = 300;
@@ -117,7 +111,9 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   /** Commits not on the upstream yet. Null when git could not say. */
   const [remote, setRemote] = useState<UnmergedCommits | null>(null);
   const [mode, setMode] = useState<ViewMode>(readMode);
-  const [filesView, setFilesView] = useState<FilesView>(() => readPersisted(KEYS.touchedView, viewCodec, 'changes'));
+  // Per task, shared by the tab and the pinned column (#335): Changes until
+  // this task's view is changed, then whatever it was left on.
+  const [filesView, setFilesView] = useFilesView(task.id);
   /** Commits the user folded away in the by-commit view. */
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -575,10 +571,9 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           mode={mode}
           onMode={(m) => setMode(writeMode(m))}
           view={filesView}
-          onView={(v) => setFilesView(writeView(v))}
+          onView={setFilesView}
           menuSlot={menuSlot}
           actionSlot={actionSlot}
-          onGuide={() => requestGuide(task.id)}
         />
       ) : null}
     </div>

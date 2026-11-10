@@ -7,7 +7,7 @@
  * records each request and marks the file current, as App does.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import type { OpenFileRequest, Task, TouchedFile } from '../types';
 import type { OpenFileOptions } from './editor/openFile';
@@ -57,12 +57,21 @@ vi.mock('../git/worktree', async (importActual) => ({
 vi.mock('@tauri-apps/plugin-fs', () => ({ stat: async () => Promise.reject(new Error('no fs')) }));
 vi.mock('../capture', () => ({ onCaptureUpdate: () => () => {} }));
 vi.mock('./CommentsSection', () => ({ default: () => null }));
-vi.mock('./GitBar', () => ({ default: () => null }));
+// Only the view toggle, as GitBar draws it: the tree is a visit away (#335).
+vi.mock('./GitBar', () => ({
+  default: ({ view, onView }: { view: 'changes' | 'project'; onView: (v: 'changes' | 'project') => void }) =>
+    view === 'changes' ? (
+      <button type="button" onClick={() => onView('project')}>
+        Show All Files
+      </button>
+    ) : null,
+}));
 
 const { default: TouchedFiles } = await import('./TouchedFiles');
 const { FileOpenContext } = await import('./editor/openFile');
 const { onFocusEditor } = await import('./editor/editorFocus');
 const { KEYS } = await import('./persisted');
+const { resetFilesViews } = await import('./filesView');
 
 const task: Task = {
   id: 3, title: 't', projectId: 1, repoPath: '/repo', baseBranch: 'main', branch: 'b',
@@ -73,7 +82,7 @@ const task: Task = {
 
 let opened: [OpenFileRequest, OpenFileOptions | undefined][] = [];
 
-function Harness() {
+function Harness({ t = task }: { t?: Task } = {}) {
   const [active, setActive] = useState<string | null>(null);
   const open = (req: OpenFileRequest, options?: OpenFileOptions) => {
     opened.push([req, options]);
@@ -81,7 +90,7 @@ function Harness() {
   };
   return (
     <FileOpenContext.Provider value={open}>
-      <TouchedFiles task={task} activePath={active} />
+      <TouchedFiles task={t} activePath={active} />
     </FileOpenContext.Provider>
   );
 }
@@ -91,6 +100,7 @@ beforeEach(() => {
   stored.clear();
 });
 afterEach(() => {
+  resetFilesViews();
   cleanup();
   vi.useRealTimers();
 });
@@ -189,8 +199,8 @@ describe('Changes view', () => {
 
 describe('Project view', () => {
   async function setup() {
-    stored.set(KEYS.touchedView, 'project');
     render(<Harness />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show All Files' }));
     await waitFor(() => expect(document.querySelectorAll('.tf-tree-row')).toHaveLength(3));
     const row = (path: string) => document.querySelector<HTMLElement>(`.tf-tree-row[data-path="${path}"]`)!;
     return { row };
@@ -232,8 +242,8 @@ describe('Project view', () => {
   it('a folder carries the shared caret, open with the folder; a file carries none', async () => {
     // Not setup(): which folders are open outlives a render, so the test
     // before this one may have left `lib` open.
-    stored.set(KEYS.touchedView, 'project');
     render(<Harness />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show All Files' }));
     const row = (path: string) => document.querySelector<HTMLElement>(`.tf-tree-row[data-path="${path}"]`);
     await waitFor(() => expect(row('lib')).not.toBeNull());
     const caret = (path: string) => row(path)!.querySelector('.tf-tree-caret .disc');
@@ -243,5 +253,43 @@ describe('Project view', () => {
     expect(caret('a.ts')).toBeNull();
     fireEvent.click(row('lib')!);
     await waitFor(() => expect(caret('lib')?.className).toBe(expected(!wasOpen)));
+  });
+});
+
+describe('the view, per task and shared (#335)', () => {
+  const treeRows = () => document.querySelectorAll('.tf-tree-row').length;
+
+  it('a task opens on Changes, ignoring a view stored by an older build', async () => {
+    stored.set(KEYS.touchedView, 'project');
+    render(<Harness />);
+    expect(await screen.findByRole('button', { name: 'Show All Files' })).toBeTruthy();
+    expect(treeRows()).toBe(0);
+  });
+
+  it('comes back on the view it was left on; another task still opens on Changes', async () => {
+    const { unmount } = render(<Harness />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show All Files' }));
+    await waitFor(() => expect(treeRows()).toBeGreaterThan(0));
+    unmount();
+
+    const other = render(<Harness t={{ ...task, id: 4 }} />);
+    expect(await screen.findByRole('button', { name: 'Show All Files' })).toBeTruthy();
+    other.unmount();
+
+    render(<Harness />);
+    await waitFor(() => expect(treeRows()).toBeGreaterThan(0));
+  });
+
+  it('the tab and the pinned column show the same view', async () => {
+    render(
+      <>
+        <Harness />
+        <Harness />
+      </>,
+    );
+    const buttons = await screen.findAllByRole('button', { name: 'Show All Files' });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[0]!);
+    await waitFor(() => expect(screen.queryAllByRole('button', { name: 'Show All Files' })).toHaveLength(0));
   });
 });

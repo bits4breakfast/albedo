@@ -52,7 +52,10 @@ export const KEYS = {
   /** The new-task dialog's default project. */
   lastProjectId: 'albedo.worktree.lastProjectId',
   touchedMode: 'albedo.touched.mode',
-  /** The Files pane: the change set, or the whole worktree as a tree. */
+  /**
+   * The Files pane's view, once remembered. No longer read or written (#335):
+   * the view is per task, for the run (ui/filesView.ts). Kept so the name is not reused.
+   */
   touchedView: 'albedo.touched.view',
   /** The editor's "PHPantom isn't installed" notice was dismissed (editor/phpantomNotice.ts). */
   phpantomMissingDismissed: 'albedo.editor.phpantomMissingDismissed',
