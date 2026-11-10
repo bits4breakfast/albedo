@@ -54,8 +54,6 @@ export default function OverflowMenu({ label, items, title, heading, trigger }: 
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement | null>(null);
-  // One tick column for the whole menu when any item is a toggle, so labels align.
-  const anyCheck = items.some((i) => i.checked !== undefined);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const place = () => {
@@ -145,34 +143,49 @@ export default function OverflowMenu({ label, items, title, heading, trigger }: 
           onKeyDown={onMenuKey}
         >
           {heading && <div className="row-menu-head">{heading}</div>}
-          {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="row-menu-item"
-              role={item.checked === undefined ? 'menuitem' : item.radio ? 'menuitemradio' : 'menuitemcheckbox'}
-              aria-checked={item.checked}
-              data-group={item.group || undefined}
-              data-check-col={anyCheck || undefined}
-              data-tone={item.tone}
-              disabled={item.disabled}
-              title={item.title}
-              onClick={() => {
-                setOpen(false);
-                item.onSelect();
-              }}
-            >
-              {anyCheck && (
-                <span className="row-menu-check" aria-hidden="true">
-                  {item.checked ? '✓' : ''}
-                </span>
-              )}
-              <span className="row-menu-label">{item.label}</span>
-              {item.aside !== undefined && <span className="row-menu-aside">{item.aside}</span>}
-            </button>
-          ))}
+          <MenuItemButtons items={items} onChosen={() => setOpen(false)} />
         </div>
       )}
+    </>
+  );
+}
+
+/**
+ * The items themselves, for any menu on the `.row-menu` shell: the ⋯ menus
+ * here and the task row's right-click menu (TaskList), so an item looks and
+ * behaves the same in each. `onChosen` closes the menu before the item runs.
+ */
+export function MenuItemButtons({ items, onChosen }: { items: OverflowItem[]; onChosen: () => void }) {
+  // One tick column for the whole menu when any item is a toggle, so labels align.
+  const anyCheck = items.some((i) => i.checked !== undefined);
+  return (
+    <>
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className="row-menu-item"
+          role={item.checked === undefined ? 'menuitem' : item.radio ? 'menuitemradio' : 'menuitemcheckbox'}
+          aria-checked={item.checked}
+          data-group={item.group || undefined}
+          data-check-col={anyCheck || undefined}
+          data-tone={item.tone}
+          disabled={item.disabled}
+          title={item.title}
+          onClick={() => {
+            onChosen();
+            item.onSelect();
+          }}
+        >
+          {anyCheck && (
+            <span className="row-menu-check" aria-hidden="true">
+              {item.checked ? '✓' : ''}
+            </span>
+          )}
+          <span className="row-menu-label">{item.label}</span>
+          {item.aside !== undefined && <span className="row-menu-aside">{item.aside}</span>}
+        </button>
+      ))}
     </>
   );
 }

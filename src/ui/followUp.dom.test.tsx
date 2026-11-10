@@ -141,9 +141,7 @@ describe('TaskList row menu Follow-up…', () => {
         selectedId={null}
         onSelect={() => {}}
         onNew={() => {}}
-        onArchive={() => {}}
-        onDelete={() => {}}
-        onFollowUp={onFollowUp}
+        actions={{ archive: () => {}, delete: () => {}, followUp: onFollowUp }}
       />,
     );
 

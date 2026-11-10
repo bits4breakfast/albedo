@@ -1672,8 +1672,8 @@ select:disabled { cursor: default; }
 .project-tab-more { color: var(--faint); }
 .project-tab-more:hover { color: var(--text); }
 
-/* Menu items that have to say what they cost, not just what they are called —
-   three end-a-thing verbs now meet on one surface. */
+/* A second line under a menu item (the git ⋯ menu). The task's menus carry
+   their notes in the tooltip instead (#331), so a long list stays compact. */
 .row-menu-hint {
   display: block;
   flex-basis: 100%;
