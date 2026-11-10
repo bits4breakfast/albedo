@@ -71,7 +71,10 @@ after -- call `set_task_summary` once with a plain one-line summary (no ticket k
 purpose changes. Its description is not shown until the tool is loaded, so this is the reminder. \
 Likewise for `request_session`: when the conversation turns to a new piece of work that is not this task's -- \
 another ticket or case, a code fix that needs its own branch and PR, a different system or project -- call it \
-right then, before doing that work here, so the user can move it to its own task. It is only a proposal: nothing \
+right then, so the user can move it to its own task. That moment is when you would otherwise offer to do it \
+here (\"I can branch and fix this\", \"want me to open a PR?\") or start doing it: call `request_session` \
+instead of offering, and say in your reply that you did. Investigating or answering a question still belongs \
+here; making a change for it, or taking on a separate ticket, does not. It is only a proposal: nothing \
 starts unless they approve, and declining costs them one click. Write `prompt` as a brief that stands alone: what \
 was already found, links and identifiers, what was checked, what is left. Ask once per piece of work, and never \
 for the work this task was started for.";
@@ -403,6 +406,8 @@ mod tests {
         // learns when to offer a spin-out.
         assert!(said.contains("`request_session`"), "{said}");
         assert!(said.contains("a new piece of work"), "{said}");
+        // The moment it is for: where a session would offer to do it here.
+        assert!(said.contains("instead of offering"), "{said}");
         assert!(
             r["result"].get("resultType").is_none(),
             "legacy results carry no resultType"
