@@ -14,6 +14,7 @@ import {
   groupOf,
   hasWorkToReview,
   seenUpdate,
+  stoppedOnError,
   unseenFinish,
   wantsWorkProbe,
   type GroupFacts,
@@ -24,7 +25,7 @@ function task(over: Partial<Task> = {}): Task {
   return {
     id: 1, title: 't', projectId: 1, repoPath: '/r', baseBranch: 'main', branch: 'b', worktreePath: '/wt/b',
     sessionId: 's', ownsWorktree: true, createdBranch: true, kind: 'work', status: 'idle',
-    createdAt: 0, lastActivityAt: 100, seenAt: 1_000, summary: null, reviewUrl: null, ...over,
+    createdAt: 0, lastActivityAt: 100, seenAt: 1_000, summary: null, reviewUrl: null, apiError: null, apiErrorText: null, ...over,
   };
 }
 
@@ -314,7 +315,7 @@ describe('failing checks (#278)', () => {
 describe('the groups (#278)', () => {
   it('in the order decided', () => {
     expect(GROUP_ORDER.map((k) => GROUP_TITLE[k])).toEqual([
-      'Needs You', 'Running', 'Ready to Review', 'My Review', 'In Review', 'Awaiting Review', 'Approved', 'Idle', 'Done',
+      'Needs You', 'Stopped on an Error', 'Running', 'Ready to Review', 'My Review', 'In Review', 'Awaiting Review', 'Approved', 'Idle', 'Done',
       'Archived',
     ]);
   });
@@ -323,13 +324,44 @@ describe('the groups (#278)', () => {
     expect(GROUP_HUE.review).toBe(GROUP_HUE.mine);
     expect(GROUP_HUE.team).toBe(GROUP_HUE.awaiting);
     const live = GROUP_ORDER.filter((k) => k !== 'archived');
-    expect(new Set(live.map((k) => GROUP_HUE[k])).size).toBe(7);
+    expect(new Set(live.map((k) => GROUP_HUE[k])).size).toBe(8);
   });
 
   it('each header icon fills as the work moves along', () => {
     expect(GROUP_PIE).toMatchObject({
-      blocked: 'full', active: 0.25, review: 0.5, mine: 0.5, awaiting: 0.625, team: 0.75, approved: 0.875, quiet: 0,
+      blocked: 'full', errored: 'ring', active: 0.25, review: 0.5, mine: 0.5, awaiting: 0.625, team: 0.75, approved: 0.875, quiet: 0,
       done: 'check',
     });
+  });
+});
+
+describe('Stopped on an Error (#338)', () => {
+  const stopped = { apiError: 'stopped' as const, apiErrorText: 'API Error: The response stopped arriving.' };
+
+  it('holds an idle task whose last turn stopped on an API error', () => {
+    expect(groupOf(task(stopped), facts())).toBe('errored');
+    expect(stoppedOnError(task(stopped))).toBe(true);
+  });
+
+  it('comes right after Needs You: a prompt waiting outranks it', () => {
+    expect(GROUP_ORDER.indexOf('errored')).toBe(GROUP_ORDER.indexOf('blocked') + 1);
+    expect(groupOf(task({ ...stopped, status: 'blocked' }), facts())).toBe('blocked');
+  });
+
+  it('is not a running task, a done one or an archived one, whatever is stored', () => {
+    expect(groupOf(task({ ...stopped, status: 'running' }), facts())).toBe('active');
+    expect(groupOf(task({ ...stopped, status: 'done' }), facts())).toBe('done');
+    expect(groupOf(task({ ...stopped, status: 'archived' }), facts())).toBe('archived');
+    expect(stoppedOnError(task({ ...stopped, status: 'running' }))).toBe(false);
+  });
+
+  it('outranks what the finish or the PR would say: the turn did not finish', () => {
+    expect(groupOf(task({ ...stopped, seenAt: 0 }), facts({ finishedAt: 500, work: true }))).toBe('errored');
+    expect(groupOf(task(stopped), facts({ pr: pr('open', null, { review: 'approved' }) }))).toBe('errored');
+    expect(groupOf(task({ ...stopped, kind: 'chat' }), facts())).toBe('errored');
+  });
+
+  it('without an error the task is where it always was', () => {
+    expect(groupOf(task(), facts())).toBe('quiet');
   });
 });

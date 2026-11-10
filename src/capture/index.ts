@@ -17,6 +17,10 @@ export type { CaptureHandle, CaptureUpdate, DiskSession } from './watcher';
 
 export { deriveStatus } from './status';
 
+/** An API error line Claude Code wrote (#338); which one a turn stopped on is status.ts's. */
+export { apiErrorOf } from './adapter';
+export type { ApiErrorLine } from './adapter';
+
 /** Attached images, recovered from a placeholder row's raw line. */
 export { imageAt, imagesIn, SEQ_STRIDE } from './adapter';
 

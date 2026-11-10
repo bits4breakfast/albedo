@@ -39,6 +39,8 @@ const checkout: Task = {
   worktreePath: '/repo', sessionId: null, ownsWorktree: false, createdBranch: false, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
 };
 
 afterEach(() => {

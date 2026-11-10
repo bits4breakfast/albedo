@@ -83,6 +83,7 @@
 }
 
 .rail-circle[data-hue='blocked'] { --fill: var(--status-blocked-fill); --edge: var(--status-blocked-edge); --ink: var(--status-blocked-ink); }
+.rail-circle[data-hue='errored'] { --fill: var(--status-errored-fill); --edge: var(--status-errored-edge); --ink: var(--status-errored-ink); }
 .rail-circle[data-hue='running'] { --fill: var(--status-running-fill); --edge: var(--status-running-edge); --ink: var(--status-running-ink); }
 .rail-circle[data-hue='review'] { --fill: var(--status-review-fill); --edge: var(--status-review-edge); --ink: var(--status-review-ink); }
 .rail-circle[data-hue='team'] { --fill: var(--status-team-fill); --edge: var(--status-team-edge); --ink: var(--status-team-ink); }

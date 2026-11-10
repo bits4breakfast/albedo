@@ -138,6 +138,9 @@ const M0014_GUIDE_FOCUS: &str = include_str!("../../src/db/migrations/0014_guide
 /// v15: comments.github and reply_to -- drafts for GitHub on a review task
 /// (#287).
 const M0015_COMMENT_GITHUB: &str = include_str!("../../src/db/migrations/0015_comment_github.sql");
+/// v16: tasks.api_error and api_error_text -- the last turn stopped on an API
+/// error (#338).
+const M0016_API_ERROR: &str = include_str!("../../src/db/migrations/0016_api_error.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -229,6 +232,12 @@ pub fn run() {
             version: 15,
             description: "comments.github",
             sql: M0015_COMMENT_GITHUB,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 16,
+            description: "tasks.api_error",
+            sql: M0016_API_ERROR,
             kind: MigrationKind::Up,
         },
     ];

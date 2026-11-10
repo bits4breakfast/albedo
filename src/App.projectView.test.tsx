@@ -145,6 +145,8 @@ function task(id: number, projectId: number, title: string): Task {
     seenAt: null,
     summary: null,
     reviewUrl: null,
+    apiError: null,
+    apiErrorText: null,
   };
 }
 

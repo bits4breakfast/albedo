@@ -420,6 +420,8 @@ export default function App() {
       seenAt: null,
       summary: null,
       reviewUrl: null,
+      apiError: null,
+      apiErrorText: null,
     };
   }, [selected, activeProject]);
   /** Whose main checkout the shell drawer is in: the project the list shows. */

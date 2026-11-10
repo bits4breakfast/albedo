@@ -12,7 +12,14 @@ import {
 } from '../db';
 import { listProjects, onProjectsChanged } from '../db/projects';
 import { startCapture, onCaptureUpdate, onCaptureProgress, deriveStatus, contextUsageForSessions } from '../capture';
-import { keepUserStatus, pendingQuestion, RUNNING_WINDOW_MS, statusExpiresAt, turnEndedAt } from '../capture/status';
+import {
+  keepUserStatus,
+  lastApiError,
+  pendingQuestion,
+  RUNNING_WINDOW_MS,
+  statusExpiresAt,
+  turnEndedAt,
+} from '../capture/status';
 import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
@@ -189,6 +196,9 @@ export function mergeContext(
   return changed ? next : prev;
 }
 
+/** No API error: what a new prompt, Mark as Done and Archive leave (#338). */
+const NO_API_ERROR: Pick<Task, 'apiError' | 'apiErrorText'> = { apiError: null, apiErrorText: null };
+
 function liveSessionIds(tasks: Task[]): string[] {
   const ids = new Set<string>();
   for (const t of tasks) if (t.status !== 'archived' && t.sessionId) ids.add(t.sessionId);
@@ -233,6 +243,11 @@ export function useTasks(): UseTasksResult {
   /** Per-task derivation counter: an older derivation never lands on a newer. */
   const statusGenRef = useRef(new Map<number, number>());
   const pendingRef = useRef(new Map<number, PendingWrite>());
+  /**
+   * The API error each task's transcript last ended on (#338), whatever the
+   * task is marked: Mark as Not Done puts it back without a re-derivation.
+   */
+  const apiErrorRef = useRef(new Map<number, Pick<Task, 'apiError' | 'apiErrorText'>>());
   /** The pending question per task as last derived; see refreshStatus. */
   const questionSeenRef = useRef(new Map<number, string | null>());
   /** Monotonic clock over write completions, compared against reload starts. */
@@ -383,7 +398,7 @@ export function useTasks(): UseTasksResult {
 
   const archive = useCallback(
     async (id: number) => {
-      applyTask(id, { status: 'archived' });
+      applyTask(id, { status: 'archived', ...NO_API_ERROR });
       dropDraft(id);
       forgetQueuedCi(id);
       // On failure the overlay is dropped, not the status reverted: archiveTask
@@ -391,7 +406,7 @@ export function useTasks(): UseTasksResult {
       // archived, and a reload shows whichever is true.
       const err = await persist(
         id,
-        { status: 'archived' },
+        { status: 'archived', ...NO_API_ERROR },
         { write: () => archiveTask(id), rollback: () => void refresh() },
       );
       if (err !== null && aliveRef.current) setLoadError(`Could not archive task: ${message(err)}`);
@@ -407,8 +422,11 @@ export function useTasks(): UseTasksResult {
       // derivation (keepUserStatus) the moment it landed.
       if (!task || task.status !== from) return;
       const status = done ? 'done' : 'idle';
-      applyTask(id, { status });
-      const err = await persist(id, { status });
+      // Done clears a stopped-on-an-error mark (#338); Not Done puts back what
+      // the transcript still ends on.
+      const apiError = done ? NO_API_ERROR : (apiErrorRef.current.get(id) ?? NO_API_ERROR);
+      applyTask(id, { status, ...apiError });
+      const err = await persist(id, { status, ...apiError });
       if (err !== null && aliveRef.current) setLoadError(`Could not update task: ${message(err)}`);
     },
     [applyTask, persist],
@@ -495,6 +513,7 @@ export function useTasks(): UseTasksResult {
       let agents = 0;
       let asked: string | null = null;
       let finishedAt: number | null = null;
+      let apiError: Pick<Task, 'apiError' | 'apiErrorText'> = NO_API_ERROR;
       try {
         // Parent rows only: a subagent's tool call that is still running has no
         // result yet, and would read as this task waiting on a permission prompt.
@@ -505,6 +524,8 @@ export function useTasks(): UseTasksResult {
         expiresAt = statusExpiresAt(messages, now, opts);
         for (const m of messages) if (m.ts > newestTs) newestTs = m.ts;
         finishedAt = turnEndedAt(messages);
+        const stopped = lastApiError(messages);
+        if (stopped !== null) apiError = { apiError: stopped.kind, apiErrorText: stopped.text };
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
         if (pendingPrompt(taskId) !== null || isTrustWaiting(taskId)) status = 'blocked';
@@ -535,6 +556,11 @@ export function useTasks(): UseTasksResult {
       if (!prior || prior.status === 'archived') return;
       // A task marked done stays done while its session stays at rest.
       status = keepUserStatus(prior.status, status);
+      // Kept only on an idle task (#338): a turn running or a prompt waiting
+      // is the session moving on, and a task marked done is settled.
+      apiErrorRef.current.set(taskId, apiError);
+      if (status !== 'idle') apiError = NO_API_ERROR;
+      const errorChanged = prior.apiError !== apiError.apiError || prior.apiErrorText !== apiError.apiErrorText;
 
       const question = asked !== null;
       // The question as last seen, per task. Absent until the first derivation,
@@ -575,7 +601,7 @@ export function useTasks(): UseTasksResult {
       // "now": a re-derivation at launch or at a window edge is not activity.
       const lastActivityAt =
         newestTs > (prior.lastActivityAt ?? 0) ? newestTs : prior.lastActivityAt;
-      applyTask(taskId, { status, lastActivityAt });
+      applyTask(taskId, { status, lastActivityAt, ...apiError });
       if (prior.status !== status) {
         // A transition, not a level: this is the one place that knows a task
         // just *became* blocked rather than having been blocked all along.
@@ -584,7 +610,7 @@ export function useTasks(): UseTasksResult {
         noteQuestion(taskId, prior.title, asked);
       }
       const retry = pendingRef.current.get(taskId)?.failed === true;
-      if (prior.status !== status || retry) void persist(taskId, { status, lastActivityAt });
+      if (prior.status !== status || errorChanged || retry) void persist(taskId, { status, lastActivityAt, ...apiError });
     },
     [applyTask, persist, clearExpiry],
   );

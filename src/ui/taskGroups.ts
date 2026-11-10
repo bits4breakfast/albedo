@@ -14,6 +14,8 @@
  *
  *   Archived
  *   Needs You        blocked
+ *   Stopped on an    idle, and its last turn stopped on an API error
+ *   Error            (`Task.apiError`, #338): it waits on you too
  *   Running          running
  *   Done             marked done, or its PR merged
  *   Needs You        its open or draft PR's checks failed (not while they run)
@@ -36,6 +38,7 @@ import type { PrStatus } from '../gh/prStatus';
 
 export type GroupKey =
   | 'blocked'
+  | 'errored'
   | 'active'
   | 'review'
   | 'mine'
@@ -48,6 +51,7 @@ export type GroupKey =
 
 export const GROUP_ORDER: readonly GroupKey[] = [
   'blocked',
+  'errored',
   'active',
   'review',
   'mine',
@@ -61,6 +65,7 @@ export const GROUP_ORDER: readonly GroupKey[] = [
 
 export const GROUP_TITLE: Record<GroupKey, string> = {
   blocked: 'Needs You',
+  errored: 'Stopped on an Error',
   active: 'Running',
   review: 'Ready to Review',
   mine: 'My Review',
@@ -80,6 +85,7 @@ export const GROUP_TITLE: Record<GroupKey, string> = {
  */
 export const GROUP_HUE: Record<GroupKey, string> = {
   blocked: 'blocked',
+  errored: 'errored',
   active: 'running',
   review: 'review',
   mine: 'review',
@@ -94,12 +100,15 @@ export const GROUP_HUE: Record<GroupKey, string> = {
 /**
  * The group header's icon (#278): a pie in the group's edge colour that fills
  * as work moves along. A number is the filled fraction; `full` a solid dot,
- * `check` a solid dot with a check, `thin` archived's thin ring.
+ * `check` a solid dot with a check, `thin` archived's thin ring, `ring` a
+ * heavier empty ring (Stopped on an Error: work that went nowhere, beside
+ * Needs You's solid dot and in a red of its own, #338).
  */
-export type GroupPieShape = number | 'full' | 'check' | 'thin';
+export type GroupPieShape = number | 'full' | 'check' | 'thin' | 'ring';
 
 export const GROUP_PIE: Record<GroupKey, GroupPieShape> = {
   blocked: 'full',
+  errored: 'ring',
   active: 1 / 4,
   review: 1 / 2,
   mine: 1 / 2,
@@ -190,10 +199,20 @@ export function reviewStage(pr: PrStatus): 'approved' | 'team' | 'awaiting' {
   return 'awaiting';
 }
 
+/**
+ * The task is idle and its last turn stopped on an API error (#338). Only
+ * idle: a turn running, a prompt waiting, a mark of Done or an archive is the
+ * task having moved on, whatever is still stored.
+ */
+export function stoppedOnError(task: Pick<Task, 'status' | 'apiError'>): boolean {
+  return task.status === 'idle' && task.apiError !== null;
+}
+
 /** Highest first: a prompt waiting on you outranks everything else. See the table above. */
-export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt'>, facts: GroupFacts): GroupKey {
+export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt' | 'apiError'>, facts: GroupFacts): GroupKey {
   if (task.status === 'archived') return 'archived';
   if (task.status === 'blocked') return 'blocked';
+  if (stoppedOnError(task)) return 'errored';
   if (task.status === 'running') return 'active';
   if (task.status === 'done' || prMerged(facts.pr)) return 'done';
   // A chat's PR is always null (the list never asks), so these are work tasks.

@@ -78,6 +78,9 @@
    light, 7.36 dark; Ready to Review 6.48, 11.99. The rest keep --faint. */
 .group-label[data-tone='blocked'] { color: var(--status-blocked); }
 .group-label[data-tone='review'] { color: var(--status-review); }
+/* Stopped on an Error (#338) waits on you too: --danger, 6.34 light, 7.91
+   dark on --panel-chrome; 6.98 | 8.37 on the popover's --panel. */
+.group-label[data-tone='errored'] { color: var(--danger); }
 
 .group-count { font-variant-numeric: tabular-nums; }
 
@@ -86,6 +89,7 @@
    Done's check in its -ink (4.5 on its fill). Archived: the thin ring. */
 .group-pie { display: block; flex: 0 0 auto; color: var(--status-idle-edge); }
 .group-pie[data-hue='blocked'] { color: var(--status-blocked-edge); }
+.group-pie[data-hue='errored'] { color: var(--status-errored-edge); }
 .group-pie[data-hue='running'] { color: var(--status-running-edge); }
 .group-pie[data-hue='review'] { color: var(--status-review-edge); }
 .group-pie[data-hue='team'] { color: var(--status-team-edge); }
@@ -291,6 +295,28 @@
    and a word in the Needs You text tier (4.5 on every ground a row has,
    styles.css). State: it stays while they fail. */
 .task-checks-failing { color: var(--status-blocked); font-weight: 600; white-space: nowrap; }
+/* Stopped on an Error (#338): which error, on a line of its own under the
+   title, and Try Again at the row's end. The label is --danger on every
+   ground an idle row has, light | dark: --panel-chrome 6.34 | 7.91,
+   --panel-hover 6.07 | 7.48, --panel-raised 5.75 | 7.03, --row-selected
+   5.53 | 6.46, --panel-active 5.39 | 8.07. Words, never colour alone; the
+   full text is the row's tooltip. */
+.task-why {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-row > .try-again {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  justify-self: end;
+}
+
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on

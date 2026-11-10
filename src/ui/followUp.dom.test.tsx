@@ -73,6 +73,8 @@ const task = (over: Partial<Task> = {}): Task => ({
   seenAt: null,
   summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
   ...over,
 });
 

@@ -27,6 +27,7 @@ import {
   GROUP_ORDER,
   GROUP_TITLE,
   groupOf,
+  stoppedOnError,
   wantsWorkProbe,
   type GroupFacts,
   type GroupKey,
@@ -41,6 +42,7 @@ import { ReminderGlyph } from './reminders/ReminderGlyph';
 import TaskTitleEdit from './TaskTitleEdit';
 import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
 import GroupPie from './GroupPie';
+import { API_ERROR_LABEL, TryAgainButton } from './TryAgain';
 import ReviewList from './ReviewList';
 import { useReviewStarts } from './reviewStarts';
 import { PlusIcon, RefreshIcon } from './icons';
@@ -565,8 +567,18 @@ export default function TaskList({
     );
   };
 
+  /* Stopped on an Error (#338): which error, in words, under the title.
+     Claude Code's own text is its tooltip. */
+  const rowWhy = (task: Task): ReactNode =>
+    stoppedOnError(task) && task.apiError !== null ? (
+      <span className="task-why" title={task.apiErrorText ?? undefined}>
+        {API_ERROR_LABEL[task.apiError]}
+      </span>
+    ) : null;
+
   const railRow = (task: Task, group: GroupKey): RailRow => ({
     title: rowTitle(task),
+    why: rowWhy(task),
     meta: rowMeta(task, group),
     age: relativeTime(task.lastActivityAt, now),
     tooltip: rowTooltip(task),
@@ -754,6 +766,9 @@ export default function TaskList({
                       its own width hid on every row cut titles short. */}
                   {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
                   {rowMeta(task, group.key)}
+                  {rowWhy(task)}
+                  {/* Sends "try again" (#338): only while the session is live. */}
+                  {stoppedOnError(task) && <TryAgainButton task={task} />}
                   <ContextMeter usage={ctx} variant="hairline" />
                   {(actions?.archive || actions?.delete) && (
                     <button
