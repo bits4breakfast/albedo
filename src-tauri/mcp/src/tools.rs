@@ -69,7 +69,8 @@ pub fn definitions() -> Value {
                 (a follow-up, an unrelated bug you found, work in another project). Nothing starts on its own: the \
                 request waits in Albedo until the user approves or denies it, and you are not told which. If they \
                 approve, `prompt` becomes the new task's first message, unsent, for them to edit. Write `prompt` so \
-                that it stands alone -- the new session has none of this conversation. Do not use it to hand off the \
+                that it stands alone -- the new session has none of this conversation: carry over what was already \
+                found, the links and identifiers, what was checked and what is left. Do not use it to hand off the \
                 work of this session, and do not ask twice for the same thing.",
             "inputSchema": {
                 "type": "object",

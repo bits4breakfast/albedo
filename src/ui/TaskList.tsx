@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, MutableRefObject, ReactNode } from 'react';
 import type { Project, Task } from '../types';
 import { ContextMeter, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import { parseIssueKey } from '../lib/issueKey';
@@ -11,7 +11,9 @@ import type { ContextUsage } from '../capture';
 import type { TaskSignals } from './useTasks';
 import type { AttentionKind } from './attention';
 import { useShortcuts } from './shortcuts';
-import { canFollowUp } from './followUp';
+import { MenuItemButtons } from './OverflowMenu';
+import { taskMenuItems, type TaskActions } from './taskMenuItems';
+import { useTaskMenuFacts } from './useTaskMenuFacts';
 import { getPrStatus, usePrPolling, usePrStatusVersion } from '../gh/prStore';
 import { ciMarkFor, useCiVersion } from './ciNotice';
 import { reviewMarkFor, standingApproval, useReviewVersion } from './reviewNotice';
@@ -20,8 +22,6 @@ import { reviewerNames, type PrStatus } from '../gh/prStatus';
 import { useBranchSync } from '../git/branchSync';
 import { getReviewWork, useReviewWorkProbes, useReviewWorkVersion } from '../git/reviewWork';
 import {
-  canMarkDone,
-  canMarkNotDone,
   checksFailing,
   compareInGroup,
   GROUP_ORDER,
@@ -39,7 +39,6 @@ import { useDraftTaskIds } from './transcript/drafts';
 import { useReminderTaskIds } from './reminders/useReminders';
 import { ReminderGlyph } from './reminders/ReminderGlyph';
 import TaskTitleEdit from './TaskTitleEdit';
-import { RENAME_HINT } from './taskRename';
 import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
 import GroupPie from './GroupPie';
 import ReviewList from './ReviewList';
@@ -65,27 +64,13 @@ export interface TaskListProps {
   onSelect: (id: number) => void;
   onNew: () => void;
   /**
-   * Opens the archive confirmation for a task. Optional so the
-   * four-prop signature still type-checks; when absent the affordance is
-   * simply not rendered.
+   * What the row menu's actions do (#331): the same {@link TaskActions} the
+   * task bar's ⋯ uses, so both menus offer one list (`taskMenuItems`). Each
+   * acts on the row's task, selected or not. An action with no handler is
+   * not offered; with neither archive nor delete, the row has no ⋯ (the
+   * right-click menu still opens).
    */
-  onArchive?: (task: Task) => void;
-  /**
-   * Ends the task for good. Distinct from {@link TaskListProps.onArchive}: see
-   * the menu copy, which has to keep three verbs apart on one surface.
-   */
-  onDelete?: (task: Task) => void;
-  /**
-   * Opens the new-task dialog prefilled as a follow-up. Offered in the menu
-   * only for a task whose PR is merged, or that is archived (whose PR is not
-   * polled, so merged or not is looked up when the dialog opens).
-   */
-  onFollowUp?: (task: Task) => void;
-  /**
-   * Mark as Done, or with false, Mark as Not Done. Offered in the menu only
-   * where it can hold (`canMarkDone` / `canMarkNotDone`).
-   */
-  onSetDone?: (task: Task, done: boolean) => void;
+  actions?: TaskActions;
   /**
    * Saves a new title (already cleaned, and different). Offered in the row
    * menu as "Rename Task…", which edits the title in place on the row.
@@ -189,10 +174,7 @@ export default function TaskList({
   onSelect,
   attention,
   onNew,
-  onArchive,
-  onDelete,
-  onFollowUp,
-  onSetDone,
+  actions,
   onRename,
   onSummary,
   onRenameClosed,
@@ -243,28 +225,6 @@ export default function TaskList({
   const reviewGroupsNow = reviewList ? reviewGroups(reviewList.prs, seenMarks(), reviewList.viewer, reviewStarts) : [];
   const reviewCount = reviewList ? waitingCount(reviewGroupsNow) : null;
   const menuRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * Where the open menu goes so all of it is in the window (#285), measured
-   * before it paints. Kept with the menu it was measured for: a new menu is
-   * first laid out at the pointer, uncapped, so its natural size is what gets
-   * measured.
-   */
-  const [placed, setPlaced] = useState<{ for: RowMenu; at: MenuPlacement } | null>(null);
-  useLayoutEffect(() => {
-    const el = menuRef.current;
-    if (!menu || !el) return;
-    const r = el.getBoundingClientRect();
-    setPlaced({
-      for: menu,
-      at: placeMenu(
-        { x: menu.x, y: menu.y },
-        { width: r.width, height: r.height },
-        { width: window.innerWidth, height: window.innerHeight },
-      ),
-    });
-  }, [menu]);
-  const menuAt: MenuPlacement =
-    placed && placed.for === menu ? placed.at : { left: menu?.x ?? 0, top: menu?.y ?? 0 };
   const drafts = useDraftTaskIds();
   const reminderIds = useReminderTaskIds();
   /**
@@ -795,7 +755,7 @@ export default function TaskList({
                   {index < 9 && <span className="task-index kbd">⌘{index + 1}</span>}
                   {rowMeta(task, group.key)}
                   <ContextMeter usage={ctx} variant="hairline" />
-                  {(onArchive || onDelete) && (
+                  {(actions?.archive || actions?.delete) && (
                     <button
                       className="task-more"
                       aria-label={`Actions for ${task.title}`}
@@ -824,133 +784,95 @@ export default function TaskList({
       )}
 
       {menu && (
-        <div
-          className="row-menu"
-          ref={menuRef}
-          style={{
-            left: menuAt.left,
-            top: menuAt.top,
-            ...(menuAt.maxHeight !== undefined ? { maxHeight: menuAt.maxHeight, overflowY: 'auto' as const } : {}),
-          }}
-          role="menu"
-        >
-          <div className="row-menu-head" title={wrapForTooltip(menu.task.title)}>
-            {menu.task.title}
-          </div>
-          {/* Edits the title here on the row, where it was right-clicked,
-              without selecting the task: selecting would move focus to its
-              terminal, and that blur would save the field the moment it opened. */}
-          {onRename && (
-            <button
-              className="row-menu-item"
-              role="menuitem"
-              title={RENAME_HINT}
-              onClick={() => {
-                const task = menu.task;
-                setMenu(null);
-                setRenamingId(task.id);
-              }}
-            >
-              Rename Task…
-              <span className="row-menu-hint">branch and folder kept</span>
-            </button>
-          )}
-          <button
-            className="row-menu-item"
-            role="menuitem"
-            onClick={() => {
-              const path = menu.task.worktreePath;
-              setMenu(null);
-              void navigator.clipboard?.writeText(path).catch(() => {});
-            }}
-          >
-            Copy Worktree Path
-          </button>
-          {onSetDone && canMarkDone(menu.task, getPrStatus(menu.task.id)) && (
-            <button
-              className="row-menu-item"
-              role="menuitem"
-              onClick={() => {
-                const task = menu.task;
-                setMenu(null);
-                onSetDone(task, true);
-              }}
-            >
-              Mark as Done
-              <span className="row-menu-hint">worktree and session kept</span>
-            </button>
-          )}
-          {onSetDone && canMarkNotDone(menu.task, getPrStatus(menu.task.id)) && (
-            <button
-              className="row-menu-item"
-              role="menuitem"
-              onClick={() => {
-                const task = menu.task;
-                setMenu(null);
-                onSetDone(task, false);
-              }}
-            >
-              Mark as Not Done
-            </button>
-          )}
-          {onFollowUp && canFollowUp(menu.task, getPrStatus(menu.task.id)) && (
-            <button
-              className="row-menu-item"
-              role="menuitem"
-              onClick={() => {
-                const task = menu.task;
-                setMenu(null);
-                onFollowUp(task);
-              }}
-            >
-              Follow-Up…
-              <span className="row-menu-hint">new task from the base</span>
-            </button>
-          )}
-          {/*
-            Three verbs now meet on one surface and the wording is what keeps
-            them apart, so each says what it costs rather than just naming
-            itself:
-
-              Close    hide the tab — view state, on the tab bar, not here
-              Archive  out of the active list
-              Delete   gone, worktree optional, CONVERSATION KEPT
-
-            That last clause is the reason Delete can sit next to Archive at
-            all, and the dialog states it too. Saying it here as well is what
-            makes the menu safe to trust before it is opened.
-          */}
-          {onArchive && (
-            <button
-              className="row-menu-item"
-              role="menuitem"
-              onClick={() => {
-                const task = menu.task;
-                setMenu(null);
-                onArchive(task);
-              }}
-            >
-              Archive Task…
-              <span className="row-menu-hint">out of the active list</span>
-            </button>
-          )}
-          {onDelete && (
-            <button
-              className="row-menu-item"
-              data-tone="danger"
-              role="menuitem"
-              onClick={() => {
-                const task = menu.task;
-                setMenu(null);
-                onDelete(task);
-              }}
-            >
-              Delete Task…
-              <span className="row-menu-hint">worktree optional · conversation kept</span>
-            </button>
-          )}
-        </div>
+        <TaskRowMenu
+          menu={menu}
+          // The task as it is now, not as it was when right-clicked: its
+          // status decides what Compact Now and Mark as Done say.
+          task={allTasks.find((t) => t.id === menu.task.id) ?? menu.task}
+          shown={menu.task.id === selectedId}
+          actions={actions ?? NO_ACTIONS}
+          menuRef={menuRef}
+          close={() => setMenu(null)}
+          // Edits the title here on the row, where it was right-clicked,
+          // without selecting the task: selecting would move focus to its
+          // terminal, and that blur would save the field the moment it opened.
+          rename={onRename ? (task) => setRenamingId(task.id) : undefined}
+        />
       )}
+    </div>
+  );
+}
+
+const NO_ACTIONS: TaskActions = {};
+
+/**
+ * The row's menu (right-click, or the row's ⋯): the task's actions from
+ * `taskMenuItems`, the same list as the task bar's ⋯, under a heading that
+ * says which task was right-clicked -- it may not be the selected one.
+ */
+function TaskRowMenu({
+  menu,
+  task,
+  shown,
+  actions,
+  menuRef,
+  close,
+  rename,
+}: {
+  menu: RowMenu;
+  task: Task;
+  shown: boolean;
+  actions: TaskActions;
+  menuRef: MutableRefObject<HTMLDivElement | null>;
+  close: () => void;
+  rename?: (task: Task) => void;
+}) {
+  // This row's facts, never the selected task's: Compact Now's blocker is
+  // about the session it would go to.
+  const facts = useTaskMenuFacts(task, shown);
+  const items = taskMenuItems(task, facts, actions, rename ? () => rename(task) : undefined);
+  // What changes the menu's size once it is open: a fact arriving late (the
+  // Remote Control lookup, the reminder count) adds, drops or widens an item.
+  const shape = items.map((i) => `${i.id}:${typeof i.aside === 'string' ? i.aside : ''}`).join('|');
+
+  /**
+   * Where the menu goes so all of it is in the window (#285), measured before
+   * it paints. Kept with the menu and shape it was measured for: a new menu is
+   * first laid out at the pointer, uncapped, so its natural size is what gets
+   * measured. A capped menu's own height is the cap; its scroll height is
+   * still all of it.
+   */
+  const [placed, setPlaced] = useState<{ for: RowMenu; at: MenuPlacement } | null>(null);
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPlaced({
+      for: menu,
+      at: placeMenu(
+        { x: menu.x, y: menu.y },
+        { width: r.width, height: Math.max(r.height, el.scrollHeight) },
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    });
+  }, [menu, shape, menuRef]);
+  const at: MenuPlacement = placed && placed.for === menu ? placed.at : { left: menu.x, top: menu.y };
+
+  return (
+    <div
+      className="row-menu"
+      ref={menuRef}
+      style={{
+        left: at.left,
+        top: at.top,
+        ...(at.maxHeight !== undefined ? { maxHeight: at.maxHeight, overflowY: 'auto' as const } : {}),
+      }}
+      role="menu"
+    >
+      <div className="row-menu-head" title={wrapForTooltip(task.title)}>
+        {task.title}
+      </div>
+      <MenuItemButtons items={items} onChosen={close} />
     </div>
   );
 }
