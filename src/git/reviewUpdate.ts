@@ -30,6 +30,17 @@ export interface UpdateResult {
   /** The old head is not in the new one: moved with `reset --keep`. */
   forced: boolean;
   moved: boolean;
+  /**
+   * After a forced move, the branch the old copy was kept on
+   * (`review/<n>-previous`): a commit made in the copy is not in the PR's new
+   * head, and moving past it must not lose it. Null otherwise.
+   */
+  kept: string | null;
+}
+
+/** Where a forced update keeps the copy it moved away from. */
+export function keptBranch(n: number): string {
+  return `review/${n}-previous`;
 }
 
 async function run(args: string[], cwd: string): Promise<string> {
@@ -65,7 +76,7 @@ export async function updateReviewCopy(
   const next = (await run(['rev-parse', '--verify', 'FETCH_HEAD^{commit}'], worktreePath)).trim();
   const prev = (await run(['rev-parse', '--verify', 'HEAD'], worktreePath)).trim();
   onPrev?.(prev);
-  if (prev === next) return { prev, next, forced: false, moved: false };
+  if (prev === next) return { prev, next, forced: false, moved: false, kept: null };
   const forced = !(await isAncestor(worktreePath, prev, next));
   // A file touched and put back is still "not uptodate" to a stale index, and
   // both moves would refuse over it. Refreshing the index's stat data changes
@@ -73,8 +84,13 @@ export async function updateReviewCopy(
   await git(['update-index', '-q', '--refresh'], worktreePath);
   // The sha just read, not FETCH_HEAD: another fetch in the same worktree
   // cannot change what this one moves to.
+  // A forced move leaves the old head on no branch. It may hold commits made
+  // in the copy (a fix tried during review), so it is kept on a branch first;
+  // nothing is discarded silently. One per PR: the copy before the last forced update.
+  const kept = forced ? keptBranch(pr.number) : null;
+  if (kept) await run(['branch', '-f', kept, prev], worktreePath);
   await run(forced ? ['reset', '--keep', next] : ['merge', '--ff-only', next], worktreePath);
-  return { prev, next, forced, moved: true };
+  return { prev, next, forced, moved: true, kept };
 }
 
 /** The copy as it stands: its head, and its commits ahead of the base (null when the base is not found). */

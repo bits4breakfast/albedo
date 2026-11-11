@@ -44,6 +44,8 @@ export interface UpdateRecord {
   prev: string;
   next: string;
   forced: boolean;
+  /** After a forced move, the branch the old copy is kept on. */
+  kept?: string;
   /** When the copy moved, ms. */
   at: number;
   /** "Since your review" hidden until the next update. */
@@ -61,6 +63,7 @@ function isRecord(v: unknown): v is UpdateRecord {
     typeof r.forced === 'boolean' &&
     typeof r.at === 'number' &&
     (r.hidden === undefined || typeof r.hidden === 'boolean') &&
+    (r.kept === undefined || typeof r.kept === 'string') &&
     (ex === undefined ||
       (typeof ex === 'object' && ex !== null && typeof ex.text === 'string' && typeof ex.cut === 'boolean' && typeof ex.at === 'number'))
   );
@@ -267,7 +270,7 @@ export async function runReviewUpdate(task: CopyTask, o: UpdateOptions = {}): Pr
     const r = await updateReviewCopy(task.worktreePath, pr, task.baseBranch);
     if (r.moved) {
       const at = (o.now ?? Date.now)();
-      writeRecord(task.id, () => ({ prev: r.prev, next: r.next, forced: r.forced, at }));
+      writeRecord(task.id, () => ({ prev: r.prev, next: r.next, forced: r.forced, at, ...(r.kept ? { kept: r.kept } : {}) }));
       if (o.explain !== false) void startExplanation(task.id, task.worktreePath);
     } else {
       upToDate.add(task.id);

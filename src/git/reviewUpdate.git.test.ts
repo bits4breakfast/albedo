@@ -32,7 +32,7 @@ describe('updateReviewCopy', { timeout: 30_000 }, () => {
     const main = repo.pushToMain('c.txt', 'c\n', 'Main moves');
     const seen: string[] = [];
     const r = await updateReviewCopy(repo.copy, pr, 'main', (p) => seen.push(p));
-    expect(r).toEqual({ prev: before, next, forced: false, moved: true });
+    expect(r).toEqual({ prev: before, next, forced: false, moved: true, kept: null });
     expect(seen).toEqual([before]);
     expect(repo.head(repo.copy)).toBe(next);
     // Still on review/1, which moved with it.
@@ -42,7 +42,7 @@ describe('updateReviewCopy', { timeout: 30_000 }, () => {
 
   it('says so, and moves nothing, when the copy is already at the head', async () => {
     const at = repo.head(repo.copy);
-    expect(await updateReviewCopy(repo.copy, pr, 'main')).toEqual({ prev: at, next: at, forced: false, moved: false });
+    expect(await updateReviewCopy(repo.copy, pr, 'main')).toEqual({ prev: at, next: at, forced: false, moved: false, kept: null });
   });
 
   it('keeps a local edit the fast-forward does not touch', async () => {
@@ -58,10 +58,23 @@ describe('updateReviewCopy', { timeout: 30_000 }, () => {
     repo.write('b.txt', 'b1\nlocal\n');
     const next = repo.forcePushPr({ 'a.txt': 'a1\nREWRITTEN\na3\n' }, 'Change a, again');
     const r = await updateReviewCopy(repo.copy, pr, 'main');
-    expect(r).toEqual({ prev: before, next, forced: true, moved: true });
+    expect(r).toEqual({ prev: before, next, forced: true, moved: true, kept: 'review/1-previous' });
+    expect(sh(repo.copy, 'rev-parse', 'review/1-previous').trim()).toBe(before);
     expect(repo.head(repo.copy)).toBe(next);
     expect(repo.read('a.txt')).toBe('a1\nREWRITTEN\na3\n');
     expect(repo.read('b.txt')).toBe('b1\nlocal\n');
+  });
+
+  it('keeps a commit made in the copy on a branch, rather than moving past it silently', async () => {
+    repo.write('c.txt', 'my fix\n');
+    sh(repo.copy, 'add', 'c.txt');
+    sh(repo.copy, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'Try a fix');
+    const mine = repo.head(repo.copy);
+    const next = repo.pushToPr('b.txt', 'b1\nb2\n', 'Add b2');
+    const r = await updateReviewCopy(repo.copy, pr, 'main');
+    expect(r).toMatchObject({ prev: mine, next, forced: true, moved: true, kept: 'review/1-previous' });
+    expect(repo.head(repo.copy)).toBe(next);
+    expect(sh(repo.copy, 'rev-parse', 'review/1-previous').trim()).toBe(mine);
   });
 
   it('after a force-push, refuses a conflicting local edit in git’s words and leaves HEAD and the edit alone', async () => {

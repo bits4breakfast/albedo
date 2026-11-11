@@ -67,6 +67,11 @@ export default function SinceReview({ task, record, changes, now }: SinceReviewP
           Hide
         </button>
       </div>
+      {record.kept && (
+        <p className="gd-since-note">
+          Your previous copy is kept on the branch <code>{record.kept}</code>, with any commits you made in it.
+        </p>
+      )}
       <Explanation task={task} record={record} />
       {changes.kind === 'loading' ? (
         <p className="gd-since-note">Reading the changes…</p>
