@@ -176,6 +176,13 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 
 - **A fix measured only at one width.** Owner-reported, a fourth round on the same control (2026-11-10): the Building · Reviewing tabs (#291) still cut Reviewing off at the right edge of the track, count and padding gone. The tab padding was measured even in Chrome, but only in a sidebar wide enough for both tabs. They need 207px of track; at the sidebar's default 260px there are 170px, and the track's `overflow: hidden` clipped the second tab. **Rule:** a fix to anything in a resizable pane is measured at that pane's minimum, its default and its maximum (`src/ui/app/useLayout.ts`), and with the longest content it can hold. Report all three, not the width that happened to be open.
 
+## Model-written content in the webview
+
+- **A CSP is not a network fence, and a sandbox does not hide the IPC handler.** Near-miss in #348 (HTML mockups a session writes, shown in a sandboxed `srcdoc` iframe), measured in a WKWebView set up as wry sets up Tauri's: with `sandbox="allow-scripts"` and `default-src 'none'`, every fetch and image was blocked, yet `location.href = 'https://…'`, `<meta http-equiv="refresh">` and a link click each reached the webview's navigation policy as a sub-frame navigation to the remote URL -- and Tauri allows every navigation unless told otherwise. The same frame could also see `webkit.messageHandlers.ipc` and post to Tauri's IPC handler (`isMainFrame=false`); only Tauri's invoke key, which the frame cannot read, stops it. **Rule:**
+  - Never give such a frame `allow-same-origin`; load it from a stored copy (`srcdoc`), never a path or URL.
+  - CSP does not cover navigation: `src-tauri/src/navguard.rs` keeps every frame on the app's own pages. Check a new kind of embedded content against it.
+  - Prove isolation in WebKit, not jsdom: probe `parent` access, `webkit.messageHandlers`, fetch, images and self-navigation from inside the frame.
+
 ## Shell scripts (for agents)
 
 - **zsh `path` is `PATH`.** `while read path …` in zsh wipes the command search path, and every later command is "not found". Use another variable name.

@@ -3,6 +3,7 @@ mod fsscope;
 mod fsx;
 mod keep_awake;
 mod mcp;
+mod navguard;
 mod oneshot;
 mod pty;
 
@@ -143,6 +144,8 @@ const M0015_COMMENT_GITHUB: &str = include_str!("../../src/db/migrations/0015_co
 const M0016_API_ERROR: &str = include_str!("../../src/db/migrations/0016_api_error.sql");
 /// v17: tasks.spun_from_task_id -- the task a task was spun out of (#332).
 const M0017_SPUN_FROM: &str = include_str!("../../src/db/migrations/0017_spun_from.sql");
+/// v18: previews -- HTML mockups a session showed the user for approval (#348).
+const M0018_PREVIEWS: &str = include_str!("../../src/db/migrations/0018_previews.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -248,9 +251,18 @@ pub fn run() {
             sql: M0017_SPUN_FROM,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 18,
+            description: "previews",
+            sql: M0018_PREVIEWS,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
+        // Every frame stays on the app's own pages: a preview's sandboxed
+        // page (#348) cannot navigate itself out to the network.
+        .plugin(navguard::plugin())
         .menu(build_menu)
         .setup(|app| {
             attention::install(app.handle());

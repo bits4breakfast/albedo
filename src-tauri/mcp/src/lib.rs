@@ -1,15 +1,26 @@
-//! Albedo's MCP server (#157): the four things a session can ask Albedo for
-//! (the fourth, `set_task_summary`, from #262).
+//! Albedo's MCP server (#157): the five things a session can ask Albedo for
+//! (the fourth, `set_task_summary`, from #262; the fifth, `show_preview`,
+//! from #348).
 //!
 //! Claude Code starts this binary for every session Albedo spawns
 //! (`--mcp-config`, with `ALBEDO_TASK_ID` in its environment) and talks
 //! JSON-RPC to it over stdin/stdout. It answers `tools/list` and `tools/call`;
 //! a call that passes validation is appended as one line to
-//! `~/.albedo/inbox/task-<id>.jsonl` and nothing else happens here. Acting on
-//! it -- showing it, queueing it for approval -- is the app's job.
+//! `~/.albedo/inbox/task-<id>.jsonl`. Acting on it -- showing it, queueing it
+//! for approval -- is the app's job.
 //!
-//! No network, no other files, nothing read back. The caller's identity is the
-//! task id Albedo put in the environment, never anything in a request.
+//! Four of the tools are answered at once. `show_preview` is not: it copies
+//! the page the session names into `~/.albedo/previews`, writes its line, and
+//! then waits for `answer-<task>-<request>.json`, which the app writes only
+//! from a click on the "waiting on you" card (`preview.rs`). The answer is
+//! the call's result. `notifications/cancelled` (Esc in the terminal, or
+//! Claude Code's own timeout) ends the wait: it is recorded in the inbox so
+//! the app retires the card, and the answer file's name is never read again.
+//! The stdio loop (`main.rs`) calls [`Server::poll`] while anything waits.
+//!
+//! No network. Nothing read back but the page named and its answer. The
+//! caller's identity is the task id Albedo put in the environment, never
+//! anything in a request.
 //!
 //! ## Protocol versions
 //!
@@ -29,6 +40,7 @@
 
 pub mod due;
 pub mod inbox;
+pub mod preview;
 pub mod tools;
 
 use serde_json::{json, Map, Value};
@@ -63,9 +75,13 @@ pub const RATE_WINDOW_MS: i64 = 60_000;
 
 const INSTRUCTIONS: &str = "This session runs inside Albedo, the user's desktop cockpit for Claude Code sessions. \
 These tools ask Albedo for things only it can do: a reminder on this task, a new session (only ever started with \
-the user's approval), telling the user you are blocked on them, or a one-line summary of what this task is about, \
-shown beside its title. Each call is delivered to Albedo and answered \
-at once; none of them waits for the user. \
+the user's approval), telling the user you are blocked on them, a one-line summary of what this task is about, \
+shown beside its title, or an HTML mockup shown to the user for approval. Every call is delivered to Albedo and \
+answered at once, except `show_preview`: it waits until the user answers, and their answer is its result. \
+Whenever you would show the user a UI mockup or HTML preview for their approval, write it as one self-contained \
+HTML file and call `show_preview` with its path, instead of linking to it or describing it; do not build what it \
+shows until it comes back approved. Its description is not shown until the tool is loaded, so this is the \
+reminder. \
 As soon as you know what this task is about -- typically right after reading the ticket or issue it is named \
 after -- call `set_task_summary` once with a plain one-line summary (no ticket key), and again only if the task's \
 purpose changes. Its description is not shown until the tool is loaded, so this is the reminder. \
@@ -85,6 +101,11 @@ pub struct Env {
     pub task: Option<u64>,
     /// `~/.albedo/inbox`, when `HOME` is known.
     pub inbox_dir: Option<PathBuf>,
+    /// `~/.albedo/previews`, when `HOME` is known (`show_preview`, #348).
+    pub previews_dir: Option<PathBuf>,
+    /// Where a relative `show_preview` path is read from: the directory
+    /// Claude Code started this server in.
+    pub cwd: Option<PathBuf>,
     pub now_ms: Box<dyn FnMut() -> i64>,
 }
 
@@ -94,12 +115,18 @@ impl Env {
         let task = std::env::var("ALBEDO_TASK_ID")
             .ok()
             .and_then(|s| parse_task_id(&s));
-        let inbox_dir = std::env::var_os("HOME")
-            .filter(|h| !h.is_empty())
-            .map(|h| inbox::dir_under(std::path::Path::new(&h)));
+        let home = std::env::var_os("HOME").filter(|h| !h.is_empty());
+        let inbox_dir = home
+            .as_ref()
+            .map(|h| inbox::dir_under(std::path::Path::new(h)));
+        let previews_dir = home
+            .as_ref()
+            .map(|h| preview::dir_under(std::path::Path::new(h)));
         Env {
             task,
             inbox_dir,
+            previews_dir,
+            cwd: std::env::current_dir().ok(),
             now_ms: Box::new(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -118,18 +145,113 @@ pub fn parse_task_id(s: &str) -> Option<u64> {
     s.parse().ok().filter(|&n| n > 0)
 }
 
+/// A `show_preview` call waiting for the user's answer.
+struct Wait {
+    /// The JSON-RPC id the answer goes back under.
+    rpc_id: Value,
+    /// The inbox line's id: the request's name in the answer file.
+    request: String,
+    task: u64,
+    answer: PathBuf,
+    modern: bool,
+}
+
+/// What a `tools/call` came to: an answer now, or a wait (`show_preview`).
+enum Called {
+    Now(Result<Value, Value>),
+    Waiting,
+}
+
 pub struct Server {
     env: Env,
     calls: VecDeque<i64>,
     seq: u64,
+    waits: Vec<Wait>,
 }
 
 impl Server {
     pub fn new(env: Env) -> Server {
+        if let Some(dir) = env.previews_dir.as_deref() {
+            preview::sweep(dir, std::time::SystemTime::now());
+        }
         Server {
             env,
             calls: VecDeque::new(),
             seq: 0,
+            waits: Vec::new(),
+        }
+    }
+
+    /// Whether a `show_preview` call is waiting, so the loop should poll.
+    pub fn waiting(&self) -> bool {
+        !self.waits.is_empty()
+    }
+
+    /// The answers that arrived since the last poll, as JSON-RPC responses.
+    /// Each wait ends with its answer; a malformed answer file is removed and
+    /// the call keeps waiting.
+    pub fn poll(&mut self) -> Vec<Value> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.waits.len() {
+            match preview::take_answer(&self.waits[i].answer) {
+                Some(preview::Answer::Text(text)) => {
+                    let w = self.waits.remove(i);
+                    let result =
+                        json!({"content": [{"type": "text", "text": text}], "isError": false});
+                    out.push(respond(w.rpc_id, "tools/call", Ok(result), w.modern));
+                }
+                Some(preview::Answer::Malformed) => {
+                    eprintln!(
+                        "albedo-mcp: ignored a malformed answer for {}",
+                        self.waits[i].request
+                    );
+                    i += 1;
+                }
+                None => i += 1,
+            }
+        }
+        out
+    }
+
+    /// stdin closed: Claude Code is gone, and so is every call that waited.
+    /// Each is recorded as cancelled, so the app retires its card.
+    pub fn shutdown(&mut self) {
+        for w in std::mem::take(&mut self.waits) {
+            self.record_cancel(&w, "session ended");
+        }
+    }
+
+    /// `notifications/cancelled`: stop waiting for that request, and say so.
+    /// Per the protocol, a cancelled request gets no response.
+    fn cancel(&mut self, params: Option<&Value>) {
+        let Some(rid) = params.and_then(|p| p.get("requestId")) else {
+            return;
+        };
+        let reason = params.and_then(|p| p.get("reason")).and_then(Value::as_str);
+        if let Some(i) = self.waits.iter().position(|w| &w.rpc_id == rid) {
+            let w = self.waits.remove(i);
+            self.record_cancel(&w, &preview::clean_reason(reason));
+        }
+    }
+
+    fn record_cancel(&mut self, w: &Wait, reason: &str) {
+        let Some(dir) = self.env.inbox_dir.clone() else {
+            return;
+        };
+        let now = (self.env.now_ms)();
+        self.seq += 1;
+        let id = format!("{}-{}-{}", std::process::id(), now, self.seq);
+        let mut args = Map::new();
+        args.insert("request".into(), w.request.clone().into());
+        args.insert("reason".into(), reason.into());
+        match inbox::line(w.task, inbox::PREVIEW_CANCELLED, args, now, &id) {
+            Ok(bytes) => {
+                if let Err(e) = inbox::append(&inbox::file_for(&dir, w.task), &bytes) {
+                    eprintln!("albedo-mcp: could not record a cancelled preview: {e}");
+                }
+            }
+            Err(e) => eprintln!("albedo-mcp: could not record a cancelled preview: {e}"),
         }
     }
 
@@ -167,8 +289,12 @@ impl Server {
                 .filter(|_| !obj.contains_key("result") && !obj.contains_key("error"))
                 .map(|id| error(id, INVALID_REQUEST, "Invalid request: no method", None));
         };
-        // A notification (`notifications/initialized`, `notifications/cancelled`):
-        // nothing to answer, and nothing here runs long enough to cancel.
+        // A cancel ends a `show_preview` wait (#348); other notifications
+        // (`notifications/initialized`) need nothing.
+        if id.is_none() && method == "notifications/cancelled" {
+            self.cancel(obj.get("params"));
+            return None;
+        }
         let id = id?;
         if obj.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
             return Some(error(
@@ -195,7 +321,10 @@ impl Server {
             "server/discover" => Ok(discover()),
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({"tools": tools::definitions()})),
-            "tools/call" => self.call(params),
+            "tools/call" => match self.call(params, &id, modern) {
+                Called::Now(r) => r,
+                Called::Waiting => return None,
+            },
             _ => Err(error(
                 id.clone(),
                 METHOD_NOT_FOUND,
@@ -203,26 +332,7 @@ impl Server {
                 None,
             )),
         };
-        Some(match result {
-            Ok(mut r) => {
-                if modern {
-                    if let Some(o) = r.as_object_mut() {
-                        o.insert("resultType".into(), "complete".into());
-                        // Required on these two from 2026-07-28 (server/utilities/caching).
-                        // The list is fixed for the process and the same for everyone.
-                        if matches!(method, "tools/list" | "server/discover") {
-                            o.insert("ttlMs".into(), CACHE_TTL_MS.into());
-                            o.insert("cacheScope".into(), "public".into());
-                        }
-                    }
-                }
-                json!({"jsonrpc": "2.0", "id": id, "result": r})
-            }
-            Err(mut e) => {
-                e["id"] = id;
-                e
-            }
-        })
+        Some(respond(id, method, result, modern))
     }
 
     fn initialize(&self, params: Option<&Value>) -> Value {
@@ -242,55 +352,108 @@ impl Server {
         })
     }
 
-    fn call(&mut self, params: Option<&Value>) -> Result<Value, Value> {
+    fn call(&mut self, params: Option<&Value>, rpc_id: &Value, modern: bool) -> Called {
+        let now_result = |r: Value| Called::Now(Ok(r));
         let Some(name) = params.and_then(|p| p.get("name")).and_then(Value::as_str) else {
-            return Err(error(
+            return Called::Now(Err(error(
                 Value::Null,
                 INVALID_PARAMS,
                 "tools/call needs a tool `name`",
                 None,
-            ));
+            )));
         };
         if !tools::NAMES.contains(&name) {
-            return Err(error(
+            return Called::Now(Err(error(
                 Value::Null,
                 INVALID_PARAMS,
                 &format!("Unknown tool: {name}"),
                 None,
-            ));
+            )));
         }
         let now = (self.env.now_ms)();
         if !self.admit(now) {
-            return Ok(tool_error(&format!(
+            return now_result(tool_error(&format!(
                 "Too many requests: at most {RATE_LIMIT} a minute from one session. Nothing was sent; try again later."
             )));
         }
         let Some(task) = self.env.task else {
-            return Ok(tool_error(
+            return now_result(tool_error(
                 "Albedo did not start this session (ALBEDO_TASK_ID is missing), so there is no task to deliver this to.",
             ));
         };
         let Some(dir) = self.env.inbox_dir.clone() else {
-            return Ok(tool_error(
+            return now_result(tool_error(
                 "HOME is not set, so Albedo's inbox cannot be found.",
             ));
         };
-        let accepted = match tools::validate(name, params.and_then(|p| p.get("arguments")), now) {
+        let mut accepted = match tools::validate(name, params.and_then(|p| p.get("arguments")), now)
+        {
             Ok(a) => a,
-            Err(msg) => return Ok(tool_error(&msg)),
+            Err(msg) => return now_result(tool_error(&msg)),
         };
         self.seq += 1;
         let id = format!("{}-{}-{}", std::process::id(), now, self.seq);
+
+        // show_preview: freeze the page before anything is written, so the
+        // line never names a version that does not exist.
+        let mut wait = None;
+        if accepted.tool == tools::SHOW_PREVIEW {
+            let Some(previews) = self.env.previews_dir.clone() else {
+                return now_result(tool_error(
+                    "HOME is not set, so Albedo's previews folder cannot be found.",
+                ));
+            };
+            let path = accepted
+                .args
+                .remove("path")
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default();
+            let Some(full) = preview::resolve(&path, self.env.cwd.as_deref()) else {
+                return now_result(tool_error(&format!(
+                    "`path` ({path}) is relative; give the absolute path."
+                )));
+            };
+            let page = match preview::read_page(&full) {
+                Ok(p) => p,
+                Err(msg) => return now_result(tool_error(&msg)),
+            };
+            if let Err(e) = preview::write_copy(&previews, task, &id, &page) {
+                return now_result(tool_error(&format!(
+                    "Could not copy the page for Albedo: {e}"
+                )));
+            }
+            // The call's own id in the transcript, so the app can retire the
+            // card when the transcript records this call's result.
+            if let Some(t) = tool_use_id(params) {
+                accepted.args.insert("toolUseId".into(), t.into());
+            }
+            wait = Some(Wait {
+                rpc_id: rpc_id.clone(),
+                request: id.clone(),
+                task,
+                answer: previews.join(preview::answer_name(task, &id)),
+                modern,
+            });
+        }
+
         let bytes = match inbox::line(task, accepted.tool, accepted.args, now, &id) {
             Ok(b) => b,
-            Err(msg) => return Ok(tool_error(&msg)),
+            Err(msg) => return now_result(tool_error(&msg)),
         };
         if let Err(e) = inbox::append(&inbox::file_for(&dir, task), &bytes) {
-            return Ok(tool_error(&format!(
+            return now_result(tool_error(&format!(
                 "Could not deliver this to Albedo: {e}"
             )));
         }
-        Ok(json!({"content": [{"type": "text", "text": accepted.reply}], "isError": false}))
+        match wait {
+            Some(w) => {
+                self.waits.push(w);
+                Called::Waiting
+            }
+            None => now_result(
+                json!({"content": [{"type": "text", "text": accepted.reply}], "isError": false}),
+            ),
+        }
     }
 
     /// Sliding window over the last [`RATE_WINDOW_MS`].
@@ -307,6 +470,44 @@ impl Server {
         }
         self.calls.push_back(now);
         true
+    }
+}
+
+/// Claude Code's id for the call in its transcript, from the request's
+/// `_meta`: plain characters only, or none.
+fn tool_use_id(params: Option<&Value>) -> Option<&str> {
+    let t = params?
+        .get("_meta")?
+        .get("claudecode/toolUseId")?
+        .as_str()?;
+    let ok = !t.is_empty()
+        && t.len() <= 100
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    ok.then_some(t)
+}
+
+/// The response line for one request.
+fn respond(id: Value, method: &str, result: Result<Value, Value>, modern: bool) -> Value {
+    match result {
+        Ok(mut r) => {
+            if modern {
+                if let Some(o) = r.as_object_mut() {
+                    o.insert("resultType".into(), "complete".into());
+                    // Required on these two from 2026-07-28 (server/utilities/caching).
+                    // The list is fixed for the process and the same for everyone.
+                    if matches!(method, "tools/list" | "server/discover") {
+                        o.insert("ttlMs".into(), CACHE_TTL_MS.into());
+                        o.insert("cacheScope".into(), "public".into());
+                    }
+                }
+            }
+            json!({"jsonrpc": "2.0", "id": id, "result": r})
+        }
+        Err(mut e) => {
+            e["id"] = id;
+            e
+        }
     }
 }
 
@@ -370,6 +571,8 @@ mod tests {
         Server::new(Env {
             task,
             inbox_dir: dir,
+            previews_dir: None,
+            cwd: None,
             now_ms: Box::new(move || clock.get()),
         })
     }
@@ -408,6 +611,15 @@ mod tests {
         assert!(said.contains("a new piece of work"), "{said}");
         // The moment it is for: where a session would offer to do it here.
         assert!(said.contains("instead of offering"), "{said}");
+        // show_preview (#348): deferred too, so the instructions name its
+        // moment, and say honestly that it is the one call that waits.
+        assert!(said.contains("`show_preview`"), "{said}");
+        assert!(
+            said.contains("UI mockup or HTML preview for their approval"),
+            "{said}"
+        );
+        assert!(said.contains("it waits until the user answers"), "{said}");
+        assert!(!said.contains("none of them waits"), "{said}");
         assert!(
             r["result"].get("resultType").is_none(),
             "legacy results carry no resultType"
@@ -469,7 +681,7 @@ mod tests {
             .contains(&json!("2025-11-25")));
         let l = s.handle(&req(2, "tools/list", meta)).unwrap();
         assert_eq!(l["result"]["resultType"], "complete");
-        assert_eq!(l["result"]["tools"].as_array().unwrap().len(), 4);
+        assert_eq!(l["result"]["tools"].as_array().unwrap().len(), 5);
         for r in [&d, &l] {
             assert_eq!(r["result"]["ttlMs"], CACHE_TTL_MS);
             assert_eq!(r["result"]["cacheScope"], "public");

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { Project, Task } from '../../types';
 import { startInbox, stopInbox } from '../../capture/inbox';
+import { startPreviewGate } from '../../capture/previewGate';
 import type { NewTaskPrefill } from '../followUp';
 import Requests from '../Requests';
 import { denyRequest, dismissRequest, receiveRequest, useRequests, type QueuedRequest, type SessionRequest } from '../requestQueue';
@@ -68,13 +69,18 @@ export default function useSessionRequests(opts: {
 
   useEffect(() => {
     if (loading) return;
-    startInbox((req) => {
-      const t = tasksRef.current.find((x) => x.id === req.taskId);
-      receiveRequest(req, { title: t?.title, archived: t?.status === 'archived' });
-    }).catch((err: unknown) => {
-      // Optional, like the hooks: without it sessions still run; say so.
-      console.warn('[inbox] not started: requests from sessions will not appear', err);
-    });
+    // Previews (#348) listen first: a line read at launch must reach them.
+    startPreviewGate()
+      .then(() =>
+        startInbox((req) => {
+          const t = tasksRef.current.find((x) => x.id === req.taskId);
+          receiveRequest(req, { title: t?.title, archived: t?.status === 'archived' });
+        }),
+      )
+      .catch((err: unknown) => {
+        // Optional, like the hooks: without it sessions still run; say so.
+        console.warn('[inbox] not started: requests from sessions will not appear', err);
+      });
   }, [loading]);
 
   useEffect(

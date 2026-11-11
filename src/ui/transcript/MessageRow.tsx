@@ -24,6 +24,8 @@ import { lineCount } from './pastedText';
 import { PassageRevealContext } from './passages';
 import { foldQuote } from './transcriptQuotes';
 import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
+import { SHOW_PREVIEW_TOOL } from '../../capture/previewGate';
+import { PreviewChip } from '../preview/PreviewChip';
 import {
   imageSourceNote,
   isAllEnvelopes,
@@ -771,6 +773,19 @@ function ToolUseRow({
 }): ReactNode {
   const rendered = useDiffsFor(message, result);
   const more = extras.length > 0 ? <SkillInstructions rows={extras} /> : null;
+
+  // A mockup shown for approval (#348): a chip per version with how it
+  // ended, which opens that version read only.
+  if (message.toolName === SHOW_PREVIEW_TOOL) {
+    return (
+      <div className="tx-row tx-row-tool" data-message-id={message.id}>
+        <div className="tx-gutter" />
+        <div className="tx-content">
+          <PreviewChip message={message} result={result} />
+        </div>
+      </div>
+    );
+  }
 
   // `data-message-id`, as on every row: what the Background band scrolls to,
   // and what a comment on a passage names as its source (#187).
