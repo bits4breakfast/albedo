@@ -23,6 +23,10 @@
  * decision 2026-11-09) up to MAX_FLAGS files to read carefully, each a path
  * it was given and a one-line reason. Files the guide sets aside (focus.ts)
  * are never sent.
+ *
+ * One more use, by the owner's decision on #352 (2026-11-11): the short
+ * explanation in "Since your review", from the commit messages and the diff
+ * between two heads of a review copy (writeChangesExplanation).
  */
 
 import type { BranchDiff } from './blocks';
@@ -517,4 +521,88 @@ export async function writeNotes(
   if (reply === null) throw new GuideError('invalid', 'The notes were not in the shape asked for.');
   const allowed = new Set(paths);
   return { notes: cleanNotes(reply.notes, allowed), lines: cleanNotes(reply.lines, allowed, NOTE_LINE_MAX_CHARS) };
+}
+
+// ---------------------------------------------------------------------------
+// "Since your review": what changed when the copy was updated (#352)
+// ---------------------------------------------------------------------------
+
+/**
+ * The explanation at the top of "Since your review": two to four plain
+ * sentences on what changed between the copy you had and the PR's new head,
+ * and why. One call, the same run as the guide's, given the commit messages
+ * and the diff between the two heads only -- never the whole PR.
+ */
+export const CHANGES_SYSTEM = [
+  'You tell a code reviewer what changed in a pull request since they last looked at it.',
+  'You are given the messages of the commits added since then, and the diff from the copy they had to the new head.',
+  'Write two to four plain sentences: what changed and, where the messages or the code make it evident, why.',
+  'Lead with the most important change. Name files, settings or functions only when that helps.',
+  'If the history was rewritten (force-pushed), say what differs now, not how the history moved.',
+  'If the diff was cut, describe only what you were shown and do not guess at the rest.',
+  'Write plainly; describe, do not praise or judge the code. No lists, no headings, no preamble.',
+].join(' ');
+
+const CHANGES_SCHEMA = {
+  type: 'object',
+  properties: { explanation: { type: 'string' } },
+  required: ['explanation'],
+};
+
+/** The diff sent, at most: about 10,000 tokens, so the call stays small. */
+export const CHANGES_DIFF_MAX_CHARS = 30_000;
+/** Commit messages sent, at most, and each body's length. */
+export const CHANGES_MAX_COMMITS = 40;
+export const CHANGES_BODY_MAX_CHARS = 800;
+/** The explanation kept, at most: four sentences need far less. */
+export const CHANGES_MAX_CHARS = 1_200;
+
+export interface ChangesInput {
+  commits: ReadonlyArray<{ sha: string; subject: string; body: string }>;
+  diff: string;
+  forced: boolean;
+}
+
+/**
+ * The prompt, and whether the diff had to be cut to fit. The diff is cut at
+ * a line, with how many lines were left out, so the model is told too. Pure.
+ */
+export function changesPrompt(input: ChangesInput): { prompt: string; cut: boolean } {
+  let diff = input.diff;
+  let cut = false;
+  if (diff.length > CHANGES_DIFF_MAX_CHARS) {
+    const head = diff.slice(0, CHANGES_DIFF_MAX_CHARS);
+    const at = head.lastIndexOf('\n');
+    const kept = at > 0 ? head.slice(0, at) : head;
+    const left = diff.slice(kept.length).split('\n').filter((l) => l.length > 0).length;
+    diff = `${kept}\n[… the diff was cut here: ${left} more ${left === 1 ? 'line' : 'lines'} not shown …]`;
+    cut = true;
+  }
+  const commits = input.commits.slice(0, CHANGES_MAX_COMMITS).map((c) => {
+    const body = c.body.length > CHANGES_BODY_MAX_CHARS ? `${c.body.slice(0, CHANGES_BODY_MAX_CHARS)}…` : c.body;
+    return `- ${c.sha.slice(0, 7)} ${c.subject}${body ? `\n  ${body.replace(/\n/g, '\n  ')}` : ''}`;
+  });
+  const more = input.commits.length - commits.length;
+  const prompt = [
+    input.forced ? 'The pull request was force-pushed: its history was rewritten since the reviewer’s copy.' : null,
+    `Commits since the reviewer’s copy (${input.commits.length}, newest first):`,
+    commits.length > 0 ? commits.join('\n') : '(none: only the history changed)',
+    more > 0 ? `… and ${more} older ${more === 1 ? 'commit' : 'commits'} not listed.` : null,
+    '',
+    cut ? 'The diff from the reviewer’s copy to the new head (cut to fit; see its end):' : 'The diff from the reviewer’s copy to the new head:',
+    diff.trim() ? diff : '(no file changes)',
+  ]
+    .filter((x) => x !== null)
+    .join('\n');
+  return { prompt, cut };
+}
+
+/** The explanation, and whether it was written from a cut diff. Throws a {@link GuideError}. */
+export async function writeChangesExplanation(input: ChangesInput): Promise<{ text: string; cut: boolean }> {
+  const { prompt, cut } = changesPrompt(input);
+  const reply = await call(CHANGES_SYSTEM, CHANGES_SCHEMA, prompt);
+  const raw = typeof reply === 'object' && reply !== null ? (reply as { explanation?: unknown }).explanation : undefined;
+  const text = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
+  if (!text) throw new GuideError('invalid', 'The reply had no explanation in it.');
+  return { text: text.length > CHANGES_MAX_CHARS ? `${text.slice(0, CHANGES_MAX_CHARS - 1)}…` : text, cut };
 }

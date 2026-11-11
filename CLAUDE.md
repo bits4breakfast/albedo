@@ -94,6 +94,14 @@ patterns, `src/guide/focus.ts`) are never sent to it.
 only file that knows that output's shape. Nothing else may be built on this
 run without the same decision.
 
+One more use of it, by the owner's decision (2026-11-11, issue #352): after
+Update Copy moves a review copy, the same run writes "Since your review"'s
+explanation, two to four sentences, once, right after that click, and again
+only on its Rewrite link. It is sent the commit messages of `prev..new` and
+the diff between those two heads, cut to `CHANGES_DIFF_MAX_CHARS` (the model
+and the reader are told when it was cut), never the whole PR. The result is
+kept with the two heads (`src/guide/copyUpdate.ts`).
+
 A seventh, by the owner's decision (2026-11-06, issue #272): for Claude
 Code's plan mode only, the waiting prompt derived from a `PermissionRequest`
 for `ExitPlanMode` keeps its `plan` -- that one field of the tool's input, for

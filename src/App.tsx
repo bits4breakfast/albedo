@@ -78,6 +78,8 @@ import ProjectBar from './ui/ProjectBar';
 import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
 import { onComposerInsert, onShowTranscriptRequest, requestAttach, sendWaitingComments } from './ui/transcript/composerBridge';
 import GuidePane from './guide/GuidePane';
+import ReviewUpdateBand from './ui/ReviewUpdateBand';
+import { runReviewUpdate } from './guide/copyUpdate';
 import { onGuideRequest, requestGuide } from './guide/openGuide';
 import { FileOpenContext, FilePathContext, FileTextContext, markReadOnly, type OpenFileOptions } from './ui/editor/openFile';
 import { markUserActivated } from './ui/editor/outsideFile';
@@ -1296,6 +1298,8 @@ export default function App() {
         select(task.id);
         requestGuide(task.id);
       },
+      // Never on its own (#352): only this click, or the band's.
+      updateReview: (task) => void runReviewUpdate(task),
       fork: openFork,
       move: (task) => setMoveTarget(task),
       setDone: (task, done) => void setDone(task.id, done),
@@ -1843,6 +1847,11 @@ export default function App() {
               </div>
               )}
 
+              {/* A review copy behind its PR (#352): over every tab, since the
+                  copy is what all three read. */}
+              {selected?.reviewUrl && !projectView ? (
+                <ReviewUpdateBand key={`ru-${selected.id}`} task={selected} onShowFiles={() => setRightTab('files')} />
+              ) : null}
               {/* All three panels stay mounted so scroll position and editor
                   buffer survive a tab flip; only the task identity resets them. */}
               <div className="pane-body">

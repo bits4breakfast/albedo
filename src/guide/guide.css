@@ -653,3 +653,112 @@
 /* Every file set aside: said where "All N groups reviewed" goes, in the
    count row's quiet tier. */
 .gd-none-to-review { font-size: var(--fs-sm); color: var(--muted); }
+
+/* --- Since your review (#352) ----------------------------------------------
+   A card at the top of the Guide after Update Copy, on --subcard (#fff |
+   #17181c), where every tier clears more than on --panel: --text 17.02 |
+   14.09, --muted 7.33 | 7.46, --faint 6.09 | 5.80, --accent 6.63 | 7.59,
+   --add 7.37 | 9.74, --del 7.15 | 8.07, --danger 7.15 | 8.07 (reviewUpdateContrast.test.ts).
+   A picked file row is --on-accent-soft on --accent-soft (6.92 | 9.26), a
+   hovered one --accent on --panel-hover (5.62 | 7.04). Its own
+   scroll, capped, so the groups below keep their room. */
+.gd-since-wrap {
+  flex: 0 1 auto;
+  max-height: 48%;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 0;
+}
+.gd-intro > .gd-since { align-self: stretch; margin-bottom: 8px; }
+.gd-since {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--subcard);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.gd-since-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.gd-since-title { color: var(--text-strong); font-size: var(--fs-md); }
+.gd-since-facts { min-width: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+.gd-since-gap { flex: 1 1 0; }
+.gd-since-what {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.gd-since-text { margin: 0; max-width: 75ch; font-size: var(--fs-md); line-height: 1.5; color: var(--text); }
+.gd-since-pending { color: var(--muted); }
+.gd-since-by { font-size: var(--fs-xs); color: var(--muted); }
+.gd-since-by .gd-link { font-size: var(--fs-xs); }
+.gd-since-note { margin: 0; padding: 8px 12px; font-size: var(--fs-sm); color: var(--muted); }
+.gd-since-what > .gd-since-note { padding: 0; }
+.gd-since-note[data-tone='error'] { color: var(--danger); white-space: pre-wrap; }
+.gd-since-lists {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 8px 12px 10px;
+}
+@container (max-width: 640px) { .gd-since-lists { grid-template-columns: minmax(0, 1fr); } }
+.gd-since-label {
+  margin: 0 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.gd-since-commits,
+.gd-since-files { list-style: none; margin: 0; padding: 0; }
+.gd-since-commit { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
+.gd-since-sha { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); }
+.gd-since-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gd-since-age { flex: none; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.gd-since-file {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  cursor: pointer;
+}
+.gd-since-file:hover { background: var(--panel-hover); }
+.gd-since-file[aria-expanded='true'] { background: var(--accent-soft); color: var(--on-accent-soft); }
+.gd-since-file:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+.gd-since-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gd-since-diff { border-top: 1px solid var(--border); padding: 8px 12px 10px; }
+.gd-since { container-type: inline-size; }
+
+/* A group with new code since the copy you had (#352): a tag beside its
+   Reviewed box, --accent on --panel (6.46 | 7.88), and "Reviewed before" in
+   --muted. In the rail, a short --accent bar at the mark's left: a glyph,
+   3:1 on --panel and --panel-hover (railContrast.test.ts's grounds). */
+.gd-changed {
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+.gd-reviewed-before { font-size: var(--fs-sm); color: var(--muted); }
+.gd-rail-mark[data-changed] {
+  background: linear-gradient(var(--accent), var(--accent)) left 1px center / 2px 10px no-repeat;
+}
