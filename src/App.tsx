@@ -111,6 +111,7 @@ import { useMergeNotices } from './ui/mergeNotice';
 import { getPrStatus, usePendingPrWatch } from './gh/prStore';
 import { requestChecks, useCiNotices, useCiNotifyEnabled } from './ui/ciNotice';
 import { useKeepAwake, useKeepAwakeEnabled } from './ui/keepAwake';
+import { useGroupToolCalls } from './ui/transcript/groupToolCalls';
 import { useReviewNotices } from './ui/reviewNotice';
 import { fetchPrStatus } from './gh/gh';
 import type { PrStatus } from './gh/prStatus';
@@ -700,6 +701,7 @@ export default function App() {
   const [ciNotify, setCiNotify] = useCiNotifyEnabled();
   // No idle sleep and no App Nap while tasks run (#283); the count for the status strip.
   const [keepAwake, setKeepAwake] = useKeepAwakeEnabled();
+  const [groupToolCalls, setGroupToolCalls] = useGroupToolCalls();
   const awakeCount = useKeepAwake(tasks, keepAwake);
 
   /*
@@ -1336,6 +1338,8 @@ export default function App() {
         ciNotify={ciNotify}
         onCiNotifyChange={setCiNotify}
         keepAwake={keepAwake}
+        groupToolCalls={groupToolCalls}
+        onGroupToolCallsChange={setGroupToolCalls}
         onKeepAwakeChange={setKeepAwake}
         taskListCollapsed={taskListCollapsed}
         onTaskListCollapsedChange={setTaskListCollapsed}

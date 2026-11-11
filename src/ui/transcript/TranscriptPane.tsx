@@ -104,7 +104,9 @@ import ReminderCards from '../reminders/ReminderCard';
 import BackgroundStrip from './BackgroundStrip';
 import { backgroundShown, useBackgroundWork } from '../BackgroundWork';
 import { PermissionModeLabel } from './PermissionModeLabel';
-import { isSidechain, toolUseId } from './ToolChip';
+import { isSidechain, summaryOf, toolUseId } from './ToolChip';
+import { findRuns, runFacts } from './toolGroups';
+import { useGroupToolCalls } from './groupToolCalls';
 import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
 import { COMPOSER_MIN_PX, TRANSCRIPT_MIN_PX, composerHeight } from './composerHeight';
 import './transcript.css';
@@ -451,7 +453,11 @@ export function TranscriptPane({
     return () => window.removeEventListener('keydown', onKey);
   }, [jumpToEnd]);
 
-  const items = useMemo(() => groupRows(messages), [messages]);
+  const [groupTools] = useGroupToolCalls();
+  const items = useMemo(() => {
+    const rows = groupRows(messages);
+    return groupTools ? foldToolRuns(rows) : rows;
+  }, [messages, groupTools]);
 
   // The API error the last turn stopped on (#338), on the session's own
   // thread, while the task is idle -- the task list's Stopped on an Error,
@@ -599,8 +605,10 @@ export function TranscriptPane({
 
           <PassageRevealContext.Provider value={revealPassage}>
             <ApiErrorRetryContext.Provider value={retry}>
-              {items.map((item) =>
-                item.kind === 'sidechain' ? (
+              {items.map((item, idx) =>
+                item.kind === 'tools' ? (
+                  <ToolRunGroup key={item.key} rows={item.rows} live={idx === items.length - 1} reveal={reveal} />
+                ) : item.kind === 'sidechain' ? (
                   <SidechainGroup key={item.key} rows={item.rows} results={item.results} extras={item.extras} />
                 ) : item.kind === 'compaction' ? (
                   <CompactionRow key={item.key} compaction={item.compaction} />
@@ -2097,7 +2105,31 @@ export type Item =
       /** A Skill call's text, by the call's row id (#150). */
       extras: Map<number, Message[]>;
     }
-  | { kind: 'compaction'; key: string; compaction: Compaction };
+  | { kind: 'compaction'; key: string; compaction: Compaction }
+  /** Two or more tool calls in a row, folded into one line (#358, toolGroups.ts). */
+  | { kind: 'tools'; key: string; rows: RowItem[] };
+
+type RowItem = Extract<Item, { kind: 'row' }>;
+
+/**
+ * Fold each run of tool calls (toolGroups.ts's findRuns) into one `tools`
+ * item. Keyed by the run's first call, so a run that grows while Claude
+ * works keeps its line, open or closed.
+ */
+export function foldToolRuns(items: readonly Item[]): Item[] {
+  const runs = findRuns(items.map((it) => (it.kind === 'row' ? { kind: 'row', message: it.message } : { kind: it.kind })));
+  if (runs.length === 0) return [...items];
+  const out: Item[] = [];
+  let i = 0;
+  for (const [start, end] of runs) {
+    while (i < start) out.push(items[i++]!);
+    const rows = items.slice(start, end) as RowItem[];
+    out.push({ kind: 'tools', key: `t-${rows[0]!.message.id}`, rows });
+    i = end;
+  }
+  while (i < items.length) out.push(items[i++]!);
+  return out;
+}
 
 /**
  * Pair each `tool_use` with its `tool_result`, and fold runs of sidechain rows
@@ -2233,6 +2265,61 @@ export function groupRows(messages: readonly Message[], { foldSidechains = true 
     i++;
   }
   return items;
+}
+
+/**
+ * A run of tool calls as one line (#358): what was done, the lines added and
+ * removed, how many failed, and -- while it is the newest thing and a call
+ * has no result yet -- what is running. Opened, the same rows as before.
+ *
+ * A row asked for by a reveal (the Background band, a comment's passage)
+ * opens its group, in the same render, so the pane finds the row.
+ */
+export function ToolRunGroup({ rows, live, reveal }: { rows: readonly RowItem[]; live: boolean; reveal: number | null }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const holdsReveal = reveal !== null && rows.some((r) => r.message.id === reveal);
+  useEffect(() => {
+    if (holdsReveal) setOpen(true);
+  }, [holdsReveal]);
+  const shown = open || holdsReveal;
+
+  const calls = useMemo(() => rows.filter((r) => r.message.role === 'tool_use').map((r) => r.message), [rows]);
+  const results = useMemo(() => new Map(rows.map((r) => [r.message.id, r.result] as const)), [rows]);
+  const facts = useMemo(() => runFacts(calls, results), [calls, results]);
+  const running = live && facts.pending > 0;
+  const last = calls[calls.length - 1];
+  const now = running && last ? summaryOf(last) : null;
+
+  return (
+    <div className={`tx-row tx-row-toolrun ${shown ? 'tx-toolrun-open' : ''}`}>
+      <div className="tx-gutter" />
+      <div className="tx-content">
+        <button type="button" className="tx-sidechain-head tx-toolrun-head" onClick={() => setOpen(!shown)} aria-expanded={shown}>
+          <Disclosure open={shown} />
+          <span className="tx-toolrun-summary">{facts.summary}</span>
+          {facts.lines ? (
+            <span className="tx-d-stat" aria-label={`${facts.lines.added} lines added, ${facts.lines.removed} removed`}>
+              <span className="tx-d-plus">+{facts.lines.added}</span>
+              <span className="tx-d-minus">−{facts.lines.removed}</span>
+            </span>
+          ) : null}
+          {facts.failed > 0 ? <span className="tx-toolrun-failed">· {facts.failed} failed</span> : null}
+          {running ? (
+            <span className="tx-toolrun-live">
+              · running{now ? <span className="tx-toolrun-now">{now}</span> : null}
+            </span>
+          ) : null}
+        </button>
+        {shown ? (
+          <div className="tx-sidechain-body tx-toolrun-body">
+            {rows.map((r) => (
+              <MessageRow key={r.key} message={r.message} result={r.result} extras={r.extras} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function SidechainGroup({
