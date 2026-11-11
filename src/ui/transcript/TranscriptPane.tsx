@@ -84,6 +84,7 @@ import {
 } from '../../capture';
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
+import { onPreviewChange } from '../../capture/previewGate';
 import { onConnectivityChange, useOffline, watchConnectivity } from '../../lib/connectivity';
 import { canResume, hasLivePty, onPtyPresenceChange, startPty, usePtyLiveSince } from '../Terminal';
 import { imageFromClipboard, keepDroppedFile, savePastedImage, withInsertedPath } from '../../lib/pasteImage';
@@ -95,6 +96,8 @@ import { compactionAt, isPromptRow, type Compaction } from './compaction';
 import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
 import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
+import { PreviewCard } from '../preview/PreviewCard';
+import { PreviewViewerHost } from '../preview/previewViewer';
 import { REMOTE_MENU_HINT, RemoteMenuNotice } from './RemoteMenuNotice';
 import { useRemoteWait } from '../remoteWait';
 import ReminderCards from '../reminders/ReminderCard';
@@ -638,6 +641,10 @@ export function TranscriptPane({
       <BackgroundStrip items={background} onReveal={setReveal} />
       <QueuedStrip sessionId={sessionId} taskId={taskId} liveSince={liveSince} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
+      {/* A mockup waiting for approval (#348): the session's call waits on it. */}
+      {taskId !== null ? <PreviewCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
+      {/* A kept version, opened from its chip: read only, over the pane. */}
+      <PreviewViewerHost taskId={taskId} />
       {/* Remote Control's menu, up in the terminal with nothing written (#343). */}
       {taskId !== null ? <RemoteMenuNotice taskId={taskId} onShowTerminal={onAnswerInTerminal} /> : null}
       {/* A reminder that came back (#156): its own card, never text in the box. */}
@@ -948,6 +955,7 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
       onConnectivityChange(() => bump((n) => n + 1)),
       onPromptChange(mine),
       onTrustWaiting(mine),
+      onPreviewChange(mine),
       onTurnChange(mine),
       onEditingChange(mine),
     ];

@@ -38,6 +38,7 @@ import RemoteMark from './RemoteMark';
 import { BackgroundMark } from './BackgroundWork';
 import { useDraftTaskIds } from './transcript/drafts';
 import { useReminderTaskIds } from './reminders/useReminders';
+import { useTasksWaitingOnPreview } from './preview/usePreviews';
 import { ReminderGlyph } from './reminders/ReminderGlyph';
 import TaskTitleEdit from './TaskTitleEdit';
 import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
@@ -252,6 +253,7 @@ export default function TaskList({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const drafts = useDraftTaskIds();
   const reminderIds = useReminderTaskIds();
+  const previewWaiting = useTasksWaitingOnPreview();
   /**
    * The ‹ or › that was pressed is gone once the list redraws, so focus
    * would fall to the body: hand it to the other one. Only for a press of
@@ -591,9 +593,14 @@ export default function TaskList({
   };
 
   /* Stopped on an Error (#338): which error, in words, under the title.
-     Claude Code's own text is its tooltip. */
+     Claude Code's own text is its tooltip. A mockup waiting for approval
+     (#348) says so on the same line: it is why the task is in Needs You. */
   const rowWhy = (task: Task): ReactNode =>
-    stoppedOnError(task) && task.apiError !== null ? (
+    previewWaiting.has(task.id) ? (
+      <span className="task-why" data-why="preview" title="A mockup is waiting for your approval in this task">
+        Preview to approve
+      </span>
+    ) : stoppedOnError(task) && task.apiError !== null ? (
       <span className="task-why" title={task.apiErrorText ?? undefined}>
         {API_ERROR_LABEL[task.apiError]}
       </span>

@@ -311,6 +311,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A mockup waiting for approval (#348): why the task is in Needs You, in the
+   Needs You text tier, cleared on every ground a row has (styles.css,
+   status): light 5.12 | 5.47 | 5.26 | 5.21 | 5.89 on --panel-active |
+   --panel-raised | --row-selected | --accent-soft-strong | --row-blocked-hover,
+   dark 6.01 | 5.99 | 6.55 | 6.90. Words, never colour alone. */
+.task-why[data-why='preview'] { color: var(--status-blocked); }
 .task-row > .try-again {
   grid-column: 2 / 4;
   grid-row: 2;

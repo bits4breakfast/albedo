@@ -23,6 +23,7 @@ import {
 import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
+import { finishedPreviewCalls, onPreviewChange, pendingPreview, retireFinishedPreviews } from '../capture/previewGate';
 import { noteQuestion, noteStatusChange } from './attention';
 import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
@@ -526,9 +527,13 @@ export function useTasks(): UseTasksResult {
         finishedAt = turnEndedAt(messages);
         const stopped = lastApiError(messages);
         if (stopped !== null) apiError = { apiError: stopped.kind, apiErrorText: stopped.text };
+        // A preview call (#348) is over once the transcript has its result --
+        // an error when Esc or the timeout cancelled it.
+        await retireFinishedPreviews(taskId, finishedPreviewCalls(messages));
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
-        if (pendingPrompt(taskId) !== null || isTrustWaiting(taskId)) status = 'blocked';
+        // Nor a preview waiting for its answer (capture/previewGate.ts).
+        if (pendingPrompt(taskId) !== null || isTrustWaiting(taskId) || pendingPreview(taskId) !== null) status = 'blocked';
         asked = status !== 'blocked' ? pendingQuestion(messages) : null;
         // Background agents report back to the session when they finish, and
         // it carries on by itself: a turn handed back while they work is not
@@ -803,6 +808,23 @@ export function useTasks(): UseTasksResult {
       const task = tasksRef.current.find((t) => t.id === taskId);
       if (!task || task.status === 'archived') return;
       if (waiting) {
+        if (task.status === 'blocked') return;
+        applyTask(taskId, { status: 'blocked' });
+        noteStatusChange(taskId, task.status, 'blocked', task.title);
+        void persist(taskId, { status: 'blocked' });
+      } else if (task.sessionId) {
+        void refreshStatus(task.sessionId);
+      }
+    });
+  }, [applyTask, persist, refreshStatus]);
+
+  // A preview waiting for its answer (#348), the same way: the session is
+  // inside a tool call, and only Albedo knows what it waits for.
+  useEffect(() => {
+    return onPreviewChange((taskId) => {
+      const task = tasksRef.current.find((t) => t.id === taskId);
+      if (!task || task.status === 'archived') return;
+      if (pendingPreview(taskId) !== null) {
         if (task.status === 'blocked') return;
         applyTask(taskId, { status: 'blocked' });
         noteStatusChange(taskId, task.status, 'blocked', task.title);

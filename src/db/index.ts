@@ -427,6 +427,9 @@ export async function purgeTaskHistory(id: number): Promise<void> {
   // Review comments belong to the task and go with it: archived or deleted,
   // there is nothing left for them to be sent to.
   await db.execute(`DELETE FROM comments WHERE task_id = $1`, [id]);
+  // Mockups a session showed for approval (#348): copies kept for viewing,
+  // not raw_json, and nothing to answer once the task is gone.
+  await db.execute(`DELETE FROM previews WHERE task_id = $1`, [id]);
 }
 
 /**

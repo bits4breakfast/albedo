@@ -7,6 +7,7 @@ import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
 import { openExternal } from '../lib/openUrl';
 import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
+import { endTaskPreviews } from '../capture/previewGate';
 import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
 import { getTaskModel } from './taskModel';
 import { isResumePlan, planSpawn, withMcpConfig } from './sessionSpawn';
@@ -708,6 +709,8 @@ export default function Terminal({
         // Whatever it was waiting on died with it (no SessionEnd on a crash).
         void endTaskEvents(task.id);
         setTrustWaiting(task.id, false);
+        // A preview it was waiting on (#348): the call died with the session.
+        void endTaskPreviews(task.id);
         setExitCode(code);
         setPhase('exited');
         // Leave the scrollback intact and readable.

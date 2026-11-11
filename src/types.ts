@@ -471,3 +471,41 @@ export interface Reminder {
   /** The task whose card shows it, once fired. */
   cardTaskId: number | null;
 }
+
+// ---------------------------------------------------------------------------
+// Previews (migration v18, issue #348)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where one version stands. `pending` while the session's `show_preview`
+ * call waits for the user; then `approved`, `changes` (changes requested),
+ * or `cancelled` (Esc in the terminal, Claude Code's timeout, or the session
+ * ending before an answer).
+ */
+export type PreviewOutcome = 'pending' | 'approved' | 'changes' | 'cancelled';
+
+/**
+ * One version of an HTML mockup a session showed for approval: a copy taken
+ * when the call was made, so it never changes. Columns: 0018_previews.sql.
+ */
+export interface Preview {
+  id: number;
+  taskId: number;
+  /** The MCP server's id for the call; names its answer file. */
+  requestId: string;
+  /** Claude Code's id for the call in the transcript, when it gave one. */
+  toolUseId: string | null;
+  title: string;
+  /** 1, 2, ... per task and title. */
+  version: number;
+  /** The page as it was when the call was made. Model-written: shown sandboxed only. */
+  html: string;
+  question: string | null;
+  /** The session's own one line on what changed since the last version. */
+  note: string | null;
+  createdAt: number;
+  outcome: PreviewOutcome;
+  /** The text sent back as the call's result, once answered. */
+  answer: string | null;
+  answeredAt: number | null;
+}

@@ -5,10 +5,11 @@
  *
  * CLAUDE.md, "Two channels": every session Albedo starts gets Albedo's MCP
  * server (`src-tauri/mcp`, a Rust binary bundled beside the app) through
- * `--mcp-config`, with `ALBEDO_TASK_ID` in its environment. It offers four
+ * `--mcp-config`, with `ALBEDO_TASK_ID` in its environment. It offers five
  * tools and nothing else -- `create_reminder`, `request_session`,
- * `notify_blocked`, and `set_task_summary` (#262: one line shown under the
- * task's title, never acted on) -- and a call that passes its checks is
+ * `notify_blocked`, `set_task_summary` (#262: one line shown under the
+ * task's title, never acted on), and `show_preview` (#348, below) -- and a
+ * call that passes its checks is
  * appended as one JSON line to `~/.albedo/inbox/task-<id>.jsonl`. This module reads those
  * files. It is the only file in the app that knows the line's shape, as
  * hookEvents.ts is for hook payloads.
@@ -20,8 +21,18 @@
  *         which writes a summary to tasks.summary rather than queueing it)
  *
  * Only the agent starts anything here; what the user starts goes through
- * Albedo directly. Nothing flows back: the server answers the agent at once,
- * and never learns what the user did.
+ * Albedo directly. For four of the tools nothing flows back: the server
+ * answers the agent at once, and never learns what the user did.
+ *
+ * ## The one that waits: `show_preview` (#348)
+ *
+ * A fifth tool shows the user an HTML mockup and waits for their answer. Its
+ * line carries the title, question and note, and the call's transcript id;
+ * the page itself the server has copied to `~/.albedo/previews` under the
+ * line's id (`previewGate.ts` reads it). A second line,
+ * `preview_cancelled`, is the server's record that such a call ended without
+ * an answer. Both go to {@link onPreviewLine}, not to the request queue: the
+ * answer goes back through a file only `previewGate.ts` writes.
  *
  * ## Nothing in a line is trusted
  *
@@ -67,6 +78,11 @@ export const CAPS = {
   branch: 200,
   message: 1_000,
   taskSummary: 120,
+  // show_preview (#348): `tools::MAX_PREVIEW_*`; the reason is `preview::clean_reason`'s.
+  previewTitle: 120,
+  previewQuestion: 1_000,
+  previewNote: 200,
+  cancelReason: 200,
 } as const;
 
 /** `request_session`'s `start` (`tools::START_BRIEF` / `START_FORK`). */
@@ -143,10 +159,28 @@ function branchOk(b: string): boolean {
 }
 
 /**
- * One line of `task-<fileTaskId>.jsonl`, or null when it is anything but a
- * well-formed request from that task. Never throws.
+ * A `show_preview` call (#348), or the server's record that one ended without
+ * an answer. Not a queued request: see the module header.
  */
-export function parseInboxLine(line: string, fileTaskId: number): InboxRequest | null {
+export type PreviewLine =
+  | (Base & {
+      tool: 'show_preview';
+      title: string;
+      question: string | null;
+      note: string | null;
+      /** Claude Code's id for the call in the transcript, when it gave one. */
+      toolUseId: string | null;
+    })
+  | (Base & {
+      tool: 'preview_cancelled';
+      /** The `show_preview` line's id. */
+      request: string;
+      /** Claude Code's reason, e.g. "AbortError: user-cancel", or "session ended". */
+      reason: string;
+    });
+
+/** The checks every line shares: version, the task's own file, id, time, args. */
+function lineHead(line: string, fileTaskId: number): { base: Base; tool: unknown; a: Args } | null {
   if (line.length === 0 || new TextEncoder().encode(line).length >= MAX_LINE_BYTES) return null;
   let raw: unknown;
   try {
@@ -163,10 +197,49 @@ export function parseInboxLine(line: string, fileTaskId: number): InboxRequest |
   if (typeof o.at !== 'number' || !Number.isFinite(o.at) || o.at <= 0) return null;
   const args = o.args;
   if (typeof args !== 'object' || args === null || Array.isArray(args)) return null;
-  const a = args as Args;
-  const base: Base = { id: o.id, taskId: fileTaskId, at: o.at };
+  return { base: { id: o.id, taskId: fileTaskId, at: o.at }, tool: o.tool, a: args as Args };
+}
 
-  switch (o.tool) {
+const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,100}$/;
+
+/**
+ * One preview line of `task-<fileTaskId>.jsonl`, or null when it is anything
+ * but a well-formed `show_preview` or `preview_cancelled` from that task.
+ */
+export function parsePreviewLine(line: string, fileTaskId: number): PreviewLine | null {
+  const head = lineHead(line, fileTaskId);
+  if (!head) return null;
+  const { base, tool, a } = head;
+  if (tool === 'show_preview') {
+    if (!onlyKeys(a, ['title', 'question', 'note', 'toolUseId'])) return null;
+    const title = text(a, 'title', CAPS.previewTitle, false);
+    const question = a.question === undefined ? null : text(a, 'question', CAPS.previewQuestion, true);
+    const note = optionalText(a, 'note', CAPS.previewNote);
+    if (title === null || (a.question !== undefined && question === null) || note === undefined) return null;
+    const t = a.toolUseId;
+    if (t !== undefined && (typeof t !== 'string' || !TOOL_USE_ID.test(t))) return null;
+    return { ...base, tool: 'show_preview', title, question, note, toolUseId: typeof t === 'string' ? t : null };
+  }
+  if (tool === 'preview_cancelled') {
+    if (!onlyKeys(a, ['request', 'reason'])) return null;
+    const request = a.request;
+    const reason = text(a, 'reason', CAPS.cancelReason, false);
+    if (typeof request !== 'string' || !ID.test(request) || reason === null) return null;
+    return { ...base, tool: 'preview_cancelled', request, reason };
+  }
+  return null;
+}
+
+/**
+ * One line of `task-<fileTaskId>.jsonl`, or null when it is anything but a
+ * well-formed request from that task. Never throws.
+ */
+export function parseInboxLine(line: string, fileTaskId: number): InboxRequest | null {
+  const head = lineHead(line, fileTaskId);
+  if (!head) return null;
+  const { base, a } = head;
+
+  switch (head.tool) {
     case 'create_reminder': {
       if (!onlyKeys(a, ['text', 'due', 'dueMs', 'summary'])) return null;
       const t = text(a, 'text', CAPS.reminderText, false);
@@ -212,15 +285,26 @@ export function parseInboxLine(line: string, fileTaskId: number): InboxRequest |
   }
 }
 
-/** Every well-formed request in `text`, in order. */
-export function parseInboxLines(text: string, fileTaskId: number): InboxRequest[] {
-  const out: InboxRequest[] = [];
+/** Every well-formed line in `text`, in order: requests, and preview lines. */
+export function parseAllLines(text: string, fileTaskId: number): { reqs: InboxRequest[]; previews: PreviewLine[] } {
+  const reqs: InboxRequest[] = [];
+  const previews: PreviewLine[] = [];
   for (const line of text.split('\n')) {
     const req = parseInboxLine(line, fileTaskId);
-    if (req) out.push(req);
+    if (req) {
+      reqs.push(req);
+      continue;
+    }
+    const p = parsePreviewLine(line, fileTaskId);
+    if (p) previews.push(p);
     else if (line.trim().length > 0) console.warn(`[inbox] dropped a malformed line from task ${fileTaskId}`);
   }
-  return out;
+  return { reqs, previews };
+}
+
+/** Every well-formed request in `text`, in order. */
+export function parseInboxLines(text: string, fileTaskId: number): InboxRequest[] {
+  return parseAllLines(text, fileTaskId).reqs;
 }
 
 /**
@@ -298,8 +382,21 @@ export function mcpServerPath(): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 export type InboxListener = (req: InboxRequest) => void;
+export type PreviewListener = (line: PreviewLine) => void;
 
 let listener: InboxListener | null = null;
+const previewListeners = new Set<PreviewListener>();
+
+/**
+ * Preview lines (#348), each once, in the order they were written. Subscribe
+ * before {@link startInbox} so a line read at launch is not missed.
+ */
+export function onPreviewLine(cb: PreviewListener): () => void {
+  previewListeners.add(cb);
+  return () => {
+    previewListeners.delete(cb);
+  };
+}
 let started: Promise<void> | null = null;
 let unwatch: UnwatchFn | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -316,25 +413,44 @@ const offsets = new Map<number, number>();
 const seen = new Set<string>();
 const SEEN_MAX = 2_000;
 
-function deliver(reqs: readonly InboxRequest[]): void {
-  for (const r of reqs) {
-    if (seen.has(r.id)) continue;
-    seen.add(r.id);
-    if (seen.size > SEEN_MAX) seen.delete(seen.values().next().value as string);
+function firstTime(id: string): boolean {
+  if (seen.has(id)) return false;
+  seen.add(id);
+  if (seen.size > SEEN_MAX) seen.delete(seen.values().next().value as string);
+  return true;
+}
+
+function deliver(read: { reqs: readonly InboxRequest[]; previews: readonly PreviewLine[] }): void {
+  for (const r of read.reqs) {
+    if (!firstTime(r.id)) continue;
     try {
       listener?.(r);
     } catch (err) {
       console.warn('[inbox] a request could not be handled', err);
     }
   }
+  for (const p of read.previews) {
+    if (!firstTime(p.id)) continue;
+    for (const cb of [...previewListeners]) {
+      try {
+        cb(p);
+      } catch (err) {
+        console.warn('[inbox] a preview line could not be handled', err);
+      }
+    }
+  }
 }
 
-/** The complete lines of `path` past `offset`: the requests, and the new offset. */
-async function readPast(path: string, offset: number, taskId: number): Promise<{ reqs: InboxRequest[]; offset: number }> {
+/** The complete lines of `path` past `offset`: what they hold, and the new offset. */
+async function readPast(
+  path: string,
+  offset: number,
+  taskId: number,
+): Promise<{ reqs: InboxRequest[]; previews: PreviewLine[]; offset: number }> {
   const bytes = await readFile(path);
   const from = bytes.length < offset ? 0 : offset; // emptied under us: from the top
   const { text, consumed } = completeLines(bytes.subarray(from));
-  return { reqs: parseInboxLines(text, taskId), offset: from + consumed };
+  return { ...parseAllLines(text, taskId), offset: from + consumed };
 }
 
 const queues = new Map<number, Promise<void>>();
@@ -364,7 +480,7 @@ function readTask(taskId: number): Promise<void> {
       }
       const first = await readPast(path, offsets.get(taskId) ?? 0, taskId);
       offsets.set(taskId, first.offset);
-      deliver(first.reqs);
+      deliver(first);
       const size = (await stat(path)).size;
       if (size === 0 || first.offset !== size) return; // a line is being written: next time
       const aside = `${path}.old`;
@@ -372,7 +488,7 @@ function readTask(taskId: number): Promise<void> {
       offsets.delete(taskId);
       try {
         const rest = await readPast(aside, first.offset, taskId);
-        deliver(rest.reqs);
+        deliver(rest);
       } finally {
         await writeTextFile(aside, '');
       }
@@ -386,9 +502,9 @@ function readTask(taskId: number): Promise<void> {
 /** A copy left by a crash between renaming and emptying: read it once, then empty it. */
 async function readLeftover(path: string, taskId: number): Promise<void> {
   try {
-    const { reqs } = await readPast(path, 0, taskId);
-    deliver(reqs);
-    if (reqs.length > 0) await writeTextFile(path, '');
+    const read = await readPast(path, 0, taskId);
+    deliver(read);
+    if (read.reqs.length + read.previews.length > 0) await writeTextFile(path, '');
   } catch {
     /* nothing to recover */
   }
