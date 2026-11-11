@@ -9,13 +9,14 @@
  * Comment on a Spot lays a transparent layer over the frame: a click there
  * drops a numbered pin instead of reaching the page. A wheel on the layer
  * lets the page scroll for a moment. Pins are placed in page coordinates,
- * from the scroll position the page reports (frameDoc.ts); the only message
- * taken from the page is that one, as plain numbers, from this frame alone.
+ * from the scroll position the page reports (frameDoc.ts); the only messages
+ * taken from the page are that one, as plain numbers, and a bare Esc tag,
+ * from this frame alone.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
-import { PREVIEW_SANDBOX, parseGeometry, previewSrcdoc, type Geometry, type PreviewScheme } from './frameDoc';
+import { PREVIEW_SANDBOX, isEscape, parseGeometry, previewSrcdoc, type Geometry, type PreviewScheme } from './frameDoc';
 
 export interface FramePin {
   /** The number shown on it; null for the one being written. */
@@ -36,6 +37,7 @@ export function PreviewFrame({
   commentMode,
   pins,
   onPlace,
+  onEscape,
 }: {
   html: string;
   /** For the iframe's accessible name. */
@@ -46,12 +48,16 @@ export function PreviewFrame({
   pins: readonly FramePin[];
   /** A click on the layer: where on the page, in percent. */
   onPlace: (x: number, y: number) => void;
+  /** Esc pressed with focus inside the page (frameDoc's Esc script). */
+  onEscape?: () => void;
 }): ReactNode {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const [geom, setGeom] = useState<Geometry | null>(null);
   const [through, setThrough] = useState(false);
   const throughTimer = useRef<number | null>(null);
+  const escapeRef = useRef(onEscape);
+  escapeRef.current = onEscape;
 
   // A new page or scheme is a new document: its scroll starts at the top.
   const srcdoc = useMemo(() => previewSrcdoc(html, scheme), [html, scheme]);
@@ -61,6 +67,10 @@ export function PreviewFrame({
     const onMessage = (e: MessageEvent) => {
       // Only this frame's own window, and only numbers.
       if (frameRef.current === null || e.source !== frameRef.current.contentWindow) return;
+      if (isEscape(e.data)) {
+        escapeRef.current?.();
+        return;
+      }
       const g = parseGeometry(e.data);
       if (g) {
         setGeom(g);

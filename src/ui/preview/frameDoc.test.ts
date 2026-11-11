@@ -3,7 +3,7 @@
  * leading doctype stays first, and the only message taken back is numbers.
  */
 import { describe, expect, it } from 'vitest';
-import { GEOMETRY_TAG, PREVIEW_CSP, PREVIEW_SANDBOX, parseGeometry, previewSrcdoc } from './frameDoc';
+import { ESCAPE_TAG, GEOMETRY_TAG, PREVIEW_CSP, PREVIEW_SANDBOX, isEscape, parseGeometry, previewSrcdoc } from './frameDoc';
 
 describe('previewSrcdoc', () => {
   it('puts the no-network policy before the page', () => {
@@ -42,6 +42,16 @@ describe('previewSrcdoc', () => {
     expect(previewSrcdoc('<p>', 'dark')).toContain('var dark=true;');
     expect(previewSrcdoc('<p>', 'light')).toContain('var dark=false;');
     expect(previewSrcdoc('<p>', 'dark')).toContain('<meta name="color-scheme" content="dark">');
+  });
+});
+
+describe('isEscape', () => {
+  it('takes only the tagged Esc message (#356)', () => {
+    expect(previewSrcdoc('<p>x</p>', 'light')).toContain(ESCAPE_TAG);
+    expect(isEscape({ tag: ESCAPE_TAG })).toBe(true);
+    expect(isEscape({ tag: 'other' })).toBe(false);
+    expect(isEscape(ESCAPE_TAG)).toBe(false);
+    expect(isEscape(null)).toBe(false);
   });
 });
 

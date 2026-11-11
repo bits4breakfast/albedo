@@ -15,13 +15,17 @@
  *      fetch, no images or fonts from anywhere, no form posts, no frames).
  *      A page's own CSP can only narrow it further.
  *
- * Then two small scripts of Albedo's, both in the page's own sandbox:
+ * Then three small scripts of Albedo's, all in the page's own sandbox:
  *
  *   - Light / Dark: the page's `prefers-color-scheme` rules and matchMedia
  *     calls are made to answer the scheme picked, without touching the app's.
  *   - Where the page is scrolled to, posted to the parent as plain numbers,
  *     so a pin can say where on the PAGE it sits (PreviewFrame takes only
  *     numbers, and only from its own frame).
+ *   - Esc pressed inside the page, posted as a bare tag (#356): with focus in
+ *     the frame, the key never reaches the app, and the viewer's Esc would do
+ *     nothing. A page could post the tag itself; all it can do is close the
+ *     viewer it is shown in.
  */
 
 export type PreviewScheme = 'light' | 'dark';
@@ -32,6 +36,14 @@ export const PREVIEW_CSP =
 
 /** Tags the geometry messages, so nothing else posted is mistaken for one. */
 export const GEOMETRY_TAG = 'albedo-preview-geometry';
+
+/** Tags the Esc message: the only other thing taken from the page. */
+export const ESCAPE_TAG = 'albedo-preview-escape';
+
+/** True for the page's Esc message, and nothing else. Never throws. */
+export function isEscape(data: unknown): boolean {
+  return typeof data === 'object' && data !== null && (data as Record<string, unknown>).tag === ESCAPE_TAG;
+}
 
 /** Where the page is: scroll offset, full size, and the frame's own size. */
 export interface Geometry {
@@ -96,6 +108,13 @@ addEventListener('scroll',g,{passive:true});addEventListener('resize',g);addEven
 })();`;
 }
 
+/** The Esc script: tells the parent, and lets the page have the key too. */
+function escapeScript(): string {
+  return `(function(){
+addEventListener('keydown',function(e){if(e.key==='Escape'){try{parent.postMessage({tag:'${ESCAPE_TAG}'},'*');}catch(x){}}},true);
+})();`;
+}
+
 const DOCTYPE = /^(﻿?\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>)/i;
 
 /**
@@ -109,7 +128,8 @@ export function previewSrcdoc(html: string, scheme: PreviewScheme): string {
     `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">` +
     `<meta name="color-scheme" content="${scheme}">` +
     `<script>${schemeScript(scheme)}</script>` +
-    `<script>${geometryScript()}</script>`;
+    `<script>${geometryScript()}</script>` +
+    `<script>${escapeScript()}</script>`;
   const m = DOCTYPE.exec(html);
   return m ? `${m[1]}${head}${html.slice(m[1]!.length)}` : `${head}${html}`;
 }
