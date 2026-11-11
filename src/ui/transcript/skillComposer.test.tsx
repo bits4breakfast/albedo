@@ -149,6 +149,25 @@ describe('the keys', () => {
     expect(submitPty).not.toHaveBeenCalled();
   });
 
+  it('Return sends what was typed when no name starts with it, so a built-in command still goes; Tab inserts', async () => {
+    listSkills();
+    renderBox();
+    // "view" is inside two names but starts none: Claude Code's own command wins.
+    type('/view');
+    expect(optionNames()).toEqual(['letter-review', 'garden:review-beds']);
+    expect(screen.getByText('↑↓ Move · ⇥ Insert · ↵ Send as Typed · Esc Close')).toBeTruthy();
+    key('Enter');
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(1, '/view'));
+  });
+
+  it('Tab takes a row whose name only contains what was typed', () => {
+    listSkills();
+    renderBox();
+    type('/view');
+    key('Tab');
+    expect(box().value).toBe('/letter-review ');
+  });
+
   it('Tab inserts too; ↑ wraps to the last row', () => {
     listSkills();
     renderBox();

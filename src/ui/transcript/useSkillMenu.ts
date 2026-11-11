@@ -7,7 +7,10 @@
  * ## Keys, while the list is open and has rows
  *
  *   ↑ / ↓        move (wrapping, as the `@` list does)
- *   Return, Tab  insert `/name ` -- Return never sends while the list is open
+ *   Tab          insert `/name `
+ *   Return       insert `/name ` when that row's name starts with what was
+ *                typed (or nothing was typed after `/`); otherwise send what
+ *                was typed, so `/model` typed in one go is still sent
  *   Esc          close; this `/` stays as typed and does not reopen the list
  *
  * Each is `preventDefault`ed, which keeps Tab from the window's area cycle
@@ -190,8 +193,14 @@ export function useSkillMenu({
         case 'Enter':
         case 'Tab': {
           if (e.shiftKey) return false;
-          e.preventDefault();
           const item = items[shownActive];
+          // Return takes a row only when its name starts with what was typed.
+          // Otherwise it sends what was typed: `/model` or `/review` typed in
+          // one go is Claude Code's own command, and a skill that merely
+          // contains the word (or mentions it in its description) must not
+          // swallow it. Tab takes any row.
+          if (e.key === 'Enter' && !returnPicks(item, query)) return false;
+          e.preventDefault();
           if (item) pick(item);
           return true;
         }
@@ -205,7 +214,7 @@ export function useSkillMenu({
           return false;
       }
     },
-    [open, empty, items, shownActive, pick, trigger],
+    [open, empty, items, shownActive, pick, trigger, query],
   );
 
   const hideStrip = useCallback(() => setStripHidden(true), []);
@@ -225,4 +234,13 @@ export function useSkillMenu({
     strip: picked && !stripHidden ? lead : null,
     hideStrip,
   };
+}
+
+/**
+ * Whether Return takes `item` rather than sending: only when its name, or
+ * the part after a plugin's prefix, starts with the query (tier 0), or the
+ * query is empty.
+ */
+export function returnPicks(item: SkillItem | undefined, query: string): boolean {
+  return item !== undefined && (query === '' || item.tier === 0);
 }

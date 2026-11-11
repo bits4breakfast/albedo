@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 import { Highlighted } from '../Highlighted';
 import type { Skill } from '../../capture';
 import { firstSentence, splitSkillName } from './skillMenu';
-import type { SkillMenu } from './useSkillMenu';
+import { returnPicks, type SkillMenu } from './useSkillMenu';
 import './skillMenu.css';
 
 export function skillOptionId(listId: string, i: number): string {
@@ -52,6 +52,8 @@ export function SkillPopover({ menu, listId }: { menu: SkillMenu; listId: string
   }
   if (!menu.open) return null;
   const { items, active, total } = menu;
+  // Return inserts only a row whose name starts with what was typed; else it sends.
+  const hint = returnPicks(items[active], menu.query) ? '↑↓ Move · ↵ or ⇥ Insert · Esc Close' : '↑↓ Move · ⇥ Insert · ↵ Send as Typed · Esc Close';
   return (
     <div className="sk-pop">
       <div className="sk-list" id={listId} ref={listRef} role="listbox" aria-label="Skills">
@@ -79,7 +81,7 @@ export function SkillPopover({ menu, listId }: { menu: SkillMenu; listId: string
         ))}
       </div>
       <div className="sk-foot">
-        <span aria-hidden="true">↑↓ Move · ↵ or ⇥ Insert · Esc Close</span>
+        <span aria-hidden="true">{hint}</span>
         <span className="sk-count">
           {items.length} of {total} {total === 1 ? 'skill' : 'skills'}
         </span>
