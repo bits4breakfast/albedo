@@ -81,6 +81,10 @@ export type { QueuedEntry } from './queue';
 export { permissionModeFor, loadPermissionMode, onPermissionModeChange } from './permissionMode';
 export type { PermissionMode } from './adapter';
 
+// The skills each session can run, for the composer's `/` list (in memory, #349).
+export { skillsFor, loadSkills, onSkillsChange } from './skills';
+export type { Skill } from './skills';
+
 export { onCaptureProgress } from './watcher';
 export type { CaptureProgress } from './watcher';
 

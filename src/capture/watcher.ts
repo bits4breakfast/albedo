@@ -34,9 +34,11 @@ import {
   permissionModesIn,
   queueFactsIn,
   remoteSessionFactsIn,
+  skillListingsIn,
   SEQ_STRIDE,
 } from './adapter';
 import { recordRemoteSessions } from './remoteSession';
+import { recordSkillListings } from './skills';
 import { recordPermissionModes } from './permissionMode';
 import { recordQueueOperations, seedQueue } from './queue';
 import {
@@ -764,6 +766,8 @@ class Capture implements CaptureHandle {
       recordPermissionModes(permissionModesIn(text));
       // And whether Remote Control is on (#343): an attachment, never a row.
       recordRemoteSessions(remoteSessionFactsIn(text));
+      // And the skills it can run (#349): an attachment too.
+      recordSkillListings(skillListingsIn(text));
 
       // Resolve identity from the rows themselves. sessionId can change
       // mid-file after a resume or compaction, so the LAST row wins and the
@@ -1021,12 +1025,15 @@ async function seedQueueFrom(path: string, upTo: number, sessionId: string): Pro
     seedQueue([sessionId], queueFactsIn(text));
     // The same replay brings back whether Remote Control is on (#343).
     recordRemoteSessions(remoteSessionFactsIn(text));
+    // And the skills it can run (#349), when the last full listing is this recent.
+    recordSkillListings(skillListingsIn(text));
   } catch {
     /* a queue we cannot rebuild just starts empty */
   }
 }
 
-async function readRange(path: string, offset: number, length: number): Promise<Uint8Array> {
+/** `length` bytes of `path` from `offset`, or fewer at the end of the file. */
+export async function readRange(path: string, offset: number, length: number): Promise<Uint8Array> {
   const file = await open(path, { read: true });
   try {
     await file.seek(offset, SeekMode.Start);

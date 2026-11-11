@@ -794,6 +794,128 @@ export function remoteSessionFactsIn(text: string): RemoteSessionFact[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The skills a session can run (#349)
+// ---------------------------------------------------------------------------
+
+/**
+ * The skills Claude Code tells the model about, as it tells it:
+ * `{type: "attachment", attachment: {type: "skill_listing", content, names,
+ * skillCount, isInitial, digests}}`.
+ *
+ *  - `names` is the skills' names, in the listing's order; a plugin's carry
+ *    its prefix (`plugin:skill`).
+ *  - `content` is one item per skill, `- name: description`, and
+ *    `- name (alias): description` for a plugin skill also known by another
+ *    name. A description may be missing (`- name`), may hold ": " and " - ",
+ *    and may run over several lines. So an item is found by its name from
+ *    `names`, never by splitting on ": ".
+ *  - `isInitial: true` is the whole list. `false` is a delta: only the skills
+ *    added or changed since, never the rest.
+ *
+ * Measured on this machine, Claude Code 2.1.291-2.1.322 (240 listings in 135
+ * main transcripts, none on a sidechain; subagent files carry their own,
+ * `isSidechain: true`): every `isInitial: true` listing is complete --
+ * `skillCount` equals `names`, and a later one in the same file restates
+ * every skill still there (54, then 42 after a resume: the dropped twelve
+ * are gone). Every `isInitial: false` one is small (1 to 18 skills) and
+ * follows a full one of 30-65; 16 of 45 share no name with what came before
+ * (new skills: a plugin installed mid-session), and of the names a delta
+ * repeats, 55 come with a changed description and 32 unchanged. Nothing
+ * says a skill was removed short of the next full listing. A full listing is
+ * written with the first prompt of each `claude` process (and after a
+ * compaction), so a session that has sent nothing has none yet.
+ *
+ * An attachment, a bookkeeping line: never stored as a row, only read as it
+ * is ingested, or from the file on demand (capture/skills.ts).
+ */
+export interface SkillListing {
+  sessionId: string;
+  /** The line's own id, so the same line read twice is applied once. */
+  uuid: string;
+  ts: number;
+  /** The whole list; false for a delta of added or changed skills. */
+  initial: boolean;
+  skills: { name: string; description: string }[];
+}
+
+const SKILL_LISTING_ATTACHMENT = 'skill_listing';
+
+/** The {@link SkillListing} a raw line carries, or null. Main-session lines only. */
+export function skillListingOf(rawLine: string): SkillListing | null {
+  if (!rawLine.includes(`"${SKILL_LISTING_ATTACHMENT}"`)) return null;
+  const line = safeParse(rawLine);
+  if (!line || line['type'] !== 'attachment' || line['isSidechain'] === true) return null;
+  const att = line['attachment'];
+  if (!isRecord(att) || att['type'] !== SKILL_LISTING_ATTACHMENT) return null;
+  const sessionId = stringOr(line['sessionId'], '');
+  if (sessionId === '') return null;
+  const names = Array.isArray(att['names'])
+    ? att['names'].filter((n): n is string => typeof n === 'string' && n.trim() !== '')
+    : [];
+  const content = typeof att['content'] === 'string' ? att['content'] : '';
+  const ts = parseTs(line['timestamp']);
+  return {
+    sessionId,
+    uuid: stringOr(line['uuid'], '') || `${sessionId}@${ts}`,
+    ts,
+    initial: att['isInitial'] !== false,
+    skills: skillItemsOf(content, names),
+  };
+}
+
+/** Every {@link SkillListing} in a chunk, in file order. */
+export function skillListingsIn(text: string): SkillListing[] {
+  const out: SkillListing[] = [];
+  if (!text.includes(`"${SKILL_LISTING_ATTACHMENT}"`)) return out;
+  for (const line of text.split('\n')) {
+    const listing = line.length === 0 ? null : skillListingOf(line);
+    if (listing) out.push(listing);
+  }
+  return out;
+}
+
+/**
+ * Pair each name with its item in `content`. An item starts a line with
+ * "- " and a name, followed by ":", " (" or the line's end; the longest
+ * name wins, so `review` never claims `review-pr`'s line. Every other line
+ * continues the item above it.
+ */
+function skillItemsOf(content: string, names: readonly string[]): { name: string; description: string }[] {
+  const unique = [...new Set(names)];
+  const byLength = [...unique].sort((a, b) => b.length - a.length);
+  const found = new Map<string, string[]>();
+  let current: string[] | null = null;
+  for (const raw of content.split('\n')) {
+    const name = raw.startsWith('- ') ? byLength.find((n) => !found.has(n) && itemStartsWith(raw, n)) : undefined;
+    if (name !== undefined) {
+      let rest = raw.slice(2 + name.length);
+      if (rest.startsWith(' (')) {
+        const close = rest.indexOf(')');
+        rest = close < 0 ? '' : rest.slice(close + 1);
+      }
+      if (rest.startsWith(':')) rest = rest.slice(1);
+      current = [rest.trim()];
+      found.set(name, current);
+    } else if (current) {
+      current.push(raw.trim());
+    }
+  }
+  return unique.map((name) => ({
+    name,
+    description: (found.get(name) ?? [])
+      .filter((part) => part !== '')
+      .join('\n')
+      .trim(),
+  }));
+}
+
+function itemStartsWith(line: string, name: string): boolean {
+  if (!line.startsWith(name, 2)) return false;
+  const next = line.slice(2 + name.length, 4 + name.length);
+  return next === '' || next.startsWith(':') || next === ' (';
+}
+
 /**
  * SQLite predicate preselecting rows that may be a Remote Control line, so a
  * lookup parses a handful of rows instead of a session. `instr`, not LIKE: the

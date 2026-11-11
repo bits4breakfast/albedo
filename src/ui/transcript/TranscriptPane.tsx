@@ -23,6 +23,8 @@ import { PastedTexts } from './PastedTexts';
 import { markMentions, unmarkMentions, type Mention } from './mentions';
 import { MentionPopover, mentionOptionId } from './MentionPopover';
 import { useMentions } from './useMentions';
+import { SkillPopover, SkillStrip, skillOptionId } from './SkillPopover';
+import { useSkillMenu } from './useSkillMenu';
 import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type ComposerInsert } from './composerBridge';
 import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
 import { markQuotes, unmarkQuotes } from './transcriptQuotes';
@@ -1701,6 +1703,16 @@ export function Composer({
     replace: replaceDraft,
   });
   const mentionListId = useId();
+  /* The `/` list of the session's skills, and the strip a pick leaves (#349). */
+  const skill = useSkillMenu({
+    taskId,
+    sessionId,
+    text,
+    inputRef: ref,
+    frozen: busy || awaiting || held,
+    replace: replaceDraft,
+  });
+  const skillListId = useId();
 
   /**
    * Attach files from a picker -- the button, or ⌘U. They go in as paths, as
@@ -1943,6 +1955,7 @@ export function Composer({
         </div>
       ) : null}
       <WaitingComments taskId={taskId} frozen={busy || awaiting || held} onJump={onJump} code={waitingCode} />
+      {skill.strip ? <SkillStrip skill={skill.strip} onHide={skill.hideStrip} /> : null}
       {/* claude.ai's shape: one rounded box holding the text and, under it,
           the controls -- the model and Send at the bottom right. Beside a
           tall box they floated at its foot; inside it they move with it. */}
@@ -1970,18 +1983,33 @@ export function Composer({
           setText(e.target.value);
           grow();
           mention.sync();
+          skill.sync();
         }}
-        /* The `@` list follows the caret: a click or an arrow key moves it. */
-        onSelect={mention.sync}
-        onBlur={mention.close}
+        /* The `@` and `/` lists follow the caret: a click or an arrow key moves it. */
+        onSelect={() => {
+          mention.sync();
+          skill.sync();
+        }}
+        onBlur={() => {
+          mention.close();
+          skill.close();
+        }}
         aria-autocomplete="list"
-        aria-controls={mention.open ? mentionListId : undefined}
-        aria-activedescendant={mention.open ? mentionOptionId(mentionListId, mention.active) : undefined}
+        aria-controls={mention.open ? mentionListId : skill.open ? skillListId : undefined}
+        aria-activedescendant={
+          mention.open
+            ? mentionOptionId(mentionListId, mention.active)
+            : skill.open
+              ? skillOptionId(skillListId, skill.active)
+              : undefined
+        }
         onPaste={onPaste}
         onKeyDown={(e) => {
           // The `@` list first: ↑↓, Return and Tab pick, Esc closes. It
           // prevents what it takes, so Tab never reaches the area cycle.
           if (mention.onKeyDown(e)) return;
+          // Then the `/` list (#349), the same way: Return inserts, never sends.
+          if (skill.onKeyDown(e)) return;
           // Match the TUI: Enter sends, Shift+Enter is a newline. `isComposing`
           // keeps an IME's Enter from submitting a half-typed word.
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -1991,6 +2019,7 @@ export function Composer({
         }}
       />
       <MentionPopover list={mention} listId={mentionListId} />
+      <SkillPopover menu={skill} listId={skillListId} />
       <PastedTexts
         pastes={pastesIn(text, pastesRef.current)}
         frozen={busy || awaiting || held}
