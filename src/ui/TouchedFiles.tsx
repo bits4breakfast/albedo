@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { updateRecordOf, useSinceReviewVersion } from '../guide/copyUpdate';
 import type { ReactNode } from 'react';
 import type { OpenFileRequest, Task, TouchedFile } from '../types';
 import { compareTouched, touchedFilesDetailed } from '../db/touched';
@@ -254,6 +255,19 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [task.id]);
+
+  // --- refresh when a review copy moves (#352) ------------------------------
+  // Update Copy moves HEAD without a tool call or a focus change: the new
+  // head recorded for the task is the signal. Not on mount: the first load
+  // has it already.
+  useSinceReviewVersion();
+  const copyMovedTo = task.reviewUrl ? (updateRecordOf(task.id)?.next ?? null) : null;
+  const copySeen = useRef(copyMovedTo);
+  useEffect(() => {
+    if (copySeen.current === copyMovedTo) return;
+    copySeen.current = copyMovedTo;
+    setReloadKey((k) => k + 1);
+  }, [copyMovedTo]);
 
   // --- hand-edited marker ---------------------------------------------------
   // Saving in the built-in editor writes to the worktree without going through

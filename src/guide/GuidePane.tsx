@@ -65,6 +65,8 @@ import { FileIcon } from '../ui/fileIcons';
 import { takeGuideFocus, useGuideFocusRequests } from './openGuide';
 import { CommentCount, commentsSaid } from './CommentCount';
 import GuideMap from './GuideMap';
+import SinceReview from './SinceReview';
+import { updateRecordOf, useSinceChanges, useSinceReviewVersion, type ChangesLoad, type UpdateRecord } from './copyUpdate';
 import OverflowMenu from '../ui/OverflowMenu';
 import './guide.css';
 
@@ -111,6 +113,14 @@ export interface GuidePaneProps {
 
 export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   useGuideStoreVersion();
+  // The copy's last Update Copy (#352): "Since your review" and the groups
+  // with new code. Its new head is in the read's deps, so the branch is read
+  // again once the copy moves.
+  useSinceReviewVersion();
+  const update = task.reviewUrl ? updateRecordOf(task.id) : null;
+  const sinceChanges = useSinceChanges(task.worktreePath, update);
+  const since =
+    update && !update.hidden && sinceChanges ? <SinceReview task={task} record={update} changes={sinceChanges} /> : null;
   // Measured against the branch the header shows it merging into (#237).
   const measured = useMeasuredBase(task);
   const measuredBase = measured.base;
@@ -145,7 +155,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     return () => {
       live = false;
     };
-  }, [task.id, task.worktreePath, measuredBase, active, again]);
+  }, [task.id, task.worktreePath, measuredBase, active, again, update?.next]);
 
   const guide = loadGuide(task.id);
   const stored = writeStateOf(task.id);
@@ -221,6 +231,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     const start = guide === null ? defaults : guideFocus;
     return (
       <GuideIntro
+        since={since}
         task={task}
         diff={diff}
         write={write}
@@ -246,6 +257,9 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   return (
     <GuideBody
       key={`${task.id}:${guide.writtenAt}`}
+      since={since}
+      update={update}
+      sinceChanges={sinceChanges}
       task={task}
       guide={guide}
       loaded={load.data}
@@ -304,6 +318,7 @@ function WriteStatus({ taskId, write, onRetry }: { taskId: number; write: WriteS
 }
 
 function GuideIntro({
+  since,
   task,
   diff,
   write,
@@ -312,6 +327,8 @@ function GuideIntro({
   active,
   options,
 }: {
+  /** "Since your review" (#352), above everything else. */
+  since: ReactNode;
   task: Task;
   diff: BranchDiff;
   write: WriteState | null;
@@ -335,6 +352,7 @@ function GuideIntro({
   }, [active, focusAsked, task.id]);
   return (
     <div className="gd-intro" ref={introRef} tabIndex={-1}>
+      {since}
       <h2 className="gd-intro-title">Review Guide</h2>
       <p className="gd-intro-text">
         This branch’s changes, grouped by what they do and put in reading order, with a summary of each group beside its
@@ -452,6 +470,9 @@ function ChangeTotals({ diff, base }: { diff: BranchDiff; base: string }): React
 }
 
 function GuideBody({
+  since,
+  update,
+  sinceChanges,
   task,
   guide,
   loaded,
@@ -461,6 +482,11 @@ function GuideBody({
   onEditOptions,
   active,
 }: {
+  /** "Since your review" (#352), at the top. */
+  since: ReactNode;
+  /** The copy's last update and what it changed (#352), for the groups' "changed". */
+  update: UpdateRecord | null;
+  sinceChanges: ChangesLoad | null;
   task: Task;
   guide: Guide;
   loaded: LoadedBranchDiff;
@@ -527,6 +553,33 @@ function GuideBody({
   // Ticked once, at other blocks: the file changed since it was reviewed (#248).
   const reviewedPaths = new Set([...reviewed].map((k) => k.slice(0, k.lastIndexOf('#'))));
   const changedSinceReview = (f: GroupFile) => !isFileReviewed(f) && reviewedPaths.has(f.path);
+  // New code since the copy you had (#352): the files Update Copy changed.
+  // A group holding any is "changed"; one you had ticked is "Reviewed
+  // before" -- its tick went with the old blocks, as every tick does.
+  // The record is read afresh each render; its heads are what matter.
+  const hasUpdate = update !== null;
+  const updatedPaths = useMemo(
+    () => new Set(hasUpdate && sinceChanges?.kind === 'ready' ? sinceChanges.changes.files.map((f) => f.path) : []),
+    [hasUpdate, sinceChanges],
+  );
+  const groupChanged = (g: GroupView) => g.files.filter((f) => updatedPaths.has(f.path)).length;
+  // Ticked in THIS group before: a mark on the file whose blocks were all the
+  // group's as the guide placed them. Unsorted has no blocks of its own to
+  // ask, so any mark on the file counts there.
+  const tickedInGroup = (g: GroupView, path: string) => {
+    const own = g.index === null ? null : new Set(guide.groups[g.index]?.blocks ?? []);
+    for (const k of reviewed) {
+      const at = k.lastIndexOf('#');
+      if (at <= 0 || k.slice(0, at) !== path) continue;
+      const ids = k.slice(at + 1).split(',').filter(Boolean);
+      if (own === null || (ids.length > 0 && ids.every((id) => own.has(id)))) return true;
+    }
+    return false;
+  };
+  const reviewedBefore = (g: GroupView) =>
+    !isGroupReviewed(g) && g.files.some((f) => updatedPaths.has(f.path) && tickedInGroup(g, f.path));
+  // The guide is of the copy before the update: the banner says so, in those words.
+  const forPreviousCopy = view.stale && update !== null && guide.writtenAt < update.at;
 
   // The group is kept by its key, never its number: Uncommitted Only changes
   // the numbers. With no place kept, the first group still to review.
@@ -723,7 +776,15 @@ function GuideBody({
         {/* Out of date, what matters leads: a narrow pane cuts from the end,
             so the base goes before the news does. Only the text is a live
             region, never the controls beside it. */}
-        {view.stale ? (
+        {forPreviousCopy ? (
+          <span
+            className="gd-meta-text"
+            role="status"
+            title={`The Guide was written ${writtenAgo(guide.writtenAt)}, before Update Copy. Groups marked changed have new code in them. Branch vs ${guide.base}.`}
+          >
+            The Guide was written for your previous copy. Groups marked <b>changed</b> have new code in them.
+          </span>
+        ) : view.stale ? (
           <span
             className="gd-meta-text"
             role="status"
@@ -767,7 +828,7 @@ function GuideBody({
           disabled={write?.kind === 'writing'}
           title="Ask Claude Haiku for a new guide of the branch as it is now"
         >
-          {write?.kind === 'writing' ? 'Rewriting…' : 'Rewrite'}
+          {write?.kind === 'writing' ? (forPreviousCopy ? 'Updating Guide…' : 'Rewriting…') : forPreviousCopy ? 'Update Guide' : 'Rewrite'}
         </button>
         {view.stale ? null : sendButton}
         {/* The rest in ⋯ (#295): Rewrite With Other Options… always; Read ·
@@ -793,6 +854,7 @@ function GuideBody({
           ]}
         />
       </div>
+      {since ? <div className="gd-since-wrap">{since}</div> : null}
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {said}
@@ -841,6 +903,16 @@ function GuideBody({
                 <input type="checkbox" checked={isGroupReviewed(group)} onChange={() => toggleGroup(group)} />
                 Reviewed
               </label>
+              {groupChanged(group) > 0 ? (
+                <span className="gd-changed" title="This group has new code since your previous copy">
+                  changed
+                </span>
+              ) : null}
+              {groupChanged(group) > 0 && reviewedBefore(group) ? (
+                <span className="gd-reviewed-before">
+                  Reviewed before · {groupChanged(group)} {groupChanged(group) === 1 ? 'file' : 'files'} changed
+                </span>
+              ) : null}
               {led.length === 0 ? (
                 // Every file set aside (#295 review): nothing the guide counts.
                 <span className="gd-none-to-review">{NOTHING_TO_REVIEW}</span>
@@ -950,9 +1022,10 @@ function GuideBody({
                   data-unsorted={g.unsorted || undefined}
                   data-aside={g.setAside || undefined}
                   data-comments={groupCommentCount(marks, g.key) > 0 || undefined}
+                  data-changed={groupChanged(g) > 0 || undefined}
                   onClick={() => goTo(i, false)}
-                  aria-label={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ', ')}`}
-                  title={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ' · ')}`}
+                  aria-label={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}${groupChanged(g) > 0 ? ', changed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ', ')}`}
+                  title={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}${groupChanged(g) > 0 ? ' · changed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ' · ')}`}
                 />
               ))}
             </div>

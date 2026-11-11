@@ -25,6 +25,8 @@ import {
 import { markSeen, type ReviewListState } from '../gh/reviewStore';
 import type { ReviewPr } from '../gh/reviewRequests';
 import { openReviewTask, reviewTaskFor } from './openReview';
+import { behindWords, isUpdating, runReviewUpdate, useCopyBehind } from '../guide/copyUpdate';
+import './reviewupdate.css';
 import './reviewlist.css';
 
 export interface ReviewListProps {
@@ -52,6 +54,7 @@ function Row({
   opening,
   error,
   onClick,
+  onUpdate,
   age,
 }: {
   row: ReviewRow;
@@ -60,10 +63,16 @@ function Row({
   opening: boolean;
   error: string | null;
   onClick: () => void;
+  /** Update Copy for the row's task (#352). */
+  onUpdate: () => void;
   age: (ts: number) => string;
 }) {
   const { pr, activity } = row;
-  const news = activityWords(activity);
+  // The copy behind the PR (#352): said once, on its own line with Update;
+  // the news words then leave the commits out rather than say them twice.
+  const behind = useCopyBehind(task, pr);
+  const busy = task !== null && isUpdating(task.id);
+  const news = activityWords(behind ? { ...activity, newCommits: 0, forcePushed: false } : activity);
   // How far into it you are (#315): only on Review Started's rows.
   const progress = row.start ? startWords(row.start) : [];
   return (
@@ -101,6 +110,24 @@ function Row({
           </span>
         </span>
       </button>
+      {task && (behind || busy) && (
+        <button
+          type="button"
+          className="review-update"
+          disabled={busy}
+          aria-busy={busy || undefined}
+          title="Fetch the pull request’s head from GitHub and move your copy to it, then show the review"
+          onClick={onUpdate}
+        >
+          {busy ? (
+            'Updating…'
+          ) : (
+            <>
+              {behind ? behindWords(behind) : ''} · <span className="review-update-verb">Update</span>
+            </>
+          )}
+        </button>
+      )}
       {error && (
         <p className="review-error" role="alert">
           {error}
@@ -187,6 +214,11 @@ export default function ReviewList({
                 opening={opening === row.pr.url}
                 error={errors.get(row.pr.url) ?? null}
                 onClick={() => void open(row.pr)}
+                onUpdate={() => {
+                  if (!task) return;
+                  onSelect(task.id);
+                  void runReviewUpdate(task);
+                }}
                 age={age}
               />
             );

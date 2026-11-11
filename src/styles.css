@@ -70,6 +70,12 @@
      on it --text 14.99, --text-strong 17.54, --muted 6.46, --faint 5.37,
      --accent 5.84, --add 6.49, --del 6.30. */
   --user-row: #eef0fb;
+  /* A review copy is behind its PR (#352): the band over the review task's
+     tabs. Opaque, an indigo step like --user-row, and measured on itself:
+     --text 14.99, --text-strong 17.54, --muted 6.46, --faint 5.37,
+     --accent 5.84. Its force-push and failure states are --banner-bg. */
+  --info-band: #eef0fb;
+  --info-band-border: #d9dcf3;  /* decorative hairline */
   --panel-inset: #ffffff;  /* wells: terminal body, code blocks, inputs */
   /* Hovered row: between --panel-chrome and the selected row. A token, not a
      hex in a :hover rule -- see the dark block for why. */
@@ -335,6 +341,9 @@
     /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
        --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
     --user-row: #1a1c26;
+    /* #352's band: --text 13.48, --text-strong 15.84, --muted 7.13, --faint 5.55, --accent 7.26. */
+    --info-band: #1a1c26;
+    --info-band-border: #2c3044;
     --panel-inset: #0c0d0f;
     /* Hovered row. A token, not a hex typed into whichever :hover rule needed
        one: contrast is a property of a pair, so a surface invented locally is a
@@ -487,6 +496,9 @@
   /* Your messages. On it: --text 13.48, --text-strong 15.84, --muted 7.13,
      --faint 5.55, --accent 7.26, --add 9.32, --del 7.71. */
   --user-row: #1a1c26;
+  /* #352's band: --text 13.48, --text-strong 15.84, --muted 7.13, --faint 5.55, --accent 7.26. */
+  --info-band: #1a1c26;
+  --info-band-border: #2c3044;
   --panel-inset: #0c0d0f;
   /* Hovered row. A token, not a hex typed into whichever :hover rule needed
      one: contrast is a property of a pair, so a surface invented locally is a

@@ -1,0 +1,58 @@
+/* ==========================================================================
+   Keeping a review copy current (#352): the band over a review task's tabs,
+   and the Reviewing row's "N new commits · Update".
+
+   No text is dimmed: each tier is a token. Grounds and what is measured on them (light |
+   dark), see the tokens in styles.css and reviewUpdateContrast.test.ts:
+   - --info-band: --text-strong 17.54 | 15.84, --muted 6.46 | 7.13,
+     --accent 5.84 | 7.26. The primary button keeps its own --accent-btn
+     ground (--on-accent 6.63 | 5.29).
+   - --banner-bg (force-push, failure): --warn 6.90 | 8.51 for the title,
+     --muted 6.49 | 6.60 for the line after it.
+   - The row's line is --accent on the Reviewing rows' grounds:
+     --panel-chrome 5.87 | 7.44, --panel-hover 5.62 | 7.04, --row-selected
+     5.12 | 6.08.
+   ========================================================================== */
+
+.rv-band {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 12px;
+  background: var(--info-band);
+  border-bottom: 1px solid var(--info-band-border);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.rv-band[data-tone='warn'] {
+  background: var(--banner-bg);
+  border-bottom-color: var(--banner-border);
+}
+.rv-band-title { font-weight: 600; color: var(--text-strong); }
+.rv-band[data-tone='warn'] .rv-band-title { color: var(--warn); }
+.rv-band-sub { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.rv-band-gap { flex: 1 1 0; }
+
+/* The Reviewing row's copy-behind line, a button of its own just under the
+   row (a button cannot hold one). Indented to the title's 12px. */
+.review-update {
+  display: block;
+  width: 100%;
+  margin: -3px 0 3px;
+  padding: 1px 8px 3px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+}
+.review-update:hover:not(:disabled) { background: var(--panel-hover); }
+.review-update:hover:not(:disabled) .review-update-verb { text-decoration: underline; text-decoration-color: var(--accent-line); }
+.review-update:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.review-update:disabled { cursor: progress; }

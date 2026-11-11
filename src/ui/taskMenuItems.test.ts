@@ -38,6 +38,7 @@ function allActions(): Required<TaskActions> {
   return {
     remind: vi.fn(),
     guide: vi.fn(),
+    updateReview: vi.fn(),
     fork: vi.fn(),
     move: vi.fn(),
     setDone: vi.fn(),
@@ -73,6 +74,19 @@ describe('taskMenuItems', () => {
     expect(byId(items, 'delete')?.title).toMatch(/^Worktree optional, conversation kept/);
     const done = taskMenuItems(task(), facts(), allActions());
     expect(byId(done, 'mark-done')?.title).toBe('Worktree and session kept');
+  });
+
+  it('offers Update from GitHub on a review task only, always (#352)', () => {
+    expect(ids(taskMenuItems(task(), facts(), allActions()))).not.toContain('update-review');
+    const actions = allActions();
+    const review = task({ reviewUrl: 'https://github.com/acme/relay/pull/9', branch: 'review/9' });
+    const items = taskMenuItems(review, facts(), actions);
+    expect(shape(items).startsWith('remind guide update-review / compact')).toBe(true);
+    const item = byId(items, 'update-review')!;
+    expect(item.label).toBe('Update from GitHub');
+    expect(item.disabled).toBe(false);
+    item.onSelect?.();
+    expect(actions.updateReview).toHaveBeenCalledWith(review);
   });
 
   it('offers no Review Guide and no Move for a chat', () => {

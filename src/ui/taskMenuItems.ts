@@ -22,6 +22,7 @@ import { canMarkDone, canMarkNotDone } from './taskGroups';
 import { canFollowUp } from './followUp';
 import { sendToSession } from './transcript/send';
 import { normalizePath } from '../git/reconcile';
+import { isUpdating } from '../guide/copyUpdate';
 
 /**
  * What App does for an action that needs its state (a dialog, the
@@ -32,6 +33,8 @@ export interface TaskActions {
   remind?: (task: Task) => void;
   /** Shows the task's Review Guide, selecting the task first. */
   guide?: (task: Task) => void;
+  /** A review task (#352): fetch its PR's head and move the copy to it. */
+  updateReview?: (task: Task) => void;
   /** Opens the new-task dialog to fork the task's conversation (#332). */
   fork?: (task: Task) => void;
   /** Opens the move dialog: to the main checkout, or to a worktree. */
@@ -91,7 +94,7 @@ export function taskMenuItems(
   rename?: () => void,
 ): OverflowItem[] {
   const chat = task.kind === 'chat';
-  const { remind, guide, fork, move, setDone, followUp, archive, delete: del } = actions;
+  const { remind, guide, updateReview, fork, move, setDone, followUp, archive, delete: del } = actions;
 
   const remote = remoteControlItem(task, facts.live, facts.remoteUrl);
   const remoteWhy = remote ? remoteBlocker(task, facts) : null;
@@ -110,6 +113,16 @@ export function taskMenuItems(
           aside: '⇧⌘G',
           title: 'This branch’s changes against its base, grouped by what they do',
           onSelect: () => guide(task),
+        },
+      // A review copy, brought up to its PR (#352). Always offered on a
+      // review task, behind or not: git says whether there was anything.
+      !!task.reviewUrl &&
+        updateReview && {
+          id: 'update-review',
+          label: isUpdating(task.id) ? 'Updating from GitHub…' : 'Update from GitHub',
+          disabled: isUpdating(task.id),
+          title: 'Fetch the pull request’s head and move your copy to it',
+          onSelect: () => updateReview(task),
         },
     ],
     [
