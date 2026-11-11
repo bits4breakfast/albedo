@@ -20,6 +20,7 @@ import {
   resultLine,
   stopWakeups,
   taskStop,
+  taskStopMissing,
   wakeup,
 } from './backgroundFixtures';
 
@@ -90,6 +91,23 @@ describe('runningInBackground', () => {
 
   it('ends what a TaskStop names by task id, which writes no notification for a shell', () => {
     const r = rows([...backgroundShell('t1', 'b1', SPAWNED + 1_000), ...backgroundShell('t2', 'b2', SPAWNED + 2_000), ...taskStop('s1', 'b1', SPAWNED + 3_000)]);
+    expect(keys(r)).toEqual(['t2']);
+  });
+
+  it('never opens a shell whose end was written before its start (#350)', () => {
+    // A command that failed at once: its notice is stamped 11 ms before the
+    // result that says it went to the background.
+    const [call, result] = backgroundShell('t1', 'b1', SPAWNED + 1_000);
+    const r = rows([
+      call!,
+      noticeAttachmentLine(notification({ taskIds: ['b1'], toolUseId: 't1', status: 'completed' }), SPAWNED + 1_039),
+      { ...result!, timestamp: new Date(SPAWNED + 1_050).toISOString() },
+    ]);
+    expect(keys(r)).toEqual([]);
+  });
+
+  it('ends a shell that TaskStop says no longer exists (#350)', () => {
+    const r = rows([...backgroundShell('t1', 'b1', SPAWNED + 1_000), ...backgroundShell('t2', 'b2', SPAWNED + 2_000), ...taskStopMissing('s1', 'b1', SPAWNED + 3_000)]);
     expect(keys(r)).toEqual(['t2']);
   });
 

@@ -19,8 +19,10 @@ import {
   noticeAttachmentLine,
   noticeUserLine,
   notification,
+  resultLine,
   stopWakeups,
   taskStop,
+  taskStopMissing,
   wakeup,
 } from './backgroundFixtures';
 
@@ -96,6 +98,13 @@ describe('background lines', () => {
     expect(facts(stopWakeups('w2', T)[1]!)).toEqual([{ fact: 'wakeups-stopped' }]);
   });
 
+  it("reads TaskStop's \"No task found\" error as a stop: that task is not running (#350)", () => {
+    expect(facts(taskStopMissing('s2', 'b6anvlma8', T)[1]!)).toEqual([{ fact: 'stop', taskId: 'b6anvlma8' }]);
+    // Any other failed result is no stop and no start.
+    const other = resultLine('s3', {}, T, { isError: true, text: '<tool_use_error>Something else went wrong</tool_use_error>' });
+    expect(facts(other)).toMatchObject([{ fact: 'result', ok: false }]);
+  });
+
   it('preselects exactly the rows that matter in SQL', () => {
     const db = new BetterSqlite3(':memory:');
     db.exec('CREATE TABLE t (role TEXT, tool_name TEXT, raw_json TEXT)');
@@ -105,6 +114,7 @@ describe('background lines', () => {
       ...monitor('m1', 'bm', T),
       ...wakeup('w1', T, 300),
       ...taskStop('s1', 'b1', T),
+      ...taskStopMissing('s2', 'b9', T),
       noticeUserLine(done, T),
       noticeAttachmentLine(done, T),
       // Not background work: a plain call and its result, and a prompt.
@@ -113,8 +123,8 @@ describe('background lines', () => {
     ];
     for (const line of lines) for (const m of parseLine(JSON.stringify(line), 0)) insert.run(m.role, m.toolName, m.rawJson);
     const hits = db.prepare(`SELECT role, tool_name FROM t WHERE ${backgroundSqlPredicate()}`).all() as { role: string; tool_name: string | null }[];
-    // Everything but TaskStop's call (its result says it), `ls` and the prompt.
-    expect(hits).toHaveLength(lines.length - 3);
+    // Everything but the TaskStop calls (their results say it), `ls` and the prompt.
+    expect(hits).toHaveLength(lines.length - 4);
     expect(hits.some((h) => h.tool_name === 'Bash' && h.role === 'tool_use')).toBe(true);
     db.close();
   });

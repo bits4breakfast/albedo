@@ -983,6 +983,13 @@ function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>)
   const toolUseId = textOf(blockFor(m, 'tool_result')?.['tool_use_id']);
   if (toolUseId === null) return [];
   const ok = !toolResultIsErrorOf(m);
+  // TaskStop on a task that is gone fails, and that failure is the proof it
+  // is not running (#350): a shell can end before the result that started it
+  // is written, or end with a notice this never paired.
+  if (!ok) {
+    const gone = NO_TASK_FOUND.exec(flattenContent(blockFor(m, 'tool_result')?.['content']).trim());
+    if (gone?.[1]) return [{ fact: 'stop', taskId: gone[1] }];
+  }
   const r = isRecord(line['toolUseResult']) ? line['toolUseResult'] : {};
   const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
   const positive = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
@@ -1002,6 +1009,12 @@ function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>)
     },
   ];
 }
+
+/**
+ * TaskStop's error for a task id that does not exist (any more), measured on
+ * 2.1.322: `<tool_use_error>No task found with ID: b6anvlma8</tool_use_error>`.
+ */
+const NO_TASK_FOUND = /^(?:<tool_use_error>)?No task found with ID: ([A-Za-z0-9_-]+)(?:<\/tool_use_error>)?$/;
 
 /** The trimmed, non-empty values of every `<tag>…</tag>` in an envelope. */
 function tagValues(body: string, tag: string): string[] {
@@ -1030,6 +1043,7 @@ export function backgroundSqlPredicate(): string {
     '"timeoutMs":',
     '"task_type":',
     '"cancelledWakeups":',
+    'No task found with ID: ',
   ];
   return `(
     (role = 'tool_use' AND tool_name IN ('Monitor', 'ScheduleWakeup', 'CronCreate', 'CronDelete'))
