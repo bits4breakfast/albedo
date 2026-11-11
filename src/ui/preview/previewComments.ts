@@ -169,6 +169,14 @@ export function composeChanges(comments: readonly PreviewComment[]): string {
 }
 
 /**
+ * How many comments a "changes requested" answer carries: its numbered items.
+ * A comment's own further lines are indented (body()), so they never count.
+ */
+export function commentCount(answer: string): number {
+  return answer.split('\n').filter((l) => /^\d+\. /.test(l)).length;
+}
+
+/**
  * The answer Approve sends: "approved", or, when an earlier version than the
  * one waiting is on screen, which version that is.
  */

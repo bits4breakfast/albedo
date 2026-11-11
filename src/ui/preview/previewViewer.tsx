@@ -81,8 +81,14 @@ function PreviewViewer({ first, onClose }: { first: Preview; onClose: () => void
         <span className="pv-viewer-outcome" data-outcome={shown.outcome}>
           {outcomeText(shown.outcome)}
         </span>
-        <button type="button" className="btn" onClick={onClose} autoFocus>
+        <button type="button" className="btn pv-viewer-close" aria-label="Close" onClick={onClose} autoFocus>
+          <span className="pv-viewer-close-x" aria-hidden="true">
+            ✕
+          </span>
           Close
+          <span className="kbd" aria-hidden="true">
+            Esc
+          </span>
         </button>
       </div>
       {shown.question ? <div className="pv-viewer-q">{shown.question}</div> : null}
@@ -95,6 +101,8 @@ function PreviewViewer({ first, onClose }: { first: Preview; onClose: () => void
         commentMode={false}
         pins={[]}
         onPlace={() => {}}
+        // Esc pressed with focus inside the page reaches the page, not here.
+        onEscape={onClose}
       />
       {shown.answer ? (
         <div className="pv-viewer-answer">

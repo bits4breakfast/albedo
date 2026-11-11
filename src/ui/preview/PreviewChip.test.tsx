@@ -79,8 +79,12 @@ describe('PreviewChip', () => {
         <PreviewViewerHost taskId={3} />
       </>,
     );
-    const chip = await screen.findByRole("button", { name: /Preview: Proposed row, v2/ });
-    expect(chip.textContent?.replace(/\s+/g, ' ').trim()).toBe('◫ Preview: Proposed row, v2 · changes requested');
+    const chip = await screen.findByRole('button', { name: /Preview: Proposed row, v2/ });
+    // #356: the parts are separate, as on every tool row -- never run together.
+    const parts = [...chip.children].map((el) => el.textContent?.trim()).filter(Boolean);
+    expect(parts).toEqual(['Preview', 'Proposed row', 'v2', 'Open ↗', 'Changes requested · 1 comment']);
+    expect(chip.closest('.tx-chip')).not.toBeNull();
+    expect(chip.classList.contains('tx-chip-head')).toBe(true);
     act(() => fireEvent.click(chip));
     const viewer = screen.getByRole('dialog', { name: 'Preview: Proposed row, v2, read only' });
     expect(viewer.querySelector('iframe')?.getAttribute('sandbox')).toBe('allow-scripts');
@@ -91,10 +95,37 @@ describe('PreviewChip', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('shows the question asked, or from v2 on what changed', async () => {
+    kept.byToolUse.set('toolu_3', { ...V2, toolUseId: 'toolu_3', question: 'Does it read?', note: 'Smaller gap' });
+    const { use, result } = rows('toolu_3', null);
+    render(<PreviewChip message={use} result={result} />);
+    expect(await screen.findByText('Smaller gap')).toBeTruthy();
+    expect(screen.queryByText('Does it read?')).toBeNull();
+  });
+
+  it('closes the viewer on Esc pressed inside the page, and only from its own frame', async () => {
+    kept.byToolUse.set('toolu_2', V2);
+    const { use, result } = rows('toolu_2', V2.answer);
+    render(
+      <>
+        <PreviewChip message={use} result={result} />
+        <PreviewViewerHost taskId={3} />
+      </>,
+    );
+    const chip = await screen.findByRole('button', { name: /Preview: Proposed row, v2/ });
+    act(() => fireEvent.click(chip));
+    const frame = screen.getByRole('dialog').querySelector('iframe')!;
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: { tag: 'albedo-preview-escape' }, source: window })));
+    expect(screen.queryByRole('dialog')).not.toBeNull();
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: { tag: 'albedo-preview-escape' }, source: frame.contentWindow })));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('without a kept copy, reads how it ended from the result and opens nothing', async () => {
     const { use, result } = rows('toolu_9', "The user doesn't want to proceed with this tool use.", true);
     render(<PreviewChip message={use} result={result} />);
-    expect(await screen.findByText(/cancelled/)).toBeTruthy();
+    expect(await screen.findByText('Cancelled')).toBeTruthy();
+    expect(screen.getByText('No copy kept')).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
   });
 });

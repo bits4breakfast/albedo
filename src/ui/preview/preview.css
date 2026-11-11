@@ -184,27 +184,45 @@
 .pv-frame-large { flex: 1 1 auto; height: auto; min-height: 200px; }
 .pv-card-large .pv-comments { flex: none; max-height: 28%; overflow: auto; }
 
-/* --- the transcript's chip, one per version --------------------------------- */
-.pv-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0;
-  max-width: 100%;
-  padding: 3px 10px;
+/* --- the transcript's row, one per version (#356) ---------------------------
+   A tool row (.tx-chip / .tx-chip-head): its frame, height, hover and state
+   slot. Only what a preview row says differently is here. */
+.pv-row { border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }
+.pv-row:not(.pv-row-link) { cursor: default; }
+.pv-row-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.pv-row-icon { flex: none; color: var(--muted); }
+.pv-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* On --panel and --panel-hover: --muted, as the tool row's target. */
+.pv-row-ver {
+  flex: none;
+  padding: 0 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-sm);
-  text-align: left;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
-.pv-chip-link { border-color: var(--border-strong); cursor: default; }
-.pv-chip-link:hover { background: var(--panel-hover); }
-.pv-chip-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.pv-chip-glyph { color: var(--muted); }
-.pv-chip-title { font-weight: 600; color: var(--text-strong); }
-.pv-chip-outcome { color: var(--muted); white-space: pre; }
+/* The question is prose, not a command: the UI face, not mono. */
+.pv-row-summary { font-family: var(--font-ui); font-size: var(--fs-xs); }
+.pv-row-open { flex: none; margin-left: auto; color: var(--accent); font-size: var(--fs-xs); visibility: hidden; }
+.pv-row-link:hover .pv-row-open,
+.pv-row-link:focus-visible .pv-row-open { visibility: visible; }
+.pv-row-open + .pv-row-state { margin-left: 0; }
+/* The tool row's own state colours: --add done, --warn waiting (as
+   .tx-chip-pending), --faint for one that ended without an answer. */
+.pv-row-state[data-outcome='approved'] { color: var(--add); }
+.pv-row-state[data-outcome='changes'],
+.pv-row-state[data-outcome='pending'] { color: var(--warn); }
+.pv-row-state[data-outcome='cancelled'] { color: var(--faint); }
 
 /* --- a kept version, read only, over the reading pane ----------------------- */
 .pv-viewer {
@@ -217,6 +235,17 @@
   background: var(--panel);
 }
 .pv-viewer-head { display: flex; align-items: center; gap: 10px; font-size: var(--fs-md); color: var(--text); }
+/* The viewer's own frame (#356): a bar on chrome, so it never reads as part of
+   the mockup under it. Edge to edge over the viewer's padding. */
+.pv-viewer > .pv-viewer-head {
+  margin: -12px -16px 0;
+  padding: 8px 16px;
+  background: var(--panel-chrome);
+  border-bottom: 1px solid var(--border);
+}
+/* Close: the way out, so it carries --border-strong (the 3:1 control edge). */
+.pv-viewer-close { border-color: var(--border-strong); color: var(--text-strong); }
+.pv-viewer-close-x { font-size: var(--fs-md); line-height: 1; }
 .pv-viewer-title b { color: var(--text-strong); }
 /* On --panel: --muted 7.15 / 7.74. */
 .pv-viewer-outcome { color: var(--muted); font-size: var(--fs-sm); }

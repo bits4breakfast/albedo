@@ -55,6 +55,13 @@ describe('composeChanges', () => {
   });
 });
 
+describe('commentCount', () => {
+  it("counts the numbered items, never a comment's own further lines (#356)", () => {
+    expect(c.commentCount('changes requested on v2:\n1. Fill it.\n   12. not an item\n2. (pin 1, top left) Move it.')).toBe(2);
+    expect(c.commentCount('approved')).toBe(0);
+  });
+});
+
 describe('composeApproval', () => {
   it('is "approved" for the version waiting, and names an earlier one shown', () => {
     expect(c.composeApproval(3, 3)).toBe('approved');
