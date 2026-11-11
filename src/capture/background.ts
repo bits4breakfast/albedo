@@ -74,6 +74,12 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
 
   const calls = new Map<string, { kind: BackgroundKind; description: string; ts: number; rowId: number }>();
   const running = new Map<string, BackgroundItem & { taskId: string | null }>();
+  // What has already ended, by tool-use id and task id. Claude Code can write
+  // a shell's end before the result that starts it: one that failed at once
+  // was noticed 11 ms before its result (#350). Sorting by time cannot fix
+  // that order, so a start whose end was already seen never opens.
+  const endedUses = new Set<string>();
+  const endedTasks = new Set<string>();
   const endOf = (pred: (i: BackgroundItem & { taskId: string | null }) => boolean) => {
     for (const [k, i] of running) if (pred(i)) running.delete(k);
   };
@@ -87,6 +93,7 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
         case 'result': {
           const call = calls.get(f.toolUseId);
           if (!call || !f.ok || running.has(f.toolUseId)) break;
+          if (endedUses.has(f.toolUseId) || (f.taskId !== null && endedTasks.has(f.taskId))) break;
           let until: number | null = null;
           let taskId: string | null = f.taskId;
           if (call.kind === 'wakeup') {
@@ -116,10 +123,13 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
         case 'end': {
           const ids = new Set(f.toolUseIds);
           const tasks = new Set(f.taskIds);
+          for (const id of ids) endedUses.add(id);
+          for (const t of tasks) endedTasks.add(t);
           endOf((i) => ids.has(i.key) || (i.taskId !== null && tasks.has(i.taskId)));
           break;
         }
         case 'stop':
+          endedTasks.add(f.taskId);
           endOf((i) => i.taskId === f.taskId);
           break;
         case 'wakeups-stopped':
