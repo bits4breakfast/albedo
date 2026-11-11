@@ -2236,3 +2236,28 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
 .tx-api-error-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .tx-api-error-head { color: var(--danger); font-weight: 600; }
 .tx-api-error > .try-again { flex: 0 0 auto; }
+
+/* --- a run of tool calls as one line (#358) --------------------------------
+   The subagent group's head and body (.tx-sidechain-*), so a folded run and a
+   folded subagent read as the same kind of line. The counts are the diff
+   header's (.tx-d-stat). The parts are spans with a gap: a flex box drops the
+   spaces between its parts. */
+.tx-toolrun-head { gap: 6px; max-width: 100%; min-width: 0; text-align: left; }
+.tx-toolrun-head .disc { flex: none; }
+.tx-toolrun-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* --del / --warn on --panel and --panel-hover, as the tool row's state. */
+.tx-toolrun-failed { flex: none; color: var(--del); }
+.tx-toolrun-live { display: inline-flex; gap: 6px; min-width: 0; color: var(--warn); }
+.tx-toolrun-now {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Opened, the calls sit just inside the rule, not a second speaker gutter
+   further in: the run's line already has the gutter. 22px still holds a
+   comment count on a row (.tx-row[data-comments]). */
+.tx-toolrun-body > .tx-row { grid-template-columns: 22px minmax(0, 1fr); gap: 4px; }

@@ -80,6 +80,8 @@ export const KEYS = {
   ciNotifications: 'albedo.notifications.ci',
   /** "Keep the Mac Awake While Tasks Run" (ui/keepAwake.ts, #283). Absent means on. */
   keepAwake: 'albedo.keepAwake',
+  /** "Group Tool Calls" in the transcript (ui/transcript/groupToolCalls.ts, #358). Absent means on. */
+  groupToolCalls: 'albedo.transcript.groupToolCalls',
   commentsIntro: 'albedo.comments.intro',
   /** The build last run here, for What's New (ui/whatsNew.ts owns the shape). */
   whatsNewSeen: 'albedo.whatsNew.seen',
