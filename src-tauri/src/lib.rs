@@ -146,6 +146,9 @@ const M0016_API_ERROR: &str = include_str!("../../src/db/migrations/0016_api_err
 const M0017_SPUN_FROM: &str = include_str!("../../src/db/migrations/0017_spun_from.sql");
 /// v18: previews -- HTML mockups a session showed the user for approval (#348).
 const M0018_PREVIEWS: &str = include_str!("../../src/db/migrations/0018_previews.sql");
+/// v19: messages_au re-indexes search only when id or body is written (#361).
+const M0019_FTS_BODY_UPDATES: &str =
+    include_str!("../../src/db/migrations/0019_fts_body_updates.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -255,6 +258,12 @@ pub fn run() {
             version: 18,
             description: "previews",
             sql: M0018_PREVIEWS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 19,
+            description: "messages_au on id and body only",
+            sql: M0019_FTS_BODY_UPDATES,
             kind: MigrationKind::Up,
         },
     ];
