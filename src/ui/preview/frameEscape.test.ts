@@ -65,7 +65,8 @@ describe('the preview frame\'s Esc script', () => {
     install(post);
     expect(press('a').defaultPrevented).toBe(false);
     expect(press('Escape', { isComposing: true }).defaultPrevented).toBe(false);
-    expect(post).toHaveBeenCalledTimes(1);
+    // Ending a composition in a mockup field doesn't close the viewer either.
+    expect(post).not.toHaveBeenCalled();
   });
 
   it('marks only the Escape it was added for', () => {

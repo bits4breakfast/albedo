@@ -116,19 +116,22 @@ addEventListener('scroll',g,{passive:true});addEventListener('resize',g);addEven
  * guard, and an Escape nothing handled goes back to AppKit, which takes the
  * window out of full screen (#376). Marked only from a one-shot bubble
  * listener added during the dispatch, so the mockup's own listeners run first
- * and still see the key as unhandled.
+ * and still see the key as unhandled. An Escape that ends an input-method
+ * composition only cancels the composition: it neither closes the viewer nor
+ * is marked.
  */
 function escapeScript(): string {
   return `(function(){
-addEventListener('keydown',function(e){if(e.key!=='Escape')return;try{parent.postMessage({tag:'${ESCAPE_TAG}'},'*');}catch(x){}
-if(e.isComposing||e.keyCode===229)return;addEventListener('keydown',function(l){if(l===e)e.preventDefault();},{once:true});},true);
+addEventListener('keydown',function(e){if(e.key!=='Escape'||e.isComposing||e.keyCode===229)return;
+try{parent.postMessage({tag:'${ESCAPE_TAG}'},'*');}catch(x){}
+addEventListener('keydown',function(l){if(l===e)e.preventDefault();},{once:true});},true);
 })();`;
 }
 
 const DOCTYPE = /^(﻿?\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>)/i;
 
 /**
- * The iframe's `srcdoc`: the page with the CSP and Albedo's two scripts in
+ * The iframe's `srcdoc`: the page with the CSP and Albedo's scripts in
  * front. They go after a leading `<!doctype>` -- anything before it would put
  * the page in quirks mode -- and before everything else, so the policy is in
  * force before the page's first tag is parsed.
