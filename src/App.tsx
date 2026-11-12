@@ -6,7 +6,7 @@ import type { SetStateAction } from 'react';
 import type { OpenFileRequest, Project, Task } from './types';
 import { useTheme } from './ui/theme';
 import useTasks from './ui/useTasks';
-import useLayout, { type RightTab } from './ui/app/useLayout';
+import useLayout, { filesFlex, ratioFlex, shellFlex, sidebarStyle, type RightTab } from './ui/app/useLayout';
 import useTaskTabs from './ui/app/useTaskTabs';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
@@ -47,7 +47,8 @@ import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
-import Terminal, { focusPty, hasLivePty } from './ui/Terminal';
+import { focusPty, hasLivePty } from './ui/Terminal';
+import TerminalStack from './ui/TerminalStack';
 import { focusArea, useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemotePending } from './ui/RemoteMark';
 import { taskMenuItems, type TaskActions } from './ui/taskMenuItems';
@@ -196,6 +197,10 @@ export default function App() {
     shellHeight,
     mainRef,
     panesRef,
+    sidebarRef,
+    ptyPaneRef,
+    filesPaneRef,
+    shellPaneRef,
     startSidebarDrag,
     startSplitDrag,
     startFilesDrag,
@@ -1220,7 +1225,7 @@ export default function App() {
   const split = mode === 'split';
 
   const primaryStyle = split
-    ? { flex: `0 0 ${(ratio * 100).toFixed(2)}%` }
+    ? { flex: ratioFlex(ratio) }
     : { flex: '1 1 auto' };
   const secondaryStyle = { flex: '1 1 0' };
 
@@ -1438,8 +1443,9 @@ export default function App() {
             list's, which is kept for when it expands. */}
         <aside
           className="sidebar"
+          ref={sidebarRef}
           data-collapsed={taskListCollapsed || undefined}
-          style={taskListCollapsed ? undefined : { width: sidebarWidth, flexBasis: sidebarWidth }}
+          style={taskListCollapsed ? undefined : sidebarStyle(sidebarWidth)}
         >
           <TaskList
             tasks={visibleTasks}
@@ -1734,7 +1740,7 @@ export default function App() {
             )}
 
             {/* Kept mounted in every mode: unmounting it would kill live ptys. */}
-            <section className="pane pane-pty" style={primaryStyle} hidden={!showPty || !selected} data-focus-area="terminal">
+            <section className="pane pane-pty" ref={ptyPaneRef} style={primaryStyle} hidden={!showPty || !selected} data-focus-area="terminal">
               {/* A name only when there is another pane to tell it from: in
                   PTY mode the switch above already says "PTY". */}
               {split && (
@@ -1743,21 +1749,15 @@ export default function App() {
                 </div>
               )}
               <div className="pane-body">
-                <div className="term-stack">
-                  {openTasks.filter((task) => !stopped.has(task.id)).map((task) => (
-                    <Terminal
-                      /* The folder is part of the identity: a task that moved
-                         starts again there, resuming the same session. */
-                      key={`${task.id}@${task.worktreePath}`}
-                      task={task}
-                      active={task.id === selectedId}
-                      initialPrompt={initialPromptFor(task) ?? undefined}
-                      spawnArgs={spawnArgsFor(task)}
-                      onFreshStart={() => forgetResume(task.id)}
-                      sessionName={sessionNameFor(task)}
-                    />
-                  ))}
-                </div>
+                {/* Memoised per terminal (#364): a capture burst redraws none of them. */}
+                <TerminalStack
+                  tasks={openTasks.filter((task) => !stopped.has(task.id))}
+                  selectedId={selectedId}
+                  initialPromptFor={initialPromptFor}
+                  spawnArgsFor={spawnArgsFor}
+                  sessionNameFor={sessionNameFor}
+                  forgetResume={forgetResume}
+                />
               </div>
             </section>
 
@@ -1925,9 +1925,12 @@ export default function App() {
                       </PaneErrorBoundary>
                     )
                   ) : projectView && browseTask ? (
-                    <PaneErrorBoundary key={`pf-${browseTask.id}`} label="Project files">
-                      <ProjectFiles task={browseTask} activePath={editorTask === browseTask ? editorFile : null} />
-                    </PaneErrorBoundary>
+                    /* Likewise the project view's (#364): the column has it. */
+                    filesColumnShown ? null : (
+                      <PaneErrorBoundary key={`pf-${browseTask.id}`} label="Project files">
+                        <ProjectFiles task={browseTask} activePath={editorTask === browseTask ? editorFile : null} />
+                      </PaneErrorBoundary>
+                    )
                   ) : (
                     <div className="placeholder">No task selected.</div>
                   )}
@@ -1971,7 +1974,8 @@ export default function App() {
                 />
                 <section
                   className="pane pane-files"
-                  style={{ flex: `0 0 ${Math.round(filesWidth)}px` }}
+                  ref={filesPaneRef}
+                  style={{ flex: filesFlex(filesWidth) }}
                 >
                   <div className="pane-head">
                     <span>Files</span>
@@ -2015,7 +2019,8 @@ export default function App() {
           {shellProjectIds.length > 0 && (
             <section
               className="pane shell-drawer"
-              style={{ flex: `0 0 ${shellHeight}px` }}
+              ref={shellPaneRef}
+              style={{ flex: shellFlex(shellHeight) }}
               hidden={!shellOpen || !shellProject}
             >
               <div className="pane-head">
