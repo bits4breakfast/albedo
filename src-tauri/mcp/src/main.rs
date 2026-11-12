@@ -5,12 +5,13 @@
 //! stdin is read on a thread of its own, so the loop here never blocks on it:
 //! a `show_preview` call (#348) waits for the user, and meanwhile the loop
 //! must still take a `notifications/cancelled`, a ping or another call, and
-//! look for the answer file every [`POLL`].
+//! look for the answer file every [`POLL`]. With no call waiting there is no
+//! file to look for, and the loop sleeps until a message arrives (#365).
 
 use albedo_mcp::{Env, Server, PARSE_ERROR};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 /// The longest request line read. A tool call is a few KB; anything this long
@@ -53,7 +54,7 @@ fn main() {
 
     let mut out = io::stdout().lock();
     loop {
-        let reply = match rx.recv_timeout(POLL) {
+        let reply = match next(&rx, server.waiting()) {
             Ok(Incoming::Line(line)) => server.handle_line(&line),
             Ok(Incoming::TooLong) => Some(json!({
                 "jsonrpc": "2.0",
@@ -78,6 +79,18 @@ fn main() {
                 return; // the client is gone
             }
         }
+    }
+}
+
+/// The next message from stdin. While a call waits for its answer, wakes
+/// every [`POLL`] (a `Timeout`) to look for it; otherwise only a message, or
+/// stdin closing, wakes it: nothing else can happen until one arrives, since
+/// a wait only ever starts from a message. Unchanged when one does.
+fn next<T>(rx: &Receiver<T>, waiting: bool) -> Result<T, RecvTimeoutError> {
+    if waiting {
+        rx.recv_timeout(POLL)
+    } else {
+        rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
     }
 }
 
@@ -140,6 +153,33 @@ fn read_capped_line(r: &mut impl BufRead, buf: &mut Vec<u8>, cap: usize) -> io::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_waits_for_a_message_and_never_times_out() {
+        let (tx, rx) = mpsc::channel::<u8>();
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(POLL * 3);
+            tx.send(7).unwrap();
+            // Dropped here: the next receive sees stdin closed.
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(next(&rx, false), Ok(7));
+        assert!(started.elapsed() >= POLL * 3);
+        sender.join().unwrap();
+        assert_eq!(next(&rx, false), Err(RecvTimeoutError::Disconnected));
+    }
+
+    #[test]
+    fn a_waiting_call_wakes_every_poll() {
+        let (tx, rx) = mpsc::channel::<u8>();
+        let started = std::time::Instant::now();
+        assert_eq!(next(&rx, true), Err(RecvTimeoutError::Timeout));
+        assert!(started.elapsed() >= POLL);
+        tx.send(1).unwrap();
+        assert_eq!(next(&rx, true), Ok(1));
+        drop(tx);
+        assert_eq!(next(&rx, true), Err(RecvTimeoutError::Disconnected));
+    }
 
     #[test]
     fn lines_are_split_and_long_ones_skipped_whole() {

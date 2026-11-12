@@ -52,6 +52,7 @@ export function getDb(): Promise<Database> {
 export function resetDb(): void {
   dbPromise = null;
   forgetContextPeaks();
+  forgetUsageHours();
 }
 
 // ---------------------------------------------------------------------------
@@ -427,8 +428,9 @@ export async function purgeTaskHistory(id: number): Promise<void> {
     );
     await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
   } finally {
-    // Cached context peaks hold only while rows are only added (#361).
+    // Cached context peaks and usage hours hold only while rows are only added (#361, #365).
     forgetContextPeaks();
+    forgetUsageHours();
   }
   // Review comments belong to the task and go with it: archived or deleted,
   // there is nothing left for them to be sent to.
@@ -1423,7 +1425,11 @@ export interface WindowUsageTotals {
   oldestTs: number | null;
 }
 
-export async function getWindowUsageTotals(
+/**
+ * {@link getWindowUsageTotals} in one query over the whole window: what the
+ * cached path must equal, and what it falls back to.
+ */
+export async function getWindowUsageTotalsExact(
   startTs: number,
   endTs: number,
 ): Promise<WindowUsageTotals> {
@@ -1467,6 +1473,243 @@ export async function getWindowUsageTotals(
     lineCount: r?.line_count ?? 0,
     oldestTs: r?.oldest_ts ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Window usage with the closed hours cached (#365)
+// ---------------------------------------------------------------------------
+//
+// The status strip asks for seven days every 30 s, and the query reads every
+// usage line of the week (~630 ms on the owner's data). Hours that are over
+// do not change while rows are only added, so their per-line maxima are kept
+// and only the new rows, the open hour and the window's first, partial hour
+// are read again.
+//
+// Exactly the same answer as the one query, which is pinned in a test. The
+// query groups rows by (session, line) and takes each counter's MAX and the
+// MIN ts per group, then sums. A group's rows can lie in different hours --
+// a subagent's lines share the parent's session and line numbers, measured
+// on the owner's data at 6,814 groups over 11,107 group-hours in a week -- so
+// hours are never summed on their own: the cache keeps each hour's per-group
+// maxima, and the groups are merged across the pieces (MAX of MAXes, MIN of
+// MINs) before anything is summed. MAX and MIN do not care how often a row
+// is seen, so a row folded in twice changes nothing; one never folded in
+// would, and the id cursor is what makes sure none is missed.
+//
+// Valid while rows are only added, as for the context peaks above: the only
+// code that deletes messages is purgeTaskHistory, and it (and resetDb) call
+// forgetUsageHours. Ids are assigned in insertion order, so the rows added
+// since the last read are those past the cursor.
+
+const HOUR_MS = 3_600_000;
+/** Windows shorter than this are read in one query: there is no closed hour worth keeping. */
+const CACHE_MIN_SPAN_MS = 2 * HOUR_MS;
+/** Hours older than this before the window's end are let go. */
+const CACHE_KEEP_MS = 8 * 24 * HOUR_MS;
+
+interface LineMax {
+  inT: number;
+  outT: number;
+  ccT: number;
+  crT: number;
+  minTs: number;
+}
+
+interface UsageHours {
+  /** Hour start -> group key -> that group's maxima over its rows in the hour. */
+  hours: Map<number, Map<string, LineMax>>;
+  /** Every row with an id up to this is in the hours held. -1: none read yet. */
+  lastId: number;
+}
+
+let usageHours: UsageHours = { hours: new Map(), lastId: -1 };
+let usageCacheOn = true;
+
+/**
+ * Tests that script the SQL by hand expect the one query; this turns the
+ * cache off for them. The cache itself is pinned against the one query on a
+ * real SQLite (usageHours.test.ts).
+ */
+export function setUsageHourCacheForTests(on: boolean): void {
+  usageCacheOn = on;
+  forgetUsageHours();
+}
+let usageChain: Promise<unknown> = Promise.resolve();
+let messageDeletionCount = 0;
+
+/** Drop the cached hours; the next read starts over. Called wherever messages are deleted. */
+export function forgetUsageHours(): void {
+  usageHours = { hours: new Map(), lastId: -1 };
+  messageDeletionCount++;
+}
+
+/** Bumped whenever messages may have been deleted: a usage figure read before it may be too high. */
+export function messageDeletions(): number {
+  return messageDeletionCount;
+}
+
+function mergeLine(into: Map<string, LineMax>, key: string, m: LineMax): void {
+  const had = into.get(key);
+  if (!had) {
+    into.set(key, { ...m });
+    return;
+  }
+  had.inT = Math.max(had.inT, m.inT);
+  had.outT = Math.max(had.outT, m.outT);
+  had.ccT = Math.max(had.ccT, m.ccT);
+  had.crT = Math.max(had.crT, m.crT);
+  had.minTs = Math.min(had.minTs, m.minTs);
+}
+
+interface LineRow {
+  session_id: string;
+  line: number;
+  in_t: number | null;
+  out_t: number | null;
+  cc_t: number | null;
+  cr_t: number | null;
+  min_ts: number;
+}
+
+/**
+ * Per-(group, hour) maxima of the usage lines with `from <= ts < to` (or
+ * `<= to` when `toInclusive`), optionally only ids in `(idAfter, idUpTo]`.
+ * The same row filter and the same expressions as the one query.
+ */
+async function usageLines(
+  from: number,
+  to: number,
+  opts: { toInclusive?: boolean; idAfter?: number; idUpTo?: number } = {},
+): Promise<Array<{ key: string; m: LineMax }>> {
+  const db = await getDb();
+  const params: number[] = [from, to];
+  let ids = '';
+  if (opts.idAfter !== undefined) {
+    params.push(opts.idAfter);
+    ids += ` AND id > $${params.length}`;
+  }
+  if (opts.idUpTo !== undefined) {
+    params.push(opts.idUpTo);
+    ids += ` AND id <= $${params.length}`;
+  }
+  const rows = await db.select<LineRow[]>(
+    `SELECT session_id,
+            seq / ${SEQ_STRIDE} AS line,
+            MAX(${usageSqlExpr('inputTokens')})             AS in_t,
+            MAX(${usageSqlExpr('outputTokens')})            AS out_t,
+            MAX(${usageSqlExpr('cacheCreationInputTokens')}) AS cc_t,
+            MAX(${usageSqlExpr('cacheReadInputTokens')})     AS cr_t,
+            MIN(ts) AS min_ts
+       FROM messages
+      WHERE ts >= $1 AND ts ${opts.toInclusive ? '<=' : '<'} $2${ids}
+        AND role IN ('assistant', 'tool_use')
+        AND json_extract(raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
+      GROUP BY session_id, seq / ${SEQ_STRIDE}, CAST(ts / ${HOUR_MS} AS INTEGER)`,
+    params,
+  );
+  return rows.map((r) => ({
+    key: `${r.session_id}\u0000${r.line}`,
+    m: { inT: r.in_t ?? 0, outT: r.out_t ?? 0, ccT: r.cc_t ?? 0, crT: r.cr_t ?? 0, minTs: r.min_ts },
+  }));
+}
+
+function hourOf(ts: number): number {
+  return Math.floor(ts / HOUR_MS) * HOUR_MS;
+}
+
+async function cachedWindowUsage(startTs: number, endTs: number): Promise<WindowUsageTotals> {
+  const st = usageHours;
+  const db = await getDb();
+  const top = await db.select<{ max_id: number | null }[]>(`SELECT MAX(id) AS max_id FROM messages`);
+  const maxId = top[0]?.max_id ?? 0;
+
+  // The closed hours wholly inside the window: [firstFull, open).
+  const firstFull = Math.ceil(startTs / HOUR_MS) * HOUR_MS;
+  const open = hourOf(endTs);
+
+  // Rows added since the last read, into every hour already held. Rows in an
+  // hour not held yet are read with it below; rows in the open hour are read
+  // every time.
+  if (st.lastId >= 0 && maxId > st.lastId && st.hours.size > 0) {
+    const held = [...st.hours.keys()];
+    const lo = Math.min(...held);
+    const hi = Math.max(...held) + HOUR_MS;
+    for (const { key, m } of await usageLines(lo, hi, { idAfter: st.lastId, idUpTo: maxId })) {
+      const bucket = st.hours.get(hourOf(m.minTs));
+      if (bucket) mergeLine(bucket, key, m);
+    }
+  }
+  st.lastId = maxId;
+
+  // The hours not held yet, in one read per run of them.
+  let runFrom: number | null = null;
+  const runs: Array<[number, number]> = [];
+  for (let h = firstFull; h < open; h += HOUR_MS) {
+    if (!st.hours.has(h)) runFrom ??= h;
+    else if (runFrom !== null) {
+      runs.push([runFrom, h]);
+      runFrom = null;
+    }
+  }
+  if (runFrom !== null) runs.push([runFrom, open]);
+  for (const [from, to] of runs) {
+    const fresh = new Map<number, Map<string, LineMax>>();
+    for (let h = from; h < to; h += HOUR_MS) fresh.set(h, new Map());
+    for (const { key, m } of await usageLines(from, to, { idUpTo: maxId })) {
+      const bucket = fresh.get(hourOf(m.minTs));
+      if (bucket) mergeLine(bucket, key, m);
+    }
+    for (const [h, bucket] of fresh) st.hours.set(h, bucket);
+  }
+  for (const h of [...st.hours.keys()]) if (h < endTs - CACHE_KEEP_MS) st.hours.delete(h);
+
+  // Merge per group: the window's first, partial hour, the held hours, and
+  // the open hour, each read as it is now.
+  const lines = new Map<string, LineMax>();
+  if (startTs < firstFull) {
+    for (const { key, m } of await usageLines(startTs, Math.min(firstFull, endTs), { toInclusive: firstFull > endTs })) {
+      mergeLine(lines, key, m);
+    }
+  }
+  for (let h = firstFull; h < open; h += HOUR_MS) {
+    for (const [key, m] of st.hours.get(h) ?? []) mergeLine(lines, key, m);
+  }
+  if (endTs >= Math.max(open, startTs)) {
+    for (const { key, m } of await usageLines(Math.max(open, startTs), endTs, { toInclusive: true })) {
+      mergeLine(lines, key, m);
+    }
+  }
+
+  const out: WindowUsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    lineCount: lines.size,
+    oldestTs: null,
+  };
+  for (const m of lines.values()) {
+    out.inputTokens += m.inT;
+    out.outputTokens += m.outT;
+    out.cacheCreationInputTokens += m.ccT;
+    out.cacheReadInputTokens += m.crT;
+    if (out.oldestTs === null || m.minTs < out.oldestTs) out.oldestTs = m.minTs;
+  }
+  return out;
+}
+
+/**
+ * Token totals over `[startTs, endTs]`, across all sessions. The closed hours
+ * of a long window come from a cache (#365); the answer is the one query's.
+ */
+export async function getWindowUsageTotals(startTs: number, endTs: number): Promise<WindowUsageTotals> {
+  if (!usageCacheOn || !(endTs - startTs >= CACHE_MIN_SPAN_MS) || endTs - startTs > CACHE_KEEP_MS) {
+    return getWindowUsageTotalsExact(startTs, endTs);
+  }
+  // One at a time: two windows read together share, and grow, one cache.
+  const run = usageChain.then(() => cachedWindowUsage(startTs, endTs));
+  usageChain = run.catch(() => {});
+  return run;
 }
 
 /**

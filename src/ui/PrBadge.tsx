@@ -66,6 +66,9 @@ export function opensChecks(pr: PrStatus): boolean {
 /** After a turn ends, when to look again for the checks a push started. */
 const AFTER_TURN_RECHECK_MS = [10_000, 30_000];
 
+/** The commit count behind Create PR is asked at most this often while a session writes. */
+export const RECOUNT_MIN_MS = 5_000;
+
 /** Header badge: "#6 ✓ checks", "#6 ✗ 2 failing", "#6 merged  Archive… Delete…". */
 export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onResolveConflicts }: PrBadgeProps) {
   const pr = usePrStatus(task);
@@ -114,17 +117,51 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
   const answered = task ? getPrStatus(task.id) !== undefined : false;
   const askable = !!task && !!onCreatePr && answered && pr === null && prLookupBranch(task) !== null;
   const [own, setOwn] = useState<number | null>(null);
+  // Counted at once for each task, branch and base, then again as the session
+  // works (a commit lands with a transcript write), but at most once per
+  // RECOUNT_MIN_MS (#365): a streaming turn writes many times a second. A
+  // write inside the window is counted when it closes, so the last one is
+  // always counted. Between counts the last number stays on screen.
+  const countKey = askable && task ? `${task.id}\n${task.repoPath}\n${countBase}\n${task.branch}` : '';
+  const countRef = useRef({ key: '', at: 0, seq: 0 });
   useEffect(() => {
-    setOwn(null);
-    if (!askable || !task) return;
-    let live = true;
-    void commitsOnBranch(task.repoPath, countBase, task.branch).then((n) => {
-      if (live) setOwn(n);
-    });
-    return () => {
-      live = false;
+    const c = countRef.current;
+    if (countKey === '' || !task) {
+      c.key = '';
+      setOwn(null);
+      return;
+    }
+    if (c.key !== countKey) {
+      c.key = countKey;
+      c.at = 0;
+      setOwn(null);
+    }
+    const { repoPath, branch } = task;
+    const base = countBase;
+    const count = () => {
+      c.at = Date.now();
+      const seq = ++c.seq;
+      void commitsOnBranch(repoPath, base, branch).then((n) => {
+        // Only the latest count, and only for what is still being counted.
+        if (c.key === countKey && c.seq === seq) setOwn(n);
+      });
     };
-  }, [askable, task?.id, task?.repoPath, countBase, task?.branch, task?.lastActivityAt]);
+    const wait = c.at + RECOUNT_MIN_MS - Date.now();
+    if (wait <= 0) {
+      count();
+      return;
+    }
+    const timer = window.setTimeout(count, wait);
+    return () => window.clearTimeout(timer);
+    // `countKey` carries the task, its folder, branch and base.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countKey, task?.lastActivityAt]);
+  useEffect(
+    () => () => {
+      countRef.current.key = '';
+    },
+    [],
+  );
 
   if (task && !pr && askable && own !== null && own > 0) {
     return (

@@ -10,9 +10,12 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import type { Task } from '../types';
 import {
   PENDING_CALLS_PER_MIN,
+  POLL_MERGED_QUIET_MS,
+  POLL_NO_PR_QUIET_MS,
   POLL_PENDING_MS,
   POLL_MS,
   pendingIntervalMs,
+  pollEveryMs,
   refreshPrStatus,
   setPrFetcherForTests,
   usePendingPrWatch,
@@ -51,6 +54,113 @@ describe('usePrPolling', () => {
     clock += POLL_PENDING_MS;
     await act(async () => {
       vi.advanceTimersByTime(POLL_PENDING_MS);
+    });
+    expect(calls).toEqual([1]);
+  });
+});
+
+describe('usePrPolling: quiet branches with no PR or a merged one (#365)', () => {
+  /** Run the on-screen poll for `ms`, a tick at a time, and return who was asked. */
+  async function pollFor(tasks: () => Task[], ms: number, clock: { now: number }, calls: number[]) {
+    const { rerender } = renderHook(() => usePrPolling(tasks()));
+    await act(async () => {});
+    calls.length = 0;
+    for (let t = 0; t < ms; t += POLL_PENDING_MS) {
+      clock.now += POLL_PENDING_MS;
+      rerender();
+      await act(async () => {
+        vi.advanceTimersByTime(POLL_PENDING_MS);
+      });
+    }
+  }
+
+  it('asks a quiet branch with no PR every five minutes, an open PR every minute as before', async () => {
+    vi.useFakeTimers();
+    const clock = { now: 1_000_000 };
+    const calls: number[] = [];
+    setPrFetcherForTests(async (t) => {
+      calls.push(t.id);
+      return t.id === 1 ? null : pr('passing');
+    }, () => clock.now);
+    const quiet = { ...task(1), lastActivityAt: clock.now - 10_000 } as Task;
+    await pollFor(() => [quiet, task(2)], POLL_NO_PR_QUIET_MS, clock, calls);
+    expect(calls.filter((id) => id === 1)).toEqual([1]);
+    expect(calls.filter((id) => id === 2)).toHaveLength(POLL_NO_PR_QUIET_MS / POLL_MS);
+  });
+
+  it('asks a quiet merged PR every fifteen minutes', async () => {
+    vi.useFakeTimers();
+    const clock = { now: 1_000_000 };
+    const calls: number[] = [];
+    setPrFetcherForTests(async (t) => {
+      calls.push(t.id);
+      return pr('passing', 'merged');
+    }, () => clock.now);
+    const merged = { ...task(1), lastActivityAt: null } as Task;
+    await pollFor(() => [merged], POLL_MERGED_QUIET_MS, clock, calls);
+    expect(calls).toEqual([1]);
+  });
+
+  it('asks a branch with no PR every minute again once its session writes', async () => {
+    vi.useFakeTimers();
+    const clock = { now: 1_000_000 };
+    const calls: number[] = [];
+    setPrFetcherForTests(async (t) => {
+      calls.push(t.id);
+      return null;
+    }, () => clock.now);
+    let activity: number | null = null;
+    const current = () => [{ ...task(1), lastActivityAt: activity } as Task];
+    const { rerender } = renderHook(() => usePrPolling(current()));
+    await act(async () => {});
+    calls.length = 0;
+    // Quiet for two minutes: not asked.
+    for (let i = 0; i < 8; i++) {
+      clock.now += POLL_PENDING_MS;
+      rerender();
+      await act(async () => {
+        vi.advanceTimersByTime(POLL_PENDING_MS);
+      });
+    }
+    expect(calls).toEqual([]);
+    // A turn writes (it may have opened a PR): asked on the next tick, the
+    // last answer being over a minute old.
+    activity = clock.now;
+    clock.now += POLL_PENDING_MS;
+    rerender();
+    await act(async () => {
+      vi.advanceTimersByTime(POLL_PENDING_MS);
+    });
+    expect(calls).toEqual([1]);
+  });
+
+  it('counts activity from when the question was sent, not answered', () => {
+    const asked = 1_000;
+    // A PR opened while gh was on its way may not be in the answer.
+    expect(pollEveryMs({ pr: null, askedAt: asked }, { lastActivityAt: asked + 1 })).toBe(POLL_MS);
+    expect(pollEveryMs({ pr: null, askedAt: asked }, { lastActivityAt: asked })).toBe(POLL_NO_PR_QUIET_MS);
+    expect(pollEveryMs({ pr: null, askedAt: asked }, { lastActivityAt: null })).toBe(POLL_NO_PR_QUIET_MS);
+    expect(pollEveryMs({ pr: pr('passing', 'merged'), askedAt: asked }, { lastActivityAt: 0 })).toBe(POLL_MERGED_QUIET_MS);
+    // Unchanged: an open or closed PR, and a task whose activity is unknown.
+    expect(pollEveryMs({ pr: pr('passing'), askedAt: asked }, { lastActivityAt: 0 })).toBe(POLL_MS);
+    expect(pollEveryMs({ pr: pr('passing', 'closed'), askedAt: asked }, { lastActivityAt: 0 })).toBe(POLL_MS);
+    expect(pollEveryMs({ pr: null, askedAt: asked }, {})).toBe(POLL_MS);
+  });
+
+  it('still catches a quiet branch up on focus', async () => {
+    vi.useFakeTimers();
+    const clock = { now: 1_000_000 };
+    const calls: number[] = [];
+    setPrFetcherForTests(async (t) => {
+      calls.push(t.id);
+      return null;
+    }, () => clock.now);
+    renderHook(() => usePrPolling([{ ...task(1), lastActivityAt: null } as Task]));
+    await act(async () => {});
+    calls.length = 0;
+    clock.now += 20_000;
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
     });
     expect(calls).toEqual([1]);
   });

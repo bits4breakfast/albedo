@@ -16,9 +16,10 @@
 import { useEffect, useRef } from 'react';
 import type { Task } from '../types';
 import { updateTask } from '../db';
-import { git } from './worktree';
+import { git, listWorktreesDetailed } from './worktree';
 
-type SyncTask = Pick<Task, 'id' | 'branch' | 'worktreePath' | 'status' | 'createdBranch'>;
+type SyncTask = Pick<Task, 'id' | 'branch' | 'worktreePath' | 'status' | 'createdBranch'> &
+  Partial<Pick<Task, 'repoPath'>>;
 
 /** Same cadence as the PR poll, which is what reads the result. */
 const POLL_MS = 60_000;
@@ -47,19 +48,72 @@ export async function checkedOutBranch(worktreePath: string): Promise<string | n
   }
 }
 
+function samePath(p: string): string {
+  return p.length > 1 ? p.replace(/\/+$/, '') : p;
+}
+
+/**
+ * What each of a repo's worktrees has checked out, from one `git worktree
+ * list` (#365): path -> branch, or null for a detached HEAD. Only worktrees
+ * git can still see: one whose folder is gone (`prunable`) is left out, so
+ * its tasks ask on their own as before. Null when git cannot list them.
+ */
+export async function checkedOutBranches(repoPath: string): Promise<Map<string, string | null> | null> {
+  try {
+    const out = new Map<string, string | null>();
+    for (const w of await listWorktreesDetailed(repoPath)) {
+      if (w.prunable || w.bare) continue;
+      if (w.branch !== null) out.set(samePath(w.path), w.branch);
+      else if (w.detached) out.set(samePath(w.path), null);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 const inflight = new Set<number>();
 
-export async function syncTaskBranch(task: SyncTask): Promise<void> {
+/**
+ * `known` is {@link checkedOutBranches} for the task's repo, when the sweep
+ * has it. A folder it does not list (another path spelling, another repo) is
+ * asked on its own, exactly as without it.
+ */
+export async function syncTaskBranch(task: SyncTask, known?: ReadonlyMap<string, string | null> | null): Promise<void> {
   if (task.status === 'archived' || !task.worktreePath || inflight.has(task.id)) return;
   inflight.add(task.id);
   try {
-    const patch = branchPatch(task, await checkedOutBranch(task.worktreePath));
+    const path = samePath(task.worktreePath);
+    const current = known?.has(path) ? (known.get(path) ?? null) : await checkedOutBranch(task.worktreePath);
+    const patch = branchPatch(task, current);
     if (patch) await updateTask(task.id, patch);
   } catch (err) {
     console.warn('[git] branch sync failed', err);
   } finally {
     inflight.delete(task.id);
   }
+}
+
+/**
+ * Sync every task once: one `git worktree list` per repo (#365), not one git
+ * per task. Tasks with no repo, or in a folder that list does not name, ask
+ * on their own.
+ */
+export async function syncBranches(tasks: readonly SyncTask[]): Promise<void> {
+  const byRepo = new Map<string, SyncTask[]>();
+  const alone: SyncTask[] = [];
+  for (const t of tasks) {
+    if (t.status === 'archived' || !t.worktreePath || inflight.has(t.id)) continue;
+    if (!t.repoPath) alone.push(t);
+    else byRepo.set(t.repoPath, [...(byRepo.get(t.repoPath) ?? []), t]);
+  }
+  await Promise.all([
+    ...alone.map((t) => syncTaskBranch(t)),
+    ...[...byRepo].map(async ([repo, list]) => {
+      const known = await checkedOutBranches(repo);
+      await Promise.all(list.map((t) => syncTaskBranch(t, known)));
+    }),
+  ]);
 }
 
 /** Sync the given tasks now, every {@link POLL_MS}, and on window focus. */
@@ -73,7 +127,7 @@ export function useBranchSync(tasks: SyncTask[]): void {
 
   useEffect(() => {
     const sweep = () => {
-      for (const t of ref.current) void syncTaskBranch(t);
+      void syncBranches(ref.current);
     };
     sweep();
     const timer = setInterval(() => {

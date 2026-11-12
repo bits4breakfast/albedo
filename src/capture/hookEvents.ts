@@ -950,9 +950,21 @@ async function readFrom(path: string, offset: number, length: number): Promise<U
   }
 }
 
-/** Apply the complete lines of `path` past `tail.offset`; returns them. */
-async function consume(path: string, tail: Tail): Promise<HookEvent[]> {
-  const size = (await stat(path)).size;
+/** The file's size, or null when it is not there (or cannot be read). */
+async function sizeOf(path: string): Promise<number | null> {
+  try {
+    return (await stat(path)).size;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Apply the complete lines of `path` past `tail.offset`; returns them.
+ * `known` is its size when the caller has just read it.
+ */
+async function consume(path: string, tail: Tail, known?: number): Promise<HookEvent[]> {
+  const size = known ?? (await stat(path)).size;
   if (size < tail.offset) {
     // Shorter than what was read: emptied under us. Start over with it.
     tail.offset = 0;
@@ -1023,8 +1035,10 @@ function refreshTask(taskId: number): Promise<void> {
     try {
       const path = await eventsPath(taskId);
       // Missing is normal right after a compaction: nothing new, state stands.
-      if (await exists(path)) {
-        events.push(...(await consume(path, tail)));
+      // One stat says both whether it is there and how far it goes (#365).
+      const size = await sizeOf(path);
+      if (size !== null) {
+        events.push(...(await consume(path, tail, size)));
         if (isQuiet(tail.state) && tail.offset >= COMPACT_AT_BYTES) events.push(...(await compact(path, tail)));
       }
     } catch {
@@ -1106,7 +1120,7 @@ export async function startHookEvents(): Promise<string> {
     await mkdir(`${base}/events`, { recursive: true });
     await installScript(scriptPath);
     const sweep = () =>
-      void Promise.all([...live].flatMap((id) => [refreshTask(id), readSnapshot(id)]));
+      void Promise.all([...live].flatMap((id) => [refreshTask(id), sweepSnapshot(id)]));
     // Whatever the last sessions reported, so the strip has figures at launch.
     try {
       for (const e of await readDir(`${base}/events`)) {
@@ -1372,18 +1386,47 @@ export function planUsage(): { fiveHour: PlanWindow | null; sevenDay: PlanWindow
   return best && { fiveHour: best.fiveHour, sevenDay: best.sevenDay, at: best.at };
 }
 
-async function readSnapshot(taskId: number): Promise<void> {
+async function snapshotPath(taskId: number): Promise<string> {
+  return `${await home()}/${ALBEDO_DIR}/events/${STATUS_PREFIX}${taskId}.json`;
+}
+
+/**
+ * What the 2 s sweep last read of each status file: its inode, mtime and
+ * size (#365). The file is replaced by rename on every refresh, so a new one
+ * is a new inode; one that is the same file as last time is not read again.
+ * The watcher's reads do not go through this: they always read.
+ */
+const snapshotSeen = new Map<number, string>();
+
+/** The sweep's read of a status file: only when the file is another one. */
+async function sweepSnapshot(taskId: number): Promise<void> {
+  let key: string | null = null;
+  try {
+    const st = await stat(await snapshotPath(taskId));
+    // Without an inode or a time there is nothing to tell files apart by.
+    if (st.ino != null && st.mtime) key = `${st.ino}:${st.mtime.getTime()}:${st.size}`;
+  } catch {
+    return; // not there: as readSnapshot would find it
+  }
+  if (key !== null && snapshotSeen.get(taskId) === key) return;
+  // The key is from before the read: a file replaced in between is newer
+  // than the key, and so read again next time, never skipped.
+  if ((await readSnapshot(taskId)) && key !== null) snapshotSeen.set(taskId, key);
+}
+
+/** Read a status file and publish what changed. True when it was read. */
+async function readSnapshot(taskId: number): Promise<boolean> {
   let text: string;
   try {
-    const path = `${await home()}/${ALBEDO_DIR}/events/${STATUS_PREFIX}${taskId}.json`;
-    if (!(await exists(path))) return;
+    const path = await snapshotPath(taskId);
+    if (!(await exists(path))) return false;
     text = await readTextFile(path);
   } catch {
-    return;
+    return false;
   }
-  if (snapshotText.get(taskId) === text) return;
+  if (snapshotText.get(taskId) === text) return true;
   const snap = parseStatusSnapshot(text);
-  if (snap === null) return;
+  if (snap === null) return true;
   snapshotText.set(taskId, text);
   snapshots.set(taskId, snap);
   for (const cb of [...snapshotListeners]) {
@@ -1393,4 +1436,5 @@ async function readSnapshot(taskId: number): Promise<void> {
       /* a broken subscriber must not stall the others */
     }
   }
+  return true;
 }
