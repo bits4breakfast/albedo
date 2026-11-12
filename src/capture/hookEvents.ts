@@ -63,16 +63,15 @@ import { homeDir } from '@tauri-apps/api/path';
 import {
   exists,
   mkdir,
-  open,
   readDir,
   readTextFile,
   rename,
-  SeekMode,
   stat,
   watch,
   writeTextFile,
   type UnwatchFn,
 } from '@tauri-apps/plugin-fs';
+import { completeLines, readRange, serialQueue } from './fileTail';
 
 // ---------------------------------------------------------------------------
 // What a prompt is
@@ -917,39 +916,6 @@ const tails = new Map<number, Tail>();
  */
 export const COMPACT_AT_BYTES = 64 * 1024;
 
-/**
- * The complete lines at the head of `bytes`, and how many bytes they span.
- * Cut on the raw `\n` byte, which never occurs inside a UTF-8 sequence.
- */
-export function completeLines(bytes: Uint8Array): { text: string; consumed: number } {
-  let cut = -1;
-  for (let i = bytes.length - 1; i >= 0; i--) {
-    if (bytes[i] === 0x0a) {
-      cut = i;
-      break;
-    }
-  }
-  if (cut < 0) return { text: '', consumed: 0 };
-  return { text: new TextDecoder().decode(bytes.subarray(0, cut + 1)), consumed: cut + 1 };
-}
-
-async function readFrom(path: string, offset: number, length: number): Promise<Uint8Array> {
-  const file = await open(path, { read: true });
-  try {
-    await file.seek(offset, SeekMode.Start);
-    const out = new Uint8Array(length);
-    let filled = 0;
-    while (filled < length) {
-      const n = await file.read(out.subarray(filled));
-      if (n === null || n <= 0) break;
-      filled += n;
-    }
-    return out.subarray(0, filled);
-  } finally {
-    await file.close();
-  }
-}
-
 /** The file's size, or null when it is not there (or cannot be read). */
 async function sizeOf(path: string): Promise<number | null> {
   try {
@@ -971,7 +937,7 @@ async function consume(path: string, tail: Tail, known?: number): Promise<HookEv
     tail.state = emptyPending();
   }
   if (size === tail.offset) return [];
-  const { text, consumed } = completeLines(await readFrom(path, tail.offset, size - tail.offset));
+  const { text, consumed } = completeLines(await readRange(path, tail.offset, size - tail.offset));
   if (consumed === 0) return [];
   const events = parseHookLines(text);
   applyHookEvents(tail.state, events);
@@ -1011,16 +977,7 @@ async function compact(path: string, tail: Tail): Promise<HookEvent[]> {
 }
 
 /** Per-task queue: two reads of one file at once would apply its lines twice. */
-const queues = new Map<number, Promise<void>>();
-
-function serial(taskId: number, work: () => Promise<void>): Promise<void> {
-  const next = (queues.get(taskId) ?? Promise.resolve()).then(work, work);
-  queues.set(taskId, next);
-  void next.finally(() => {
-    if (queues.get(taskId) === next) queues.delete(taskId);
-  });
-  return next;
-}
+const serial = serialQueue<number>();
 
 async function eventsPath(taskId: number): Promise<string> {
   return `${await home()}/${ALBEDO_DIR}/events/task-${taskId}.jsonl`;
