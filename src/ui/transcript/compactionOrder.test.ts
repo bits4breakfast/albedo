@@ -19,7 +19,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 import fixture from '../../capture/fixtures/compaction.jsonl?raw';
 import { parseTranscript } from '../../capture/adapter';
 import { getMessages, insertMessages, resetDb } from '../../db';
-import { groupRows } from './TranscriptPane';
+import { groupRows } from './grouping';
 
 let db: TestDb;
 

@@ -8,7 +8,8 @@ import skills from '../../capture/fixtures/skill-load.jsonl?raw';
 import { parseTranscript } from '../../capture/adapter';
 import type { Message } from '../../types';
 import { MessageRow } from './MessageRow';
-import { echoLanded, groupRows } from './TranscriptPane';
+import { echoLanded } from './TranscriptPane';
+import { groupRows } from './grouping';
 import { isPromptRow } from './compaction';
 import { workingState } from './working';
 

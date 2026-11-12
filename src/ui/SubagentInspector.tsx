@@ -24,7 +24,7 @@ import { modalOpen } from './focusAreas';
 import StatusDot from './StatusDot';
 import MessageRow from './transcript/MessageRow';
 import CompactionRow from './transcript/CompactionRow';
-import { groupRows } from './transcript/TranscriptPane';
+import { groupRows } from './transcript/grouping';
 import { agentLabel, agentState, agentStatusDetail, agentStatusWord, elapsedMs, formatElapsed } from './subagentView';
 
 /** Rows in the initial window, and the size of each step backwards. */
