@@ -19,6 +19,7 @@ import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { TASK_TERMINAL_ATTR, taskTerminalTakesKey } from './shortcuts';
 import { focusOnItsOwn } from './focusAreas';
+import { writeOutput } from './terminalOutput';
 import './terminal.css';
 
 /**
@@ -682,16 +683,14 @@ export default function Terminal({
       // handler before then, so both handlers below always see it set.
       let id = '';
 
-      const onOutput = (bytes: Uint8Array) => {
+      const onOutput = (bytes: Uint8Array, done: () => void) => {
         // Counting that bytes arrived is not reading them. Nothing here
         // interprets the stream -- it only distinguishes "died before it
         // produced anything", which is what a rejected --resume looks like.
         sawOutputRef.current = true;
-        try {
-          term.write(bytes);
-        } catch {
-          /* a write after dispose is harmless */
-        }
+        // `done` once xterm has written them paces the pty (#366); a write
+        // after dispose is harmless.
+        writeOutput(term, bytes, done);
       };
 
       const onExit = (code: number | null) => {

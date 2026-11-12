@@ -141,6 +141,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - The same applies to every store pruned against the task list that can hold something for a task just made (drafts, outbox).
 
 - **A kill whose second half never ran on quit.** Closing a task HUPs its process group and SIGKILLs it 2 s later from a timer thread, but quitting Albedo released only keep-awake: the closed pty masters HUPed each foreground group, the timer died with the app, and a dev server ignoring SIGHUP kept running (#360, audit). **Rule:** a cleanup that relies on a delayed step also runs that step, bounded, on the exit path (`PtyRegistry::shutdown`).
+- **A paused reader held a SIGKILL.** Near-miss in #366's own tests: with output pacing, a kill of a session whose page had stopped acknowledging never completed. On macOS a session leader cannot finish exiting -- even on SIGKILL -- while output it wrote sits unread on its terminal, so a reader paused for the page kept the process alive. **Rule:** anything that stops reading a pty (`Flow` in pty.rs) is released by every path that ends the session (`terminate`, `shutdown`, the waiter), and nothing may wait on the page without a timeout.
 
 ## Data and contracts
 

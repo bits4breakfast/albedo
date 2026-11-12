@@ -26,7 +26,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   },
 }));
 
-import { killPty, resizePty, spawnPty, writePty, type PtyHandlers } from './pty';
+import { ACK_BYTES, killPty, resizePty, spawnPty, writePty, type PtyHandlers } from './pty';
 
 const opts = { cwd: '/tmp', command: 'claude', args: ['--foo'], cols: 80, rows: 24 };
 
@@ -148,5 +148,85 @@ describe('spawnPty', () => {
     channels[1]?.onmessage({ kind: 'exit', code: 2 });
     expect(a.exits).toEqual([]);
     expect(b.exits).toEqual([2]);
+  });
+});
+
+describe('output pacing (#366)', () => {
+  /** A chunk of `n` zero bytes, as the channel carries it. */
+  const chunk = (n: number) => ({ kind: 'output', data: btoa('\0'.repeat(n)) });
+  const acks = () => invokeMock.mock.calls.filter(([cmd]) => cmd === 'pty_ack').map(([, args]) => args);
+
+  /** Spawns with a consumer that keeps each chunk's `done` for the test. */
+  async function spawnHolding() {
+    const pending: Array<() => void> = [];
+    const handle = await spawnPty(opts, {
+      onOutput: (_bytes, done) => pending.push(done),
+      onExit: () => {},
+    });
+    await tick();
+    return { handle, pending };
+  }
+
+  it('reports processed bytes only once the consumer is done with them, in batches', async () => {
+    const { pending } = await spawnHolding();
+    const half = ACK_BYTES / 2;
+    channels[0]?.onmessage(chunk(half));
+    channels[0]?.onmessage(chunk(half));
+    channels[0]?.onmessage(chunk(half));
+    expect(acks()).toEqual([]);
+
+    pending[0]?.();
+    expect(acks()).toEqual([]); // under a batch
+    pending[1]?.();
+    expect(acks()).toEqual([{ ptyId: 'pty-1', bytes: ACK_BYTES }]);
+    pending[2]?.();
+    expect(acks()).toHaveLength(1);
+  });
+
+  it('counts a chunk once however often its done is called', async () => {
+    const { pending } = await spawnHolding();
+    channels[0]?.onmessage(chunk(ACK_BYTES - 1));
+    pending[0]?.();
+    pending[0]?.();
+    expect(acks()).toEqual([]);
+    channels[0]?.onmessage(chunk(1));
+    pending[1]?.();
+    expect(acks()).toEqual([{ ptyId: 'pty-1', bytes: ACK_BYTES }]);
+  });
+
+  it('reports output dropped after detach as processed, so it never holds the pty', async () => {
+    const { handle } = await spawnHolding();
+    handle.detach();
+    channels[0]?.onmessage(chunk(ACK_BYTES));
+    expect(acks()).toEqual([{ ptyId: 'pty-1', bytes: ACK_BYTES }]);
+  });
+
+  it('reports output held before the spawn resolved under the real id', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd !== 'pty_spawn') return Promise.resolve(undefined);
+      channels[0]?.onmessage(chunk(ACK_BYTES));
+      return Promise.resolve('pty-7');
+    });
+    const handle = await spawnPty(opts, { onOutput: (_b, done) => done(), onExit: () => {} });
+    expect(acks()).toEqual([]);
+    await tick();
+    expect(handle.id).toBe('pty-7');
+    expect(acks()).toEqual([{ ptyId: 'pty-7', bytes: ACK_BYTES }]);
+  });
+
+  it('a failed report is logged once and never thrown into the consumer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'pty_ack' ? Promise.reject(new Error('ipc')) : Promise.resolve(cmd === 'pty_spawn' ? 'pty-1' : undefined),
+    );
+    const handle = await spawnPty(opts, { onOutput: (_b, done) => done(), onExit: () => {} });
+    await tick();
+    channels[0]?.onmessage(chunk(ACK_BYTES));
+    channels[0]?.onmessage(chunk(ACK_BYTES));
+    await tick();
+    expect(acks()).toHaveLength(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(handle.id).toBe('pty-1');
+    warn.mockRestore();
   });
 });
