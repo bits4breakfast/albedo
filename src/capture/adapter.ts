@@ -243,7 +243,9 @@ export interface LineUsage {
  * Read defensively: the field set drifts between Claude Code releases.
  */
 export function extractUsage(rawJson: string): LineUsage | null {
-  const line = rowLine(rawJson);
+  // Uncached: the in-memory usage fallbacks scan thousands of rows at once,
+  // which would push the visible pane's parses out of the row cache.
+  const line = safeParse(rawJson);
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -2067,8 +2069,11 @@ function safeParse(raw: string): Record<string, unknown> | null {
  * it came from. A test ingests a chunk and checks the cache stays empty.
  */
 const ROW_PARSE_MAX_ENTRIES = 4096;
-const ROW_PARSE_MAX_CHARS = 32 * 1024 * 1024;
-const ROW_PARSE_MAX_LINE_CHARS = 1024 * 1024;
+// Counted as twice the line's length: the parsed object held beside the key
+// costs about as much again. Small enough that a cache left behind by a task
+// you moved away from stays modest.
+const ROW_PARSE_MAX_CHARS = 16 * 1024 * 1024;
+const ROW_PARSE_MAX_LINE_CHARS = 256 * 1024;
 const rowParses = new Map<string, Record<string, unknown> | null>();
 let rowParseChars = 0;
 
@@ -2084,12 +2089,12 @@ function rowLine(raw: string): Record<string, unknown> | null {
   if (raw.length > ROW_PARSE_MAX_LINE_CHARS) return parsed;
   const value = parsed === null ? null : deepFreeze(parsed);
   rowParses.set(raw, value);
-  rowParseChars += raw.length;
+  rowParseChars += 2 * raw.length;
   while (rowParses.size > ROW_PARSE_MAX_ENTRIES || rowParseChars > ROW_PARSE_MAX_CHARS) {
     const oldest = rowParses.keys().next();
     if (oldest.done === true) break;
     rowParses.delete(oldest.value);
-    rowParseChars -= oldest.value.length;
+    rowParseChars -= 2 * oldest.value.length;
   }
   return value;
 }
