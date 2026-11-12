@@ -20,6 +20,7 @@ import type { Message } from '../types';
 import type { SubagentRun } from '../db/subagents';
 import { getMessages } from '../db';
 import { onCaptureUpdate } from '../capture';
+import { modalOpen } from './focusAreas';
 import StatusDot from './StatusDot';
 import MessageRow from './transcript/MessageRow';
 import CompactionRow from './transcript/CompactionRow';
@@ -214,7 +215,7 @@ export default function SubagentInspector({
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       const root = rootRef.current;
       if (!root || root.offsetParent === null) return;
-      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      if (modalOpen()) return;
       const active = document.activeElement;
       if (active instanceof HTMLElement && !root.contains(active)) {
         if (active.isContentEditable || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT') return;

@@ -46,7 +46,6 @@ export type QueuedRequest = Exclude<InboxRequest, { tool: 'set_task_summary' }>;
 export type TaskSummaryRequest = Extract<InboxRequest, { tool: 'set_task_summary' }>;
 export type SessionRequest = Extract<InboxRequest, { tool: 'request_session' }>;
 export type ReminderRequest = Extract<InboxRequest, { tool: 'create_reminder' }>;
-export type BlockedNotice = Extract<InboxRequest, { tool: 'notify_blocked' }>;
 
 /** How long a request waits before it is dropped unanswered. */
 export const REQUEST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;

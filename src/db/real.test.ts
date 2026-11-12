@@ -43,16 +43,15 @@ import {
   getTask,
   onTasksChanged,
   resetDb,
-  searchMessages,
   setTranscriptTitle,
   renameTask,
   touchTaskActivity,
   updateTask,
   setTaskSummary,
 } from './index';
-import { listPastSessions, listSessionCwds, PROMPT_CHARS } from './sessions';
+import { listPastSessions, PROMPT_CHARS } from './sessions';
 import { deriveStatus } from '../capture/status';
-import { usageBreakdown, usageSummary, windowUsage } from '../capture/usage';
+import { windowUsage } from '../capture/usage';
 import { contextUsage } from '../capture/context';
 import { touchedFiles } from './touched';
 import { DEFAULT_CAREFUL, DEFAULT_SET_ASIDE, projectFocus } from '../guide/focus';
@@ -197,14 +196,6 @@ describe('listPastSessions — executed', () => {
     expect(await listPastSessions({ cwd: '/w/.claude/worktrees/a1' })).toEqual([]);
   });
 
-  it('offers only cwds a main transcript ran in as filters (#74)', async () => {
-    seedTranscriptFile(db, { path: '/p/proj/s1.jsonl', sessionId: 's1', cwd: '/w', updatedAt: 1 });
-    seedTranscriptFile(db, {
-      path: '/p/proj/s1/subagents/agent-a1.jsonl', sessionId: 's1', cwd: '/w/.claude/worktrees/a1', updatedAt: 9,
-    });
-    expect(await listSessionCwds()).toEqual(['/w']);
-  });
-
   it("reports a titleless main transcript's '' sentinel as no title", async () => {
     seedSession('s1', 1, 1_000);
     seedTranscriptFile(db, { path: '/p/s1.jsonl', sessionId: 's1', cwd: '/w', title: '' });
@@ -327,7 +318,7 @@ describe('usage and context aggregates — executed', () => {
 
   it('does not let cache_read grow the window total with turn count', async () => {
     seedRepeatedTurns(50);
-    const a = await usageSummary(NOW);
+    const a = await windowUsage('5h', NOW);
     expect(a.inputTokens).toBe(50 * 110); // input + cache_creation only
     expect(a.outputTokens).toBe(50 * 50);
     expect(a.cacheReadTokens).toBe(50 * CACHE);
@@ -338,18 +329,17 @@ describe('usage and context aggregates — executed', () => {
   it('scales spend with turns while cache_read stays out of it', async () => {
     seedRepeatedTurns(10, 'a');
     seedRepeatedTurns(40, 'b');
-    const all = await usageSummary(NOW);
+    const all = await windowUsage('5h', NOW);
     expect(all.inputTokens).toBe(50 * 110); // counted across sessions
     expect(all.cacheReadTokens).toBe(50 * CACHE);
   });
 
   it('de-duplicates the three rows each turn expanded into', async () => {
     seedRepeatedTurns(7);
-    const b = await usageBreakdown(NOW);
-    expect(b.lineCount).toBe(7); // not 21
-    expect(b.inputTokens).toBe(70);
-    expect(b.cacheCreationInputTokens).toBe(700);
-    expect(b.cacheReadInputTokens).toBe(7 * CACHE);
+    const w = await windowUsage('5h', NOW);
+    expect(w.inputTokens).toBe(7 * 110); // input + cache_creation, once per line, not 21 times
+    expect(w.outputTokens).toBe(7 * 50);
+    expect(w.cacheReadTokens).toBe(7 * CACHE);
   });
 
   it('keeps the burn rate free of the same inflation', async () => {
@@ -363,7 +353,7 @@ describe('usage and context aggregates — executed', () => {
   it('excludes turns outside the window', async () => {
     seedTurn(db, { sessionId: 's1', line: 0, ts: NOW - 6 * 3_600_000, usage: { input: 999_999 } });
     seedTurn(db, { sessionId: 's1', line: 1, ts: NOW - 60_000, usage: { input: 7 } });
-    expect((await usageSummary(NOW)).inputTokens).toBe(7);
+    expect((await windowUsage('5h', NOW)).inputTokens).toBe(7);
   });
 
   it('contextUsage sums ALL THREE counters — the opposite rule, on one turn', async () => {
@@ -394,33 +384,6 @@ describe('usage and context aggregates — executed', () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-
-describe('searchMessages — executed', () => {
-  beforeEach(async () => {
-    await insertMessages([
-      { taskId: null, sessionId: 's1', seq: 0, role: 'user', toolName: null, targetPath: null,
-        body: 'please fix the uploader retry logic', rawJson: '{}', agentId: null, ts: 1 },
-      { taskId: null, sessionId: 's1', seq: 100, role: 'tool_use', toolName: 'Edit',
-        targetPath: '/repo/src/uploader.ts', body: 'Edit: /repo/src/uploader.ts', rawJson: '{}', agentId: null, ts: 2 },
-    ]);
-  });
-
-  it('returns a highlighted snippet from the real FTS index', async () => {
-    const hits = await searchMessages('uploader');
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0]?.snippet).toContain('<mark>');
-    expect(hits[0]?.snippet.toLowerCase()).toContain('uploader');
-  });
-
-  it('filters by tool name', async () => {
-    expect(await searchMessages('uploader', { toolName: 'Edit' })).toHaveLength(1);
-    expect(await searchMessages('uploader', { toolName: 'Bash' })).toHaveLength(0);
-  });
-
-  it('does not raise a syntax error on punctuation', async () => {
-    await expect(searchMessages(`it's: "quoted" -x NEAR(a b)`)).resolves.toBeInstanceOf(Array);
-  });
-});
 
 // ---------------------------------------------------------------------------
 
@@ -1013,11 +976,10 @@ describe('deleteTask — removes the task and the conversation copy Albedo holds
 
   it('empties the search index and the session browser for that session', async () => {
     const { taskId } = await seedTaskWithSession();
-    expect(await searchMessages('uploader')).not.toHaveLength(0);
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages_fts').get()).not.toEqual({ c: 0 });
 
     await deleteTask(taskId);
 
-    expect(await searchMessages('uploader')).toHaveLength(0);
     expect(db.raw.prepare('SELECT COUNT(*) c FROM messages_fts').get()).toEqual({ c: 0 });
     expect(await listPastSessions()).toHaveLength(0);
   });

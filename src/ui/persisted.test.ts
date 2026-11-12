@@ -10,6 +10,7 @@ import {
   KEYS,
   numberListCodec,
   oneOfCodec,
+  persistedSwitch,
   readPersisted,
   stringListCodec,
   writePersisted,
@@ -161,5 +162,95 @@ describe('KEYS', () => {
 describe('KEYS: Squash and Merge (#236)', () => {
   it('remembers the delete-branch choice under its own key', () => {
     expect(KEYS.mergeDeleteBranch).toBe('albedo.pr.mergeDeleteBranch');
+  });
+});
+
+describe('persistedSwitch (#367)', () => {
+  /** A store that counts its reads, installed as window.localStorage. */
+  function countingStore(initial: Record<string, string> = {}) {
+    const data = new Map(Object.entries(initial));
+    const reads: string[] = [];
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (k: string) => {
+          reads.push(k);
+          return data.get(k) ?? null;
+        },
+        setItem: (k: string, v: string) => void data.set(k, String(v)),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    return { data, reads };
+  }
+
+  it('keeps the format the four copies wrote: only off is stored, on removes the key', () => {
+    const { data } = countingStore();
+    const sw = persistedSwitch('k');
+    expect(sw.get()).toBe(true);
+    sw.set(false);
+    expect(data.get('k')).toBe('off');
+    expect(sw.get()).toBe(false);
+    sw.set(true);
+    expect(data.has('k')).toBe(false);
+    expect(sw.get()).toBe(true);
+  });
+
+  it('reads a stored value the way the copies did: anything but off is on', () => {
+    countingStore({ a: 'off', b: 'on', c: '0', d: '' });
+    expect(persistedSwitch('a').get()).toBe(false);
+    expect(persistedSwitch('b').get()).toBe(true);
+    expect(persistedSwitch('c').get()).toBe(true);
+    expect(persistedSwitch('d').get()).toBe(true);
+  });
+
+  it('reads storage once, not on every ask, and again after a set', () => {
+    const { reads } = countingStore({ k: 'off' });
+    const sw = persistedSwitch('k');
+    for (let i = 0; i < 5; i++) expect(sw.get()).toBe(false);
+    expect(reads).toEqual(['k']);
+    sw.set(true);
+    expect(sw.get()).toBe(true);
+    expect(sw.get()).toBe(true);
+    expect(reads).toEqual(['k', 'k']);
+  });
+
+  it('reads a different storage afresh', () => {
+    countingStore({ k: 'off' });
+    const sw = persistedSwitch('k');
+    expect(sw.get()).toBe(false);
+    countingStore();
+    expect(sw.get()).toBe(true);
+  });
+
+  it('reads on, and stays on, when storage throws -- as before, a refused write is not remembered', () => {
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: () => {
+          throw new Error('denied');
+        },
+        setItem: () => {
+          throw new Error('denied');
+        },
+        removeItem: () => {
+          throw new Error('denied');
+        },
+      },
+    });
+    const sw = persistedSwitch('k');
+    expect(sw.get()).toBe(true);
+    sw.set(false);
+    expect(sw.get()).toBe(true);
+  });
+
+  it('tells subscribers when it is set, until they leave', () => {
+    countingStore();
+    const sw = persistedSwitch('k');
+    const heard: boolean[] = [];
+    const off = sw.subscribe(() => heard.push(sw.get()));
+    sw.set(false);
+    sw.set(true);
+    off();
+    sw.set(false);
+    expect(heard).toEqual([false, true]);
   });
 });

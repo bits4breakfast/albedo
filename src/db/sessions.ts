@@ -316,21 +316,3 @@ export function fallbackSessionLabel(
   if (oneLine.length === 0) return null;
   return oneLine.length <= maxChars ? oneLine : `${oneLine.slice(0, maxChars - 1)}…`;
 }
-
-/**
- * The distinct cwds that have captured sessions, newest activity first.
- *
- * Main transcripts only, matching the cwd `listPastSessions` reports: a cwd
- * only a subagent ran in would be offered as a filter that lists nothing.
- */
-export async function listSessionCwds(): Promise<string[]> {
-  const db = await getDb();
-  const rows = await db.select<{ cwd: string | null }[]>(
-    `SELECT cwd, MAX(updated_at) AS newest
-       FROM transcript_files
-      WHERE cwd IS NOT NULL AND ${MAIN_TRANSCRIPT_SQL}
-      GROUP BY cwd
-      ORDER BY newest DESC`,
-  );
-  return rows.map((r) => r.cwd).filter((c): c is string => c !== null);
-}

@@ -1,5 +1,5 @@
 /**
- * `remoteControlUrlSince` on a real SQLite: on means an "is active" row in
+ * `remoteControlLineSince` on a real SQLite: on means an "is active" row in
  * the session written at or after the pty was spawned (#114).
  */
 
@@ -13,10 +13,12 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
   default: { load: async () => harness.db },
 }));
 
-import { insertMessages, remoteControlLineSince, remoteControlUrlSince, resetDb } from './index';
+import { insertMessages, remoteControlLineSince, resetDb } from './index';
 import { parseLine } from '../capture/adapter';
 
 const URL = 'https://claude.ai/code/session_example';
+/** The link alone, as the on/off cases ask it. */
+const urlSince = async (sessionId: string, sinceTs: number) => (await remoteControlLineSince(sessionId, sinceTs))?.url ?? null;
 const SPAWNED = Date.parse('2026-10-28T10:00:00.000Z');
 
 let db: TestDb;
@@ -50,31 +52,31 @@ function active(ms: number, url = URL): Record<string, unknown> {
   };
 }
 
-describe('remoteControlUrlSince', () => {
+describe('remoteControlLineSince: on or off', () => {
   it('is on for a row written after the pty was spawned', async () => {
     await seed([{ type: 'user', message: { role: 'user', content: 'hi' }, timestamp: at(SPAWNED + 500), uuid: 'a' }, active(SPAWNED + 1_000)]);
-    expect(await remoteControlUrlSince('s1', SPAWNED)).toBe(URL);
+    expect(await urlSince('s1', SPAWNED)).toBe(URL);
   });
 
   it('is off for a row from before the spawn: that process is gone', async () => {
     await seed([active(SPAWNED - 60_000)]);
-    expect(await remoteControlUrlSince('s1', SPAWNED)).toBeNull();
+    expect(await urlSince('s1', SPAWNED)).toBeNull();
   });
 
   it('takes the newest row when it came on more than once', async () => {
     await seed([active(SPAWNED + 1_000, 'https://claude.ai/code/session_old'), active(SPAWNED + 2_000)]);
-    expect(await remoteControlUrlSince('s1', SPAWNED)).toBe(URL);
+    expect(await urlSince('s1', SPAWNED)).toBe(URL);
   });
 
   it("reads the task's session only, and never a subagent's rows", async () => {
     await seed([active(SPAWNED + 1_000)], 's2');
     await seed([active(SPAWNED + 1_000)], 's1', 'agent-1');
-    expect(await remoteControlUrlSince('s1', SPAWNED)).toBeNull();
+    expect(await urlSince('s1', SPAWNED)).toBeNull();
   });
 
   it('is off with no such row at all', async () => {
     await seed([{ type: 'system', subtype: 'turn_duration', durationMs: 5, timestamp: at(SPAWNED + 1_000), uuid: 't' }]);
-    expect(await remoteControlUrlSince('s1', SPAWNED)).toBeNull();
+    expect(await urlSince('s1', SPAWNED)).toBeNull();
   });
 });
 

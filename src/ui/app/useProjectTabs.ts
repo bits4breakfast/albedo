@@ -32,6 +32,28 @@ export default function useProjectTabs(projects: Project[], tasks: Task[], onEnt
   const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<number>>(
     () => new Set(readHiddenProjectIds()),
   );
+  /** The closed tabs as last set: what the next change starts from. */
+  const hiddenRef = useRef(hiddenProjectIds);
+  /**
+   * Change the closed tabs: state and storage together, the storage write
+   * made here rather than inside a state updater. Every change goes through
+   * here, so `hiddenRef` is always the newest set, as `prev` was.
+   */
+  const changeHidden = useCallback((change: (next: Set<number>) => void) => {
+    const next = new Set(hiddenRef.current);
+    change(next);
+    hiddenRef.current = next;
+    writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
+    setHiddenProjectIds(next);
+  }, []);
+  /** Reopen a closed tab (the scope does not move). */
+  const unhideProject = useCallback(
+    (projectId: number) =>
+      changeHidden((next) => {
+        next.delete(projectId);
+      }),
+    [changeHidden],
+  );
   const switchTabRef = useRef<((key: string) => void) | null>(null);
   const onEnterRef = useRef(onEnter);
   onEnterRef.current = onEnter;
@@ -79,13 +101,10 @@ export default function useProjectTabs(projects: Project[], tasks: Task[], onEnt
     );
     const revive = [...hiddenProjectIds].filter((id) => blocked.has(id));
     if (revive.length === 0) return;
-    setHiddenProjectIds((prev) => {
-      const next = new Set(prev);
+    changeHidden((next) => {
       for (const id of revive) next.delete(id);
-      writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
-      return next;
     });
-  }, [tasks, hiddenProjectIds]);
+  }, [tasks, hiddenProjectIds, changeHidden]);
 
   const tabs = useMemo(
     () => allTabs.filter((t) => t.project === null || !hiddenProjectIds.has(t.project.id)),
@@ -107,25 +126,17 @@ export default function useProjectTabs(projects: Project[], tasks: Task[], onEnt
       const neighbour = tabs[i + 1] ?? tabs[i - 1] ?? null;
       if (neighbour) switchTabRef.current?.(neighbour.key);
     }
-    setHiddenProjectIds((prev) => {
-      const next = new Set(prev);
+    changeHidden((next) => {
       next.add(projectId);
-      writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
-      return next;
     });
-  }, [tabs, activeProjectTabKey]);
+  }, [tabs, activeProjectTabKey, changeHidden]);
 
   const restoreProject = useCallback(
     (projectId: number) => {
-      setHiddenProjectIds((prev) => {
-        const next = new Set(prev);
-        next.delete(projectId);
-        writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
-        return next;
-      });
+      unhideProject(projectId);
       switchTabRef.current?.(`p${projectId}`);
     },
-    [],
+    [unhideProject],
   );
 
   /**
@@ -163,7 +174,7 @@ export default function useProjectTabs(projects: Project[], tasks: Task[], onEnt
   return {
     tabs,
     hiddenProjectIds,
-    setHiddenProjectIds,
+    unhideProject,
     hiddenProjects,
     hideProject,
     restoreProject,

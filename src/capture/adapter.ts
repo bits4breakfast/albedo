@@ -50,35 +50,15 @@ const TRUNCATION_MARKER = '\n… [truncated by Albedo; full payload in raw_json]
  * `file-history-delta`, `frame-link`, `artifact-autoreact-ledger`,
  * `artifact-comment-monitor`). An allowlist means a new bookkeeping type is
  * ignored by default rather than polluting history.
+ *
+ * Every type known to be left out, so "why is X missing?" has an answer here:
+ * `mode`, `permission-mode`, `atis-latch`, `ai-title`, `custom-title`,
+ * `last-prompt`, `bridge-session`, `queue-operation`, `file-history-snapshot`,
+ * `file-history-delta`, `agent-name`, `pr-link`, `frame-link`,
+ * `worktree-state`, `relocated`, `cost-state`, `artifact-autoreact-ledger`,
+ * `artifact-comment-monitor`, `attachment`, `summary`.
  */
 const PERSISTED_LINE_TYPES = new Set(['user', 'assistant', 'system']);
-
-/**
- * Documented for humans only — the parser is allowlist-driven, so this set is
- * not consulted. Kept so the "why is X missing?" question has an answer here.
- */
-export const BOOKKEEPING_LINE_TYPES: readonly string[] = [
-  'mode',
-  'permission-mode',
-  'atis-latch',
-  'ai-title',
-  'custom-title',
-  'last-prompt',
-  'bridge-session',
-  'queue-operation',
-  'file-history-snapshot',
-  'file-history-delta',
-  'agent-name',
-  'pr-link',
-  'frame-link',
-  'worktree-state',
-  'relocated',
-  'cost-state',
-  'artifact-autoreact-ledger',
-  'artifact-comment-monitor',
-  'attachment',
-  'summary',
-];
 
 /** Input keys that name the file a tool acted on, in priority order. */
 const PATH_INPUT_KEYS = ['file_path', 'path', 'notebook_path'] as const;

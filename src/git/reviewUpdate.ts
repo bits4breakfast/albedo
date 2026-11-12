@@ -43,12 +43,6 @@ export function keptBranch(n: number): string {
   return `review/${n}-previous`;
 }
 
-async function run(args: string[], cwd: string): Promise<string> {
-  const r = await git(args, cwd);
-  if (r.code !== 0) throw new GitError({ args, cwd, code: r.code, stdout: r.stdout, stderr: r.stderr });
-  return r.stdout;
-}
-
 /** Whether `a` is an ancestor of (or equal to) `b`. */
 export async function isAncestor(cwd: string, a: string, b: string): Promise<boolean> {
   const r = await git(['merge-base', '--is-ancestor', a, b], cwd);
@@ -72,9 +66,9 @@ export async function updateReviewCopy(
   const base = baseRefspec(remote, baseBranch);
   if (base) refspecs.push(base);
   // The PR's head is FETCH_HEAD's first line: the first refspec given.
-  await run(['fetch', '--no-tags', remote, ...refspecs], worktreePath);
-  const next = (await run(['rev-parse', '--verify', 'FETCH_HEAD^{commit}'], worktreePath)).trim();
-  const prev = (await run(['rev-parse', '--verify', 'HEAD'], worktreePath)).trim();
+  await gitOk(['fetch', '--no-tags', remote, ...refspecs], worktreePath);
+  const next = (await gitOk(['rev-parse', '--verify', 'FETCH_HEAD^{commit}'], worktreePath)).trim();
+  const prev = (await gitOk(['rev-parse', '--verify', 'HEAD'], worktreePath)).trim();
   onPrev?.(prev);
   if (prev === next) return { prev, next, forced: false, moved: false, kept: null };
   const forced = !(await isAncestor(worktreePath, prev, next));
@@ -88,8 +82,8 @@ export async function updateReviewCopy(
   // in the copy (a fix tried during review), so it is kept on a branch first;
   // nothing is discarded silently. One per PR: the copy before the last forced update.
   const kept = forced ? keptBranch(pr.number) : null;
-  if (kept) await run(['branch', '-f', kept, prev], worktreePath);
-  await run(forced ? ['reset', '--keep', next] : ['merge', '--ff-only', next], worktreePath);
+  if (kept) await gitOk(['branch', '-f', kept, prev], worktreePath);
+  await gitOk(forced ? ['reset', '--keep', next] : ['merge', '--ff-only', next], worktreePath);
   return { prev, next, forced, moved: true, kept };
 }
 
@@ -156,8 +150,8 @@ export function parseSinceLog(stdout: string): SinceCommit[] {
  */
 export async function sinceChanges(worktreePath: string, prev: string, next: string): Promise<SinceChanges> {
   const forced = !(await isAncestor(worktreePath, prev, next));
-  const log = await run(['log', '--no-color', '--format=%x1e%H%x1f%ct%x1f%s', `${prev}..${next}`], worktreePath);
-  const stat = await run(['-c', 'core.quotePath=false', 'diff', '--numstat', '--no-renames', prev, next], worktreePath);
+  const log = await gitOk(['log', '--no-color', '--format=%x1e%H%x1f%ct%x1f%s', `${prev}..${next}`], worktreePath);
+  const stat = await gitOk(['-c', 'core.quotePath=false', 'diff', '--numstat', '--no-renames', prev, next], worktreePath);
   const files = [...parseNumstat(stat)].map(([path, c]) => ({ path, added: c.added, deleted: c.deleted }));
   return { commits: parseSinceLog(log), files, forced };
 }
@@ -186,8 +180,8 @@ export async function explainMaterial(
   prev: string,
   next: string,
 ): Promise<{ commits: ExplainCommit[]; diff: string }> {
-  const log = await run(['log', '--no-color', '--format=%x1e%H%x1f%s%x1f%b', `${prev}..${next}`], worktreePath);
-  const diff = await run(
+  const log = await gitOk(['log', '--no-color', '--format=%x1e%H%x1f%s%x1f%b', `${prev}..${next}`], worktreePath);
+  const diff = await gitOk(
     ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '--no-renames', '-U2', prev, next],
     worktreePath,
   );

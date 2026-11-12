@@ -4,35 +4,16 @@
  * localStorage like the other ⋯ preferences (persisted.ts).
  */
 
-import { useSyncExternalStore } from 'react';
-import { KEYS, readPersisted, writePersisted, type Codec } from '../persisted';
+import { KEYS, persistedSwitch, usePersistedSwitch } from '../persisted';
 
-/** Only 'off' is stored; on removes the key. */
-const onOff: Codec<boolean> = {
-  decode: (raw) => raw !== 'off',
-  encode: (on) => (on ? null : 'off'),
-};
-
-const listeners = new Set<() => void>();
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
-}
+const groupSwitch = persistedSwitch(KEYS.groupToolCalls);
 
 /** Never throws: no storage reads as "on". */
-export function groupToolCallsEnabled(): boolean {
-  return readPersisted(KEYS.groupToolCalls, onOff, true);
-}
+export const groupToolCallsEnabled = groupSwitch.get;
 
-export function setGroupToolCalls(on: boolean): void {
-  writePersisted(KEYS.groupToolCalls, onOff, on);
-  for (const l of [...listeners]) l();
-}
+export const setGroupToolCalls = groupSwitch.set;
 
 /** The setting, for the menu that shows it and the pane that obeys it. */
 export function useGroupToolCalls(): [boolean, (on: boolean) => void] {
-  const on = useSyncExternalStore(subscribe, groupToolCallsEnabled);
-  return [on, setGroupToolCalls];
+  return usePersistedSwitch(groupSwitch);
 }

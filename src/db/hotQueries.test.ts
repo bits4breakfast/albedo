@@ -28,7 +28,6 @@ import {
   getSessionUsageRows,
   purgeTaskHistory,
   resetDb,
-  searchMessages,
 } from './index';
 import { listSubagents } from './subagents';
 import { contextUsage } from '../capture/context';
@@ -418,6 +417,16 @@ describe('listSubagents (#361)', () => {
 // ---------------------------------------------------------------------------
 
 describe('messages_au (#361)', () => {
+  /** The rows the search index finds for `term`: what a history search matches. */
+  function ftsHits(term: string): { id: number; taskId: number | null }[] {
+    return db.raw
+      .prepare(
+        `SELECT m.id AS id, m.task_id AS taskId FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
+          WHERE messages_fts MATCH ?`,
+      )
+      .all(`"${term}"`) as { id: number; taskId: number | null }[];
+  }
+
   function ftsChanges(run: () => void): number {
     // Every trigger write to messages_fts counts in total_changes().
     const before = (db.raw.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
@@ -440,8 +449,7 @@ describe('messages_au (#361)', () => {
     db.raw.prepare(`INSERT INTO tasks (id, title, repo_path, base_branch, branch, worktree_path, status, created_at)
                     VALUES (5, 't', '/r', 'main', 'b', '/w', 'idle', 0)`).run();
     await adoptSessionIntoTask('sx', 5);
-    const hits = await searchMessages('quokka');
-    expect(hits.map((h) => h.message.taskId)).toEqual([5]);
+    expect(ftsHits('quokka').map((h) => h.taskId)).toEqual([5]);
   });
 
   it('re-indexes a body that is written', async () => {
@@ -449,13 +457,13 @@ describe('messages_au (#361)', () => {
       { taskId: null, sessionId: 'sy', seq: 0, role: 'user', rawJson: '{"type":"user"}', agentId: null, ts: 1 },
     ]);
     db.raw.prepare(`UPDATE messages SET body = 'platypus' WHERE session_id = 'sy'`).run();
-    expect((await searchMessages('platypus')).length).toBe(1);
+    expect(ftsHits('platypus').length).toBe(1);
     db.raw.prepare(`UPDATE messages SET body = 'wombat' WHERE session_id = 'sy'`).run();
-    expect((await searchMessages('platypus')).length).toBe(0);
-    expect((await searchMessages('wombat')).length).toBe(1);
+    expect(ftsHits('platypus').length).toBe(0);
+    expect(ftsHits('wombat').length).toBe(1);
     // Same text written again: still indexed once.
     db.raw.prepare(`UPDATE messages SET body = 'wombat' WHERE session_id = 'sy'`).run();
-    expect((await searchMessages('wombat')).length).toBe(1);
+    expect(ftsHits('wombat').length).toBe(1);
   });
 
   it('re-files a row whose id changes', async () => {
@@ -464,7 +472,6 @@ describe('messages_au (#361)', () => {
     ]);
     db.raw.prepare(`UPDATE messages SET body = 'echidna' WHERE session_id = 'sz'`).run();
     db.raw.prepare(`UPDATE messages SET id = 999999 WHERE session_id = 'sz'`).run();
-    const hits = await searchMessages('echidna');
-    expect(hits.map((h) => h.message.id)).toEqual([999999]);
+    expect(ftsHits('echidna').map((h) => h.id)).toEqual([999999]);
   });
 });
