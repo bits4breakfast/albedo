@@ -133,6 +133,11 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - A read shared between callers is shared only by callers asking for the same moment (one event's listeners); a later caller asks again.
   - A jsdom property stubbed on `HTMLElement.prototype` (`clientWidth`) lives on `Element.prototype`: restore by deleting the stub, or it leaks into the next test.
 
+- **Moving an import reordered the stylesheets.** Near-miss in #368 (file splits, no logic change): the built CSS had the same rules in a different order, and the Checks dialog's log -- `<pre className="tx-pre ck-log">` -- went back to `.tx-pre`'s 340px cap with no margin. `.ck-log` won only by coming later. It came later only because App imported TranscriptPane (and so transcript.css) before anything that reaches ChecksDialog; the new `TaskBar` module, imported near the top of App, loads PrBadge and with it ChecksDialog and checks.css first. Vite orders CSS by when each module is first imported, so a split that lets a file import less moves every stylesheet beneath it. **Rule:**
+  - A refactor that moves imports diffs the built CSS against `main` (`vite build`, then compare rule order), not only the tests: jsdom applies no cascade.
+  - Where the order changed, check every pair of rules that can match one element (same specificity, a common property).
+  - A rule that overrides another stylesheet's class on the same element wins by specificity (`.tx-pre.ck-log`), never by load order.
+
 ## Cleanup paths
 
 - **An optional helper blocked a core action.** Removing a task failed with "forbidden path: ~/.albedo/phpantom/phpantom_lsp/.phpantom.toml (not a git failure)". Archive calls `stopPhpantom(worktree)`, which awaited the server's *start*; the start had failed (the config write was refused), so the stop rethrew that error and the archive aborted. The start failed because Tauri's fs scope `$HOME/.albedo/**` does not match dot-files on Unix (`requireLiteralLeadingDot`), so PHPantom had never started at all and navigation silently used git grep. **Rule:**
