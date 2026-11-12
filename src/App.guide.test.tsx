@@ -452,7 +452,9 @@ describe('the Files pane, mounted once and read only when shown (#363)', () => {
       await settle();
       expect(document.activeElement?.closest('.pane-files')).not.toBeNull();
     } finally {
+      // jsdom defines clientWidth on Element: put back exactly what was there.
       if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
     }
   });
 

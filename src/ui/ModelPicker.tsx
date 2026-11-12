@@ -37,6 +37,26 @@ const FALLBACK_CHOICES: ModelChoice[] = [
 
 const FALLBACK_MS = 15_000;
 
+/**
+ * The model a session last replied with. In PTY mode the picker is mounted
+ * twice -- in the task bar, and in the hidden composer -- and both read on the
+ * same capture event (#364): the second shares the first's read instead of
+ * asking the database again. Shared only within the same synchronous turn
+ * (one event's listeners, one commit's effects): a read asked for after it
+ * may follow rows the first one began too early to see, so it asks afresh.
+ */
+const reading = new Map<string, Promise<string | null>>();
+function readModel(sessionId: string): Promise<string | null> {
+  const already = reading.get(sessionId);
+  if (already) return already;
+  const p = contextUsage(sessionId).then((u) => u?.model ?? null);
+  reading.set(sessionId, p);
+  queueMicrotask(() => {
+    if (reading.get(sessionId) === p) reading.delete(sessionId);
+  });
+  return p;
+}
+
 /** The choice the transcript's model id is, by exact id or by family alias. */
 function choiceFor(model: string | null, choices: readonly ModelChoice[]): string | null {
   if (!model) return null;
@@ -67,7 +87,7 @@ export default function ModelPicker({ task }: { task: Task }) {
     let read: string | null = null;
     if (sessionId) {
       try {
-        read = (await contextUsage(sessionId))?.model ?? null;
+        read = await readModel(sessionId);
       } catch {
         /* the gauge panel already reports unavailable usage */
       }
@@ -88,6 +108,12 @@ export default function ModelPicker({ task }: { task: Task }) {
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
+  // Only this session's rows can change the model it reads (#364): every
+  // other session's capture events used to re-query it too.
+  const sessionRef = useRef(sessionId);
+  useEffect(() => {
+    sessionRef.current = sessionId;
+  }, [sessionId]);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -102,7 +128,9 @@ export default function ModelPicker({ task }: { task: Task }) {
   useEffect(() => {
     let off: () => void = () => {};
     try {
-      const o = onCaptureUpdate(() => void loadRef.current());
+      const o = onCaptureUpdate((u) => {
+        if (sessionRef.current !== null && u?.sessionId === sessionRef.current) void loadRef.current();
+      });
       if (typeof o === 'function') off = o;
     } catch {
       /* polling below still covers it */

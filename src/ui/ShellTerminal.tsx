@@ -6,6 +6,7 @@ import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
 import { cssVar, terminalTheme } from './Terminal';
 import { onThemeChange } from './theme';
 import { terminalTakesKey } from './shortcuts';
+import { writeOutput } from './terminalOutput';
 import './terminal.css';
 
 /**
@@ -134,13 +135,8 @@ export default function ShellTerminal({ cwd, active }: { cwd: string; active: bo
         const handle = await spawnPty(
           { cwd, command: '', args: [], cols: term.cols, rows: term.rows },
           {
-            onOutput: (bytes) => {
-              try {
-                term.write(bytes);
-              } catch {
-                /* after dispose */
-              }
-            },
+            // Paced: `done` once xterm has written them (#366).
+            onOutput: (bytes, done) => writeOutput(term, bytes, done),
             onExit: (code) => {
               dead = true;
               setExitCode(code);

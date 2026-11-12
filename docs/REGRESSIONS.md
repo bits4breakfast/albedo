@@ -126,6 +126,12 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 
 - **A test that read a value right after a click that loads it.** Owner-reported: `./build.sh` failed on `GuidePane.test.tsx` "shows where comments are… (#252)" with no "2 comments" in the Diff region, while CI, the file alone and two full local runs passed (2026-11-10). After #297 and #302 the opened file's diff header gets its comment count a tick after the click (per-file comment and review loads), and the test asserted with `getByRole` straight after `fireEvent.click`, so it passed only when the load beat the assertion. **Rule:** after an event that changes what's shown, wait for anything that arrives through a load or an effect (`findBy…` / `waitFor`); a `getBy…` right after the event is a race that a busy machine loses. **Again (2026-11-10, same test):** #305 fixed only the diff header's read; the rail and file-row counts in the same test come from the same load and raced too, failing once under parallel load. Fix every read in the test that depends on the load, not only the one that failed.
 
+- **A memo test that could not see a stale prop.** Near-miss in #364 (memoised terminals and task rows). The first test of the terminal stack passed new callbacks on every render, as an inline JSX test does by default, so every slot re-rendered anyway: a comparator that skipped `title` and `sessionId` still passed it. App passes stable ones, so in the app the terminal would have kept a stale title for its next `--name`. The same review caught a shared read (ModelPicker's model, two pickers on one session) that a later event could join after its query had begun, and miss the rows that event announced. **Rule:**
+  - A test of a memoised component passes props as the app does (stable callbacks, the same objects for unchanged items), or it proves nothing about skipping.
+  - Mutation-check a comparator: make it ignore a field it must see and watch a test fail, before trusting the suite.
+  - A read shared between callers is shared only by callers asking for the same moment (one event's listeners); a later caller asks again.
+  - A jsdom property stubbed on `HTMLElement.prototype` (`clientWidth`) lives on `Element.prototype`: restore by deleting the stub, or it leaks into the next test.
+
 ## Cleanup paths
 
 - **An optional helper blocked a core action.** Removing a task failed with "forbidden path: ~/.albedo/phpantom/phpantom_lsp/.phpantom.toml (not a git failure)". Archive calls `stopPhpantom(worktree)`, which awaited the server's *start*; the start had failed (the config write was refused), so the stop rethrew that error and the archive aborted. The start failed because Tauri's fs scope `$HOME/.albedo/**` does not match dot-files on Unix (`requireLiteralLeadingDot`), so PHPantom had never started at all and navigation silently used git grep. **Rule:**
@@ -141,6 +147,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - The same applies to every store pruned against the task list that can hold something for a task just made (drafts, outbox).
 
 - **A kill whose second half never ran on quit.** Closing a task HUPs its process group and SIGKILLs it 2 s later from a timer thread, but quitting Albedo released only keep-awake: the closed pty masters HUPed each foreground group, the timer died with the app, and a dev server ignoring SIGHUP kept running (#360, audit). **Rule:** a cleanup that relies on a delayed step also runs that step, bounded, on the exit path (`PtyRegistry::shutdown`).
+- **A paused reader held a SIGKILL.** Near-miss in #366's own tests: with output pacing, a kill of a session whose page had stopped acknowledging never completed. On macOS a session leader cannot finish exiting -- even on SIGKILL -- while output it wrote sits unread on its terminal, so a reader paused for the page kept the process alive. **Rule:** anything that stops reading a pty (`Flow` in pty.rs) is released by every path that ends the session (`terminate`, `shutdown`, the waiter), and nothing may wait on the page without a timeout.
 
 ## Data and contracts
 
