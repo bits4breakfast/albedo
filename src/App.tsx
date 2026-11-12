@@ -1,12 +1,10 @@
 import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SetStateAction } from 'react';
 import type { OpenFileRequest, Task } from './types';
 import { useTheme } from './ui/theme';
 import useTasks from './ui/useTasks';
 import useLayout, { filesFlex, ratioFlex, shellFlex, sidebarStyle, type RightTab } from './ui/app/useLayout';
-import useTaskTabs from './ui/app/useTaskTabs';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
 import useSessionRequests from './ui/app/useSessionRequests';
@@ -19,6 +17,7 @@ import useProjectTabs from './ui/app/useProjectTabs';
 import useSelection from './ui/app/useSelection';
 import useBrowseTask from './ui/app/useBrowseTask';
 import useSpawnPlan from './ui/app/useSpawnPlan';
+import useReadingTab from './ui/app/useReadingTab';
 import ProjectTabs from './ui/app/ProjectTabs';
 import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
 import { useQuitGuard } from './ui/quitGuard';
@@ -287,35 +286,10 @@ export default function App() {
     [tasks, selectedId],
   );
 
-  /**
-   * The reading pane's tab: the selected task's own (#314), or the project
-   * view's. Setting it changes the selected task's unless a task is named --
-   * a request about a task that is not on screen yet (revealing it, its
-   * guide, its transcript) must land on that task, not on the one leaving.
-   */
-  const { tabFor, setTabFor } = useTaskTabs();
-  const rightTab: RightTab = selectedId !== null ? tabFor(selectedId) : projectRightTab;
-  const tabTaskRef = useRef(selectedId);
-  tabTaskRef.current = selectedId;
-  /**
-   * The tab each task (or the project view, under -1) was on when the editor
-   * took the pane (#322), so closing the editor goes back there rather than
-   * always to Transcript.
-   */
-  const beforeEditorRef = useRef(new Map<number, RightTab>());
-  const setRightTab = useCallback(
-    (action: SetStateAction<RightTab>, taskId?: number) => {
-      const id = taskId ?? tabTaskRef.current;
-      const key = id ?? -1;
-      const tracked = (current: RightTab): RightTab => {
-        const next = typeof action === 'function' ? action(current) : action;
-        if (next === 'editor' && current !== 'editor') beforeEditorRef.current.set(key, current);
-        return next;
-      };
-      if (id === null) setProjectRightTab(tracked);
-      else setTabFor(id, tracked);
-    },
-    [setProjectRightTab, setTabFor],
+  const { rightTab, setRightTab, tabTaskRef, beforeEditorRef } = useReadingTab(
+    selectedId,
+    projectRightTab,
+    setProjectRightTab,
   );
   /** What the selected task merges into, for its Create PR (#237): the header's base. */
   const selectedBase = useMeasuredBase(selected);
