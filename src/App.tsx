@@ -1,7 +1,7 @@
 import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { OpenFileRequest, Task } from './types';
+import type { Task } from './types';
 import { useTheme } from './ui/theme';
 import useTasks from './ui/useTasks';
 import useLayout, { filesFlex, ratioFlex, shellFlex, sidebarStyle, type RightTab } from './ui/app/useLayout';
@@ -19,6 +19,7 @@ import useSelection from './ui/app/useSelection';
 import useBrowseTask from './ui/app/useBrowseTask';
 import useSpawnPlan from './ui/app/useSpawnPlan';
 import useReadingTab from './ui/app/useReadingTab';
+import useEditorRequests from './ui/app/useEditorRequests';
 import ProjectTabs from './ui/app/ProjectTabs';
 import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
 import { useQuitGuard } from './ui/quitGuard';
@@ -46,8 +47,6 @@ import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
-import { filesNamed } from './git/codeIndex';
-import { isBareName } from './lib/paths';
 import { focusPty, hasLivePty } from './ui/Terminal';
 import TerminalStack from './ui/TerminalStack';
 import { focusArea, modalOpen, useFocusAreaCycle } from './ui/focusAreas';
@@ -77,14 +76,13 @@ import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
 import ProjectBar from './ui/ProjectBar';
-import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
+import EditorTabs from './ui/editor/EditorTabs';
 import { onComposerInsert, onShowTranscriptRequest, requestAttach, sendWaitingComments } from './ui/transcript/composerBridge';
 import GuidePane from './guide/GuidePane';
 import ReviewUpdateBand from './ui/ReviewUpdateBand';
 import { runReviewUpdate } from './guide/copyUpdate';
 import { onGuideRequest, requestGuide } from './guide/openGuide';
-import { FileOpenContext, FilePathContext, FileTextContext, markReadOnly, type OpenFileOptions } from './ui/editor/openFile';
-import { markUserActivated } from './ui/editor/outsideFile';
+import { FileOpenContext, FilePathContext, FileTextContext } from './ui/editor/openFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
 import { resolveInWorktree } from './lib/paths';
@@ -209,12 +207,6 @@ export default function App() {
     setRemoteConfirmFor,
   } = useDialogs();
 
-  /** Pending file-open, scoped to the task it was requested from. */
-  const [openRequest, setOpenRequest] = useState<{
-    taskId: number;
-    request: OpenFileRequest;
-    step?: boolean;
-  } | null>(null);
   /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
   const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
   /** What Go to File starts from when a transcript name opened it. */
@@ -565,50 +557,30 @@ export default function App() {
     [requests.items, activeProjectTab, tasks, projects],
   );
 
-  // File-open entry point handed to every renderer via context. Reads the
-  // selection through a ref so the context value stays referentially stable --
-  // transcript rows subscribe to it and should not re-render on every select.
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
-
-  const filesColumnShownRef = useRef(filesColumnShown);
-  filesColumnShownRef.current = filesColumnShown;
-
-  const openFile = useCallback((request: OpenFileRequest, options?: OpenFileOptions) => {
-    const taskId = selectedIdRef.current ?? browseTaskRef.current?.id ?? null;
-    if (taskId === null) return;
-    // A bare name from the transcript (`Foo.php` in backticks) is looked up:
-    // one file by that name opens; none or several open Go to File with the
-    // name typed, rather than an empty new file at the worktree root.
-    const show = (req: OpenFileRequest) => {
-      // The exact object the editor gets: only it may grant a file outside
-      // the worktree, and only because a person clicked (outsideFile.ts).
-      if (options?.activated) markUserActivated(req);
-      if (options?.readOnly) markReadOnly(req);
-      setOpenRequest({ taskId, request: req, step: options?.step });
-      // A step keeps the Files tab on screen: the list is what is being walked.
-      setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
-      // The editor is useless behind a full-width terminal. The project view
-      // has no terminal, and its pane shows whatever the mode.
-      if (selectedIdRef.current !== null) setMode((m) => (m === 'pty' ? 'split' : m));
-    };
-    const root = (selectedRef.current ?? browseTaskRef.current)?.worktreePath ?? null;
-    if (!options?.lookup || !isBareName(request.path) || root === null) {
-      show(request);
-      return;
-    }
-    void filesNamed(root, request.path)
-      .catch(() => [] as string[])
-      .then((found) => {
-        const only = found.length === 1 ? found[0] : undefined;
-        if (only !== undefined) {
-          show({ ...request, path: only });
-          return;
-        }
-        setQuickSeed({ text: request.path });
-        setQuickOpen('file');
-      });
-  }, []);
+  const {
+    openRequest,
+    openRequestRef,
+    openFile,
+    closeEditor,
+    editorCloseSignal,
+    setEditorCloseSignal,
+    editorActivePath,
+    setEditorActivePath,
+    editorTask,
+  } = useEditorRequests({
+    selected,
+    selectedId,
+    selectedRef,
+    browseTask,
+    browseTaskRef,
+    filesColumnShown,
+    setRightTab,
+    setMode,
+    setQuickSeed,
+    setQuickOpen,
+    tabTaskRef,
+    beforeEditorRef,
+  });
 
   /**
    * Put a task on screen. The ONLY supported way to do so.
@@ -662,19 +634,6 @@ export default function App() {
     [hiddenProjectIds, unhideProject, showProjectView],
   );
 
-  /** Close the editor and every tab in it (the pane's ✕, or the last tab closing). */
-  const openRequestRef = useRef(openRequest);
-  openRequestRef.current = openRequest;
-  const closeEditor = useCallback(() => {
-    const open = openRequestRef.current;
-    if (open) forgetEditorTabs(open.taskId);
-    setOpenRequest(null);
-    // Back to where the file was opened from (#322): the Guide, Files or
-    // Transcript. App's derivation still turns a tab with nothing to show
-    // (a Guide for a chat) into Transcript.
-    const key = tabTaskRef.current ?? -1;
-    setRightTab((t) => (t === 'editor' ? (beforeEditorRef.current.get(key) ?? 'transcript') : t));
-  }, [setRightTab]);
   // Text handed to the composer from elsewhere (review comments): show the
   // transcript, where the composer is, the way opening a file shows the editor.
   useEffect(
@@ -705,10 +664,6 @@ export default function App() {
     [],
   );
 
-  /** Bumped by ⌘W: the editor closes its active tab. */
-  const [editorCloseSignal, setEditorCloseSignal] = useState(0);
-  /** The active tab's file, for the files list and Quick Open. */
-  const [editorActivePath, setEditorActivePath] = useState<string | null>(null);
 
   // A selection restored from the last run is shown but was never opened, so it
   // had no terminal and the message box could not send to it. Selecting by
@@ -735,12 +690,6 @@ export default function App() {
     [openIds, tasks],
   );
 
-  /** The editor only exists for the task its request came from. */
-  const editorTask = useMemo(() => {
-    if (!openRequest) return null;
-    if (selected) return openRequest.taskId === selected.id ? selected : null;
-    return browseTask && openRequest.taskId === browseTask.id ? browseTask : null;
-  }, [openRequest, selected, browseTask]);
 
   // Derived rather than corrected in an effect: switching task while the editor
   // tab is showing falls straight back to the transcript, with no flash.
