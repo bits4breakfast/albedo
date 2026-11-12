@@ -1297,6 +1297,60 @@ export function subagentMarkSqlPredicate(): string {
   )`;
 }
 
+// ---------------------------------------------------------------------------
+// A subagent's name: the call that started it (#377)
+// ---------------------------------------------------------------------------
+
+/**
+ * Measured on Claude Code 2.1.28x-2.1.322, in the PARENT's transcript (the
+ * subagent's own lines say nothing about the call that started it):
+ *
+ *  - **The call.** An `Agent` tool_use (`Task` before) whose input carries
+ *    `description` -- the short name the terminal shows -- `prompt` and
+ *    `subagent_type`.
+ *  - **The link.** Its tool_result's `toolUseResult.agentId` is the id the
+ *    agent's own lines carry. 470 of 470 results here were async
+ *    (`isAsync: true, status: "async_launched"`), written right after the
+ *    call. A synchronous one was not seen; it is read the same way if it
+ *    carries `agentId`, and is linked only once its result is written.
+ */
+export const AGENT_TOOL_NAMES: readonly string[] = ['Agent', 'Task'];
+
+/** What a call to start a subagent said about it. */
+export interface AgentCall {
+  toolUseId: string;
+  /** The short name the call gave it. Null when empty. */
+  description: string | null;
+  /** `general-purpose`, `Explore`, ... Null when absent. */
+  subagentType: string | null;
+}
+
+/** An `Agent`/`Task` tool_use row's id, description and agent type; null for any other row. */
+export function agentCallOf(m: ToolRow & Pick<Message, 'role'>): AgentCall | null {
+  if (m.role !== 'tool_use' || !AGENT_TOOL_NAMES.includes(m.toolName ?? '')) return null;
+  const toolUseId = toolUseIdOf(m);
+  if (toolUseId === null) return null;
+  const input = toolInputOf(m);
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+  return { toolUseId, description: text(input['description']), subagentType: text(input['subagent_type']) };
+}
+
+/** The agent a tool_result row says was started, by the call it answers; null for any other row. */
+export function spawnedAgentOf(m: ToolRow & Pick<Message, 'role'>): { toolUseId: string; agentId: string } | null {
+  if (m.role !== 'tool_result' || !m.rawJson.includes('"agentId"')) return null;
+  const line = rowLine(m.rawJson);
+  const r = line !== null && isRecord(line['toolUseResult']) ? line['toolUseResult'] : null;
+  const agentId = r?.['agentId'];
+  if (typeof agentId !== 'string' || agentId === '') return null;
+  const toolUseId = toolUseIdOf(m);
+  return toolUseId === null ? null : { toolUseId, agentId };
+}
+
+/** SQLite predicate for the rows {@link agentCallOf} reads, over `role` and `tool_name`. */
+export function agentCallSqlPredicate(): string {
+  return `(role = 'tool_use' AND tool_name IN (${AGENT_TOOL_NAMES.map((n) => `'${n}'`).join(', ')}))`;
+}
+
 /**
  * Session-title line types, mapped to the key each carries the title in.
  *

@@ -23,12 +23,38 @@
  * knowledge in one file -- adding a second owner to save a string is a bad
  * trade. The subagent's own first prompt is already captured, already behind
  * the adapter, and says what the agent was asked to do.
+ *
+ * ## Its name, and what it is doing now (#377)
+ *
+ * The first line of a prompt is mostly setup ("Fix GitHub issue … Your
+ * worktree: …"). The terminal names an agent by the short `description` its
+ * `Agent` call gave it, and that call is in the parent's transcript too,
+ * linked to the agent by the id its result carries (`agentCallOf`,
+ * `spawnedAgentOf` in the adapter). Still the transcript, still behind the
+ * adapter; `.meta.json` stays unread. A name never changes once found, so it
+ * is looked up once per agent and kept (`agentNames`).
+ *
+ * What it is doing now is its newest tool call, and its tokens are what its
+ * newest usage record says (`agentTokensFrom`). Both are read only for the
+ * strip (`listSubagents(id, { detail: true })`): the task list counts live
+ * agents on every status refresh and needs neither.
  */
 
 import type { Message, TaskStatus } from '../types';
 import { getDb } from './index';
 import { deriveStatus, statusExpiresAt } from '../capture/status';
-import { subagentMarkSqlPredicate, subagentMarksOf } from '../capture/adapter';
+import {
+  agentCallOf,
+  agentCallSqlPredicate,
+  contextUsedFrom,
+  extractUsage,
+  spawnedAgentOf,
+  subagentMarkSqlPredicate,
+  subagentMarksOf,
+  SEQ_STRIDE,
+  toolUseIdOf,
+  type AgentCall,
+} from '../capture/adapter';
 
 /** One subagent run under a parent session. */
 export interface SubagentRun {
@@ -36,6 +62,30 @@ export interface SubagentRun {
   agentId: string;
   /** First line of its opening prompt. Null when it has not spoken yet. */
   label: string | null;
+  /**
+   * Its opening prompt, whole up to {@link PROMPT_MAX} characters, for a
+   * hover. Null when it has not spoken yet.
+   */
+  prompt: string | null;
+  /**
+   * The short name its `Agent` call gave it, as the terminal shows it (#377).
+   * Null when no call in the parent names it, and when listed without detail.
+   */
+  name: string | null;
+  /** The agent type that call asked for (`general-purpose`, `Explore`). */
+  kind: string | null;
+  /**
+   * Its newest tool call: what it is doing now. Null before its first call,
+   * and when listed without detail. `body` is not read (null): the call's
+   * input is in `rawJson`.
+   */
+  lastCall: Message | null;
+  /**
+   * Tokens it is using, as Claude Code counts an agent's: its newest usage
+   * record's input, cache and output tokens together (`agentTokensFrom`).
+   * Null when no usage record is among its newest rows, and without detail.
+   */
+  tokens: number | null;
   /**
    * Derived the same way a task's is, from rows only -- never from the pty --
    * except that the parent's notification that the agent stopped settles it
@@ -75,6 +125,13 @@ const TAIL_ROWS = 400;
 
 /** Characters of the opening line kept as a label. See `buildRuns`. */
 const LABEL_MAX = 280;
+
+/**
+ * Characters of the opening prompt kept for a hover. A tooltip is not a
+ * reader: past this it would cover the screen, and the inspector shows the
+ * whole transcript a click away.
+ */
+export const PROMPT_MAX = 2_000;
 
 /**
  * Parent rows read for resumes and stops, newest first. Only rows naming one
@@ -207,6 +264,14 @@ export function selfResumeAfter(marks: AgentMarks | undefined, lastTs: number): 
   return cut;
 }
 
+/** The opening prompt, trimmed, cut at `max` with an ellipsis. Null for nothing usable. */
+export function promptFrom(body: string | null, max = PROMPT_MAX): string | null {
+  if (typeof body !== 'string') return null;
+  const text = body.trim();
+  if (text === '') return null;
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
 /** First non-empty line of the opening prompt, trimmed for a chip. */
 export function labelFrom(body: string | null, max = 60): string | null {
   if (typeof body !== 'string') return null;
@@ -304,10 +369,15 @@ export function buildRuns(
     const runStartTs = Math.max(a.first_ts, resumedAt ?? -Infinity, runs.selfResumedAt?.get(a.agent_id) ?? -Infinity);
     return {
       agentId: a.agent_id,
-      // Long enough to say what the agent was asked to do; the strip wraps it
-      // to two lines and clamps there, so the cap is a sanity bound, not a
-      // layout decision.
+      // Long enough to say what the agent was asked to do; the strip cuts it
+      // to one line where no call names the agent (#377), and the inspector
+      // clamps it, so the cap is a sanity bound, not a layout decision.
       label: labelFrom(opening ?? null, LABEL_MAX),
+      prompt: promptFrom(opening ?? null),
+      name: null,
+      kind: null,
+      lastCall: null,
+      tokens: null,
       status,
       waiting,
       firstTs: a.first_ts,
@@ -320,7 +390,7 @@ export function buildRuns(
 }
 
 /** Every subagent this session has spawned, newest activity first. */
-export async function listSubagents(sessionId: string): Promise<SubagentRun[]> {
+export async function listSubagents(sessionId: string, opts: { detail?: boolean } = {}): Promise<SubagentRun[]> {
   if (!sessionId) return [];
   const db = await getDb();
   // The aggregate first, and alone: it walks messages_agent and touches no
@@ -348,7 +418,236 @@ export async function listSubagents(sessionId: string): Promise<SubagentRun[]> {
       if (typeof ts === 'number') selfResumedAt.set(a.agent_id, ts);
     }),
   );
-  return buildRuns(agg ?? [], tail ?? [], openings ?? [], { marks, selfResumedAt });
+  const runs = buildRuns(agg ?? [], tail ?? [], openings ?? [], { marks, selfResumedAt });
+  if (opts.detail !== true) return runs;
+  // Only for the agents the strip lists: live, or waiting on their own work.
+  // A session that ran 80 agents is not read 80 times for the two at work.
+  const shown = runs.filter((r) => r.status === 'running' || r.status === 'blocked' || r.waiting).map((r) => r.agentId);
+  if (shown.length === 0) return runs;
+  const [latestRows, names] = await Promise.all([
+    Promise.all(shown.map((id) => db.select<LatestRow[]>(SUBAGENT_LATEST_SQL, [sessionId, id, sessionId, id, USAGE_ROWS]))),
+    agentNames(sessionId, shown),
+  ]);
+  return withDetail(runs, latestFrom(latestRows.flatMap((rows) => rows ?? [])), names);
+}
+
+// ---------------------------------------------------------------------------
+// Detail for the strip (#377): its name, what it is doing now, its tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * Newest assistant rows per agent read for a usage record. Every line of an
+ * assistant message repeats its usage, so the newest nearly always has one;
+ * a few more cover a line that does not (an API error).
+ */
+const USAGE_ROWS = 4;
+
+/**
+ * One agent's newest tool call and its newest few assistant rows. Each half
+ * walks the `(session_id, COALESCE(agent_id, ''), seq)` index backwards from
+ * the agent's end and stops after a row or a few, so it costs the same on an
+ * agent of ten rows as on one of ten thousand. `seq` is the order: an agent's
+ * rows are one file. The session and agent are bound twice, once per half,
+ * as {@link SUBAGENT_MARKS_SQL} does, so no parameter is repeated.
+ */
+export const SUBAGENT_LATEST_SQL = `
+  SELECT agent_id, seq, role, tool_name, target_path, raw_json, ts, 1 AS call FROM (
+    SELECT * FROM messages
+     WHERE session_id = $1 AND COALESCE(agent_id, '') = $2 AND role = 'tool_use'
+     ORDER BY seq DESC LIMIT 1)
+  UNION ALL
+  SELECT agent_id, seq, role, tool_name, target_path, raw_json, ts, 0 AS call FROM (
+    SELECT * FROM messages
+     WHERE session_id = $3 AND COALESCE(agent_id, '') = $4 AND role IN ('assistant', 'tool_use')
+     ORDER BY seq DESC LIMIT $5)`;
+
+interface LatestRow {
+  agent_id: string;
+  seq: number;
+  role: string;
+  tool_name: string | null;
+  target_path: string | null;
+  raw_json: string;
+  ts: number;
+  /** 1 on the row read as the agent's newest tool call. */
+  call: number;
+}
+
+/**
+ * Tokens an agent is using, from one usage record: input, both cache counts
+ * and output, together. Claude Code reports a finished agent's
+ * `<subagent_tokens>` this way -- measured against 405 notifications here,
+ * each within 1% of the agent's newest usage record before it (the final
+ * line is written moments later) and nowhere near a sum over its turns.
+ */
+export function agentTokensFrom(rawJson: string): number | null {
+  const usage = extractUsage(rawJson);
+  return usage === null ? null : contextUsedFrom(usage) + usage.outputTokens;
+}
+
+/** Per agent: its newest tool call and its newest token count, from {@link SUBAGENT_LATEST_SQL}'s rows. */
+export function latestFrom(rows: readonly LatestRow[]): Map<string, { call: Message | null; tokens: number | null }> {
+  const out = new Map<string, { call: Message | null; tokens: number | null }>();
+  const usageSeq = new Map<string, number>();
+  for (const r of rows) {
+    const cur = out.get(r.agent_id) ?? { call: null, tokens: null };
+    if (r.call === 1 && r.role === 'tool_use') cur.call = rowMessage(r);
+    // The newest row with a usage record wins; rows arrive in no set order.
+    const tokens = agentTokensFrom(r.raw_json);
+    if (tokens !== null && r.seq > (usageSeq.get(r.agent_id) ?? -Infinity)) {
+      usageSeq.set(r.agent_id, r.seq);
+      cur.tokens = tokens;
+    }
+    out.set(r.agent_id, cur);
+  }
+  return out;
+}
+
+function rowMessage(r: LatestRow): Message {
+  return {
+    id: 0,
+    taskId: null,
+    sessionId: '',
+    seq: r.seq,
+    role: r.role as Message['role'],
+    toolName: r.tool_name,
+    targetPath: r.target_path,
+    body: null,
+    rawJson: r.raw_json,
+    agentId: r.agent_id,
+    ts: r.ts,
+  };
+}
+
+/** What the strip adds to a run. Pure, for tests. */
+export function withDetail(
+  runs: readonly SubagentRun[],
+  latest: ReadonlyMap<string, { call: Message | null; tokens: number | null }>,
+  names: ReadonlyMap<string, AgentName>,
+): SubagentRun[] {
+  return runs.map((r) => {
+    const l = latest.get(r.agentId);
+    const n = names.get(r.agentId);
+    return { ...r, name: n?.name ?? null, kind: n?.kind ?? null, lastCall: l?.call ?? null, tokens: l?.tokens ?? null };
+  });
+}
+
+/** An agent's name and type, from the call that started it. */
+export interface AgentName {
+  name: string | null;
+  kind: string | null;
+}
+
+/**
+ * The parent's calls that start a subagent, after a `seq`. Read through the
+ * `(session_id, COALESCE(agent_id, ''), seq)` index from where the last read
+ * stopped, so after the first read it touches only rows that are new.
+ */
+export const SUBAGENT_CALLS_SQL = `
+  SELECT seq, role, tool_name, raw_json FROM messages
+   WHERE session_id = $1 AND COALESCE(agent_id, '') = '' AND seq > $2
+     AND ${agentCallSqlPredicate()}
+   ORDER BY seq`;
+
+/**
+ * Lines after a call that its result is looked for in. An async agent's
+ * result is written right after its call, or after the other calls of the
+ * same message when several agents start at once.
+ */
+export const SPAWN_WINDOW_LINES = 200;
+
+/**
+ * The first tool result after a call that names it: its answer. Through the
+ * same index, over {@link SPAWN_WINDOW_LINES} lines from the call, and it
+ * stops at the first match.
+ */
+export const SUBAGENT_SPAWN_SQL = `
+  SELECT seq, role, tool_name, raw_json FROM messages
+   WHERE session_id = $1 AND COALESCE(agent_id, '') = '' AND seq > $2 AND seq <= $3
+     AND role = 'tool_result' AND instr(raw_json, $4) > 0
+   ORDER BY seq
+   LIMIT 1`;
+
+/** The parent's newest `seq`: one step down the same index. */
+export const PARENT_LAST_SEQ_SQL = `
+  SELECT MAX(seq) AS seq FROM messages WHERE session_id = $1 AND COALESCE(agent_id, '') = ''`;
+
+interface CallRow {
+  seq: number;
+  role: string;
+  tool_name: string | null;
+  raw_json: string;
+}
+
+/**
+ * What is known about one session's agents' names. A name is a fact once
+ * found -- the call that started an agent never changes -- so it is kept.
+ */
+interface NameBook {
+  /** The highest call `seq` read so far. */
+  readSeq: number;
+  /** Calls whose result has not been found yet. */
+  open: Map<string, AgentCall & { seq: number }>;
+  names: Map<string, AgentName>;
+}
+
+/** Sessions whose names are kept; the least recently read go first. */
+const NAME_BOOKS_MAX = 32;
+const nameBooks = new Map<string, NameBook>();
+
+/** For tests: forget every name, as a restart does. */
+export function __resetAgentNames(): void {
+  nameBooks.clear();
+}
+
+/**
+ * Names for these agents. Reads the database only while one of them is
+ * unnamed: new calls since the last read, then the result of each call not
+ * yet answered. An agent no `Agent` call names (a skill run as a fork, say)
+ * costs a read of new rows each time, never a rescan.
+ */
+export async function agentNames(sessionId: string, agentIds: readonly string[]): Promise<Map<string, AgentName>> {
+  let book = nameBooks.get(sessionId);
+  nameBooks.delete(sessionId);
+  if (book === undefined) book = { readSeq: -1, open: new Map(), names: new Map() };
+  nameBooks.set(sessionId, book);
+  while (nameBooks.size > NAME_BOOKS_MAX) {
+    const oldest = nameBooks.keys().next();
+    if (oldest.done === true) break;
+    nameBooks.delete(oldest.value);
+  }
+  if (agentIds.every((id) => book.names.has(id))) return book.names;
+
+  const db = await getDb();
+  const [calls, last] = await Promise.all([
+    db.select<CallRow[]>(SUBAGENT_CALLS_SQL, [sessionId, book.readSeq]),
+    db.select<{ seq: number | null }[]>(PARENT_LAST_SEQ_SQL, [sessionId]),
+  ]);
+  const lastSeq = last?.[0]?.seq ?? -1;
+  for (const row of calls ?? []) {
+    book.readSeq = Math.max(book.readSeq, row.seq);
+    const call = agentCallOf({ role: row.role as Message['role'], seq: row.seq, toolName: row.tool_name, rawJson: row.raw_json });
+    if (call !== null) book.open.set(call.toolUseId, { ...call, seq: row.seq });
+  }
+  await Promise.all(
+    [...book.open.values()].map(async (call) => {
+      const until = call.seq + SPAWN_WINDOW_LINES * SEQ_STRIDE;
+      const found = await db.select<CallRow[]>(SUBAGENT_SPAWN_SQL, [sessionId, call.seq, until, `"${call.toolUseId}"`]);
+      const row = found?.[0];
+      const m = row && { role: row.role as Message['role'], seq: row.seq, toolName: row.tool_name, rawJson: row.raw_json };
+      if (m === undefined || toolUseIdOf(m) !== call.toolUseId) {
+        // Not answered yet: asked again next time, until the parent has
+        // written past the window with no answer in it.
+        if (lastSeq > until) book.open.delete(call.toolUseId);
+        return;
+      }
+      // Answered: with the agent it started, or without one (refused, failed).
+      book.open.delete(call.toolUseId);
+      const spawned = spawnedAgentOf(m);
+      if (spawned !== null) book.names.set(spawned.agentId, { name: call.description, kind: call.subagentType });
+    }),
+  );
+  return book.names;
 }
 
 /**
