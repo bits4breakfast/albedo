@@ -44,8 +44,6 @@ import {
   deriveWindowUsage,
   MIN_BURN_ELAPSED_MS,
   sumUsage,
-  usageBreakdown,
-  usageSummary,
   USAGE_WINDOW_MS,
   WEEK_WINDOW_MS,
   windowUsage,
@@ -515,7 +513,7 @@ describe('windowUsage aggregates across sessions', () => {
     expect(w.outputTokens).toBe(6);
   });
 
-  it('keeps usageBreakdown components separate on the SQL path too', async () => {
+  it('keeps cache_read out of the spend on the SQL path too', async () => {
     state.handler = () => [
       {
         input_tokens: 100,
@@ -526,24 +524,10 @@ describe('windowUsage aggregates across sessions', () => {
         oldest_ts: NOW - 3_600_000,
       },
     ];
-    const b = await usageBreakdown(NOW);
-    expect(b.cacheCreationInputTokens).toBe(20);
-    expect(b.cacheReadInputTokens).toBe(300);
-    // usageSummary folds all three input-side counters together
-    state.handler = () => [
-      {
-        input_tokens: 100,
-        output_tokens: 10,
-        cache_creation_input_tokens: 20,
-        cache_read_input_tokens: 300,
-        line_count: 1,
-        oldest_ts: NOW - 3_600_000,
-      },
-    ];
-    const s = await usageSummary(NOW);
-    expect(s.inputTokens).toBe(120); // 100 fresh + 20 cache_creation, NOT + 300
-    expect(s.cacheReadTokens).toBe(300);
-    expect(s.sinceTs).toBe(NOW - USAGE_WINDOW_MS);
+    const w = await windowUsage('5h', NOW);
+    expect(w.inputTokens).toBe(120); // 100 fresh + 20 cache_creation, NOT + 300
+    expect(w.cacheReadTokens).toBe(300);
+    expect(w.windowStart).toBe(NOW - USAGE_WINDOW_MS);
   });
 
   it('does NOT grow with turn count from the cache_read term', () => {
@@ -593,7 +577,7 @@ describe('windowUsage aggregates across sessions', () => {
     expect(w.burnRate).toBeCloseTo(2_000, 6); // 1000 + 500 + 500 over one hour
   });
 
-  it('usageSummary reports spend and cache reads as separate figures', async () => {
+  it('reports spend and cache reads as separate figures', async () => {
     state.handler = () => [
       {
         input_tokens: 1_744,
@@ -604,7 +588,7 @@ describe('windowUsage aggregates across sessions', () => {
         oldest_ts: NOW - 3_600_000,
       },
     ];
-    const s = await usageSummary(NOW);
+    const s = await windowUsage('5h', NOW);
     // The real five-hour numbers from the user's database.
     expect(s.inputTokens).toBe(4_828_798); // 1,744 + 4,827,054
     expect(s.outputTokens).toBe(965_174);

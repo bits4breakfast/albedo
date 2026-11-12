@@ -11,6 +11,7 @@ import {
   areaSequence,
   cycleKeyOf,
   focusOnItsOwn,
+  modalOpen,
   shouldCycle,
   useFocusAreaCycle,
   type FocusArea,
@@ -455,5 +456,21 @@ describe('stops within an area', () => {
     $('view-1').focus();
     press({ ctrlKey: true, shiftKey: true });
     expect(active()).toBe('tasks');
+  });
+});
+
+describe('modalOpen (#367)', () => {
+  it('is true only while an aria-modal="true" element is in the document', () => {
+    expect(modalOpen()).toBe(false);
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'false');
+    document.body.append(dialog);
+    expect(modalOpen()).toBe(false);
+    dialog.setAttribute('aria-modal', 'true');
+    expect(modalOpen()).toBe(true);
+    expect(modalOpen(document.implementation.createHTMLDocument(''))).toBe(false);
+    dialog.remove();
+    expect(modalOpen()).toBe(false);
   });
 });

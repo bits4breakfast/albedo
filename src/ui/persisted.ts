@@ -18,7 +18,7 @@
  * rather than returning null, and no remembered preference is worth an error.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 export const KEYS = {
@@ -189,10 +189,73 @@ export const stringListCodec: Codec<string[]> = {
   encode: (value) => JSON.stringify(value),
 };
 
+/** Only 'off' is stored; on removes the key. Anything else reads as on. */
+const onOffCodec: Codec<boolean> = {
+  decode: (raw) => raw !== 'off',
+  encode: (on) => (on ? null : 'off'),
+};
+
 /** One of a fixed set of strings; anything else reads as the fallback. */
 export function oneOfCodec<T extends string>(values: readonly T[]): Codec<T> {
   return {
     decode: (raw) => ((values as readonly string[]).includes(raw) ? (raw as T) : null),
     encode: (value) => value,
   };
+}
+
+// ---------------------------------------------------------------------------
+// On/off switches
+// ---------------------------------------------------------------------------
+
+/** An on-by-default preference, from {@link persistedSwitch}. */
+export interface PersistedSwitch {
+  /** The setting. Never throws: no storage reads as on. */
+  get: () => boolean;
+  /** Remember it, and tell every component showing it. */
+  set: (on: boolean) => void;
+  subscribe: (cb: () => void) => () => void;
+}
+
+/**
+ * An on/off preference stored under `key`, on by default: only 'off' is
+ * stored, on removes the key -- the format the hand-written copies used.
+ *
+ * The value is read from storage once and then held, so a component asking
+ * on every render costs nothing; `set` drops the held value, so the next read
+ * is storage's answer again (a write storage refused still reads as on). The
+ * held value belongs to the storage it came from: a different
+ * `window.localStorage` (a test's fresh store) is read afresh.
+ */
+export function persistedSwitch(key: string): PersistedSwitch {
+  const listeners = new Set<() => void>();
+  let held: { store: unknown; on: boolean } | null = null;
+  const get = (): boolean => {
+    let store: unknown;
+    try {
+      store = window.localStorage;
+    } catch {
+      return true;
+    }
+    if (held !== null && held.store === store) return held.on;
+    const on = readPersisted(key, onOffCodec, true);
+    held = { store, on };
+    return on;
+  };
+  const set = (on: boolean): void => {
+    writePersisted(key, onOffCodec, on);
+    held = null;
+    for (const l of [...listeners]) l();
+  };
+  const subscribe = (cb: () => void): (() => void) => {
+    listeners.add(cb);
+    return () => {
+      listeners.delete(cb);
+    };
+  };
+  return { get, set, subscribe };
+}
+
+/** A switch for the component that shows or obeys it: re-rendered when it is set. */
+export function usePersistedSwitch(sw: PersistedSwitch): [boolean, (on: boolean) => void] {
+  return [useSyncExternalStore(sw.subscribe, sw.get), sw.set];
 }

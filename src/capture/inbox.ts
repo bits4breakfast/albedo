@@ -54,7 +54,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
 import { exists, mkdir, readDir, readFile, rename, stat, watch, writeTextFile, type UnwatchFn } from '@tauri-apps/plugin-fs';
-import { ALBEDO_DIR, completeLines } from './hookEvents';
+import { completeLines, serialQueue } from './fileTail';
+import { ALBEDO_DIR } from './hookEvents';
 
 // ---------------------------------------------------------------------------
 // The line -- FORMAT KNOWLEDGE lives here and in src-tauri/mcp
@@ -453,16 +454,8 @@ async function readPast(
   return { ...parseAllLines(text, taskId), offset: from + consumed };
 }
 
-const queues = new Map<number, Promise<void>>();
-
-function serial(taskId: number, work: () => Promise<void>): Promise<void> {
-  const next = (queues.get(taskId) ?? Promise.resolve()).then(work, work);
-  queues.set(taskId, next);
-  void next.finally(() => {
-    if (queues.get(taskId) === next) queues.delete(taskId);
-  });
-  return next;
-}
+/** Per-task queue, its own: two reads of one file at once would hand its lines on twice. */
+const serial = serialQueue<number>();
 
 /**
  * Read a task's file and, when nothing is left half-written, compact it:

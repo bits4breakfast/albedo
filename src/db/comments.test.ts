@@ -21,7 +21,6 @@ import {
   moveComment,
   onCommentsChanged,
   relocate,
-  autoResolveComments,
   commentState,
   reopenComment,
   resolveComment,
@@ -178,22 +177,6 @@ describe('the life of a comment (#222)', () => {
     expect(resolvedReason({ ...at, sentAt: 1, resolvedAt: 2 }, file)).toBe('you');
     expect(resolvedReason({ ...at, sentAt: null, resolvedAt: 2 }, changed)).toBe('you');
     expect(resolvedReason({ ...at, sentAt: 1, resolvedAt: null }, changed)).toBeNull();
-  });
-
-  it('autoResolveComments resolves the sent ones whose lines are gone, reading each file once', async () => {
-    const t = await task();
-    const gone = await comment(t, { path: 'a.ts', anchorText: 'two\nthree' });
-    const kept = await comment(t, { path: 'a.ts', anchorText: 'one' });
-    const waiting = await comment(t, { path: 'b.ts', anchorText: 'nope' });
-    await markCommentsSent(t, [gone, kept]);
-    const reads: string[] = [];
-    const ids = await autoResolveComments(t, await listComments(t), async (p) => {
-      reads.push(p);
-      return p === 'a.ts' ? changed : '';
-    });
-    expect(ids).toEqual([gone]);
-    expect(reads).toEqual(['a.ts']);
-    expect((await listComments(t)).map((c) => c.id).sort()).toEqual([kept, waiting].sort());
   });
 
   it('reopening makes it open and unsent: it waits for your next message', async () => {

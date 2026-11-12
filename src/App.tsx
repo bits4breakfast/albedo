@@ -1,5 +1,4 @@
 import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
-import { KEYS, numberListCodec, writePersisted } from './ui/persisted';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SetStateAction } from 'react';
@@ -49,7 +48,7 @@ import { filesNamed } from './git/codeIndex';
 import { isBareName } from './lib/paths';
 import { focusPty, hasLivePty } from './ui/Terminal';
 import TerminalStack from './ui/TerminalStack';
-import { focusArea, useFocusAreaCycle } from './ui/focusAreas';
+import { focusArea, modalOpen, useFocusAreaCycle } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemotePending } from './ui/RemoteMark';
 import { taskMenuItems, type TaskActions } from './ui/taskMenuItems';
 import { useTaskMenuFacts } from './ui/useTaskMenuFacts';
@@ -261,7 +260,7 @@ export default function App() {
   const {
     tabs,
     hiddenProjectIds,
-    setHiddenProjectIds,
+    unhideProject,
     hiddenProjects,
     hideProject,
     restoreProject,
@@ -826,20 +825,13 @@ export default function App() {
     (task: Task) => {
       const projectId = task.projectId;
 
-      if (projectId !== null && hiddenProjectIds.has(projectId)) {
-        setHiddenProjectIds((prev) => {
-          const next = new Set(prev);
-          next.delete(projectId);
-          writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
-          return next;
-        });
-      }
+      if (projectId !== null && hiddenProjectIds.has(projectId)) unhideProject(projectId);
 
       selectTab(projectId !== null ? `p${projectId}` : 'orphans');
       select(task.id);
       setRightTab('transcript', task.id);
     },
-    [hiddenProjectIds, selectTab, select, setRightTab],
+    [hiddenProjectIds, unhideProject, selectTab, select, setRightTab],
   );
 
   /**
@@ -849,17 +841,10 @@ export default function App() {
    */
   const openProjectView = useCallback(
     (projectId: number) => {
-      if (hiddenProjectIds.has(projectId)) {
-        setHiddenProjectIds((prev) => {
-          const next = new Set(prev);
-          next.delete(projectId);
-          writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
-          return next;
-        });
-      }
+      if (hiddenProjectIds.has(projectId)) unhideProject(projectId);
       showProjectView(`p${projectId}`);
     },
-    [hiddenProjectIds, setHiddenProjectIds, showProjectView],
+    [hiddenProjectIds, unhideProject, showProjectView],
   );
 
   /** Close the editor and every tab in it (the pane's ✕, or the last tab closing). */
@@ -1052,7 +1037,7 @@ export default function App() {
   const toggleQuickOpen = useCallback((next: QuickOpenMode) => {
     if (!selectedRef.current && !browseTaskRef.current) return;
     const current = quickOpenRef.current;
-    if (current === null && document.querySelector('[aria-modal="true"]') !== null) return;
+    if (current === null && modalOpen()) return;
     setQuickOpen(current === next ? null : next);
   }, []);
   const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
@@ -1066,7 +1051,7 @@ export default function App() {
   findOpenRef.current = findOpen;
   const toggleFind = useCallback(() => {
     if (!selectedRef.current && !browseTaskRef.current) return;
-    if (!findOpenRef.current && document.querySelector('[aria-modal="true"]') !== null) return;
+    if (!findOpenRef.current && modalOpen()) return;
     setFindOpen((o) => !o);
   }, []);
   const closeFind = useCallback(() => setFindOpen(false), []);
@@ -1104,7 +1089,7 @@ export default function App() {
   };
 
   const startRename = () => {
-    if (!selected || document.querySelector('[aria-modal="true"]') !== null) return;
+    if (!selected || modalOpen()) return;
     setRenaming({ id: selected.id, by: 'key' });
   };
 
@@ -1131,7 +1116,7 @@ export default function App() {
       phase: 'capture',
       run: () => {
         if (!selected || !remoteItem) return;
-        if (document.querySelector('[aria-modal="true"]') !== null) return;
+        if (modalOpen()) return;
         setRemoteConfirmFor(selected.id);
       },
     },
@@ -1143,7 +1128,7 @@ export default function App() {
       typingExcept: GUIDE_KEY_EXCEPT,
       run: () => {
         if (!selected || selected.kind === 'chat') return;
-        if (document.querySelector('[aria-modal="true"]') !== null) return;
+        if (modalOpen()) return;
         // The key, unlike a click, takes focus into the guide (#217).
         requestGuide(selected.id, { focus: true });
       },
@@ -1152,13 +1137,13 @@ export default function App() {
     // only, as ⌘U does. Not over a dialog.
     'mod+shift+t': () => {
       if (!selected || projectView) return;
-      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      if (modalOpen()) return;
       setRightTab('transcript');
       setMode((m) => (m === 'pty' ? 'split' : m));
     },
     'mod+shift+e': () => {
       if (!selected && !projectView) return;
-      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      if (modalOpen()) return;
       setMode((m) => (m === 'pty' ? 'split' : m));
       // Pinned as a column, Files has no tab: go into the column instead.
       if (filesColumnShown) {
@@ -1172,7 +1157,7 @@ export default function App() {
     // transcript then shows, where the message lands, sent or held.
     'mod+shift+s': () => {
       if (!selected) return;
-      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      if (modalOpen()) return;
       sendWaitingComments(selected.id);
     },
     // The message box is in the transcript: show it, then ask it to attach.
@@ -1198,7 +1183,7 @@ export default function App() {
     // The task list as a rail of group counts, or back (#266). Live while
     // typing, as ⇧⌘T: no field claims ⌥⌘T (shortcuts.ts). Not over a dialog.
     'mod+alt+t': () => {
-      if (document.querySelector('[aria-modal="true"]') !== null) return;
+      if (modalOpen()) return;
       setTaskListCollapsed((c) => !c);
     },
     'mod+shift+[': () => stepProject(-1),
@@ -2142,17 +2127,10 @@ export default function App() {
         <ProjectsDialog
           open={projectsOpen}
           onClose={() => setProjectsOpen(false)}
-          onUnhideProject={(id) =>
-            // The hidden set lives in React state, read from localStorage once
-            // at mount — a write to the key alone would not bring the tab back
-            // until a relaunch.
-            setHiddenProjectIds((prev) => {
-              const next = new Set(prev);
-              next.delete(id);
-              writePersisted(KEYS.hiddenProjects, numberListCodec, [...next]);
-              return next;
-            })
-          }
+          // The hidden set lives in React state, read from localStorage once
+          // at mount — a write to the key alone would not bring the tab back
+          // until a relaunch.
+          onUnhideProject={unhideProject}
           onChanged={(created) => {
             void refresh();
             // Follow the project that was just made. Without this the new tab

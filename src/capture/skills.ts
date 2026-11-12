@@ -168,11 +168,11 @@ async function readListingsBackwards(fs: SkillFileAccess, path: string, sessionI
 }
 
 async function defaultAccess(): Promise<SkillFileAccess> {
-  // Imported when first needed: the watcher imports this module.
+  // Imported when first needed.
   const [{ transcriptPathFor }, { stat }, { readRange }] = await Promise.all([
     import('../db/reminders'),
     import('@tauri-apps/plugin-fs'),
-    import('./watcher'),
+    import('./fileTail'),
   ]);
   return { pathFor: transcriptPathFor, size: async (path) => (await stat(path)).size, read: readRange };
 }

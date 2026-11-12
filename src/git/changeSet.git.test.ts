@@ -21,11 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  branchCommits,
-  changeKinds,
-  changeKindsSince,
-  committedFileTimes,
-  lineChanges,
+  branchCommitsSince,
   lineChangesSince,
   loadChangeSet,
   parseNameStatus,
@@ -183,6 +179,23 @@ const before = {
   lineChanges: (against: string) => parseNumstat(sh('diff', '--numstat', '--no-renames', against)),
   changeKinds: (against: string) => parseNameStatus(sh('diff', '--name-status', '--no-renames', against)),
   renames: (base: string) => parseRenames(sh('diff', '--name-status', '-z', '-M', base, '--')),
+  /** Each path's newest commit time on the branch, from `git log --name-only`, as committedFileTimes read it. */
+  committedFileTimes(base: string): Map<string, number> {
+    const out = new Map<string, number>();
+    let at: number | null = null;
+    for (const raw of sh('log', '--format=%x00%ct', '--name-only', '--no-renames', `${base}..HEAD`).split('\n')) {
+      const line = raw.trimEnd();
+      if (line.startsWith('\u0000')) {
+        const n = Number(line.slice(1));
+        at = Number.isFinite(n) ? n * 1000 : null;
+        continue;
+      }
+      if (line === '' || at === null) continue;
+      const prev = out.get(line);
+      if (prev === undefined || at > prev) out.set(line, at);
+    }
+    return out;
+  },
   async branchDiff(base: string, read: (p: string) => Promise<string | null>) {
     const tracked = splitZ(sh('diff', '--name-only', '--no-renames', '-z', base, '--'));
     const loose = splitZ(sh('ls-files', '--others', '--exclude-standard', '-z'));
@@ -226,8 +239,6 @@ describe('the change set read without writing the index (#363)', { timeout: 60_0
     const was = indexState();
     await loadChangeSet(root, 'main');
     await loadChangeSet(root, 'no-such-base');
-    await lineChanges(root, 'main');
-    await changeKinds(root, 'main');
     await loadBranchDiff(root, 'main', readWorking);
     await loadTaskFileDiff(root, 'main', 'moved.txt', readWorking);
     await loadTaskFileDiff(root, 'main', 'bin-moved.dat', readWorking);
@@ -245,19 +256,21 @@ describe('the change set read without writing the index (#363)', { timeout: 60_0
     const now = await loadChangeSet(root, 'main');
     const separately = {
       lines: await lineChangesSince(root, merge!),
-      kinds: await changeKindsSince(root, merge!),
-      commits: await branchCommits(root, 'main'),
-      committedAt: await committedFileTimes(root, 'main'),
+      commits: await branchCommitsSince(root, merge!),
     };
-    const old = { lines: before.lineChanges(merge!), kinds: before.changeKinds(merge!) };
+    const old = {
+      lines: before.lineChanges(merge!),
+      kinds: before.changeKinds(merge!),
+      committedAt: before.committedFileTimes(merge!),
+    };
 
     expect(now.merge).toBe(merge);
     expect(now.lines).toEqual(old.lines);
     expect(now.kinds).toEqual(old.kinds);
     expect(separately.lines).toEqual(old.lines);
-    expect(separately.kinds).toEqual(old.kinds);
     expect(now.commits).toEqual(separately.commits);
-    expect(now.committedAt).toEqual(separately.committedAt);
+    expect(now.committedAt).toEqual(old.committedAt);
+    expect(old.committedAt.size).toBeGreaterThan(0);
     // The fixture does hold what it claims to.
     expect([...old.kinds.values()].sort()).toEqual(expect.arrayContaining(['A', 'D', 'M', 'T']));
     expect([...old.lines.values()]).toContainEqual({ added: null, deleted: null });

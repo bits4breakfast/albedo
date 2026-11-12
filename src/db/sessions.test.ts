@@ -26,7 +26,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
   },
 }));
 
-import { fallbackSessionLabel, listPastSessions, listSessionCwds } from './sessions';
+import { fallbackSessionLabel, listPastSessions } from './sessions';
 import { resetDb } from './index';
 
 const ROW = {
@@ -202,14 +202,5 @@ describe('fallbackSessionLabel', () => {
     expect(fallbackSessionLabel(null)).toBeNull();
     expect(fallbackSessionLabel({ body: null })).toBeNull();
     expect(fallbackSessionLabel({ body: '   \n ' })).toBeNull();
-  });
-});
-
-describe('listSessionCwds', () => {
-  it('lists distinct cwds, newest activity first, dropping nulls', async () => {
-    state.rows = [{ cwd: '/a' }, { cwd: null }, { cwd: '/b' }];
-    expect(await listSessionCwds()).toEqual(['/a', '/b']);
-    expect(state.calls[0]?.sql).toContain('GROUP BY cwd');
-    expect(state.calls[0]?.sql).toContain('ORDER BY newest DESC');
   });
 });

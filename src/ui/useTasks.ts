@@ -197,6 +197,20 @@ export function mergeContext(
   return changed ? next : prev;
 }
 
+/**
+ * Tasks archived in `prev` and absent from `next`: the reload no longer lists
+ * them, and nothing brings an archived task back, so what is held per task
+ * for them can go. Not a task merely missing from one reload -- one created
+ * while that read was under way (#184) -- and not one archived but still
+ * listed, which the list may still be showing.
+ */
+export function archivedAndGone(prev: readonly Task[], next: readonly Task[]): number[] {
+  const archived = prev.filter((t) => t.status === 'archived');
+  if (archived.length === 0) return [];
+  const listed = new Set(next.map((t) => t.id));
+  return archived.filter((t) => !listed.has(t.id)).map((t) => t.id);
+}
+
 /** No API error: what a new prompt, Mark as Done and Archive leave (#338). */
 const NO_API_ERROR: Pick<Task, 'apiError' | 'apiErrorText'> = { apiError: null, apiErrorText: null };
 
@@ -262,6 +276,21 @@ export function useTasks(): UseTasksResult {
     // The outbox's turn follows each task's session (transcript/turn.ts).
     noteTaskSessions(next);
     setTasks(next);
+    // Per-task state of archived tasks gone from the list. Nothing re-adds
+    // it: a derivation stops at an archived or missing task first.
+    const gone = archivedAndGone(prev, next);
+    if (gone.length > 0) {
+      for (const id of gone) {
+        apiErrorRef.current.delete(id);
+        questionSeenRef.current.delete(id);
+      }
+      setSignals((held) => {
+        if (!gone.some((id) => held.has(id))) return held;
+        const kept = new Map(held);
+        for (const id of gone) kept.delete(id);
+        return kept;
+      });
+    }
   }, []);
 
   const applyTask = useCallback(
@@ -784,13 +813,19 @@ export function useTasks(): UseTasksResult {
     });
   }, [refreshContext]);
 
-  // A prompt appearing or being answered is a status change on its own: the
-  // transcript has nothing to say about either until the turn ends.
+  // Waiting on you with nothing in the transcript to say so, each a status
+  // change on its own: blocked the moment it appears, re-derived when it goes.
+  //  - A prompt appearing or being answered: the transcript has nothing to
+  //    say about either until the turn ends.
+  //  - Claude Code's trust dialog: no hook and no transcript line says it is
+  //    up (capture/workspaceTrust.ts).
+  //  - A preview waiting for its answer (#348): the session is inside a tool
+  //    call, and only Albedo knows what it waits for.
   useEffect(() => {
-    return onPromptChange((taskId, prompt) => {
+    const waitingChanged = (taskId: number, waiting: () => boolean) => {
       const task = tasksRef.current.find((t) => t.id === taskId);
       if (!task || task.status === 'archived') return;
-      if (prompt !== null) {
+      if (waiting()) {
         if (task.status === 'blocked') return;
         applyTask(taskId, { status: 'blocked' });
         noteStatusChange(taskId, task.status, 'blocked', task.title);
@@ -798,41 +833,15 @@ export function useTasks(): UseTasksResult {
       } else if (task.sessionId) {
         void refreshStatus(task.sessionId);
       }
-    });
-  }, [applyTask, persist, refreshStatus]);
-
-  // Claude Code's trust dialog, the same way: no hook and no transcript line
-  // says it is up (capture/workspaceTrust.ts).
-  useEffect(() => {
-    return onTrustWaiting((taskId, waiting) => {
-      const task = tasksRef.current.find((t) => t.id === taskId);
-      if (!task || task.status === 'archived') return;
-      if (waiting) {
-        if (task.status === 'blocked') return;
-        applyTask(taskId, { status: 'blocked' });
-        noteStatusChange(taskId, task.status, 'blocked', task.title);
-        void persist(taskId, { status: 'blocked' });
-      } else if (task.sessionId) {
-        void refreshStatus(task.sessionId);
-      }
-    });
-  }, [applyTask, persist, refreshStatus]);
-
-  // A preview waiting for its answer (#348), the same way: the session is
-  // inside a tool call, and only Albedo knows what it waits for.
-  useEffect(() => {
-    return onPreviewChange((taskId) => {
-      const task = tasksRef.current.find((t) => t.id === taskId);
-      if (!task || task.status === 'archived') return;
-      if (pendingPreview(taskId) !== null) {
-        if (task.status === 'blocked') return;
-        applyTask(taskId, { status: 'blocked' });
-        noteStatusChange(taskId, task.status, 'blocked', task.title);
-        void persist(taskId, { status: 'blocked' });
-      } else if (task.sessionId) {
-        void refreshStatus(task.sessionId);
-      }
-    });
+    };
+    const offs = [
+      onPromptChange((taskId, prompt) => waitingChanged(taskId, () => prompt !== null)),
+      onTrustWaiting((taskId, waiting) => waitingChanged(taskId, () => waiting)),
+      onPreviewChange((taskId) => waitingChanged(taskId, () => pendingPreview(taskId) !== null)),
+    ];
+    return () => {
+      for (const off of offs) off();
+    };
   }, [applyTask, persist, refreshStatus]);
 
   return useMemo(

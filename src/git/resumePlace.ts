@@ -26,9 +26,9 @@ import { listProjects } from '../db/projects';
 import {
   createWorktree,
   defaultBranchOf,
-  git,
   gitOk,
   listWorktreesDetailed,
+  refExists,
   switchCleanCheckout,
   uncommittedChanges,
   type ParsedWorktree,
@@ -128,7 +128,7 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
     }
     if (!repoPath || !branch || !isValidRefName(branch)) return null;
     if (!baseBranch || baseBranch === branch) baseBranch = await defaultBranchOf(repoPath);
-    const exists = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoPath);
+    const exists = await refExists(repoPath, `refs/heads/${branch}`);
     const worktrees = await listWorktreesDetailed(repoPath);
     const first = worktrees[0];
     let mainDirty: number | null = null;
@@ -139,7 +139,7 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
       cwd,
       repoPath,
       branch,
-      branchExists: exists.code === 0,
+      branchExists: exists,
       worktrees,
       baseBranch,
       mainDirty,

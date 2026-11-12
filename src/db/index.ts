@@ -772,14 +772,10 @@ export async function findToolResults(toolName: string, needle: string, limit = 
 
 /**
  * The claude.ai link of the newest "Remote Control is active" row in the
- * session written at or after `sinceTs`, or null. The caller passes when its
- * pty was spawned: a row from before that describes a process that is gone.
+ * session written at or after `sinceTs`, with the row's time for weighing it
+ * against newer facts, or null. The caller passes when its pty was spawned: a
+ * row from before that describes a process that is gone.
  */
-export async function remoteControlUrlSince(sessionId: string, sinceTs: number): Promise<string | null> {
-  return (await remoteControlLineSince(sessionId, sinceTs))?.url ?? null;
-}
-
-/** {@link remoteControlUrlSince} with the row's time, for weighing it against newer facts. */
 export async function remoteControlLineSince(
   sessionId: string,
   sinceTs: number,
@@ -967,19 +963,6 @@ export async function adoptSessionIntoTask(sessionId: string, taskId: number): P
 // Search
 // ---------------------------------------------------------------------------
 
-export interface SearchHit {
-  message: Message;
-  snippet: string;
-  taskTitle: string | null;
-}
-
-interface SearchRow extends MessageRow {
-  snippet: string | null;
-  task_title: string | null;
-}
-
-const DEFAULT_SEARCH_LIMIT = 100;
-
 /**
  * Turn arbitrary user input into a query FTS5 will accept.
  *
@@ -1005,66 +988,6 @@ export function toFtsQuery(query: string): string | null {
     terms.push(`"${stem.replace(/"/g, '""')}"${prefix ? '*' : ''}`);
   }
   return terms.length === 0 ? null : terms.join(' ');
-}
-
-export async function searchMessages(
-  query: string,
-  opts?: {
-    taskId?: number;
-    repoPath?: string;
-    toolName?: string;
-    since?: number;
-    until?: number;
-    limit?: number;
-  },
-): Promise<SearchHit[]> {
-  const match = toFtsQuery(query);
-  if (match === null) return [];
-
-  const binds: unknown[] = [match];
-  const where: string[] = ['messages_fts MATCH $1'];
-
-  if (opts?.taskId !== undefined) {
-    binds.push(opts.taskId);
-    where.push(`m.task_id = $${binds.length}`);
-  }
-  if (opts?.repoPath !== undefined) {
-    binds.push(opts.repoPath);
-    where.push(`t.repo_path = $${binds.length}`);
-  }
-  if (opts?.toolName !== undefined) {
-    binds.push(opts.toolName);
-    where.push(`m.tool_name = $${binds.length}`);
-  }
-  if (opts?.since !== undefined) {
-    binds.push(opts.since);
-    where.push(`m.ts >= $${binds.length}`);
-  }
-  if (opts?.until !== undefined) {
-    binds.push(opts.until);
-    where.push(`m.ts <= $${binds.length}`);
-  }
-  binds.push(Math.max(1, opts?.limit ?? DEFAULT_SEARCH_LIMIT));
-
-  const db = await getDb();
-  const rows = await db.select<SearchRow[]>(
-    `SELECT ${MESSAGE_SELECT.split(', ').map((c) => `m.${c}`).join(', ')},
-            snippet(messages_fts, 0, '<mark>', '</mark>', '…', 24) AS snippet,
-            t.title AS task_title
-       FROM messages_fts
-       JOIN messages m ON m.id = messages_fts.rowid
-       LEFT JOIN tasks t ON t.id = m.task_id
-      WHERE ${where.join(' AND ')}
-      ORDER BY rank
-      LIMIT $${binds.length}`,
-    binds,
-  );
-
-  return rows.map((r) => ({
-    message: toMessage(r),
-    snippet: r.snippet ?? '',
-    taskTitle: r.task_title,
-  }));
 }
 
 // ---------------------------------------------------------------------------

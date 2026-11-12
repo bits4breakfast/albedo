@@ -17,6 +17,13 @@ const h = vi.hoisted(() => ({
   listTasks: null as unknown as () => Promise<Task[]>,
   updateTask: null as unknown as (id: number, patch: Partial<Task>) => Promise<void>,
   captureListeners: new Set<(u: { sessionId: string; cwd: string | null; lastSeq: number }) => void>(),
+  /** What waits on you outside the transcript, per task, and who listens for it. */
+  prompt: new Map<number, unknown>(),
+  trust: new Set<number>(),
+  preview: new Map<number, unknown>(),
+  promptListeners: new Set<(taskId: number, prompt: unknown) => void>(),
+  trustListeners: new Set<(taskId: number, waiting: boolean) => void>(),
+  previewListeners: new Set<(taskId: number) => void>(),
 }));
 
 vi.mock('../db', () => ({
@@ -43,15 +50,33 @@ vi.mock('../capture', async () => ({
 }));
 vi.mock('../capture/hookEvents', () => ({
   hasHooks: () => false,
-  onPromptChange: () => () => {},
+  onPromptChange: (cb: (taskId: number, prompt: unknown) => void) => {
+    h.promptListeners.add(cb);
+    return () => h.promptListeners.delete(cb);
+  },
   onStatusSnapshot: () => () => {},
-  pendingPrompt: () => null,
+  pendingPrompt: (taskId: number) => h.prompt.get(taskId) ?? null,
+}));
+vi.mock('../capture/workspaceTrust', () => ({
+  isTrustWaiting: (taskId: number) => h.trust.has(taskId),
+  onTrustWaiting: (cb: (taskId: number, waiting: boolean) => void) => {
+    h.trustListeners.add(cb);
+    return () => h.trustListeners.delete(cb);
+  },
+}));
+vi.mock('../capture/previewGate', async () => ({
+  ...(await vi.importActual<typeof import('../capture/previewGate')>('../capture/previewGate')),
+  pendingPreview: (taskId: number) => h.preview.get(taskId) ?? null,
+  onPreviewChange: (cb: (taskId: number) => void) => {
+    h.previewListeners.add(cb);
+    return () => h.previewListeners.delete(cb);
+  },
 }));
 vi.mock('./attention', () => ({ noteStatusChange: vi.fn(), noteQuestion: vi.fn() }));
 
 const db = await import('../db');
 const { noteStatusChange } = await import('./attention');
-const { useTasks, reconcileTasks } = await import('./useTasks');
+const { useTasks, reconcileTasks, archivedAndGone } = await import('./useTasks');
 const { RUNNING_WINDOW_MS } = await import('../capture/status');
 const { __resetDrafts } = await import('./transcript/drafts');
 
@@ -90,6 +115,9 @@ beforeEach(() => {
   h.rows = [];
   h.messages.clear();
   h.captureListeners.clear();
+  h.prompt.clear();
+  h.trust.clear();
+  h.preview.clear();
   // A fresh copy per read, as the real driver returns.
   h.listTasks = async () => h.rows.map((r) => ({ ...r }));
   h.updateTask = async (id, patch) => {
@@ -460,5 +488,116 @@ describe('a last turn that stopped on an API error (#338)', () => {
       await result.current.archive(1);
     });
     expect(result.current.tasks[0]).toMatchObject({ status: 'archived', apiError: null, apiErrorText: null });
+  });
+});
+
+describe('waiting on you outside the transcript: a prompt, the trust dialog, a preview (#367)', () => {
+  const sources = {
+    prompt: (id: number, on: boolean) => {
+      if (on) h.prompt.set(id, { requestId: 'r' });
+      else h.prompt.delete(id);
+      for (const cb of [...h.promptListeners]) cb(id, on ? h.prompt.get(id) : null);
+    },
+    trust: (id: number, on: boolean) => {
+      if (on) h.trust.add(id);
+      else h.trust.delete(id);
+      for (const cb of [...h.trustListeners]) cb(id, on);
+    },
+    preview: (id: number, on: boolean) => {
+      if (on) h.preview.set(id, { id: 'p' });
+      else h.preview.delete(id);
+      for (const cb of [...h.previewListeners]) cb(id);
+    },
+  };
+
+  for (const [name, signal] of Object.entries(sources)) {
+    it(`${name}: blocks at once and announces it, then re-derives when it goes`, async () => {
+      h.rows = [task()];
+      h.messages.set('s1', [prompt('s1', T0 - 90_000), finished('s1', T0 - 60_000)]);
+      const { result } = renderHook(() => useTasks());
+      await tick();
+      expect(result.current.tasks[0]?.status).toBe('idle');
+      vi.mocked(noteStatusChange).mockClear();
+
+      act(() => signal(1, true));
+      expect(result.current.tasks[0]?.status).toBe('blocked');
+      expect(noteStatusChange).toHaveBeenCalledWith(1, 'idle', 'blocked', 't');
+      await tick();
+      expect(h.rows[0]?.status).toBe('blocked');
+      // Already blocked: nothing announced twice.
+      act(() => signal(1, true));
+      expect(noteStatusChange).toHaveBeenCalledTimes(1);
+
+      act(() => signal(1, false));
+      await tick();
+      expect(result.current.tasks[0]?.status).toBe('idle');
+    });
+  }
+
+  it('leaves an archived task alone, and stops listening on unmount', async () => {
+    h.rows = [task({ status: 'archived' })];
+    const { result, unmount } = renderHook(() => useTasks());
+    await tick();
+    act(() => sources.prompt(1, true));
+    act(() => sources.trust(1, true));
+    act(() => sources.preview(1, true));
+    expect(result.current.tasks[0]?.status).toBe('archived');
+    expect(noteStatusChange).not.toHaveBeenCalled();
+    unmount();
+    expect(h.promptListeners.size + h.trustListeners.size + h.previewListeners.size).toBe(0);
+  });
+});
+
+describe('per-task state of an archived task (#367)', () => {
+  it('archivedAndGone: archived and no longer listed, nothing else', () => {
+    const a = task({ id: 1, status: 'archived' });
+    const b = task({ id: 2 });
+    const c = task({ id: 3, status: 'archived' });
+    expect(archivedAndGone([a, b, c], [b, c])).toEqual([1]);
+    // Missing but not archived: a reload that began before it existed (#184).
+    expect(archivedAndGone([a, b, c], [a, c])).toEqual([]);
+    expect(archivedAndGone([], [b])).toEqual([]);
+  });
+
+  it('keeps what an archived task shows while it is listed, and drops it once a reload no longer lists it', async () => {
+    h.rows = [task(), task({ id: 2, sessionId: 's2', worktreePath: '/wt/2' })];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), finished('s1', T0 - 60_000)]);
+    h.messages.set('s2', [prompt('s2', T0 - 90_000), finished('s2', T0 - 30_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    expect(result.current.signals.get(1)?.finishedAt).toBe(T0 - 60_000);
+    await act(async () => {
+      await result.current.archive(1);
+    });
+    expect(result.current.tasks.find((t) => t.id === 1)?.status).toBe('archived');
+    expect(result.current.signals.get(1)?.finishedAt).toBe(T0 - 60_000);
+    // The database no longer lists it, as listTasks does for an archived row.
+    h.rows = h.rows.filter((r) => r.id !== 1);
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.tasks.map((t) => t.id)).toEqual([2]);
+    expect(result.current.signals.has(1)).toBe(false);
+    expect(result.current.signals.get(2)?.finishedAt).toBe(T0 - 30_000);
+  });
+
+  it('keeps the state of a task one reload missed, when it was not archived (#184)', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), finished('s1', T0 - 60_000)]);
+    const { result } = renderHook(() => useTasks());
+    await tick();
+    const signals = result.current.signals;
+    const rows = h.rows;
+    h.rows = [];
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.tasks).toEqual([]);
+    expect(result.current.signals).toBe(signals);
+    h.rows = rows;
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.signals.get(1)?.finishedAt).toBe(T0 - 60_000);
   });
 });

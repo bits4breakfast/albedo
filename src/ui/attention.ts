@@ -42,7 +42,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import type { TaskStatus } from '../types';
-import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
+import { KEYS, persistedSwitch } from './persisted';
 
 /**
  * Why a task is asking for attention. The two are not equally urgent, and the
@@ -115,11 +115,7 @@ const QUESTION_BODY_MAX = 160;
 /** localStorage key for the off switch. Absent means on. */
 export const NOTIFICATIONS_KEY = KEYS.notifications;
 
-/** Only 'off' is stored; on removes the key. */
-const notificationsCodec: Codec<boolean> = {
-  decode: (raw) => raw !== 'off',
-  encode: (on) => (on ? null : 'off'),
-};
+const notificationsSwitch = persistedSwitch(NOTIFICATIONS_KEY);
 
 /** When each (task, kind) last posted a notification. */
 const lastNotified = new Map<string, number>();
@@ -215,14 +211,10 @@ export function notificationFor(
 }
 
 /** The per-user off switch. Never throws: no storage reads as "on". */
-export function notificationsEnabled(): boolean {
-  return readPersisted(NOTIFICATIONS_KEY, notificationsCodec, true);
-}
+export const notificationsEnabled = notificationsSwitch.get;
 
 /** Storage unavailable: the choice just is not remembered. */
-export function setNotificationsEnabled(on: boolean): void {
-  writePersisted(NOTIFICATIONS_KEY, notificationsCodec, on);
-}
+export const setNotificationsEnabled = notificationsSwitch.set;
 
 /**
  * Where banners go:
