@@ -28,15 +28,17 @@ vi.mock('../db/touched', async (importActual) => ({
 const asked = vi.hoisted(() => ({ bases: [] as string[], resolves: true }));
 vi.mock('../git/worktree', async (importActual) => ({
   ...(await importActual<typeof import('../git/worktree')>()),
-  lineChanges: async (_w: string, base: string) => {
+  loadChangeSet: async (_w: string, base: string) => {
     asked.bases.push(base);
-    return new Map();
+    return {
+      merge: asked.resolves && base !== '' ? 'abc1234' : null,
+      lines: new Map(),
+      kinds: new Map(),
+      commits: [],
+      committedAt: new Map(),
+    };
   },
-  changeKinds: async () => new Map(),
   unmergedCommits: async () => null,
-  branchCommits: async () => [],
-  committedFileTimes: async () => new Map(),
-  taskBase: async (_w: string, base: string) => (asked.resolves && base !== '' ? 'abc1234' : null),
 }));
 vi.mock('@tauri-apps/plugin-fs', () => ({ stat: async () => Promise.reject(new Error('no fs')) }));
 vi.mock('../capture', () => ({ onCaptureUpdate: () => () => {} }));

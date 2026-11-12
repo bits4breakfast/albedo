@@ -12,6 +12,7 @@
  */
 
 import type { Task } from '../types';
+import { withoutAnthropicKeys } from '../lib/spawnEnv';
 import { parsePrGraphql, PR_QUERY, type PrStatus } from './prStatus';
 import {
   parseAnnotations,
@@ -53,8 +54,9 @@ export type GhRunner = (program: GhProgram, args: string[], cwd?: string) => Pro
 let runner: GhRunner = async (program, args, cwd) => {
   const { Command } = await import('@tauri-apps/plugin-shell');
   // GH_PROMPT_DISABLED: never wait on a question nobody can see. NO_COLOR and
-  // GH_PAGER: the output is JSON for a parser, not a terminal.
-  const env = { GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_PAGER: 'cat' };
+  // GH_PAGER: the output is JSON for a parser, not a terminal. The Anthropic
+  // credentials are blanked: gh runs extensions (hard rule 3).
+  const env = withoutAnthropicKeys({ GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_PAGER: 'cat' });
   const child = await Command.create(program, args, cwd ? { cwd, env } : { env }).execute();
   return { code: child.code, stdout: child.stdout, stderr: child.stderr };
 };

@@ -42,16 +42,18 @@ vi.mock('../db/touched', async (importActual) => ({
 }));
 vi.mock('../git/worktree', async (importActual) => ({
   ...(await importActual<typeof import('../git/worktree')>()),
-  lineChanges: async () =>
-    new Map([
+  loadChangeSet: async () => ({
+    merge: 'abc1234',
+    lines: new Map([
       ['src/a.ts', { added: 1, deleted: 0 }],
       ['src/b.ts', { added: 1, deleted: 0 }],
       ['src/c.ts', { added: 2, deleted: 1 }],
     ]),
-  changeKinds: async () => new Map(),
+    kinds: new Map(),
+    commits: [],
+    committedAt: new Map([['src/c.ts', 100]]),
+  }),
   unmergedCommits: async () => null,
-  branchCommits: async () => [],
-  committedFileTimes: async () => new Map([['src/c.ts', 100]]),
   git: async () => ({ code: 0, stdout: 'a.ts\0b.ts\0lib/c.ts\0', stderr: '' }),
 }));
 vi.mock('@tauri-apps/plugin-fs', () => ({ stat: async () => Promise.reject(new Error('no fs')) }));

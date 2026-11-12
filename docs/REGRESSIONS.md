@@ -81,6 +81,10 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 - **A one-file workaround hid the general case.** Opening `.claude/skills/x/SKILL.md` or `.github/workflows/ci.yml` in a worktree failed with "forbidden path", while the Files pane listed the folder (#93). On unix Tauri's fs scope matches with `require_literal_leading_dot: true` by default, so a `<dir>/**` grant never matches a path component that starts with a dot. #77 hit the same cause with `~/.albedo/.../.phpantom.toml` and fixed it with a literal scope entry for that one file, so nobody looked for the other dot-paths it broke. Turning the option off in `tauri.conf.json` was not enough either: the plugin applies it to capability scopes only, while `fs_scope().allow_directory` (the runtime grant) always keeps Tauri's default. **Rule:**
   - When a scope or permission refuses one path, find the rule that refused it and list what else it refuses, before adding an exception.
   - Read where a config option is applied before trusting that it applies: `allow_project_dir` grants through a runtime capability for this reason.
+- **A read that writes: `git diff` against the working tree.** The Files pane rewrote `.git/index` -- in the user's main checkout too -- on every focus and capture update, so a `git commit` of theirs could fail on `index.lock`, the hazard #181 closed for `git status` (#363). `git diff <rev>` refreshes stale stats and writes the index back, and `GIT_OPTIONAL_LOCKS=0` does not stop it. **Rule:**
+  - A `git diff` that compares with the working tree goes through `DIFF_NO_REFRESH` (`src/git/worktree.ts`, `diff.autoRefreshIndex=false`). Not `git diff-index`: the plumbing ignores the user's `diff.algorithm`, so the counts change.
+  - Without the refresh, `--name-only` and `--name-status` also list files whose stat alone is stale. Take paths from `--numstat`, which skips them, or filter through `keepChanged`.
+  - Check a new git read by comparing `.git/index` before and after it on a repo with stale stats (`src/git/changeSet.git.test.ts`).
 - **Stale comments after a behaviour change.** A comment still said "wrap" after the behaviour became "stop at the ends". **Rule:** when behaviour changes, grep the comments and the PR text for the old words.
 
 ## Tests and verification
@@ -136,6 +140,8 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Pruning by "not in the list I just read" keeps anything written since the read began (`readStartedAt`); a read cannot speak for what is newer than itself.
   - The same applies to every store pruned against the task list that can hold something for a task just made (drafts, outbox).
 
+- **A kill whose second half never ran on quit.** Closing a task HUPs its process group and SIGKILLs it 2 s later from a timer thread, but quitting Albedo released only keep-awake: the closed pty masters HUPed each foreground group, the timer died with the app, and a dev server ignoring SIGHUP kept running (#360, audit). **Rule:** a cleanup that relies on a delayed step also runs that step, bounded, on the exit path (`PtyRegistry::shutdown`).
+
 ## Data and contracts
 
 - **`schema.sql` is migration v1 and is never edited.** tauri-plugin-sql checksums applied migrations. New columns go in a new numbered migration, registered in `src-tauri/src/lib.rs`.
@@ -183,6 +189,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Never give such a frame `allow-same-origin`; load it from a stored copy (`srcdoc`), never a path or URL.
   - CSP does not cover navigation: `src-tauri/src/navguard.rs` keeps every frame on the app's own pages. Check a new kind of embedded content against it.
   - Prove isolation in WebKit, not jsdom: probe `parent` access, `webkit.messageHandlers`, fetch, images and self-navigation from inside the frame.
+- **"The dev server" meant every port on this machine.** The guard from #348 allowed http to `localhost`/`127.0.0.1` on any port, in release builds too, so a mockup could still navigate to another dev server, a Docker API or an admin panel (#360, audit). **Rule:** an allowance for the dev server names its origin (`build.devUrl`) and exists only under `debug_assertions`; a release build allows no http at all.
 
 ## Shell scripts (for agents)
 

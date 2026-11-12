@@ -11,7 +11,7 @@
  * a moved file is a deletion and an addition, as `--no-renames` reports it.
  */
 
-import { git, taskBase } from '../git/worktree';
+import { DIFF_NO_REFRESH, git, taskBase } from '../git/worktree';
 import { composeFileDiff, readAtRev, sideFromText, type WorkingReader } from '../git/fileDiff';
 import { buildBranchDiff, type BranchDiff, type ChangedFile } from './blocks';
 import { statReason } from './budget';
@@ -25,6 +25,28 @@ async function paths(args: string[], cwd: string): Promise<string[]> {
   const r = await git(args, cwd);
   if (r.code !== 0) throw new Error(r.stderr.trim() || `git ${args[0]} exited with ${r.code}`);
   return splitZ(r.stdout);
+}
+
+/**
+ * Paths whose content or mode differs between `rev` and the working tree:
+ * what `git diff --name-only` listed, without writing the index (#363). With
+ * the refresh off `--name-only` would also list files whose stat is merely
+ * stale; `--numstat` skips those, so the paths come from it.
+ */
+async function changedSince(rev: string, cwd: string): Promise<string[]> {
+  const r = await git([...DIFF_NO_REFRESH, '--numstat', '--no-renames', '-z', rev, '--'], cwd);
+  if (r.code !== 0) throw new Error(r.stderr.trim() || `git diff exited with ${r.code}`);
+  return numstatPathsZ(r.stdout);
+}
+
+/** The paths of `--numstat -z --no-renames` output: `<added>\t<deleted>\t<path>` NUL-terminated. */
+export function numstatPathsZ(stdout: string): string[] {
+  const out: string[] = [];
+  for (const rec of splitZ(stdout)) {
+    const m = /^(?:\d+|-)\t(?:\d+|-)\t([\s\S]+)$/.exec(rec);
+    if (m) out.push(m[1] as string);
+  }
+  return out;
 }
 
 /** Untracked files git would add (ignored ones excluded). */
@@ -64,9 +86,9 @@ export async function loadBranchDiff(
   const merge = await taskBase(worktreePath, baseBranch);
   const base = merge ?? 'HEAD';
   const [tracked, loose, dirty] = await Promise.all([
-    paths(['diff', '--name-only', '--no-renames', '-z', base, '--'], worktreePath),
+    changedSince(base, worktreePath),
     untracked(worktreePath),
-    paths(['diff', '--name-only', '--no-renames', '-z', 'HEAD', '--'], worktreePath),
+    changedSince('HEAD', worktreePath),
   ]);
   const all = [...new Set([...tracked, ...loose])];
   const changed: ChangedFile[] = await pool(all, 6, async (path) => {

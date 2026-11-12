@@ -21,7 +21,7 @@
 
 import type { FileDiff } from '../types';
 import { diffStrings } from '../lib/diff';
-import { git, gitOk, taskBase } from './worktree';
+import { DIFF_NO_REFRESH, git, gitOk, taskBase } from './worktree';
 
 /**
  * Past this, either side is not diffed at all. `diffStrings` is synchronous on
@@ -211,7 +211,9 @@ export async function readAtRev(worktreePath: string, rev: string, path: string)
  */
 export async function renameSource(worktreePath: string, base: string, relPath: string): Promise<string | null> {
   assertRev(base);
-  const r = await git(['diff', '--name-status', '-z', '-M', base, '--'], worktreePath);
+  // Without the index refresh (#363): a stale stat then shows here as a
+  // plain `M`, never as a rename, so the renames are the same.
+  const r = await git([...DIFF_NO_REFRESH, '--name-status', '-z', '-M', base, '--'], worktreePath);
   if (r.code !== 0) return null;
   return parseRenames(r.stdout).get(relPath) ?? null;
 }
