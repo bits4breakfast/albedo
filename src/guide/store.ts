@@ -27,7 +27,7 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import { KEYS, readPersisted, writePersisted, type Codec } from '../ui/persisted';
+import { KEYS, writePersisted, type Codec } from '../ui/persisted';
 import type { Guide } from './validate';
 import type { BranchDiff } from './blocks';
 import type { LoadedBranchDiff } from './branchDiff';
@@ -104,6 +104,45 @@ export const reviewedAtCodec: Codec<Record<string, number>> = {
 };
 
 // ---------------------------------------------------------------------------
+// Reading storage, decoded once per stored string (#365)
+// ---------------------------------------------------------------------------
+
+/**
+ * The last string read per key and what it decoded to. The task list asks
+ * for every guide on each activity change and the pane on each render; up to
+ * 40 guides are a lot of JSON to parse and check every time. Keyed on the
+ * stored string itself, so whatever writes the key -- this store, another
+ * window, a test -- is read afresh the next time, with no event to miss.
+ *
+ * The values are shared between callers: nothing here or in a reader may
+ * change one in place (every write builds a new object, as it always has).
+ */
+const decoded = new Map<string, { raw: string; value: unknown }>();
+
+/** `readPersisted` with an empty record as the fallback, decoded once per stored string. */
+function readStored<T extends object>(key: string, codec: Codec<T>): T {
+  const empty = {} as T;
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(key);
+  } catch {
+    return empty;
+  }
+  if (raw === null) return empty;
+  const hit = decoded.get(key);
+  if (hit && hit.raw === raw) return hit.value as T;
+  let value: T | null;
+  try {
+    value = codec.decode(raw);
+  } catch {
+    value = null;
+  }
+  const out = value ?? empty;
+  decoded.set(key, { raw, value: out });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Guides
 // ---------------------------------------------------------------------------
 
@@ -125,7 +164,7 @@ function subscribe(l: () => void): () => void {
 }
 
 export function loadGuide(taskId: number): Guide | null {
-  return readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>)[String(taskId)] ?? null;
+  return readStored(KEYS.reviewGuides, guidesCodec)[String(taskId)] ?? null;
 }
 
 /** Keep the newest {@link MAX_GUIDES}. Pure. */
@@ -135,7 +174,7 @@ export function capGuides(all: Record<string, Guide>, max = MAX_GUIDES): Record<
 }
 
 export function saveGuide(taskId: number, guide: Guide): void {
-  const all = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
+  const all = readStored(KEYS.reviewGuides, guidesCodec);
   writePersisted(KEYS.reviewGuides, guidesCodec, capGuides({ ...all, [String(taskId)]: guide }));
   reviewedVersion++;
   changed();
@@ -151,7 +190,7 @@ export function reviewedKey(path: string, blocks: readonly string[]): string {
 }
 
 export function loadReviewed(taskId: number): ReadonlySet<string> {
-  return new Set(readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>)[String(taskId)] ?? []);
+  return new Set(readStored(KEYS.reviewGuideReviewed, reviewedCodec)[String(taskId)] ?? []);
 }
 
 /**
@@ -161,8 +200,8 @@ export function loadReviewed(taskId: number): ReadonlySet<string> {
  * moved), it no longer counts. Two reads of storage, whatever the task count.
  */
 export function reviewingTaskIds(): ReadonlySet<number> {
-  const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
-  const marks = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
+  const guides = readStored(KEYS.reviewGuides, guidesCodec);
+  const marks = readStored(KEYS.reviewGuideReviewed, reviewedCodec);
   const out = new Set<number>();
   for (const [id, keys] of Object.entries(marks)) {
     const guide = guides[id];
@@ -182,7 +221,7 @@ function marksCurrent(guide: Guide, keys: readonly string[]): boolean {
 }
 
 export function setReviewed(taskId: number, keys: readonly string[], on: boolean): void {
-  const all = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
+  const all = readStored(KEYS.reviewGuideReviewed, reviewedCodec);
   const mine = new Set(all[String(taskId)] ?? []);
   for (const k of keys) {
     if (on) mine.add(k);
@@ -191,7 +230,7 @@ export function setReviewed(taskId: number, keys: readonly string[], on: boolean
   const list = [...mine].slice(-MAX_REVIEWED);
   // Bounded like the guides: marks are kept only for tasks that still have a
   // guide, so a task whose guide aged out (or was deleted) takes its own along.
-  const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
+  const guides = readStored(KEYS.reviewGuides, guidesCodec);
   const next: Record<string, string[]> = {};
   for (const [k, v] of Object.entries(all)) if (k in guides) next[k] = v;
   if (list.length === 0) delete next[String(taskId)];
@@ -199,7 +238,7 @@ export function setReviewed(taskId: number, keys: readonly string[], on: boolean
   writePersisted(KEYS.reviewGuideReviewed, reviewedCodec, next);
   // When, for Review Started (#315): a tick, never an untick. Kept for the
   // tasks whose marks are kept.
-  const times = readPersisted(KEYS.reviewGuideReviewedAt, reviewedAtCodec, {} as Record<string, number>);
+  const times = readStored(KEYS.reviewGuideReviewedAt, reviewedAtCodec);
   const keptTimes: Record<string, number> = {};
   for (const [k, v] of Object.entries(times)) if (k in next) keptTimes[k] = v;
   if (on && keys.length > 0 && String(taskId) in next) keptTimes[String(taskId)] = Date.now();
@@ -229,9 +268,9 @@ export interface GuideProgress {
  * {@link useGuideReviewedVersion}.
  */
 export function guideProgress(taskIds: readonly number[]): ReadonlyMap<number, GuideProgress> {
-  const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
-  const marks = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
-  const times = readPersisted(KEYS.reviewGuideReviewedAt, reviewedAtCodec, {} as Record<string, number>);
+  const guides = readStored(KEYS.reviewGuides, guidesCodec);
+  const marks = readStored(KEYS.reviewGuideReviewed, reviewedCodec);
+  const times = readStored(KEYS.reviewGuideReviewedAt, reviewedAtCodec);
   const out = new Map<number, GuideProgress>();
   for (const id of taskIds) {
     const guide = guides[String(id)];
@@ -533,6 +572,7 @@ export function keepLastRead(taskId: number, data: LoadedBranchDiff): void {
 
 /** Tests only. */
 export function resetGuideStoreForTests(): void {
+  decoded.clear();
   places.clear();
   lastReads.clear();
   writes.clear();

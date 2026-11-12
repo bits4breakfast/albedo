@@ -50,7 +50,7 @@ import {
   WEEK_WINDOW_MS,
   windowUsage,
 } from './usage';
-import { resetDb } from '../db';
+import { resetDb, setUsageHourCacheForTests } from '../db';
 
 // A real shape observed on a live session holding ~198k of context.
 const REAL_SAMPLE = { input_tokens: 2, cache_read_input_tokens: 186_919, cache_creation_input_tokens: 10_889 };
@@ -84,6 +84,9 @@ function assistantLine(opts: {
 
 beforeEach(() => {
   resetDb();
+  // These script the one usage query by hand; the closed-hour cache (#365)
+  // is pinned against it on a real SQLite in db/usageHours.test.ts.
+  setUsageHourCacheForTests(false);
   state.calls = [];
   state.handler = null;
   // The JSON1-fallback tests warn on purpose; keep the run readable.

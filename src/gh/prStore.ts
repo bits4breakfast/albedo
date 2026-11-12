@@ -11,23 +11,39 @@
  *     is when the answer changes and someone is waiting on it. That one also
  *     holds off screen, in another project tab or with the window hidden
  *     ({@link usePendingPrWatch}): the checks finishing is an event the owner
- *     is told about (#159), wherever the task is,
+ *     is told about (#159), wherever the task is. A branch with no PR, or a
+ *     merged PR, whose session has written nothing since it was last asked is
+ *     asked less often ({@link pollEveryMs}, #365),
  *   - on window focus -- coming back from the browser is exactly when the
  *     owner wants to know whether CI went green,
  *   - on demand, when a task is selected.
  * Whatever the trigger, a task never has more than one `gh` call in flight,
  * and a result younger than {@link MIN_AGE_MS} is reused rather than refetched.
  *
- * Each call is one GraphQL request (gh.ts `fetchPrStatus`), and it carries the
+ * Each call is one GraphQL request (gh.ts `fetchPrAnswer`), and it carries the
  * review threads too (#278): the unresolved counts cost no call of their own.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
-import { fetchPrStatus, loadViewerLogin, viewerLogin } from './gh';
+import { fetchPrAnswer, loadViewerLogin, PR_FETCH_FAILED, viewerLogin } from './gh';
 import type { PrStatus } from './prStatus';
 
 export const POLL_MS = 60_000;
+/**
+ * A branch with no PR whose session has been quiet since it was last asked
+ * (#365). A PR is opened by a session's turn -- which writes to the
+ * transcript and so brings the branch back to {@link POLL_MS} -- or from the
+ * browser or another terminal, which coming back to Albedo catches on focus.
+ * This is the wait for the rest: a PR opened while Albedo stays in front.
+ */
+export const POLL_NO_PR_QUIET_MS = 5 * 60_000;
+/**
+ * A merged PR whose session has been quiet since it was last asked (#365).
+ * A merge is final; what can still change is a new PR for the same branch,
+ * which a session's turn or a focus catches like any other.
+ */
+export const POLL_MERGED_QUIET_MS = 15 * 60_000;
 /** While a PR's checks run: soon enough to see them finish, not a hammering. */
 export const POLL_PENDING_MS = 15_000;
 /** Focus and selection churn; this keeps a burst of them to one fetch. */
@@ -51,26 +67,73 @@ export function pendingIntervalMs(n: number): number {
   return Math.max(POLL_PENDING_MS, Math.ceil((n * 60_000) / PENDING_CALLS_PER_MIN));
 }
 
-type PrTask = Pick<Task, 'id' | 'branch' | 'baseBranch' | 'worktreePath' | 'repoPath' | 'status'>;
+type PrTask = Pick<Task, 'id' | 'branch' | 'baseBranch' | 'worktreePath' | 'repoPath' | 'status'> &
+  Partial<Pick<Task, 'lastActivityAt'>>;
 
 interface Entry {
-  /** Null is a real answer: "no PR for this branch" (or gh unavailable). */
+  /**
+   * Null is a real answer: "no PR for this branch" -- or gh could not answer
+   * and there was no earlier answer to keep (`failed`, `streak` 0).
+   */
   pr: PrStatus | null;
   /** The branch it was fetched for; a different branch makes it stale. */
   branch: string;
   fetchedAt: number;
+  /**
+   * When that fetch was sent. Session activity after it may not be in the
+   * answer: a PR opened while gh was on its way is noticed at the next poll.
+   */
+  askedAt: number;
+  /**
+   * The last ask failed (gh offline, rate-limited, logged out...): `pr` is
+   * the answer before it, kept rather than read as "none" (#365 review).
+   */
+  failed: boolean;
+  /** How many answers in a row said what `pr` says: none, merged, or a PR not merged. 0: no answer yet. */
+  streak: number;
+}
+
+type AnswerKind = 'none' | 'merged' | 'other';
+function kindOf(pr: PrStatus | null): AnswerKind {
+  return pr === null ? 'none' : pr.state === 'merged' ? 'merged' : 'other';
+}
+
+/**
+ * How long the answer in `e` holds for `task` before the on-screen poll asks
+ * again (#365). {@link POLL_MS}, except for a branch with no PR or a merged PR
+ * whose session has written nothing since the answer was asked for: those are
+ * quiet, and wait {@link POLL_NO_PR_QUIET_MS} or {@link POLL_MERGED_QUIET_MS}.
+ * Any session write since then (a turn, a prompt, a `!` command) is what
+ * opens a PR from inside Albedo, and puts the branch back on the minute.
+ * A task whose activity is not known is never treated as quiet.
+ *
+ * Only on two answers in a row that say the same (#365 review): GitHub's
+ * search can lag a PR opened a moment ago, so one "none" is not enough. And
+ * never after a failed ask: that is retried on the minute.
+ */
+export function pollEveryMs(
+  e: Pick<Entry, 'pr' | 'askedAt' | 'failed' | 'streak'>,
+  task: Pick<PrTask, 'lastActivityAt'>,
+): number {
+  if (e.failed || e.streak < 2) return POLL_MS;
+  const merged = e.pr !== null && e.pr.state === 'merged';
+  if (e.pr !== null && !merged) return POLL_MS;
+  if (task.lastActivityAt === undefined) return POLL_MS;
+  const quiet = (task.lastActivityAt ?? 0) <= e.askedAt;
+  if (!quiet) return POLL_MS;
+  return merged ? POLL_MERGED_QUIET_MS : POLL_NO_PR_QUIET_MS;
 }
 
 const cache = new Map<number, Entry>();
 const inflight = new Map<number, Promise<void>>();
 const listeners = new Set<() => void>();
 
-let fetcher: (task: PrTask) => Promise<PrStatus | null> = fetchPrStatus;
+let fetcher: (task: PrTask) => Promise<PrStatus | null | typeof PR_FETCH_FAILED> = fetchPrAnswer;
 let now: () => number = () => Date.now();
 
 /** Test seam: swap the fetch and the clock; clears the cache. */
 export function setPrFetcherForTests(
-  next: (task: PrTask) => Promise<PrStatus | null>,
+  next: (task: PrTask) => Promise<PrStatus | null | typeof PR_FETCH_FAILED>,
   clock?: () => number,
 ): void {
   fetcher = next;
@@ -135,14 +198,32 @@ export function refreshPrStatus(task: PrTask, opts: { force?: boolean } = {}): P
   const fresh = prev && prev.branch === task.branch && now() - prev.fetchedAt < MIN_AGE_MS;
   if (fresh && !opts.force) return Promise.resolve();
 
-  const p = gate(() => fetcher(task))
+  let askedAt = now();
+  const p = gate(() => {
+    // Sent now: a call waiting at the gate has not asked yet.
+    askedAt = now();
+    return fetcher(task);
+  })
     .then((fetched) => {
-      const pr = keepThreads(fetched, prev && prev.branch === task.branch ? prev.pr : null);
-      cache.set(task.id, { pr, branch: task.branch, fetchedAt: now() });
+      const same = prev && prev.branch === task.branch ? prev : null;
+      if (fetched === PR_FETCH_FAILED) {
+        // gh could not answer: the last answer stands, asked again on the
+        // minute. With none to keep, "none", as it always read.
+        if (same) {
+          cache.set(task.id, { ...same, fetchedAt: now(), askedAt, failed: true });
+          return;
+        }
+        cache.set(task.id, { pr: null, branch: task.branch, fetchedAt: now(), askedAt, failed: true, streak: 0 });
+        emit();
+        return;
+      }
+      const pr = keepThreads(fetched, same ? same.pr : null);
+      const streak = same && same.streak > 0 && kindOf(same.pr) === kindOf(pr) ? same.streak + 1 : 1;
+      cache.set(task.id, { pr, branch: task.branch, fetchedAt: now(), askedAt, failed: false, streak });
       emit();
     })
     .catch((err) => {
-      // fetchPrStatus does not throw by contract; this is for a fetcher that
+      // fetchPrAnswer does not throw by contract; this is for a fetcher that
       // does. Keep what we had -- a flicker to "no PR" would be a lie.
       console.warn('[gh] pr status failed', err);
     })
@@ -256,14 +337,15 @@ export function usePrPolling(tasks: PrTask[]): void {
     };
     sweep();
     // One tick at the fast rate; each task is due at its own: a PR with
-    // checks running every tick, every other only once POLL_MS has passed.
+    // checks running every tick, every other only once POLL_MS has passed --
+    // or, quiet with no PR or a merged one, its longer wait (pollEveryMs).
     const tick = () => {
       if (document.hidden) return; // nobody reading the badge; focus catches it up
       for (const t of ref.current) {
         if (t.status === 'archived') continue;
         const e = cache.get(t.id);
         const pending = e?.pr?.checks.kind === 'pending';
-        if (!e || pending || now() - e.fetchedAt >= POLL_MS) void refreshPrStatus(t);
+        if (!e || pending || now() - e.fetchedAt >= pollEveryMs(e, t)) void refreshPrStatus(t);
       }
     };
     const timer = setInterval(tick, POLL_PENDING_MS);

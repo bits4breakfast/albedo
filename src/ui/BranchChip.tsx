@@ -12,7 +12,7 @@ import { useStackBase } from './useMeasuredBase';
 
 export default function BranchChip({ task }: { task: Task }): ReactNode {
   const pr = usePrStatus(task);
-  const stack = useStackBase(task);
+  const stack = useStackBase(task, pr);
   const target = mergeTarget(task, pr, stack);
   return (
     <span className="main-ident-branch" title={branchTooltip(task.branch, target, pr?.number ?? null, task.baseBranch)}>
