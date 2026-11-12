@@ -42,7 +42,7 @@ import { ciBanner, ciStep, type CiEvent, type CiOutcome, type CiWatch } from '..
 import { getPrStatus, subscribePrStatus } from '../gh/prStore';
 import type { PrStatus } from '../gh/prStatus';
 import { noteChecksFinished } from './attention';
-import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
+import { KEYS, persistedSwitch, usePersistedSwitch } from './persisted';
 import { ciDetailsWanted, observeCiQueue } from './transcript/ciFailure';
 import { fetchQueuedCiDetails, type DetailsTask } from './transcript/ciDetailsQueue';
 
@@ -79,25 +79,19 @@ function subscribe(cb: () => void): () => void {
 
 // --- the setting -------------------------------------------------------------
 
-/** Only 'off' is stored; on removes the key. */
-const onOff: Codec<boolean> = {
-  decode: (raw) => raw !== 'off',
-  encode: (on) => (on ? null : 'off'),
-};
+const ciSwitch = persistedSwitch(KEYS.ciNotifications);
 
 /** "Notify About PRs: Checks and Reviews". Never throws: no storage reads as "on". */
-export function ciNotifyEnabled(): boolean {
-  return readPersisted(KEYS.ciNotifications, onOff, true);
-}
+export const ciNotifyEnabled = ciSwitch.get;
 
 export function setCiNotifyEnabled(on: boolean): void {
-  writePersisted(KEYS.ciNotifications, onOff, on);
+  ciSwitch.set(on);
   emit();
 }
 
 /** The setting, for the menu that shows it. */
 export function useCiNotifyEnabled(): [boolean, (on: boolean) => void] {
-  const on = useSyncExternalStore(subscribe, ciNotifyEnabled);
+  const [on] = usePersistedSwitch(ciSwitch);
   return [on, setCiNotifyEnabled];
 }
 

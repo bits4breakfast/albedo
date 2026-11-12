@@ -29,13 +29,13 @@
  * remembered in localStorage like the other ⋯ preferences (persisted.ts).
  */
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { onCaptureUpdate, runningInBackground } from '../capture';
 import type { BackgroundItem } from '../capture/background';
 import { backgroundRowsSince } from '../db';
 import type { Message, Task, TaskStatus } from '../types';
-import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
+import { KEYS, persistedSwitch, usePersistedSwitch } from './persisted';
 import { onPtyPresenceChange, ptyLiveSince } from './Terminal';
 
 // --- what counts (pure) -------------------------------------------------------
@@ -85,34 +85,16 @@ export function keepAwakeReason(count: number): string {
 
 // --- the switch ---------------------------------------------------------------
 
-/** Only 'off' is stored; on removes the key. */
-const onOff: Codec<boolean> = {
-  decode: (raw) => raw !== 'off',
-  encode: (on) => (on ? null : 'off'),
-};
-
-const listeners = new Set<() => void>();
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
-}
+const keepAwakeSwitch = persistedSwitch(KEYS.keepAwake);
 
 /** "Keep the Mac Awake While Tasks Run". Never throws: no storage reads as "on". */
-export function keepAwakeEnabled(): boolean {
-  return readPersisted(KEYS.keepAwake, onOff, true);
-}
+export const keepAwakeEnabled = keepAwakeSwitch.get;
 
-export function setKeepAwakeEnabled(on: boolean): void {
-  writePersisted(KEYS.keepAwake, onOff, on);
-  for (const l of [...listeners]) l();
-}
+export const setKeepAwakeEnabled = keepAwakeSwitch.set;
 
 /** The setting, for the menu that shows it and the hook that obeys it. */
 export function useKeepAwakeEnabled(): [boolean, (on: boolean) => void] {
-  const on = useSyncExternalStore(subscribe, keepAwakeEnabled);
-  return [on, setKeepAwakeEnabled];
+  return usePersistedSwitch(keepAwakeSwitch);
 }
 
 // --- the hook -----------------------------------------------------------------
