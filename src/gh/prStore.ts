@@ -20,13 +20,13 @@
  * Whatever the trigger, a task never has more than one `gh` call in flight,
  * and a result younger than {@link MIN_AGE_MS} is reused rather than refetched.
  *
- * Each call is one GraphQL request (gh.ts `fetchPrStatus`), and it carries the
+ * Each call is one GraphQL request (gh.ts `fetchPrAnswer`), and it carries the
  * review threads too (#278): the unresolved counts cost no call of their own.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
-import { fetchPrStatus, loadViewerLogin, viewerLogin } from './gh';
+import { fetchPrAnswer, loadViewerLogin, PR_FETCH_FAILED, viewerLogin } from './gh';
 import type { PrStatus } from './prStatus';
 
 export const POLL_MS = 60_000;
@@ -71,7 +71,10 @@ type PrTask = Pick<Task, 'id' | 'branch' | 'baseBranch' | 'worktreePath' | 'repo
   Partial<Pick<Task, 'lastActivityAt'>>;
 
 interface Entry {
-  /** Null is a real answer: "no PR for this branch" (or gh unavailable). */
+  /**
+   * Null is a real answer: "no PR for this branch" -- or gh could not answer
+   * and there was no earlier answer to keep (`failed`, `streak` 0).
+   */
   pr: PrStatus | null;
   /** The branch it was fetched for; a different branch makes it stale. */
   branch: string;
@@ -81,6 +84,18 @@ interface Entry {
    * answer: a PR opened while gh was on its way is noticed at the next poll.
    */
   askedAt: number;
+  /**
+   * The last ask failed (gh offline, rate-limited, logged out...): `pr` is
+   * the answer before it, kept rather than read as "none" (#365 review).
+   */
+  failed: boolean;
+  /** How many answers in a row said what `pr` says: none, merged, or a PR not merged. 0: no answer yet. */
+  streak: number;
+}
+
+type AnswerKind = 'none' | 'merged' | 'other';
+function kindOf(pr: PrStatus | null): AnswerKind {
+  return pr === null ? 'none' : pr.state === 'merged' ? 'merged' : 'other';
 }
 
 /**
@@ -91,8 +106,16 @@ interface Entry {
  * Any session write since then (a turn, a prompt, a `!` command) is what
  * opens a PR from inside Albedo, and puts the branch back on the minute.
  * A task whose activity is not known is never treated as quiet.
+ *
+ * Only on two answers in a row that say the same (#365 review): GitHub's
+ * search can lag a PR opened a moment ago, so one "none" is not enough. And
+ * never after a failed ask: that is retried on the minute.
  */
-export function pollEveryMs(e: Pick<Entry, 'pr' | 'askedAt'>, task: Pick<PrTask, 'lastActivityAt'>): number {
+export function pollEveryMs(
+  e: Pick<Entry, 'pr' | 'askedAt' | 'failed' | 'streak'>,
+  task: Pick<PrTask, 'lastActivityAt'>,
+): number {
+  if (e.failed || e.streak < 2) return POLL_MS;
   const merged = e.pr !== null && e.pr.state === 'merged';
   if (e.pr !== null && !merged) return POLL_MS;
   if (task.lastActivityAt === undefined) return POLL_MS;
@@ -105,12 +128,12 @@ const cache = new Map<number, Entry>();
 const inflight = new Map<number, Promise<void>>();
 const listeners = new Set<() => void>();
 
-let fetcher: (task: PrTask) => Promise<PrStatus | null> = fetchPrStatus;
+let fetcher: (task: PrTask) => Promise<PrStatus | null | typeof PR_FETCH_FAILED> = fetchPrAnswer;
 let now: () => number = () => Date.now();
 
 /** Test seam: swap the fetch and the clock; clears the cache. */
 export function setPrFetcherForTests(
-  next: (task: PrTask) => Promise<PrStatus | null>,
+  next: (task: PrTask) => Promise<PrStatus | null | typeof PR_FETCH_FAILED>,
   clock?: () => number,
 ): void {
   fetcher = next;
@@ -182,12 +205,25 @@ export function refreshPrStatus(task: PrTask, opts: { force?: boolean } = {}): P
     return fetcher(task);
   })
     .then((fetched) => {
-      const pr = keepThreads(fetched, prev && prev.branch === task.branch ? prev.pr : null);
-      cache.set(task.id, { pr, branch: task.branch, fetchedAt: now(), askedAt });
+      const same = prev && prev.branch === task.branch ? prev : null;
+      if (fetched === PR_FETCH_FAILED) {
+        // gh could not answer: the last answer stands, asked again on the
+        // minute. With none to keep, "none", as it always read.
+        if (same) {
+          cache.set(task.id, { ...same, fetchedAt: now(), askedAt, failed: true });
+          return;
+        }
+        cache.set(task.id, { pr: null, branch: task.branch, fetchedAt: now(), askedAt, failed: true, streak: 0 });
+        emit();
+        return;
+      }
+      const pr = keepThreads(fetched, same ? same.pr : null);
+      const streak = same && same.streak > 0 && kindOf(same.pr) === kindOf(pr) ? same.streak + 1 : 1;
+      cache.set(task.id, { pr, branch: task.branch, fetchedAt: now(), askedAt, failed: false, streak });
       emit();
     })
     .catch((err) => {
-      // fetchPrStatus does not throw by contract; this is for a fetcher that
+      // fetchPrAnswer does not throw by contract; this is for a fetcher that
       // does. Keep what we had -- a flicker to "no PR" would be a lie.
       console.warn('[gh] pr status failed', err);
     })

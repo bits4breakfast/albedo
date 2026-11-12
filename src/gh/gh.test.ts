@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { urlOpener } from '../lib/platform';
 import {
   GH_PROGRAMS,
+  fetchPrAnswer,
   fetchPrStatus,
+  PR_FETCH_FAILED,
   gh,
   loadViewerLogin,
   mergePr,
@@ -237,6 +239,36 @@ describe('viewerLogin (#180)', () => {
     for (const f of ['reviewDecision', 'latestReviews(first: 100)', 'reviewRequests(first: 100)', 'author {']) {
       expect(query).toContain(f);
     }
+  });
+});
+
+describe('fetchPrAnswer: a failure is not "no PR" (#365 review)', () => {
+  it('says failed when gh could not answer, null only for GitHub saying none', async () => {
+    install(async () => ({ code: 1, stdout: '', stderr: 'error connecting to api.github.com' }));
+    expect(await fetchPrAnswer(task)).toBe(PR_FETCH_FAILED);
+    install(async () => ({ code: 1, stdout: '', stderr: 'API rate limit exceeded' }));
+    expect(await fetchPrAnswer(task)).toBe(PR_FETCH_FAILED);
+    install(async () => ({ code: 0, stdout: '<html>502</html>', stderr: '' }));
+    expect(await fetchPrAnswer(task)).toBe(PR_FETCH_FAILED);
+    install(async () => ({ code: 0, stdout: '{"data":{"repository":null}}', stderr: '' }));
+    expect(await fetchPrAnswer(task)).toBe(PR_FETCH_FAILED);
+    install(async () => {
+      throw new Error('No such file or directory');
+    });
+    expect(await fetchPrAnswer(task)).toBe(PR_FETCH_FAILED);
+    install(async () => ({ code: 0, stdout: '{"data":{"repository":{"pullRequests":{"nodes":[]}}}}', stderr: '' }));
+    expect(await fetchPrAnswer(task)).toBeNull();
+    install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
+    expect(((await fetchPrAnswer(task)) as { number: number }).number).toBe(7);
+    // fetchPrStatus, for its other callers: a failure still reads as null.
+    install(async () => ({ code: 1, stdout: '', stderr: 'offline' }));
+    expect(await fetchPrStatus(task)).toBeNull();
+  });
+
+  it('is null, not failed, when there is no branch to look up', async () => {
+    const calls = install(async () => ({ code: 0, stdout: PR_JSON, stderr: '' }));
+    expect(await fetchPrAnswer({ ...task, branch: 'main' })).toBeNull();
+    expect(calls).toHaveLength(0);
   });
 });
 

@@ -1,6 +1,6 @@
 /**
- * The branch sync's sweep (#365): one `git worktree list` per repo instead of
- * one git per task, with the per-task read kept for any folder that list
+ * The branch sync's sweep (#365): one `git worktree list` and one
+ * `for-each-ref` per repo instead of one git per task, with the per-task read kept for any folder that list
  * does not name. What gets written is pinned against the per-task read.
  */
 
@@ -59,6 +59,10 @@ beforeEach(() => {
   prev = setGitRunner(async (args, cwd) => {
     calls.push({ args, cwd });
     if (args[0] === 'worktree') return cwd === '/broken' ? { code: 128, stdout: '', stderr: 'not a git repo' } : { code: 0, stdout: LIST, stderr: '' };
+    if (args[2] === 'for-each-ref') {
+      const refs = args.slice(args.indexOf('--') + 1);
+      return { code: 0, stdout: refs.map((r) => `${r}\0${r.replace(/^refs\/heads\//, '')}\n`).join(''), stderr: '' };
+    }
     if (args[0] === 'symbolic-ref') {
       const head = HEADS[cwd ?? ''];
       return head ? { code: 0, stdout: `${head}\n`, stderr: '' } : { code: 1, stdout: '', stderr: '' };
@@ -71,9 +75,15 @@ afterEach(() => {
 });
 
 describe('syncBranches (#365)', () => {
-  it('asks git once per repo, however many tasks are in it', async () => {
+  it('asks git twice per repo, however many tasks are in it', async () => {
     await syncBranches([task(1, '/repo', 'main'), task(2, '/wt/a', 'feature-a'), task(3, '/repo', 'main'), task(4, '/wt/b', 'x')]);
-    expect(calls).toEqual([{ args: ['worktree', 'list', '--porcelain'], cwd: '/repo' }]);
+    expect(calls).toEqual([
+      { args: ['worktree', 'list', '--porcelain'], cwd: '/repo' },
+      {
+        args: ['-c', 'core.warnAmbiguousRefs=false', 'for-each-ref', '--format=%(refname)%00%(refname:short)', '--', 'refs/heads/main', 'refs/heads/feature-a'],
+        cwd: '/repo',
+      },
+    ]);
   });
 
   it('writes what the per-task read would: a switched branch, nothing for a detached HEAD', async () => {

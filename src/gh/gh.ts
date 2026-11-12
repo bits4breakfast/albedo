@@ -183,6 +183,23 @@ export function prLookupBranch(task: Pick<Task, 'branch' | 'baseBranch'>): strin
 export async function fetchPrStatus(
   task: Pick<Task, 'branch' | 'baseBranch' | 'worktreePath' | 'repoPath'>,
 ): Promise<PrStatus | null> {
+  const answer = await fetchPrAnswer(task);
+  return answer === PR_FETCH_FAILED ? null : answer;
+}
+
+/** {@link fetchPrAnswer}'s "gh could not answer": not the same as "no PR". */
+export const PR_FETCH_FAILED = 'failed' as const;
+
+/**
+ * {@link fetchPrStatus}, telling "gh could not answer" ({@link
+ * PR_FETCH_FAILED}: not logged in, no remote, offline, rate-limited, a
+ * GraphQL or server error, output that is not GitHub's answer, nowhere to run
+ * gh) from GitHub's answer -- a PR, or null for none (#365 review). The PR
+ * store keeps its last answer on a failure instead of reading it as "none".
+ */
+export async function fetchPrAnswer(
+  task: Pick<Task, 'branch' | 'baseBranch' | 'worktreePath' | 'repoPath'>,
+): Promise<PrStatus | null | typeof PR_FETCH_FAILED> {
   const branch = prLookupBranch(task);
   if (!branch) return null;
   const args = [
@@ -204,12 +221,23 @@ export async function fetchPrStatus(
     const r = await gh(args, cwd);
     if (!r) continue; // could not spawn here: the cwd may not exist
     // Non-zero covers "not logged in", "no remote", offline and a GraphQL
-    // error. None of them is something to shout about; all mean "no badge".
-    if (r.code !== 0) return null;
+    // error. None of them is something to shout about; none is "no PR".
+    if (r.code !== 0) return PR_FETCH_FAILED;
+    if (!answeredRepository(r.stdout)) return PR_FETCH_FAILED;
     // Only a PR whose head is this branch: parsePrGraphql checks.
     return parsePrGraphql(r.stdout, branch);
   }
-  return null;
+  return PR_FETCH_FAILED;
+}
+
+/** Whether `stdout` is GraphQL's answer about the repository at all. */
+function answeredRepository(stdout: string): boolean {
+  try {
+    const data = (JSON.parse(stdout) as { data?: { repository?: unknown } } | null)?.data;
+    return typeof data?.repository === 'object' && data.repository !== null;
+  } catch {
+    return false;
+  }
 }
 
 /** What a branch's pull request says about it, for checking the branch out. */

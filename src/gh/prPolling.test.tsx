@@ -14,6 +14,7 @@ import {
   POLL_NO_PR_QUIET_MS,
   POLL_PENDING_MS,
   POLL_MS,
+  getPrStatus,
   pendingIntervalMs,
   pollEveryMs,
   refreshPrStatus,
@@ -22,6 +23,7 @@ import {
   usePrPolling,
 } from './prStore';
 import type { PrStatus } from './prStatus';
+import { PR_FETCH_FAILED } from './gh';
 
 afterEach(() => {
   cleanup();
@@ -74,7 +76,7 @@ describe('usePrPolling: quiet branches with no PR or a merged one (#365)', () =>
     }
   }
 
-  it('asks a quiet branch with no PR every five minutes, an open PR every minute as before', async () => {
+  it('asks a quiet branch with no PR every five minutes once two answers said none, an open PR every minute as before', async () => {
     vi.useFakeTimers();
     const clock = { now: 1_000_000 };
     const calls: number[] = [];
@@ -83,9 +85,11 @@ describe('usePrPolling: quiet branches with no PR or a merged one (#365)', () =>
       return t.id === 1 ? null : pr('passing');
     }, () => clock.now);
     const quiet = { ...task(1), lastActivityAt: clock.now - 10_000 } as Task;
-    await pollFor(() => [quiet, task(2)], POLL_NO_PR_QUIET_MS, clock, calls);
-    expect(calls.filter((id) => id === 1)).toEqual([1]);
-    expect(calls.filter((id) => id === 2)).toHaveLength(POLL_NO_PR_QUIET_MS / POLL_MS);
+    // One "none" is not enough (search can lag a PR just opened): asked
+    // again after a minute, and only then every five.
+    await pollFor(() => [quiet, task(2)], POLL_MS + POLL_NO_PR_QUIET_MS, clock, calls);
+    expect(calls.filter((id) => id === 1)).toEqual([1, 1]);
+    expect(calls.filter((id) => id === 2)).toHaveLength((POLL_MS + POLL_NO_PR_QUIET_MS) / POLL_MS);
   });
 
   it('asks a quiet merged PR every fifteen minutes', async () => {
@@ -97,8 +101,8 @@ describe('usePrPolling: quiet branches with no PR or a merged one (#365)', () =>
       return pr('passing', 'merged');
     }, () => clock.now);
     const merged = { ...task(1), lastActivityAt: null } as Task;
-    await pollFor(() => [merged], POLL_MERGED_QUIET_MS, clock, calls);
-    expect(calls).toEqual([1]);
+    await pollFor(() => [merged], POLL_MS + POLL_MERGED_QUIET_MS, clock, calls);
+    expect(calls).toEqual([1, 1]);
   });
 
   it('asks a branch with no PR every minute again once its session writes', async () => {
@@ -113,6 +117,15 @@ describe('usePrPolling: quiet branches with no PR or a merged one (#365)', () =>
     const current = () => [{ ...task(1), lastActivityAt: activity } as Task];
     const { rerender } = renderHook(() => usePrPolling(current()));
     await act(async () => {});
+    // The second "none", a minute later.
+    for (let i = 0; i < 4; i++) {
+      clock.now += POLL_PENDING_MS;
+      rerender();
+      await act(async () => {
+        vi.advanceTimersByTime(POLL_PENDING_MS);
+      });
+    }
+    expect(calls).toEqual([1, 1]);
     calls.length = 0;
     // Quiet for two minutes: not asked.
     for (let i = 0; i < 8; i++) {
@@ -136,15 +149,67 @@ describe('usePrPolling: quiet branches with no PR or a merged one (#365)', () =>
 
   it('counts activity from when the question was sent, not answered', () => {
     const asked = 1_000;
+    const e = (p: PrStatus | null, more: { failed?: boolean; streak?: number } = {}) => ({
+      pr: p,
+      askedAt: asked,
+      failed: more.failed ?? false,
+      streak: more.streak ?? 2,
+    });
     // A PR opened while gh was on its way may not be in the answer.
-    expect(pollEveryMs({ pr: null, askedAt: asked }, { lastActivityAt: asked + 1 })).toBe(POLL_MS);
-    expect(pollEveryMs({ pr: null, askedAt: asked }, { lastActivityAt: asked })).toBe(POLL_NO_PR_QUIET_MS);
-    expect(pollEveryMs({ pr: null, askedAt: asked }, { lastActivityAt: null })).toBe(POLL_NO_PR_QUIET_MS);
-    expect(pollEveryMs({ pr: pr('passing', 'merged'), askedAt: asked }, { lastActivityAt: 0 })).toBe(POLL_MERGED_QUIET_MS);
+    expect(pollEveryMs(e(null), { lastActivityAt: asked + 1 })).toBe(POLL_MS);
+    expect(pollEveryMs(e(null), { lastActivityAt: asked })).toBe(POLL_NO_PR_QUIET_MS);
+    expect(pollEveryMs(e(null), { lastActivityAt: null })).toBe(POLL_NO_PR_QUIET_MS);
+    expect(pollEveryMs(e(pr('passing', 'merged')), { lastActivityAt: 0 })).toBe(POLL_MERGED_QUIET_MS);
+    // One answer alone, or a failed ask: the minute.
+    expect(pollEveryMs(e(null, { streak: 1 }), { lastActivityAt: null })).toBe(POLL_MS);
+    expect(pollEveryMs(e(pr('passing', 'merged'), { streak: 1 }), { lastActivityAt: null })).toBe(POLL_MS);
+    expect(pollEveryMs(e(null, { failed: true }), { lastActivityAt: null })).toBe(POLL_MS);
     // Unchanged: an open or closed PR, and a task whose activity is unknown.
-    expect(pollEveryMs({ pr: pr('passing'), askedAt: asked }, { lastActivityAt: 0 })).toBe(POLL_MS);
-    expect(pollEveryMs({ pr: pr('passing', 'closed'), askedAt: asked }, { lastActivityAt: 0 })).toBe(POLL_MS);
-    expect(pollEveryMs({ pr: null, askedAt: asked }, {})).toBe(POLL_MS);
+    expect(pollEveryMs(e(pr('passing')), { lastActivityAt: 0 })).toBe(POLL_MS);
+    expect(pollEveryMs(e(pr('passing', 'closed')), { lastActivityAt: 0 })).toBe(POLL_MS);
+    expect(pollEveryMs(e(null), {})).toBe(POLL_MS);
+  });
+
+  it('keeps the last answer when gh fails, and asks again on the minute (#365 review)', async () => {
+    vi.useFakeTimers();
+    const clock = { now: 1_000_000 };
+    const calls: number[] = [];
+    let answer: PrStatus | null | typeof PR_FETCH_FAILED = pr('passing');
+    setPrFetcherForTests(async (t) => {
+      calls.push(t.id);
+      return answer;
+    }, () => clock.now);
+    const quiet = { ...task(1), lastActivityAt: null } as Task;
+    renderHook(() => usePrPolling([quiet]));
+    await act(async () => {});
+    expect(getPrStatus(1)?.number).toBe(1);
+    // Offline: the open PR stays, not "no PR".
+    answer = PR_FETCH_FAILED;
+    await pollFor(() => [quiet], POLL_MS, clock, calls);
+    expect(calls).toEqual([1]);
+    expect(getPrStatus(1)?.number).toBe(1);
+    // Still failing: asked every minute, never backed off.
+    await pollFor(() => [quiet], 3 * POLL_MS, clock, calls);
+    expect(calls).toEqual([1, 1, 1]);
+    // Back: the answer comes through.
+    answer = null;
+    await pollFor(() => [quiet], POLL_MS, clock, calls);
+    expect(calls).toEqual([1]);
+    expect(getPrStatus(1)).toBeNull();
+  });
+
+  it('reads a failure with nothing to keep as "none", as before, and does not back off on it', async () => {
+    vi.useFakeTimers();
+    const clock = { now: 1_000_000 };
+    const calls: number[] = [];
+    setPrFetcherForTests(async (t) => {
+      calls.push(t.id);
+      return PR_FETCH_FAILED;
+    }, () => clock.now);
+    const quiet = { ...task(1), lastActivityAt: null } as Task;
+    await pollFor(() => [quiet], 3 * POLL_MS, clock, calls);
+    expect(getPrStatus(1)).toBeNull();
+    expect(calls).toEqual([1, 1, 1]);
   });
 
   it('still catches a quiet branch up on focus', async () => {

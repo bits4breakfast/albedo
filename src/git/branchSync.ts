@@ -16,7 +16,7 @@
 import { useEffect, useRef } from 'react';
 import type { Task } from '../types';
 import { updateTask } from '../db';
-import { git, listWorktreesDetailed } from './worktree';
+import { git } from './worktree';
 
 type SyncTask = Pick<Task, 'id' | 'branch' | 'worktreePath' | 'status' | 'createdBranch'> &
   Partial<Pick<Task, 'repoPath'>>;
@@ -53,18 +53,50 @@ function samePath(p: string): string {
 }
 
 /**
- * What each of a repo's worktrees has checked out, from one `git worktree
- * list` (#365): path -> branch, or null for a detached HEAD. Only worktrees
- * git can still see: one whose folder is gone (`prunable`) is left out, so
- * its tasks ask on their own as before. Null when git cannot list them.
+ * What each of a repo's worktrees has checked out (#365): path -> branch, or
+ * null for a detached HEAD, named exactly as `symbolic-ref --short HEAD`
+ * names it in that folder. Two git calls for the whole repo:
+ *
+ *  - `worktree list --porcelain` gives each folder's full ref;
+ *  - `for-each-ref` shortens them by the same rule as `symbolic-ref --short`
+ *    (`core.warnAmbiguousRefs=false` makes it the non-strict rule
+ *    symbolic-ref uses), so a branch that shares its name with a tag is
+ *    `heads/x` here too.
+ *
+ * A folder git can no longer see (`prunable`), and a branch with no commit
+ * yet (for-each-ref does not list it), are left out: their tasks ask on
+ * their own, as before. Null when git cannot list them.
  */
 export async function checkedOutBranches(repoPath: string): Promise<Map<string, string | null> | null> {
   try {
+    const listed = await git(['worktree', 'list', '--porcelain'], repoPath);
+    if (listed.code !== 0) return null;
+    const heads = new Map<string, string | null>();
+    for (const record of listed.stdout.split(/\r?\n\r?\n/)) {
+      const lines = record.split(/\r?\n/).filter((l) => l.length > 0);
+      const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
+      if (!path || lines.some((l) => l === 'bare' || l === 'prunable' || l.startsWith('prunable '))) continue;
+      const ref = lines.find((l) => l.startsWith('branch '))?.slice('branch '.length);
+      if (ref) heads.set(samePath(path), ref);
+      else if (lines.includes('detached')) heads.set(samePath(path), null);
+    }
+    const refs = [...new Set([...heads.values()].filter((r): r is string => r !== null))];
+    const short = new Map<string, string>();
+    if (refs.length > 0) {
+      const named = await git(
+        ['-c', 'core.warnAmbiguousRefs=false', 'for-each-ref', '--format=%(refname)%00%(refname:short)', '--', ...refs],
+        repoPath,
+      );
+      if (named.code !== 0) return null;
+      for (const line of named.stdout.split('\n')) {
+        const nul = line.indexOf('\0');
+        if (nul > 0) short.set(line.slice(0, nul), line.slice(nul + 1).replace(/\r$/, ''));
+      }
+    }
     const out = new Map<string, string | null>();
-    for (const w of await listWorktreesDetailed(repoPath)) {
-      if (w.prunable || w.bare) continue;
-      if (w.branch !== null) out.set(samePath(w.path), w.branch);
-      else if (w.detached) out.set(samePath(w.path), null);
+    for (const [path, ref] of heads) {
+      if (ref === null) out.set(path, null);
+      else if (short.has(ref)) out.set(path, short.get(ref)!);
     }
     return out;
   } catch {
