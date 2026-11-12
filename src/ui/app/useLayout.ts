@@ -74,6 +74,40 @@ const rightTabCodec: Codec<RightTab> = {
   encode: (tab) => (tab === 'editor' || tab === 'guide' ? undefined : tab),
 };
 
+/**
+ * The styles the resized panes get. App renders them, and a drag writes the
+ * same strings straight to the element (#364), so the two never disagree.
+ */
+export const sidebarStyle = (w: number) => ({ width: w, flexBasis: w });
+export const ratioFlex = (ratio: number) => `0 0 ${(ratio * 100).toFixed(2)}%`;
+export const filesFlex = (w: number) => `0 0 ${Math.round(w)}px`;
+export const shellFlex = (h: number) => `0 0 ${h}px`;
+
+/**
+ * Whether the pinned files column shows, beside a terminal (`shown`) and in
+ * the project view's read area, which has none (`shownAlone`).
+ */
+export function columnFits(s: {
+  mode: PaneMode;
+  orientation: Orientation;
+  ratio: number;
+  panesWidth: number;
+  filesWidth: number;
+  filesPinned: boolean;
+}): { shown: boolean; shownAlone: boolean } {
+  const readAreaWidth =
+    s.mode === 'pty'
+      ? 0
+      : s.mode === 'split' && s.orientation === 'row'
+        ? s.panesWidth * (1 - s.ratio)
+        : s.panesWidth;
+  const fits = readAreaWidth >= s.filesWidth + READ_MIN;
+  return {
+    shown: s.filesPinned && s.mode !== 'pty' && fits,
+    shownAlone: s.filesPinned && s.panesWidth >= s.filesWidth + READ_MIN,
+  };
+}
+
 export default function useLayout() {
   const [sidebarWidth, setSidebarWidth] = usePersisted(KEYS.sidebarWidth, sidebarCodec, SIDEBAR_DEFAULT);
   /**
@@ -104,17 +138,11 @@ export default function useLayout() {
   const mainRef = useRef<HTMLElement | null>(null);
 
   const panesRef = useRef<HTMLDivElement | null>(null);
-
-  // Measure the pane row, not the read pane: the read pane's width DEPENDS on
-  // whether the column is showing, so observing it would feed back on itself.
-  useEffect(() => {
-    const el = panesRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => setPanesWidth(el.clientWidth));
-    observer.observe(el);
-    setPanesWidth(el.clientWidth);
-    return () => observer.disconnect();
-  }, []);
+  /** The elements a drag resizes; App gives each the style below. */
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const ptyPaneRef = useRef<HTMLElement | null>(null);
+  const filesPaneRef = useRef<HTMLElement | null>(null);
+  const shellPaneRef = useRef<HTMLElement | null>(null);
 
   /**
    * Is there room for the column, right now?
@@ -124,86 +152,175 @@ export default function useLayout() {
    * is the difference between a layout that adapts and a preference that
    * evaporates on resize and never returns.
    */
-  const readAreaWidth =
-    mode === 'pty'
-      ? 0
-      : mode === 'split' && orientation === 'row'
-        ? panesWidth * (1 - ratio)
-        : panesWidth;
-  const filesColumnFits = readAreaWidth >= filesWidth + READ_MIN;
-  const filesColumnShown = filesPinned && mode !== 'pty' && filesColumnFits;
+  const fits = columnFits({ mode, orientation, ratio, panesWidth, filesWidth, filesPinned });
+  const filesColumnShown = fits.shown;
   /**
    * The same answer for a read area with no terminal beside it -- the project
    * view's (#181), which takes the whole row whatever the mode.
    */
-  const filesColumnShownAlone = filesPinned && panesWidth >= filesWidth + READ_MIN;
+  const filesColumnShownAlone = fits.shownAlone;
 
   // --- splitter drags ------------------------------------------------------
+  //
+  // A drag used to set state on every pointer move, re-rendering the whole
+  // app (and writing localStorage) per move (#364). Now the dragged element
+  // is given its new size directly, with the very style string a render
+  // would write, and the value is committed once, on release. What is drawn
+  // is the same at every move: a value that would change what renders --
+  // the files column showing or not, at a width or ratio past where it fits
+  // -- is committed at once, as before, and so is any move a direct write
+  // cannot stand for (the pane not there, or not laid out by that value).
 
-  const startSidebarDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragging('sidebar');
-    const move = (ev: PointerEvent) => setSidebarWidth(clamp(ev.clientX, SIDEBAR_MIN, SIDEBAR_MAX));
+  /** What was last rendered, for the drag handlers. */
+  const drawn = useRef({ mode, orientation, ratio, filesWidth, filesPinned, panesWidth, taskListCollapsed, fits });
+  drawn.current = { mode, orientation, ratio, filesWidth, filesPinned, panesWidth, taskListCollapsed, fits };
+  /** The pane row's latest width; state only when it changes what renders, while a drag is on. */
+  const panesWidthRef = useRef(0);
+  /** The value being dragged, not yet committed, as it bears on the column. */
+  const dragOverride = useRef<{ ratio?: number; filesWidth?: number } | null>(null);
+
+  /** Would the files column show differently from what is drawn, with the drag's value? */
+  const columnWouldChange = (override: { ratio?: number; filesWidth?: number }): boolean => {
+    const d = drawn.current;
+    const next = columnFits({ ...d, ...override, panesWidth: panesWidthRef.current });
+    return next.shown !== d.fits.shown || next.shownAlone !== d.fits.shownAlone;
+  };
+
+  // Measure the pane row, not the read pane: the read pane's width DEPENDS on
+  // whether the column is showing, so observing it would feed back on itself.
+  useEffect(() => {
+    const el = panesRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      panesWidthRef.current = el.clientWidth;
+      // While a drag is on (the task list's moves this row), only a width
+      // that changes what renders is state; release commits the rest.
+      const override = dragOverride.current;
+      if (override === null || columnWouldChange(override)) setPanesWidth(el.clientWidth);
+    });
+    observer.observe(el);
+    panesWidthRef.current = el.clientWidth;
+    setPanesWidth(el.clientWidth);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * One drag: `at` turns a pointer position into the value, `paint` writes it
+   * to the element and says whether it could, `commit` sets the state, and
+   * `override` says what the value means for the files column.
+   */
+  const drag = (
+    kind: Exclude<Dragging, null>,
+    at: (ev: PointerEvent) => number,
+    paint: (value: number) => boolean,
+    commit: (value: number) => void,
+    override: (value: number) => { ratio?: number; filesWidth?: number },
+  ) => {
+    setDragging(kind);
+    let last: number | null = null;
+    dragOverride.current = {};
+    const move = (ev: PointerEvent) => {
+      const value = at(ev);
+      last = value;
+      const o = override(value);
+      dragOverride.current = o;
+      // Painted first, so the element has the value even when a commit follows.
+      const painted = paint(value);
+      if (!painted || columnWouldChange(o)) {
+        commit(value);
+        setPanesWidth(panesWidthRef.current);
+      }
+    };
     const up = () => {
+      if (last !== null) commit(last);
+      setPanesWidth(panesWidthRef.current);
+      dragOverride.current = null;
       setDragging(null);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+  };
+
+  const startSidebarDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    drag(
+      'sidebar',
+      (ev) => clamp(ev.clientX, SIDEBAR_MIN, SIDEBAR_MAX),
+      (w) => {
+        const el = sidebarRef.current;
+        // Collapsed, the rail has no width of its own to set (App.tsx).
+        if (!el || drawn.current.taskListCollapsed) return false;
+        const s = sidebarStyle(w);
+        el.style.width = `${s.width}px`;
+        el.style.flexBasis = `${s.flexBasis}px`;
+        return true;
+      },
+      setSidebarWidth,
+      () => ({}),
+    );
   };
 
   const startSplitDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const rect = panesRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setDragging('split');
-    const move = (ev: PointerEvent) => {
-      const next =
-        orientation === 'row'
-          ? (ev.clientX - rect.left) / rect.width
-          : (ev.clientY - rect.top) / rect.height;
-      setRatio(clamp(next, RATIO_MIN, RATIO_MAX));
-    };
-    const up = () => {
-      setDragging(null);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    drag(
+      'split',
+      (ev) =>
+        clamp(
+          orientation === 'row' ? (ev.clientX - rect.left) / rect.width : (ev.clientY - rect.top) / rect.height,
+          RATIO_MIN,
+          RATIO_MAX,
+        ),
+      (r) => {
+        const el = ptyPaneRef.current;
+        // Only split mode lays the terminal out by the ratio (App.tsx).
+        if (!el || drawn.current.mode !== 'split') return false;
+        el.style.flex = ratioFlex(r);
+        return true;
+      },
+      setRatio,
+      (r) => ({ ratio: r }),
+    );
   };
 
   const startFilesDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const rect = panesRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setDragging('files');
-    const move = (ev: PointerEvent) =>
-      setFilesWidth(clamp(rect.right - ev.clientX, FILES_MIN, FILES_MAX));
-    const up = () => {
-      setDragging(null);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    drag(
+      'files',
+      (ev) => clamp(rect.right - ev.clientX, FILES_MIN, FILES_MAX),
+      (w) => {
+        const el = filesPaneRef.current;
+        if (!el) return false;
+        el.style.flex = filesFlex(w);
+        return true;
+      },
+      setFilesWidth,
+      (w) => ({ filesWidth: w }),
+    );
   };
 
   const startShellDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const rect = mainRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setDragging('shell');
-    const move = (ev: PointerEvent) =>
-      setShellHeight(clamp(rect.bottom - ev.clientY, SHELL_MIN, Math.max(SHELL_MIN, rect.height - SHELL_PANES_MIN)));
-    const up = () => {
-      setDragging(null);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    drag(
+      'shell',
+      (ev) => clamp(rect.bottom - ev.clientY, SHELL_MIN, Math.max(SHELL_MIN, rect.height - SHELL_PANES_MIN)),
+      (h) => {
+        const el = shellPaneRef.current;
+        if (!el) return false;
+        el.style.flex = shellFlex(h);
+        return true;
+      },
+      setShellHeight,
+      () => ({}),
+    );
   };
 
   return {
@@ -228,6 +345,10 @@ export default function useLayout() {
     shellHeight,
     mainRef,
     panesRef,
+    sidebarRef,
+    ptyPaneRef,
+    filesPaneRef,
+    shellPaneRef,
     startSidebarDrag,
     startSplitDrag,
     startFilesDrag,

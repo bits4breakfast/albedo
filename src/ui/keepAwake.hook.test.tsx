@@ -30,10 +30,14 @@ vi.mock('./Terminal', () => ({
 }));
 
 let background: Record<string, unknown>[] = [];
+/** Sessions looked up, in order. */
+const lookups: string[] = [];
 vi.mock('../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db')>()),
-  backgroundRowsSince: async (): Promise<Message[]> =>
-    background.flatMap((line, i) => parseLine(JSON.stringify(line), i).map((m) => ({ ...m, id: i + 1, taskId: 1, agentId: null }))),
+  backgroundRowsSince: async (sessionId: string): Promise<Message[]> => {
+    lookups.push(sessionId);
+    return background.flatMap((line, i) => parseLine(JSON.stringify(line), i).map((m) => ({ ...m, id: i + 1, taskId: 1, agentId: null })));
+  },
 }));
 
 const { useKeepAwake, keepAwakeEnabled, setKeepAwakeEnabled } = await import('./keepAwake');
@@ -49,6 +53,7 @@ const mk = (id: number, status: Task['status']): Task => ({ ...base, id, status,
 let data: Map<string, string>;
 beforeEach(() => {
   calls.length = 0;
+  lookups.length = 0;
   live.clear();
   background = [];
   data = new Map();
@@ -148,6 +153,67 @@ describe('useKeepAwake', () => {
       for (const cb of presence) cb(1, true);
     });
     await waitFor(() => expect(result.current).toBe(1));
+  });
+});
+
+describe('switched off (#364)', () => {
+  it('looks nothing up, and counts background work again once switched on', async () => {
+    const spawned = Date.now() - 60_000;
+    live.set(1, spawned);
+    background = backgroundShell('t1', 'b1', spawned + 1_000);
+    const { result, rerender } = renderHook(({ tasks, on }) => useKeepAwake(tasks, on), {
+      initialProps: { tasks: [mk(1, 'idle')], on: false },
+    });
+    await act(async () => {});
+    expect(lookups).toEqual([]);
+    expect(result.current).toBe(0);
+    expect(calls).toEqual([]);
+
+    // Tasks change, a terminal comes and goes: still nothing to look up.
+    rerender({ tasks: [mk(1, 'idle'), mk(2, 'idle')], on: false });
+    live.set(2, spawned);
+    act(() => {
+      for (const cb of presence) cb(2, true);
+    });
+    await act(async () => {});
+    expect(lookups).toEqual([]);
+
+    // Both terminals are live, and both sessions have the shell running.
+    rerender({ tasks: [mk(1, 'idle'), mk(2, 'idle')], on: true });
+    await waitFor(() => expect(result.current).toBe(2));
+    expect([...lookups].sort()).toEqual(['s1', 's2']);
+    expect(calls.at(-1)).toEqual({ on: true, reason: '2 Claude Code tasks running' });
+  });
+
+  it('switched off while holding for background work: released, and its lookups stop', async () => {
+    const spawned = Date.now() - 60_000;
+    live.set(1, spawned);
+    background = backgroundShell('t1', 'b1', spawned + 1_000);
+    const { result, rerender } = renderHook(({ tasks, on }) => useKeepAwake(tasks, on), {
+      initialProps: { tasks: [mk(1, 'idle')], on: true },
+    });
+    await waitFor(() => expect(result.current).toBe(1));
+    lookups.length = 0;
+
+    rerender({ tasks: [mk(1, 'idle')], on: false });
+    await act(async () => {});
+    expect(result.current).toBe(0);
+    expect(calls.at(-1)).toEqual({ on: false, reason: '' });
+    rerender({ tasks: [{ ...mk(1, 'idle'), title: 'renamed' }], on: false });
+    await act(async () => {});
+    expect(lookups).toEqual([]);
+  });
+
+  it('a running task holds at once when switched on, before any lookup lands', async () => {
+    const { result, rerender } = renderHook(({ tasks, on }) => useKeepAwake(tasks, on), {
+      initialProps: { tasks: [mk(1, 'running')], on: false },
+    });
+    await act(async () => {});
+    expect(calls).toEqual([]);
+    rerender({ tasks: [mk(1, 'running')], on: true });
+    expect(result.current).toBe(1);
+    await act(async () => {});
+    expect(calls).toEqual([{ on: true, reason: '1 Claude Code task running' }]);
   });
 });
 

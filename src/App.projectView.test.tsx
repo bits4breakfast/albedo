@@ -264,6 +264,53 @@ describe('the project view', () => {
     expect(await screen.findByText('README.md')).toBeTruthy();
   });
 
+  it('pinned as a column that fits: one tree, the column’s, and one `git status` on focus (#364)', async () => {
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 4000 });
+    try {
+      store.set(KEYS.activeProject, 'p2');
+      store.set(KEYS.filesPinned, '1');
+      render(<App />);
+      await settle();
+      const trees = await screen.findAllByText('README.md');
+      expect(trees).toHaveLength(1);
+      expect(trees[0]!.closest('.pane-files')).not.toBeNull();
+      expect(screen.queryByRole('tab', { name: 'Files' })).toBeNull();
+      // Coming back to the window looks again, once: it used to be twice,
+      // once more for the hidden tab's copy.
+      gitCalls.length = 0;
+      act(() => void window.dispatchEvent(new Event('focus')));
+      await settle();
+      expect(gitCalls.filter((c) => c.args[0] === 'status' && c.cwd === '/code/infra')).toHaveLength(1);
+    } finally {
+      // jsdom defines clientWidth on Element: put back exactly what was there.
+      if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
+  });
+
+  it('not pinned: one tree, in the Files tab', async () => {
+    store.set(KEYS.activeProject, 'p2');
+    render(<App />);
+    await settle();
+    const trees = await screen.findAllByText('README.md');
+    expect(trees).toHaveLength(1);
+    expect(document.querySelector('.pane-files')).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Files' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('pinned, but no room for the column: the tree is in the tab', async () => {
+    store.set(KEYS.activeProject, 'p2');
+    store.set(KEYS.filesPinned, '1');
+    render(<App />);
+    await settle();
+    const trees = await screen.findAllByText('README.md');
+    expect(trees).toHaveLength(1);
+    expect(document.querySelector('.pane-files')).toBeNull();
+    // Named with the pin hint: pinned, but a tab for now.
+    expect(screen.getByRole('tab', { name: /^Files/ }).getAttribute('aria-selected')).toBe('true');
+  });
+
   it('switching to another tab and back lands where each was left', async () => {
     store.set(KEYS.activeProject, 'p1');
     store.set(KEYS.selectedTask, '10');
