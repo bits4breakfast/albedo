@@ -36,9 +36,17 @@ export const ACK_BYTES = 128 * 1024;
 export interface PtyHandlers {
   /**
    * Raw bytes, in order. Call `done` once they have been written -- for xterm,
-   * pass it as `write`'s callback. A consumer that never calls it does not
-   * hang the process (Rust stops waiting after a second without any report),
-   * but it loses the pacing, so a flood queues up in the page again.
+   * pass it as `write`'s callback.
+   *
+   * Every delivered chunk's `done` MUST be called, once, even if the bytes are
+   * thrown away (`writeOutput` in src/ui/terminalOutput.ts does this). Bytes
+   * delivered and never reported stay counted in Rust for the rest of the
+   * session and shrink the 1 MB window for good. A consumer that skips `done`
+   * while the pty lives on reaches the pause and then stalls: each report that
+   * does arrive (about one per 128 KB) re-arms the pause, which then waits the
+   * full second before giving up -- a freeze of up to 1 s per ~128 KB. A
+   * consumer that stops for good (it is unmounting) must kill the pty, or
+   * `detach`, which reports whatever arrives afterwards itself.
    */
   onOutput: (bytes: Uint8Array, done: () => void) => void;
   /**
@@ -108,6 +116,9 @@ export async function spawnPty(opts: PtySpawnOptions, handlers: PtyHandlers): Pr
   let id = '';
   let unreported = 0;
   let ackFailed = false;
+  // The only path to Rust's count (`HIGH_WATER` in pty.rs): it moves only
+  // when the consumer calls `done`, so every delivered chunk must reach here
+  // exactly once -- see `PtyHandlers.onOutput`.
   const processed = (n: number) => {
     unreported += n;
     if (unreported < ACK_BYTES) return;
