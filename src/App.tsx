@@ -1,4 +1,3 @@
-import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from './types';
@@ -20,13 +19,14 @@ import useBrowseTask from './ui/app/useBrowseTask';
 import useSpawnPlan from './ui/app/useSpawnPlan';
 import useReadingTab from './ui/app/useReadingTab';
 import useEditorRequests from './ui/app/useEditorRequests';
+import useAppShortcuts from './ui/app/useAppShortcuts';
 import ProjectTabs from './ui/app/ProjectTabs';
 import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
 import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import { seenUpdate } from './ui/taskGroups';
-import { createPrPrompt, resolveConflictsPrompt, pushPrompt } from './ui/gitPrompts';
+import { createPrPrompt, resolveConflictsPrompt } from './ui/gitPrompts';
 import { sendPrompt } from './ui/sendPrompt';
 import { useMeasuredBase } from './ui/useMeasuredBase';
 import Subagents from './ui/Subagents';
@@ -41,15 +41,13 @@ import {
   watchFocus,
   type AttentionKind,
 } from './ui/attention';
-import { GUIDE_KEY_EXCEPT, TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
-import { stepProjectTab } from './ui/projectStep';
 import ShortcutsHelp from './ui/ShortcutsHelp';
 import QuickOpen from './ui/QuickOpen';
 import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { focusPty, hasLivePty } from './ui/Terminal';
 import TerminalStack from './ui/TerminalStack';
-import { focusArea, modalOpen, useFocusAreaCycle } from './ui/focusAreas';
+import { modalOpen } from './ui/focusAreas';
 import { RemoteLink, remoteControlItem, useRemotePending } from './ui/RemoteMark';
 import { taskMenuItems, type TaskActions } from './ui/taskMenuItems';
 import { useTaskMenuFacts } from './ui/useTaskMenuFacts';
@@ -77,7 +75,7 @@ import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
 import ProjectBar from './ui/ProjectBar';
 import EditorTabs from './ui/editor/EditorTabs';
-import { onComposerInsert, onShowTranscriptRequest, requestAttach, sendWaitingComments } from './ui/transcript/composerBridge';
+import { onComposerInsert, onShowTranscriptRequest } from './ui/transcript/composerBridge';
 import GuidePane from './guide/GuidePane';
 import ReviewUpdateBand from './ui/ReviewUpdateBand';
 import { runReviewUpdate } from './guide/copyUpdate';
@@ -93,7 +91,7 @@ import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
 import { deleteTask, getTask } from './db';
 import { endTaskEvents } from './capture/hookEvents';
-import { composeWorktreePath, listBranches, listWorktrees, probePath, unmergedCommits } from './git/worktree';
+import { composeWorktreePath, listBranches, listWorktrees, probePath } from './git/worktree';
 import ImportProjects from './ui/ImportProjects';
 import MoveTaskDialog from './ui/MoveTaskDialog';
 import MoreGlyph from './ui/MoreGlyph';
@@ -768,27 +766,6 @@ export default function App() {
     };
   }, []);
 
-  const stepReadingTab = useCallback(
-    (delta: number) => {
-      const tabs = readingTabs;
-      if (tabs.length < 2) return;
-      const at = tabs.indexOf(activeTab);
-      const next = tabs[(((at === -1 ? 0 : at) + delta) % tabs.length + tabs.length) % tabs.length];
-      if (next) setRightTab(next);
-    },
-    [readingTabs, activeTab],
-  );
-
-  // Text size (HIG: macOS has no Dynamic Type, so the app offers its own).
-  const zoomRef = useRef(storedZoom());
-  useEffect(() => {
-    if (zoomRef.current !== 1) void applyZoom(zoomRef.current);
-  }, []);
-  const zoomTo = (z: number) => {
-    zoomRef.current = z;
-    void applyZoom(z);
-  };
-
   /**
    * Open the palette in a mode, or close it if it is already showing that mode.
    * Pressing another mode's keys while it is open switches mode and keeps the
@@ -805,9 +782,6 @@ export default function App() {
     setQuickOpen(current === next ? null : next);
   }, []);
   const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
-  useDoubleShift(() => toggleQuickOpen('all'));
-  // Tab / Ctrl+Tab between the message box, terminal, Files and task list.
-  useFocusAreaCycle();
 
   /** Find in Files (⇧⌘F): same guards as the palette -- a folder, and no other modal. */
   const [findOpen, setFindOpen] = useState(false);
@@ -826,145 +800,27 @@ export default function App() {
     [editorTask, editorActivePath],
   );
 
-  /**
-   * ⇧⌘P: what the Files pane's Push does, for the selected task -- the same
-   * prompt, through the same path (submitted on an idle session, otherwise
-   * left in the message box). The message box lives in the transcript, so in
-   * terminal-only mode a busy task gets the split view and a second try.
-   */
-  const pushSelected = async () => {
-    const task = selected;
-    // A chat has no branch to push, and the Files pane offers no Push for it.
-    if (!task || task.status === 'archived' || task.kind === 'chat') return;
-    // As the Files pane: on no branch there is nothing to push, and pushing a
-    // stale detached copy could overwrite the branch with old commits.
-    const remote = await unmergedCommits(task.worktreePath, task.baseBranch).catch(() => null);
-    if (remote?.detached) {
-      console.warn('[push] HEAD is detached in', task.worktreePath, '- nothing to push');
-      return;
-    }
-    const text = pushPrompt(task);
-    if ((await sendPrompt(task, text)) !== 'failed') return;
-    setMode((m) => (m === 'pty' ? 'split' : m));
-    await new Promise((resolve) => window.setTimeout(resolve, 150));
-    if ((await sendPrompt(task, text)) === 'failed') {
-      console.warn('[push] no live session or message box for task', task.id);
-    }
-  };
-
-  const startRename = () => {
-    if (!selected || modalOpen()) return;
-    setRenaming({ id: selected.id, by: 'key' });
-  };
-
-  const stepProject = (delta: number) => {
-    if (!showTabs) return;
-    const key = stepProjectTab(tabs.map((t) => t.key), activeProjectTab?.key ?? null, delta);
-    if (key) switchTab(key);
-  };
-
-  useShortcuts({
-    // PhpStorm's keymap. Live while typing: nothing in a text field, the
-    // terminal included, binds ⌘O (Ctrl+O is left alone -- see shortcuts.ts).
-    'mod+shift+o': () => toggleQuickOpen('file'),
-    'mod+o': () => toggleQuickOpen('class'),
-    'mod+alt+o': () => toggleQuickOpen('symbol'),
-    'mod+shift+f': toggleFind,
-    'mod+shift+p': () => void pushSelected(),
-    // Remote Control, after a confirmation. Heard in the capture phase so it
-    // works wherever focus is (shortcuts.ts). Only where the ⋯ item is
-    // offered: a selected task with a live session and Remote Control off.
-    // Already on, it does nothing -- the Remote mark beside the title opens
-    // the session. Never over another dialog, as the palette.
-    'mod+shift+r': {
-      phase: 'capture',
-      run: () => {
-        if (!selected || !remoteItem) return;
-        if (modalOpen()) return;
-        setRemoteConfirmFor(selected.id);
-      },
-    },
-    // The selected task's Review Guide (#207), as its ⋯ item. Not for a chat,
-    // which has no branch to guide; not over a dialog; and not in the editor,
-    // where ⇧⌘G is Find Previous (shortcuts.ts).
-    'mod+shift+g': {
-      whenTyping: 'ignore',
-      typingExcept: GUIDE_KEY_EXCEPT,
-      run: () => {
-        if (!selected || selected.kind === 'chat') return;
-        if (modalOpen()) return;
-        // The key, unlike a click, takes focus into the guide (#217).
-        requestGuide(selected.id, { focus: true });
-      },
-    },
-    // Straight to a reading tab (#256), beside ⇧⌘G. Shown even from PTY
-    // only, as ⌘U does. Not over a dialog.
-    'mod+shift+t': () => {
-      if (!selected || projectView) return;
-      if (modalOpen()) return;
-      setRightTab('transcript');
-      setMode((m) => (m === 'pty' ? 'split' : m));
-    },
-    'mod+shift+e': () => {
-      if (!selected && !projectView) return;
-      if (modalOpen()) return;
-      setMode((m) => (m === 'pty' ? 'split' : m));
-      // Pinned as a column, Files has no tab: go into the column instead.
-      if (filesColumnShown) {
-        const col = document.querySelector<HTMLElement>('[data-focus-area="files"]');
-        if (col) focusArea(col);
-        return;
-      }
-      setRightTab('files');
-    },
-    // Send the selected task's waiting comments, from anywhere (#258): the
-    // transcript then shows, where the message lands, sent or held.
-    'mod+shift+s': () => {
-      if (!selected) return;
-      if (modalOpen()) return;
-      sendWaitingComments(selected.id);
-    },
-    // The message box is in the transcript: show it, then ask it to attach.
-    'mod+u': () => {
-      if (!selected) return;
-      const id = selected.id;
-      setRightTab('transcript');
-      setMode((m) => (m === 'pty' ? 'split' : m));
-      if (!requestAttach(id)) window.setTimeout(() => requestAttach(id), 150);
-    },
-    'alt+f12': () => setShellOpen((o) => !o),
-    'mod+t': () => setShellOpen((o) => !o),
-    'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
-    'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
-    'mod+0': () => zoomTo(1),
-    'mod+/': () => setShortcutsOpen((o) => !o),
-    // The nth project tab, as shown in the bar. Nothing to do without one.
-    'mod+alt+digit': (_e, digit) => {
-      const tab = showTabs && digit !== null ? tabs[digit - 1] : undefined;
-      if (tab) switchTab(tab.key);
-    },
-    // The previous / next tab, stopping at the ends; lands like the digit above.
-    // The task list as a rail of group counts, or back (#266). Live while
-    // typing, as ⇧⌘T: no field claims ⌥⌘T (shortcuts.ts). Not over a dialog.
-    'mod+alt+t': () => {
-      if (modalOpen()) return;
-      setTaskListCollapsed((c) => !c);
-    },
-    'mod+shift+[': () => stepProject(-1),
-    'mod+shift+]': () => stepProject(1),
-    // Only where the switch is shown: not over the editor (see the switch).
-    'mod+\\': () => {
-      if (!editorShowing) setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty'));
-    },
-    // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
-    // field, and this app has a composer, a title input and a code editor.
-    'mod+arrowleft': { run: () => stepReadingTab(-1), whenTyping: 'ignore' },
-    'mod+arrowright': { run: () => stepReadingTab(1), whenTyping: 'ignore' },
-    // PhpStorm's Rename, and F2. Live in the task terminal, which gives them
-    // up; not in a text field, the editor or the shell drawer (shortcuts.ts).
-    // Never over a dialog.
-    'shift+f6': { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
-    f2: { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
+  useAppShortcuts({
+    readingTabs,
+    activeTab,
+    setRightTab,
+    toggleQuickOpen,
+    toggleFind,
+    selected,
+    setMode,
+    remoteItem,
+    setRemoteConfirmFor,
+    projectView,
+    filesColumnShown,
+    setShellOpen,
+    setShortcutsOpen,
+    showTabs,
+    tabs,
+    switchTab,
+    activeProjectTab,
+    setTaskListCollapsed,
+    editorShowing,
+    setRenaming,
   });
 
   // --- render --------------------------------------------------------------
