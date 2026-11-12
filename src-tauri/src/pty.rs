@@ -111,7 +111,7 @@ const READER_GRACE: Duration = Duration::from_millis(250);
 /// the variable after layer 1 has already run, and the billing bug is silently
 /// back. Verified: with only layer 1, a key exported from `.zshrc` reaches the
 /// child; with layer 2, it does not.
-pub(crate) const STRIPPED_ENV: [&str; 3] = [
+const STRIPPED_ENV: [&str; 3] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
@@ -207,6 +207,40 @@ impl PtyRegistry {
             .map(|d| d.as_millis())
             .unwrap_or(0);
         format!("pty-{millis:x}-{n}")
+    }
+
+    /// Ends every session when Albedo quits (#360). Closing the masters on
+    /// exit only HUPs each foreground group, and the SIGKILL that
+    /// [`terminate`] sends after [`KILL_GRACE`] never comes because the app is
+    /// gone by then -- so a dev server that ignores SIGHUP, or anything else
+    /// in a group, outlived the quit.
+    ///
+    /// SIGHUP to every group now, wait up to `grace` for them to exit, then
+    /// SIGKILL every group whether or not its leader went, as `terminate`
+    /// does. Blocks for at most `grace`.
+    pub fn shutdown(&self, grace: Duration) {
+        shutdown(&self.sessions, grace);
+    }
+}
+
+fn shutdown(sessions: &Sessions, grace: Duration) {
+    // Collected under the lock and signalled after it: the pump deregisters a
+    // session under the same lock when its child exits, so waiting while
+    // holding it would stall every exit until the deadline.
+    let groups: Vec<(libc::pid_t, Arc<Latch>)> = sessions
+        .lock()
+        .values()
+        .map(|s| (s.pgid, Arc::clone(&s.exited)))
+        .collect();
+    for (pgid, _) in &groups {
+        signal_group(*pgid, libc::SIGHUP);
+    }
+    let deadline = Instant::now() + grace;
+    for (_, exited) in &groups {
+        exited.wait(deadline.saturating_duration_since(Instant::now()));
+    }
+    for (pgid, _) in &groups {
+        signal_group(*pgid, libc::SIGKILL);
     }
 }
 
@@ -333,6 +367,27 @@ pub(crate) fn shell_script(shell: &str, opts: &SpawnOptions) -> String {
     format!("cd {} || exit 1; {unset}; {exec}", shell_quote(&opts.cwd))
 }
 
+/// The login shell's argv, after the shell itself: `-l -i -c <script>`. One
+/// copy for every path that runs a command through the login shell (the ptys
+/// here, the one-shot run in oneshot.rs); see [`build_command`] for why `-l -i`.
+pub(crate) fn login_shell_invocation(shell: &str, opts: &SpawnOptions) -> [String; 4] {
+    [
+        "-l".to_string(),
+        "-i".to_string(),
+        "-c".to_string(),
+        shell_script(shell, opts),
+    ]
+}
+
+/// Layer 1 of the strip (layer 2 is the `unset` in [`shell_script`]): calls
+/// `remove` once per variable in [`STRIPPED_ENV`]. A callback so the same list
+/// serves portable-pty's `CommandBuilder` and std's `Command`.
+pub(crate) fn strip_env(mut remove: impl FnMut(&str)) {
+    for key in STRIPPED_ENV {
+        remove(key);
+    }
+}
+
 /// Build the child's command line and environment.
 ///
 /// The command is **not** spawned directly. portable-pty resolves a bare
@@ -364,10 +419,9 @@ pub(crate) fn shell_script(shell: &str, opts: &SpawnOptions) -> String {
 /// rest of the work here is subtractive.
 fn build_command(shell: &str, opts: &SpawnOptions) -> CommandBuilder {
     let mut cmd = CommandBuilder::new(shell);
-    cmd.arg("-l");
-    cmd.arg("-i");
-    cmd.arg("-c");
-    cmd.arg(shell_script(shell, opts));
+    for arg in login_shell_invocation(shell, opts) {
+        cmd.arg(arg);
+    }
     cmd.cwd(&opts.cwd);
 
     // Caller-supplied extras first, so the two policies below can override
@@ -387,9 +441,7 @@ fn build_command(shell: &str, opts: &SpawnOptions) -> CommandBuilder {
     // Layer 1 of the strip: removes what Albedo itself inherited, before the
     // shell starts. Applied after the caller's env so a stray key cannot be
     // reintroduced from the frontend either. Layer 2 lives in shell_script.
-    for key in STRIPPED_ENV {
-        cmd.env_remove(key);
-    }
+    strip_env(|key| cmd.env_remove(key));
 
     cmd
 }
@@ -1102,6 +1154,53 @@ mod tests {
             group_is_gone(pgid),
             "something in group {pgid} survived the kill"
         );
+    }
+
+    #[test]
+    fn shutdown_ends_every_group_including_what_ignores_sighup() {
+        let sessions = Sessions::default();
+        let (polite, polite_rx) = launch_sh(&sessions, "a", "p", "sleep 30 & echo up; wait");
+        let (stubborn, stubborn_rx) =
+            launch_sh(&sessions, "b", "p", "trap '' HUP; sleep 30 & echo up; wait");
+        until_output(&polite_rx, "up");
+        until_output(&stubborn_rx, "up");
+
+        let started = Instant::now();
+        shutdown(&sessions, Duration::from_millis(300));
+        let took = started.elapsed();
+        // Never longer than the grace (plus scheduling), unlike terminate's 2 s.
+        assert!(took < Duration::from_millis(1000), "{took:?}");
+
+        assert!(group_is_gone(polite), "group {polite} survived the quit");
+        assert!(
+            group_is_gone(stubborn),
+            "group {stubborn} survived the quit"
+        );
+        let (_, code) = until_exit(&stubborn_rx, Duration::from_secs(3));
+        assert!(code.is_some_and(|c| c != 0), "{code:?}");
+    }
+
+    #[test]
+    fn shutdown_returns_at_once_when_every_group_leaves_on_sighup() {
+        let sessions = Sessions::default();
+        let (pgid, rx) = launch_sh(&sessions, "a", "p", "echo up; exec sleep 30");
+        until_output(&rx, "up");
+
+        let started = Instant::now();
+        shutdown(&sessions, Duration::from_secs(5));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "waited the whole grace: {:?}",
+            started.elapsed()
+        );
+        assert!(group_is_gone(pgid));
+    }
+
+    #[test]
+    fn shutdown_with_no_sessions_does_nothing() {
+        let started = Instant::now();
+        shutdown(&Sessions::default(), Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 
     // The next three pin what portable-pty does for us on spawn and resize,

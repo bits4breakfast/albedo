@@ -19,6 +19,7 @@
 
 import { assertValidRefName, isValidRefName } from './slug';
 import { expandTilde, normalizePath } from './reconcile';
+import { withoutAnthropicKeys } from '../lib/spawnEnv';
 
 // ---------------------------------------------------------------------------
 // Public surface (docs/ARCHITECTURE.md)
@@ -148,7 +149,9 @@ let runner: GitRunner = async (args, cwd, env) => {
   // Lazy import: keeps `@tauri-apps/plugin-shell` out of the module graph for
   // the pure-parser unit tests, which run in plain node.
   const { Command } = await import('@tauri-apps/plugin-shell');
-  const opts = cwd || env ? { ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) } : undefined;
+  // The Anthropic credentials are always blanked: git runs hooks, and a hook
+  // may start `claude` (hard rule 3).
+  const opts = { ...(cwd ? { cwd } : {}), env: withoutAnthropicKeys(env) };
   const child = await Command.create('git', args, opts).execute();
   return { code: child.code, stdout: child.stdout, stderr: child.stderr };
 };

@@ -135,6 +135,8 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Pruning by "not in the list I just read" keeps anything written since the read began (`readStartedAt`); a read cannot speak for what is newer than itself.
   - The same applies to every store pruned against the task list that can hold something for a task just made (drafts, outbox).
 
+- **A kill whose second half never ran on quit.** Closing a task HUPs its process group and SIGKILLs it 2 s later from a timer thread, but quitting Albedo released only keep-awake: the closed pty masters HUPed each foreground group, the timer died with the app, and a dev server ignoring SIGHUP kept running (#360, audit). **Rule:** a cleanup that relies on a delayed step also runs that step, bounded, on the exit path (`PtyRegistry::shutdown`).
+
 ## Data and contracts
 
 - **`schema.sql` is migration v1 and is never edited.** tauri-plugin-sql checksums applied migrations. New columns go in a new numbered migration, registered in `src-tauri/src/lib.rs`.
@@ -182,6 +184,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - Never give such a frame `allow-same-origin`; load it from a stored copy (`srcdoc`), never a path or URL.
   - CSP does not cover navigation: `src-tauri/src/navguard.rs` keeps every frame on the app's own pages. Check a new kind of embedded content against it.
   - Prove isolation in WebKit, not jsdom: probe `parent` access, `webkit.messageHandlers`, fetch, images and self-navigation from inside the frame.
+- **"The dev server" meant every port on this machine.** The guard from #348 allowed http to `localhost`/`127.0.0.1` on any port, in release builds too, so a mockup could still navigate to another dev server, a Docker API or an admin panel (#360, audit). **Rule:** an allowance for the dev server names its origin (`build.devUrl`) and exists only under `debug_assertions`; a release build allows no http at all.
 
 ## Shell scripts (for agents)
 
