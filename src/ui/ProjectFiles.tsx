@@ -7,7 +7,7 @@
  * session. The main checkout has neither a task nor a session, so this is the
  * same ProjectTree with the same status letters and the same opener, and none
  * of the rest. Files open through the app's opener, which opens them for the
- * browse stand-in (App.tsx `browseTask`), read-only.
+ * browse stand-in (`useBrowseTask`, src/ui/app), read-only.
  */
 
 import { useCallback, useEffect, useState } from 'react';
