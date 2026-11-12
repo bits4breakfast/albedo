@@ -8,7 +8,8 @@
 //! Threading model, per pty (four threads, each blocked on exactly one thing):
 //!
 //! ```text
-//!   reader   poll(master, wake pipe), read  --->  Vec<u8> chunks
+//!   reader   poll(master, wake pipe), read  --->  Vec<u8> chunks;
+//!            pauses while too much output is unacknowledged (see [`Flow`])
 //!   pump     coalesce ~64KB / ~8ms, send Output on the spawn's Channel;
 //!            once the reader is done: take the exit code, deregister, send Exit
 //!   waiter   child.wait(); then give the reader READER_GRACE to reach EOF,
@@ -27,6 +28,17 @@
 //! never reported, the child stayed a zombie and the threads leaked. Now the
 //! child is reaped the moment it exits, the reader gets a short grace to drain
 //! what is left, and then it is stopped regardless.
+//!
+//! Output is paced to the page (#366). Without that, a flood (a large `cat`,
+//! a long build log, a `--resume` replaying a long conversation) queued in
+//! Rust, in Tauri's IPC and in xterm.js all at once, and the webview's main
+//! thread filled. The page reports how many bytes xterm has finished writing
+//! ([`pty_ack`]); the reader stops reading past [`HIGH_WATER`] unacknowledged
+//! bytes, so the child blocks on its own write, as it would in any terminal
+//! that falls behind. This counts bytes and never looks at them -- the same
+//! class as the one "any bytes arrived" boolean in `Terminal.tsx`, not a
+//! precedent for reading output. See [`Flow`] for why a page that stops
+//! acknowledging can never freeze its process.
 //!
 //! Events go over a per-spawn `tauri::ipc::Channel`, not global events. A
 //! global event emitted between `pty_spawn` returning and the frontend's async
@@ -88,6 +100,17 @@ const KILL_GRACE: Duration = Duration::from_secs(2);
 /// normal exit EOF arrives within a millisecond or two; this only ever runs out
 /// when something else still holds the slave open.
 const READER_GRACE: Duration = Duration::from_millis(250);
+
+/// How many bytes may be read from a pty and not yet acknowledged by the page
+/// before the reader pauses. Far above anything interactive (a spinner tick or
+/// a keystroke echo is a few bytes; a full repaint of a large terminal is tens
+/// of KB), so only a flood ever reaches it. The page acknowledges in batches
+/// of `ACK_BYTES` (src/lib/pty.ts, 128 KB), well under this.
+const HIGH_WATER: u64 = 1024 * 1024;
+
+/// How long a paused reader waits for an acknowledgement before it stops
+/// waiting. See [`Flow`].
+const ACK_STALL: Duration = Duration::from_secs(1);
 
 /// Environment variables that must never reach a spawned Claude Code.
 ///
@@ -181,6 +204,8 @@ struct PtySession {
     pgid: libc::pid_t,
     /// Set once the child has been reaped.
     exited: Arc<Latch>,
+    /// Bytes read and not yet acknowledged by the page; see [`Flow`].
+    flow: Arc<Flow>,
     owner: Owner,
 }
 
@@ -226,11 +251,16 @@ impl PtyRegistry {
 fn shutdown(sessions: &Sessions, grace: Duration) {
     // Collected under the lock and signalled after it: the pump deregisters a
     // session under the same lock when its child exits, so waiting while
-    // holding it would stall every exit until the deadline.
+    // holding it would stall every exit until the deadline. Each flow is
+    // released before the signal: a paused reader would hold the exit (see
+    // [`Flow`]).
     let groups: Vec<(libc::pid_t, Arc<Latch>)> = sessions
         .lock()
         .values()
-        .map(|s| (s.pgid, Arc::clone(&s.exited)))
+        .map(|s| {
+            s.flow.release();
+            (s.pgid, Arc::clone(&s.exited))
+        })
         .collect();
     for (pgid, _) in &groups {
         signal_group(*pgid, libc::SIGHUP);
@@ -267,6 +297,120 @@ impl Latch {
             }
         }
         *set
+    }
+}
+
+/// Output pacing for one pty: a count of bytes read and not yet acknowledged
+/// by the page, and the reader's wait on it.
+///
+/// The reader waits only while all of these hold:
+///
+/// - at least [`FlowLimits::high_water`] bytes are unacknowledged;
+/// - the session is not being ended. [`terminate`] and [`shutdown`] release
+///   the flow before they signal: on macOS a process cannot finish exiting
+///   -- not even on SIGKILL -- while output it wrote sits unread on its
+///   terminal (the last close of the tty waits for it to drain), so a reader
+///   still paused there would hold every kill until the stall below;
+/// - the child has not exited. The same drain means a child that exits on
+///   its own is reaped only once the reader has read everything up to its
+///   exit, which a page that acks (or the stall below) lets happen. But a
+///   backgrounded grandchild can write after that and pause the reader, and
+///   a paused reader does not watch the stop pipe; the waiter releases the
+///   flow on the reap so [`READER_GRACE`] keeps meaning exactly what it did;
+/// - the page has acknowledged something within [`FlowLimits::stall`].
+///
+/// The last one is what makes a lost acknowledgement harmless. A page can stop
+/// acknowledging for reasons that say nothing about whether the output is
+/// wanted: it was reloaded (its sessions are swept by the next page, but only
+/// once that page has started), the webview is suspended or throttled in the
+/// background, an IPC call failed, a consumer was detached. Blocking the reader
+/// until an ack that may never come would freeze Claude Code -- its writes to
+/// a terminal are synchronous, so its whole process would stop -- with nothing
+/// on screen to say why. So after `stall` without an ack the reader stops
+/// waiting and reads on, unpaced, as it did before pacing existed; the next
+/// ack proves the page is back and arms the wait again. The cost of a stalled
+/// page is the old behaviour (output queues for it), never a hung process.
+///
+/// Dropping output instead was rejected: the scrollback would silently lose
+/// bytes, and an escape sequence cut in half corrupts everything after it.
+struct Flow {
+    limits: FlowLimits,
+    state: Mutex<FlowState>,
+    cv: Condvar,
+}
+
+#[derive(Clone, Copy)]
+struct FlowLimits {
+    high_water: u64,
+    stall: Duration,
+}
+
+const FLOW_LIMITS: FlowLimits = FlowLimits {
+    high_water: HIGH_WATER,
+    stall: ACK_STALL,
+};
+
+#[derive(Default)]
+struct FlowState {
+    unacked: u64,
+    /// Bumped by every ack, so a waiting reader can tell one arrived.
+    acks: u64,
+    /// The session is ending: never pause again.
+    released: bool,
+    /// A wait ran out with no ack: do not pause again until the next ack.
+    stalled: bool,
+}
+
+impl Flow {
+    fn new(limits: FlowLimits) -> Self {
+        Flow {
+            limits,
+            state: Mutex::new(FlowState::default()),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// The reader read `n` bytes.
+    fn read(&self, n: usize) {
+        self.state.lock().unacked += n as u64;
+    }
+
+    /// The page finished writing `n` bytes. Saturating: an ack can never take
+    /// the count below zero, whatever a page sends.
+    fn ack(&self, n: u64) {
+        let mut s = self.state.lock();
+        s.unacked = s.unacked.saturating_sub(n);
+        s.acks = s.acks.wrapping_add(1);
+        s.stalled = false;
+        self.cv.notify_all();
+    }
+
+    /// The session is ending: never pause again.
+    fn release(&self) {
+        self.state.lock().released = true;
+        self.cv.notify_all();
+    }
+
+    /// Blocks the reader while it should not read; returns at once otherwise.
+    /// The stall clock restarts with every ack, so a page that is slow but
+    /// keeps acknowledging keeps the reader paced.
+    fn wait_for_room(&self) {
+        let mut s = self.state.lock();
+        let mut deadline = Instant::now() + self.limits.stall;
+        let mut acks = s.acks;
+        while s.unacked >= self.limits.high_water && !s.released && !s.stalled {
+            if self.cv.wait_until(&mut s, deadline).timed_out() {
+                s.stalled = true;
+            } else if s.acks != acks {
+                acks = s.acks;
+                deadline = Instant::now() + self.limits.stall;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn unacked(&self) -> u64 {
+        self.state.lock().unacked
     }
 }
 
@@ -471,6 +615,7 @@ pub async fn pty_spawn(
         },
         build_command(&shell, &opts),
         pty_size(opts.cols, opts.rows),
+        FLOW_LIMITS,
         // Names the shell as well as the command: if the spawn fails it is
         // almost always the shell that is missing, and "failed to spawn
         // claude" would send whoever reads it looking in the wrong place.
@@ -525,6 +670,29 @@ pub async fn pty_resize(
         .master
         .resize(pty_size(cols, rows))
         .map_err(|e| format!("resize of {pty_id} failed: {e}"))
+}
+
+/// The page has finished writing `bytes` of this pty's output (xterm's write
+/// callback), so the reader may read that much more. See [`Flow`].
+///
+/// Not an error for an unknown id, like [`pty_resize`]: the last acks of a
+/// session routinely arrive after its exit has deregistered it.
+#[tauri::command]
+pub async fn pty_ack(
+    registry: tauri::State<'_, PtyRegistry>,
+    pty_id: String,
+    bytes: u64,
+) -> Result<(), String> {
+    ack(&registry.sessions, &pty_id, bytes);
+    Ok(())
+}
+
+fn ack(sessions: &Sessions, pty_id: &str, bytes: u64) {
+    // Cloned out so the registry lock is not held while waking the reader.
+    let flow = sessions.lock().get(pty_id).map(|s| Arc::clone(&s.flow));
+    if let Some(flow) = flow {
+        flow.ack(bytes);
+    }
 }
 
 /// Signals the child's process group and returns at once. The exit is still
@@ -592,6 +760,8 @@ fn kill_stale(sessions: &Sessions, webview: &str, page: &str) -> Vec<Arc<Latch>>
 /// while any member is alive, and pids are not recycled within two seconds.
 fn terminate(pty_id: &str, session: &PtySession) {
     let pgid = session.pgid;
+    // Before the signal: a paused reader would hold the exit. See [`Flow`].
+    session.flow.release();
     signal_group(pgid, libc::SIGHUP);
     spawn_named(format!("pty-kill-{pty_id}"), move || {
         std::thread::sleep(KILL_GRACE);
@@ -624,13 +794,16 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
 /// Opens a pty, spawns `cmd` on it, registers the session under `pty_id` and
 /// starts its four threads. Returns the child's pid (= its process group).
 ///
-/// `what` names the command in the spawn error.
+/// `what` names the command in the spawn error. `limits` is always
+/// [`FLOW_LIMITS`] in the app; tests shrink it.
+#[allow(clippy::too_many_arguments)]
 fn launch(
     sessions: &Sessions,
     pty_id: String,
     owner: Owner,
     cmd: CommandBuilder,
     size: PtySize,
+    limits: FlowLimits,
     what: &str,
     sink: impl Sink,
 ) -> Result<libc::pid_t, String> {
@@ -668,6 +841,7 @@ fn launch(
     };
 
     let exited = Arc::new(Latch::default());
+    let flow = Arc::new(Flow::new(limits));
     let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>();
     sessions.lock().insert(
         pty_id.clone(),
@@ -676,6 +850,7 @@ fn launch(
             input: input_tx,
             pgid,
             exited: Arc::clone(&exited),
+            flow: Arc::clone(&flow),
             owner,
         },
     );
@@ -684,8 +859,9 @@ fn launch(
     let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
     // Never sent on: the reader dropping it is the "I am done" signal.
     let (done_tx, done_rx) = mpsc::channel::<()>();
+    let read_flow = Arc::clone(&flow);
     spawn_named(format!("pty-read-{pty_id}"), move || {
-        read_loop(reader, &out_tx);
+        read_loop(reader, &out_tx, &read_flow);
         drop(done_tx);
     });
 
@@ -697,6 +873,9 @@ fn launch(
     spawn_named(format!("pty-wait-{pty_id}"), move || {
         let code = child.wait().ok().map(|s| s.exit_code() as i32);
         exited.set();
+        // Before the grace starts: a reader paused on the page does not watch
+        // the stop pipe, so the grace could not end it. See [`Flow`].
+        flow.release();
         let _ = code_tx.send(code);
         // Whatever the child wrote before exiting is still in the kernel
         // buffer; the grace lets the reader deliver it. After that, whoever
@@ -767,10 +946,15 @@ impl PtyReader {
 }
 
 /// Reads the pty master until EOF or until told to stop, handing raw chunks to
-/// the pump thread.
-fn read_loop(mut half: ReadHalf, tx: &Sender<Vec<u8>>) {
+/// the pump thread. Pauses before each read while `flow` says the page is too
+/// far behind.
+fn read_loop(mut half: ReadHalf, tx: &Sender<Vec<u8>>, flow: &Flow) {
     let mut buf = [0u8; READ_BUF_BYTES];
     loop {
+        // Before the poll, so a paused reader leaves the bytes in the kernel
+        // and the child blocks on its write. Never waits once the child has
+        // exited, which is the only time the stop pipe below is closed.
+        flow.wait_for_room();
         let mut fds = [
             libc::pollfd {
                 fd: half.pty.as_raw_fd(),
@@ -802,6 +986,7 @@ fn read_loop(mut half: ReadHalf, tx: &Sender<Vec<u8>>) {
             // EOF on Linux/macOS once the child and the slave fd are gone.
             Ok(0) => return,
             Ok(n) => {
+                flow.read(n);
                 if tx.send(buf[..n].to_vec()).is_err() {
                     return; // pump thread gone; nobody left to deliver to
                 }
@@ -1041,6 +1226,16 @@ mod tests {
         page: &str,
         script: &str,
     ) -> (libc::pid_t, Receiver<Ev>) {
+        launch_sh_with(sessions, id, page, script, FLOW_LIMITS)
+    }
+
+    fn launch_sh_with(
+        sessions: &Sessions,
+        id: &str,
+        page: &str,
+        script: &str,
+        limits: FlowLimits,
+    ) -> (libc::pid_t, Receiver<Ev>) {
         let mut cmd = CommandBuilder::new("/bin/sh");
         cmd.arg("-c");
         cmd.arg(script);
@@ -1055,6 +1250,7 @@ mod tests {
             owner,
             cmd,
             pty_size(80, 24),
+            limits,
             "sh",
             TestSink(tx),
         )
@@ -1267,6 +1463,7 @@ mod tests {
             owner,
             cmd,
             pty_size(80, 24),
+            FLOW_LIMITS,
             "sh",
             TestSink(tx),
         )
@@ -1300,5 +1497,321 @@ mod tests {
 
         signal_group(new_pgid, libc::SIGKILL);
         until_exit(&new_rx, Duration::from_secs(3));
+    }
+
+    // --- output pacing (#366) ------------------------------------------------
+
+    const NO_STALL: Duration = Duration::from_secs(600);
+
+    fn limits(high_water: u64, stall: Duration) -> FlowLimits {
+        FlowLimits { high_water, stall }
+    }
+
+    /// Runs `wait_for_room` on a thread; true if it returned within `within`.
+    fn waits_return(flow: &Arc<Flow>, within: Duration) -> (bool, std::thread::JoinHandle<()>) {
+        let (tx, rx) = mpsc::channel();
+        let f = Arc::clone(flow);
+        let handle = std::thread::spawn(move || {
+            f.wait_for_room();
+            let _ = tx.send(());
+        });
+        (rx.recv_timeout(within).is_ok(), handle)
+    }
+
+    #[test]
+    fn the_reader_waits_only_at_the_mark_and_an_ack_lets_it_go() {
+        let flow = Arc::new(Flow::new(limits(100, NO_STALL)));
+        flow.read(99);
+        assert!(
+            waits_return(&flow, Duration::from_millis(500)).0,
+            "below the mark"
+        );
+
+        flow.read(1);
+        let (returned, handle) = waits_return(&flow, Duration::from_millis(200));
+        assert!(!returned, "did not pause at the mark");
+        flow.ack(1);
+        handle.join().unwrap();
+        assert_eq!(flow.unacked(), 99);
+
+        // Saturating: an ack can never wrap the count.
+        flow.ack(1_000);
+        assert_eq!(flow.unacked(), 0);
+    }
+
+    #[test]
+    fn a_page_that_stops_acking_holds_the_reader_for_one_stall_only() {
+        let flow = Arc::new(Flow::new(limits(10, Duration::from_millis(150))));
+        flow.read(50);
+        let started = Instant::now();
+        flow.wait_for_room();
+        let took = started.elapsed();
+        assert!(took >= Duration::from_millis(140), "{took:?}");
+
+        // Stalled: no more waiting, however much is read, until an ack.
+        flow.read(1_000_000);
+        let started = Instant::now();
+        flow.wait_for_room();
+        assert!(started.elapsed() < Duration::from_millis(50));
+
+        // An ack proves the page is back, and pacing resumes.
+        flow.ack(1);
+        let (returned, handle) = waits_return(&flow, Duration::from_millis(50));
+        assert!(!returned, "an ack did not re-arm the pause");
+        handle.join().unwrap(); // ends on the next stall
+    }
+
+    #[test]
+    fn a_slow_page_that_keeps_acking_keeps_the_reader_paced() {
+        // Each ack restarts the stall clock, so acks spaced under the stall
+        // never let the reader run unpaced.
+        let flow = Arc::new(Flow::new(limits(10, Duration::from_millis(200))));
+        flow.read(1_000);
+        let (returned, handle) = waits_return(&flow, Duration::from_millis(10));
+        assert!(!returned);
+        for _ in 0..4 {
+            std::thread::sleep(Duration::from_millis(120));
+            flow.ack(1);
+        }
+        assert!(!flow.state.lock().stalled, "stalled despite acks");
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn the_childs_exit_releases_the_reader_for_good() {
+        let flow = Arc::new(Flow::new(limits(10, NO_STALL)));
+        flow.read(10);
+        let (returned, handle) = waits_return(&flow, Duration::from_millis(100));
+        assert!(!returned);
+        flow.release();
+        handle.join().unwrap();
+        flow.read(1_000_000);
+        assert!(waits_return(&flow, Duration::from_millis(500)).0);
+    }
+
+    #[test]
+    fn an_ack_for_a_gone_session_is_ignored() {
+        ack(&Sessions::default(), "nope", 123);
+    }
+
+    /// Checks `seq 1 N` output, one number per line, and counts the lines.
+    /// Panics on the first line out of place, so lost, repeated or reordered
+    /// bytes fail. The flood scripts turn off the terminal's `\n` -> `\r\n`
+    /// translation (`stty -onlcr`): under output pressure macOS's tty
+    /// occasionally emits a second `\r`, which is the kernel's doing, not
+    /// the bridge's.
+    struct SeqCheck {
+        next: u64,
+        line: Vec<u8>,
+        bytes: u64,
+    }
+
+    impl SeqCheck {
+        fn new() -> Self {
+            SeqCheck {
+                next: 1,
+                line: Vec::new(),
+                bytes: 0,
+            }
+        }
+
+        fn feed(&mut self, chunk: &[u8]) {
+            for &b in chunk {
+                self.bytes += 1;
+                if b != b'\n' {
+                    self.line.push(b);
+                    continue;
+                }
+                let got = std::str::from_utf8(&self.line)
+                    .ok()
+                    .and_then(|l| l.parse::<u64>().ok());
+                assert_eq!(got, Some(self.next), "out of order at byte {}", self.bytes);
+                self.next += 1;
+                self.line.clear();
+            }
+        }
+
+        fn lines(&self) -> u64 {
+            assert!(self.line.is_empty(), "ends mid-line");
+            self.next - 1
+        }
+    }
+
+    fn seq_script(n: u64) -> String {
+        // BSD seq prints 1000000 as 1e+06 unless told otherwise.
+        format!("stty -onlcr; seq -f %.0f 1 {n}")
+    }
+
+    /// Drains `rx` as the page would: checks each output chunk and acks it,
+    /// but stops for 500 ms after every 8 MB, as a webview's main thread does
+    /// when something else holds it. Returns the lines seen, the exit code and
+    /// the highest unacknowledged count seen.
+    fn slow_page(
+        sessions: &Sessions,
+        id: &str,
+        rx: &Receiver<Ev>,
+        within: Duration,
+    ) -> (u64, Option<i32>, u64) {
+        let deadline = Instant::now() + within;
+        let mut check = SeqCheck::new();
+        let mut peak = 0;
+        let mut since_jank = 0;
+        loop {
+            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(Ev::Out(b)) => {
+                    if let Some(s) = sessions.lock().get(id) {
+                        peak = peak.max(s.flow.unacked());
+                    }
+                    check.feed(&b);
+                    since_jank += b.len();
+                    if since_jank >= 8 * 1024 * 1024 {
+                        since_jank = 0;
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                    ack(sessions, id, b.len() as u64);
+                }
+                Ok(Ev::Exit(code)) => return (check.lines(), code, peak),
+                Err(_) => panic!("no exit within {within:?}; {} bytes so far", check.bytes),
+            }
+        }
+    }
+
+    /// `seq 1 6500000` is 51 MB.
+    const FLOOD: u64 = 6_500_000;
+
+    #[test]
+    fn a_flood_arrives_whole_and_in_order_with_bounded_buffering() {
+        let sessions = Sessions::default();
+        let (_, rx) = launch_sh(&sessions, "a", "p", &seq_script(FLOOD));
+        let (lines, code, peak) = slow_page(&sessions, "a", &rx, Duration::from_secs(60));
+        assert_eq!(lines, FLOOD, "lost or extra output");
+        assert_eq!(code, Some(0));
+        // Everything read and not yet acknowledged: the reader's channel, the
+        // pump's buffer and what the page holds. One read may land past the
+        // mark before the reader checks again.
+        assert!(
+            peak <= HIGH_WATER + READ_BUF_BYTES as u64,
+            "{peak} bytes outstanding"
+        );
+        // And the pause was reached, or the bound above proves nothing.
+        assert!(peak >= HIGH_WATER / 2, "never paced: peak {peak}");
+        eprintln!("paced flood: peak unacknowledged {peak} bytes");
+    }
+
+    /// Not a check: prints the numbers for the PR. `cargo test -- --ignored
+    /// --nocapture flood_buffering`.
+    #[test]
+    #[ignore]
+    fn flood_buffering_with_and_without_pacing() {
+        for (name, lim) in [
+            ("unpaced", limits(u64::MAX, NO_STALL)),
+            ("paced", FLOW_LIMITS),
+        ] {
+            let sessions = Sessions::default();
+            let started = Instant::now();
+            let (_, rx) = launch_sh_with(&sessions, "a", "p", &seq_script(FLOOD), lim);
+            let (lines, _, peak) = slow_page(&sessions, "a", &rx, Duration::from_secs(120));
+            eprintln!(
+                "{name}: {lines} lines, peak unacknowledged {peak} bytes, {:?}",
+                started.elapsed()
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_that_never_acks_pauses_the_child_and_ends_it_on_kill() {
+        // No stall, so nothing but the kill can free the reader: proves the
+        // pause holds, and that terminate does not depend on the page.
+        let sessions = Sessions::default();
+        let (pgid, rx) = launch_sh_with(
+            &sessions,
+            "a",
+            "p",
+            "trap '' HUP; yes",
+            limits(64 * 1024, NO_STALL),
+        );
+        let flow = Arc::clone(&sessions.lock()["a"].flow);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while flow.unacked() < 64 * 1024 {
+            assert!(Instant::now() < deadline, "never reached the mark");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        let paused = flow.unacked();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(flow.unacked(), paused, "kept reading past the mark");
+        assert!(paused <= 64 * 1024 + READ_BUF_BYTES as u64, "{paused}");
+
+        terminate("a", &sessions.lock()["a"]);
+        let (_, code) = until_exit(&rx, KILL_GRACE + Duration::from_secs(3));
+        assert!(code.is_some_and(|c| c != 0), "{code:?}");
+        assert!(group_is_gone(pgid), "group {pgid} survived the kill");
+        assert!(sessions.lock().is_empty());
+    }
+
+    #[test]
+    fn quitting_ends_a_session_paused_on_a_page_that_never_acks() {
+        let sessions = Sessions::default();
+        let (pgid, rx) = launch_sh_with(&sessions, "a", "p", "yes", limits(64 * 1024, NO_STALL));
+        let flow = Arc::clone(&sessions.lock()["a"].flow);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while flow.unacked() < 64 * 1024 {
+            assert!(Instant::now() < deadline, "never reached the mark");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let started = Instant::now();
+        shutdown(&sessions, Duration::from_millis(300));
+        assert!(started.elapsed() < Duration::from_millis(1000));
+        assert!(group_is_gone(pgid));
+        until_exit(&rx, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn lost_acks_cost_one_stall_never_the_output_or_the_exit() {
+        // The page never acks (reloaded, suspended, IPC failing): with the
+        // app's own limits the flood still completes, whole, and exits.
+        let sessions = Sessions::default();
+        let n = 700_000; // 4.7 MB
+        let started = Instant::now();
+        let (_, rx) = launch_sh(&sessions, "a", "p", &seq_script(n));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut check = SeqCheck::new();
+        let code = loop {
+            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(Ev::Out(b)) => check.feed(&b),
+                Ok(Ev::Exit(code)) => break code,
+                Err(_) => panic!("hung with {} bytes delivered", check.bytes),
+            }
+        };
+        assert_eq!(check.lines(), n);
+        assert_eq!(code, Some(0));
+        assert!(started.elapsed() >= ACK_STALL, "never paused");
+    }
+
+    #[test]
+    fn a_reader_paused_when_the_child_exits_still_ends_with_the_grace() {
+        // The reader pauses after "first" with no stall to rescue it; the
+        // child exits while a grandchild holds the terminal, so there is no
+        // EOF and only the grace can end the reader. Paused, it never sees
+        // the stop pipe: the waiter's release is what lets the exit through.
+        let sessions = Sessions::default();
+        let started = Instant::now();
+        let (pgid, rx) = launch_sh_with(
+            &sessions,
+            "a",
+            "p",
+            "sleep 30 & printf first; sleep 0.2; exit 7",
+            limits(1, NO_STALL),
+        );
+        let (out, code) = until_exit(&rx, Duration::from_secs(5));
+        assert_eq!(out, "first");
+        assert_eq!(code, Some(7));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        signal_group(pgid, libc::SIGKILL);
     }
 }

@@ -11,6 +11,11 @@
  *
  * Nothing in this module inspects the byte stream. Terminal output is opaque --
  * all structured data comes from the transcript (CLAUDE.md, "Two channels").
+ *
+ * Output is paced (#366): each chunk comes with a `done` callback for the
+ * consumer to call once it has written the chunk (xterm's write callback), and
+ * this module reports the byte counts back to Rust, which stops reading the pty
+ * past ~1 MB unreported. It counts bytes; it never looks at them.
  */
 
 import { Channel, invoke } from '@tauri-apps/api/core';
@@ -20,9 +25,30 @@ import type { PtySpawnOptions } from '../types';
 /** One message on a spawn's channel. Mirrors `PtyEvent` in pty.rs. */
 type PtyEvent = { kind: 'output'; data: string } | { kind: 'exit'; code: number | null };
 
+/**
+ * Processed bytes are reported in batches of at least this many, so a flood
+ * costs one IPC call per 128 KB rather than one per chunk. Well under Rust's
+ * 1 MB pause (`HIGH_WATER` in pty.rs), so the up to 128 KB not yet reported at
+ * any moment never brings the reader near it on its own.
+ */
+export const ACK_BYTES = 128 * 1024;
+
 export interface PtyHandlers {
-  /** Raw bytes, in order. */
-  onOutput: (bytes: Uint8Array) => void;
+  /**
+   * Raw bytes, in order. Call `done` once they have been written -- for xterm,
+   * pass it as `write`'s callback.
+   *
+   * Every delivered chunk's `done` MUST be called, once, even if the bytes are
+   * thrown away (`writeOutput` in src/ui/terminalOutput.ts does this). Bytes
+   * delivered and never reported stay counted in Rust for the rest of the
+   * session and shrink the 1 MB window for good. A consumer that skips `done`
+   * while the pty lives on reaches the pause and then stalls: each report that
+   * does arrive (about one per 128 KB) re-arms the pause, which then waits the
+   * full second before giving up -- a freeze of up to 1 s per ~128 KB. A
+   * consumer that stops for good (it is unmounting) must kill the pty, or
+   * `detach`, which reports whatever arrives afterwards itself.
+   */
+  onOutput: (bytes: Uint8Array, done: () => void) => void;
   /**
    * Fires once, after the last output. `code` is null when the exit status
    * could not be determined.
@@ -86,10 +112,44 @@ export async function spawnPty(opts: PtySpawnOptions, handlers: PtyHandlers): Pr
 
   let held: PtyEvent[] | null = [];
   let detached = false;
+  // Assigned when pty_spawn resolves; nothing is delivered (or acked) before.
+  let id = '';
+  let unreported = 0;
+  let ackFailed = false;
+  // The only path to Rust's count (`HIGH_WATER` in pty.rs): it moves only
+  // when the consumer calls `done`, so every delivered chunk must reach here
+  // exactly once -- see `PtyHandlers.onOutput`.
+  const processed = (n: number) => {
+    unreported += n;
+    if (unreported < ACK_BYTES) return;
+    const bytes = unreported;
+    unreported = 0;
+    invoke<void>('pty_ack', { ptyId: id, bytes }).catch((err: unknown) => {
+      // Once per pty: a flood would otherwise log hundreds of these. Rust
+      // stops waiting on its own, so a lost ack costs pacing, not the session.
+      if (ackFailed) return;
+      ackFailed = true;
+      console.warn('pty: could not acknowledge output', err);
+    });
+  };
   const deliver = (ev: PtyEvent) => {
-    if (detached) return;
-    if (ev.kind === 'output') handlers.onOutput(decodeBase64(ev.data));
-    else handlers.onExit(ev.code);
+    if (ev.kind === 'output') {
+      const bytes = decodeBase64(ev.data);
+      // Dropped output counts as processed: a detached consumer must never
+      // keep the process paused.
+      if (detached) {
+        processed(bytes.length);
+        return;
+      }
+      let called = false;
+      handlers.onOutput(bytes, () => {
+        if (called) return;
+        called = true;
+        processed(bytes.length);
+      });
+    } else if (!detached) {
+      handlers.onExit(ev.code);
+    }
   };
 
   const events = new Channel<PtyEvent>();
@@ -98,7 +158,7 @@ export async function spawnPty(opts: PtySpawnOptions, handlers: PtyHandlers): Pr
     else deliver(ev);
   };
 
-  const id = await invoke<string>('pty_spawn', { opts, page: PAGE, events });
+  id = await invoke<string>('pty_spawn', { opts, page: PAGE, events });
 
   // A macrotask, so it runs after the caller's continuation (a microtask) has
   // stored the id. Messages keep queueing behind `held` until then.
