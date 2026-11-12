@@ -22,8 +22,11 @@ const QUIT_REQUESTED_EVENT: &str = "albedo://quit-requested";
 const QUIT_ID: &str = "albedo-quit";
 
 /// How long quitting waits for the terminals' process groups to leave on
-/// SIGHUP before it SIGKILLs them. Short: the user asked to quit.
-const QUIT_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+/// SIGHUP before it SIGKILLs them. The same as closing a task (pty.rs
+/// KILL_GRACE), so Claude Code can finish its transcript write and SessionEnd
+/// hooks; quit returns as soon as every group has gone, so this is only spent
+/// while something refuses to exit.
+const QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How many tasks are mid-turn or waiting on the user, as the webview last
 /// reported (`set_busy_tasks`). Quitting kills their `claude` processes, so
