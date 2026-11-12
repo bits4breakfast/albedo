@@ -384,7 +384,6 @@ export default function App() {
     setNewTaskPrefill(buildFollowUp(task, found, title));
   }, []);
 
-
   /**
    * Read a file's current text for the diff view's context expansion.
    *
@@ -628,7 +627,6 @@ export default function App() {
     [],
   );
 
-
   // A selection restored from the last run is shown but was never opened, so it
   // had no terminal and the message box could not send to it. Selecting by
   // click opens the task; a restored selection must too.
@@ -653,7 +651,6 @@ export default function App() {
         .filter((t): t is Task => t !== undefined),
     [openIds, tasks],
   );
-
 
   // Derived rather than corrected in an effect: switching task while the editor
   // tab is showing falls straight back to the transcript, with no flash.
