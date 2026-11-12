@@ -16,10 +16,11 @@
  */
 
 import type { Message } from '../../types';
-import { diffStrings } from '../../lib/diff';
+import { lineChangeCounts } from '../../lib/diff';
 import { SHOW_PREVIEW_TOOL } from '../../capture/previewGate';
 import { REQUEST_SESSION_TOOL } from '../spinOut';
-import { isObj, str, targetOf, toolInput, toolResultIsError } from './ToolChip';
+import { targetOf, toolInput, toolResultIsError } from './ToolChip';
+import { DIFF_TOOLS, editPairsOf } from './editPairs';
 
 /** Tools that are never folded: they wait on the user, or run in the background. */
 const NEVER_FOLDED = new Set([
@@ -134,42 +135,38 @@ export function runSummary(calls: readonly Message[]): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+/*
+ * Counted once per call (#362). The run's line re-reads every call in the run
+ * on each live append, and counting rebuilt each edit's whole diff, word
+ * refinement and all: ~34 ms per append on a 1,000-row window. Kept per row
+ * object, which is never changed once captured (MessageRow's memo rests on
+ * the same fact): a row that changes arrives as a new object, and a reload
+ * keeps the objects of rows it already held (tail.ts, keepRowObjects). Weak,
+ * so a count goes when its row does.
+ */
+const linesCache = new WeakMap<Message, { added: number; removed: number } | null>();
 
 /** Lines added and removed by one call, from its input; null for a call that changes no file. */
 export function linesChanged(m: Message): { added: number; removed: number } | null {
-  const tool = m.toolName ?? '';
-  if (!DIFF_TOOLS.has(tool)) return null;
-  const input = toolInput(m);
-  const path = targetOf(m) ?? 'file';
-  const pairs: Array<[string, string]> = [];
-  if (tool === 'Write') {
-    const content = str(input.content);
-    if (content !== null) pairs.push(['', content]);
-  } else if (tool === 'MultiEdit') {
-    for (const e of Array.isArray(input.edits) ? input.edits : []) {
-      if (!isObj(e)) continue;
-      const a = str(e.old_string);
-      const b = str(e.new_string);
-      if (a !== null && b !== null) pairs.push([a, b]);
-    }
-  } else {
-    const a = str(input.old_string) ?? str(input.old_source) ?? '';
-    const b = str(input.new_string) ?? str(input.new_source);
-    if (b !== null) pairs.push([a, b]);
-  }
-  if (pairs.length === 0) return null;
+  if (!DIFF_TOOLS.has(m.toolName ?? '')) return null;
+  const hit = linesCache.get(m);
+  if (hit !== undefined) return hit;
+  const counted = countLines(m);
+  linesCache.set(m, counted);
+  return counted;
+}
+
+function countLines(m: Message): { added: number; removed: number } | null {
+  const edit = editPairsOf(m);
+  if (edit === null) return null;
   let added = 0;
   let removed = 0;
-  for (const [a, b] of pairs) {
-    for (const h of diffStrings(a, b, path).hunks) {
-      for (const l of h.lines) {
-        if (l.kind === 'add') added++;
-        else if (l.kind === 'del') removed++;
-      }
-    }
+  for (const p of edit.pairs) {
+    const c = lineChangeCounts(p.oldText, p.newText);
+    added += c.added;
+    removed += c.removed;
   }
-  return { added, removed };
+  return Object.freeze({ added, removed });
 }
 
 export interface RunFacts {

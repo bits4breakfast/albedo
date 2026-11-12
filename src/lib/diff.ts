@@ -380,6 +380,22 @@ export function diffStrings(oldText: string, newText: string, path: string): Fil
   return { path, lang: langForPath(path), hunks: buildHunks(lines) };
 }
 
+/**
+ * Lines added and removed between two strings: the same counts as the add and
+ * del lines of `diffStrings`' hunks (every changed line is in a hunk, and the
+ * word-level refinement never changes a line's kind), without building the
+ * lines, refining them or grouping them (#362).
+ */
+export function lineChangeCounts(oldText: string, newText: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const op of diffSequences(splitLines(oldText), splitLines(newText))) {
+    if (op.kind === 'add') added++;
+    else if (op.kind === 'del') removed++;
+  }
+  return { added, removed };
+}
+
 // ---------------------------------------------------------------------------
 // Unified diff parsing
 // ---------------------------------------------------------------------------

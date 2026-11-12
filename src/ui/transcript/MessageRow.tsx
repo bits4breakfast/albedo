@@ -23,7 +23,8 @@ import { bareFileRef, parsePathRef } from '../../lib/paths';
 import { lineCount } from './pastedText';
 import { PassageRevealContext } from './passages';
 import { foldQuote } from './transcriptQuotes';
-import ToolChip, { FieldList, isObj, str, targetOf, toolInput, toolResultText } from './ToolChip';
+import { DIFF_TOOLS, editPairsOf } from './editPairs';
+import ToolChip, { FieldList, str, toolInput, toolResultText } from './ToolChip';
 import { SHOW_PREVIEW_TOOL } from '../../capture/previewGate';
 import { PreviewChip } from '../preview/PreviewChip';
 import {
@@ -56,7 +57,6 @@ import type { Mention } from './mentions';
 import { ApiErrorRetryContext } from './apiErrorRetry';
 import { TryAgainButton } from '../TryAgain';
 
-const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
 export interface MessageRowProps {
   message: Message;
@@ -832,33 +832,13 @@ function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | 
     const input = toolInput(message);
 
     if (DIFF_TOOLS.has(tool)) {
-      const path = targetOf(message) ?? 'file';
-      const diffs: FileDiff[] = [];
-      const expand: Array<{ oldText: string; newText: string } | null> = [];
-
-      if (tool === 'Write') {
-        const content = str(input.content);
-        if (content === null) return null;
-        diffs.push(diffStrings('', content, path));
-        expand.push({ oldText: '', newText: content });
-      } else if (tool === 'MultiEdit') {
-        const edits = Array.isArray(input.edits) ? input.edits : [];
-        for (const edit of edits) {
-          if (!isObj(edit)) continue;
-          const oldText = str(edit.old_string);
-          const newText = str(edit.new_string);
-          if (oldText === null || newText === null) continue;
-          diffs.push(diffStrings(oldText, newText, path));
-          expand.push({ oldText, newText });
-        }
-      } else {
-        const oldText = str(input.old_string) ?? str(input.old_source);
-        const newText = str(input.new_string) ?? str(input.new_source);
-        if (oldText === null || newText === null) return null;
-        diffs.push(diffStrings(oldText, newText, path));
-        expand.push({ oldText, newText });
-      }
-      return diffs.length > 0 ? { diffs, expand, absoluteLines: tool === 'Write' } : null;
+      const edit = editPairsOf(message);
+      if (edit === null) return null;
+      return {
+        diffs: edit.pairs.map((p) => diffStrings(p.oldText, p.newText, edit.path)),
+        expand: edit.pairs.map((p) => ({ oldText: p.oldText, newText: p.newText })),
+        absoluteLines: edit.absoluteLines,
+      };
     }
 
     if (tool === 'Bash') {
