@@ -18,7 +18,7 @@ import {
   toolResultTextOf,
   toolUseIdOf,
 } from '../../capture/adapter';
-import { Disclosure } from './Diff';
+import { Disclosure } from '../Disclosure';
 import { CodeLines } from './codeTokens';
 import { LinkifiedText, PathLink, useActivate } from './links';
 import {

@@ -24,7 +24,7 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Disclosure } from './Diff';
+import { Disclosure } from '../Disclosure';
 import { editComment, removeComment, useComments } from './drafts';
 import { foldQuote, inTranscriptOrder, type TranscriptComment } from './transcriptQuotes';
 import type { RevealPassage } from './passages';

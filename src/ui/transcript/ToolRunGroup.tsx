@@ -6,7 +6,7 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
-import { Disclosure } from './Diff';
+import { Disclosure } from '../Disclosure';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import { summaryOf } from './ToolChip';
 import { runFacts } from './toolGroups';

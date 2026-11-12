@@ -28,9 +28,6 @@ import { PathLink, useActivate } from './links';
 import { Code, composePieces, sourceLines, useCodeTokens } from './codeTokens';
 import './transcript.css';
 
-/* Re-exported so the transcript renderers keep importing it from here. */
-export { Disclosure };
-
 /** Below this container width the side-by-side layout stops being readable. */
 const SIDE_BY_SIDE_MIN = 860;
 
