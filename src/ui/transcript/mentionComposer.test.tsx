@@ -13,7 +13,7 @@ import { hasLivePty, submitPty } from '../Terminal';
 import { useFocusAreaCycle } from '../focusAreas';
 import { MentionSourceContext } from '../mentionSource';
 import type { Project } from '../../types';
-import { Composer } from './TranscriptPane';
+import { Composer } from './Composer';
 import { __resetDrafts, getDraft } from './drafts';
 import { encodeMention, fileMention, taskMention } from './mentions';
 import { task } from './mentions.fixture';

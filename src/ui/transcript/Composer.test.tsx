@@ -26,7 +26,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@t
 import { useFocusAreaCycle } from '../focusAreas';
 
 import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty, submitPty } from '../Terminal';
-import { Composer } from './TranscriptPane';
+import { Composer } from './Composer';
 import { __resetDrafts, addComment, commentsOf, flushDrafts, getDraft, saveDraft } from './drafts';
 import type { TranscriptComment } from './transcriptQuotes';
 import { __resetOutbox, heldFor, holdMessage, removeHeld } from './outbox';
@@ -655,7 +655,7 @@ describe('pasting a screenshot', () => {
 
 describe('shellEscapePath', () => {
   it('escapes spaces and shell characters the way a terminal does on drop', async () => {
-    const { shellEscapePath } = await import('./TranscriptPane');
+    const { shellEscapePath } = await import('./Composer');
     expect(shellEscapePath('/T/Screenshot 2026-10-17 at 00.36.49.png')).toBe('/T/Screenshot\\ 2026-10-17\\ at\\ 00.36.49.png');
     expect(shellEscapePath("/a/it's (1).png")).toBe("/a/it\\'s\\ \\(1\\).png");
     expect(shellEscapePath('/plain/path.png')).toBe('/plain/path.png');

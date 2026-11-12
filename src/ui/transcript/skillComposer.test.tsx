@@ -11,7 +11,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 
 import { submitPty } from '../Terminal';
 import { __resetSkills, recordSkillListings } from '../../capture/skills';
-import { Composer } from './TranscriptPane';
+import { Composer } from './Composer';
 import { __resetDrafts } from './drafts';
 
 vi.mock('../Terminal', () => ({
