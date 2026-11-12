@@ -7,6 +7,7 @@ import useTasks from './ui/useTasks';
 import useLayout, { filesFlex, ratioFlex, shellFlex, sidebarStyle, type RightTab } from './ui/app/useLayout';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
+import LaunchNotices from './ui/app/LaunchNotices';
 import useSessionRequests from './ui/app/useSessionRequests';
 import { proposalsInScope } from './ui/proposals';
 import { resolveRequest, useSessionOutcomes } from './ui/requestQueue';
@@ -92,7 +93,6 @@ import { ContextClear } from './ui/ClearContextButton';
 import ProjectsDialog from './ui/ProjectsDialog';
 import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
-import { archiveProject } from './db/projects';
 import { deleteTask, getTask } from './db';
 import { endTaskEvents } from './capture/hookEvents';
 import { composeWorktreePath, listBranches, listWorktrees, probePath, unmergedCommits } from './git/worktree';
@@ -1179,64 +1179,14 @@ export default function App() {
         {announcement}
       </div>
 
-      {banner && (
-        <div className="banner" role="status">
-          <span className="status-dot" data-status="blocked" aria-hidden="true" />
-          <span className="banner-text" title={banner}>
-            {banner}
-          </span>
-          <button className="btn btn-ghost" onClick={() => void refresh()}>
-            Retry
-          </button>
-        </div>
-      )}
-
-      {/* Detection, never correction: a project whose root is another
-          project's repo_path IS a linked worktree of it -- git says so. But
-          merging or deleting a row the user created, with the wrong survivor
-          picked automatically, costs far more to undo than the duplicate costs
-          to live with. So: say what it is, offer the reversible action. */}
-      {worktreeProjects.map((finding) => (
-        <div className="notice" key={`wt-${finding.project.id}`}>
-          <span className="notice-text">
-            <strong>{finding.project.name}</strong> looks like a worktree of{' '}
-            <strong>{finding.parent.name}</strong>. Archiving it re-associates its tasks.
-          </span>
-          <button
-            className="btn"
-            onClick={() => {
-              const id = finding.project.id;
-              dismiss(`wt:${id}`);
-              void archiveProject(id)
-                .then(() => refresh())
-                .catch(() => {});
-            }}
-          >
-            Archive It
-          </button>
-          <button className="btn btn-ghost" onClick={() => dismiss(`wt:${finding.project.id}`)}>
-            Dismiss
-          </button>
-        </div>
-      ))}
-
-      {unclaimed.length > 0 && (
-        <div className="notice">
-          <span className="notice-text">
-            {unclaimed.length} repositor{unclaimed.length === 1 ? 'y' : 'ies'} in your history{' '}
-            {unclaimed.length === 1 ? 'has' : 'have'} no project yet.
-          </span>
-          <button className="btn" onClick={() => setImportOpen(true)}>
-            Review
-          </button>
-          <button
-            className="btn btn-ghost"
-            onClick={() => unclaimed.forEach((r) => dismiss(`repo:${r.repoRoot}`))}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+      <LaunchNotices
+        banner={banner}
+        refresh={refresh}
+        worktreeProjects={worktreeProjects}
+        unclaimed={unclaimed}
+        dismiss={dismiss}
+        setImportOpen={setImportOpen}
+      />
 
       <div className="app-body">
         {/* Collapsed (#266), the rail's own width (taskrail.css) replaces the
