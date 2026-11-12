@@ -203,6 +203,14 @@ export async function gitOk(args: string[], cwd?: string): Promise<string> {
 }
 
 /**
+ * Whether `ref` names an object in the repo at `cwd`: `git rev-parse --verify
+ * --quiet`, exit 0. Rejects when git cannot be run, like {@link git}.
+ */
+export async function refExists(cwd: string, ref: string): Promise<boolean> {
+  return (await git(['rev-parse', '--verify', '--quiet', ref], cwd)).code === 0;
+}
+
+/**
  * Last line of defence. Arguments are passed as an array so there is no shell
  * to inject into, but an argument that *starts with a dash* is still read by
  * git as an option, which is a real (if lesser) hazard. Any value that could be
@@ -439,10 +447,8 @@ export async function baseOrUpstream(cwd: string, baseBranch: string): Promise<s
   // name that is not a branch name is left for the caller to refuse.
   if (baseBranch === '' || baseBranch.startsWith('-')) return baseBranch;
   try {
-    const local = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${baseBranch}`], cwd);
-    if (local.code !== 0) {
-      const remote = await git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${baseBranch}`], cwd);
-      if (remote.code === 0) return `origin/${baseBranch}`;
+    if (!(await refExists(cwd, `refs/heads/${baseBranch}`))) {
+      if (await refExists(cwd, `refs/remotes/origin/${baseBranch}`)) return `origin/${baseBranch}`;
     }
   } catch {
     /* git could not say: the name as given */
@@ -656,8 +662,7 @@ export function revRange(base: string, head = 'HEAD'): string {
 export async function commitsOnBranch(repoPath: string, baseBranch: string, branch: string): Promise<number | null> {
   try {
     assertValidRefName(branch, 'branch');
-    const ref = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoPath);
-    if (ref.code !== 0) return null;
+    if (!(await refExists(repoPath, `refs/heads/${branch}`))) return null;
     assertValidRefName(baseBranch, 'base branch');
     const base = await baseOrUpstream(repoPath, baseBranch);
     const r = await git(['rev-list', '--count', revRange(base, `refs/heads/${branch}`), '--'], repoPath);
@@ -808,8 +813,7 @@ export async function defaultBranchOf(repoPath: string): Promise<string | null> 
   const fromRemote = remote.includes('/') ? remote.slice(remote.indexOf('/') + 1) : '';
   if (fromRemote && isValidRefName(fromRemote)) return fromRemote;
   for (const name of ['main', 'master']) {
-    const r = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${name}`], repoPath).catch(() => null);
-    if (r?.code === 0) return name;
+    if (await refExists(repoPath, `refs/heads/${name}`).catch(() => false)) return name;
   }
   return null;
 }
