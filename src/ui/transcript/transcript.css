@@ -533,8 +533,10 @@
 .tx-paste-act:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
 .tx-paste-act:disabled { color: var(--faint); }
 /* The inspector's text: the code block's face on the inset ground, as tall
-   as the dialog allows rather than .tx-pre's transcript cap. */
-.tx-paste-view {
+   as the dialog allows rather than .tx-pre's transcript cap. It is a
+   `.tx-pre` too, and .tx-pre comes later in this file: naming both outranks
+   it (#382). */
+.tx-pre.tx-paste-view {
   max-height: min(60vh, 640px);
   padding: 10px 12px;
   border: 1px solid var(--border);
