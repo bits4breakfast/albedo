@@ -21,6 +21,13 @@ const CLOSE_TAB_ID: &str = "close-tab";
 const QUIT_REQUESTED_EVENT: &str = "albedo://quit-requested";
 const QUIT_ID: &str = "albedo-quit";
 
+/// How long quitting waits for the terminals' process groups to leave on
+/// SIGHUP before it SIGKILLs them. The same as closing a task (pty.rs
+/// KILL_GRACE), so Claude Code can finish its transcript write and SessionEnd
+/// hooks; quit returns as soon as every group has gone, so this is only spent
+/// while something refuses to exit.
+const QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// How many tasks are mid-turn or waiting on the user, as the webview last
 /// reported (`set_busy_tasks`). Quitting kills their `claude` processes, so
 /// while this is non-zero a quit or a window close asks first.
@@ -335,6 +342,9 @@ pub fn run() {
             // crash needs nothing -- the OS ends the activity with the process.
             if let RunEvent::Exit = event {
                 app.state::<keep_awake::KeepAwake>().release();
+                // End every terminal's process group, dev servers included:
+                // HUP, up to QUIT_GRACE for them to go, then KILL (#360).
+                app.state::<pty::PtyRegistry>().shutdown(QUIT_GRACE);
             }
         });
 }
