@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildRuns, labelFrom, liveRuns, marksByAgent, selfResumeAfter } from './subagents';
+import { agentTokensFrom, buildRuns, labelFrom, latestFrom, liveRuns, marksByAgent, PROMPT_MAX, promptFrom, selfResumeAfter } from './subagents';
 import { RUNNING_WINDOW_MS } from '../capture/status';
 import { parseLine } from '../capture/adapter';
 import {
@@ -234,5 +234,64 @@ describe('selfResumeAfter', () => {
     // Stopped after its newest row: at rest, nothing to look up.
     expect(selfResumeAfter({ resumedAt: null, stops: [{ ts: 120, waiting: true }] }, 100)).toBeNull();
     expect(selfResumeAfter({ resumedAt: 60, stops: [{ ts: 50, waiting: true }] }, 100)).toBeNull();
+  });
+});
+
+describe('promptFrom (#377)', () => {
+  it('keeps the whole prompt, trimmed, for the hover', () => {
+    expect(promptFrom('\n  Fix GitHub issue #365.\nYour worktree: /tmp/w  \n')).toBe('Fix GitHub issue #365.\nYour worktree: /tmp/w');
+  });
+
+  it('cuts a prompt past PROMPT_MAX with an ellipsis', () => {
+    const cut = promptFrom('x'.repeat(PROMPT_MAX + 50));
+    expect(cut).toHaveLength(PROMPT_MAX);
+    expect(cut?.endsWith('…')).toBe(true);
+  });
+
+  it('is null for nothing usable', () => {
+    expect(promptFrom(null)).toBeNull();
+    expect(promptFrom(' \n ')).toBeNull();
+  });
+
+  it('is what buildRuns sets beside the label, which is unchanged', () => {
+    const [run] = buildRuns([agg('aaa', 2, 1_000, 2_000)], [], [{ agent_id: 'aaa', body: 'Review it\nthen report' }]);
+    expect(run).toMatchObject({ label: 'Review it', prompt: 'Review it\nthen report', name: null, kind: null, lastCall: null, tokens: null });
+  });
+});
+
+describe('agentTokensFrom (#377)', () => {
+  const line = (usage: Record<string, number>) => JSON.stringify({ type: 'assistant', message: { id: 'm', usage } });
+
+  it('adds input, both cache counts and output, as Claude Code counts an agent', () => {
+    expect(agentTokensFrom(line({ input_tokens: 2, cache_read_input_tokens: 186_919, cache_creation_input_tokens: 10_889, output_tokens: 8 }))).toBe(197_818);
+  });
+
+  it('is null for a line without usage', () => {
+    expect(agentTokensFrom(JSON.stringify({ type: 'assistant', message: { id: 'm' } }))).toBeNull();
+    expect(agentTokensFrom(JSON.stringify({ type: 'user' }))).toBeNull();
+  });
+});
+
+describe('latestFrom (#377)', () => {
+  const row = (seq: number, role: string, call: number, usage: Record<string, number> | null) => ({
+    agent_id: 'a',
+    seq,
+    role,
+    tool_name: role === 'tool_use' ? 'Read' : null,
+    target_path: null,
+    raw_json: JSON.stringify({ type: 'assistant', message: { id: `m${seq}`, ...(usage ? { usage } : {}) } }),
+    ts: seq,
+    call,
+  });
+
+  it('takes the marked call and the newest usage record, whatever order the rows come in', () => {
+    const got = latestFrom([
+      row(300, 'assistant', 0, null),
+      row(100, 'tool_use', 0, { output_tokens: 1 }),
+      row(200, 'tool_use', 1, { output_tokens: 5 }),
+      row(200, 'tool_use', 0, { output_tokens: 5 }),
+    ]).get('a');
+    expect(got?.call?.seq).toBe(200);
+    expect(got?.tokens).toBe(5);
   });
 });
