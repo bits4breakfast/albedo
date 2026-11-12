@@ -12,7 +12,7 @@
  * work, which the Background band points at by its row. A thinking block
  * between two calls stays inside the run; one at either end does not.
  *
- * Pure: the pane draws the result (TranscriptPane's ToolRunGroup).
+ * Pure: the pane draws the result (ToolRunGroup.tsx).
  */
 
 import type { Message } from '../../types';

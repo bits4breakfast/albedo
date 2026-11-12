@@ -7,7 +7,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 import { langForPath } from '../../lib/diff';
-import { Code, composePieces, useCodeTokens } from './Diff';
+import { Code, composePieces, useCodeTokens } from './codeTokens';
 import { CopyButton } from './CopyButton';
 
 const CODE_LANG_ALIAS: Record<string, string> = {

@@ -1,30 +1,31 @@
-import { applyZoom, stepZoom, storedZoom } from './ui/zoom';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SetStateAction } from 'react';
-import type { OpenFileRequest, Project, Task } from './types';
+import type { Task } from './types';
 import { useTheme } from './ui/theme';
 import useTasks from './ui/useTasks';
 import useLayout, { filesFlex, ratioFlex, shellFlex, sidebarStyle, type RightTab } from './ui/app/useLayout';
-import useTaskTabs from './ui/app/useTaskTabs';
 import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
+import LaunchNotices from './ui/app/LaunchNotices';
+import TaskBar from './ui/app/TaskBar';
+import AppDialogs from './ui/app/AppDialogs';
 import useSessionRequests from './ui/app/useSessionRequests';
 import { proposalsInScope } from './ui/proposals';
-import { resolveRequest, useSessionOutcomes } from './ui/requestQueue';
+import { useSessionOutcomes } from './ui/requestQueue';
 import { SpinOutContext, spinOutStatus, type SpinOutLookup } from './ui/spinOut';
-import SpunFromChip from './ui/SpunFromChip';
-import { newSessionId } from './capture/sessionLink';
 import useProjectTabs from './ui/app/useProjectTabs';
 import useSelection from './ui/app/useSelection';
+import useBrowseTask from './ui/app/useBrowseTask';
+import useSpawnPlan from './ui/app/useSpawnPlan';
+import useReadingTab from './ui/app/useReadingTab';
+import useEditorRequests from './ui/app/useEditorRequests';
+import useAppShortcuts from './ui/app/useAppShortcuts';
 import ProjectTabs from './ui/app/ProjectTabs';
 import PaneErrorBoundary from './ui/app/PaneErrorBoundary';
 import { useQuitGuard } from './ui/quitGuard';
 import Header from './ui/Header';
 import TaskList from './ui/TaskList';
 import { seenUpdate } from './ui/taskGroups';
-import { createPrPrompt, resolveConflictsPrompt, pushPrompt } from './ui/gitPrompts';
-import { sendPrompt } from './ui/sendPrompt';
 import { useMeasuredBase } from './ui/useMeasuredBase';
 import Subagents from './ui/Subagents';
 import {
@@ -38,69 +39,39 @@ import {
   watchFocus,
   type AttentionKind,
 } from './ui/attention';
-import { GUIDE_KEY_EXCEPT, TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from './ui/shortcuts';
-import { stepProjectTab } from './ui/projectStep';
-import ShortcutsHelp from './ui/ShortcutsHelp';
-import QuickOpen from './ui/QuickOpen';
-import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
-import { filesNamed } from './git/codeIndex';
-import { isBareName } from './lib/paths';
 import { focusPty, hasLivePty } from './ui/Terminal';
 import TerminalStack from './ui/TerminalStack';
-import { focusArea, modalOpen, useFocusAreaCycle } from './ui/focusAreas';
-import { RemoteLink, remoteControlItem, useRemotePending } from './ui/RemoteMark';
-import { taskMenuItems, type TaskActions } from './ui/taskMenuItems';
+import { modalOpen } from './ui/focusAreas';
+import { remoteControlItem, useRemotePending } from './ui/RemoteMark';
+import type { TaskActions } from './ui/taskMenuItems';
 import { useTaskMenuFacts } from './ui/useTaskMenuFacts';
 import ModelPicker from './ui/ModelPicker';
-import { ChatIcon, FolderIcon, PtyLayoutIcon, SplitLayoutIcon, TranscriptLayoutIcon, homeRelative } from './ui/icons';
-import BranchChip from './ui/BranchChip';
-import { ReviewBadge } from './ui/SubmitReview';
-import OverflowMenu from './ui/OverflowMenu';
-import TaskTitleEdit from './ui/TaskTitleEdit';
-import { RENAME_KEYS, renameTaskAndSession } from './ui/taskRename';
-import NewTaskDialog from './ui/NewTaskDialog';
+import { renameTaskAndSession } from './ui/taskRename';
 import ShellTerminal from './ui/ShellTerminal';
-import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
-import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
-import RemoteControlDialog from './ui/RemoteControlDialog';
-import RemindDialog from './ui/reminders/RemindDialog';
 import { sessionResumable, startReminders } from './reminders';
 import { openReplacementTask } from './reminders/replacement';
 
-import WhatsNewDialog from './ui/WhatsNewDialog';
 import useWhatsNew from './ui/app/useWhatsNew';
-import { PrBadge } from './ui/PrBadge';
 import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
-import ProjectBar from './ui/ProjectBar';
-import EditorTabs, { forgetEditorTabs } from './ui/editor/EditorTabs';
-import { onComposerInsert, onShowTranscriptRequest, requestAttach, sendWaitingComments } from './ui/transcript/composerBridge';
+import EditorTabs from './ui/editor/EditorTabs';
+import { onComposerInsert, onShowTranscriptRequest } from './ui/transcript/composerBridge';
 import GuidePane from './guide/GuidePane';
 import ReviewUpdateBand from './ui/ReviewUpdateBand';
 import { runReviewUpdate } from './guide/copyUpdate';
 import { onGuideRequest, requestGuide } from './guide/openGuide';
-import { FileOpenContext, FilePathContext, FileTextContext, markReadOnly, type OpenFileOptions } from './ui/editor/openFile';
-import { markUserActivated } from './ui/editor/outsideFile';
+import { FileOpenContext, FilePathContext, FileTextContext } from './ui/editor/openFile';
 import { TaskOpenContext, type TaskOpener } from './ui/openTask';
 import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
 import { ContextClear } from './ui/ClearContextButton';
-import ProjectsDialog from './ui/ProjectsDialog';
-import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
-import { archiveProject } from './db/projects';
-import { deleteTask, getTask } from './db';
-import { endTaskEvents } from './capture/hookEvents';
-import { composeWorktreePath, listBranches, listWorktrees, probePath, unmergedCommits } from './git/worktree';
-import ImportProjects from './ui/ImportProjects';
-import MoveTaskDialog from './ui/MoveTaskDialog';
-import MoreGlyph from './ui/MoreGlyph';
+import { getTask } from './db';
+import { composeWorktreePath, listBranches, listWorktrees, probePath } from './git/worktree';
 import PanelToggle from './ui/PanelToggle';
-import { displayName, wrapForTooltip } from './ui/text';
-import { fillPromptTemplate } from './lib/issueKey';
 import {
   buildFollowUp,
   followUpTaken,
@@ -129,27 +100,6 @@ import type { PrStatus } from './gh/prStatus';
  * A fourth resizable pane would leave every one of them too narrow to read at
  * 1440px, which is the width this app is actually used at.
  */
-
-/**
- * Build the initial prompt for a task's first session.
- *
- * Opt-in by design: an empty or absent template yields null, and null means no
- * argv prompt at all. Silently prompting an agent the user has just launched
- * is a side effect they did not ask for, so the default is to say nothing.
- */
-function renderPromptTemplate(task: Task, project: Project | null): string | null {
-  // The template is written for work on a branch ("pick up {key} on
-  // {branch}"); sent to a chat it would contradict the chat's own
-  // instruction not to change anything. A chat starts with no prompt.
-  if (task.kind === 'chat') return null;
-  // Shared with the ProjectsDialog preview on purpose. A preview that drifts
-  // from what the agent is actually told is worse than no preview, and two
-  // expanders in two files is precisely how that drift happens.
-  return fillPromptTemplate(project?.taskPromptTemplate, {
-    title: task.title,
-    branch: task.branch,
-  });
-}
 
 // ---------------------------------------------------------------------------
 
@@ -205,53 +155,26 @@ export default function App() {
     startFilesDrag,
     startShellDrag,
   } = useLayout();
+  const dialogs = useDialogs();
   const {
-    newTaskOpen,
     setNewTaskOpen,
-    newTaskPrefill,
     setNewTaskPrefill,
-    reconcileOpen,
     setReconcileOpen,
-    projectsOpen,
     setProjectsOpen,
-    shortcutsOpen,
     setShortcutsOpen,
-    sessionsOpen,
     setSessionsOpen,
-    importOpen,
     setImportOpen,
-    archiveTarget,
     setArchiveTarget,
-    moveTarget,
     setMoveTarget,
-    endIntent,
     setEndIntent,
     remoteConfirmFor,
     setRemoteConfirmFor,
-  } = useDialogs();
+  } = dialogs;
 
-  /** Pending file-open, scoped to the task it was requested from. */
-  const [openRequest, setOpenRequest] = useState<{
-    taskId: number;
-    request: OpenFileRequest;
-    step?: boolean;
-  } | null>(null);
-  /**
-   * The prompt a follow-up was created with, for its first spawn. In memory
-   * on purpose: the session starts the moment the task is created, and a
-   * prompt for a session that has already started is never sent again.
-   */
-  const [promptOverrides, setPromptOverrides] = useState<Map<number, string>>(() => new Map());
   /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
   const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
   /** What Go to File starts from when a transcript name opened it. */
   const [quickSeed, setQuickSeed] = useState<{ text: string } | null>(null);
-  /**
-   * Resume argv for tasks created in THIS run. A fork lands under a new
-   * session id that the task does not yet know, so the args cannot be derived
-   * from the row until capture has adopted it.
-   */
-  const [pendingResume, setPendingResume] = useState<Map<number, string[]>>(() => new Map());
   const { choice: themeChoice, setChoice: setThemeChoice } = useTheme();
   /** Tasks whose terminal is down while they move: unmounting ends the session. */
   const [stopped, setStopped] = useState<ReadonlySet<number>>(() => new Set());
@@ -319,35 +242,10 @@ export default function App() {
     [tasks, selectedId],
   );
 
-  /**
-   * The reading pane's tab: the selected task's own (#314), or the project
-   * view's. Setting it changes the selected task's unless a task is named --
-   * a request about a task that is not on screen yet (revealing it, its
-   * guide, its transcript) must land on that task, not on the one leaving.
-   */
-  const { tabFor, setTabFor } = useTaskTabs();
-  const rightTab: RightTab = selectedId !== null ? tabFor(selectedId) : projectRightTab;
-  const tabTaskRef = useRef(selectedId);
-  tabTaskRef.current = selectedId;
-  /**
-   * The tab each task (or the project view, under -1) was on when the editor
-   * took the pane (#322), so closing the editor goes back there rather than
-   * always to Transcript.
-   */
-  const beforeEditorRef = useRef(new Map<number, RightTab>());
-  const setRightTab = useCallback(
-    (action: SetStateAction<RightTab>, taskId?: number) => {
-      const id = taskId ?? tabTaskRef.current;
-      const key = id ?? -1;
-      const tracked = (current: RightTab): RightTab => {
-        const next = typeof action === 'function' ? action(current) : action;
-        if (next === 'editor' && current !== 'editor') beforeEditorRef.current.set(key, current);
-        return next;
-      };
-      if (id === null) setProjectRightTab(tracked);
-      else setTabFor(id, tracked);
-    },
-    [setProjectRightTab, setTabFor],
+  const { rightTab, setRightTab, tabTaskRef, beforeEditorRef } = useReadingTab(
+    selectedId,
+    projectRightTab,
+    setProjectRightTab,
   );
   /** What the selected task merges into, for its Create PR (#237): the header's base. */
   const selectedBase = useMeasuredBase(selected);
@@ -403,40 +301,7 @@ export default function App() {
     if (at !== null) markSeen(selected.id, at);
   }, [selected?.id, selected?.seenAt, selectedFinishedAt, markSeen]);
 
-  /**
-   * With no task selected, Go to File and Find in Files search the active
-   * project's main checkout -- the repo folder itself -- and open what they
-   * find read-only. This stands in for a task so the search dialogs and the
-   * editor need no second code path. Its id is negative, so it can never meet
-   * a real task's id, and it is never written anywhere: the editor is
-   * read-only for it (the folder is the user's real repo, not a worktree).
-   */
-  const browseTask = useMemo<Task | null>(() => {
-    if (selected !== null || activeProject === null || !activeProject.repoPath) return null;
-    return {
-      id: -activeProject.id,
-      title: activeProject.name,
-      projectId: activeProject.id,
-      repoPath: activeProject.repoPath,
-      baseBranch: '',
-      branch: '',
-      worktreePath: activeProject.repoPath,
-      sessionId: null,
-      ownsWorktree: false,
-      createdBranch: false,
-      // Never spawned and never stored: only searched and read.
-      kind: 'work',
-      status: 'idle',
-      createdAt: 0,
-      lastActivityAt: null,
-      seenAt: null,
-      summary: null,
-      reviewUrl: null,
-      apiError: null,
-      apiErrorText: null,
-      spunFromTaskId: null,
-    };
-  }, [selected, activeProject]);
+  const browseTask = useBrowseTask(selected, activeProject);
   /** Whose main checkout the shell drawer is in: the project the list shows. */
   const shellProject = activeProject?.repoPath ? activeProject : null;
   // Spawned lazily, per project, the first time the drawer shows it.
@@ -464,102 +329,8 @@ export default function App() {
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
-  /**
-   * FIRST SPAWN ONLY. A task with a sessionId has already been told this; a
-   * re-spawn after a kill or crash must not re-prompt, or the agent starts the
-   * work over. That would read as bizarre agent behaviour rather than as a
-   * spawn bug, which is exactly why the gate lives here and is stated twice.
-   */
-  /**
-   * How this task's `claude` should be started.
-   *
-   * A task Albedo cut spawns fresh. A RESUMED task — `ownsWorktree === false`
-   * with a session id — resumes, and keeps resuming across restarts, which is
-   * what makes the feature survive closing the app. Deliberately scoped to
-   * not-owned tasks: making every task resume its own session on relaunch is
-   * arguably right too, but it is a behaviour change to existing tasks that
-   * nobody asked for, so it is a separate decision.
-   */
-  /**
-   * EVERY task with a session id resumes it — not only ones opened from the
-   * browser. A cockpit for long-lived sessions whose sessions evaporate on
-   * restart is not tracking them; before this, reopening a task started a
-   * fresh `claude` and quietly discarded the conversation, and the pane looked
-   * perfectly fine while the agent had no idea what it had been doing.
-   *
-   * `--resume` can legitimately fail (a pruned transcript), which the exit code
-   * reports without anything reading the stream. Terminal handles that by
-   * offering a fresh session rather than leaving a dead pane.
-   *
-   * Terminal decides the resume itself, from the task's LIVE session id
-   * (ui/sessionSpawn.ts): only History's one-off args are passed down here.
-   */
-  const spawnArgsFor = useCallback(
-    (task: Task): string[] | undefined => pendingResume.get(task.id),
-    [pendingResume],
-  );
-
-  /**
-   * `--name` for this spawn, or undefined to leave the session's name alone.
-   *
-   * Naming happens exactly where we are CREATING a session:
-   *  - a brand new task (no session id yet)
-   *  - a fork, which is a new session under a new id — and marked as a fork so
-   *    the user can tell it from the original in their own /resume picker
-   *
-   * Never on a plain re-open, and never on a straight continue from the
-   * browser: those sessions already have whatever name their owner gave them,
-   * and overwriting it with something Albedo derived would be a quiet mutation
-   * of the user's own data.
-   */
-  const sessionNameFor = useCallback(
-    (task: Task): string | undefined => {
-      /*
-       * Shortened, because this one leaves our app.
-       *
-       * `--name` surfaces in Claude Code's prompt box, its /resume picker and
-       * the terminal title. A task title created from a long prompt is a whole
-       * paragraph, and a paragraph-length name degrades the very surfaces this
-       * flag was added to improve. The full title stays in the database and on
-       * the row; only the label we hand to another program is trimmed.
-       */
-      const name = displayName(task.title);
-      const pending = pendingResume.get(task.id);
-      if (pending) return pending.includes('--fork-session') ? `${name} (fork)` : undefined;
-      if (task.sessionId === null) return name;
-      return undefined;
-    },
-    [pendingResume],
-  );
-
-  /**
-   * The user gave up on a failed resume. Drop any stale args so the retry
-   * starts clean instead of re-attempting the same dead session id.
-   */
-  const forgetResume = useCallback((taskId: number) => {
-    setPendingResume((prev) => {
-      if (!prev.has(taskId)) return prev;
-      const next = new Map(prev);
-      next.delete(taskId);
-      return next;
-    });
-  }, []);
-
-  const initialPromptFor = useCallback(
-    (task: Task): string | null => {
-      if (task.sessionId !== null) return null;
-      // A review task (#287) starts with no prompt: the project's Initial
-      // Prompt is for your own work (it may name a ticket key), not someone
-      // else's pull request. The session waits for your questions.
-      if (!!task.reviewUrl) return null;
-      // A follow-up's prompt was written in the dialog; empty is "none".
-      const override = promptOverrides.get(task.id);
-      if (override !== undefined) return override || null;
-      const project = projects.find((p) => p.id === task.projectId) ?? null;
-      return renderPromptTemplate(task, project);
-    },
-    [projects, promptOverrides],
-  );
+  const { setPendingResume, setPromptOverrides, spawnArgsFor, sessionNameFor, forgetResume, initialPromptFor } =
+    useSpawnPlan(projects);
 
   /**
    * "Follow-up…": open the new-task dialog prefilled. Never creates anything.
@@ -612,7 +383,6 @@ export default function App() {
     if (seq !== followUpSeq.current) return;
     setNewTaskPrefill(buildFollowUp(task, found, title));
   }, []);
-
 
   /**
    * Read a file's current text for the diff view's context expansion.
@@ -750,50 +520,30 @@ export default function App() {
     [requests.items, activeProjectTab, tasks, projects],
   );
 
-  // File-open entry point handed to every renderer via context. Reads the
-  // selection through a ref so the context value stays referentially stable --
-  // transcript rows subscribe to it and should not re-render on every select.
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
-
-  const filesColumnShownRef = useRef(filesColumnShown);
-  filesColumnShownRef.current = filesColumnShown;
-
-  const openFile = useCallback((request: OpenFileRequest, options?: OpenFileOptions) => {
-    const taskId = selectedIdRef.current ?? browseTaskRef.current?.id ?? null;
-    if (taskId === null) return;
-    // A bare name from the transcript (`Foo.php` in backticks) is looked up:
-    // one file by that name opens; none or several open Go to File with the
-    // name typed, rather than an empty new file at the worktree root.
-    const show = (req: OpenFileRequest) => {
-      // The exact object the editor gets: only it may grant a file outside
-      // the worktree, and only because a person clicked (outsideFile.ts).
-      if (options?.activated) markUserActivated(req);
-      if (options?.readOnly) markReadOnly(req);
-      setOpenRequest({ taskId, request: req, step: options?.step });
-      // A step keeps the Files tab on screen: the list is what is being walked.
-      setRightTab((t) => (options?.step && t === 'files' && !filesColumnShownRef.current ? t : 'editor'));
-      // The editor is useless behind a full-width terminal. The project view
-      // has no terminal, and its pane shows whatever the mode.
-      if (selectedIdRef.current !== null) setMode((m) => (m === 'pty' ? 'split' : m));
-    };
-    const root = (selectedRef.current ?? browseTaskRef.current)?.worktreePath ?? null;
-    if (!options?.lookup || !isBareName(request.path) || root === null) {
-      show(request);
-      return;
-    }
-    void filesNamed(root, request.path)
-      .catch(() => [] as string[])
-      .then((found) => {
-        const only = found.length === 1 ? found[0] : undefined;
-        if (only !== undefined) {
-          show({ ...request, path: only });
-          return;
-        }
-        setQuickSeed({ text: request.path });
-        setQuickOpen('file');
-      });
-  }, []);
+  const {
+    openRequest,
+    openRequestRef,
+    openFile,
+    closeEditor,
+    editorCloseSignal,
+    setEditorCloseSignal,
+    editorActivePath,
+    setEditorActivePath,
+    editorTask,
+  } = useEditorRequests({
+    selected,
+    selectedId,
+    selectedRef,
+    browseTask,
+    browseTaskRef,
+    filesColumnShown,
+    setRightTab,
+    setMode,
+    setQuickSeed,
+    setQuickOpen,
+    tabTaskRef,
+    beforeEditorRef,
+  });
 
   /**
    * Put a task on screen. The ONLY supported way to do so.
@@ -847,19 +597,6 @@ export default function App() {
     [hiddenProjectIds, unhideProject, showProjectView],
   );
 
-  /** Close the editor and every tab in it (the pane's ✕, or the last tab closing). */
-  const openRequestRef = useRef(openRequest);
-  openRequestRef.current = openRequest;
-  const closeEditor = useCallback(() => {
-    const open = openRequestRef.current;
-    if (open) forgetEditorTabs(open.taskId);
-    setOpenRequest(null);
-    // Back to where the file was opened from (#322): the Guide, Files or
-    // Transcript. App's derivation still turns a tab with nothing to show
-    // (a Guide for a chat) into Transcript.
-    const key = tabTaskRef.current ?? -1;
-    setRightTab((t) => (t === 'editor' ? (beforeEditorRef.current.get(key) ?? 'transcript') : t));
-  }, [setRightTab]);
   // Text handed to the composer from elsewhere (review comments): show the
   // transcript, where the composer is, the way opening a file shows the editor.
   useEffect(
@@ -890,11 +627,6 @@ export default function App() {
     [],
   );
 
-  /** Bumped by ⌘W: the editor closes its active tab. */
-  const [editorCloseSignal, setEditorCloseSignal] = useState(0);
-  /** The active tab's file, for the files list and Quick Open. */
-  const [editorActivePath, setEditorActivePath] = useState<string | null>(null);
-
   // A selection restored from the last run is shown but was never opened, so it
   // had no terminal and the message box could not send to it. Selecting by
   // click opens the task; a restored selection must too.
@@ -919,13 +651,6 @@ export default function App() {
         .filter((t): t is Task => t !== undefined),
     [openIds, tasks],
   );
-
-  /** The editor only exists for the task its request came from. */
-  const editorTask = useMemo(() => {
-    if (!openRequest) return null;
-    if (selected) return openRequest.taskId === selected.id ? selected : null;
-    return browseTask && openRequest.taskId === browseTask.id ? browseTask : null;
-  }, [openRequest, selected, browseTask]);
 
   // Derived rather than corrected in an effect: switching task while the editor
   // tab is showing falls straight back to the transcript, with no flash.
@@ -1004,27 +729,6 @@ export default function App() {
     };
   }, []);
 
-  const stepReadingTab = useCallback(
-    (delta: number) => {
-      const tabs = readingTabs;
-      if (tabs.length < 2) return;
-      const at = tabs.indexOf(activeTab);
-      const next = tabs[(((at === -1 ? 0 : at) + delta) % tabs.length + tabs.length) % tabs.length];
-      if (next) setRightTab(next);
-    },
-    [readingTabs, activeTab],
-  );
-
-  // Text size (HIG: macOS has no Dynamic Type, so the app offers its own).
-  const zoomRef = useRef(storedZoom());
-  useEffect(() => {
-    if (zoomRef.current !== 1) void applyZoom(zoomRef.current);
-  }, []);
-  const zoomTo = (z: number) => {
-    zoomRef.current = z;
-    void applyZoom(z);
-  };
-
   /**
    * Open the palette in a mode, or close it if it is already showing that mode.
    * Pressing another mode's keys while it is open switches mode and keeps the
@@ -1041,9 +745,6 @@ export default function App() {
     setQuickOpen(current === next ? null : next);
   }, []);
   const closeQuickOpen = useCallback(() => setQuickOpen(null), []);
-  useDoubleShift(() => toggleQuickOpen('all'));
-  // Tab / Ctrl+Tab between the message box, terminal, Files and task list.
-  useFocusAreaCycle();
 
   /** Find in Files (⇧⌘F): same guards as the palette -- a folder, and no other modal. */
   const [findOpen, setFindOpen] = useState(false);
@@ -1062,145 +763,27 @@ export default function App() {
     [editorTask, editorActivePath],
   );
 
-  /**
-   * ⇧⌘P: what the Files pane's Push does, for the selected task -- the same
-   * prompt, through the same path (submitted on an idle session, otherwise
-   * left in the message box). The message box lives in the transcript, so in
-   * terminal-only mode a busy task gets the split view and a second try.
-   */
-  const pushSelected = async () => {
-    const task = selected;
-    // A chat has no branch to push, and the Files pane offers no Push for it.
-    if (!task || task.status === 'archived' || task.kind === 'chat') return;
-    // As the Files pane: on no branch there is nothing to push, and pushing a
-    // stale detached copy could overwrite the branch with old commits.
-    const remote = await unmergedCommits(task.worktreePath, task.baseBranch).catch(() => null);
-    if (remote?.detached) {
-      console.warn('[push] HEAD is detached in', task.worktreePath, '- nothing to push');
-      return;
-    }
-    const text = pushPrompt(task);
-    if ((await sendPrompt(task, text)) !== 'failed') return;
-    setMode((m) => (m === 'pty' ? 'split' : m));
-    await new Promise((resolve) => window.setTimeout(resolve, 150));
-    if ((await sendPrompt(task, text)) === 'failed') {
-      console.warn('[push] no live session or message box for task', task.id);
-    }
-  };
-
-  const startRename = () => {
-    if (!selected || modalOpen()) return;
-    setRenaming({ id: selected.id, by: 'key' });
-  };
-
-  const stepProject = (delta: number) => {
-    if (!showTabs) return;
-    const key = stepProjectTab(tabs.map((t) => t.key), activeProjectTab?.key ?? null, delta);
-    if (key) switchTab(key);
-  };
-
-  useShortcuts({
-    // PhpStorm's keymap. Live while typing: nothing in a text field, the
-    // terminal included, binds ⌘O (Ctrl+O is left alone -- see shortcuts.ts).
-    'mod+shift+o': () => toggleQuickOpen('file'),
-    'mod+o': () => toggleQuickOpen('class'),
-    'mod+alt+o': () => toggleQuickOpen('symbol'),
-    'mod+shift+f': toggleFind,
-    'mod+shift+p': () => void pushSelected(),
-    // Remote Control, after a confirmation. Heard in the capture phase so it
-    // works wherever focus is (shortcuts.ts). Only where the ⋯ item is
-    // offered: a selected task with a live session and Remote Control off.
-    // Already on, it does nothing -- the Remote mark beside the title opens
-    // the session. Never over another dialog, as the palette.
-    'mod+shift+r': {
-      phase: 'capture',
-      run: () => {
-        if (!selected || !remoteItem) return;
-        if (modalOpen()) return;
-        setRemoteConfirmFor(selected.id);
-      },
-    },
-    // The selected task's Review Guide (#207), as its ⋯ item. Not for a chat,
-    // which has no branch to guide; not over a dialog; and not in the editor,
-    // where ⇧⌘G is Find Previous (shortcuts.ts).
-    'mod+shift+g': {
-      whenTyping: 'ignore',
-      typingExcept: GUIDE_KEY_EXCEPT,
-      run: () => {
-        if (!selected || selected.kind === 'chat') return;
-        if (modalOpen()) return;
-        // The key, unlike a click, takes focus into the guide (#217).
-        requestGuide(selected.id, { focus: true });
-      },
-    },
-    // Straight to a reading tab (#256), beside ⇧⌘G. Shown even from PTY
-    // only, as ⌘U does. Not over a dialog.
-    'mod+shift+t': () => {
-      if (!selected || projectView) return;
-      if (modalOpen()) return;
-      setRightTab('transcript');
-      setMode((m) => (m === 'pty' ? 'split' : m));
-    },
-    'mod+shift+e': () => {
-      if (!selected && !projectView) return;
-      if (modalOpen()) return;
-      setMode((m) => (m === 'pty' ? 'split' : m));
-      // Pinned as a column, Files has no tab: go into the column instead.
-      if (filesColumnShown) {
-        const col = document.querySelector<HTMLElement>('[data-focus-area="files"]');
-        if (col) focusArea(col);
-        return;
-      }
-      setRightTab('files');
-    },
-    // Send the selected task's waiting comments, from anywhere (#258): the
-    // transcript then shows, where the message lands, sent or held.
-    'mod+shift+s': () => {
-      if (!selected) return;
-      if (modalOpen()) return;
-      sendWaitingComments(selected.id);
-    },
-    // The message box is in the transcript: show it, then ask it to attach.
-    'mod+u': () => {
-      if (!selected) return;
-      const id = selected.id;
-      setRightTab('transcript');
-      setMode((m) => (m === 'pty' ? 'split' : m));
-      if (!requestAttach(id)) window.setTimeout(() => requestAttach(id), 150);
-    },
-    'alt+f12': () => setShellOpen((o) => !o),
-    'mod+t': () => setShellOpen((o) => !o),
-    'mod+=': () => zoomTo(stepZoom(zoomRef.current, 1)),
-    'mod+-': () => zoomTo(stepZoom(zoomRef.current, -1)),
-    'mod+0': () => zoomTo(1),
-    'mod+/': () => setShortcutsOpen((o) => !o),
-    // The nth project tab, as shown in the bar. Nothing to do without one.
-    'mod+alt+digit': (_e, digit) => {
-      const tab = showTabs && digit !== null ? tabs[digit - 1] : undefined;
-      if (tab) switchTab(tab.key);
-    },
-    // The previous / next tab, stopping at the ends; lands like the digit above.
-    // The task list as a rail of group counts, or back (#266). Live while
-    // typing, as ⇧⌘T: no field claims ⌥⌘T (shortcuts.ts). Not over a dialog.
-    'mod+alt+t': () => {
-      if (modalOpen()) return;
-      setTaskListCollapsed((c) => !c);
-    },
-    'mod+shift+[': () => stepProject(-1),
-    'mod+shift+]': () => stepProject(1),
-    // Only where the switch is shown: not over the editor (see the switch).
-    'mod+\\': () => {
-      if (!editorShowing) setMode((m) => (m === 'pty' ? 'split' : m === 'split' ? 'transcript' : 'pty'));
-    },
-    // Exempt while typing: ⌘← / ⌘→ are start/end of line in every macOS text
-    // field, and this app has a composer, a title input and a code editor.
-    'mod+arrowleft': { run: () => stepReadingTab(-1), whenTyping: 'ignore' },
-    'mod+arrowright': { run: () => stepReadingTab(1), whenTyping: 'ignore' },
-    // PhpStorm's Rename, and F2. Live in the task terminal, which gives them
-    // up; not in a text field, the editor or the shell drawer (shortcuts.ts).
-    // Never over a dialog.
-    'shift+f6': { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
-    f2: { run: () => startRename(), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT },
+  useAppShortcuts({
+    readingTabs,
+    activeTab,
+    setRightTab,
+    toggleQuickOpen,
+    toggleFind,
+    selected,
+    setMode,
+    remoteItem,
+    setRemoteConfirmFor,
+    projectView,
+    filesColumnShown,
+    setShellOpen,
+    setShortcutsOpen,
+    showTabs,
+    tabs,
+    switchTab,
+    activeProjectTab,
+    setTaskListCollapsed,
+    editorShowing,
+    setRenaming,
   });
 
   // --- render --------------------------------------------------------------
@@ -1364,64 +947,14 @@ export default function App() {
         {announcement}
       </div>
 
-      {banner && (
-        <div className="banner" role="status">
-          <span className="status-dot" data-status="blocked" aria-hidden="true" />
-          <span className="banner-text" title={banner}>
-            {banner}
-          </span>
-          <button className="btn btn-ghost" onClick={() => void refresh()}>
-            Retry
-          </button>
-        </div>
-      )}
-
-      {/* Detection, never correction: a project whose root is another
-          project's repo_path IS a linked worktree of it -- git says so. But
-          merging or deleting a row the user created, with the wrong survivor
-          picked automatically, costs far more to undo than the duplicate costs
-          to live with. So: say what it is, offer the reversible action. */}
-      {worktreeProjects.map((finding) => (
-        <div className="notice" key={`wt-${finding.project.id}`}>
-          <span className="notice-text">
-            <strong>{finding.project.name}</strong> looks like a worktree of{' '}
-            <strong>{finding.parent.name}</strong>. Archiving it re-associates its tasks.
-          </span>
-          <button
-            className="btn"
-            onClick={() => {
-              const id = finding.project.id;
-              dismiss(`wt:${id}`);
-              void archiveProject(id)
-                .then(() => refresh())
-                .catch(() => {});
-            }}
-          >
-            Archive It
-          </button>
-          <button className="btn btn-ghost" onClick={() => dismiss(`wt:${finding.project.id}`)}>
-            Dismiss
-          </button>
-        </div>
-      ))}
-
-      {unclaimed.length > 0 && (
-        <div className="notice">
-          <span className="notice-text">
-            {unclaimed.length} repositor{unclaimed.length === 1 ? 'y' : 'ies'} in your history{' '}
-            {unclaimed.length === 1 ? 'has' : 'have'} no project yet.
-          </span>
-          <button className="btn" onClick={() => setImportOpen(true)}>
-            Review
-          </button>
-          <button
-            className="btn btn-ghost"
-            onClick={() => unclaimed.forEach((r) => dismiss(`repo:${r.repoRoot}`))}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+      <LaunchNotices
+        banner={banner}
+        refresh={refresh}
+        worktreeProjects={worktreeProjects}
+        unclaimed={unclaimed}
+        dismiss={dismiss}
+        setImportOpen={setImportOpen}
+      />
 
       <div className="app-body">
         {/* Collapsed (#266), the rail's own width (taskrail.css) replaces the
@@ -1480,219 +1013,41 @@ export default function App() {
         )}
 
         <main className="main" ref={mainRef}>
-          <div className="main-bar">
-            {/* These panes follow the SELECTED TASK, not the active tab, so
-                the task on screen can belong to a different project than the
-                sidebar is scoped to. The two can legitimately disagree, and
-                when they do that is precisely when it needs saying. */}
-            <div className="main-ident">
-              {selected ? (
-                <>
-                  {selectedProject && (
-                    <>
-                      {/* The way back to the project itself (#181): its view,
-                          where the tab clicked again also goes. */}
-                      <button
-                        type="button"
-                        className="main-ident-project"
-                        data-foreign={selectedProjectIsForeign}
-                        title={
-                          (selectedProjectIsForeign
-                            ? `This task is in ${selectedProject.name}, not the project the list is showing`
-                            : selectedProject.repoPath) + `\nShow ${selectedProject.name}`
-                        }
-                        onClick={() => openProjectView(selectedProject.id)}
-                      >
-                        {selectedProject.name}
-                      </button>
-                      <span className="main-ident-sep" aria-hidden="true">›</span>
-                    </>
-                  )}
-                  {renaming?.id === selected.id ? (
-                    <TaskTitleEdit
-                      className="main-ident-title-edit"
-                      summaryClassName="main-ident-summary-edit"
-                      title={selected.title}
-                      summary={selected.summary}
-                      returnFocus={renaming.by === 'key' ? 'previous' : 'fallback'}
-                      fallbackFocus={() => focusLiveTerminal(selected.id)}
-                      onSave={(title) => {
-                        setRenaming(null);
-                        saveTitle(selected, title);
-                      }}
-                      onSaveSummary={(summary) => {
-                        setRenaming(null);
-                        saveSummary(selected, summary);
-                      }}
-                      onDone={() => setRenaming(null)}
-                    />
-                  ) : (
-                    <>
-                      <span
-                        className="main-ident-title"
-                        title={`${wrapForTooltip(selected.title)}\n${selected.worktreePath}\nDouble-click to rename (${RENAME_KEYS})`}
-                        onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
-                      >
-                        {selected.title}
-                      </span>
-                      {/* Where it came from (#332): against the name, which
-                          it qualifies, and before the summary, which goes
-                          first when the bar is short. */}
-                      <SpunFromChip task={selected} tasks={tasks} onOpen={openTaskById} />
-                      {/* What the task is about (#262), after its name: it
-                          takes only room nothing else wants, so it goes
-                          first when the bar is short and never cuts the
-                          title. The tooltip has it whole. */}
-                      {selected.summary && (
-                        <span
-                          className="main-ident-summary"
-                          title={`${wrapForTooltip(selected.summary)}\nDouble-click to edit (${RENAME_KEYS})`}
-                          onDoubleClick={() => setRenaming({ id: selected.id, by: 'pointer' })}
-                        >
-                          {selected.summary}
-                        </span>
-                      )}
-                    </>
-                  )}
-                  {/* What acts on the task, right after its name; the ⋯ at
-                      the bar's end keeps what acts on the panes. */}
-                  <OverflowMenu
-                    label={`Actions for ${selected.title}`}
-                    title="Task actions"
-                    trigger={{ className: 'icon-btn main-ident-more', content: <MoreGlyph /> }}
-                    // The same list as the row's menu (#331), with no heading:
-                    // the task's name is right beside it.
-                    items={taskMenuItems(selected, selectedFacts, taskActions, () =>
-                      setRenaming({ id: selected.id, by: 'pointer' }),
-                    )}
-                  />
-                  {/* Reachable through Remote Control, against the name: it
-                      is about the session, not the branch after it. */}
-                  <RemoteLink url={remoteUrl} variant="bar" pending={remotePending} />
-                  {/* The branch and folder live here and nowhere else on screen:
-                      the sidebar row repeats the branch only when it adds to
-                      the title, the Files bar not at all. Icons say which is
-                      which, so a branch named like its task reads as a fact. */}
-                  {/* A chat has no branch: the chat glyph takes its place, in
-                      the same tier, and the folder after it says where. */}
-                  {selected.kind === 'chat' ? (
-                    <span
-                      className="main-ident-branch"
-                      data-kind="chat"
-                      title="A chat about the code: no branch, in the main checkout as it is"
-                    >
-                      <ChatIcon />
-                      <span className="main-ident-text">Chat</span>
-                    </span>
-                  ) : selected.branch ? (
-                    <BranchChip task={selected} />
-                  ) : null}
-                  {/* The PR, beside the branch it belongs to: with the branch,
-                      the one place git and GitHub state shows. It never
-                      shrinks; the title and the folder give way first. A chat
-                      has neither, and nothing takes their place. */}
-                  {/* A review task (#287): the pull request it is for, one
-                      click to GitHub. Its branch is Albedo's copy, which has
-                      no PR of its own, so the badge below would offer to
-                      create one. */}
-                  {/* Submit Review (#287, step 3) beside it: the review
-                      task's one main action, as Merge is beside your own
-                      PR's badge. */}
-                  {!!selected.reviewUrl && <ReviewBadge task={selected} />}
-                  {selected.kind !== 'chat' && !selected.reviewUrl && (
-                  <PrBadge
-                    task={selected}
-                    onEnd={(intent) => {
-                      setEndIntent(intent);
-                      setArchiveTarget(selected);
-                    }}
-                    onFollowUp={(pr) => void openFollowUp(selected, pr)}
-                    onCreatePr={() => void sendPrompt(selected, createPrPrompt(selectedBase.base !== '' ? { ...selected, baseBranch: selectedBase.base } : selected))}
-                    onResolveConflicts={(pr) => void sendPrompt(selected, resolveConflictsPrompt(selected, pr))}
-                    onOpenFile={openFile}
-                  />
-                  )}
-                  {/* The folder only where it says something: a worktree Albedo
-                      cut is always <root>/<branch>, so naming it cost the room
-                      the title and branch needed. A task running anywhere else
-                      -- above all the main checkout -- shows where. */}
-                  {!selected.ownsWorktree && (
-                    <span className="main-ident-path" title={selected.worktreePath}>
-                      <FolderIcon />
-                      <span className="main-ident-text">{homeRelative(selected.worktreePath)}</span>
-                    </span>
-                  )}
-                </>
-              ) : projectView && activeProject ? (
-                <ProjectBar project={activeProject} onNewTask={() => setNewTaskOpen(true)} />
-              ) : null}
-            </div>
-
-            {/* The picker lives beside Send in the composer; only with the
-                transcript hidden (terminal only) does it fall back to here. */}
-            {selected && !showTranscript && <ModelPicker task={selected} />}
-
-            {/* The project view has one pane: nothing to lay out. */}
-            {!editorShowing && !projectView && (
-              /* Icons (#317): the words took 192px of a bar the title and
-                 branch need; the names are each button's label and tooltip. */
-              <div className="seg seg-icons" role="group" aria-label="Pane layout">
-                <button aria-pressed={mode === 'pty'} onClick={() => setMode('pty')} aria-label="PTY" title="Terminal only (⌘\)">
-                  <PtyLayoutIcon />
-                </button>
-                <button aria-pressed={mode === 'split'} onClick={() => setMode('split')} aria-label="Split" title="Split (⌘\)">
-                  <SplitLayoutIcon />
-                </button>
-                <button
-                  aria-pressed={mode === 'transcript'}
-                  onClick={() => setMode('transcript')}
-                  aria-label="Transcript"
-                  title="Transcript only (⌘\)"
-                >
-                  <TranscriptLayoutIcon />
-                </button>
-              </div>
-            )}
-
-            {/* Two icons where a ⋯ held two items: the orientation only
-                means something in Split, and the shell keeps ⌥F12. */}
-            {split && !projectView && (
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label={orientation === 'row' ? 'Stack Panes' : 'Panes Side by Side'}
-                title={
-                  orientation === 'row'
-                    ? 'Terminal and reading pane side by side. Click to stack them'
-                    : 'Terminal and reading pane stacked. Click to put them side by side'
-                }
-                onClick={() => setOrientation((o) => (o === 'row' ? 'column' : 'row'))}
-              >
-                <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                  <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
-                  {orientation === 'row' ? <path d="M8 3v10" /> : <path d="M2 8h12" />}
-                </svg>
-              </button>
-            )}
-            <button
-              type="button"
-              className="icon-btn icon-btn-on"
-              aria-pressed={shellOpen && shellProject !== null}
-              aria-label="Shell"
-              disabled={!shellProject}
-              title={
-                shellProject
-                  ? `Shell in ${shellProject.name}'s main checkout (⌘T or ⌥F12)`
-                  : 'No project to open a shell in'
-              }
-              onClick={() => setShellOpen((o) => !o)}
-            >
-              <svg className="more-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-                <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
-                <path d="M4.5 6.5 6.5 8l-2 1.5M8 10h3.5" />
-              </svg>
-            </button>
-          </div>
+          <TaskBar
+            selected={selected}
+            selectedProject={selectedProject}
+            selectedProjectIsForeign={selectedProjectIsForeign}
+            openProjectView={openProjectView}
+            renaming={renaming}
+            setRenaming={setRenaming}
+            focusLiveTerminal={focusLiveTerminal}
+            saveTitle={saveTitle}
+            saveSummary={saveSummary}
+            tasks={tasks}
+            openTaskById={openTaskById}
+            selectedFacts={selectedFacts}
+            taskActions={taskActions}
+            remoteUrl={remoteUrl}
+            remotePending={remotePending}
+            setEndIntent={setEndIntent}
+            setArchiveTarget={setArchiveTarget}
+            openFollowUp={openFollowUp}
+            selectedBase={selectedBase}
+            openFile={openFile}
+            projectView={projectView}
+            activeProject={activeProject}
+            setNewTaskOpen={setNewTaskOpen}
+            showTranscript={showTranscript}
+            editorShowing={editorShowing}
+            mode={mode}
+            setMode={setMode}
+            split={split}
+            orientation={orientation}
+            setOrientation={setOrientation}
+            shellOpen={shellOpen}
+            shellProject={shellProject}
+            setShellOpen={setShellOpen}
+          />
 
           {/* The project view has no terminal: its one pane is laid out as
               Transcript mode's is, with no edge against a hidden terminal. */}
@@ -2050,217 +1405,42 @@ export default function App() {
         <StatusBar awake={awakeCount} />
       </PaneErrorBoundary>
 
-      <PaneErrorBoundary label="New task">
-        <NewTaskDialog
-          open={newTaskOpen}
-          prefill={newTaskPrefill}
-          defaultProjectId={activeProject?.id ?? null}
-          onClose={() => {
-            followUpSeq.current++;
-            setNewTaskOpen(false);
-            setNewTaskPrefill(null);
-          }}
-          onCreated={(task: Task, initialPrompt?: string, forkOf?: string) => {
-            // An approved session request is done once its task exists, and
-            // its transcript says which task it became (#332).
-            if (newTaskPrefill?.request) resolveRequest(newTaskPrefill.request.id, task);
-            // A fork (#332): the first spawn copies the source's session under
-            // a new id, as History's fork does; the first message, if any,
-            // goes after the copy (Terminal). The id is chosen here so the
-            // spawn plan and `--name … (fork)` both see a fork.
-            if (forkOf) {
-              setPendingResume((prev) =>
-                new Map(prev).set(task.id, ['--resume', forkOf, '--fork-session', '--session-id', newSessionId()]),
-              );
-            }
-            if (initialPrompt !== undefined) {
-              setPromptOverrides((prev) => new Map(prev).set(task.id, initialPrompt));
-            }
-            followUpSeq.current++;
-            setNewTaskPrefill(null);
-            upsertTask(task);
-            // revealTask, not select: a new task can land in a closed tab,
-            // which must open before the task can show (see revealTask).
-            revealTask(task);
-            setNewTaskOpen(false);
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Worktree reconcile">
-        <WorktreeReconcile
-          open={reconcileOpen}
-          onClose={() => {
-            setReconcileOpen(false);
-            void refresh();
-          }}
-        />
-      </PaneErrorBoundary>
-
-      {/* Archiving is not a status flip: the dialog does `git worktree remove`
-          and branch cleanup behind a confirmation. The task row is only marked
-          archived once the dialog reports the worktree work succeeded --
-          flipping first would strand the worktree, reachable from nothing. */}
-      <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-      <PaneErrorBoundary label="Go to">
-        <QuickOpen
-          mode={searchTask ? quickOpen : null}
-          worktreePath={searchTask?.worktreePath ?? null}
-          scopeLabel={searchScopeLabel}
-          currentFile={editorFile}
-          onMode={setQuickOpen}
-          onClose={closeQuickOpen}
-          onOpen={openFile}
-          seed={quickSeed}
-        />
-      </PaneErrorBoundary>
-      <PaneErrorBoundary label="Find in Files">
-        <FindInFiles
-          open={searchTask !== null && findOpen}
-          worktreePath={searchTask?.worktreePath ?? null}
-          scopeLabel={searchScopeLabel}
-          onClose={closeFind}
-          onOpen={openFile}
-        />
-      </PaneErrorBoundary>
-      <PaneErrorBoundary label="Projects">
-        <ProjectsDialog
-          open={projectsOpen}
-          onClose={() => setProjectsOpen(false)}
-          // The hidden set lives in React state, read from localStorage once
-          // at mount — a write to the key alone would not bring the tab back
-          // until a relaunch.
-          onUnhideProject={unhideProject}
-          onChanged={(created) => {
-            void refresh();
-            // Follow the project that was just made. Without this the new tab
-            // appears but stays in the background, and a task created into it
-            // is filtered out of the active tab and silently deselected.
-            if (created) switchTab(`p${created.id}`);
-          }}
-          onCreateTaskIn={(project) => {
-            // The dialog already remembers the project it just created as the
-            // new-task default, so this only has to switch to its tab and open
-            // the dialog.
-            switchTab(`p${project.id}`);
-            setProjectsOpen(false);
-            setNewTaskOpen(true);
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Import projects">
-        <ImportProjects
-          open={importOpen}
-          repos={unclaimed}
-          onClose={() => setImportOpen(false)}
-          onImported={(created) => {
-            // Imported repos are claimed now; stop offering them.
-            for (const p of created) dismiss(`repo:${p.repoPath}`);
-            void refresh();
-            const first = created[0];
-            if (first) switchTab(`p${first.id}`);
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Past sessions">
-        <SessionBrowser
-          open={sessionsOpen}
-          onClose={() => setSessionsOpen(false)}
-          onOpenTask={(taskId) => {
-            const task = tasks.find((t) => t.id === taskId);
-            if (task) revealTask(task);
-          }}
-          onResumed={(task, args) => {
-            setPendingResume((prev) => {
-              const next = new Map(prev);
-              next.set(task.id, args);
-              return next;
-            });
-            upsertTask(task);
-            // Continue AND fork both land here, and both carry a projectId
-            // resolved from the session's repo root — frequently a different
-            // project than the active tab, since reaching sessions from
-            // anywhere in your history is the point of the browser.
-            revealTask(task);
-            void refresh();
-          }}
-        />
-      </PaneErrorBoundary>
-
-      {whatsNew.open && (
-        <PaneErrorBoundary label="What's New">
-          <WhatsNewDialog list={whatsNew.open} onClose={whatsNew.dismiss} />
-        </PaneErrorBoundary>
-      )}
-
-      {remoteConfirm && selected && (
-        <PaneErrorBoundary label="Remote Control">
-          <RemoteControlDialog
-            task={selected}
-            onConfirm={remoteConfirm.onSelect}
-            onClose={() => setRemoteConfirmFor(null)}
-          />
-        </PaneErrorBoundary>
-      )}
-
-      {remindFor && (
-        <PaneErrorBoundary label="Reminders">
-          <RemindDialog task={remindFor} onClose={() => setRemindFor(null)} />
-        </PaneErrorBoundary>
-      )}
-
-      <PaneErrorBoundary label="Move task">
-        <MoveTaskDialog
-          task={moveTarget}
-          project={projects.find((p) => p.id === moveTarget?.projectId) ?? null}
-          onClose={() => setMoveTarget(null)}
-          onStop={async (task) => {
-            setStopped((prev) => new Set(prev).add(task.id));
-            // Unmounting kills the pty; give claude a moment to exit before
-            // git touches the folder it was running in.
-            await new Promise((resolve) => window.setTimeout(resolve, 600));
-          }}
-          onDone={(moved) => {
-            upsertTask(moved);
-            // Its tabs are paths in the old folder.
-            if (openRequestRef.current?.taskId === moved.id) closeEditor();
-            setStopped((prev) => {
-              const next = new Set(prev);
-              next.delete(moved.id);
-              return next;
-            });
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Archive task">
-        <ArchiveTaskDialog
-          task={archiveTarget}
-          intent={endIntent}
-          otherTasks={tasks}
-          onClose={() => setArchiveTarget(null)}
-          onArchived={(taskId) => {
-            void archive(taskId);
-            setArchiveTarget(null);
-          }}
-          onDeleted={(taskId) => {
-            // Same ordering discipline as onArchived: the row only leaves the
-            // list once the destructive work has actually completed. The dialog
-            // only does the git side, so the task and its captured messages are
-            // removed here (see deleteTask).
-            void deleteTask(taskId)
-              .then(() => {
-                forgetResume(taskId);
-                void endTaskEvents(taskId).catch(() => {});
-                setArchiveTarget(null);
-                return refresh();
-              })
-              .catch((e) => console.error('deleteTask failed', e));
-          }}
-        />
-      </PaneErrorBoundary>
+      <AppDialogs
+        dialogs={dialogs}
+        activeProject={activeProject}
+        followUpSeq={followUpSeq}
+        setPendingResume={setPendingResume}
+        setPromptOverrides={setPromptOverrides}
+        forgetResume={forgetResume}
+        upsertTask={upsertTask}
+        revealTask={revealTask}
+        refresh={refresh}
+        archive={archive}
+        tasks={tasks}
+        projects={projects}
+        searchTask={searchTask}
+        searchScopeLabel={searchScopeLabel}
+        quickOpen={quickOpen}
+        setQuickOpen={setQuickOpen}
+        closeQuickOpen={closeQuickOpen}
+        quickSeed={quickSeed}
+        findOpen={findOpen}
+        closeFind={closeFind}
+        editorFile={editorFile}
+        openFile={openFile}
+        unhideProject={unhideProject}
+        switchTab={switchTab}
+        unclaimed={unclaimed}
+        dismiss={dismiss}
+        whatsNew={whatsNew}
+        remoteConfirm={remoteConfirm}
+        selected={selected}
+        remindFor={remindFor}
+        setRemindFor={setRemindFor}
+        setStopped={setStopped}
+        openRequestRef={openRequestRef}
+        closeEditor={closeEditor}
+      />
     </div>
     </MentionSourceContext.Provider>
     </TaskOpenContext.Provider>

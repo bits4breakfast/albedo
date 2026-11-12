@@ -17,7 +17,7 @@ vi.mock('../../lib/clipboard', () => ({
   },
 }));
 
-const { Markdown } = await import('./MessageRow');
+const { Markdown } = await import('./Markdown');
 const { COPIED_MS } = await import('./CopyButton');
 
 beforeEach(() => {

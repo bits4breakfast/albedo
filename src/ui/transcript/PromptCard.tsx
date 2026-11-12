@@ -43,7 +43,7 @@ import {
 } from '../../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { useOpenFile } from '../editor/openFile';
-import { Markdown } from './MessageRow';
+import { Markdown } from './Markdown';
 import { PlanDocument } from './PlanDocument';
 import { inDocumentOrder, planCommentKey, usePlanComments } from './planComments';
 import {

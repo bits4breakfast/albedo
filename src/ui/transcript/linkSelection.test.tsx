@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { FileOpenContext } from '../editor/openFile';
-import { PathLink } from './Diff';
+import { PathLink } from './links';
 
 afterEach(() => {
   cleanup();
