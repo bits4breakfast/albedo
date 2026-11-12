@@ -750,7 +750,7 @@ class Capture implements CaptureHandle {
       const text = new TextDecoder().decode(bytes.subarray(0, consumed));
 
       const fromLine = lineIndexAfter(lastSeq);
-      const rows = parseTranscript(text, fromLine);
+      const rows = parseTranscript(text, fromLine, path);
       const nextLineIndex = fromLine + countLines(text);
 
       // Title lines are bookkeeping and produce no message rows, so they are

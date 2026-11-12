@@ -67,11 +67,11 @@ import OverlayScrollbar from './OverlayScrollbar';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SEQ_STRIDE } from '../../capture';
 import { imageSourceNote, isImagePlaceholder } from './envelopes';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
 import type { Message, TaskStatus } from '../../types';
 import { getMessages, messageOrderKeys } from '../../db';
-import { mergeTail, tailCursor } from './tail';
+import { grownLimit, keepRowObjects, mergeTail, tailCursor } from './tail';
 import {
   harnessInputOf,
   isLocalCommandLine,
@@ -248,7 +248,8 @@ export function TranscriptPane({
         // their place, whatever caused the reload.
         if (pendingScrollRef.current === 'anchor') pageAppliedRef.current = true;
         else pendingScrollRef.current = followingRef.current ? 'bottom' : null;
-        setMessages(rows);
+        // Rows already held keep their objects, so only what is new renders.
+        setMessages((prev) => keepRowObjects(prev, rows));
         // `limit` keeps the most recent rows, so a full page means there is more
         // history behind it.
         setHasMore(rows.length >= limit);
@@ -274,6 +275,9 @@ export function TranscriptPane({
   useEffect(() => {
     lastIdRef.current = tailCursor(messages);
   }, [messages]);
+  /** How many rows are on screen, for growing the window from (grownLimit). */
+  const heldRef = useRef(0);
+  heldRef.current = messages.length;
   // Fresh rows go where a reload would put them.
   const orderKeys = useMemo(() => messageOrderKeys(query), [query]);
   const orderKeysRef = useRef(orderKeys);
@@ -343,7 +347,7 @@ export function TranscriptPane({
     if (el) anchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
     pendingScrollRef.current = 'anchor';
     pageAppliedRef.current = false;
-    setLimit((l) => l + PAGE);
+    setLimit((l) => grownLimit(l, heldRef.current, PAGE));
   }, []);
 
   const onScroll = useCallback(() => {
@@ -487,7 +491,7 @@ export function TranscriptPane({
     const row = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${reveal}"]`) ?? null;
     const step = revealStep(row !== null, messages.some((m) => m.id === reveal), hasMore);
     if (step === 'grow') {
-      setLimit((l) => l + PAGE);
+      setLimit((l) => grownLimit(l, heldRef.current, PAGE));
       return;
     }
     const passage = passageRef.current?.messageId === reveal ? passageRef.current : null;
@@ -607,7 +611,7 @@ export function TranscriptPane({
             <ApiErrorRetryContext.Provider value={retry}>
               {items.map((item, idx) =>
                 item.kind === 'tools' ? (
-                  <ToolRunGroup key={item.key} rows={item.rows} live={idx === items.length - 1} reveal={reveal} />
+                  <MemoToolRunGroup key={item.key} rows={item.rows} live={idx === items.length - 1} reveal={reveal} />
                 ) : item.kind === 'sidechain' ? (
                   <SidechainGroup key={item.key} rows={item.rows} results={item.results} extras={item.extras} />
                 ) : item.kind === 'compaction' ? (
@@ -2321,6 +2325,28 @@ export function ToolRunGroup({ rows, live, reveal }: { rows: readonly RowItem[];
     </div>
   );
 }
+
+/**
+ * A run whose rows are the same objects draws the same line (#362): rows are
+ * immutable once captured (MessageRow's `sameRow`). groupRows builds new
+ * arrays on every append, so the rows are compared one by one; without this
+ * every run in the window re-read its calls on each new row.
+ */
+export function sameRun(
+  a: { rows: readonly RowItem[]; live: boolean; reveal: number | null },
+  b: { rows: readonly RowItem[]; live: boolean; reveal: number | null },
+): boolean {
+  if (a.live !== b.live || a.reveal !== b.reveal || a.rows.length !== b.rows.length) return false;
+  return a.rows.every((r, i) => {
+    const o = b.rows[i]!;
+    if (r.key !== o.key || r.message !== o.message || (r.result ?? null) !== (o.result ?? null)) return false;
+    const ea = r.extras ?? [];
+    const eb = o.extras ?? [];
+    return ea.length === eb.length && ea.every((m, k) => m === eb[k]);
+  });
+}
+
+const MemoToolRunGroup = memo(ToolRunGroup, sameRun);
 
 function SidechainGroup({
   rows,

@@ -133,10 +133,19 @@ export function fullBodyOf(row: Pick<ParsedMessage, 'body' | 'rawJson' | 'seq'>)
  * `text` must contain only complete lines; the watcher holds back a partial
  * trailing line until the newline arrives. If one slips through anyway it
  * fails to parse and is dropped, which is the correct outcome either way.
+ *
+ * `file` names the transcript the chunk was read from, when the caller tails
+ * one chunk at a time. A tool's result is written once the tool has run,
+ * nearly always in a later file event than its call, and pairing within one
+ * chunk left most live results with no tool name (#362). With `file`, what
+ * the calls said is kept per file across chunks ({@link FILE_PAIRING_MAX_FILES}
+ * files, {@link FILE_PAIRING_MAX_CALLS} calls each, least recent out first),
+ * and a chunk from line 0 -- a new or rewritten file -- starts it afresh.
+ * Without `file`, the text is the whole story and pairs only within itself.
  */
-export function parseTranscript(text: string, fromLineIndex = 0): ParsedMessage[] {
+export function parseTranscript(text: string, fromLineIndex = 0, file?: string): ParsedMessage[] {
   const out: ParsedMessage[] = [];
-  const pairing: ToolUsePairing = new Map();
+  const pairing: ToolUsePairing = file === undefined ? new Map() : filePairing(file, fromLineIndex === 0);
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -144,7 +153,39 @@ export function parseTranscript(text: string, fromLineIndex = 0): ParsedMessage[
     const rows = parseLineWithContext(line, fromLineIndex + i, pairing);
     for (const r of rows) out.push(r);
   }
+  if (file !== undefined) trimPairing(pairing);
   return out;
+}
+
+/** Transcripts whose calls are remembered across chunks. */
+export const FILE_PAIRING_MAX_FILES = 64;
+/** Calls remembered per transcript, newest kept. */
+export const FILE_PAIRING_MAX_CALLS = 2000;
+const filePairings = new Map<string, ToolUsePairing>();
+
+function filePairing(file: string, fresh: boolean): ToolUsePairing {
+  let pairing = filePairings.get(file);
+  filePairings.delete(file);
+  if (pairing === undefined || fresh) pairing = new Map();
+  filePairings.set(file, pairing);
+  while (filePairings.size > FILE_PAIRING_MAX_FILES) {
+    const oldest = filePairings.keys().next();
+    if (oldest.done === true) break;
+    filePairings.delete(oldest.value);
+  }
+  return pairing;
+}
+
+function trimPairing(pairing: ToolUsePairing): void {
+  for (const id of pairing.keys()) {
+    if (pairing.size <= FILE_PAIRING_MAX_CALLS) return;
+    pairing.delete(id);
+  }
+}
+
+/** For tests: forget every file's calls, as a restart does. */
+export function __resetFilePairings(): void {
+  filePairings.clear();
 }
 
 /**
@@ -176,7 +217,7 @@ export function countLines(text: string): number {
  */
 export function toolCallIdOf(m: Pick<ParsedMessage, 'role' | 'seq' | 'rawJson'>): string | null {
   if (m.role !== 'tool_use' && m.role !== 'tool_result') return null;
-  const line = safeParse(m.rawJson);
+  const line = rowLine(m.rawJson);
   if (!line) return null;
   const blocks = contentBlocksOf(line);
   if (!blocks) return null;
@@ -202,7 +243,7 @@ export interface LineUsage {
  * Read defensively: the field set drifts between Claude Code releases.
  */
 export function extractUsage(rawJson: string): LineUsage | null {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -292,7 +333,7 @@ export function contextUsedFrom(usage: LineUsage): number {
 
 /** `message.model` off an assistant line, or null. */
 export function modelOf(rawJson: string): string | null {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -320,7 +361,7 @@ const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp
  * request the app never meant to make.
  */
 export function imageAt(rawJson: string, seq: number): TranscriptImage | null {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   const message = line?.['message'];
   if (!isRecord(message) || !Array.isArray(message['content'])) return null;
   return imageOf((message['content'] as unknown[])[seq % SEQ_STRIDE]);
@@ -333,7 +374,7 @@ export function imageAt(rawJson: string, seq: number): TranscriptImage | null {
  * with an `[image]` line per picture -- this is how those are recovered.
  */
 export function imagesIn(rawJson: string): TranscriptImage[] {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line) return [];
   const message = line['message'];
   const att = line['attachment'];
@@ -374,7 +415,11 @@ function imageOf(block: unknown): TranscriptImage | null {
  * callers must fall back rather than assume 'finished'.
  */
 export function stopReasonOf(rawJson: string): string | null {
-  const line = safeParse(rawJson);
+  return stopReasonIn(rowLine(rawJson));
+}
+
+/** {@link stopReasonOf} on a line already parsed (ingest parses its own). */
+function stopReasonIn(line: Record<string, unknown> | null): string | null {
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -426,7 +471,7 @@ export interface ApiErrorLine {
  */
 export function apiErrorOf(rawJson: string): ApiErrorLine | null {
   if (!rawJson.includes('isApiErrorMessage')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'assistant' || line['isApiErrorMessage'] !== true) return null;
   const blocks = contentBlocksOf(line);
   const message = line['message'];
@@ -461,7 +506,7 @@ function apiErrorKindOf(cause: string, error: string, text: string): ApiErrorKin
  * with `<local-command-stdout>` (`/model`).
  */
 export function endsLocalCommand(rawJson: string): boolean {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line) return false;
   if (line['type'] === 'system') return line['subtype'] === 'local_command';
   if (line['type'] !== 'user') return false;
@@ -485,7 +530,7 @@ export function endsLocalCommand(rawJson: string): boolean {
  * reads as user rows already. The content is the same envelope either way.
  */
 export function isLocalCommandLine(rawJson: string): boolean {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line !== null && line['type'] === 'system' && line['subtype'] === 'local_command';
 }
 
@@ -502,7 +547,7 @@ export const SEND_MESSAGE_TOOL = 'SendMessage';
 
 /** `origin.msg_id` of a line another session sent. Null for anything else. */
 export function peerMessageIdOf(rawJson: string): string | null {
-  const origin = safeParse(rawJson)?.['origin'];
+  const origin = rowLine(rawJson)?.['origin'];
   if (!isRecord(origin) || origin['kind'] !== 'peer') return null;
   const id = origin['msg_id'];
   return typeof id === 'string' && id.length > 0 ? id : null;
@@ -510,7 +555,7 @@ export function peerMessageIdOf(rawJson: string): string | null {
 
 /** The `msg_id` a `SendMessage` tool_result reports as delivered. */
 export function sentMessageIdOf(rawJson: string): string | null {
-  const message = safeParse(rawJson)?.['message'];
+  const message = rowLine(rawJson)?.['message'];
   const content = isRecord(message) ? message['content'] : null;
   if (!Array.isArray(content)) return null;
   for (const block of content) {
@@ -535,7 +580,7 @@ export function sentMessageIdOf(rawJson: string): string | null {
  * "run directly in Claude Code" caveat), never something anyone typed.
  */
 export function isMetaLine(rawJson: string): boolean {
-  return safeParse(rawJson)?.['isMeta'] === true;
+  return rowLine(rawJson)?.['isMeta'] === true;
 }
 
 /**
@@ -582,7 +627,7 @@ export type HarnessInput = 'wakeup' | 'scheduled-prompt' | 'note';
 export function harnessInputOf(rawJson: string): HarnessInput | null {
   // Cheap pre-filter: nearly every row is neither.
   if (!rawJson.includes('isMeta') && !rawJson.includes('scheduled_task_fire')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line) return null;
   if (line['type'] === 'system') return line['subtype'] === 'scheduled_task_fire' ? 'wakeup' : null;
   if (line['type'] !== 'user' || line['isMeta'] !== true || line['origin'] !== undefined) return null;
@@ -621,7 +666,7 @@ export function harnessInputOf(rawJson: string): HarnessInput | null {
 export function skillSourceToolUseIdOf(rawJson: string): string | null {
   // Cheap pre-filter: nearly every row is not one.
   if (!rawJson.includes('sourceToolUseID')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'user' || line['isMeta'] !== true || line['origin'] !== undefined) return null;
   const id = line['sourceToolUseID'];
   if (typeof id !== 'string' || id === '') return null;
@@ -660,7 +705,7 @@ export interface CompactBoundary {
  */
 export function compactBoundaryOf(rawJson: string): CompactBoundary | null {
   if (!rawJson.includes('compact_boundary')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'system' || line['subtype'] !== 'compact_boundary') return null;
   const meta = isRecord(line['compactMetadata']) ? line['compactMetadata'] : {};
   const trigger = meta['trigger'];
@@ -690,7 +735,7 @@ export interface CompactSummary {
  */
 export function compactSummaryOf(rawJson: string): CompactSummary | null {
   if (!rawJson.includes('isCompactSummary')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'user' || line['isCompactSummary'] !== true) return null;
   const message = line['message'];
   const text = isRecord(message) ? textOfUnknown(message['content']) : null;
@@ -710,7 +755,7 @@ export function compactSummaryOf(rawJson: string): CompactSummary | null {
  */
 export function isNoticeLine(rawJson: string): boolean {
   if (!rawJson.includes('informational')) return false;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line?.['type'] === 'system' && line['subtype'] === 'informational';
 }
 
@@ -732,7 +777,7 @@ export const REMOTE_CONTROL_SUBTYPE = 'bridge_status';
 /** The session's claude.ai link from a "Remote Control is active" line, else null. */
 export function remoteControlUrlOf(rawJson: string): string | null {
   if (!rawJson.includes(REMOTE_CONTROL_SUBTYPE)) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'system' || line['subtype'] !== REMOTE_CONTROL_SUBTYPE) return null;
   if (line['isSidechain'] === true) return null;
   const content = typeof line['content'] === 'string' ? line['content'] : '';
@@ -1037,7 +1082,7 @@ export function isBackgroundNoticeLine(line: Record<string, unknown>): boolean {
 /** {@link isBackgroundNoticeLine} for a stored row's raw line. */
 export function isBackgroundNotice(rawJson: string): boolean {
   if (!rawJson.includes('"queued_command"')) return false;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line !== null && isBackgroundNoticeLine(line);
 }
 
@@ -1069,7 +1114,7 @@ export function backgroundFactsOf(m: Pick<Message, 'role' | 'seq' | 'rawJson' | 
 function notificationTextOf(m: Pick<Message, 'role' | 'rawJson'>): string | null {
   if (m.role !== 'user' && m.role !== 'system') return null;
   if (!m.rawJson.includes('<task-notification>')) return null;
-  const line = safeParse(m.rawJson);
+  const line = rowLine(m.rawJson);
   if (!line) return null;
   let text = '';
   if (line['type'] === 'user') text = userTextOf(line);
@@ -1100,7 +1145,7 @@ function backgroundCallFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): 
 }
 
 function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
-  const line = safeParse(m.rawJson);
+  const line = rowLine(m.rawJson);
   if (!line) return [];
   const toolUseId = textOf(blockFor(m, 'tool_result')?.['tool_use_id']);
   if (toolUseId === null) return [];
@@ -1217,7 +1262,7 @@ const WAITING_ON_OWN_WORK = /\bis waiting on its own background work\b|\bwith ba
 export function subagentMarksOf(m: Pick<Message, 'role' | 'rawJson'>): SubagentMark[] {
   if (m.role === 'tool_result') {
     if (!m.rawJson.includes('"resumedAgentId"')) return [];
-    const line = safeParse(m.rawJson);
+    const line = rowLine(m.rawJson);
     const r = line !== null && isRecord(line['toolUseResult']) ? line['toolUseResult'] : null;
     const id = r?.['resumedAgentId'];
     if (r === null || r['success'] === false || typeof id !== 'string' || id === '') return [];
@@ -1438,7 +1483,7 @@ export function queueFactsIn(text: string): QueueFact[] {
       continue;
     }
     if (obj['type'] === 'assistant') {
-      if (TURN_ENDING_STOP_REASONS.has(stopReasonOf(line) ?? '')) out.push({ op: 'turn-end', sessionId, ts });
+      if (TURN_ENDING_STOP_REASONS.has(stopReasonIn(obj) ?? '')) out.push({ op: 'turn-end', sessionId, ts });
       else if (obj['isApiErrorMessage'] !== true) out.push({ op: 'turn-step', sessionId, ts });
       continue;
     }
@@ -1484,7 +1529,7 @@ function userTextOf(obj: Record<string, unknown>): string {
  * sidechain traffic: callers keep to the main session's rows.
  */
 export function turnEdgeOf(rawJson: string): 'prompt' | 'end' | null {
-  const obj = safeParse(rawJson);
+  const obj = rowLine(rawJson);
   if (!obj) return null;
   if (obj['type'] === 'system') {
     return obj['subtype'] === 'turn_duration' || obj['subtype'] === 'local_command' ? 'end' : null;
@@ -1507,7 +1552,7 @@ export function turnEdgeOf(rawJson: string): 'prompt' | 'end' | null {
  * tokens", 37,527). Null for any other line, or one without both fields.
  */
 export function outputTokensOf(rawJson: string): { messageId: string; outputTokens: number } | null {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -1609,11 +1654,14 @@ export function gitBranchSqlExpr(column = 'raw_json'): string {
 
 /** `isSidechain` — true for subagent traffic. See the watcher's scan comment. */
 export function isSidechainOf(rawJson: string): boolean {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line?.['isSidechain'] === true;
 }
 
-/** The `cwd` recorded on a line, used by the watcher to match a task. */
+/**
+ * The `cwd` recorded on a line, used by the watcher to match a task. Asked of
+ * lines fresh out of a chunk, so it parses without the row cache (see rowLine).
+ */
 export function cwdOf(rawJson: string): string | null {
   const line = safeParse(rawJson);
   if (!line) return null;
@@ -1642,7 +1690,7 @@ function blocksOfRow(raw: Record<string, unknown>): unknown[] {
  * the only way to disambiguate a line carrying two calls to the same tool.
  */
 function blockFor(message: ToolRow, type: 'tool_use' | 'tool_result'): Record<string, unknown> | null {
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (!raw) return null;
   if (raw['type'] === type) return raw;
 
@@ -1660,7 +1708,7 @@ function blockFor(message: ToolRow, type: 'tool_use' | 'tool_result'): Record<st
 export function toolInputOf(message: ToolRow): Record<string, unknown> {
   const block = blockFor(message, 'tool_use');
   if (block && isRecord(block['input'])) return block['input'];
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (raw && isRecord(raw['input'])) return raw['input'];
   return {};
 }
@@ -1698,7 +1746,7 @@ export function toolResultTextOf(message: (ToolRow & Pick<Message, 'body'>) | nu
     const text = flattenContent(block['content']);
     if (text.length > 0) return text;
   }
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (raw) {
     const text = flattenContent(raw['toolUseResult']);
     if (text.length > 0) return text;
@@ -1711,7 +1759,7 @@ export function toolResultIsErrorOf(message: ToolRow | null | undefined): boolea
   if (!message) return false;
   const block = blockFor(message, 'tool_result');
   if (block && block['is_error'] === true) return true;
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (raw) {
     if (raw['is_error'] === true) return true;
     if (raw['toolDenialKind'] !== undefined && raw['toolDenialKind'] !== null) return true;
@@ -1723,7 +1771,7 @@ export function toolResultIsErrorOf(message: ToolRow | null | undefined): boolea
 
 /** `tool_use_id` linking a result row back to its call, from either shape. */
 export function toolUseIdOf(message: ToolRow & Pick<Message, 'role'>): string | null {
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (!raw) return null;
   if (message.role === 'tool_use') {
     const block = blockFor(message, 'tool_use');
@@ -1994,6 +2042,74 @@ function safeParse(raw: string): Record<string, unknown> | null {
     return null; // truncated tail line, mid-append — expected, not an error
   }
   return isRecord(value) ? value : null;
+}
+
+/*
+ * A stored row's raw line, parsed once (#362). The pane asks the same rows the
+ * same questions on every live append -- which call a result answers, its
+ * input, whether it starts or ends a turn -- and each asked JSON.parse again:
+ * several parses per row per append, ~50 ms on a 1,000-row window.
+ *
+ * Keyed by the raw text itself, not by the row object: a reload hands back new
+ * objects for the same rows, and a key that is the content can never answer
+ * for a line that changed -- different text is a different key. The parsed
+ * value is frozen, so a caller that tried to change what it was handed would
+ * fail at once instead of corrupting every later read of that line.
+ *
+ * Bounded by entries and by characters held, least recently used out first; a
+ * line too long to be worth holding is parsed every time, as before.
+ *
+ * Only rows read back from the database come through here. Ingest
+ * (parseLineWithContext, the chunk scanners, `cwdOf`, `queueFactsIn`) parses
+ * with `safeParse` and never touches this cache: a line split out of a chunk
+ * the watcher read is a slice that keeps the whole chunk alive (V8 and
+ * JavaScriptCore both share substrings), so caching one would hold every chunk
+ * it came from. A test ingests a chunk and checks the cache stays empty.
+ */
+const ROW_PARSE_MAX_ENTRIES = 4096;
+const ROW_PARSE_MAX_CHARS = 32 * 1024 * 1024;
+const ROW_PARSE_MAX_LINE_CHARS = 1024 * 1024;
+const rowParses = new Map<string, Record<string, unknown> | null>();
+let rowParseChars = 0;
+
+function rowLine(raw: string): Record<string, unknown> | null {
+  const hit = rowParses.get(raw);
+  if (hit !== undefined) {
+    // Most recently used goes last, so eviction takes the oldest first.
+    rowParses.delete(raw);
+    rowParses.set(raw, hit);
+    return hit;
+  }
+  const parsed = safeParse(raw);
+  if (raw.length > ROW_PARSE_MAX_LINE_CHARS) return parsed;
+  const value = parsed === null ? null : deepFreeze(parsed);
+  rowParses.set(raw, value);
+  rowParseChars += raw.length;
+  while (rowParses.size > ROW_PARSE_MAX_ENTRIES || rowParseChars > ROW_PARSE_MAX_CHARS) {
+    const oldest = rowParses.keys().next();
+    if (oldest.done === true) break;
+    rowParses.delete(oldest.value);
+    rowParseChars -= oldest.value.length;
+  }
+  return value;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const v of Object.values(value as Record<string, unknown>)) deepFreeze(v);
+  return value;
+}
+
+/** For tests: empty the row parse cache. */
+export function __clearRowParseCache(): void {
+  rowParses.clear();
+  rowParseChars = 0;
+}
+
+/** For tests: how much the row parse cache holds. */
+export function __rowParseCacheStats(): { entries: number; chars: number; maxEntries: number; maxChars: number } {
+  return { entries: rowParses.size, chars: rowParseChars, maxEntries: ROW_PARSE_MAX_ENTRIES, maxChars: ROW_PARSE_MAX_CHARS };
 }
 
 function safeStringify(value: unknown): string | null {
