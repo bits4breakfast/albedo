@@ -19,6 +19,7 @@
 
 import { assertValidRefName, isValidRefName } from './slug';
 import { expandTilde, normalizePath } from './reconcile';
+import { withoutAnthropicKeys } from '../lib/spawnEnv';
 
 // ---------------------------------------------------------------------------
 // Public surface (docs/ARCHITECTURE.md)
@@ -148,7 +149,9 @@ let runner: GitRunner = async (args, cwd, env) => {
   // Lazy import: keeps `@tauri-apps/plugin-shell` out of the module graph for
   // the pure-parser unit tests, which run in plain node.
   const { Command } = await import('@tauri-apps/plugin-shell');
-  const opts = cwd || env ? { ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) } : undefined;
+  // The Anthropic credentials are always blanked: git runs hooks, and a hook
+  // may start `claude` (hard rule 3).
+  const opts = { ...(cwd ? { cwd } : {}), env: withoutAnthropicKeys(env) };
   const child = await Command.create('git', args, opts).execute();
   return { code: child.code, stdout: child.stdout, stderr: child.stderr };
 };
@@ -454,8 +457,30 @@ export async function baseOrUpstream(cwd: string, baseBranch: string): Promise<s
  * absent here.
  */
 export async function lineChanges(worktreePath: string, baseBranch: string): Promise<Map<string, LineChange>> {
-  const against = (await taskBase(worktreePath, baseBranch)) ?? 'HEAD';
-  return parseNumstat(await gitOk(['diff', '--numstat', '--no-renames', against], worktreePath));
+  return lineChangesSince(worktreePath, (await taskBase(worktreePath, baseBranch)) ?? 'HEAD');
+}
+
+/**
+ * Prefix for a `git diff` against the working tree that must not write
+ * `.git/index` (#363). By default the porcelain refreshes the index whenever a
+ * file's stat is stale and writes it back, taking `index.lock` -- in the
+ * user's own main checkout too -- on every focus and capture update, where a
+ * `git commit` of theirs can then fail on the lock (#181). `GIT_OPTIONAL_LOCKS=0`
+ * does not stop it; `diff.autoRefreshIndex=false` does. It is still the
+ * porcelain, so the user's diff settings (`diff.algorithm`, `diff.orderFile`,
+ * textconv, submodules) apply exactly as before, which `git diff-index` would
+ * not honour.
+ *
+ * Without the refresh, a file whose stat is stale but whose content is not
+ * stays in the comparison: `--numstat` still skips it (no change in content
+ * or mode), but `--name-only` and `--name-status` list it. Read those through
+ * {@link keepChanged} or take the paths from `--numstat`.
+ */
+export const DIFF_NO_REFRESH: readonly string[] = ['-c', 'diff.autoRefreshIndex=false', 'diff'];
+
+/** {@link lineChanges} against a revision already resolved, without writing the index. */
+export async function lineChangesSince(worktreePath: string, against: string): Promise<Map<string, LineChange>> {
+  return parseNumstat(await gitOk([...DIFF_NO_REFRESH, '--numstat', '--no-renames', against], worktreePath));
 }
 
 /** How a file differs from the task's base: added, modified, deleted, or its type changed. */
@@ -476,8 +501,32 @@ export function parseNameStatus(stdout: string): Map<string, ChangeKind> {
 
 /** The change kind per file, over the same range as {@link lineChanges}. */
 export async function changeKinds(worktreePath: string, baseBranch: string): Promise<Map<string, ChangeKind>> {
-  const against = (await taskBase(worktreePath, baseBranch)) ?? 'HEAD';
-  return parseNameStatus(await gitOk(['diff', '--name-status', '--no-renames', against], worktreePath));
+  return changeKindsSince(worktreePath, (await taskBase(worktreePath, baseBranch)) ?? 'HEAD');
+}
+
+/**
+ * {@link changeKinds} against a revision already resolved, without writing
+ * the index ({@link DIFF_NO_REFRESH}). `--name-status` then also lists a file
+ * whose stat is merely stale, as `M`; only paths that also have a `--numstat`
+ * line -- a real change in content or mode -- are kept, which is the set the
+ * refreshing diff reported.
+ */
+export async function changeKindsSince(worktreePath: string, against: string): Promise<Map<string, ChangeKind>> {
+  const [names, counts] = await Promise.all([
+    gitOk([...DIFF_NO_REFRESH, '--name-status', '--no-renames', against], worktreePath),
+    lineChangesSince(worktreePath, against),
+  ]);
+  return keepChanged(parseNameStatus(names), counts);
+}
+
+/** `kinds` limited to the paths `changed` has: drops the stat-only entries. */
+export function keepChanged(
+  kinds: Map<string, ChangeKind>,
+  changed: ReadonlyMap<string, LineChange>,
+): Map<string, ChangeKind> {
+  const out = new Map<string, ChangeKind>();
+  for (const [path, kind] of kinds) if (changed.has(path)) out.set(path, kind);
+  return out;
 }
 
 /**
@@ -550,9 +599,74 @@ export function parseCommitLog(stdout: string): BranchCommit[] {
 export async function branchCommits(worktreePath: string, baseBranch: string): Promise<BranchCommit[]> {
   const base = await taskBase(worktreePath, baseBranch);
   if (base === null) return [];
+  return branchCommitsSince(worktreePath, base);
+}
+
+/** {@link branchCommits} from a merge base already resolved. */
+export async function branchCommitsSince(worktreePath: string, base: string): Promise<BranchCommit[]> {
   return parseCommitLog(
     await gitOk(['log', '--format=%x00%H%x09%ct%x09%s', '--numstat', '--no-renames', `${base}..HEAD`], worktreePath),
   );
+}
+
+/**
+ * When each file was last committed, from commits {@link branchCommits}
+ * already read: the same answer as {@link committedFileTimes}, without
+ * asking git a second time. A commit's `--numstat` lists the paths its
+ * `--name-only` does.
+ */
+export function commitFileTimes(commits: readonly BranchCommit[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const c of commits) {
+    for (const path of c.files.keys()) {
+      const prev = out.get(path);
+      if (prev === undefined || c.at > prev) out.set(path, c.at);
+    }
+  }
+  return out;
+}
+
+/** Everything the Files pane reads from git about a task's change set. */
+export interface ChangeSet {
+  /** The merge base measured from; null when there is none and HEAD stood in. */
+  merge: string | null;
+  /** +/- per path against the base. Empty when git could not say. */
+  lines: Map<string, LineChange>;
+  /** A / M / D / T per path against the base. Empty when git could not say. */
+  kinds: Map<string, ChangeKind>;
+  /** The branch's commits, newest first. Empty when there is no base or git could not say. */
+  commits: BranchCommit[];
+  /** When each file was last committed on the branch. */
+  committedAt: Map<string, number>;
+}
+
+/**
+ * {@link lineChanges}, {@link changeKinds}, {@link branchCommits} and
+ * {@link committedFileTimes} in one go, resolving the base once (#363). Each
+ * of those resolved it on its own, and the pane also asked for it a fifth
+ * time: ~17 git processes per reload, now 5. Each part fails to empty, as
+ * the separate calls did; the kinds also need the line counts, which tell a
+ * real change from a stale stat. Never throws.
+ */
+export async function loadChangeSet(worktreePath: string, baseBranch: string): Promise<ChangeSet> {
+  const merge = await taskBase(worktreePath, baseBranch);
+  const against = merge ?? 'HEAD';
+  const [lines, names, commits] = await Promise.all([
+    lineChangesSince(worktreePath, against).catch(() => null),
+    gitOk([...DIFF_NO_REFRESH, '--name-status', '--no-renames', against], worktreePath)
+      .then(parseNameStatus)
+      .catch(() => null),
+    merge === null ? Promise.resolve([]) : branchCommitsSince(worktreePath, merge).catch(() => []),
+  ]);
+  return {
+    merge,
+    lines: lines ?? new Map(),
+    // The numstat is what tells a real change from a stale stat; without it
+    // the kinds cannot be trusted, so they are left out like a failure.
+    kinds: names !== null && lines !== null ? keepChanged(names, lines) : new Map(),
+    commits,
+    committedAt: commitFileTimes(commits),
+  };
 }
 
 export function parseCommitCount(stdout: string): number {

@@ -18,6 +18,8 @@ const h = vi.hoisted(() => ({
   transcriptMounts: [] as (number | null)[],
   terminalMounts: [] as number[],
   editors: [] as { taskId: number; path: string | null; readOnly: boolean }[],
+  /** Every render of the Files pane: its task and whether it was told it is read. */
+  files: [] as { taskId: number; active: boolean | undefined }[],
 }));
 
 vi.mock('./ui/useTasks', () => {
@@ -103,7 +105,14 @@ vi.mock('./ui/openReview', async (orig) => ({
 }));
 vi.mock('./ui/TouchedFiles', async (orig) => ({
   ...(await orig<typeof import('./ui/TouchedFiles')>()),
-  default: () => <div data-testid="files" />,
+  default: (p: { task: Task; active?: boolean }) => {
+    h.files.push({ taskId: p.task.id, active: p.active });
+    return (
+      <div data-testid="files" data-focus-area="files">
+        <button type="button">{`row of ${p.task.id}`}</button>
+      </div>
+    );
+  },
 }));
 vi.mock('./git/branchSync', async (orig) => ({
   ...(await orig<typeof import('./git/branchSync')>()),
@@ -204,6 +213,7 @@ beforeEach(() => {
   h.transcriptMounts = [];
   h.terminalMounts = [];
   h.editors = [];
+  h.files = [];
   gitCalls.length = 0;
   setGitRunner(async (args, cwd) => {
     gitCalls.push({ args, cwd });
@@ -414,5 +424,67 @@ describe('the task’s two ⋯ menus (#331)', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Speed up the build')).toBeTruthy();
     expect(row('Fix the login retry').getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+describe('the Files pane, mounted once and read only when shown (#363)', () => {
+  const tabSelected = (name: string) => screen.getByRole('tab', { name }).getAttribute('aria-selected');
+
+  it('pinned as a column that fits: one Files pane, the column’s, and no second copy in the hidden tab', async () => {
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 4000 });
+    try {
+      store.set(KEYS.activeProject, 'p1');
+      store.set(KEYS.selectedTask, '10');
+      store.set(KEYS.filesPinned, '1');
+      store.set(KEYS.paneMode, 'transcript');
+      render(<App />);
+      await settle();
+      const panes = screen.getAllByTestId('files');
+      expect(panes).toHaveLength(1);
+      expect(panes[0]!.closest('.pane-files')).not.toBeNull();
+      expect(screen.queryByRole('tab', { name: 'Files' })).toBeNull();
+      // The column is always on screen: it reloads as it always has.
+      expect(h.files.at(-1)).toEqual({ taskId: 10, active: undefined });
+      // ⇧⌘E goes into the column. It used to find the hidden tab's copy
+      // first, which could not take focus.
+      fireEvent.keyDown(window, { key: 'E', code: 'KeyE', metaKey: true, shiftKey: true });
+      await settle();
+      expect(document.activeElement?.closest('.pane-files')).not.toBeNull();
+    } finally {
+      if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+    }
+  });
+
+  it('as a tab: one Files pane, read only while its tab is open', async () => {
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    expect(screen.getAllByTestId('files')).toHaveLength(1);
+    expect(document.querySelector('.pane-files')).toBeNull();
+    expect(tabSelected('Transcript')).toBe('true');
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: false });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
+    await settle();
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: true });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: false });
+  });
+
+  it('as a tab, with a file of this task in the editor: read, since the editor steps through its order', async () => {
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open a.ts' }));
+    await settle();
+    expect(tabSelected('Editor')).toBe('true');
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: true });
   });
 });

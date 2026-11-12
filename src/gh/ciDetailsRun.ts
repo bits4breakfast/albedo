@@ -23,6 +23,7 @@
 import type { Project } from '../types';
 import { fetchJob, fetchJobLog } from './gh';
 import { checkSource, failedStep, failureLines } from './checks';
+import { withoutAnthropicKeys } from '../lib/spawnEnv';
 import {
   CI_DETAILS_TIMEOUT_MS,
   clipLog,
@@ -85,7 +86,7 @@ const tauriShell: CiShellRunner = async (script, { cwd, input, timeoutMs }) => {
     processGroup: true,
     // The plugin cannot unset a variable; the preamble does. Blanked here
     // as well, as phpantom.ts does, in case the preamble is ever changed.
-    env: { ALBEDO_CI_INPUT: input, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' },
+    env: withoutAnthropicKeys({ ALBEDO_CI_INPUT: input }),
   });
   const out = { stdout: [] as Uint8Array[], stderr: [] as Uint8Array[], size: 0 };
   const take = (into: Uint8Array[]) => (chunk: Uint8Array | number[] | string) => {
