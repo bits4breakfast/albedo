@@ -24,7 +24,7 @@ vi.mock('../Terminal', () => ({
   onPtyPresenceChange: vi.fn(() => () => {}),
 }));
 
-const { QueuedStrip } = await import('./TranscriptPane');
+const { QueuedStrip } = await import('./QueuedStrip');
 const { __resetOutbox, heldFor, holdMessage, releaseHeld, sendHeldNow } = await import('./outbox');
 const { __resetConnectivity } = await import('../../lib/connectivity');
 const { hasLivePty, ptyLiveSince, submitPty } = await import('../Terminal');
