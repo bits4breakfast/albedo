@@ -9,12 +9,13 @@ const onDisk: Record<string, string> = { 'a.ts': 'two\n', 'b.ts': 'y\n', 'new.ts
 
 const fake: GitRunner = async (args) => {
   const ok = (stdout: string) => ({ code: 0, stdout, stderr: '' });
-  const [cmd] = args;
+  // `-c diff.autoRefreshIndex=false diff …` (#363): the command after the config.
+  const cmd = args[0] === '-c' ? args[2] : args[0];
   if (cmd === 'rev-parse') return { code: 128, stdout: '', stderr: 'no upstream' };
   if (cmd === 'merge-base') return ok('base123\n');
   if (cmd === 'ls-files') return ok('new.ts\0');
-  if (cmd === 'diff' && args.includes('base123')) return ok('a.ts\0b.ts\0');
-  if (cmd === 'diff' && args.includes('HEAD')) return ok('b.ts\0');
+  if (cmd === 'diff' && args.includes('base123')) return ok('1\t1\ta.ts\x001\t1\tb.ts\0');
+  if (cmd === 'diff' && args.includes('HEAD')) return ok('1\t1\tb.ts\0');
   if (cmd === 'ls-tree') {
     const path = args.at(-1)!;
     const text = atBase[path];

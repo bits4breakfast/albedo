@@ -1909,10 +1909,21 @@ export default function App() {
                 </div>
 
                 <div className="tabpanel" hidden={activeTab !== 'files'}>
+                  {/* One Files pane per task (#363): while the column shows it,
+                      this tab is off the strip, and a second copy here only
+                      asked git everything again. It reloads only while it is
+                      read: on screen, or stepped through by this task's editor. */}
                   {selected ? (
-                    <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
-                      <TouchedFiles task={selected} activePath={editorTask?.id === selected.id ? editorFile : null} menuSlot={tabFilesSlot} />
-                    </PaneErrorBoundary>
+                    filesColumnShown ? null : (
+                      <PaneErrorBoundary key={`tf-${selected.id}`} label="Touched files">
+                        <TouchedFiles
+                          task={selected}
+                          activePath={editorTask?.id === selected.id ? editorFile : null}
+                          menuSlot={tabFilesSlot}
+                          active={showTranscript && (activeTab === 'files' || editorTask?.id === selected.id)}
+                        />
+                      </PaneErrorBoundary>
+                    )
                   ) : projectView && browseTask ? (
                     <PaneErrorBoundary key={`pf-${browseTask.id}`} label="Project files">
                       <ProjectFiles task={browseTask} activePath={editorTask === browseTask ? editorFile : null} />
