@@ -16,7 +16,16 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 }));
 
 import { insertMessages, resetDb } from './index';
-import { __resetAgentNames, listSubagents, liveRuns, SPAWN_WINDOW_LINES, SUBAGENT_CALLS_SQL, SUBAGENT_SPAWN_SQL } from './subagents';
+import {
+  __resetAgentNames,
+  listSubagents,
+  liveRuns,
+  SPAWN_LEAD_MS,
+  SPAWN_WINDOW_LINES,
+  SUBAGENT_CALLS_SQL,
+  SUBAGENT_LATEST_SQL,
+  SUBAGENT_SPAWN_SQL,
+} from './subagents';
 import { parseLine } from '../capture/adapter';
 import {
   agentNotification,
@@ -248,5 +257,56 @@ describe('listSubagents with detail: name, doing now, tokens (#377)', () => {
     const [run] = await listSubagents('s1', { detail: true });
     expect(run).toMatchObject({ status: 'idle', waiting: false, name: null, lastCall: null });
     expect(select).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps the strip when a detail read fails: only that detail is lost', async () => {
+    const now = Date.now();
+    await seed(asyncAgent('g1', 'ag1', now - 60_000, 'Named'));
+    await seed([agentCall('c1', 'Read', { file_path: '/tmp/a.ts' }, now - 1_000)], 'ag1');
+    const real = db.select.bind(db);
+    const select = vi.spyOn(db, 'select');
+
+    select.mockImplementation(((q: string, b?: unknown[]) =>
+      q === SUBAGENT_LATEST_SQL ? Promise.reject(new Error('disk I/O error')) : real(q, b)) as typeof db.select);
+    let [run] = await listSubagents('s1', { detail: true });
+    expect(run).toMatchObject({ agentId: 'ag1', status: 'running', name: 'Named', lastCall: null, tokens: null });
+
+    __resetAgentNames();
+    select.mockImplementation(((q: string, b?: unknown[]) =>
+      q === SUBAGENT_CALLS_SQL ? Promise.reject(new Error('disk I/O error')) : real(q, b)) as typeof db.select);
+    [run] = await listSubagents('s1', { detail: true });
+    expect(run).toMatchObject({ agentId: 'ag1', status: 'running', name: null });
+    expect(run?.lastCall?.toolName).toBe('Read');
+  });
+
+  it('asks only about calls near the agents it lists, not every agent the session ran', async () => {
+    const now = Date.now();
+    const old = now - 3 * 3_600_000;
+    await seed(asyncAgent('g0', 'ag0', old, 'Long done'));
+    await seed(own(old + 100, 'Old work'), 'ag0');
+    await seed([noticeAttachmentLine(agentNotification({ agentId: 'ag0', toolUseId: 'g0' }), old + 5_000)]);
+    await seed(asyncAgent('g1', 'ag1', now - 60_000, 'Now'));
+    await seed([agentCall('c1', 'Read', { file_path: '/tmp/a.ts' }, now - 1_000)], 'ag1');
+    const select = vi.spyOn(db, 'select');
+    const runs = await listSubagents('s1', { detail: true });
+    expect(runs.find((r) => r.agentId === 'ag1')?.name).toBe('Now');
+    expect(select.mock.calls.filter((c) => c[0] === SUBAGENT_SPAWN_SQL)).toHaveLength(1);
+    expect(SPAWN_LEAD_MS).toBeLessThan(now - old);
+  });
+
+  it('after a resume, says Starting… until its first call of the new run, and keeps its tokens', async () => {
+    const now = Date.now();
+    await seed(asyncAgent('g1', 'ag1', now - 600_000, 'Resumed one'));
+    await seed([agentCall('c1', 'Read', { file_path: '/tmp/a.ts' }, now - 590_000)], 'ag1');
+    await seed([noticeAttachmentLine(agentNotification({ agentId: 'ag1', toolUseId: 'g1' }), now - 580_000)]);
+    const resume = now - 5_000;
+    await seed(sendMessageResume('sm1', 'ag1', resume));
+    await seed([{ type: 'user', isSidechain: true, timestamp: iso(resume + 100), uuid: 'u-r', message: { role: 'user', content: 'Carry on' } }], 'ag1');
+    let [run] = await listSubagents('s1', { detail: true });
+    expect(run).toMatchObject({ status: 'running', lastCall: null, tokens: 3 + 90_000 + 2_000 + 400 });
+
+    await seed([agentCall('c2', 'Glob', { pattern: '*.ts' }, resume + 1_000)], 'ag1');
+    [run] = await listSubagents('s1', { detail: true });
+    expect(run?.lastCall?.toolName).toBe('Glob');
   });
 });

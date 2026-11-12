@@ -422,11 +422,23 @@ export async function listSubagents(sessionId: string, opts: { detail?: boolean 
   if (opts.detail !== true) return runs;
   // Only for the agents the strip lists: live, or waiting on their own work.
   // A session that ran 80 agents is not read 80 times for the two at work.
-  const shown = runs.filter((r) => r.status === 'running' || r.status === 'blocked' || r.waiting).map((r) => r.agentId);
+  const shown = runs.filter((r) => r.status === 'running' || r.status === 'blocked' || r.waiting);
   if (shown.length === 0) return runs;
+  // A detail that fails to read loses that detail, never the strip: each
+  // read falls back to nothing on its own, and the runs above stand.
   const [latestRows, names] = await Promise.all([
-    Promise.all(shown.map((id) => db.select<LatestRow[]>(SUBAGENT_LATEST_SQL, [sessionId, id, sessionId, id, USAGE_ROWS]))),
-    agentNames(sessionId, shown),
+    Promise.all(
+      shown.map((r) =>
+        db
+          .select<LatestRow[]>(SUBAGENT_LATEST_SQL, [sessionId, r.agentId, sessionId, r.agentId, USAGE_ROWS])
+          .catch(() => [] as LatestRow[]),
+      ),
+    ),
+    agentNames(
+      sessionId,
+      shown.map((r) => r.agentId),
+      Math.min(...shown.map((r) => r.firstTs)),
+    ).catch(() => new Map<string, AgentName>()),
   ]);
   return withDetail(runs, latestFrom(latestRows.flatMap((rows) => rows ?? [])), names);
 }
@@ -528,7 +540,13 @@ export function withDetail(
   return runs.map((r) => {
     const l = latest.get(r.agentId);
     const n = names.get(r.agentId);
-    return { ...r, name: n?.name ?? null, kind: n?.kind ?? null, lastCall: l?.call ?? null, tokens: l?.tokens ?? null };
+    // A call from before the current run began (it was resumed) is not what
+    // it is doing now: "Starting…" until its first call of this run (#139:
+    // a run is counted from its resume). Its tokens stay -- a resumed agent
+    // carries its context on, and that is what the count measures.
+    const call = l?.call ?? null;
+    const lastCall = call !== null && call.ts >= r.runStartTs ? call : null;
+    return { ...r, name: n?.name ?? null, kind: n?.kind ?? null, lastCall, tokens: l?.tokens ?? null };
   });
 }
 
@@ -544,7 +562,7 @@ export interface AgentName {
  * stopped, so after the first read it touches only rows that are new.
  */
 export const SUBAGENT_CALLS_SQL = `
-  SELECT seq, role, tool_name, raw_json FROM messages
+  SELECT seq, role, tool_name, raw_json, ts FROM messages
    WHERE session_id = $1 AND COALESCE(agent_id, '') = '' AND seq > $2
      AND ${agentCallSqlPredicate()}
    ORDER BY seq`;
@@ -577,7 +595,17 @@ interface CallRow {
   role: string;
   tool_name: string | null;
   raw_json: string;
+  /** Read for calls only. */
+  ts?: number;
 }
+
+/**
+ * How long before an agent's first row the call that started it may be
+ * written. A launch is written, and the agent starts, within seconds; this
+ * is a generous bound so that only calls near the listed agents are asked
+ * about, not every agent the session ever ran.
+ */
+export const SPAWN_LEAD_MS = 10 * 60_000;
 
 /**
  * What is known about one session's agents' names. A name is a fact once
@@ -587,7 +615,7 @@ interface NameBook {
   /** The highest call `seq` read so far. */
   readSeq: number;
   /** Calls whose result has not been found yet. */
-  open: Map<string, AgentCall & { seq: number }>;
+  open: Map<string, AgentCall & { seq: number; ts: number }>;
   names: Map<string, AgentName>;
 }
 
@@ -603,10 +631,15 @@ export function __resetAgentNames(): void {
 /**
  * Names for these agents. Reads the database only while one of them is
  * unnamed: new calls since the last read, then the result of each call not
- * yet answered. An agent no `Agent` call names (a skill run as a fork, say)
+ * yet answered, near the listed agents (`since`). An agent no `Agent` call names (a skill run as a fork, say)
  * costs a read of new rows each time, never a rescan.
  */
-export async function agentNames(sessionId: string, agentIds: readonly string[]): Promise<Map<string, AgentName>> {
+export async function agentNames(
+  sessionId: string,
+  agentIds: readonly string[],
+  /** The earliest first row of those agents: older calls cannot have started them. */
+  since = -Infinity,
+): Promise<Map<string, AgentName>> {
   let book = nameBooks.get(sessionId);
   nameBooks.delete(sessionId);
   if (book === undefined) book = { readSeq: -1, open: new Map(), names: new Map() };
@@ -627,10 +660,11 @@ export async function agentNames(sessionId: string, agentIds: readonly string[])
   for (const row of calls ?? []) {
     book.readSeq = Math.max(book.readSeq, row.seq);
     const call = agentCallOf({ role: row.role as Message['role'], seq: row.seq, toolName: row.tool_name, rawJson: row.raw_json });
-    if (call !== null) book.open.set(call.toolUseId, { ...call, seq: row.seq });
+    if (call !== null) book.open.set(call.toolUseId, { ...call, seq: row.seq, ts: row.ts ?? 0 });
   }
   await Promise.all(
-    [...book.open.values()].map(async (call) => {
+    // Older calls stay open, unasked, for an older agent listed later.
+    [...book.open.values()].filter((call) => call.ts >= since - SPAWN_LEAD_MS).map(async (call) => {
       const until = call.seq + SPAWN_WINDOW_LINES * SEQ_STRIDE;
       const found = await db.select<CallRow[]>(SUBAGENT_SPAWN_SQL, [sessionId, call.seq, until, `"${call.toolUseId}"`]);
       const row = found?.[0];
