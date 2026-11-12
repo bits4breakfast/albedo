@@ -319,7 +319,8 @@ describe('contextUsageForSessions — one query, not N', () => {
     state.handler = () => [];
     await contextUsageForSessions(['a', 'a', '', 'a']);
     expect(state.calls).toHaveLength(1);
-    expect(state.calls[0]?.binds).toEqual(['a', 'a']); // bound once per IN clause
+    // Once, with its peak cursor (-1: nothing read yet), #361.
+    expect(state.calls[0]?.binds).toEqual(['a', -1]);
   });
 
   it('issues no query at all for an empty list', async () => {

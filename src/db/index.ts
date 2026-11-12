@@ -51,6 +51,7 @@ export function getDb(): Promise<Database> {
 /** Test/teardown hook: drop the memoised handle. */
 export function resetDb(): void {
   dbPromise = null;
+  forgetContextPeaks();
 }
 
 // ---------------------------------------------------------------------------
@@ -417,13 +418,18 @@ export async function purgeTaskHistory(id: number): Promise<void> {
          OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
     [id, sessionId ?? ''],
   );
-  await db.execute(
-    `DELETE FROM messages
-      WHERE session_id = $2
-         OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
-    [id, sessionId ?? ''],
-  );
-  await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
+  try {
+    await db.execute(
+      `DELETE FROM messages
+        WHERE session_id = $2
+           OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
+      [id, sessionId ?? ''],
+    );
+    await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
+  } finally {
+    // Cached context peaks hold only while rows are only added (#361).
+    forgetContextPeaks();
+  }
   // Review comments belong to the task and go with it: archived or deleted,
   // there is nothing left for them to be sent to.
   await db.execute(`DELETE FROM comments WHERE task_id = $1`, [id]);
@@ -652,6 +658,21 @@ export function messageOrderKeys(opts: GetMessagesOptions): string[] {
   return seqScoped ? ['seq', 'ts', 'id'] : ['ts', 'seq', 'id'];
 }
 
+/**
+ * The ORDER BY getMessages sends: {@link messageOrderKeys}, minus the
+ * tiebreakers that can never decide.
+ *
+ * A parent-only read of one session pins (session_id, COALESCE(agent_id, ''))
+ * and messages_session_seq is UNIQUE on those plus seq, so no two rows share a
+ * seq and `ts, id` after it never break a tie. Dropping them gives the same
+ * order, and lets SQLite read the index in order instead of sorting.
+ */
+function sqlOrderKeys(opts: GetMessagesOptions): string[] {
+  const keys = messageOrderKeys(opts);
+  const oneParentFile = opts.parentOnly === true && opts.agentId === undefined;
+  return oneParentFile && keys[0] === 'seq' ? ['seq'] : keys;
+}
+
 /** Which end of the result set `limit` truncates. */
 export type PageDirection = 'head' | 'tail';
 
@@ -694,6 +715,12 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
     // Unary + keeps SQLite off messages_agent, a worse plan for this query;
     // messages_session_seq is ~10x faster on a long session (110 ms -> 10 ms measured).
     where.push('+agent_id IS NULL');
+    // The same rows (agent_id is NULL exactly when COALESCE(agent_id, '') is
+    // '' and agent_id IS NULL both hold), but it names messages_session_seq's
+    // second column, so a session-scoped read walks that index in seq order
+    // instead of sorting the whole session -- raw_json included -- to keep 400
+    // rows (60 ms -> 0.7 ms on a 20,000-row session, #361).
+    where.push(`COALESCE(agent_id, '') = ''`);
   }
   if (opts.afterSeq !== undefined) {
     // exclusive: pages forward from the last seq the caller already has
@@ -706,7 +733,7 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
   }
   binds.push(Math.max(1, opts.limit ?? DEFAULT_MESSAGE_LIMIT));
 
-  const keys = messageOrderKeys(opts);
+  const keys = sqlOrderKeys(opts);
   const ascending = keys.map((k) => `${k} ASC`).join(', ');
   const descending = keys.map((k) => `${k} DESC`).join(', ');
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -1179,14 +1206,51 @@ export async function getAssistantRowsSince(
 // ---------------------------------------------------------------------------
 
 /**
- * Sessions per IN(...) clause. The ids are bound twice (peak subquery and
- * outer filter), so this stays well inside MAX_BIND_PARAMS.
+ * Sessions per query. Each is bound twice (its id and its peak cursor), so
+ * this stays well inside MAX_BIND_PARAMS.
  */
 const CONTEXT_SESSION_CHUNK = 400;
 
+/**
+ * The rows of a session's OWN conversation: not its subagents', which are
+ * stored under the parent's session id with their own seq numbering (one file
+ * each). Both terms together select exactly the rows `agent_id IS NULL`
+ * does; the COALESCE names messages_session_seq's second column so SQLite
+ * walks that index, and the unary + keeps it off messages_agent, which would
+ * fetch every row of the session from the table to filter it.
+ */
+const PARENT_ROWS_SQL = `COALESCE(agent_id, '') = '' AND +agent_id IS NULL`;
+
+/**
+ * Peak context occupancy per session, and the highest message id it covers.
+ *
+ * A peak only grows while rows are only added, so each read scans just the
+ * rows inserted since the last one (ids are assigned in insertion order) and
+ * folds them in. Recomputing it from every row after each burst of appends
+ * cost ~30 ms on a 20,000-row session (#361).
+ *
+ * Rows being deleted is the one thing that lowers a peak, or lets SQLite hand
+ * out an id below a cursor again. The only code that deletes messages is
+ * purgeTaskHistory (deleteTask goes through it), and it calls
+ * {@link forgetContextPeaks}. The other writes cannot lower a peak: inserts
+ * are INSERT OR IGNORE (never a rewrite), adoptSessionIntoTask changes only
+ * task_id (the peak reads none), nothing ever changes a row's session_id or
+ * raw_json, and the migrations that delete run before the app reads.
+ * Anything new that deletes or rewrites messages must call it too.
+ */
+const contextPeaks = new Map<string, { peak: number; lastId: number }>();
+/** Bumped by every forget, so a read that began before it cannot write back. */
+let contextPeakGeneration = 0;
+
+/** Drop every cached peak; the next read recomputes from all rows. */
+export function forgetContextPeaks(): void {
+  contextPeaks.clear();
+  contextPeakGeneration++;
+}
+
 export interface SessionContextRow {
   sessionId: string;
-  /** Highest context occupancy seen anywhere in the session. */
+  /** Highest context occupancy seen anywhere in the session's own rows. */
   peakUsed: number;
   /** raw_json of the newest line carrying a usage record. */
   latestRawJson: string | null;
@@ -1201,56 +1265,102 @@ export interface SessionContextRow {
  * alternative is shipping every assistant line's raw_json across the IPC
  * bridge just to pick a denominator, which for a long session is megabytes.
  *
- * Note the outer query has exactly one aggregate, MAX(m.seq); SQLite then
- * guarantees the bare `m.ts` / `m.raw_json` columns come from the row that
- * produced that maximum. That guarantee is why peak is computed in a
- * subquery instead of as a second aggregate alongside it.
+ * Only the session's own rows count (#361). A subagent's rows share the
+ * session id, and its seq is numbered in its own file: a long Explore agent
+ * had the highest seq, so the meter showed its context and its model, and a
+ * resume could pick that model up through lastModelOf.
+ *
+ * "Latest" is the parent row with the highest seq that carries a usage record,
+ * read off the end of messages_session_seq; seq is unique among a session's
+ * parent rows, so it is one row. The peak is folded in from the rows added
+ * since the last read (see {@link contextPeaks}). Both come from one
+ * statement, so they describe the same moment.
  */
 export async function getSessionContextRows(
   sessionIds: string[],
 ): Promise<SessionContextRow[]> {
   if (sessionIds.length === 0) return [];
   const db = await getDb();
-  const usedExpr = contextUsedSqlExpr('raw_json');
+  const usedExpr = contextUsedSqlExpr('m.raw_json');
   const out: SessionContextRow[] = [];
 
   for (let start = 0; start < sessionIds.length; start += CONTEXT_SESSION_CHUNK) {
-    const chunk = sessionIds.slice(start, start + CONTEXT_SESSION_CHUNK);
-    const inner = chunk.map((_, i) => `$${i + 1}`).join(', ');
-    const outer = chunk.map((_, i) => `$${chunk.length + i + 1}`).join(', ');
-    const rows = await db.select<
-      {
-        session_id: string;
-        latest_ts: number | null;
-        latest_raw: string | null;
-        peak_used: number | null;
-      }[]
-    >(
-      `SELECT m.session_id AS session_id,
-              MAX(m.seq)   AS latest_seq,
-              m.ts         AS latest_ts,
-              m.raw_json   AS latest_raw,
-              p.peak_used  AS peak_used
-         FROM messages m
-         JOIN (
-            SELECT session_id, MAX(${usedExpr}) AS peak_used
-              FROM messages
-             WHERE session_id IN (${inner}) AND role IN ('assistant', 'tool_use')
-             GROUP BY session_id
-         ) p ON p.session_id = m.session_id
-        WHERE m.session_id IN (${outer})
-          AND m.role IN ('assistant', 'tool_use')
-          AND json_extract(m.raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
-        GROUP BY m.session_id`,
-      [...chunk, ...chunk],
-    );
-    for (const r of rows) {
-      out.push({
-        sessionId: r.session_id,
-        peakUsed: r.peak_used ?? 0,
-        latestRawJson: r.latest_raw,
-        latestTs: r.latest_ts,
-      });
+    const chunk = [...new Set(sessionIds.slice(start, start + CONTEXT_SESSION_CHUNK))];
+    // Read again if the cache was forgotten while the statement ran: its
+    // cursors then predate a delete, and folding its rows into an emptied
+    // cache would understate the peak.
+    for (;;) {
+      const generation = contextPeakGeneration;
+      const held = new Map(chunk.map((id) => [id, contextPeaks.get(id)]));
+      const binds: unknown[] = [];
+      const values = chunk
+        .map((id) => {
+          binds.push(id, held.get(id)?.lastId ?? -1);
+          return `($${binds.length - 1}, $${binds.length})`;
+        })
+        .join(', ');
+      const rows = await db.select<
+        {
+          session_id: string;
+          latest_ts: number | null;
+          latest_raw: string | null;
+          peak_used: number | null;
+          peak_last_id: number | null;
+        }[]
+      >(
+        // Scalar subqueries, not a join grouped by session: GROUP BY over a
+        // join sorted every joined row, raw_json and all, through a temp
+        // b-tree (~20x slower than the scan itself, measured).
+        `WITH c(sid, cursor_id) AS (VALUES ${values})
+         SELECT c.sid      AS session_id,
+                l.ts       AS latest_ts,
+                l.raw_json AS latest_raw,
+                (SELECT MAX(${usedExpr}) FROM messages m
+                  WHERE m.session_id = c.sid
+                    AND COALESCE(m.agent_id, '') = '' AND +m.agent_id IS NULL
+                    -- Unary +: as a rowid range, a cursor of -1 would walk the
+                    -- whole table instead of the session's index range.
+                    AND +m.id > c.cursor_id
+                    AND m.role IN ('assistant', 'tool_use')) AS peak_used,
+                -- Where the next read resumes. Every row up to it was in reach
+                -- of peak_used above (same statement, same snapshot); taking it
+                -- over more rows than the peak reads is harmless, and lets the
+                -- index answer it alone.
+                (SELECT MAX(id) FROM messages
+                  WHERE session_id = c.sid AND COALESCE(agent_id, '') = '') AS peak_last_id
+           FROM c
+           JOIN messages l ON l.id = (
+                  SELECT id FROM messages
+                   WHERE session_id = c.sid AND ${PARENT_ROWS_SQL}
+                     AND role IN ('assistant', 'tool_use')
+                     AND json_extract(raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
+                   ORDER BY seq DESC LIMIT 1)`,
+        binds,
+      );
+      if (generation !== contextPeakGeneration) continue;
+      const byId = new Map(rows.map((r) => [r.session_id, r]));
+      for (const id of chunk) {
+        const r = byId.get(id);
+        // The peak of the rows read now, folded into what the cursor covered.
+        const peak = Math.max(held.get(id)?.peak ?? 0, r?.peak_used ?? 0);
+        if (r?.peak_last_id != null) {
+          // Merged, not replaced: another read may have landed meanwhile. Each
+          // covers every row up to its own lastId, so the union is the larger.
+          const now = contextPeaks.get(id);
+          contextPeaks.set(id, {
+            peak: Math.max(peak, now?.peak ?? 0),
+            lastId: Math.max(r.peak_last_id, now?.lastId ?? -1),
+          });
+        }
+        if (r === undefined) continue;
+        out.push({
+          sessionId: id,
+          peakUsed: peak,
+          latestRawJson: r.latest_raw,
+          latestTs: r.latest_ts,
+        });
+      }
+      break;
     }
   }
   return out;
@@ -1262,6 +1372,8 @@ export async function getSessionContextRows(
  * Used when getSessionContextRows fails, which in practice means a SQLite
  * build without the JSON1 functions. Costs far more bandwidth, so it is not
  * the primary path, but it keeps the feature working rather than blanking it.
+ * The session's own rows only, as in getSessionContextRows; a subagent's seq
+ * would also collide with the parent's in aggregateUsageRows' per-line keys.
  */
 export async function getSessionUsageRows(
   sessionIds: string[],
@@ -1278,7 +1390,8 @@ export async function getSessionUsageRows(
     >(
       `SELECT session_id, seq, raw_json, ts
          FROM messages
-        WHERE session_id IN (${slots}) AND role IN ('assistant', 'tool_use')
+        WHERE session_id IN (${slots}) AND ${PARENT_ROWS_SQL}
+          AND role IN ('assistant', 'tool_use')
         ORDER BY session_id ASC, seq ASC`,
       chunk,
     );

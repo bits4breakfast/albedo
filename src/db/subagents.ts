@@ -323,8 +323,14 @@ export function buildRuns(
 export async function listSubagents(sessionId: string): Promise<SubagentRun[]> {
   if (!sessionId) return [];
   const db = await getDb();
-  const [agg, tail, openings, markRows] = await Promise.all([
-    db.select<AggRow[]>(SUBAGENT_AGG_SQL, [sessionId]),
+  // The aggregate first, and alone: it walks messages_agent and touches no
+  // raw_json, while the tail and marks reads below scan the session's raw
+  // lines. Most sessions have no subagent, and for them those scans found
+  // nothing every refresh (30 ms -> 0 on a long session, #361). buildRuns maps
+  // over the aggregate, so with no rows it returns [] whatever the rest holds.
+  const agg = await db.select<AggRow[]>(SUBAGENT_AGG_SQL, [sessionId]);
+  if (!agg || agg.length === 0) return [];
+  const [tail, openings, markRows] = await Promise.all([
     db.select<TailRow[]>(SUBAGENT_TAIL_SQL, [sessionId, TAIL_ROWS]),
     db.select<{ agent_id: string; body: string | null }[]>(SUBAGENT_OPENING_SQL, [sessionId]),
     db.select<MarkRow[]>(SUBAGENT_MARKS_SQL, [sessionId, MARK_ROWS, sessionId]),

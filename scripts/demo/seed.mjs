@@ -19,7 +19,7 @@ export function migrationsFromLibRs(libRsPath) {
   const src = readFileSync(libRsPath, 'utf8');
   const dir = dirname(libRsPath);
   const files = new Map();
-  for (const m of src.matchAll(/const (\w+): &str = include_str!\("([^"]+)"\);/g)) {
+  for (const m of src.matchAll(/const (\w+): &str =\s*include_str!\("([^"]+)"\);/g)) {
     files.set(m[1], resolve(dir, m[2]));
   }
   const out = [];
