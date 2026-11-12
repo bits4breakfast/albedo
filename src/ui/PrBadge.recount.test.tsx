@@ -50,9 +50,10 @@ describe('PrBadge: the commit count behind Create PR (#365)', () => {
     expect(wt.commitsOnBranch).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Create PR' }).title).toContain('(1 commit)');
 
-    // Twenty writes in two seconds: none counted yet, the button stays.
+    // Fifteen writes in one and a half seconds: none counted yet, the button stays.
+    expect(RECOUNT_MIN_MS).toBe(2_000);
     counts.n = 2;
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= 15; i++) {
       await act(async () => {
         vi.advanceTimersByTime(100);
       });

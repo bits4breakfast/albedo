@@ -67,7 +67,7 @@ export function opensChecks(pr: PrStatus): boolean {
 const AFTER_TURN_RECHECK_MS = [10_000, 30_000];
 
 /** The commit count behind Create PR is asked at most this often while a session writes. */
-export const RECOUNT_MIN_MS = 5_000;
+export const RECOUNT_MIN_MS = 2_000;
 
 /** Header badge: "#6 ✓ checks", "#6 ✗ 2 failing", "#6 merged  Archive… Delete…". */
 export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onResolveConflicts }: PrBadgeProps) {
