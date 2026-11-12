@@ -18,7 +18,8 @@ import {
   toolResultTextOf,
   toolUseIdOf,
 } from '../../capture/adapter';
-import { CodeLines, Disclosure, LinkifiedText, PathLink, useActivate } from './Diff';
+import { CodeLines, Disclosure } from './Diff';
+import { LinkifiedText, PathLink, useActivate } from './links';
 import {
   inputViewFor,
   parseQuestionAnswers,

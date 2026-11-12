@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { openExternal } from '../../lib/openUrl';
 import { codeSpanRef, parseInline } from './Markdown';
-import { LinkifiedText } from './Diff';
+import { LinkifiedText } from './links';
 
 vi.mock('../../lib/openUrl', () => ({ openExternal: vi.fn(async () => {}) }));
 

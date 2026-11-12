@@ -8,7 +8,7 @@
 
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { ExternalLink, PathLink } from './Diff';
+import { ExternalLink, PathLink } from './links';
 import { CodeBlock } from './CodeBlock';
 import { MermaidBlock } from './MermaidBlock';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';

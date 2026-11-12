@@ -9,7 +9,7 @@
 
 import type { ReactNode } from 'react';
 import { useTaskOpener } from '../openTask';
-import { useActivate, useOpenPath } from './Diff';
+import { useActivate, useOpenPath } from './links';
 import { isFolder, type Mention } from './mentions';
 import './mentions.css';
 

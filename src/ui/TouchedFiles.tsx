@@ -39,7 +39,7 @@ import { onHandEditedChange } from '../lib/handEdited';
 import { useOpenFile, type OpenFile, type OpenFileOptions } from './editor/openFile';
 import { adjacent, useListOpen, type ListOpen } from './filesListOpen';
 import { relativeTime } from './TaskList';
-import { useActivate } from './transcript/Diff';
+import { useActivate } from './transcript/links';
 import { KEYS, oneOfCodec, readPersisted, writePersisted } from './persisted';
 import { useFilesView } from './filesView';
 import './touched.css';
