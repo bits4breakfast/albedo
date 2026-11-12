@@ -18,7 +18,7 @@ const fake = vi.hoisted(() => ({
 vi.mock('mermaid', () => ({ default: fake }));
 vi.mock('../../lib/clipboard', () => ({ copyText: async () => true }));
 
-const { Markdown } = await import('./MessageRow');
+const { Markdown } = await import('./Markdown');
 const { __resetMermaid, diagramKind, svgToImage, SECURE_KEYS } = await import('./mermaid');
 
 const SVG =
