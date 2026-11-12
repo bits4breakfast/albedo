@@ -2,7 +2,7 @@
  * One file's change, for the editor's Diff mode.
  *
  * "This task's changes" means the same thing here as in the touched-files list
- * (`lineChanges`): the file at {@link taskBase} -- where the branch left its
+ * (`loadChangeSet`): the file at {@link taskBase} -- where the branch left its
  * base -- against the file in the working tree, so committed-on-branch and
  * still-uncommitted edits are one diff. The old side comes from git, the new
  * side from disk.

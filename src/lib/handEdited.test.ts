@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetHandEdited,
   clearHandEdited,
-  handEditedFiles,
   isHandEdited,
   markHandEdited,
   onHandEditedChange,
@@ -41,19 +40,21 @@ describe('markHandEdited / isHandEdited', () => {
   it('is idempotent', () => {
     markHandEdited(1, 'src/Foo.php');
     markHandEdited(1, 'src/Foo.php');
-    expect(handEditedFiles(1)).toEqual(['src/Foo.php']);
+    expect(isHandEdited(1, 'src/Foo.php')).toBe(true);
   });
 
   it('ignores junk input rather than poisoning the set', () => {
     markHandEdited(1, '');
     markHandEdited(Number.NaN, 'src/Foo.php');
     markHandEdited(1.5, 'src/Foo.php');
-    expect(handEditedFiles(1)).toEqual([]);
+    expect(isHandEdited(1, '')).toBe(false);
+    expect(isHandEdited(1, 'src/Foo.php')).toBe(false);
+    expect(isHandEdited(Number.NaN, 'src/Foo.php')).toBe(false);
+    expect(isHandEdited(1.5, 'src/Foo.php')).toBe(false);
   });
 
   it('returns false for a task it has never seen', () => {
     expect(isHandEdited(99, 'anything')).toBe(false);
-    expect(handEditedFiles(99)).toEqual([]);
   });
 });
 
@@ -151,6 +152,5 @@ describe('session scope', () => {
     markHandEdited(1, 'src/Foo.php');
     __resetHandEdited();
     expect(isHandEdited(1, 'src/Foo.php')).toBe(false);
-    expect(handEditedFiles(1)).toEqual([]);
   });
 });

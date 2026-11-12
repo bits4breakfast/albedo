@@ -451,16 +451,6 @@ export async function baseOrUpstream(cwd: string, baseBranch: string): Promise<s
 }
 
 /**
- * Lines changed per file in a worktree: everything the task did relative to
- * {@link taskBase} -- committed on the branch AND still uncommitted -- which is
- * what "this task's changes" means. Untracked files are not in a diff and are
- * absent here.
- */
-export async function lineChanges(worktreePath: string, baseBranch: string): Promise<Map<string, LineChange>> {
-  return lineChangesSince(worktreePath, (await taskBase(worktreePath, baseBranch)) ?? 'HEAD');
-}
-
-/**
  * Prefix for a `git diff` against the working tree that must not write
  * `.git/index` (#363). By default the porcelain refreshes the index whenever a
  * file's stat is stale and writes it back, taking `index.lock` -- in the
@@ -478,7 +468,12 @@ export async function lineChanges(worktreePath: string, baseBranch: string): Pro
  */
 export const DIFF_NO_REFRESH: readonly string[] = ['-c', 'diff.autoRefreshIndex=false', 'diff'];
 
-/** {@link lineChanges} against a revision already resolved, without writing the index. */
+/**
+ * Lines changed per file against a revision already resolved, without
+ * writing the index: everything the task did relative to {@link taskBase} --
+ * committed on the branch AND still uncommitted -- when `against` is its
+ * merge base. Untracked files are not in a diff and are absent here.
+ */
 export async function lineChangesSince(worktreePath: string, against: string): Promise<Map<string, LineChange>> {
   return parseNumstat(await gitOk([...DIFF_NO_REFRESH, '--numstat', '--no-renames', against], worktreePath));
 }
@@ -499,27 +494,13 @@ export function parseNameStatus(stdout: string): Map<string, ChangeKind> {
   return out;
 }
 
-/** The change kind per file, over the same range as {@link lineChanges}. */
-export async function changeKinds(worktreePath: string, baseBranch: string): Promise<Map<string, ChangeKind>> {
-  return changeKindsSince(worktreePath, (await taskBase(worktreePath, baseBranch)) ?? 'HEAD');
-}
-
 /**
- * {@link changeKinds} against a revision already resolved, without writing
- * the index ({@link DIFF_NO_REFRESH}). `--name-status` then also lists a file
- * whose stat is merely stale, as `M`; only paths that also have a `--numstat`
- * line -- a real change in content or mode -- are kept, which is the set the
- * refreshing diff reported.
+ * `kinds` limited to the paths `changed` has: drops the stat-only entries.
+ * Without the index refresh ({@link DIFF_NO_REFRESH}) `--name-status` also
+ * lists a file whose stat is merely stale, as `M`; only paths that also have
+ * a `--numstat` line -- a real change in content or mode -- are kept, which
+ * is the set the refreshing diff reported.
  */
-export async function changeKindsSince(worktreePath: string, against: string): Promise<Map<string, ChangeKind>> {
-  const [names, counts] = await Promise.all([
-    gitOk([...DIFF_NO_REFRESH, '--name-status', '--no-renames', against], worktreePath),
-    lineChangesSince(worktreePath, against),
-  ]);
-  return keepChanged(parseNameStatus(names), counts);
-}
-
-/** `kinds` limited to the paths `changed` has: drops the stat-only entries. */
 export function keepChanged(
   kinds: Map<string, ChangeKind>,
   changed: ReadonlyMap<string, LineChange>,
@@ -527,37 +508,6 @@ export function keepChanged(
   const out = new Map<string, ChangeKind>();
   for (const [path, kind] of kinds) if (changed.has(path)) out.set(path, kind);
   return out;
-}
-
-/**
- * `git log --format=%x00%ct --name-only` output: path -> the newest commit
- * time (ms) that touched it. Records are a NUL-prefixed timestamp line
- * followed by the paths that commit changed.
- */
-export function parseCommitFileTimes(stdout: string): Map<string, number> {
-  const out = new Map<string, number>();
-  let at: number | null = null;
-  for (const raw of stdout.split('\n')) {
-    const line = raw.trimEnd();
-    if (line.startsWith('\u0000')) {
-      const n = Number(line.slice(1));
-      at = Number.isFinite(n) ? n * 1000 : null;
-      continue;
-    }
-    if (line === '' || at === null) continue;
-    const prev = out.get(line);
-    if (prev === undefined || at > prev) out.set(line, at);
-  }
-  return out;
-}
-
-/** When each file was last committed on the task's branch. Empty when unknown. */
-export async function committedFileTimes(worktreePath: string, baseBranch: string): Promise<Map<string, number>> {
-  const base = await taskBase(worktreePath, baseBranch);
-  if (base === null) return new Map();
-  return parseCommitFileTimes(
-    await gitOk(['log', '--format=%x00%ct', '--name-only', '--no-renames', `${base}..HEAD`], worktreePath),
-  );
 }
 
 /** One commit on the task's branch, with the files it changed. */
@@ -595,14 +545,7 @@ export function parseCommitLog(stdout: string): BranchCommit[] {
   return out;
 }
 
-/** The commits on the task's branch since it left its base, newest first. */
-export async function branchCommits(worktreePath: string, baseBranch: string): Promise<BranchCommit[]> {
-  const base = await taskBase(worktreePath, baseBranch);
-  if (base === null) return [];
-  return branchCommitsSince(worktreePath, base);
-}
-
-/** {@link branchCommits} from a merge base already resolved. */
+/** The commits on the task's branch since it left `base` (its merge base), newest first. */
 export async function branchCommitsSince(worktreePath: string, base: string): Promise<BranchCommit[]> {
   return parseCommitLog(
     await gitOk(['log', '--format=%x00%H%x09%ct%x09%s', '--numstat', '--no-renames', `${base}..HEAD`], worktreePath),
@@ -610,10 +553,9 @@ export async function branchCommitsSince(worktreePath: string, base: string): Pr
 }
 
 /**
- * When each file was last committed, from commits {@link branchCommits}
- * already read: the same answer as {@link committedFileTimes}, without
- * asking git a second time. A commit's `--numstat` lists the paths its
- * `--name-only` does.
+ * When each file was last committed, from commits {@link branchCommitsSince}
+ * already read, without asking git a second time (`git log --name-only`): a
+ * commit's `--numstat` lists the paths its `--name-only` does.
  */
 export function commitFileTimes(commits: readonly BranchCommit[]): Map<string, number> {
   const out = new Map<string, number>();
@@ -641,10 +583,10 @@ export interface ChangeSet {
 }
 
 /**
- * {@link lineChanges}, {@link changeKinds}, {@link branchCommits} and
- * {@link committedFileTimes} in one go, resolving the base once (#363). Each
- * of those resolved it on its own, and the pane also asked for it a fifth
- * time: ~17 git processes per reload, now 5. Each part fails to empty, as
+ * The lines, kinds, commits and commit times of a task's change set in one
+ * go, resolving the base once (#363). Read separately, each resolved it on
+ * its own, and the pane also asked for it a fifth time: ~17 git processes
+ * per reload, now 5. Each part fails to empty, as
  * the separate calls did; the kinds also need the line counts, which tell a
  * real change from a stale stat. Never throws.
  */

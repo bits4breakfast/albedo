@@ -1260,6 +1260,11 @@ export async function endTaskEvents(taskId: number): Promise<void> {
   publish(taskId, null);
 }
 
+/**
+ * Stop the sweep and the watcher. The app never calls it -- both end with the
+ * process -- but the runtime tests restart through it (a launch with the
+ * script already installed, the sweep under fake timers).
+ */
 export async function stopHookEvents(): Promise<void> {
   if (timer !== null) clearInterval(timer);
   timer = null;

@@ -317,26 +317,6 @@ export function resolvedReason(c: Anchored, text: string | null): 'changed' | 'y
   return 'you';
 }
 
-/**
- * Resolve every sent comment whose lines are gone, reading each file once.
- * Returns the ids resolved. A file that cannot be read resolves nothing.
- */
-export async function autoResolveComments(
-  taskId: number,
-  comments: readonly ReviewComment[],
-  read: (path: string) => Promise<string | null>,
-): Promise<number[]> {
-  const candidates = comments.filter((c) => c.sentAt !== null && c.resolvedAt === null);
-  if (candidates.length === 0) return [];
-  const texts = new Map<string, string | null>();
-  for (const path of new Set(candidates.map((c) => c.path))) {
-    texts.set(path, await read(path).catch(() => null));
-  }
-  const ids = candidates.filter((c) => shouldAutoResolve(c, texts.get(c.path) ?? null)).map((c) => c.id);
-  await resolveComments(taskId, ids);
-  return ids;
-}
-
 /** `path:12` or `path:12-14`: how a comment names its place, in the message and in lists. */
 export function commentLocation(c: Pick<ReviewComment, 'path' | 'lineStart' | 'lineEnd'>): string {
   return c.lineStart === c.lineEnd ? `${c.path}:${c.lineStart}` : `${c.path}:${c.lineStart}-${c.lineEnd}`;

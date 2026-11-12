@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { baseOrUpstream, branchCommits, lineChanges, setGitRunner, taskBase, type GitRunner } from './worktree';
+import { baseOrUpstream, loadChangeSet, setGitRunner, taskBase, type GitRunner } from './worktree';
 import { loadBranchDiff } from '../guide/branchDiff';
 
 let root: string;
@@ -69,12 +69,13 @@ describe('a base with no local branch, only origin’s (#237)', () => {
   });
 
   it('lists the branch’s own changes, not an empty set', async () => {
-    expect([...(await lineChanges(root, 'feature-a')).keys()].sort()).toEqual(['b1.txt', 'b2.txt']);
-    expect((await branchCommits(root, 'feature-a')).map((c) => c.subject)).toEqual(['feature b two', 'feature b one']);
+    const set = await loadChangeSet(root, 'feature-a');
+    expect([...set.lines.keys()].sort()).toEqual(['b1.txt', 'b2.txt']);
+    expect(set.commits.map((c) => c.subject)).toEqual(['feature b two', 'feature b one']);
   });
 
   it('measured against main instead -- the PR’s base -- the parent’s commits count too', async () => {
-    expect([...(await lineChanges(root, 'main')).keys()].sort()).toEqual(['a.txt', 'b1.txt', 'b2.txt']);
+    expect([...(await loadChangeSet(root, 'main')).lines.keys()].sort()).toEqual(['a.txt', 'b1.txt', 'b2.txt']);
     const read = await loadBranchDiff(root, 'main', async () => null);
     expect(read.fromMergeBase).toBe(true);
   });

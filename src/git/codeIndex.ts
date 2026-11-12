@@ -487,13 +487,7 @@ export function peekCodeIndex(root: string): CodeIndex | null {
   return cache.get(root)?.last ?? null;
 }
 
-/** Drop the cached index for one worktree, or all of them. */
-export function invalidateCodeIndex(root?: string): void {
-  if (root === undefined) cache.clear();
-  else {
-    const entry = cache.get(root);
-    // Keep `last` so peek still has something to show during the rebuild.
-    if (entry?.last) cache.set(root, { promise: Promise.resolve(entry.last), last: entry.last, settledAt: 0 });
-    else cache.delete(root);
-  }
+/** @internal for tests: forget every cached index. */
+export function __resetCodeIndex(): void {
+  cache.clear();
 }

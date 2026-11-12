@@ -4,7 +4,6 @@ import {
   cutPoint,
   parseAheadBehind,
   probeWorkAtRisk,
-  parseCommitFileTimes,
   parseCommitLog,
   parseNameStatus,
   parseNumstat,
@@ -1254,20 +1253,6 @@ describe('parseNameStatus', () => {
       ['old.md', 'D'],
       ['link', 'T'],
     ]);
-  });
-});
-
-describe('parseCommitFileTimes', () => {
-  it('keeps the newest commit time per path', () => {
-    const out = '\u00001700000200\n\nsrc/a.ts\nsrc/b.ts\n\u00001700000100\n\nsrc/a.ts\nsrc/c.ts\n';
-    const m = parseCommitFileTimes(out);
-    expect(m.get('src/a.ts')).toBe(1700000200_000);
-    expect(m.get('src/b.ts')).toBe(1700000200_000);
-    expect(m.get('src/c.ts')).toBe(1700000100_000);
-    expect(m.size).toBe(3);
-  });
-  it('is empty for empty output', () => {
-    expect(parseCommitFileTimes('').size).toBe(0);
   });
 });
 

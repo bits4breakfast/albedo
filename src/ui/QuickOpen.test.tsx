@@ -8,7 +8,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import QuickOpen from './QuickOpen';
-import { invalidateCodeIndex } from '../git/codeIndex';
+import { __resetCodeIndex } from '../git/codeIndex';
 import { setGitRunner, type GitRunner } from '../git/worktree';
 
 let restore: GitRunner;
@@ -30,7 +30,7 @@ afterAll(() => {
 });
 afterEach(() => {
   cleanup();
-  invalidateCodeIndex();
+  __resetCodeIndex();
 });
 
 function setup(mode: 'file' | 'class' | 'symbol' | 'all' = 'symbol', currentFile: string | null = null) {

@@ -6,7 +6,6 @@
  *   startCapture(): Promise<CaptureHandle>
  *   onCaptureUpdate(cb): () => void
  *   deriveStatus(messages): TaskStatus
- *   usageSummary(): Promise<{ inputTokens; outputTokens; sinceTs }>
  *
  * Nothing outside this directory may import src/capture/adapter.ts: the JSONL
  * format stops here (CLAUDE.md hard rule #1).
@@ -57,17 +56,12 @@ export { peerMessageIdOf } from './adapter';
 export { senderTaskOf } from './peers';
 export type { CompactBoundary, CompactSummary } from './adapter';
 
-export { usageSummary } from './usage';
-export type { UsageSummary } from './usage';
-
 /** Per-session context-window occupancy, for the task list and header. */
 export { contextUsage, contextUsageForSessions, contextBands } from './context';
 export type { ContextUsage, ContextBands } from './context';
 
 /**
- * Rolling-window token totals across all sessions. `windowUsage` lives in
- * usage.ts rather than context.ts so it shares usageSummary's query and the
- * two can never drift; the exported surface is the same either way.
+ * Rolling-window token totals across all sessions (usage.ts).
  */
 export { windowUsage } from './usage';
 export type { WindowUsage } from './usage';
@@ -90,7 +84,7 @@ export type { CaptureProgress } from './watcher';
 
 // Named constants other workstreams may want to display or reason about.
 export { RUNNING_WINDOW_MS } from './status';
-export { USAGE_WINDOW_MS, WEEK_WINDOW_MS, usageBreakdown } from './usage';
+export { USAGE_WINDOW_MS, WEEK_WINDOW_MS } from './usage';
 export type { UsageBreakdown } from './usage';
 
 // The tier table is exported so the shell can label an 'inferred' limit

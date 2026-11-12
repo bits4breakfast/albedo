@@ -3,14 +3,15 @@
  * `loadCodeIndex` is exercised through the injectable git runner.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetCodeIndex,
   extractSymbol,
   grepArgs,
-  invalidateCodeIndex,
   LANGUAGES,
   languageOf,
   filesNamed,
+  INDEX_TTL_MS,
   loadCodeIndex,
   parseGrepOutput,
   parseLsFilesZ,
@@ -287,7 +288,7 @@ describe('loadCodeIndex', () => {
   afterEach(() => {
     if (restore) setGitRunner(restore);
     restore = null;
-    invalidateCodeIndex();
+    __resetCodeIndex();
   });
 
   function fake(calls: string[][]): GitRunner {
@@ -314,18 +315,25 @@ describe('loadCodeIndex', () => {
     expect(peekCodeIndex('/w')).toBe(a);
   });
 
-  it('serves from cache inside the TTL and rebuilds after invalidate', async () => {
+  it('serves from cache inside the TTL and rebuilds after it', async () => {
     const calls: string[][] = [];
     restore = setGitRunner(fake(calls));
-    const first = await loadCodeIndex('/w');
-    await loadCodeIndex('/w');
-    expect(calls).toHaveLength(1 + LANGUAGES.length);
-    invalidateCodeIndex('/w');
-    // The stale index stays peekable while the rebuild runs.
-    expect(peekCodeIndex('/w')).toBe(first);
-    const second = await loadCodeIndex('/w');
-    expect(second).not.toBe(first);
-    expect(calls).toHaveLength(2 * (1 + LANGUAGES.length));
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    try {
+      const first = await loadCodeIndex('/w');
+      now.mockReturnValue(1_000_000 + INDEX_TTL_MS - 1);
+      await loadCodeIndex('/w');
+      expect(calls).toHaveLength(1 + LANGUAGES.length);
+      now.mockReturnValue(1_000_000 + INDEX_TTL_MS);
+      const rebuilding = loadCodeIndex('/w');
+      // The stale index stays peekable while the rebuild runs.
+      expect(peekCodeIndex('/w')).toBe(first);
+      const second = await rebuilding;
+      expect(second).not.toBe(first);
+      expect(calls).toHaveLength(2 * (1 + LANGUAGES.length));
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('falls back to ERE when this git has no PCRE', async () => {
@@ -362,7 +370,7 @@ describe('filesNamed', () => {
   afterEach(() => {
     if (restore) setGitRunner(restore);
     restore = null;
-    invalidateCodeIndex();
+    __resetCodeIndex();
   });
 
   const files = (list: string[]): GitRunner => async (args) =>
