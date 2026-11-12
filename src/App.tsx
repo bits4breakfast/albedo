@@ -8,11 +8,11 @@ import useDialogs from './ui/app/useDialogs';
 import useLaunchNotices from './ui/app/useLaunchNotices';
 import LaunchNotices from './ui/app/LaunchNotices';
 import TaskBar from './ui/app/TaskBar';
+import AppDialogs from './ui/app/AppDialogs';
 import useSessionRequests from './ui/app/useSessionRequests';
 import { proposalsInScope } from './ui/proposals';
-import { resolveRequest, useSessionOutcomes } from './ui/requestQueue';
+import { useSessionOutcomes } from './ui/requestQueue';
 import { SpinOutContext, spinOutStatus, type SpinOutLookup } from './ui/spinOut';
-import { newSessionId } from './capture/sessionLink';
 import useProjectTabs from './ui/app/useProjectTabs';
 import useSelection from './ui/app/useSelection';
 import useBrowseTask from './ui/app/useBrowseTask';
@@ -39,9 +39,6 @@ import {
   watchFocus,
   type AttentionKind,
 } from './ui/attention';
-import ShortcutsHelp from './ui/ShortcutsHelp';
-import QuickOpen from './ui/QuickOpen';
-import FindInFiles from './ui/FindInFiles';
 import { worktreeRelative, type QuickOpenMode } from './ui/quickOpenModel';
 import { focusPty, hasLivePty } from './ui/Terminal';
 import TerminalStack from './ui/TerminalStack';
@@ -51,17 +48,11 @@ import type { TaskActions } from './ui/taskMenuItems';
 import { useTaskMenuFacts } from './ui/useTaskMenuFacts';
 import ModelPicker from './ui/ModelPicker';
 import { renameTaskAndSession } from './ui/taskRename';
-import NewTaskDialog from './ui/NewTaskDialog';
 import ShellTerminal from './ui/ShellTerminal';
-import WorktreeReconcile from './ui/WorktreeReconcile';
 import TranscriptPane from './ui/transcript/TranscriptPane';
-import ArchiveTaskDialog from './ui/ArchiveTaskDialog';
-import RemoteControlDialog from './ui/RemoteControlDialog';
-import RemindDialog from './ui/reminders/RemindDialog';
 import { sessionResumable, startReminders } from './reminders';
 import { openReplacementTask } from './reminders/replacement';
 
-import WhatsNewDialog from './ui/WhatsNewDialog';
 import useWhatsNew from './ui/app/useWhatsNew';
 import TouchedFiles from './ui/TouchedFiles';
 import ProjectFiles from './ui/ProjectFiles';
@@ -77,14 +68,9 @@ import { MentionSourceContext, type MentionSource } from './ui/mentionSource';
 import { resolveInWorktree } from './lib/paths';
 import StatusBar from './ui/StatusBar';
 import { ContextClear } from './ui/ClearContextButton';
-import ProjectsDialog from './ui/ProjectsDialog';
-import SessionBrowser from './ui/SessionBrowser';
 import EmptyState from './ui/EmptyState';
-import { deleteTask, getTask } from './db';
-import { endTaskEvents } from './capture/hookEvents';
+import { getTask } from './db';
 import { composeWorktreePath, listBranches, listWorktrees, probePath } from './git/worktree';
-import ImportProjects from './ui/ImportProjects';
-import MoveTaskDialog from './ui/MoveTaskDialog';
 import PanelToggle from './ui/PanelToggle';
 import {
   buildFollowUp,
@@ -169,30 +155,21 @@ export default function App() {
     startFilesDrag,
     startShellDrag,
   } = useLayout();
+  const dialogs = useDialogs();
   const {
-    newTaskOpen,
     setNewTaskOpen,
-    newTaskPrefill,
     setNewTaskPrefill,
-    reconcileOpen,
     setReconcileOpen,
-    projectsOpen,
     setProjectsOpen,
-    shortcutsOpen,
     setShortcutsOpen,
-    sessionsOpen,
     setSessionsOpen,
-    importOpen,
     setImportOpen,
-    archiveTarget,
     setArchiveTarget,
-    moveTarget,
     setMoveTarget,
-    endIntent,
     setEndIntent,
     remoteConfirmFor,
     setRemoteConfirmFor,
-  } = useDialogs();
+  } = dialogs;
 
   /** Go to File / Class / Symbol / Search Everywhere; null when closed. */
   const [quickOpen, setQuickOpen] = useState<QuickOpenMode | null>(null);
@@ -1431,217 +1408,42 @@ export default function App() {
         <StatusBar awake={awakeCount} />
       </PaneErrorBoundary>
 
-      <PaneErrorBoundary label="New task">
-        <NewTaskDialog
-          open={newTaskOpen}
-          prefill={newTaskPrefill}
-          defaultProjectId={activeProject?.id ?? null}
-          onClose={() => {
-            followUpSeq.current++;
-            setNewTaskOpen(false);
-            setNewTaskPrefill(null);
-          }}
-          onCreated={(task: Task, initialPrompt?: string, forkOf?: string) => {
-            // An approved session request is done once its task exists, and
-            // its transcript says which task it became (#332).
-            if (newTaskPrefill?.request) resolveRequest(newTaskPrefill.request.id, task);
-            // A fork (#332): the first spawn copies the source's session under
-            // a new id, as History's fork does; the first message, if any,
-            // goes after the copy (Terminal). The id is chosen here so the
-            // spawn plan and `--name … (fork)` both see a fork.
-            if (forkOf) {
-              setPendingResume((prev) =>
-                new Map(prev).set(task.id, ['--resume', forkOf, '--fork-session', '--session-id', newSessionId()]),
-              );
-            }
-            if (initialPrompt !== undefined) {
-              setPromptOverrides((prev) => new Map(prev).set(task.id, initialPrompt));
-            }
-            followUpSeq.current++;
-            setNewTaskPrefill(null);
-            upsertTask(task);
-            // revealTask, not select: a new task can land in a closed tab,
-            // which must open before the task can show (see revealTask).
-            revealTask(task);
-            setNewTaskOpen(false);
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Worktree reconcile">
-        <WorktreeReconcile
-          open={reconcileOpen}
-          onClose={() => {
-            setReconcileOpen(false);
-            void refresh();
-          }}
-        />
-      </PaneErrorBoundary>
-
-      {/* Archiving is not a status flip: the dialog does `git worktree remove`
-          and branch cleanup behind a confirmation. The task row is only marked
-          archived once the dialog reports the worktree work succeeded --
-          flipping first would strand the worktree, reachable from nothing. */}
-      <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-      <PaneErrorBoundary label="Go to">
-        <QuickOpen
-          mode={searchTask ? quickOpen : null}
-          worktreePath={searchTask?.worktreePath ?? null}
-          scopeLabel={searchScopeLabel}
-          currentFile={editorFile}
-          onMode={setQuickOpen}
-          onClose={closeQuickOpen}
-          onOpen={openFile}
-          seed={quickSeed}
-        />
-      </PaneErrorBoundary>
-      <PaneErrorBoundary label="Find in Files">
-        <FindInFiles
-          open={searchTask !== null && findOpen}
-          worktreePath={searchTask?.worktreePath ?? null}
-          scopeLabel={searchScopeLabel}
-          onClose={closeFind}
-          onOpen={openFile}
-        />
-      </PaneErrorBoundary>
-      <PaneErrorBoundary label="Projects">
-        <ProjectsDialog
-          open={projectsOpen}
-          onClose={() => setProjectsOpen(false)}
-          // The hidden set lives in React state, read from localStorage once
-          // at mount — a write to the key alone would not bring the tab back
-          // until a relaunch.
-          onUnhideProject={unhideProject}
-          onChanged={(created) => {
-            void refresh();
-            // Follow the project that was just made. Without this the new tab
-            // appears but stays in the background, and a task created into it
-            // is filtered out of the active tab and silently deselected.
-            if (created) switchTab(`p${created.id}`);
-          }}
-          onCreateTaskIn={(project) => {
-            // The dialog already remembers the project it just created as the
-            // new-task default, so this only has to switch to its tab and open
-            // the dialog.
-            switchTab(`p${project.id}`);
-            setProjectsOpen(false);
-            setNewTaskOpen(true);
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Import projects">
-        <ImportProjects
-          open={importOpen}
-          repos={unclaimed}
-          onClose={() => setImportOpen(false)}
-          onImported={(created) => {
-            // Imported repos are claimed now; stop offering them.
-            for (const p of created) dismiss(`repo:${p.repoPath}`);
-            void refresh();
-            const first = created[0];
-            if (first) switchTab(`p${first.id}`);
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Past sessions">
-        <SessionBrowser
-          open={sessionsOpen}
-          onClose={() => setSessionsOpen(false)}
-          onOpenTask={(taskId) => {
-            const task = tasks.find((t) => t.id === taskId);
-            if (task) revealTask(task);
-          }}
-          onResumed={(task, args) => {
-            setPendingResume((prev) => {
-              const next = new Map(prev);
-              next.set(task.id, args);
-              return next;
-            });
-            upsertTask(task);
-            // Continue AND fork both land here, and both carry a projectId
-            // resolved from the session's repo root — frequently a different
-            // project than the active tab, since reaching sessions from
-            // anywhere in your history is the point of the browser.
-            revealTask(task);
-            void refresh();
-          }}
-        />
-      </PaneErrorBoundary>
-
-      {whatsNew.open && (
-        <PaneErrorBoundary label="What's New">
-          <WhatsNewDialog list={whatsNew.open} onClose={whatsNew.dismiss} />
-        </PaneErrorBoundary>
-      )}
-
-      {remoteConfirm && selected && (
-        <PaneErrorBoundary label="Remote Control">
-          <RemoteControlDialog
-            task={selected}
-            onConfirm={remoteConfirm.onSelect}
-            onClose={() => setRemoteConfirmFor(null)}
-          />
-        </PaneErrorBoundary>
-      )}
-
-      {remindFor && (
-        <PaneErrorBoundary label="Reminders">
-          <RemindDialog task={remindFor} onClose={() => setRemindFor(null)} />
-        </PaneErrorBoundary>
-      )}
-
-      <PaneErrorBoundary label="Move task">
-        <MoveTaskDialog
-          task={moveTarget}
-          project={projects.find((p) => p.id === moveTarget?.projectId) ?? null}
-          onClose={() => setMoveTarget(null)}
-          onStop={async (task) => {
-            setStopped((prev) => new Set(prev).add(task.id));
-            // Unmounting kills the pty; give claude a moment to exit before
-            // git touches the folder it was running in.
-            await new Promise((resolve) => window.setTimeout(resolve, 600));
-          }}
-          onDone={(moved) => {
-            upsertTask(moved);
-            // Its tabs are paths in the old folder.
-            if (openRequestRef.current?.taskId === moved.id) closeEditor();
-            setStopped((prev) => {
-              const next = new Set(prev);
-              next.delete(moved.id);
-              return next;
-            });
-          }}
-        />
-      </PaneErrorBoundary>
-
-      <PaneErrorBoundary label="Archive task">
-        <ArchiveTaskDialog
-          task={archiveTarget}
-          intent={endIntent}
-          otherTasks={tasks}
-          onClose={() => setArchiveTarget(null)}
-          onArchived={(taskId) => {
-            void archive(taskId);
-            setArchiveTarget(null);
-          }}
-          onDeleted={(taskId) => {
-            // Same ordering discipline as onArchived: the row only leaves the
-            // list once the destructive work has actually completed. The dialog
-            // only does the git side, so the task and its captured messages are
-            // removed here (see deleteTask).
-            void deleteTask(taskId)
-              .then(() => {
-                forgetResume(taskId);
-                void endTaskEvents(taskId).catch(() => {});
-                setArchiveTarget(null);
-                return refresh();
-              })
-              .catch((e) => console.error('deleteTask failed', e));
-          }}
-        />
-      </PaneErrorBoundary>
+      <AppDialogs
+        dialogs={dialogs}
+        activeProject={activeProject}
+        followUpSeq={followUpSeq}
+        setPendingResume={setPendingResume}
+        setPromptOverrides={setPromptOverrides}
+        forgetResume={forgetResume}
+        upsertTask={upsertTask}
+        revealTask={revealTask}
+        refresh={refresh}
+        archive={archive}
+        tasks={tasks}
+        projects={projects}
+        searchTask={searchTask}
+        searchScopeLabel={searchScopeLabel}
+        quickOpen={quickOpen}
+        setQuickOpen={setQuickOpen}
+        closeQuickOpen={closeQuickOpen}
+        quickSeed={quickSeed}
+        findOpen={findOpen}
+        closeFind={closeFind}
+        editorFile={editorFile}
+        openFile={openFile}
+        unhideProject={unhideProject}
+        switchTab={switchTab}
+        unclaimed={unclaimed}
+        dismiss={dismiss}
+        whatsNew={whatsNew}
+        remoteConfirm={remoteConfirm}
+        selected={selected}
+        remindFor={remindFor}
+        setRemindFor={setRemindFor}
+        setStopped={setStopped}
+        openRequestRef={openRequestRef}
+        closeEditor={closeEditor}
+      />
     </div>
     </MentionSourceContext.Provider>
     </TaskOpenContext.Provider>
