@@ -331,6 +331,7 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_kill,
             pty::pty_kill_stale,
+            pty::pty_ack,
             fsx::canonicalize_path,
             fsscope::allow_project_dir,
             fsscope::allow_outside_file,
