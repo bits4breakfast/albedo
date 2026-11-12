@@ -10,7 +10,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { parseLine } from '../../capture/adapter';
 import type { Message } from '../../types';
 import { findRuns, foldable, linesChanged, runFacts, runSummary } from './toolGroups';
-import { ToolRunGroup } from './TranscriptPane';
+import { ToolRunGroup } from './ToolRunGroup';
 import { foldToolRuns, groupRows } from './grouping';
 
 afterEach(cleanup);

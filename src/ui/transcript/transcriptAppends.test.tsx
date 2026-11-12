@@ -18,7 +18,7 @@ import type { Message } from '../../types';
 import { MessageRow } from './MessageRow';
 import { editPairsOf } from './editPairs';
 import { linesChanged, runFacts } from './toolGroups';
-import { sameRun } from './TranscriptPane';
+import { sameRun } from './ToolRunGroup';
 import { foldToolRuns, groupRows } from './grouping';
 import { grownLimit, keepRowObjects } from './tail';
 
