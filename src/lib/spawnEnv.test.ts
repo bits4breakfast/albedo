@@ -49,14 +49,14 @@ describe('git runner', () => {
   it('blanks the credentials with no cwd and no env', async () => {
     await git(['status']);
     expect(created).toHaveLength(1);
-    expect(created[0].program).toBe('git');
-    expect(created[0].args).toEqual(['status']);
-    expect(created[0].options).toEqual({ env: { ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' } });
+    expect(created[0]!.program).toBe('git');
+    expect(created[0]!.args).toEqual(['status']);
+    expect(created[0]!.options).toEqual({ env: { ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' } });
   });
 
   it('keeps the cwd and the caller env, and the caller cannot restore a key', async () => {
     await git(['worktree', 'add', 'x'], '/repo', { GIT_TERMINAL_PROMPT: '0', ANTHROPIC_API_KEY: 'sk-x' });
-    expect(created[0].options).toEqual({
+    expect(created[0]!.options).toEqual({
       cwd: '/repo',
       env: { GIT_TERMINAL_PROMPT: '0', ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' },
     });
@@ -67,8 +67,8 @@ describe('gh runner', () => {
   it('keeps its own env and blanks the credentials', async () => {
     const r = await gh(['pr', 'list'], '/repo');
     expect(r).not.toBeNull();
-    expect(created[0].args).toEqual(['pr', 'list']);
-    expect(created[0].options).toEqual({
+    expect(created[0]!.args).toEqual(['pr', 'list']);
+    expect(created[0]!.options).toEqual({
       cwd: '/repo',
       env: {
         GH_PROMPT_DISABLED: '1',
@@ -82,7 +82,7 @@ describe('gh runner', () => {
 
   it('blanks them without a cwd too', async () => {
     await gh(['api', 'user']);
-    expect(created[0].options).toEqual({
+    expect(created[0]!.options).toEqual({
       env: {
         GH_PROMPT_DISABLED: '1',
         NO_COLOR: '1',

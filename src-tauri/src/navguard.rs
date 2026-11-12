@@ -49,10 +49,12 @@ fn same_origin(a: &Url, b: &Url) -> bool {
         && (a.host_str() == b.host_str() || (loopback(a.host_str()) && loopback(b.host_str())))
 }
 
-/// The dev server's URL in a debug build; `None` in a release build, which
-/// never loads one.
+/// The dev server's URL when the app loads from it (`tauri dev`); `None` when
+/// it loads the bundled frontend. `tauri::is_dev()` is the same test Tauri
+/// uses to choose between `devUrl` and `frontendDist`, so the guard follows
+/// the URL the window actually loads, whatever the build profile.
 fn dev_server<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<Url> {
-    if cfg!(debug_assertions) {
+    if tauri::is_dev() {
         app.config().build.dev_url.clone()
     } else {
         None
