@@ -13,7 +13,7 @@ import { createPortal } from 'react-dom';
 import { useTheme } from '../theme';
 import { CodeBlock, CodeBody } from './CodeBlock';
 import { CopyButton } from './CopyButton';
-import { CodeLines } from './Diff';
+import { CodeLines } from './codeTokens';
 import { drawDiagram, peekDiagram, type DiagramImage, type DrawResult } from './mermaid';
 
 /** Within this many px of the end counts as reading the end (as TranscriptPane's STICK_PX). */
