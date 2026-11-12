@@ -10,6 +10,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
 - **Shortcuts collide silently.** The editor's CodeMirror keymap, the app's `useShortcuts`, macOS text fields and the terminal (`terminalTakesKey`) all see the same keys. **Rule:**
   - For any new combo, grep the editor keymap and the CodeMirror defaults it loads, plus `shortcuts.ts`. Say in the PR what you checked.
   - Use `e.code` wherever Option or Shift change `key`.
+- **Escape inside the preview frame left full screen.** Reported by the owner after #356: with Albedo in full screen, Esc in an open preview closed the viewer and also took the window out of full screen. #267's guard marks every Escape handled in the app's window, but a keydown inside an iframe happens in the frame's own document and never reaches it; unhandled, WKWebView hands it back to AppKit, and a full-screen window answers `cancelOperation:` by leaving full screen. #356's frame script forwarded Esc to the viewer without marking it handled (#376). **Rule:** any document with its own keyboard focus -- an iframe, a second webview -- needs its own Escape guard; give it the same late, one-shot `preventDefault` as `escapeKeepsFullscreen.ts`, so its own listeners still see the key unhandled.
 
 ## Claude Code's transcript and queue
 

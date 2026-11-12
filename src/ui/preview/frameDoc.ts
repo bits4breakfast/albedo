@@ -108,10 +108,20 @@ addEventListener('scroll',g,{passive:true});addEventListener('resize',g);addEven
 })();`;
 }
 
-/** The Esc script: tells the parent, and lets the page have the key too. */
+/**
+ * The Esc script: tells the parent, and lets the page have the key too.
+ *
+ * It also marks Escape handled, as keepEscapeFromLeavingFullscreen does for
+ * the app's own window (#267): a keydown inside this frame never reaches that
+ * guard, and an Escape nothing handled goes back to AppKit, which takes the
+ * window out of full screen (#376). Marked only from a one-shot bubble
+ * listener added during the dispatch, so the mockup's own listeners run first
+ * and still see the key as unhandled.
+ */
 function escapeScript(): string {
   return `(function(){
-addEventListener('keydown',function(e){if(e.key==='Escape'){try{parent.postMessage({tag:'${ESCAPE_TAG}'},'*');}catch(x){}}},true);
+addEventListener('keydown',function(e){if(e.key!=='Escape')return;try{parent.postMessage({tag:'${ESCAPE_TAG}'},'*');}catch(x){}
+if(e.isComposing||e.keyCode===229)return;addEventListener('keydown',function(l){if(l===e)e.preventDefault();},{once:true});},true);
 })();`;
 }
 
