@@ -25,6 +25,7 @@ import type { Task } from '../types';
 import { atRest } from '../capture/status';
 import { contextUsage, onCaptureUpdate } from '../capture';
 import { sendToSession, useSendsWait } from './transcript/send';
+import { SEND_FROM } from './transcript/sendFrom';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { getTaskModel, setTaskModel } from './taskModel';
 
@@ -158,7 +159,7 @@ export default function ModelPicker({ task }: { task: Task }) {
     setFailed(false);
     // Held only if sends started waiting since the menu was offered: it then
     // goes once the session is idle, so the switch is under way all the same.
-    const ok = (await sendToSession(task.id, `/model ${choice}`)) !== 'failed';
+    const ok = (await sendToSession(task.id, `/model ${choice}`, SEND_FROM.model)) !== 'failed';
     if (ok) {
       setPending(choice);
       // The process is on it from now, reply or not: a /clear before the

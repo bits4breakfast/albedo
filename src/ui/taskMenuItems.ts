@@ -133,7 +133,7 @@ export function taskMenuItems(
         label: COMPACT.label,
         disabled: facts.compactBlocker !== null,
         title: facts.compactBlocker ?? COMPACT.hint,
-        onSelect: () => void sendToSession(task.id, COMPACT.command),
+        onSelect: () => void sendToSession(task.id, COMPACT.command, COMPACT.from),
       },
       // A copy of this conversation as a new task (#332). Hidden, not
       // disabled, with no session: there is nothing to copy, and Copy

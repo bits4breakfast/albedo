@@ -59,12 +59,14 @@ vi.mock('../capture', () => ({
 const opened = vi.hoisted(() => [] as string[]);
 vi.mock('../lib/openUrl', () => ({ openExternal: vi.fn(async (url: string) => void opened.push(url)) }));
 const sent = vi.hoisted(() => [] as [number, string][]);
+const froms = vi.hoisted(() => [] as (string | undefined)[]);
 const composed = vi.hoisted(() => [] as string[]);
 vi.mock('./transcript/send', () => ({
   onSessionSubmit: () => () => {},
   mustHold: () => h.holding,
-  sendToSession: vi.fn(async (id: number, text: string) => {
+  sendToSession: vi.fn(async (id: number, text: string, from?: string) => {
     sent.push([id, text]);
+    froms.push(from);
     return h.holding ? 'held' : 'sent';
   }),
 }));
@@ -109,6 +111,7 @@ beforeEach(() => {
   lookups.length = 0;
   opened.length = 0;
   sent.length = 0;
+  froms.length = 0;
   composed.length = 0;
 });
 afterEach(() => {
@@ -301,6 +304,8 @@ describe('remoteControlItem', () => {
     h.liveSince.set(1, 5_000);
     remoteControlItem(task, true, null)?.onSelect();
     await waitFor(() => expect(sent).toEqual([[1, '/remote-control']]));
+    // Labelled, so its echo says where it came from (#384).
+    expect(froms).toEqual(['Remote Control']);
   });
 
   it('is held, not typed, while a turn runs', async () => {

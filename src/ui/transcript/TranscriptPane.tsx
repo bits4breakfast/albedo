@@ -17,6 +17,8 @@ import {
   startOutboxRelease,
 } from './outboxRelease';
 import { shownQueue } from './turn';
+import { commandEchoLanded, commandLanded, echoLanded, isCompactCommand, useCommandEcho } from './commandEcho';
+import { CommandEchoRow } from './CommandEchoRow';
 import OverlayScrollbar from './OverlayScrollbar';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -24,7 +26,6 @@ import type { Message, TaskStatus } from '../../types';
 import { getMessages, messageOrderKeys } from '../../db';
 import { grownLimit, keepRowObjects, mergeTail, tailCursor } from './tail';
 import {
-  isLocalCommandLine,
   onCaptureUpdate,
   onQueueChange,
   queuedFor,
@@ -35,7 +36,6 @@ import { usePtyLiveSince } from '../Terminal';
 import { MemoMessageRow as MessageRow } from './MessageRow';
 import CompactionRow from './CompactionRow';
 import { ApiErrorRetryContext, apiErrorRetryOf } from './apiErrorRetry';
-import { isPromptRow } from './compaction';
 import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } from './working';
 import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
@@ -468,10 +468,11 @@ export function TranscriptPane({
   const [echo, setEcho] = useState<{ text: string; at: number } | null>(null);
   useEffect(() => setEcho(null), [taskId]);
   // A held message leaving the Queued band is sent, so it shows as sending.
+  // A `/compact` is echoed by commandEcho.ts instead, which knows it runs on.
   useEffect(
     () =>
       onHeldReleased((id, held) => {
-        if (id === taskId) setEcho({ text: held.text, at: Date.now() });
+        if (id === taskId && !isCompactCommand(held.text)) setEcho({ text: held.text, at: Date.now() });
       }),
     [taskId],
   );
@@ -503,6 +504,20 @@ export function TranscriptPane({
       if (sid === sessionId) check();
     });
   }, [echo, sessionId, liveSince]);
+  /*
+     A command a button sent, and any `/compact` (commandEcho.ts): its own row,
+     kept per task outside the pane, because the task's row and the message
+     box show a running `/compact` too. It ends here as soon as the rows on
+     screen have it; the store checks the database for a task not on screen.
+     Only this task's rows count: right after a switch the window still holds
+     the last task's.
+  */
+  const commandEcho = useCommandEcho(taskId);
+  useEffect(() => {
+    if (!commandEcho || taskId === null) return;
+    const own = messages.filter((m) => m.taskId === taskId || (sessionId !== null && m.sessionId === sessionId));
+    if (commandLanded(commandEcho, own)) commandEchoLanded(taskId, commandEcho.at);
+  }, [messages, commandEcho, taskId, sessionId]);
   const working = status === 'running' || echo !== null;
   // A turn running or a message on its way: if the connection is gone, now
   // is when it matters (connectivity.ts probes only while watched).
@@ -515,7 +530,8 @@ export function TranscriptPane({
   );
   const onSent = useCallback(
     (body: string) => {
-      setEcho({ text: body, at: Date.now() });
+      // A `/compact` typed in the box: commandEcho.ts shows it, as running.
+      if (!isCompactCommand(body)) setEcho({ text: body, at: Date.now() });
       jumpToEnd();
     },
     [jumpToEnd],
@@ -564,6 +580,9 @@ export function TranscriptPane({
             </ApiErrorRetryContext.Provider>
           </PassageRevealContext.Provider>
 
+          {/* In the order they were sent: two can be up at once only when
+              one went while the other was still on its way. */}
+          {commandEcho && (!echo || commandEcho.at <= echo.at) ? <CommandEchoRow echo={commandEcho} /> : null}
           {echo ? (
             <div className="tx-row tx-row-user tx-row-echo" aria-live="polite">
               <div className="tx-gutter">You</div>
@@ -573,6 +592,7 @@ export function TranscriptPane({
               </div>
             </div>
           ) : null}
+          {commandEcho && echo && commandEcho.at > echo.at ? <CommandEchoRow echo={commandEcho} /> : null}
           {workingNow ? <WorkingLine state={workingNow} /> : null}
           {/* Comment on a selected passage (#187): drawn in the scroller, so it scrolls with the text. */}
           <PassageComments taskId={taskId} scrollRef={scrollRef} messages={messages} />
@@ -632,24 +652,8 @@ export function revealStep(drawn: boolean, held: boolean, hasMore: boolean): 'sc
 /** How long a sent message waits to appear in the transcript before its echo goes. */
 const ECHO_MAX_MS = 30_000;
 
-/**
- * Whether the transcript now has the message just sent: a row of the main
- * session written no earlier than the send, with a second of slack for a row
- * stamped in the same instant.
- *
- * A prompt arrives as a `user` row. A slash command Claude Code runs itself
- * (`/rc`, `/rename`) writes none, only `system` lines for the command and its
- * output; without them the echo of `/rc` sat below later rows as "Sending"
- * until it timed out (#113). `isPromptRow` stays "a user row someone sent".
- */
-export function echoLanded(echo: { at: number }, messages: readonly Message[]): boolean {
-  return messages.some(
-    (m) =>
-      m.agentId === null &&
-      m.ts >= echo.at - 1000 &&
-      (isPromptRow(m) || (m.role === 'system' && isLocalCommandLine(m.rawJson))),
-  );
-}
+/** The message box's echo lands as commandEcho.ts says (`echoLanded`), shared with the buttons' echo. */
+export { echoLanded };
 
 /**
  * Whether the Queued band now shows the message just sent: one of its

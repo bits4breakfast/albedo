@@ -18,7 +18,7 @@
 import type { Task } from '../types';
 import { hasLivePty } from './Terminal';
 import { insertIntoComposer } from './transcript/composerBridge';
-import { mustHold, sendToSession } from './transcript/send';
+import { mustHold, sendToSession, type SendSource } from './transcript/send';
 
 /**
  * Where the prompt went. `held`: in the task's outbox, sent by itself once it
@@ -31,7 +31,8 @@ export function canSubmitNow(task: Pick<Task, 'id' | 'status'>): boolean {
   return task.status !== 'blocked' && hasLivePty(task.id);
 }
 
-export async function sendPrompt(task: Pick<Task, 'id' | 'status'>, text: string): Promise<SendOutcome> {
-  if (mustHold(task.id) || canSubmitNow(task)) return sendToSession(task.id, text);
+/** `from` names the button, for the echo of a command it sends (send.ts). */
+export async function sendPrompt(task: Pick<Task, 'id' | 'status'>, text: string, from?: SendSource): Promise<SendOutcome> {
+  if (mustHold(task.id) || canSubmitNow(task)) return sendToSession(task.id, text, from);
   return insertIntoComposer({ taskId: task.id, text }) ? 'composer' : 'failed';
 }

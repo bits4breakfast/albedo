@@ -39,6 +39,7 @@
 import { holdMessage } from './transcript/outbox';
 import { promptOpen } from './transcript/outboxRelease';
 import { mustHold, sendToSession } from './transcript/send';
+import { SEND_FROM } from './transcript/sendFrom';
 import { hasLivePty, onPtyPresenceChange } from './Terminal';
 import type { Task } from '../types';
 import type { OverflowItem } from './OverflowMenu';
@@ -134,7 +135,8 @@ const defaultDeps: SessionRenameDeps = {
   live: hasLivePty,
   mustHold,
   promptOpen: (taskId) => promptOpen(taskId),
-  send: sendToSession,
+  // Labelled, so its echo says it came from renaming the task (#384).
+  send: (taskId, text) => sendToSession(taskId, text, SEND_FROM.rename),
   hold: (taskId, text) => holdMessage(taskId, text) !== null,
   onLive: (cb) =>
     onPtyPresenceChange((taskId, live) => {

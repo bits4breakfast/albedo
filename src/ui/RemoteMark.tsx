@@ -23,6 +23,7 @@ import { safeHttpUrl } from '../lib/urls';
 import type { Task } from '../types';
 import type { OverflowItem } from './OverflowMenu';
 import { sendPrompt } from './sendPrompt';
+import { SEND_FROM } from './transcript/sendFrom';
 import { usePtyLiveSince } from './Terminal';
 import { noteRemoteAskOutcome, noteRemoteAsked, REMOTE_CONTROL_COMMAND, remoteWaitFor, useRemoteWait } from './remoteWait';
 import './remote.css';
@@ -167,7 +168,7 @@ export function remoteControlItem(
     onSelect: () => {
       if (remoteWaitFor(task.id) !== null) return;
       noteRemoteAsked(task.id);
-      void send(task, REMOTE_CONTROL_COMMAND).then(
+      void send(task, REMOTE_CONTROL_COMMAND, SEND_FROM.remote).then(
         (outcome) => noteRemoteAskOutcome(task.id, outcome),
         () => noteRemoteAskOutcome(task.id, 'failed'),
       );

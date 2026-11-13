@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Task } from '../types';
 
 const h = vi.hoisted(() => ({
@@ -38,8 +38,12 @@ vi.mock('../capture/modelCatalog', () => ({
   ],
   loadDefaultModel: async () => 'claude-default-model',
 }));
+const sends = vi.hoisted(() => [] as unknown[][]);
 vi.mock('./transcript/send', () => ({
-  sendToSession: async () => 'sent',
+  sendToSession: async (...args: unknown[]) => {
+    sends.push(args);
+    return 'sent';
+  },
   useSendsWait: () => false,
 }));
 vi.mock('./taskModel', () => ({ getTaskModel: () => null, setTaskModel: () => {} }));
@@ -195,5 +199,16 @@ describe('ModelPicker reads (#364)', () => {
     expect(screen.getByRole('combobox', { name: 'Change model' }).getAttribute('title')).toMatch(
       /^Probably claude-default-model: confirmed on the first reply\./,
     );
+  });
+});
+
+describe('ModelPicker sends', () => {
+  it('labels its /model as from the model picker, for the echo (#384)', async () => {
+    sends.length = 0;
+    render(<ModelPicker task={task()} />);
+    await flush();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Change model' }), { target: { value: 'sonnet' } });
+    await flush();
+    expect(sends).toEqual([[1, '/model sonnet', 'the model picker']]);
   });
 });
