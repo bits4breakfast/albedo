@@ -39,7 +39,7 @@
 
 import { useSyncExternalStore } from 'react';
 import type { Message } from '../../types';
-import { compactBoundaryOf, endsLocalCommand, isLocalCommandLine, onCaptureUpdate } from '../../capture';
+import { compactBoundaryOf, endsLocalCommand, isLocalCommandLine, isLocalCommandStderr, onCaptureUpdate } from '../../capture';
 import { mainRowsSince } from '../../db';
 import { isRemoteControlCommand, onRemoteWaitChange, remoteWaitFor } from '../remoteWait';
 import { onPtyPresenceChange } from '../Terminal';
@@ -96,11 +96,6 @@ export function echoLanded(echo: { at: number }, messages: readonly Message[]): 
   );
 }
 
-/** A `user` row carrying what a local command printed to stderr: how a `/compact` that threw ends. */
-function isCommandStderr(m: Pick<Message, 'role' | 'body'>): boolean {
-  return m.role === 'user' && (m.body ?? '').trimStart().startsWith('<local-command-stderr>');
-}
-
 /**
  * Whether the transcript has the command an echo stands for: a row of the
  * main session stamped strictly after the write began (`at`), never one from
@@ -119,7 +114,7 @@ export function commandLanded(echo: Pick<CommandEcho, 'at' | 'compact'>, message
       m.agentId === null &&
       m.ts > echo.at &&
       (echo.compact
-        ? (m.role === 'system' && compactBoundaryOf(m.rawJson) !== null) || endsLocalCommand(m.rawJson) || isCommandStderr(m)
+        ? (m.role === 'system' && compactBoundaryOf(m.rawJson) !== null) || endsLocalCommand(m.rawJson) || isLocalCommandStderr(m)
         : isPromptRow(m) || (m.role === 'system' && isLocalCommandLine(m.rawJson))),
   );
 }

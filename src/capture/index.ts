@@ -34,7 +34,7 @@ export { compactBoundaryOf, compactSummaryOf, isNoticeLine } from './adapter';
 export { turnEdgeOf, outputTokensOf } from './adapter';
 
 /** A slash command Claude Code ran itself, recorded as a `system` line. */
-export { endsLocalCommand, isLocalCommandLine } from './adapter';
+export { endsLocalCommand, isLocalCommandLine, isLocalCommandStderr } from './adapter';
 
 /** Input Claude Code wrote itself: a /loop wake-up, its prompt, a harness note (#138). */
 export { harnessInputOf } from './adapter';

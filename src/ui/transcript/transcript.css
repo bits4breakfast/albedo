@@ -162,7 +162,10 @@
   color: var(--muted);
 }
 .tx-echo-meta[data-no-reply] { color: var(--warn); }
-/* Remote Control's menu notice's Dismiss (.btn-ghost), after the words. */
+/* Remote Control's menu notice's Dismiss (.btn-ghost), after the words. On
+   --user-row its --muted is 6.46 | 7.13; hovered, --text on --panel-hover
+   14.44 | 13.07; pressed, --text-strong on --panel-active 15.00 | 16.57
+   (light | dark). */
 .tx-echo-dismiss { margin-left: 10px; vertical-align: baseline; }
 /* A running /compact's clock, under the command. */
 .tx-echo-running { margin-top: 4px; }
