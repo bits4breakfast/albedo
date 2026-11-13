@@ -162,6 +162,8 @@
   color: var(--muted);
 }
 .tx-echo-meta[data-no-reply] { color: var(--warn); }
+/* Remote Control's menu notice's Dismiss (.btn-ghost), after the words. */
+.tx-echo-dismiss { margin-left: 10px; vertical-align: baseline; }
 /* A running /compact's clock, under the command. */
 .tx-echo-running { margin-top: 4px; }
 

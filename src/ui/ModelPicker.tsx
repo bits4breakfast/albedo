@@ -26,6 +26,7 @@ import { atRest } from '../capture/status';
 import { contextUsage, onCaptureUpdate } from '../capture';
 import { sendToSession, useSendsWait } from './transcript/send';
 import { SEND_FROM } from './transcript/sendFrom';
+import { COMPACTING_HINT, useCompacting } from './transcript/commandEcho';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { getTaskModel, setTaskModel } from './taskModel';
 
@@ -154,6 +155,9 @@ export default function ModelPicker({ task }: { task: Task }) {
   // While a send would be held (offline, messages waiting, a turn running),
   // there is no switching: the picker shows the switch as under way at once.
   const waiting = useSendsWait(task.id);
+  // A /compact Albedo sent is running (#384): a /model now would land in the
+  // middle of it, and its echo could not replace the compaction's.
+  const compacting = useCompacting(task.id);
   const choose = async (choice: string) => {
     if (choice === current && !pending) return;
     setFailed(false);
@@ -174,7 +178,9 @@ export default function ModelPicker({ task }: { task: Task }) {
   const label = shown ? shown.replace(/^claude-/, '') : 'Model Unknown';
   const title =
     (model ? `${model}. ` : assumed ? `Probably ${assumed}: confirmed on the first reply. ` : '') +
-    (!idle
+    (compacting
+      ? COMPACTING_HINT
+      : !idle
       ? 'Switching models is only offered while the task is idle'
       : waiting
         ? 'Not available while messages are waiting to send'
@@ -194,7 +200,7 @@ export default function ModelPicker({ task }: { task: Task }) {
         className="model-pick-select"
         aria-label="Change model"
         title={title}
-        disabled={!idle || waiting}
+        disabled={!idle || waiting || compacting}
         value={pending ?? current ?? ''}
         onChange={(e) => void choose(e.target.value)}
       >

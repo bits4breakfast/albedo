@@ -802,6 +802,11 @@ export async function remoteControlLineSince(
  * Both ids, because `/clear` moves the task to a new session whose rows may
  * be read before they are linked to it. Capped: the caller looks for one row
  * a few seconds or minutes old, not at a history.
+ *
+ * Read along `messages_ts` from `sinceTs` on, never the task's whole history:
+ * the `+` keeps SQLite from answering the OR with the task and session
+ * indexes, which read every row the task has and sort them (about 0.1 s on a
+ * 35k-row task, per call; mainRowsSince.test.ts pins the plan).
  */
 export async function mainRowsSince(
   taskId: number,
@@ -812,7 +817,7 @@ export async function mainRowsSince(
   const db = await getDb();
   const rows = await db.select<MessageRow[]>(
     `SELECT ${MESSAGE_SELECT} FROM messages
-      WHERE ts >= $1 AND (task_id = $2 OR session_id = $3) AND agent_id IS NULL AND role IN ('user', 'system')
+      WHERE ts >= $1 AND (+task_id = $2 OR +session_id = $3) AND +agent_id IS NULL AND +role IN ('user', 'system')
       ORDER BY ts DESC, id DESC LIMIT $4`,
     [sinceTs, taskId, sessionId ?? '', Math.max(1, limit)],
   );

@@ -45,6 +45,7 @@ vi.mock('./transcript/send', () => ({
     return 'sent';
   },
   useSendsWait: () => false,
+  onSessionSubmit: () => () => {},
 }));
 vi.mock('./taskModel', () => ({ getTaskModel: () => null, setTaskModel: () => {} }));
 
@@ -210,5 +211,17 @@ describe('ModelPicker sends', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Change model' }), { target: { value: 'sonnet' } });
     await flush();
     expect(sends).toEqual([[1, '/model sonnet', 'the model picker']]);
+  });
+
+  it('stands down while a /compact Albedo sent runs, saying "Compacting now" (#384)', async () => {
+    const { __setCommandEcho, __resetCommandEchoes } = await import('./transcript/commandEcho');
+    render(<ModelPicker task={task()} />);
+    await flush();
+    const select = screen.getByRole('combobox', { name: 'Change model' }) as HTMLSelectElement;
+    expect(select.disabled).toBe(false);
+    act(() => __setCommandEcho(1, { text: '/compact', from: 'Compact Now', at: Date.now(), compact: true, noReply: false }));
+    expect(select.disabled).toBe(true);
+    expect(select.title).toMatch(/Compacting now$/);
+    __resetCommandEchoes();
   });
 });

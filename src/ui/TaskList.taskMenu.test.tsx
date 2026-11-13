@@ -151,6 +151,10 @@ describe('a /compact Albedo sent, running (#384)', () => {
     const compact = item(/Compact Now/) as HTMLButtonElement;
     expect(compact.disabled).toBe(true);
     expect(compact.title).toBe('Compacting now');
+    // Nor Remote Control: it would land in the middle of the compaction.
+    const remote = item(/Make Available Remotely/) as HTMLButtonElement;
+    expect(remote.disabled).toBe(true);
+    expect(remote.title).toBe('Compacting now');
   });
 
   it('says nothing once it had no reply: it is no longer known to be compacting', () => {

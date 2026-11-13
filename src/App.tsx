@@ -260,7 +260,9 @@ export default function App() {
   const selectedFacts = useTaskMenuFacts(selected, true);
   /** Remote Control on the selected task: the task bar's mark, ⇧⌘R and its confirmation. */
   const remoteUrl = selectedFacts.remoteUrl;
-  const remoteItem = selected ? remoteControlItem(selected, selectedFacts.live, remoteUrl) : null;
+  // Not while a /compact Albedo sent runs (#384): ⇧⌘R does nothing, and an
+  // open confirmation is dropped, as for any other reason it cannot go.
+  const remoteItem = selected && !selectedFacts.compacting ? remoteControlItem(selected, selectedFacts.live, remoteUrl) : null;
   const remotePending = useRemotePending(selected?.id ?? null);
   /**
    * The task whose name is being edited in the task bar (#152): from the ⋯

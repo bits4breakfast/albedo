@@ -582,7 +582,7 @@ export function TranscriptPane({
 
           {/* In the order they were sent: two can be up at once only when
               one went while the other was still on its way. */}
-          {commandEcho && (!echo || commandEcho.at <= echo.at) ? <CommandEchoRow echo={commandEcho} /> : null}
+          {commandEcho && (!echo || commandEcho.at <= echo.at) ? <CommandEchoRow taskId={taskId!} echo={commandEcho} /> : null}
           {echo ? (
             <div className="tx-row tx-row-user tx-row-echo" aria-live="polite">
               <div className="tx-gutter">You</div>
@@ -592,7 +592,7 @@ export function TranscriptPane({
               </div>
             </div>
           ) : null}
-          {commandEcho && echo && commandEcho.at > echo.at ? <CommandEchoRow echo={commandEcho} /> : null}
+          {commandEcho && echo && commandEcho.at > echo.at ? <CommandEchoRow taskId={taskId!} echo={commandEcho} /> : null}
           {workingNow ? <WorkingLine state={workingNow} /> : null}
           {/* Comment on a selected passage (#187): drawn in the scroller, so it scrolls with the text. */}
           <PassageComments taskId={taskId} scrollRef={scrollRef} messages={messages} />

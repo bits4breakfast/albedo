@@ -7,11 +7,13 @@
  * "Compacting context… 21s", with no limit of 30 s. Past its limit with
  * nothing in the transcript the row stays and says so, in the warning colour,
  * and where to look: Albedo never reads the terminal, so it cannot say more.
+ * Dismiss takes it away, as on Remote Control's menu notice, for a command
+ * answered or abandoned in the terminal with nothing written after it.
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { formatDuration } from '../../lib/duration';
-import type { CommandEcho } from './commandEcho';
+import { dismissCommandEcho, type CommandEcho } from './commandEcho';
 
 /** What a row that had no reply says. */
 export const NO_REPLY_TEXT = 'no reply from the session · see the terminal';
@@ -26,7 +28,7 @@ export function commandEchoMeta(echo: Pick<CommandEcho, 'from' | 'compact' | 'no
   return parts.join(' · ');
 }
 
-export function CommandEchoRow({ echo }: { echo: CommandEcho }): ReactNode {
+export function CommandEchoRow({ taskId, echo }: { taskId: number; echo: CommandEcho }): ReactNode {
   const running = echo.compact && !echo.noReply;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -46,6 +48,16 @@ export function CommandEchoRow({ echo }: { echo: CommandEcho }): ReactNode {
           <span className="tx-echo-meta" data-no-reply={echo.noReply || undefined}>
             {meta}
           </span>
+        ) : null}
+        {echo.noReply ? (
+          <button
+            type="button"
+            className="btn btn-ghost tx-echo-dismiss"
+            title="Hide this: the command was dealt with in the terminal"
+            onClick={() => dismissCommandEcho(taskId)}
+          >
+            Dismiss
+          </button>
         ) : null}
         {running ? (
           <div className="tx-working tx-echo-running" role="status">

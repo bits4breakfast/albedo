@@ -14,7 +14,7 @@
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
 import type { OverflowItem } from './OverflowMenu';
-import { COMPACT } from './ClearContextButton';
+import { COMPACT, COMPACTING_HINT } from './ClearContextButton';
 import { remoteControlItem } from './RemoteMark';
 import { remindMenuItem } from './reminders/menuItem';
 import { renameMenuItem } from './taskRename';
@@ -70,10 +70,17 @@ export interface TaskMenuFacts {
   shown: boolean;
   /** A send now would wait in the outbox (`useSendsWait`). */
   sendsWait: boolean;
+  /** A `/compact` Albedo sent is running (commandEcho.ts). */
+  compacting?: boolean;
 }
 
 /** Why Make Available Remotely cannot go from here, or null when it can. */
-export function remoteBlocker(task: Pick<Task, 'status'>, facts: Pick<TaskMenuFacts, 'shown' | 'sendsWait'>): string | null {
+export function remoteBlocker(
+  task: Pick<Task, 'status'>,
+  facts: Pick<TaskMenuFacts, 'shown' | 'sendsWait' | 'compacting'>,
+): string | null {
+  // It would land in the middle of the compaction (#384).
+  if (facts.compacting) return COMPACTING_HINT;
   // On a waiting prompt with nothing held, the command is left in the
   // message box (`sendPrompt`), and a task not on screen has none to take it.
   if (task.status === 'blocked' && !facts.sendsWait && !facts.shown) {

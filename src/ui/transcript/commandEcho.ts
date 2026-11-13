@@ -24,19 +24,24 @@
  *    session for `/clear`, and for `/compact` the compaction itself.
  *  - Past `COMMAND_ECHO_MAX_MS` (`COMPACT_MAX_MS` for `/compact`) with
  *    nothing landed it stays, marked `noReply`, rather than vanish as if it
- *    had worked.
- *  - It ends with the task's pty, and when a later echo replaces it.
+ *    had worked, until it is dismissed or the session moves on.
+ *  - It ends with the task's pty, and when a later echo replaces it -- except
+ *    a running `/compact`, which nothing replaces: it is still running.
+ *  - `/remote-control` that opened Remote Control's terminal menu (#343) is
+ *    said by that menu's notice instead, so its echo ends when remoteWait.ts
+ *    takes it to the menu or settles it.
  *
  * While a `/compact` is echoed and not past its limit the task is
- * compacting (`isCompacting`): the task row says so, and Compact Now and
- * Clear are not offered (ClearContextButton.tsx). UI state only: the task's
- * stored status is the transcript's, as ever.
+ * compacting (`isCompacting`): the task row says so, and Compact Now, Clear,
+ * Try Again, the model picker and Remote Control are not offered. UI state
+ * only: the task's stored status is the transcript's, as ever.
  */
 
 import { useSyncExternalStore } from 'react';
 import type { Message } from '../../types';
 import { compactBoundaryOf, endsLocalCommand, isLocalCommandLine, onCaptureUpdate } from '../../capture';
 import { mainRowsSince } from '../../db';
+import { isRemoteControlCommand, onRemoteWaitChange, remoteWaitFor } from '../remoteWait';
 import { onPtyPresenceChange } from '../Terminal';
 import { isPromptRow } from './compaction';
 import { onSessionSubmit, type SendSource } from './send';
@@ -49,7 +54,9 @@ export const COMMAND_ECHO_MAX_MS = 30_000;
  * measured on a 148k-token session; ten minutes leaves room for a large one.
  */
 export const COMPACT_MAX_MS = 10 * 60_000;
-/** A row stamped in the same instant as the send still counts as after it. */
+/** Why the command buttons stand down while a `/compact` Albedo sent runs. */
+export const COMPACTING_HINT = 'Compacting now';
+/** The message box's echo: a row stamped in the same instant as the send still counts as after it. */
 const SLACK_MS = 1_000;
 
 export interface CommandEcho {
@@ -57,7 +64,7 @@ export interface CommandEcho {
   text: string;
   /** The button that sent it; null for a `/compact` sent from elsewhere in Albedo. */
   from: SendSource | null;
-  /** When the write finished, ms. */
+  /** When the write began, ms: what it lands as is stamped after this. */
   at: number;
   /** It is a `/compact`: it lands as a compaction, and runs until then. */
   compact: boolean;
@@ -89,23 +96,31 @@ export function echoLanded(echo: { at: number }, messages: readonly Message[]): 
   );
 }
 
+/** A `user` row carrying what a local command printed to stderr: how a `/compact` that threw ends. */
+function isCommandStderr(m: Pick<Message, 'role' | 'body'>): boolean {
+  return m.role === 'user' && (m.body ?? '').trimStart().startsWith('<local-command-stderr>');
+}
+
 /**
- * Whether the transcript has the command an echo stands for. Any command but
- * `/compact` as `echoLanded` says.
+ * Whether the transcript has the command an echo stands for: a row of the
+ * main session stamped strictly after the write began (`at`), never one from
+ * before it -- a button can follow another command's landing within a second.
  *
- * `/compact` lands as a compaction boundary written after the send, or as the
- * line that closes the command (`endsLocalCommand`: "Compacted", or what it
- * printed when it could not compact). Never as its envelope: it is stamped at
- * the start, and something else could carry a time after the send while the
- * compaction runs.
+ * Any command but `/compact` lands as `echoLanded` describes the row.
+ * `/compact` lands as a compaction boundary, or as the line that closes the
+ * command: "Compacted" (`endsLocalCommand`), or the stderr line Claude Code
+ * writes when it throws ("No messages to compact", "Error during
+ * compaction", 2.1.323). Never as its envelope: it is stamped at the start,
+ * and something else could carry a time after the send while it runs.
  */
 export function commandLanded(echo: Pick<CommandEcho, 'at' | 'compact'>, messages: readonly Message[]): boolean {
-  if (!echo.compact) return echoLanded(echo, messages);
   return messages.some(
     (m) =>
       m.agentId === null &&
-      m.ts >= echo.at - SLACK_MS &&
-      ((m.role === 'system' && compactBoundaryOf(m.rawJson) !== null) || endsLocalCommand(m.rawJson)),
+      m.ts > echo.at &&
+      (echo.compact
+        ? (m.role === 'system' && compactBoundaryOf(m.rawJson) !== null) || endsLocalCommand(m.rawJson) || isCommandStderr(m)
+        : isPromptRow(m) || (m.role === 'system' && isLocalCommandLine(m.rawJson))),
   );
 }
 
@@ -188,20 +203,41 @@ export function commandEchoLanded(taskId: number, at: number): void {
   if (echoes.get(taskId)?.at === at) set(taskId, null);
 }
 
+/** Take a row that had no reply away: its Dismiss. */
+export function dismissCommandEcho(taskId: number): void {
+  if (echoes.get(taskId)?.noReply) set(taskId, null);
+}
+
 /**
  * Text was written to the task's session. A command a button named, or any
- * `/compact`, echoes from now, replacing whatever echo was there. Anything
- * else is the message box's or the outbox's, which the pane echoes itself:
- * it ends an echo that had no reply, since the session has moved on past
- * it, and leaves one still on its way alone.
+ * `/compact`, echoes from now, replacing whatever echo was there -- but never
+ * a running `/compact`: it writes nothing for minutes, sends are no longer
+ * held after turn.ts's grace, and its echo is the only sign it runs. (The
+ * buttons stand down meanwhile; a rename still sends its `/rename`.)
+ * Anything else is the message box's or the outbox's, which the pane echoes
+ * itself: it ends an echo that had no reply, since the session has moved on
+ * past it, and leaves one still on its way alone.
  */
-function written(taskId: number, text: string, from?: SendSource): void {
+function written(taskId: number, text: string, from?: SendSource, startedAt = Date.now()): void {
+  if (isCompacting(taskId)) return;
   const compact = isCompactCommand(text);
   if (from === undefined && !compact) {
     if (echoes.get(taskId)?.noReply) set(taskId, null);
     return;
   }
-  set(taskId, { text, from: from ?? null, at: Date.now(), compact, noReply: false });
+  set(taskId, { text, from: from ?? null, at: startedAt, compact, noReply: false });
+}
+
+/**
+ * Remote Control's wait moved on (remoteWait.ts): to its terminal menu,
+ * which RemoteMenuNotice says, or settled -- on, moved on, or dismissed.
+ * Either way the `/remote-control` echo has nothing left to say.
+ */
+function remoteWaitChanged(taskId: number): void {
+  const e = echoes.get(taskId);
+  if (!e || !isRemoteControlCommand(e.text)) return;
+  const w = remoteWaitFor(taskId);
+  if (w === null || w.phase === 'menu') set(taskId, null);
 }
 
 /** Tasks whose rows are being read, and those to read again once that is done. */
@@ -219,10 +255,12 @@ async function check(taskId: number): Promise<void> {
     return;
   }
   const echo = echoes.get(taskId);
-  if (!echo) return;
+  // A command with no reply is not asked about again: it lands within a
+  // second or not at all. A late compaction can still end a `/compact`.
+  if (!echo || (echo.noReply && !echo.compact)) return;
   checking.add(taskId);
   try {
-    const rows = await mainRowsSince(taskId, sessionOfTask(taskId), echo.at - SLACK_MS);
+    const rows = await mainRowsSince(taskId, sessionOfTask(taskId), echo.at);
     if (commandLanded(echo, rows)) commandEchoLanded(taskId, echo.at);
   } catch {
     /* the watcher may be mid-write; the next update asks again */
@@ -241,10 +279,16 @@ function listen(): void {
     onPtyPresenceChange((taskId, live) => {
       if (!live) set(taskId, null);
     }),
-    // Any session: after `/clear` the task's rows come from a new one.
-    onCaptureUpdate(() => {
-      for (const taskId of echoes.keys()) void check(taskId);
+    // Only the task's own session (or one not known yet): a capture update
+    // from any other is not about it. `/clear`'s new session is reached
+    // when the task moves to it, below.
+    onCaptureUpdate((u) => {
+      for (const taskId of echoes.keys()) {
+        const sessionId = sessionOfTask(taskId);
+        if (sessionId === null || u?.sessionId === sessionId) void check(taskId);
+      }
     }),
+    onRemoteWaitChange(remoteWaitChanged),
     // The task moved to that session (turn.ts hears it): its rows may have
     // been read before they were linked, with nothing written since.
     onTurnChange((taskId) => {

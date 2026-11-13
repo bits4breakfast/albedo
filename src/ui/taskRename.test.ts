@@ -155,7 +155,7 @@ describe('renameSession: where /rename goes', () => {
     } finally {
       off();
     }
-    expect(heard).toEqual([[1, '/rename New name', 'Rename']]);
+    expect(heard).toEqual([[1, '/rename New name', 'Rename', expect.any(Number)]]);
   });
 
   it('a live session mid-turn: held in the outbox, not typed into the turn', async () => {

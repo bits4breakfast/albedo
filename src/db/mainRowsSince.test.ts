@@ -83,3 +83,20 @@ describe('mainRowsSince', () => {
     expect(await mainRowsSince(1, 's1', SENT, 2)).toHaveLength(2);
   });
 });
+
+describe('mainRowsSince: the plan', () => {
+  it('reads the ts index from the time on, with no sort and no scan of the task’s rows', async () => {
+    // A long history before the send, as a 35k-row task has.
+    await seed(Array.from({ length: 300 }, (_, i) => user(`old ${i}`, SENT - 1_000_000 + i)));
+    db.log.length = 0;
+    await mainRowsSince(1, 's1', SENT);
+    const { sql, binds } = db.log[0] as { sql: string; binds: unknown[] };
+    // No ANALYZE: the app's database has no statistics, and without them
+    // SQLite answered the plain OR with the task and session indexes.
+    const plan = (
+      db.raw.prepare(`EXPLAIN QUERY PLAN ${sql.replace(/\$\d+/g, '?')}`).all(...(binds as never[])) as { detail: string }[]
+    ).map((p) => p.detail);
+    expect(plan.join(' | ')).toContain('USING INDEX messages_ts (ts>?)');
+    expect(plan.some((d) => d.includes('MULTI-INDEX OR') || d.includes('TEMP B-TREE'))).toBe(false);
+  });
+});

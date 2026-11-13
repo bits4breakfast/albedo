@@ -80,7 +80,12 @@ export function withPtyLock<T>(taskId: number, fn: () => Promise<T>): Promise<T>
  */
 export type SendSource = string;
 
-type SubmitListener = (taskId: number, text: string, from?: SendSource) => void;
+/**
+ * `startedAt`: when the write began, before the paste. Claude Code stamps
+ * what it records of the text no earlier than that, so a row stamped after
+ * it is the text's and a row from before is not.
+ */
+type SubmitListener = (taskId: number, text: string, from?: SendSource, startedAt?: number) => void;
 
 const submitted = new Set<SubmitListener>();
 
@@ -103,12 +108,13 @@ export function onSessionSubmit(cb: SubmitListener): () => void {
  */
 export function submitLocked(taskId: number, text: string, from?: SendSource): Promise<boolean> {
   return withPtyLock(taskId, async () => {
+    const startedAt = Date.now();
     const ok = await submitPty(taskId, text);
     if (ok) {
       noteSubmitted(taskId);
       for (const cb of [...submitted]) {
         try {
-          cb(taskId, text, from);
+          cb(taskId, text, from, startedAt);
         } catch (err) {
           console.warn('[send] a submit listener failed', err);
         }

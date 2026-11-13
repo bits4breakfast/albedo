@@ -16,7 +16,7 @@ import { atRest } from '../capture/status';
 import { hasLivePty, onPtyPresenceChange } from './Terminal';
 import { sendToSession, useSendsWait, type SendSource } from './transcript/send';
 import { SEND_FROM } from './transcript/sendFrom';
-import { useCompacting } from './transcript/commandEcho';
+import { COMPACTING_HINT, useCompacting } from './transcript/commandEcho';
 import { CONTEXT_WARN, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import './gauges/gauges.css';
 import './clearcontext.css';
@@ -61,8 +61,7 @@ export const COMPACT: SessionCommand = {
   hint: 'Send /compact: replace the conversation so far with a summary and keep going.',
 };
 
-/** Why Compact Now and Clear are not offered while a `/compact` Albedo sent runs (#384). */
-export const COMPACTING_HINT = 'Compacting now';
+export { COMPACTING_HINT };
 
 /**
  * Why a command cannot go to the session now, or null when it can. Only on an

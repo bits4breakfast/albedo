@@ -199,7 +199,7 @@ describe('when a command lands', () => {
       for (const cb of [...h.captures]) cb({ sessionId: 's1' });
     });
     await waitFor(() => expect(h.sinceCalls.length).toBeGreaterThan(0));
-    expect(h.sinceCalls[0]![2]).toBe(sent - 1_000);
+    expect(h.sinceCalls[0]![2]).toBe(sent);
     expect(isCompacting(1)).toBe(true);
 
     h.since = rows([boundary(sent + 80_000)]);
@@ -222,12 +222,12 @@ describe('when a command lands', () => {
 describe('a command that never lands', () => {
   it('says so after 30 s, and stays', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-    await sendToSession(1, '/remote-control', SEND_FROM.remote);
+    await sendToSession(1, '/rename Tidy', SEND_FROM.rename);
     vi.advanceTimersByTime(COMMAND_ECHO_MAX_MS - 1);
     expect(commandEchoFor(1)?.noReply).toBe(false);
     vi.advanceTimersByTime(1);
     expect(commandEchoFor(1)?.noReply).toBe(true);
-    expect(commandEchoMeta(commandEchoFor(1)!)).toBe('from Remote Control · no reply from the session · see the terminal');
+    expect(commandEchoMeta(commandEchoFor(1)!)).toBe('from Rename · no reply from the session · see the terminal');
     vi.advanceTimersByTime(60 * 60_000);
     expect(commandEchoFor(1)).not.toBeNull();
   });
@@ -254,7 +254,7 @@ describe('a command that never lands', () => {
 
 describe('the row', () => {
   it('a short command: "You", the command, the button, sending…', () => {
-    render(<CommandEchoRow echo={{ text: '/model sonnet', from: 'the model picker', at: Date.now(), compact: false, noReply: false }} />);
+    render(<CommandEchoRow taskId={1} echo={{ text: '/model sonnet', from: 'the model picker', at: Date.now(), compact: false, noReply: false }} />);
     const row = document.querySelector('.tx-row-command-echo')!;
     expect(row.querySelector('.tx-gutter')?.textContent).toBe('You');
     expect(row.querySelector('.tx-echo-command')?.textContent).toBe('/model sonnet');
@@ -265,7 +265,7 @@ describe('the row', () => {
   it('a running /compact counts up under it, past 30 s', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(SENT);
-    render(<CommandEchoRow echo={{ text: '/compact', from: 'Compact Now', at: SENT, compact: true, noReply: false }} />);
+    render(<CommandEchoRow taskId={1} echo={{ text: '/compact', from: 'Compact Now', at: SENT, compact: true, noReply: false }} />);
     expect(screen.getByRole('status').textContent).toBe('Compacting context… 0s');
     expect(document.querySelector('.tx-echo-meta')?.textContent).toBe('from Compact Now');
     act(() => void vi.advanceTimersByTime(21_000));
@@ -275,7 +275,7 @@ describe('the row', () => {
   });
 
   it('no reply: the meta in the warning colour, and the clock gone', () => {
-    render(<CommandEchoRow echo={{ text: '/compact', from: 'Compact Now', at: SENT, compact: true, noReply: true }} />);
+    render(<CommandEchoRow taskId={1} echo={{ text: '/compact', from: 'Compact Now', at: SENT, compact: true, noReply: true }} />);
     const meta = document.querySelector('.tx-echo-meta')!;
     expect(meta.hasAttribute('data-no-reply')).toBe(true);
     expect(meta.textContent).toBe('from Compact Now · no reply from the session · see the terminal');
@@ -427,3 +427,112 @@ describe('after /clear, on a task not on screen', () => {
     __resetTurns();
   });
 });
+
+describe('review of #385', () => {
+  it('a later labelled command never replaces a running /compact; a rename still goes', async () => {
+    const { submitPty } = await import('../Terminal');
+    await sendToSession(1, '/compact', SEND_FROM.compact);
+    const compact = commandEchoFor(1);
+    vi.mocked(submitPty).mockClear();
+    expect(await sendToSession(1, '/rename Tidy', SEND_FROM.rename)).toBe('sent');
+    expect(vi.mocked(submitPty)).toHaveBeenCalledWith(1, '/rename Tidy');
+    await sendToSession(1, '/model opus', SEND_FROM.model);
+    expect(commandEchoFor(1)).toBe(compact);
+    expect(isCompacting(1)).toBe(true);
+  });
+
+  it('once a /compact had no reply, a later command echoes again', async () => {
+    __setCommandEcho(1, { text: '/compact', from: 'Compact Now', at: SENT, compact: true, noReply: true });
+    await sendToSession(1, '/model opus', SEND_FROM.model);
+    expect(commandEchoFor(1)).toMatchObject({ text: '/model opus' });
+  });
+
+  it('a /compact that threw lands on its stderr line', () => {
+    const r = rows([userLine('<local-command-stderr>Error: No messages to compact</local-command-stderr>', SENT + 900)]);
+    expect(commandLanded({ at: SENT, compact: true }, r)).toBe(true);
+  });
+
+  it('a landing is strictly after its own send: never another command’s line from just before', () => {
+    const before = rows([userLine('<local-command-stdout>Set model to Opus</local-command-stdout>', SENT - 400)]);
+    expect(commandLanded({ at: SENT, compact: true }, before)).toBe(false);
+    const model = rows([userLine(envelope('/model', 'opus'), SENT - 400)]);
+    expect(commandLanded({ at: SENT, compact: false }, model)).toBe(false);
+    expect(commandLanded({ at: SENT, compact: true }, rows([boundary(SENT)]))).toBe(false);
+  });
+
+  it('the echo starts when the write began, before the paste', async () => {
+    const { submitPty } = await import('../Terminal');
+    let duringPaste = 0;
+    vi.mocked(submitPty).mockImplementationOnce(async () => {
+      duringPaste = Date.now();
+      await new Promise((r) => setTimeout(r, 20));
+      return true;
+    });
+    await sendToSession(1, '/model opus', SEND_FROM.model);
+    expect(commandEchoFor(1)!.at).toBeLessThanOrEqual(duringPaste);
+  });
+
+  it('asks the database only on its own session’s updates', async () => {
+    const { noteTaskSessions, __resetTurns } = await import('./turn');
+    noteTaskSessions([{ id: 1, sessionId: 's1' }]);
+    await sendToSession(1, '/compact', SEND_FROM.compact);
+    await waitFor(() => expect(h.sinceCalls.length).toBeGreaterThanOrEqual(0));
+    const before = h.sinceCalls.length;
+    act(() => {
+      for (const cb of [...h.captures]) cb({ sessionId: 'other' });
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(h.sinceCalls.length).toBe(before);
+    act(() => {
+      for (const cb of [...h.captures]) cb({ sessionId: 's1' });
+    });
+    await waitFor(() => expect(h.sinceCalls.length).toBe(before + 1));
+    __resetTurns();
+  });
+
+  it('stops asking about a command with no reply; a /compact with none is still asked about', async () => {
+    __setCommandEcho(1, { text: '/model opus', from: 'the model picker', at: SENT, compact: false, noReply: true });
+    act(() => {
+      for (const cb of [...h.captures]) cb({ sessionId: 's1' });
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(h.sinceCalls).toEqual([]);
+    __setCommandEcho(1, { text: '/compact', from: 'Compact Now', at: SENT, compact: true, noReply: true });
+    act(() => {
+      for (const cb of [...h.captures]) cb({ sessionId: 's1' });
+    });
+    await waitFor(() => expect(h.sinceCalls).toHaveLength(1));
+  });
+
+  it('a row with no reply has Dismiss; one on its way does not', () => {
+    __setCommandEcho(1, { text: '/remote-control', from: 'Remote Control', at: SENT, compact: false, noReply: true });
+    render(<CommandEchoRow taskId={1} echo={commandEchoFor(1)!} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(commandEchoFor(1)).toBeNull();
+    cleanup();
+    render(<CommandEchoRow taskId={1} echo={{ text: '/model opus', from: 'the model picker', at: SENT, compact: false, noReply: false }} />);
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  });
+
+  it('/remote-control: Remote Control’s menu notice takes over, and settling ends it', async () => {
+    const { __setRemoteWait, __resetRemoteWaits } = await import('../remoteWait');
+    __setRemoteWait(1, { phase: 'asked' });
+    await sendToSession(1, '/remote-control', SEND_FROM.remote);
+    expect(commandEchoFor(1)).toMatchObject({ text: '/remote-control' });
+    act(() => __setRemoteWait(1, { phase: 'menu', at: SENT }));
+    expect(commandEchoFor(1)).toBeNull();
+
+    __setRemoteWait(1, { phase: 'asked' });
+    await sendToSession(1, '/remote-control', SEND_FROM.remote);
+    act(() => __setRemoteWait(1, null));
+    expect(commandEchoFor(1)).toBeNull();
+
+    // Another command's echo is not Remote Control's to end.
+    await sendToSession(1, '/model opus', SEND_FROM.model);
+    __setRemoteWait(1, { phase: 'menu', at: SENT });
+    act(() => __setRemoteWait(1, null));
+    expect(commandEchoFor(1)).toMatchObject({ text: '/model opus' });
+    __resetRemoteWaits();
+  });
+});
+
