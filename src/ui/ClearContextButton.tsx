@@ -14,7 +14,9 @@ import type { ContextUsage } from '../capture';
 import type { Task, TaskStatus } from '../types';
 import { atRest } from '../capture/status';
 import { hasLivePty, onPtyPresenceChange } from './Terminal';
-import { sendToSession, useSendsWait } from './transcript/send';
+import { sendToSession, useSendsWait, type SendSource } from './transcript/send';
+import { SEND_FROM } from './transcript/sendFrom';
+import { COMPACTING_HINT, useCompacting } from './transcript/commandEcho';
 import { CONTEXT_WARN, contextLevel, contextReadout, contextTitle } from './StatusDot';
 import './gauges/gauges.css';
 import './clearcontext.css';
@@ -34,6 +36,8 @@ interface SessionCommand {
   /** What is typed into the pty. */
   command: '/clear' | '/compact';
   label: string;
+  /** The button, as the command's echo names it (commandEcho.ts). */
+  from: SendSource;
   /** Second-click label; absent means one click sends it. */
   confirmLabel?: string;
   hint: string;
@@ -43,6 +47,7 @@ interface SessionCommand {
 const CLEAR: SessionCommand = {
   command: '/clear',
   label: 'Clear',
+  from: SEND_FROM.clear,
   confirmLabel: 'Clear Context?',
   hint: 'Send /clear: start this session over with an empty context.',
   confirmHint:
@@ -52,17 +57,24 @@ const CLEAR: SessionCommand = {
 export const COMPACT: SessionCommand = {
   command: '/compact',
   label: 'Compact Now',
+  from: SEND_FROM.compact,
   hint: 'Send /compact: replace the conversation so far with a summary and keep going.',
 };
+
+export { COMPACTING_HINT };
 
 /**
  * Why a command cannot go to the session now, or null when it can. Only on an
  * idle, live session with nothing waiting to send: while a turn runs, typed
  * input is queued behind it and the command would land at a moment nobody
- * chose; on a permission prompt it would be typed into the prompt.
+ * chose; on a permission prompt it would be typed into the prompt. Nor while
+ * a `/compact` Albedo sent is still compacting (commandEcho.ts): the session
+ * writes nothing until it is done, so it reads idle, and a second one, or a
+ * `/clear`, would only queue behind it.
  */
-export function commandBlocker(live: boolean, status: TaskStatus, waiting: boolean): string | null {
+export function commandBlocker(live: boolean, status: TaskStatus, waiting: boolean, compacting = false): string | null {
   if (!live) return 'No session is running for this task.';
+  if (compacting) return COMPACTING_HINT;
   if (!atRest(status)) return 'Available once the session is idle.';
   if (waiting) return 'Not available while messages are waiting to send';
   return null;
@@ -82,7 +94,8 @@ export function useCommandBlocker(task: Pick<Task, 'id' | 'status'> | null): str
   // While a send would be held (offline, messages waiting, a turn running),
   // a command is not offered.
   const waiting = useSendsWait(id);
-  return task === null ? null : commandBlocker(live, task.status, waiting);
+  const compacting = useCompacting(id);
+  return task === null ? null : commandBlocker(live, task.status, waiting, compacting);
 }
 
 /**
@@ -132,7 +145,7 @@ function SessionCommandButton({ task, cmd }: { task: Task; cmd: SessionCommand }
     try {
       // Held, not lost, if sends started waiting since the click was offered:
       // it goes once the session is idle (send.ts).
-      setFailed((await sendToSession(task.id, cmd.command)) === 'failed');
+      setFailed((await sendToSession(task.id, cmd.command, cmd.from)) === 'failed');
     } catch {
       setFailed(true);
     } finally {
@@ -172,18 +185,25 @@ export function contextWarning(usage: ContextUsage | null | undefined): { level:
 const AUTO_COMPACT_NOTE =
   'Claude Code compacts the session on its own when the window is nearly full. Compact Now chooses the moment.';
 
+/** What the reading says while a `/compact` Albedo sent runs: the old figure is about to go. */
+export const COMPACTING_READING = 'Compacting…';
+
 /**
  * "Context 72% · Compact Now · Clear" for the message box's controls row, or
  * nothing while the session has room. The level is the same reading the task
- * row's hairline draws, so the two cannot disagree.
+ * row's hairline draws, so the two cannot disagree. While a `/compact` Albedo
+ * sent runs it reads "Compacting…", at any fill, with both buttons standing
+ * down (`commandBlocker`).
  */
 export function ContextClear({ task, usage }: { task: Task; usage: ContextUsage | null | undefined }) {
+  const compacting = useCompacting(task.id);
   const warning = contextWarning(usage);
-  if (!usage || !warning) return null;
+  const reading = compacting ? { level: 'warn' as const, text: COMPACTING_READING } : warning;
+  if (!reading) return null;
   return (
-    <span className="ctx-clear" title={`${contextTitle(usage)}\n${AUTO_COMPACT_NOTE}`}>
-      <span className="ctx-clear-reading" data-level={warning.level}>
-        {warning.text}
+    <span className="ctx-clear" title={usage ? `${contextTitle(usage)}\n${AUTO_COMPACT_NOTE}` : AUTO_COMPACT_NOTE}>
+      <span className="ctx-clear-reading" data-level={reading.level} role={compacting ? 'status' : undefined}>
+        {reading.text}
       </span>
       <SessionCommandButton task={task} cmd={COMPACT} />
       <SessionCommandButton task={task} cmd={CLEAR} />

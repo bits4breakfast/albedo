@@ -795,6 +795,35 @@ export async function remoteControlLineSince(
   return null;
 }
 
+/**
+ * The main thread's `user` and `system` rows written at or after `sinceTs`,
+ * for the task or for the session it is on now, newest first: where a
+ * command Albedo sent shows up once Claude Code has run it (commandEcho.ts).
+ * Both ids, because `/clear` moves the task to a new session whose rows may
+ * be read before they are linked to it. Capped: the caller looks for one row
+ * a few seconds or minutes old, not at a history.
+ *
+ * Read along `messages_ts` from `sinceTs` on, never the task's whole history:
+ * the `+` keeps SQLite from answering the OR with the task and session
+ * indexes, which read every row the task has and sort them (about 0.1 s on a
+ * 35k-row task, per call; mainRowsSince.test.ts pins the plan).
+ */
+export async function mainRowsSince(
+  taskId: number,
+  sessionId: string | null,
+  sinceTs: number,
+  limit = 200,
+): Promise<Message[]> {
+  const db = await getDb();
+  const rows = await db.select<MessageRow[]>(
+    `SELECT ${MESSAGE_SELECT} FROM messages
+      WHERE ts >= $1 AND (+task_id = $2 OR +session_id = $3) AND +agent_id IS NULL AND +role IN ('user', 'system')
+      ORDER BY ts DESC, id DESC LIMIT $4`,
+    [sinceTs, taskId, sessionId ?? '', Math.max(1, limit)],
+  );
+  return (rows ?? []).map(toMessage);
+}
+
 /** Most preselected rows a background lookup reads; the newest win. */
 const BACKGROUND_ROWS_MAX = 1000;
 /** Most calls or results a background lookup fetches the other half of. */

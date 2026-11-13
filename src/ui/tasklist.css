@@ -233,6 +233,10 @@
 /* An unsent draft in the composer: a word in the caption, --muted (cleared
    against --panel-raised). */
 .task-draft { color: var(--muted); }
+/* A /compact Albedo sent is running (#384): the word in Running's colour,
+   --status-running, which the token block clears on every row ground
+   (5.15+ light, 9.24+ dark). */
+.task-compacting { color: var(--status-running); font-weight: 600; white-space: nowrap; }
 /* A reminder is back (#156): --accent, the reminder card's own colour, with
    its glyph, so it is never colour alone. Measured, light | dark: --panel-chrome
    5.87 | 7.44, --panel-hover 5.62 | 7.04, --panel-raised 5.32 | 6.62,

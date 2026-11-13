@@ -7,10 +7,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Task } from '../types';
 
 const sent = vi.hoisted(() => [] as [number, string][]);
+const froms = vi.hoisted(() => [] as (string | undefined)[]);
 vi.mock('../gh/prStore', () => ({
   getPrStatus: () => null,
   usePrPolling: () => {},
@@ -27,8 +28,9 @@ vi.mock('./Terminal', () => ({
 vi.mock('./transcript/send', async (orig) => ({
   ...(await orig<typeof import('./transcript/send')>()),
   useSendsWait: () => false,
-  sendToSession: async (taskId: number, text: string) => {
+  sendToSession: async (taskId: number, text: string, from?: string) => {
     sent.push([taskId, text]);
+    froms.push(from);
     return 'sent';
   },
 }));
@@ -39,10 +41,13 @@ vi.mock('../db', async (orig) => ({
 Element.prototype.scrollIntoView = () => {};
 
 const { default: TaskList } = await import('./TaskList');
+const { __resetCommandEchoes, __setCommandEcho } = await import('./transcript/commandEcho');
 
 afterEach(() => {
   cleanup();
   sent.length = 0;
+  froms.length = 0;
+  __resetCommandEchoes();
 });
 
 function task(id: number, title: string, over: Partial<Task> = {}): Task {
@@ -83,6 +88,8 @@ describe('the row menu acts on its own task (#331)', () => {
     await screen.findByRole('menuitem', { name: /Make Available Remotely/ });
     fireEvent.click(compact);
     expect(sent).toEqual([[11, '/compact']]);
+    // Labelled, so its echo says "from Compact Now" (#384).
+    expect(froms).toEqual(['Compact Now']);
     expect(onSelect).not.toHaveBeenCalled();
 
     open(10);
@@ -130,5 +137,29 @@ describe('the row menu acts on its own task (#331)', () => {
       'Archive Task…',
       'Delete Task…',
     ]);
+  });
+});
+
+describe('a /compact Albedo sent, running (#384)', () => {
+  it('reads "Compacting" on its row, and Compact Now stands down with "Compacting now"', () => {
+    const { open, container } = renderList();
+    expect(container.querySelector('.task-compacting')).toBeNull();
+    act(() => __setCommandEcho(11, { text: '/compact', from: 'Compact Now', at: Date.now(), compact: true, noReply: false }));
+    expect(container.querySelector('[data-task-id="11"] .task-compacting')?.textContent).toBe('Compacting');
+    expect(container.querySelector('[data-task-id="10"] .task-compacting')).toBeNull();
+    open(11);
+    const compact = item(/Compact Now/) as HTMLButtonElement;
+    expect(compact.disabled).toBe(true);
+    expect(compact.title).toBe('Compacting now');
+    // Nor Remote Control: it would land in the middle of the compaction.
+    const remote = item(/Make Available Remotely/) as HTMLButtonElement;
+    expect(remote.disabled).toBe(true);
+    expect(remote.title).toBe('Compacting now');
+  });
+
+  it('says nothing once it had no reply: it is no longer known to be compacting', () => {
+    const { container } = renderList();
+    act(() => __setCommandEcho(11, { text: '/compact', from: 'Compact Now', at: Date.now(), compact: true, noReply: true }));
+    expect(container.querySelector('.task-compacting')).toBeNull();
   });
 });

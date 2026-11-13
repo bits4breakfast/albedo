@@ -499,6 +499,17 @@ export function endsLocalCommand(rawJson: string): boolean {
 }
 
 /**
+ * True for a stored `user` row carrying what a local command printed to
+ * stderr: how a `/compact` that throws ends ("No messages to compact",
+ * "Error during compaction"; Claude Code 2.1.323). Kept apart from
+ * `endsLocalCommand`, which the turn and queue rules read: only the echo of
+ * a command Albedo sent (ui/transcript/commandEcho.ts) uses this.
+ */
+export function isLocalCommandStderr(m: { role: string; body: string | null }): boolean {
+  return m.role === 'user' && (m.body ?? '').trimStart().startsWith('<local-command-stderr>');
+}
+
+/**
  * True for a `system` line recording a slash command Claude Code ran itself:
  * the command's envelope (`<command-name>/remote-control</command-name>…`),
  * or its `<local-command-stdout>` (empty for most). Both are stored as

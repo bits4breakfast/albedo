@@ -146,6 +146,30 @@
   overflow: hidden;
 }
 
+/* A command a button sent (#384): the command as typed, in mono and
+   --text-strong like a sent message, then which button and where it stands in
+   --muted; no reply in --warn. All on --user-row: --text-strong 17.54 | 15.84,
+   --muted 6.46 | 7.13, --warn 6.86 | 9.19 (light | dark). */
+.tx-echo-command {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+.tx-echo-meta {
+  margin-left: 6px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.tx-echo-meta[data-no-reply] { color: var(--warn); }
+/* Remote Control's menu notice's Dismiss (.btn-ghost), after the words. On
+   --user-row its --muted is 6.46 | 7.13; hovered, --text on --panel-hover
+   14.44 | 13.07; pressed, --text-strong on --panel-active 15.00 | 16.57
+   (light | dark). */
+.tx-echo-dismiss { margin-left: 10px; vertical-align: baseline; }
+/* A running /compact's clock, under the command. */
+.tx-echo-running { margin-top: 4px; }
+
 .tx-row-working { margin: 6px 0 14px; }
 .tx-working {
   display: flex;

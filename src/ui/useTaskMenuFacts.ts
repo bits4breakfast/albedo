@@ -6,6 +6,7 @@ import { useRemoteWait } from './remoteWait';
 import { usePendingReminders } from './reminders/useReminders';
 import { usePtyLiveSince } from './Terminal';
 import { useSendsWait } from './transcript/send';
+import { useCompacting } from './transcript/commandEcho';
 import type { TaskMenuFacts } from './taskMenuItems';
 
 /**
@@ -22,6 +23,7 @@ export function useTaskMenuFacts(task: Task | null, shown: boolean): TaskMenuFac
   const remoteWaiting = useRemoteWait(id) !== null;
   const pendingReminders = usePendingReminders(id).length;
   const sendsWait = useSendsWait(id);
+  const compacting = useCompacting(id);
   return {
     compactBlocker,
     live,
@@ -31,5 +33,6 @@ export function useTaskMenuFacts(task: Task | null, shown: boolean): TaskMenuFac
     pr: id === null ? null : (getPrStatus(id) ?? null),
     shown,
     sendsWait,
+    compacting,
   };
 }

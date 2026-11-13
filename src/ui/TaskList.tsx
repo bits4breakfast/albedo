@@ -37,6 +37,7 @@ import { ChatIcon } from './icons';
 import RemoteMark from './RemoteMark';
 import { BackgroundMark } from './BackgroundWork';
 import { useDraftTaskIds } from './transcript/drafts';
+import { useCompacting } from './transcript/commandEcho';
 import { useReminderTaskIds } from './reminders/useReminders';
 import { useTasksWaitingOnPreview } from './preview/usePreviews';
 import { ReminderGlyph } from './reminders/ReminderGlyph';
@@ -842,12 +843,26 @@ function rowMeta(task: Task, group: GroupKey, { selected, sig, ctx, draft, remin
             ?
           </span>
         )}
+        {/* A /compact Albedo sent is running (#384), on every row, the
+            selected one too: the session writes nothing until it is
+            done, so its group still says Idle. */}
+        <CompactingMark taskId={task.id} />
         {ctx && ctxText && (
           <span className="task-ctx-text" data-level={ctxLevel} title={contextTitle(ctx)}>
             {ctxText}
           </span>
         )}
       </span>
+    </span>
+  );
+}
+
+/** "Compacting" while a `/compact` Albedo sent runs (commandEcho.ts); it watches its own store, as RemoteMark does. */
+function CompactingMark({ taskId }: { taskId: number }): ReactNode {
+  if (!useCompacting(taskId)) return null;
+  return (
+    <span className="task-compacting" title="Albedo sent /compact: Claude Code is compacting this session">
+      Compacting
     </span>
   );
 }
