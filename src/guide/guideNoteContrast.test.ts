@@ -2,8 +2,9 @@
  * The why under a file's header in the guide's diff (#264): --text, with a
  * "Why" label in --faint, on the pane's --panel (#274) -- and on
  * --panel-raised, the ground CLAUDE.md measures text against. Every theme.
- * Text, so 4.5:1. The CSS is read too, so moving the band onto another ground
- * or dimming it with opacity fails here.
+ * Text, so 4.5:1, and so is Show All in --accent (#397). The CSS is read
+ * too, so moving the band onto another ground or dimming it with opacity
+ * fails here.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -46,12 +47,21 @@ describe('the why under the file’s header (#264)', () => {
     expect(guide).not.toMatch(/\.gd-diff-why[^{]*\{[^}]*(opacity|transparent)/);
   });
 
+  it('Show All is a .gd-link in --accent with no ground of its own (#397)', () => {
+    expect(guide).toMatch(/\.gd-link \{[^}]*color: var\(--accent\);/);
+    expect(guide).not.toMatch(/\.gd-diff-why-more[^{]*\{[^}]*(color|background)/);
+  });
+
   for (const [name, t] of Object.entries(themes)) {
     it(`clears 4.5:1, ${name}`, () => {
       for (const ground of ['--panel', '--panel-raised']) {
         for (const fg of ['--text', '--faint']) {
           expect(ratio(t.get(fg)!, t.get(ground)!), `${fg} on ${ground}`).toBeGreaterThanOrEqual(4.5);
         }
+      }
+      // Show All / Show Less (#397): --accent text on the note's ground.
+      for (const ground of ['--panel', '--panel-raised']) {
+        expect(ratio(t.get('--accent')!, t.get(ground)!), `--accent on ${ground}`).toBeGreaterThanOrEqual(4.5);
       }
       // The rule is a glyph: 3:1 on the note's ground.
       expect(ratio(t.get('--border-strong')!, t.get('--panel')!), '--border-strong on --panel').toBeGreaterThanOrEqual(3);

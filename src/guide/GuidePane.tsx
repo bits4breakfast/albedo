@@ -1072,6 +1072,66 @@ function CarefulWords({ mark }: { mark: CarefulMark }): ReactNode {
   );
 }
 
+/**
+ * One note under the diff's header, Careful or Why (#397): at most two lines,
+ * then Show All when it runs longer, which opens it in place as Show Less.
+ * Whether it runs longer is measured, at the note's real width and again
+ * whenever that changes; a note that fits has no button. A note starts closed:
+ * the diff is keyed by group and file, so another file mounts a fresh one.
+ *
+ * What is clipped depends on the band (guide.css): alone, the label and text
+ * flow as one (`.gd-diff-why-flow`); with both notes, the text beside its
+ * label column (`.gd-diff-why-body`). Only the clipped one has a height, the
+ * other is inline or `display: contents`, so both are measured.
+ */
+function DiffNote({
+  careful,
+  name,
+  title,
+  label,
+  children,
+}: {
+  careful?: boolean;
+  name: string;
+  title?: string;
+  label: ReactNode;
+  children: ReactNode;
+}): ReactNode {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [open, setOpen] = useState(false);
+  const [longer, setLonger] = useState(false);
+  // Open, nothing is clipped to measure: it ran longer when it was opened.
+  const measure = useCallback(() => {
+    const p = ref.current;
+    if (!p || open) return;
+    const clipped = [p.querySelector('.gd-diff-why-flow'), p.querySelector('.gd-diff-why-body')];
+    setLonger(clipped.some((el) => el !== null && el.scrollHeight > el.clientHeight + 1));
+  }, [open]);
+  // Every render: the text, the band's layout or the theme may have changed.
+  useLayoutEffect(measure);
+  useEffect(() => {
+    const p = ref.current;
+    if (!p || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(p);
+    return () => ro.disconnect();
+  }, [measure]);
+  const action = open ? 'Show Less' : 'Show All';
+  return (
+    <p className="gd-diff-why-text" data-careful={careful ? 'true' : undefined} data-clamped={open ? undefined : 'true'} title={title} ref={ref}>
+      <span className="gd-diff-why-flow">
+        <span className="gd-diff-why-label">{label}</span>
+        <span className="gd-diff-why-body">{children}</span>
+      </span>
+      {longer ? (
+        <button type="button" className="gd-link gd-diff-why-more" aria-expanded={open} aria-label={`${action} of ${name}`} onClick={() => setOpen((o) => !o)}>
+          {action}
+        </button>
+      ) : null}
+    </p>
+  );
+}
+
 /** A careful file's line in its group's list: the flag and why, in --warn. */
 function CarefulLine({ mark }: { mark: CarefulMark }): ReactNode {
   return (
@@ -1219,21 +1279,24 @@ function GuideFileDiff({
         // Both notes: one label column, so their texts start at one x (#295 review).
         <div className="gd-diff-why" data-both={file.note && file.careful ? true : undefined}>
           {file.careful ? (
-            <p className="gd-diff-why-text" data-careful="true" title={carefulTitle(file.careful)}>
-              <span className="gd-diff-why-label">
-                <FlagIcon className="gd-careful-icon" />
-                Careful
-              </span>
-              <span className="gd-diff-why-body">
-                <CarefulWords mark={file.careful} />
-              </span>
-            </p>
+            <DiffNote
+              careful
+              name="Careful"
+              title={carefulTitle(file.careful)}
+              label={
+                <>
+                  <FlagIcon className="gd-careful-icon" />
+                  Careful
+                </>
+              }
+            >
+              <CarefulWords mark={file.careful} />
+            </DiffNote>
           ) : null}
           {file.note ? (
-            <p className="gd-diff-why-text">
-              <span className="gd-diff-why-label">Why</span>
-              <span className="gd-diff-why-body">{file.note}</span>
-            </p>
+            <DiffNote name="Why" label="Why">
+              {file.note}
+            </DiffNote>
           ) : null}
         </div>
       ) : null}
