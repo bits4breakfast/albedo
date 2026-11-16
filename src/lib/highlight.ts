@@ -20,12 +20,14 @@
  * tokens. Syntax colour is a nicety; the transcript must render regardless.
  */
 
-import { createHighlighterCore } from 'shiki/core';
+import { applyColorReplacements, createHighlighterCore, splitLines } from 'shiki/core';
 // Shiki 3 took the engines out of `shiki/core`; each has its own entry point.
 // Oniguruma (WASM) is the engine the grammars are written for, and the one
 // Albedo has always used, so tokens stay what they were.
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
-import type { HighlighterCore, ThemedTokenWithVariants, TokenStyles } from 'shiki/core';
+import { EncodedTokenMetadata, INITIAL, Theme } from 'shiki/textmate';
+import type { HighlighterCore, TokenStyles } from 'shiki/core';
+import type { StateStack } from 'shiki/textmate';
 
 /**
  * The two themes, tokenized together. Consumers that need a theme id (the
@@ -267,18 +269,243 @@ export function styleToCss(style: Record<string, string>): string {
     .join(';');
 }
 
-function toDual(lines: ThemedTokenWithVariants[][]): DualToken[][] {
-  return lines.map((line) =>
-    line.map((t) => ({
-      content: t.content,
-      offset: t.offset,
-      // Variants are keyed by the names in the `themes` record passed to
-      // codeToTokensWithThemes ('light' / 'dark'), NOT by the theme ids. Looking
-      // them up by id found nothing, and every token rendered uncoloured.
-      style: dualStyle(t.variants['light'], t.variants['dark']),
-    })),
+// ---------------------------------------------------------------------------
+// One grammar pass for both themes (#418)
+// ---------------------------------------------------------------------------
+
+/*
+ * Shiki's `codeToTokensWithThemes` runs the grammar once per theme and then
+ * aligns the two token lists. The grammar's regexes are most of the cost, and
+ * they do not depend on the theme: only the style a theme gives each scope
+ * does. So the grammar runs once here, against a theme that stands for BOTH --
+ * `BothThemes` below -- and each token's style ids name the pair of styles the
+ * two real themes give it.
+ *
+ * That is exactly the old output, token for token:
+ *
+ * - vscode-textmate gives a token the style of its scope stack, each scope
+ *   overriding its parent's font style, foreground and background field by
+ *   field where its best-matching rule sets them. `BothThemes` resolves that
+ *   per theme, with each theme's own `match`, and hands the grammar the pair.
+ * - The grammar merges adjacent pieces of a line whose style ids are equal.
+ *   With one theme, two pieces merge when that theme styles them alike; with
+ *   the pair, when both do. Shiki's alignment cut each theme's tokens wherever
+ *   the other's ended -- the same boundaries.
+ * - Empty lines, over-long lines, offsets, colour replacements and the
+ *   500 ms per-line limit are Shiki's `_tokenizeWithTheme`, as it does them.
+ *
+ * `highlight.dual.test.ts` compares this with `codeToTokensWithThemes` over
+ * whole files in several languages. The seam is vscode-textmate's own: the
+ * registry every grammar asks for its theme (`grammar.themeProvider`) takes
+ * any object with `match` and `getDefaults`, and gets its own theme back the
+ * moment the pass ends, so Shiki's own calls see nothing changed.
+ */
+
+type ScopePath = NonNullable<Parameters<Theme['match']>[0]>;
+
+/** A style as vscode-textmate's theme gives it: ids into a colour map. */
+interface StyleIds {
+  fontStyle: number;
+  foregroundId: number;
+  backgroundId: number;
+}
+
+/** The fields' widths in a token's metadata; 0 (-1 for font style) means "not set". */
+const FOREGROUNDS = 511;
+const BACKGROUNDS = 255;
+const FONT_STYLES = 16;
+
+interface ThemeSide {
+  theme: Theme;
+  colors: string[];
+  replacements: Record<string, string>;
+}
+
+/**
+ * One theme's resolved style -- font style, foreground id, background id --
+ * packed in one number (4 + 9 + 8 bits), so a pair of them is a cheap map key:
+ * this runs for every scope the grammar pushes.
+ */
+type Resolved = number;
+const pack = (fontStyle: number, fg: number, bg: number): Resolved => fontStyle | (fg << 4) | (bg << 13);
+const fontStyleOf = (r: Resolved) => r & 15;
+const foregroundOf = (r: Resolved) => (r >>> 4) & 511;
+const backgroundOf = (r: Resolved) => r >>> 13;
+
+/** `mergeAttributes`' rule: a field the rule sets replaces the parent's. */
+function inherit(parent: Resolved, own: StyleIds | null): Resolved {
+  if (!own) return parent;
+  return pack(
+    own.fontStyle !== -1 ? own.fontStyle : fontStyleOf(parent),
+    own.foregroundId !== 0 ? own.foregroundId : foregroundOf(parent),
+    own.backgroundId !== 0 ? own.backgroundId : backgroundOf(parent),
   );
 }
+
+/**
+ * A theme, as the grammar sees one, that stands for the light and dark theme
+ * together. Every distinct pair of resolved styles gets an id, written into
+ * the three style fields of a token's metadata -- always set, so the grammar
+ * never inherits a field itself: the pair is resolved here, per theme.
+ */
+class BothThemes {
+  /** Pair key (light * 2^21 + dark) to pair id. */
+  private readonly ids = new Map<number, number>();
+  private readonly lights: Resolved[] = [];
+  private readonly darks: Resolved[] = [];
+  private readonly encoded: StyleIds[] = [];
+  private readonly styles: Array<Record<string, string>> = [];
+  /** Scope paths are shared and immutable: a path's pair never changes. */
+  private readonly resolved = new WeakMap<ScopePath, number>();
+  private readonly defaults: number;
+
+  constructor(
+    private readonly light: ThemeSide,
+    private readonly dark: ThemeSide,
+  ) {
+    this.defaults = this.intern(inherit(0, light.theme.getDefaults()), inherit(0, dark.theme.getDefaults()));
+  }
+
+  getDefaults(): StyleIds {
+    return this.encoded[this.defaults]!;
+  }
+
+  getColorMap(): string[] {
+    return [];
+  }
+
+  match(path: ScopePath | null): StyleIds {
+    return this.encoded[path ? this.resolve(path) : this.defaults]!;
+  }
+
+  /** The token style for a token's metadata, as `dualStyle` gives it. */
+  styleOf(metadata: number): Record<string, string> {
+    const fs = EncodedTokenMetadata.getFontStyle(metadata);
+    const fg = EncodedTokenMetadata.getForeground(metadata);
+    const bg = EncodedTokenMetadata.getBackground(metadata);
+    const style = this.styles[(fs * BACKGROUNDS + (bg - 1)) * FOREGROUNDS + (fg - 1)];
+    if (!style) throw new Error('a token style that was never handed out');
+    return style;
+  }
+
+  private resolve(path: ScopePath): number {
+    const known = this.resolved.get(path);
+    if (known !== undefined) return known;
+    const parent = path.parent ? this.resolve(path.parent) : this.defaults;
+    const id = this.intern(
+      inherit(this.lights[parent]!, this.light.theme.match(path)),
+      inherit(this.darks[parent]!, this.dark.theme.match(path)),
+    );
+    this.resolved.set(path, id);
+    return id;
+  }
+
+  private intern(light: Resolved, dark: Resolved): number {
+    const key = light * 2 ** 21 + dark;
+    const known = this.ids.get(key);
+    if (known !== undefined) return known;
+    const id = this.lights.length;
+    if (id >= FOREGROUNDS * BACKGROUNDS * FONT_STYLES) throw new Error('too many style pairs');
+    this.ids.set(key, id);
+    this.lights.push(light);
+    this.darks.push(dark);
+    this.encoded.push({
+      fontStyle: Math.floor(id / (FOREGROUNDS * BACKGROUNDS)),
+      foregroundId: (id % FOREGROUNDS) + 1,
+      backgroundId: (Math.floor(id / FOREGROUNDS) % BACKGROUNDS) + 1,
+    });
+    this.styles.push(dualStyle(this.side(this.light, light), this.side(this.dark, dark)));
+    return id;
+  }
+
+  /** One theme's half of a pair, as Shiki's tokenizer reports it. */
+  private side(side: ThemeSide, r: Resolved): TokenStyles {
+    return { color: applyColorReplacements(side.colors[foregroundOf(r)], side.replacements), fontStyle: fontStyleOf(r) };
+  }
+}
+
+/** Per highlighter: the themes are its own. */
+const bothThemes = new WeakMap<HighlighterCore, BothThemes>();
+
+function bothThemesFor(hl: HighlighterCore): BothThemes {
+  let both = bothThemes.get(hl);
+  if (!both) {
+    const side = (name: string): ThemeSide => {
+      const raw = hl.getTheme(name);
+      // What Shiki's registry builds for the same theme, so the ids match.
+      const theme = Theme.createFromRawTheme(raw as never);
+      return { theme, colors: theme.getColorMap(), replacements: { ...raw.colorReplacements } };
+    };
+    both = new BothThemes(side(THEMES.light), side(THEMES.dark));
+    bothThemes.set(hl, both);
+  }
+  return both;
+}
+
+/** The registry a grammar asks for its theme (vscode-textmate's SyncRegistry). */
+interface ThemeRegistry {
+  setTheme(theme: unknown): void;
+  _theme: unknown;
+}
+
+/** Shiki's default per-line limit; a line that hits it carries on from where it stopped. */
+const LINE_TIME_LIMIT_MS = 500;
+
+/**
+ * Tokenize `code` as `lang` (a loaded grammar) for both themes in one grammar
+ * pass, starting from `state` (undefined: the top of a file). Returns the
+ * lines and the grammar state after the last of them, to carry on from.
+ * Throws when the grammar does; callers fall back to plain tokens.
+ */
+function tokenizeBoth(
+  hl: HighlighterCore,
+  code: string,
+  lang: string,
+  maxLineLength = 0,
+  state?: unknown,
+): { lines: DualToken[][]; state: StateStack } {
+  const grammar = hl.getLanguage(lang);
+  const both = bothThemesFor(hl);
+  const registry = (grammar as unknown as { themeProvider: ThemeRegistry }).themeProvider;
+  const own = registry._theme;
+  registry.setTheme(both);
+  try {
+    let stack = (state as StateStack | undefined) ?? INITIAL;
+    const out: DualToken[][] = [];
+    for (const [line, lineOffset] of splitLines(code)) {
+      if (line === '') {
+        out.push([]);
+        continue;
+      }
+      if (maxLineLength > 0 && line.length >= maxLineLength) {
+        out.push([{ content: line, offset: lineOffset, style: PLAIN }]);
+        continue;
+      }
+      const result = grammar.tokenizeLine2(line, stack, LINE_TIME_LIMIT_MS);
+      const raw = result.tokens;
+      const count = raw.length / 2;
+      const tokens: DualToken[] = [];
+      for (let j = 0; j < count; j++) {
+        const start = raw[2 * j]!;
+        const next = j + 1 < count ? raw[2 * j + 2]! : line.length;
+        if (start === next) continue;
+        tokens.push({
+          content: line.substring(start, next),
+          offset: lineOffset + start,
+          style: both.styleOf(raw[2 * j + 1]!),
+        });
+      }
+      out.push(tokens);
+      stack = result.ruleStack;
+    }
+    return { lines: out, state: stack };
+  } finally {
+    registry.setTheme(own);
+  }
+}
+
+/** An uncoloured token's style, as Shiki's over-long lines get it. */
+const PLAIN = dualStyle({ color: '', fontStyle: 0 }, { color: '', fontStyle: 0 });
 
 /**
  * Tokenize `code` as `lang`, one array of tokens per line, styled for both
@@ -306,7 +533,7 @@ export async function highlightToTokens(code: string, lang: string): Promise<Dua
       tokens = plainTokens(code);
     } else {
       const hl = await getHighlighter();
-      tokens = toDual(hl.codeToTokensWithThemes(code, { lang, themes: THEMES }));
+      tokens = tokenizeBoth(hl, code, lang).lines;
     }
   } catch {
     tokens = plainTokens(code);
@@ -481,14 +708,8 @@ async function run(entry: Progress, lang: string, target: number): Promise<void>
     }
     const slice = entry.lines.slice(start, end);
     try {
-      const lines = hl.codeToTokensWithThemes(slice.join('\n'), {
-        lang,
-        themes: THEMES,
-        tokenizeMaxLineLength: MAX_TOKENIZED_LINE,
-        ...(entry.state ? { grammarState: entry.state as never } : {}),
-      });
-      entry.state = hl.getLastGrammarState(lines as never);
-      const dual = toDual(lines);
+      const { lines: dual, state } = tokenizeBoth(hl, slice.join('\n'), lang, MAX_TOKENIZED_LINE, entry.state);
+      entry.state = state;
       for (let i = 0; i < slice.length; i++) {
         entry.tokens.push(dual[i] ?? [{ content: slice[i] ?? '', offset: 0, style: {} }]);
       }
@@ -528,7 +749,7 @@ export async function highlightBlocks(blocks: readonly string[], lang: string): 
     const n = blockLineCount(block);
     let lines: DualToken[][];
     try {
-      lines = hl && block !== '' ? toDual(hl.codeToTokensWithThemes(block, { lang, themes: THEMES })) : plainTokens(block);
+      lines = hl && block !== '' ? tokenizeBoth(hl, block, lang).lines : plainTokens(block);
     } catch {
       lines = plainTokens(block);
     }
