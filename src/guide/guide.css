@@ -377,8 +377,12 @@
 
 .gd-all-done { font-size: var(--fs-sm); color: var(--status-review); }
 
-.gd-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.gd-right { position: relative; flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .gd-diff { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* Under All Guide Files (#413): kept and laid out at its own size, so its
+   layout and scroll stay, but covered and not drawn. Never display: none,
+   which measures it 0 wide and turns a split diff unified. */
+.gd-diff[data-covered] { position: absolute; inset: 0; visibility: hidden; }
 .gd-diff-head {
   flex: none;
   display: flex;
@@ -791,3 +795,79 @@
 .gd-rail-mark[data-changed] {
   background: linear-gradient(var(--accent), var(--accent)) left 1px center / 2px 10px no-repeat;
 }
+
+/* --- Search (#413) --------------------------------------------------------
+
+   One bar for This File (under the diff's header) and All Guide Files (the
+   right column's top, its list below), on the pane's --panel. Text tiers on
+   --panel, and on --panel-hover / --accent-soft for a hovered or picked
+   result: --text and --muted, --faint for the line numbers (5.12 | 5.21 on
+   --accent-soft, see the top of this file), --del for a removed line's sign.
+   A match is --on-hit on --hit (styles.css). Every pair is measured in
+   guideSearchContrast.test.ts; nothing here is dimmed after the token. */
+.gd-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.gd-search-input {
+  flex: 1 1 180px;
+  min-width: 140px;
+  height: 26px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+  background: var(--panel-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.gd-search-input:focus { border-color: var(--focus); outline: none; }
+.gd-search-input::placeholder { color: var(--faint); font-family: var(--font-ui); }
+.gd-search-count { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gd-search-hint { color: var(--muted); white-space: nowrap; }
+
+.gd-search-all { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.gd-search-results { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 8px; font-size: var(--fs-sm); }
+.gd-search-group {
+  padding: 8px 12px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--muted);
+}
+.gd-search-file {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 12px;
+  min-width: 0;
+}
+.gd-search-file-name { flex: none; color: var(--text-strong); font-family: var(--font-mono); }
+.gd-search-file-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--fs-xs); }
+.gd-search-file-count { flex: none; margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.gd-search-hit,
+.gd-search-more {
+  display: grid;
+  grid-template-columns: 6ch 1.5ch minmax(0, 1fr);
+  align-items: baseline;
+  padding: 1px 12px 1px 16px;
+  border-left: 2px solid transparent;
+  cursor: default;
+}
+.gd-search-more { display: block; padding-left: calc(16px + 7.5ch); color: var(--muted); }
+.gd-search-hit:hover,
+.gd-search-more:hover { background: var(--panel-hover); }
+.gd-search-hit[aria-selected='true'],
+.gd-search-more[aria-selected='true'] { background: var(--accent-soft); border-left-color: var(--accent); }
+.gd-search-line { color: var(--faint); text-align: right; padding-right: 6px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.gd-search-sign { color: var(--del); font-family: var(--font-mono); }
+.gd-search-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; font-family: var(--font-mono); color: var(--text); }
+.gd-search-mark { background: var(--hit); color: var(--on-hit); border-radius: 2px; }
