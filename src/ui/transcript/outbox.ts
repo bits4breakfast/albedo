@@ -606,7 +606,45 @@ export function useHeld(taskId: number | null): readonly HeldMessage[] {
 }
 
 /** Test seam: forget everything in memory, so the next read comes from storage. */
+// ---------------------------------------------------------------------------
+// Marking: delivered code comments being marked sent (#404)
+// ---------------------------------------------------------------------------
+
+/*
+   A delivered message's code comments are no longer held, and not yet sent
+   until the database says so (codeComments.ts `markCarriedSent`). Kept here,
+   with what is held, as the other half of "on their way".
+*/
+const marking = new Map<number, ReadonlySet<number>>();
+const markingListeners = new Set<() => void>();
+const NO_IDS: ReadonlySet<number> = new Set();
+
+export function setMarking(taskId: number, ids: readonly number[], on: boolean): void {
+  const next = new Set(marking.get(taskId) ?? NO_IDS);
+  for (const id of ids) {
+    if (on) next.add(id);
+    else next.delete(id);
+  }
+  if (next.size === 0) marking.delete(taskId);
+  else marking.set(taskId, next);
+  for (const cb of [...markingListeners]) cb();
+}
+
+function subscribeMarking(cb: () => void): () => void {
+  markingListeners.add(cb);
+  return () => {
+    markingListeners.delete(cb);
+  };
+}
+
+/** The task's code comments being marked sent, kept current. */
+export function useMarking(taskId: number | null): ReadonlySet<number> {
+  const read = () => (taskId === null ? NO_IDS : (marking.get(taskId) ?? NO_IDS));
+  return useSyncExternalStore(subscribeMarking, read, read);
+}
+
 export function __resetOutbox(): void {
+  marking.clear();
   outbox = null;
   editing.clear();
   releasing.clear();

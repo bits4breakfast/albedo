@@ -131,7 +131,7 @@ export function ReviewBadge({ task }: { task: Task }): ReactNode {
         onClick={() => requestSubmitReview(task.id)}
         title={
           drafts.length > 0
-            ? `${drafts.length === 1 ? '1 draft' : `${drafts.length} drafts`} for GitHub. Send them as one review, with a summary and a verdict`
+            ? `${drafts.length === 1 ? '1 GitHub Draft' : `${drafts.length} GitHub Drafts`}. Send them as one review, with a summary and a verdict`
             : 'Send a review: a summary and a verdict, with any drafts you write on the code'
         }
       >

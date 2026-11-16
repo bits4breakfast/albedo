@@ -11,6 +11,7 @@
 import { foldPastes } from './pastedText';
 import { isJumpToLatestKey, keyboardIsFree, onScreen } from './jumpKey';
 import { PassageRevealContext, revealPassageIn, type RevealPassage } from './passages';
+import { onRevealPassageRequest } from './composerBridge';
 import { PassageComments } from './PassageComments';
 import { onHeldReleased } from './outbox';
 import {
@@ -458,6 +459,17 @@ export function TranscriptPane({
     setRevealNote(null);
     setReveal(target.messageId);
   }, []);
+  // Jump on a quote in Files ▸ Comments (#404): this task's transcript is
+  // the one that takes the reader there.
+  useEffect(
+    () =>
+      onRevealPassageRequest((id, target) => {
+        if (taskId === null || id !== taskId) return false;
+        revealPassage(target);
+        return true;
+      }),
+    [taskId, revealPassage],
+  );
 
   /*
      Between Send and anything on screen there is a gap: Claude Code writes

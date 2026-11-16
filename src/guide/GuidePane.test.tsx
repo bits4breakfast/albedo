@@ -16,12 +16,8 @@ import type { Guide } from './validate';
 
 let loaded: LoadedBranchDiff;
 vi.mock('./branchDiff', () => ({ loadBranchDiff: async () => loaded }));
-let openComments: Array<{ path: string; lineStart: number; anchorText: string; resolvedAt: number | null }> = [];
-vi.mock('./commentMarks', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./commentMarks')>()),
-  useOpenComments: () => openComments,
-}));
-let waitingCode: Array<{ id: number }> = [];
+// To Send's code comments (#404): what Send N counts and the bubbles show.
+let waitingCode: Array<{ id: number; path?: string; lineStart?: number; anchorText?: string; resolvedAt?: number | null }> = [];
 vi.mock('../ui/transcript/codeComments', () => ({ useWaitingCodeComments: () => waitingCode }));
 vi.mock('../ui/transcript/drafts', () => ({ useComments: () => [] }));
 const sendAsked: number[] = [];
@@ -67,7 +63,6 @@ beforeEach(() => {
   resetGuideStoreForTests();
   resetGuideViewsForTests();
   queuedCi.__resetQueuedCi();
-  openComments = [];
   waitingCode = [];
   sendAsked.length = 0;
   diff = makeDiff();
@@ -266,12 +261,12 @@ describe('GuidePane', () => {
       files: fileBlockIndex(diff),
       fallback: null,
     });
-    // Two on src/b.ts, one on src/c.ts, one resolved (never counted).
-    openComments = [
-      { path: 'src/b.ts', lineStart: 5, anchorText: 'line 5 beta', resolvedAt: null },
-      { path: 'src/b.ts', lineStart: 6, anchorText: 'line 6', resolvedAt: null },
-      { path: 'src/c.ts', lineStart: 5, anchorText: 'line 5 gamma', resolvedAt: null },
-      { path: 'src/a.ts', lineStart: 3, anchorText: 'line 3 alpha', resolvedAt: 7 },
+    // To Send (#404): two on src/b.ts, one on src/c.ts, one resolved (never counted).
+    waitingCode = [
+      { id: 1, path: 'src/b.ts', lineStart: 5, anchorText: 'line 5 beta', resolvedAt: null },
+      { id: 2, path: 'src/b.ts', lineStart: 6, anchorText: 'line 6', resolvedAt: null },
+      { id: 3, path: 'src/c.ts', lineStart: 5, anchorText: 'line 5 gamma', resolvedAt: null },
+      { id: 4, path: 'src/a.ts', lineStart: 3, anchorText: 'line 3 alpha', resolvedAt: 7 },
     ];
     pane();
     await screen.findByRole('heading', { name: 'Foundations' });
@@ -311,12 +306,12 @@ describe('GuidePane', () => {
       expect(screen.queryByRole('button', { name: /^Send \d/ })).toBeNull();
     });
 
-    it('comments waiting: Send N Comments leads the row; a click sends them (and the shell shows the transcript)', async () => {
+    it('To Send: Send N leads the row; a click sends them (and the shell shows the transcript)', async () => {
       save();
       waitingCode = [{ id: 1 }, { id: 2 }];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      const send = screen.getByRole('button', { name: 'Send 2 Comments' });
+      const send = screen.getByRole('button', { name: 'Send 2' });
       expect(send.className).toContain('gd-btn-primary');
       expect(screen.getByRole('button', { name: 'Rewrite' }).className).not.toContain('gd-btn-primary');
       // sendWaitingComments sends, then has the shell show the transcript.
@@ -335,10 +330,10 @@ describe('GuidePane', () => {
       expect(sendAsked).toEqual([]);
       fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
       expect(sendAsked).toEqual([task.id]);
-      expect(screen.getByRole('button', { name: 'Send 1 Comment' }).getAttribute('aria-keyshortcuts')).toBe('Meta+Enter');
+      expect(screen.getByRole('button', { name: 'Send 1' }).getAttribute('aria-keyshortcuts')).toBe('Meta+Shift+S Meta+Enter');
     });
 
-    it('a queued CI failure (#280) counts: Send CI Failure + N Comments, or Send CI Failure alone', async () => {
+    it('a queued CI failure (#280) counts as one, as in the list above the box (#404)', async () => {
       const { observeCiQueue, removeQueuedCi } = queuedCi;
       const prAt = {
         number: 6102, url: '', title: '', state: 'open', headRefName: 'b', baseRefName: 'main', headSha: 'abc', mergedAt: null,
@@ -349,15 +344,33 @@ describe('GuidePane', () => {
       waitingCode = [{ id: 1 }, { id: 2 }];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      expect(screen.getByRole('button', { name: 'Send CI Failure + 2 Comments' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Send 3' })).toBeTruthy();
       cleanup();
       waitingCode = [];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      fireEvent.click(screen.getByRole('button', { name: 'Send CI Failure' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Send 1' }));
       expect(sendAsked).toEqual([task.id]);
       removeQueuedCi(task.id, 'abc');
-      await waitFor(() => expect(screen.queryByRole('button', { name: /^Send CI/ })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^Send \d/ })).toBeNull());
+    });
+
+    it('while a send already carries them, Send N is disabled and ⌘⏎ does nothing (#404)', async () => {
+      const { setToSendFrozen, __resetToSendFrozen } = await import('../ui/transcript/toSend');
+      save();
+      waitingCode = [{ id: 1 }];
+      pane();
+      await screen.findByRole('heading', { name: 'Everything' });
+      const send = screen.getByRole('button', { name: 'Send 1' }) as HTMLButtonElement;
+      act(() => setToSendFrozen(task.id, true));
+      expect(send.disabled).toBe(true);
+      fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
+      expect(sendAsked).toEqual([]);
+      act(() => setToSendFrozen(task.id, false));
+      expect(send.disabled).toBe(false);
+      fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
+      expect(sendAsked).toEqual([task.id]);
+      __resetToSendFrozen();
     });
 
     it('⌘⏎ with nothing waiting does nothing', async () => {
@@ -373,7 +386,7 @@ describe('GuidePane', () => {
       waitingCode = [{ id: 1 }];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      expect(screen.getByRole('button', { name: 'Send 1 Comment' }).className).not.toContain('gd-btn-primary');
+      expect(screen.getByRole('button', { name: 'Send 1' }).className).not.toContain('gd-btn-primary');
       expect(screen.getByRole('button', { name: 'Rewrite' }).className).toContain('gd-btn-primary');
     });
   });

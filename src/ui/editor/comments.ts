@@ -12,6 +12,7 @@
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from '@codemirror/view';
 import { removedLines, type ReviewComment } from '../../db/comments';
+import { holdDraftEdit } from '../../capture/draftRemovals';
 import { changeLabel, indentOf, insertIndent, joinSuggestion, replacesLabel, splitSuggestion, suggestionFrom } from '../../lib/suggestion';
 import { ACTION_LABEL, DESTINATIONS, SUGGEST_HINT, SUGGEST_LABEL, cardState, draftPlaceholder, draftSaveLabel } from './commentLabels';
 
@@ -24,6 +25,8 @@ export interface PlacedComment {
   to: number;
   /** #287: a draft for GitHub on lines outside the PR's diff. */
   outside?: boolean;
+  /** #409: carried by a held message: its chip says Held. */
+  held?: boolean;
   /**
    * #402: a comment on removed lines, which are not in this file. `from`/`to`
    * are then the line its card goes under, and the removal sat just above
@@ -157,6 +160,7 @@ class CommentCard extends WidgetType {
       a.body === b.body &&
       a.github === b.github &&
       this.placed.outside === other.placed.outside &&
+      this.placed.held === other.placed.held &&
       a.lineStart === b.lineStart &&
       a.lineEnd === b.lineEnd &&
       this.placed.removed?.below === other.placed.removed?.below
@@ -166,7 +170,7 @@ class CommentCard extends WidgetType {
     const c = this.placed.comment;
     // The same card as the Diff mode's CommentCardView (#222): a state chip,
     // one main action, and the rest behind ⋯.
-    const state = cardState(c, Date.now(), this.placed.outside === true);
+    const state = cardState(c, Date.now(), this.placed.outside === true, this.placed.held === true);
     const card = el('div', 'ed-cmt');
     card.dataset.state = state.state;
     const removed = this.placed.removed;
@@ -389,12 +393,22 @@ class DraftBox extends WidgetType {
       if (!sug.hidden) fit();
     } });
     setTimeout(() => area.focus(), 0);
+    // An existing comment open here is not the session's to remove (#427);
+    // released when the box goes (an updated box keeps the same comment).
+    if (this.draft.editing) editHolds.set(box, holdDraftEdit(this.draft.editing.id));
     return box;
+  }
+  destroy(dom: HTMLElement): void {
+    editHolds.get(dom)?.();
+    editHolds.delete(dom);
   }
   ignoreEvent(): boolean {
     return true;
   }
 }
+
+/** The edit hold each File mode box took (#427), by its element. */
+const editHolds = new WeakMap<HTMLElement, () => void>();
 
 const commentedLine = Decoration.line({ class: 'ed-cmt-line' });
 

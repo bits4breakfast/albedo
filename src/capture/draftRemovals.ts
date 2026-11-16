@@ -97,10 +97,40 @@ export async function undoDraftRemoval(taskId: number, commentId: number): Promi
   emit(taskId);
 }
 
+// ---------------------------------------------------------------------------
+// Drafts open for editing: the session never removes one (#427)
+// ---------------------------------------------------------------------------
+
+/** Comment id -> how many edit boxes have it open now. */
+const editing = new Map<number, number>();
+
+/**
+ * An edit box opened on this comment (the Diff mode's box, the File mode's,
+ * a reply's): while held, `delete_github_draft` refuses it, so what is being
+ * typed is never lost under the owner. Returns the release; call it once.
+ */
+export function holdDraftEdit(commentId: number): () => void {
+  editing.set(commentId, (editing.get(commentId) ?? 0) + 1);
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    const n = (editing.get(commentId) ?? 1) - 1;
+    if (n <= 0) editing.delete(commentId);
+    else editing.set(commentId, n);
+  };
+}
+
+/** Whether any edit box has this comment open. */
+export function isDraftBeingEdited(commentId: number): boolean {
+  return editing.has(commentId);
+}
+
 /** Test seam: forget everything. */
 export function __resetDraftRemovals(): void {
   byTask.clear();
   listeners.clear();
   undoing.clear();
+  editing.clear();
   shown = null;
 }

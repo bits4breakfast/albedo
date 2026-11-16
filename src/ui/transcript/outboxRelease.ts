@@ -25,7 +25,7 @@ import { onPromptChange, pendingPrompt } from '../../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { onPreviewChange, pendingPreview } from '../../capture/previewGate';
 import { onDeletionChange, pendingDeletion } from '../../capture/githubGate';
-import { markCommentsSent } from '../../db/comments';
+import { markCarriedSent } from './codeComments';
 import { isOffline, onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import type { TaskStatus } from '../../types';
 import { hasLivePty, onPtyPresenceChange, startPty } from '../Terminal';
@@ -73,27 +73,39 @@ export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' |
   return !c.offline && !c.promptOpen && !c.turnRunning;
 }
 
-/** What the Queued band says held messages are waiting for: what actually stops them. */
-export function heldLabel(c: ReleaseConditions): string {
-  if (c.headMaybeSent) return 'Waiting for you to resend or remove the first message';
-  if (c.offline) return 'Waiting for connection';
-  if (c.promptOpen) return 'Waiting for your answer';
-  if (c.turnRunning) return 'Queued';
-  if (!c.live) return 'Waiting for the session to start';
-  if (c.failed) return 'Couldn’t send — retrying';
+/**
+ * The head of the band's outbox group (#409): Held, whatever holds them --
+ * the hint says why -- and Sending once nothing does.
+ */
+export function heldLabel(c: ReleaseConditions): 'Held' | 'Sending' {
+  if (c.headMaybeSent || c.offline || c.promptOpen || c.turnRunning || !c.live || c.failed) return 'Held';
   return 'Sending';
 }
 
 /**
- * The line beside `heldLabel` saying when they will go; null when it has
- * none. `together` is how many go as one message next (#240). When the head
+ * Beside `heldLabel`, why they are held, in plain words (#409): what
+ * actually stops them, first. Null while they are being sent. When the head
  * offers Send All Now, it is that button's tooltip instead (#290).
  */
-export function heldHint(c: ReleaseConditions, together = 1): string | null {
+export function heldHint(c: ReleaseConditions): string | null {
+  if (c.headMaybeSent) return 'until you resend or remove the first one';
+  if (c.offline) return 'until you\u2019re online';
+  if (c.promptOpen) return 'until you answer';
+  if (c.turnRunning) return 'until this turn ends';
+  if (!c.live) return 'until the session starts';
+  if (c.failed) return 'couldn\u2019t send \u2014 retrying';
+  return null;
+}
+
+/**
+ * The head's tooltip: how they go once nothing holds them. `together` is how
+ * many go as one message next (#240). Null when that is nothing to say.
+ */
+export function heldGoes(c: ReleaseConditions, together = 1): string | null {
   if (c.headMaybeSent) return null;
-  if (c.offline) return together > 1 ? 'sent together once it is back' : 'sent in order once it is back';
+  if (c.offline) return together > 1 ? 'Sent together, as one message, once you\u2019re online' : 'Sent in order once you\u2019re online';
   if (!c.promptOpen && c.turnRunning) {
-    return together > 1 ? 'sent together when Claude finishes this turn' : 'sent when Claude finishes this turn';
+    return together > 1 ? 'Sent together, as one message, when Claude finishes this turn' : 'Sent when Claude finishes this turn';
   }
   return null;
 }
@@ -251,9 +263,8 @@ function start(): () => void {
     onTurnChange(tryRelease),
     onHeldReleased((id, held) => {
       if (!held.commentIds || held.commentIds.length === 0) return;
-      markCommentsSent(id, held.commentIds).catch((err: unknown) =>
-        console.warn('[outbox] the message went out, but its comments could not be marked as sent', err),
-      );
+      // On their way until the sent mark is read back: never To Send between (#404).
+      markCarriedSent(id, held.commentIds, '[outbox] the message went out, but its comments could not be marked as sent');
     }),
   ];
   watch();

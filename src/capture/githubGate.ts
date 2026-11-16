@@ -49,7 +49,7 @@ import type { Task } from '../types';
 import { commentLocation, deleteComment, listGithubDrafts, sideOf, type ReviewComment } from '../db/comments';
 import { parsePrUrl, type PrRef } from '../git/reviewCheckout';
 import { gh, ghMessage, loadViewerLogin } from '../gh/gh';
-import { noteDraftRemoved } from './draftRemovals';
+import { isDraftBeingEdited, noteDraftRemoved } from './draftRemovals';
 import { ALBEDO_DIR } from './hookEvents';
 import { onGithubLine, type GithubLine } from './inbox';
 import { MAX_ANSWER_CHARS, previewAnswerFileName } from './previewGate';
@@ -346,6 +346,10 @@ async function removeDraft(line: DeleteLine): Promise<Answer> {
     return refuse(
       `No GitHub Draft ${line.commentId} waits on this task: it was submitted or removed already, or is another task's. Call list_github_drafts for the current ones.`,
     );
+  }
+  // Open in an edit box: what the owner is typing must not vanish under them.
+  if (isDraftBeingEdited(row.id)) {
+    return refuse(`The owner is editing GitHub Draft ${row.id} right now; try again later. Nothing was removed.`);
   }
   await deleteComment(line.taskId, row.id);
   noteDraftRemoved({ row, reason: line.reason, at: Date.now() });

@@ -191,6 +191,33 @@ describe('delete_github_draft', () => {
   });
 });
 
+describe('delete_github_draft on a draft open for editing', () => {
+  it('refuses while an edit box has it open, and removes it once the box closes', async () => {
+    const id = await draft(reviewTask);
+    const release = removals.holdDraftEdit(id);
+    call(reviewTask, 'e-1', 'delete_github_draft', { id });
+    await read();
+    expect(answer(reviewTask, 'e-1')).toEqual({ text: expect.stringContaining('The owner is editing'), isError: true });
+    expect((await listGithubDrafts(reviewTask)).map((d) => d.id)).toEqual([id]);
+    expect(removals.draftRemovalsOf(reviewTask)).toEqual([]);
+    release();
+    release(); // a second release changes nothing
+    call(reviewTask, 'e-2', 'delete_github_draft', { id });
+    await read();
+    expect(answer(reviewTask, 'e-2')?.isError).toBeUndefined();
+    expect(await listGithubDrafts(reviewTask)).toEqual([]);
+  });
+
+  it('counts two boxes on one draft: it stays held until both close', () => {
+    const a = removals.holdDraftEdit(5);
+    const b = removals.holdDraftEdit(5);
+    a();
+    expect(removals.isDraftBeingEdited(5)).toBe(true);
+    b();
+    expect(removals.isDraftBeingEdited(5)).toBe(false);
+  });
+});
+
 describe('list_posted_comments', () => {
   it("lists only the signed-in user's comments on this task's PR", async () => {
     ghAnswers['repos/acme-labs/widget/pulls/412/comments?per_page=100'] = {

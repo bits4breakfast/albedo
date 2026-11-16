@@ -547,7 +547,8 @@ button.tf-section-head:hover .disc { color: var(--text); }
   white-space: nowrap;
   color: var(--text);
 }
-/* Grouped by state (#222): Waiting, ↗ Sent, and Resolved folded away. The
+/* Grouped by state (#222, #409): Held, To Send, ↗ Sent, Resolved folded
+   away, GitHub Draft, and Posted folded away. The
    labels are text in --muted, cleared on --panel and --panel-hover
    (commentsContrast.test.ts). No ✓ here: in this list ✓ is Resolve only. */
 .tf-comments-sub {
@@ -566,7 +567,7 @@ button.tf-section-head:hover .disc { color: var(--text); }
 /* A resolved comment and its reason, in the tier below an open one. */
 .tf-comment-resolved .tf-comment-body,
 .tf-comment-why { color: var(--muted); }
-/* Send, at the Waiting label's end (#258). */
+/* Send N, at the To Send label's end (#258, #404); Submit Review… at GitHub Draft's. */
 .tf-comments-send { margin-left: auto; }
 .tf-comment-reopen { flex: none; align-self: center; margin-right: 6px; }
 .tf-comment-resolve {
@@ -579,17 +580,37 @@ button.tf-section-head:hover .disc { color: var(--text); }
 .tf-comment-resolve:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* A PR's failing checks queued for Claude (#280): its label in the failing
    tone of the task list's "✗ Checks", --danger, on --panel (6.98 | 8.37
-   light | dark) -- not a link, so no hover ground; its ✕ (Remove, not
-   Resolve: no --add) on --panel-hover, --text (ciQueueContrast.test.ts). */
+   light | dark) -- not a link, so no hover ground; its Remove is To Send's
+   (.tf-comment-act below, #404; ciQueueContrast.test.ts). */
 .tf-comment-static { cursor: default; }
 .tf-comment-static:hover { background: transparent; }
 .tf-comment-ci-label { flex: none; color: var(--danger); font-weight: 600; white-space: nowrap; }
-.tf-comment-drop:hover { color: var(--text); background: var(--panel-hover); }
-/* A GitHub Draft the session removed (#427): its row on --panel-chrome, the
-   words in --muted, its reason in a --border-edged chip, and Undo the same
-   .tf-btn as Reopen. --text and --muted on --panel-chrome are measured in
-   draftToolsContrast.test.ts. */
-.tf-comment-removed { background: var(--panel-chrome); }
+/* To Send's Edit and Remove (#404), as the list above the message box has
+   them: quiet text at the row's end, --muted on the section's --subcard and
+   --text on --panel-hover when hovered; disabled while a send carries them,
+   --faint, a lower tier, never `opacity` (toSendContrast.test.ts). */
+.tf-comment-acts { flex: none; display: flex; align-items: center; gap: 2px; padding-right: 4px; }
+.tf-comment-act {
+  padding: 1px 6px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.tf-comment-act:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
+.tf-comment-act:disabled { color: var(--faint); cursor: default; }
+.tf-comment-act:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* A quote's place (#404): it names where the comment is, at the place's tier. */
+.tf-comment-quote { flex: none; font-family: inherit; }
+/* One open for editing: its place, then the list's own field. */
+.tf-comment-edit { padding: 4px 8px 6px 11px; border-bottom: 1px solid var(--border); }
+.tf-comment-edit > .tf-comment-where { margin-bottom: 4px; }
+/* Send N's key, in the button's own colour. */
+.tf-comments-send-key { margin-left: 4px; }
+/* A GitHub Draft the session removed (#427): on the section's own --subcard,
+   no ground of its own; the words in --muted, its reason in a --border-mid
+   edged chip, and Undo the same .tf-btn as Reopen. --text and --muted on
+   --subcard are measured in draftToolsContrast.test.ts. */
 .tf-comment-removed .tf-comment-body { color: var(--muted); }
 .tf-comment-reason {
   margin-left: 6px;

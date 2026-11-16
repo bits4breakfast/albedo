@@ -126,7 +126,7 @@ describe('Stopped on an Error (#338)', () => {
     const { rowOf } = renderList(tasks());
     const button = within(rowOf(11)).getByRole('button', { name: 'Try Again' }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    expect(button.title).toMatch(/waiting to send/);
+    expect(button.title).toMatch(/messages are held/);
     fireEvent.click(button);
     expect(sent).toEqual([]);
   });

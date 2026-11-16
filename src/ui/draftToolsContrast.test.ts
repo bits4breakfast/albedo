@@ -3,7 +3,7 @@
  * on, in every theme: the card asking to delete a posted comment (its quote
  * on --panel-inset, its delete button on --danger-soft, its notes and
  * disabled buttons on --prompt-bg), and a removed draft's line in Files ▸
- * Comments (--panel-chrome) and card in the diff (--panel). The CSS is read
+ * Comments (the section's --subcard) and card in the diff (--panel). The CSS is read
  * too, so moving a rule onto another ground or dimming text with opacity
  * fails here.
  */
@@ -46,7 +46,7 @@ const TEXT: Record<string, string[]> = {
   '--panel-inset': ['--text-strong', '--muted'],
   '--danger-soft': ['--danger', '--on-del-soft'],
   '--prompt-bg': ['--muted', '--faint', '--warn'],
-  '--panel-chrome': ['--text', '--muted'],
+  '--subcard': ['--text', '--muted'],
   '--panel': ['--muted', '--text'],
 };
 
@@ -70,7 +70,8 @@ describe('the GitHub tools’ surfaces (#427)', () => {
     expect(card).toMatch(/\.gd-text \{[^}]*color: var\(--text-strong\)/);
     expect(card).toMatch(/\.gd-where \{[^}]*color: var\(--muted\)/);
     expect(card).toMatch(/\.btn\.gd-delete:not\(\[disabled\]\) \{[^}]*background: var\(--danger-soft\);[^}]*color: var\(--danger\)/);
-    expect(touched).toMatch(/\.tf-comment-removed \{ background: var\(--panel-chrome\); \}/);
+    expect(touched).toMatch(/\.tf-section \{[^}]*background: var\(--subcard\)/);
+    expect(touched).not.toMatch(/\.tf-comment-removed \{[^}]*background/);
     expect(touched).toMatch(/\.tf-comment-removed \.tf-comment-body \{ color: var\(--muted\); \}/);
     expect(comments).toMatch(/\.ed-cmt-removed-text \{ color: var\(--muted\);/);
     // The rules only: the comment above them names what they avoid.

@@ -11,7 +11,10 @@ import type { Task } from '../types';
 
 const harness = vi.hoisted(() => ({ db: null as unknown }));
 const sendAsked = vi.hoisted(() => [] as number[]);
-vi.mock('./transcript/composerBridge', () => ({ sendWaitingComments: (id: number) => (sendAsked.push(id), true) }));
+vi.mock('./transcript/composerBridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./transcript/composerBridge')>()),
+  sendWaitingComments: (id: number) => (sendAsked.push(id), true),
+}));
 vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => harness.db } }));
 
 const { createTask, resetDb } = await import('../db/index');
@@ -64,7 +67,7 @@ describe('the Comments list', () => {
     expect(row.textContent).not.toContain('```');
   });
 
-  it('a queued CI failure (#280) waits first, counts in Waiting, and ✕ drops it', async () => {
+  it('a queued CI failure (#280) is first in To Send, counts there, and Remove drops it', async () => {
     const { __resetQueuedCi, observeCiQueue, queuedCiOf } = await import('./transcript/ciFailure');
     __resetQueuedCi();
     const prAt = {
@@ -78,7 +81,7 @@ describe('the Comments list', () => {
     observeCiQueue(task.id, prAt);
     await add('one', 'first, unsent', 1);
     render(list());
-    const waiting = await screen.findByRole('group', { name: 'Waiting, 2' });
+    const waiting = await screen.findByRole('group', { name: 'To Send, 2' });
     const rows = waiting.querySelectorAll('.tf-comment');
     expect(rows[0]?.classList.contains('tf-comment-ci')).toBe(true);
     expect(rows[0]?.querySelector('.tf-comment-ci-label')?.textContent).toBe('✗ CI failed · 2 checks');
@@ -87,7 +90,7 @@ describe('the Comments list', () => {
     expect(within(waiting).getByText('first, unsent')).toBeTruthy();
     fireEvent.click(within(waiting).getByRole('button', { name: 'Remove the CI failure' }));
     expect(queuedCiOf(task.id)).toBeNull();
-    await screen.findByRole('group', { name: 'Waiting, 1' });
+    await screen.findByRole('group', { name: 'To Send, 1' });
   });
 
   it('a queued CI failure alone still shows the list, with Send', async () => {
@@ -100,48 +103,48 @@ describe('the Comments list', () => {
     } as unknown as import('../gh/prStatus').PrStatus;
     observeCiQueue(task.id, prAt);
     render(list());
-    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
-    fireEvent.click(within(waiting).getByRole('button', { name: 'Send' }));
+    const waiting = await screen.findByRole('group', { name: 'To Send, 1' });
+    fireEvent.click(within(waiting).getByRole('button', { name: /^Send \d/ }));
     expect(sendAsked).toEqual([task.id]);
   });
 
-  it('groups Waiting and ↗ Sent; only a sent one has the ✓, which is Resolve', async () => {
+  it('groups To Send and ↗ Sent; only a sent one has the ✓, which is Resolve', async () => {
     await add('one', 'first, unsent', 1);
     const sent = await add('two', 'second, sent');
     await markCommentsSent(task.id, [sent]);
     render(list());
-    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
+    const waiting = await screen.findByRole('group', { name: 'To Send, 1' });
     expect(within(waiting).getByText('first, unsent')).toBeTruthy();
     expect(within(waiting).queryByRole('button', { name: /Resolve/ })).toBeNull();
     const sentGroup = screen.getByRole('group', { name: 'Sent, 1' });
     expect(within(sentGroup).getByRole('button', { name: 'Resolve the comment on src/a.ts:2' }).textContent).toBe('✓');
   });
 
-  it('Waiting has Send (#258): it sends the waiting comments, as ⇧⌘S does; Sent has none', async () => {
+  it('To Send has Send N (#258, #404): it sends them, as ⇧⌘S does; Sent has none', async () => {
     sendAsked.length = 0;
     await add('one', 'first, unsent', 1);
     const sent = await add('two', 'second, sent');
     await markCommentsSent(task.id, [sent]);
     render(list());
-    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
-    const send = within(waiting).getByRole('button', { name: 'Send' });
+    const waiting = await screen.findByRole('group', { name: 'To Send, 1' });
+    const send = within(waiting).getByRole('button', { name: /^Send \d/ });
     expect(send.getAttribute('aria-keyshortcuts')).toBe('Meta+Shift+S');
     fireEvent.click(send);
     expect(sendAsked).toEqual([task.id]);
-    expect(within(screen.getByRole('group', { name: 'Sent, 1' })).queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Sent, 1' })).queryByRole('button', { name: /^Send \d/ })).toBeNull();
   });
 
   it('the place keeps its line: the name and :line are separate, so only the name ellipsizes (#258)', async () => {
     await add('two', 'a body', 2);
     render(list());
-    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
+    const waiting = await screen.findByRole('group', { name: 'To Send, 1' });
     const where = waiting.querySelector('.tf-comment-where')!;
     expect(where.querySelector('.tf-name')?.textContent).toBe('a.ts');
     expect(where.querySelector('.tf-comment-line')?.textContent).toBe(':2');
     expect(where.textContent).toBe('a.ts:2');
   });
 
-  it('a sent comment resolves itself once its lines change, says why, and reopens as waiting', async () => {
+  it('a sent comment resolves itself once its lines change, says why, and reopens as To Send', async () => {
     const id = await add('two', 'rename this');
     await markCommentsSent(task.id, [id]);
     const view = render(list());
@@ -154,7 +157,7 @@ describe('the Comments list', () => {
     fireEvent.click(within(resolved).getByRole('button', { name: /Resolved · 1/ }));
     await waitFor(() => expect(within(resolved).getByText(/its lines changed after it was sent/)).toBeTruthy());
     fireEvent.click(within(resolved).getByRole('button', { name: 'Reopen the comment on src/a.ts:2' }));
-    expect(await screen.findByRole('group', { name: 'Waiting, 1' })).toBeTruthy();
+    expect(await screen.findByRole('group', { name: 'To Send, 1' })).toBeTruthy();
     expect((await listComments(task.id))[0]).toMatchObject({ id, sentAt: null, resolvedAt: null });
   });
 
@@ -162,7 +165,7 @@ describe('the Comments list', () => {
     await add('two', 'not sent yet');
     files.set('src/a.ts', 'one\nTWO\n');
     render(list());
-    await screen.findByRole('group', { name: 'Waiting, 1' });
+    await screen.findByRole('group', { name: 'To Send, 1' });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
     });

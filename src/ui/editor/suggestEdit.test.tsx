@@ -34,6 +34,7 @@ const { CommentCardView, CommentDraftView } = await import('./CommentViews');
 const { commentsExtension, setDraft, setPlacedComments } = await import('./comments');
 const { useDiffComments } = await import('./diffComments');
 const { WaitingComments } = await import('../transcript/WaitingComments');
+const { toSendOf } = await import('../transcript/toSend');
 
 beforeEach(() => {
   const data = new Map<string, string>();
@@ -472,12 +473,12 @@ describe('the File mode widget', () => {
   });
 });
 
-describe('the waiting list above the message box', () => {
+describe('the To Send list above the message box', () => {
   it('shows what the suggestion replaces and the words, and Edit changes the words only', async () => {
     const c = { ...base, body: joinSuggestion(['  return sum(range);'], 'Use the helper.') };
-    render(<WaitingComments taskId={1} frozen={false} code={[c]} />);
-    fireEvent.click(screen.getByRole('button', { name: /1 Comment/ }));
-    const list = screen.getByRole('group', { name: 'Waiting to be sent' });
+    render(<WaitingComments taskId={1} frozen={false} list={toSendOf(null, [c], [])} />);
+    fireEvent.click(screen.getByRole('button', { name: /To Send · 1/ }));
+    const list = screen.getByRole('group', { name: 'To Send, 1' });
     expect(within(list).getByText(/Suggested change · replaces 3 lines with 1/)).toBeTruthy();
     expect(list.textContent).not.toContain('```');
     fireEvent.click(within(list).getByRole('button', { name: 'Edit' }));
@@ -486,5 +487,22 @@ describe('the waiting list above the message box', () => {
     fireEvent.change(box, { target: { value: 'Use sum().' } });
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(editComment).toHaveBeenCalledWith(1, 1, joinSuggestion(['  return sum(range);'], 'Use sum().')));
+  });
+
+  it('while a send carries the list, an open edit cannot be saved (#404)', async () => {
+    const c = { ...base, body: 'Use the helper.' };
+    const { rerender } = render(<WaitingComments taskId={1} frozen={false} list={toSendOf(null, [c], [])} />);
+    fireEvent.click(screen.getByRole('button', { name: /To Send · 1/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const box = screen.getByRole('textbox', { name: 'Edit comment' });
+    fireEvent.change(box, { target: { value: 'Too late.' } });
+    vi.mocked(editComment).mockClear();
+    rerender(<WaitingComments taskId={1} frozen list={toSendOf(null, [c], [])} />);
+    expect((screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect(editComment).not.toHaveBeenCalled();
+    rerender(<WaitingComments taskId={1} frozen={false} list={toSendOf(null, [c], [])} />);
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Edit comment' }), { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(editComment).toHaveBeenCalledWith(1, 1, 'Too late.'));
   });
 });

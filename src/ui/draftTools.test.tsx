@@ -106,7 +106,32 @@ describe('a draft the session removed, in Files ▸ Comments', () => {
   });
 });
 
+describe('To Send', () => {
+  it('never counts or shows a GitHub Draft or a removal line', async () => {
+    await addComment({ taskId: task.id, path: 'src/a.ts', lineStart: 1, lineEnd: 1, anchorText: 'one', body: 'Kept draft', github: 'draft' });
+    await sessionRemoves();
+    render(list());
+    await screen.findByText(/Removed by the session/);
+    const group = screen.getByRole('group', { name: 'GitHub Draft, 1' });
+    expect(within(group).getByText(/Removed by the session/)).toBeTruthy();
+    expect(within(group).getByText('Kept draft')).toBeTruthy();
+    expect(screen.queryByRole('group', { name: /^To Send/ })).toBeNull();
+  });
+});
+
 describe('a draft the session removed, in the diff', () => {
+  it('an edit box open on a draft holds it against the session', async () => {
+    const id = await addComment({ taskId: task.id, path: 'src/export.ts', lineStart: 2, lineEnd: 2, anchorText: 'two', body: 'Mine', github: 'draft' });
+    const review = { id: task.id, reviewUrl: task.reviewUrl, worktreePath: '/wt/a', baseBranch: 'main', kind: 'work' as const, branch: 'review/34' };
+    const { result, unmount } = renderHook(() => useDiffComments(task.id, 'src/export.ts', 'one\ntwo\nthree\n', false, true, review));
+    await waitFor(() => expect(result.current.annotations!.after(2)).not.toBeNull());
+    render(<>{result.current.annotations!.after(2)}</>);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(removals.isDraftBeingEdited(id)).toBe(true));
+    unmount();
+    expect(removals.isDraftBeingEdited(id)).toBe(false);
+  });
+
   it('shows a card at its line, with Undo', async () => {
     const row = await sessionRemoves();
     const review = { id: task.id, reviewUrl: task.reviewUrl, worktreePath: '/wt/a', baseBranch: 'main', kind: 'work' as const, branch: 'review/34' };

@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { removedLines, sideOf, type ReviewComment } from '../../db/comments';
 import type { ReviewThread } from '../../gh/reviewThreads';
 import { openExternal } from '../../lib/openUrl';
+import { holdDraftEdit } from '../../capture/draftRemovals';
 import {
   changeLabel,
   commentHeadline,
@@ -49,6 +50,7 @@ export function CommentCardView({
   onResolve,
   onDelete,
   outside = false,
+  held = false,
 }: {
   comment: ReviewComment;
   onEdit: () => void;
@@ -56,11 +58,13 @@ export function CommentCardView({
   onDelete: () => void;
   /** #287: a draft for GitHub on lines outside the PR's diff. */
   outside?: boolean;
+  /** #409: carried by a held message. */
+  held?: boolean;
 }): ReactNode {
   // One main action on the row, the rest under ⋯ (#222); the File mode's
   // widget draws the same from the same `cardState`.
   const [more, setMore] = useState(false);
-  const card = cardState(comment, Date.now(), outside);
+  const card = cardState(comment, Date.now(), outside, held);
   const run = { edit: onEdit, resolve: onResolve, delete: onDelete };
   const action = (a: 'edit' | 'resolve' | 'delete', primary: boolean) => (
     <button
@@ -535,6 +539,9 @@ export function ThreadCardView({
 }): ReactNode {
   const [open, setOpen] = useState(!thread.isResolved);
   const [writing, setWriting] = useState<ReviewComment | 'new' | null>(null);
+  // A reply open for editing is not the session's to remove (#427).
+  const editingReply = writing !== null && writing !== 'new' ? writing.id : null;
+  useEffect(() => (editingReply === null ? undefined : holdDraftEdit(editingReply)), [editingReply]);
   const [moreOf, setMoreOf] = useState<number | null>(null);
   const first = thread.comments[0];
   // Its state, when it has one, leads the GitHub button's words.

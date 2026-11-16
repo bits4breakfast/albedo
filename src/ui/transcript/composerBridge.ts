@@ -8,6 +8,8 @@
  * applies unchanged, and the person can read and edit the text first.
  */
 
+import type { RevealPassage } from './passages';
+
 export interface ComposerInsert {
   taskId: number;
   text: string;
@@ -69,20 +71,30 @@ export function onAttachRequest(cb: AttachListener): () => void {
  * Review Guide's Send Comments. The composer sends them as Send with an empty
  * box would, through the same gates, and leaves its draft alone.
  */
-type SendCommentsListener = (taskId: number) => boolean | void;
+/**
+ * True: taken. 'busy': the composer's own send is under way and already
+ * carries To Send (#404), so it refused and says so where it is.
+ */
+type SendCommentsListener = (taskId: number) => boolean | 'busy' | void;
 const sendCommentsListeners = new Set<SendCommentsListener>();
 
-/** False when no composer for that task took it: none mounted, or nothing waiting. */
-export function requestSendComments(taskId: number): boolean {
-  let taken = false;
+function askSendComments(taskId: number): 'taken' | 'busy' | 'none' {
+  let answer: 'taken' | 'busy' | 'none' = 'none';
   for (const cb of [...sendCommentsListeners]) {
     try {
-      if (cb(taskId) === true) taken = true;
+      const r = cb(taskId);
+      if (r === true) answer = 'taken';
+      else if (r === 'busy' && answer === 'none') answer = 'busy';
     } catch {
       /* as above */
     }
   }
-  return taken;
+  return answer;
+}
+
+/** False when no composer for that task took it: none mounted, nothing waiting, or a send already under way. */
+export function requestSendComments(taskId: number): boolean {
+  return askSendComments(taskId) === 'taken';
 }
 
 export function onSendCommentsRequest(cb: SendCommentsListener): () => void {
@@ -104,12 +116,54 @@ export function onShowTranscriptRequest(cb: ShowTranscriptListener): () => void 
 }
 
 /**
- * Send the task's waiting comments, then show its transcript (#254, #258):
- * the Review Guide's and the Files pane's Send, and ⇧⌘S. False -- and the
- * tab stays -- when nothing was waiting or no composer took it.
+ * Send the task's To Send, then show its transcript (#254, #258): the Review
+ * Guide's and the Files pane's Send N, and ⇧⌘S. False -- and the tab stays --
+ * when nothing was waiting or no composer took it. False too while a send
+ * already carries them (#404), but the transcript shows, where the message
+ * box says so.
  */
 export function sendWaitingComments(taskId: number): boolean {
-  if (!requestSendComments(taskId)) return false;
+  const answer = askSendComments(taskId);
+  if (answer === 'none') return false;
+  // Refused while a send carries them (#404): the transcript still shows,
+  // where the message box says why. Nothing was sent.
+  for (const cb of [...showTranscriptListeners]) {
+    try {
+      cb(taskId);
+    } catch {
+      /* as above */
+    }
+  }
+  return answer === 'taken';
+}
+
+/**
+ * "Show this passage", asked from outside the transcript (#404): Jump on a
+ * quote in Files ▸ Comments. The shell shows the transcript; the task's
+ * transcript pane, which stays mounted behind the tabs, takes the reader to
+ * the passage as its own Jump does.
+ */
+type RevealListener = (taskId: number, target: Parameters<RevealPassage>[0]) => boolean | void;
+const revealListeners = new Set<RevealListener>();
+
+export function onRevealPassageRequest(cb: RevealListener): () => void {
+  revealListeners.add(cb);
+  return () => {
+    revealListeners.delete(cb);
+  };
+}
+
+/** Show the task's transcript at a passage. False when no transcript of that task took it. */
+export function jumpToPassage(taskId: number, target: Parameters<RevealPassage>[0]): boolean {
+  let taken = false;
+  for (const cb of [...revealListeners]) {
+    try {
+      if (cb(taskId, target) === true) taken = true;
+    } catch {
+      /* as above */
+    }
+  }
+  if (!taken) return false;
   for (const cb of [...showTranscriptListeners]) {
     try {
       cb(taskId);

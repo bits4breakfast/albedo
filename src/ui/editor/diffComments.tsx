@@ -33,8 +33,9 @@ import {
   type NewComment,
   type ReviewComment,
 } from '../../db/comments';
+import { useCarriedCodeIds } from '../transcript/codeComments';
 import { CommentCardView, CommentDraftView, CommentsBar, RemovedDraftCardView, ThreadCardView, ThreadsAside } from './CommentViews';
-import { undoDraftRemoval, type DraftRemoval } from '../../capture/draftRemovals';
+import { holdDraftEdit, undoDraftRemoval, type DraftRemoval } from '../../capture/draftRemovals';
 import { inDiff } from '../../gh/reviewSubmit';
 import { placeThread, useReviewThreads, type ReviewThread } from '../../gh/reviewThreads';
 import { reviewPr, useDraftRemovals, useGithubDrafts, usePrRanges, type ReviewTask } from '../reviewDrafts';
@@ -102,10 +103,15 @@ export function useDiffComments(
   // Drafts the session removed (#427): a card where each was, with Undo.
   const removals = useDraftRemovals(isReview ? review : null);
   const [comments, setComments] = useState<ReviewComment[]>([]);
+  // Carried by a held message (#409): their cards say Held.
+  const carried = useCarriedCodeIds(taskId);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [picking, setPicking] = useState<{ from: number; to: number } | null>(null);
   const [pickingRemoved, setPickingRemoved] = useState<{ from: number; to: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // A comment open in this diff's box is not the session's to remove (#427).
+  const editingId = draft?.editing?.id ?? null;
+  useEffect(() => (editingId === null ? undefined : holdDraftEdit(editingId)), [editingId]);
   /** Comments that resolved themselves while this diff was open (#222). */
   const [traces, setTraces] = useState<ReviewComment[]>([]);
   useEffect(() => setTraces([]), [taskId, path]);
@@ -425,6 +431,7 @@ export function useDiffComments(
             <CommentCardView
               key={p.comment.id}
               outside={p.comment.github === 'draft' && ranges !== null && !inDiff(ranges, path, p.from, p.to)}
+              held={carried.has(p.comment.id)}
               comment={{ ...p.comment, lineStart: p.from, lineEnd: p.to }}
               onEdit={() => setDraft({ from: p.from, to: p.to, editing: p.comment })}
               onResolve={() => report(resolveComment(taskId, p.comment.id), 'resolve the comment')}
@@ -452,6 +459,7 @@ export function useDiffComments(
             <CommentCardView
               key={p.comment.id}
               outside={p.comment.github === 'draft' && ranges !== null && !inDiff(ranges, path, p.from, p.to, 'old')}
+              held={carried.has(p.comment.id)}
               comment={{ ...p.comment, lineStart: p.from, lineEnd: p.to }}
               onEdit={() => setDraft({ from: p.from, to: p.to, row: p.row, side: 'old', editing: p.comment })}
               onResolve={() => report(resolveComment(taskId, p.comment.id), 'resolve the comment')}
