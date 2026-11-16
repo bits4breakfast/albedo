@@ -25,6 +25,7 @@ import {
 } from '../db/comments';
 import { useReadFile } from './editor/openFile';
 import { Disclosure } from './Disclosure';
+import { commentHeadline } from '../lib/suggestion';
 import { sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
 import { useGithubDrafts } from './reviewDrafts';
@@ -131,7 +132,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
             :{c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
           </span>
         </span>
-        <span className="tf-comment-body">{c.body.split('\n')[0]}</span>
+        <span className="tf-comment-body">{commentHeadline(c.body)}</span>
       </button>
       {end}
     </div>
@@ -267,7 +268,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                     {c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
                   </span>
                   <span className="tf-comment-body">
-                    {c.body.split('\n')[0]}
+                    {commentHeadline(c.body)}
                     <span className="tf-comment-why">
                       {' '}
                       ·{' '}

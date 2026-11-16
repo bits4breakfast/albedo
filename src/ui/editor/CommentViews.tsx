@@ -10,7 +10,18 @@ import type { ReactNode } from 'react';
 import type { ReviewComment } from '../../db/comments';
 import type { ReviewThread } from '../../gh/reviewThreads';
 import { openExternal } from '../../lib/openUrl';
-import { ACTION_LABEL, DESTINATIONS, ago, cardState, draftPlaceholder, draftSaveLabel, resolvedTrace } from './commentLabels';
+import { commentHeadline, indentOf, insertIndent, joinSuggestion, linesOf, replacesLabel, splitSuggestion } from '../../lib/suggestion';
+import {
+  ACTION_LABEL,
+  DESTINATIONS,
+  SUGGEST_HINT,
+  SUGGEST_LABEL,
+  ago,
+  cardState,
+  draftPlaceholder,
+  draftSaveLabel,
+  resolvedTrace,
+} from './commentLabels';
 
 function where(from: number, to: number): string {
   return from === to ? `Line ${from}` : `Lines ${from}–${to}`;
@@ -67,8 +78,42 @@ export function CommentCardView({
           </button>
         </span>
       </div>
-      <div className="ed-cmt-body">{comment.body}</div>
+      <CommentContent comment={comment} />
     </div>
+  );
+}
+
+/**
+ * A suggested edit as a small diff (#411): the lines commented on, then the
+ * lines suggested for them. The lines are the ones the comment was written
+ * on; a card is drawn only where they are still in the file.
+ */
+function SuggestionDiff({ before, after }: { before: readonly string[]; after: readonly string[] }): ReactNode {
+  return (
+    <div className="ed-cmt-sug-diff" role="group" aria-label={`Suggested change: ${replacesLabel(before.length, after.length)}`}>
+      {before.map((l, i) => (
+        <div key={`d${i}`} className="ed-cmt-sug-line" data-kind="del">
+          {l}
+        </div>
+      ))}
+      {after.map((l, i) => (
+        <div key={`a${i}`} className="ed-cmt-sug-line" data-kind="add">
+          {l}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** What a card says: its suggestion, if it carries one, then its text. */
+function CommentContent({ comment }: { comment: Pick<ReviewComment, 'body' | 'anchorText'> }): ReactNode {
+  const { suggestion, text } = splitSuggestion(comment.body);
+  if (suggestion === null) return <div className="ed-cmt-body">{comment.body}</div>;
+  return (
+    <>
+      <SuggestionDiff before={comment.anchorText.split('\n')} after={suggestion} />
+      {text !== '' ? <div className="ed-cmt-body">{text}</div> : null}
+    </>
   );
 }
 
@@ -105,7 +150,7 @@ export function CommentsBar({
             ✓
           </span>
           <span className="ed-cmt-trace-text">
-            Resolved: {resolvedTrace(c)} <span className="ed-cmt-trace-body">· “{c.body.split('\n')[0]}”</span>
+            Resolved: {resolvedTrace(c)} <span className="ed-cmt-trace-body">· “{commentHeadline(c.body)}”</span>
           </span>
           <button type="button" className="ed-cmt-btn" onClick={() => onReopen(c)}>
             Reopen
@@ -120,7 +165,9 @@ export function CommentsBar({
           {outdated.map((c) => (
             <span key={`o${c.id}`} className="ed-cmt-outdated-item" title={c.anchorText}>
               <span className="ed-cmt-outdated-body">
-                {where(c.lineStart, c.lineEnd)}: {c.body.split('\n')[0]}
+                {where(c.lineStart, c.lineEnd)}: {commentHeadline(c.body)}
+                {/* #411: what it suggests replaces lines that are no longer there. */}
+                {splitSuggestion(c.body).suggestion !== null ? ' · suggested change to older lines' : ''}
               </span>
               <button type="button" className="ed-cmt-btn" onClick={() => onResolve(c)}>
                 ✓ Resolve
@@ -167,6 +214,97 @@ export function DestinationSwitch({
   );
 }
 
+/**
+ * Suggest Change (#411): the toggle at the head of the box, and, while it is
+ * on, the commented lines as code to edit into what you want. Drawn the same
+ * by the File mode's widget (comments.ts).
+ */
+function SuggestionEditor({
+  lines,
+  code,
+  onCode,
+  onToggle,
+  onSave,
+  onCancel,
+}: {
+  /** The commented lines as they are now. */
+  lines: readonly string[];
+  /** The box's code; null while Suggest Change is off. */
+  code: string | null;
+  onCode: (code: string) => void;
+  onToggle: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+}): ReactNode {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const on = code !== null;
+  // Turned on by a click: straight into the code. Not when the box opens on
+  // a comment that already has one: its text keeps the focus then.
+  const clicked = useRef(false);
+  useEffect(() => {
+    if (on && clicked.current) ref.current?.focus();
+    clicked.current = false;
+  }, [on]);
+  return (
+    <>
+      <div className="ed-cmt-head">
+        <button
+          type="button"
+          className="ed-cmt-btn ed-cmt-suggest"
+          aria-pressed={on}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            clicked.current = true;
+            onToggle();
+          }}
+        >
+          {SUGGEST_LABEL}
+          {on ? <span aria-hidden="true"> ✓</span> : null}
+        </button>
+        {on ? <span className="ed-cmt-where">{SUGGEST_HINT}</span> : null}
+      </div>
+      {on ? (
+        <div className="ed-cmt-sug">
+          <div className="ed-cmt-sug-head">
+            <span>Suggested</span>
+            <span>{replacesLabel(lines.length, linesOf(code).length)}</span>
+          </div>
+          <textarea
+            ref={ref}
+            className="ed-cmt-code"
+            aria-label="Suggested code"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            wrap="off"
+            rows={Math.max(1, Math.min(12, linesOf(code).length))}
+            value={code}
+            onChange={(e) => onCode(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                onSave();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                onCancel();
+              } else {
+                if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                  // Indent, as in the file, rather than leave the box.
+                  e.preventDefault();
+                  insertIndent(e.currentTarget, indentOf(lines));
+                  onCode(e.currentTarget.value);
+                }
+                e.stopPropagation();
+              }
+            }}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function CommentDraftView({
   from,
   to,
@@ -175,13 +313,15 @@ export function CommentDraftView({
   onSave,
   onCancel,
   destination,
+  lines = null,
 }: {
   from: number;
   to: number;
+  /** The stored body when editing: its suggestion, if any, opens in the code box. */
   initial: string;
   editing: boolean;
-  /** Resolves once stored; the box stays (with its text) if it rejects. */
-  onSave: (text: string, github: 'draft' | null) => void;
+  /** Resolves once stored; the box stays (with its text) if it rejects. Gets the body to store. */
+  onSave: (body: string, github: 'draft' | null) => void;
   onCancel: () => void;
   /**
    * #287: on a review task, where it goes to start with (the choice shows);
@@ -189,17 +329,40 @@ export function CommentDraftView({
    * choice is drawn.
    */
   destination?: 'draft' | null;
+  /**
+   * #411: the commented lines as they are now, which Suggest Change starts
+   * from. Null: no Suggest Change (nothing on these lines to replace).
+   */
+  lines?: readonly string[] | null;
 }): ReactNode {
-  const [text, setText] = useState(initial);
+  const [start] = useState(() => splitSuggestion(initial));
+  const [text, setText] = useState(start.suggestion === null ? initial : start.text);
+  const [code, setCode] = useState<string | null>(start.suggestion === null ? null : start.suggestion.join('\n'));
   const [github, setGithub] = useState<'draft' | null>(destination ?? null);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => ref.current?.focus(), []);
+  // Kept as stored when there is no Suggest Change here to show it.
+  const suggestion = code !== null ? linesOf(code) : null;
   const save = () => {
-    if (text.trim() !== '') onSave(text.trim(), github);
+    if (text.trim() !== '' || suggestion !== null) onSave(joinSuggestion(suggestion, text), github);
   };
   return (
     <div className="ed-cmt ed-cmt-draft">
       {destination !== undefined ? <DestinationSwitch value={github} onChange={setGithub} /> : null}
+      {lines !== null ? (
+        <SuggestionEditor
+          lines={lines}
+          code={code}
+          onCode={setCode}
+          // Off drops the suggestion and keeps the text; on starts again from the lines.
+          onToggle={() => {
+            setCode((c) => (c === null ? lines.join('\n') : null));
+            if (code !== null) ref.current?.focus();
+          }}
+          onSave={save}
+          onCancel={onCancel}
+        />
+      ) : null}
       <textarea
         ref={ref}
         className="ed-cmt-input"

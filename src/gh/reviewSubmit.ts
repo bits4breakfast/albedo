@@ -34,6 +34,7 @@
  */
 
 import type { PrRef } from '../git/reviewCheckout';
+import { fenceFor, splitSuggestion } from '../lib/suggestion';
 import type { GhResult } from './gh';
 
 export type ReviewVerdict = 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
@@ -153,13 +154,26 @@ function where(d: Pick<GithubDraft, 'path' | 'lineStart' | 'lineEnd'>): string {
 }
 
 /**
+ * A draft's words for the review's body. A suggested edit (#411) there is
+ * on no line GitHub could apply it to, so it is shown as plain code under
+ * "Suggested change:" rather than as a `suggestion` block.
+ */
+function bodyOutside(body: string): string {
+  const { suggestion, text } = splitSuggestion(body);
+  if (suggestion === null) return body.trim();
+  const fence = fenceFor(suggestion);
+  const code = suggestion.length === 0 ? 'Suggested change: delete these lines.' : `Suggested change:\n${fence}\n${suggestion.join('\n')}\n${fence}`;
+  return text === '' ? code : `${code}\n${text}`;
+}
+
+/**
  * The review's body: the summary, then each draft whose lines are outside
  * the diff under its `path:line`, quoted so its own markdown stays its own.
  */
 export function reviewBody(summary: string, outside: readonly GithubDraft[]): string {
   const head = summary.trim();
   if (outside.length === 0) return head;
-  const items = outside.map((d) => `\`${where(d)}\`${d.lost ? ' (this code has changed since)' : ''}\n${d.body.trim().split('\n').map((l) => `> ${l}`).join('\n')}`);
+  const items = outside.map((d) => `\`${where(d)}\`${d.lost ? ' (this code has changed since)' : ''}\n${bodyOutside(d.body).split('\n').map((l) => `> ${l}`).join('\n')}`);
   return [head, `**On lines outside the diff:**\n\n${items.join('\n\n')}`].filter((p) => p !== '').join('\n\n');
 }
 
