@@ -2,8 +2,9 @@
  * The why under a file's header in the guide's diff (#264): --text, with a
  * "Why" label in --faint, on the pane's --panel (#274) -- and on
  * --panel-raised, the ground CLAUDE.md measures text against. Every theme.
- * Text, so 4.5:1. The CSS is read too, so moving the band onto another ground
- * or dimming it with opacity fails here.
+ * Text, so 4.5:1, and so is Show All in --accent (#397). The CSS is read
+ * too, so moving the band onto another ground or dimming it with opacity
+ * fails here.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -46,6 +47,11 @@ describe('the why under the file’s header (#264)', () => {
     expect(guide).not.toMatch(/\.gd-diff-why[^{]*\{[^}]*(opacity|transparent)/);
   });
 
+  it('Show All is a .gd-link in --accent with no ground of its own (#397)', () => {
+    expect(guide).toMatch(/\.gd-link \{[^}]*color: var\(--accent\);/);
+    expect(guide).not.toMatch(/\.gd-diff-why-more[^{]*\{[^}]*(color|background)/);
+  });
+
   for (const [name, t] of Object.entries(themes)) {
     it(`clears 4.5:1, ${name}`, () => {
       for (const ground of ['--panel', '--panel-raised']) {
@@ -53,8 +59,44 @@ describe('the why under the file’s header (#264)', () => {
           expect(ratio(t.get(fg)!, t.get(ground)!), `${fg} on ${ground}`).toBeGreaterThanOrEqual(4.5);
         }
       }
+      // Show All / Show Less (#397): --accent text on the note's ground.
+      for (const ground of ['--panel', '--panel-raised']) {
+        expect(ratio(t.get('--accent')!, t.get(ground)!), `--accent on ${ground}`).toBeGreaterThanOrEqual(4.5);
+      }
       // The rule is a glyph: 3:1 on the note's ground.
       expect(ratio(t.get('--border-strong')!, t.get('--panel')!), '--border-strong on --panel').toBeGreaterThanOrEqual(3);
     });
   }
+});
+
+describe('Show All’s clamp and its open note (#397)', () => {
+  // jsdom applies no CSS: the pane's tests model the clamp, so these hold
+  // the rules that make it real. Both bands: one note alone, and both.
+  const rule = (selector: string) => {
+    const at = guide.indexOf(selector);
+    expect(at, selector).toBeGreaterThanOrEqual(0);
+    return guide.slice(guide.indexOf('{', at), guide.indexOf('}', at));
+  };
+  it('clamped, the clipped text is two lines with the rest hidden', () => {
+    for (const selector of [
+      '.gd-diff-why:not([data-both]) > .gd-diff-why-text[data-clamped] > .gd-diff-why-flow',
+      '.gd-diff-why[data-both] > .gd-diff-why-text[data-clamped] .gd-diff-why-body',
+    ]) {
+      const body = rule(selector);
+      expect(body).toMatch(/display: -webkit-box;/);
+      expect(body).toMatch(/-webkit-box-orient: vertical;/);
+      expect(body).toMatch(/-webkit-line-clamp: 2;/);
+      expect(body).toMatch(/overflow: hidden;/);
+    }
+  });
+  it('open, a long note scrolls past 40vh, so the diff below stays in reach', () => {
+    for (const selector of [
+      '.gd-diff-why:not([data-both]) > .gd-diff-why-text:not([data-clamped]) > .gd-diff-why-flow',
+      '.gd-diff-why[data-both] > .gd-diff-why-text:not([data-clamped]) .gd-diff-why-body',
+    ]) {
+      const body = rule(selector);
+      expect(body).toMatch(/max-height: 40vh;/);
+      expect(body).toMatch(/overflow-y: auto;/);
+    }
+  });
 });

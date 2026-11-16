@@ -635,6 +635,178 @@ describe('file notes (#202, #264)', () => {
   });
 });
 
+describe('a long note under the diff header: two lines, then Show All (#397)', () => {
+  const both = buildBranchDiff(
+    [edited('src/a.ts', [3, 4, 5], 'alpha'), edited('src/c.ts', [3, 4, 5], 'gamma')],
+    statReason,
+  );
+  const LONG = 'Keeps the retry rule in one place so every sender backs off alike, and the old helper stays as a thin wrapper for callers not yet moved.';
+  const SHORT = 'So every caller pages alike.';
+  const save = (notes: Record<string, string>, flags?: Record<string, string>) => {
+    loaded = { ...loaded, diff: both };
+    saveGuide(task.id, {
+      diffHash: both.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [{ title: 'Both', summary: 'S.', blocks: [...both.order], notes }],
+      files: fileBlockIndex(both),
+      fallback: null,
+      ...(flags ? { flags } : {}),
+    });
+  };
+
+  // jsdom has no layout. A small model of the one that matters: a line is
+  // 20px and holds `perLine` characters; a clamped box is two lines tall.
+  // Only the box CSS clips has a height: the flow alone, the body with both.
+  let perLine = 60;
+  const observers = new Set<(entries: unknown[]) => void>();
+  const resize = (chars: number) => {
+    perLine = chars;
+    // Other observers on the page (the diff's own width) read their entries: none here.
+    act(() => observers.forEach((f) => f([])));
+  };
+  const box = (el: HTMLElement): { full: number; shown: number } => {
+    const band = el.closest('.gd-diff-why');
+    const clips = band?.hasAttribute('data-both') ? el.classList.contains('gd-diff-why-body') : el.classList.contains('gd-diff-why-flow');
+    if (!clips) return { full: 0, shown: 0 };
+    const full = Math.ceil((el.textContent ?? '').length / perLine) * 20;
+    return { full, shown: el.closest('[data-clamped]') ? Math.min(full, 40) : full };
+  };
+  beforeEach(() => {
+    perLine = 60;
+    observers.clear();
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get(this: HTMLElement) { return box(this).full; } });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get(this: HTMLElement) { return box(this).shown; } });
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private f: (entries: unknown[]) => void) {}
+        observe() { observers.add(this.f); }
+        disconnect() { observers.delete(this.f); }
+      },
+    );
+  });
+  afterEach(() => {
+    // Stubs on the prototype outlive the test unless deleted (REGRESSIONS.md).
+    delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+    delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+    vi.unstubAllGlobals();
+  });
+  const why = () => screen.getByRole('region', { name: 'Diff' }).querySelector<HTMLElement>('.gd-diff-why')!;
+  const note = (n: number) => why().querySelectorAll<HTMLElement>('.gd-diff-why-text')[n]!;
+
+  it('a note longer than two lines shows two and Show All, which opens it in place as Show Less', async () => {
+    save({ 'src/a.ts': LONG });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    const more = await right().findByRole('button', { name: 'Show All of Why' });
+    expect(more.textContent).toBe('Show All');
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    expect(more.className).toBe('gd-link gd-diff-why-more');
+    // Under the text, inside the note, after the clipped label and text.
+    expect(more.parentElement).toBe(note(0));
+    expect(more.previousElementSibling!.className).toBe('gd-diff-why-flow');
+    expect(note(0).hasAttribute('data-clamped')).toBe(true);
+    // The whole note is there to read: nothing was cut when it was kept.
+    expect(note(0).querySelector('.gd-diff-why-body')!.textContent).toBe(LONG);
+
+    fireEvent.click(more);
+    const less = right().getByRole('button', { name: 'Show Less of Why' });
+    expect(less.textContent).toBe('Show Less');
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    expect(note(0).hasAttribute('data-clamped')).toBe(false);
+
+    fireEvent.click(less);
+    expect(right().getByRole('button', { name: 'Show All of Why' })).toBeTruthy();
+    expect(note(0).hasAttribute('data-clamped')).toBe(true);
+  });
+
+  it('a note that fits has no Show All, and is clamped all the same', async () => {
+    save({ 'src/a.ts': SHORT });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    expect(why().textContent).toBe(`Why${SHORT}`);
+    expect(right().queryByRole('button', { name: /^Show (All|Less)/ })).toBeNull();
+    expect(note(0).hasAttribute('data-clamped')).toBe(true);
+  });
+
+  it('is measured at the note’s width, again whenever it changes', async () => {
+    save({ 'src/a.ts': LONG });
+    perLine = 200; // wide: fits in one line
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    expect(right().queryByRole('button', { name: 'Show All of Why' })).toBeNull();
+    resize(40); // narrow: four lines
+    expect(right().getByRole('button', { name: 'Show All of Why' })).toBeTruthy();
+    resize(200);
+    expect(right().queryByRole('button', { name: 'Show All of Why' })).toBeNull();
+  });
+
+  it('a new file starts closed, and so does the same file opened again', async () => {
+    save({ 'src/a.ts': LONG, 'src/c.ts': `${LONG} Gamma.` });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    fireEvent.click(await right().findByRole('button', { name: 'Show All of Why' }));
+    expect(right().getByRole('button', { name: 'Show Less of Why' })).toBeTruthy();
+    fireEvent.click(left().getByRole('button', { name: /c\.ts/ }));
+    await waitFor(() => expect(why().textContent).toContain('Gamma.'));
+    expect(right().getByRole('button', { name: 'Show All of Why' })).toBeTruthy();
+    expect(note(0).hasAttribute('data-clamped')).toBe(true);
+    fireEvent.click(left().getByRole('button', { name: /a\.ts/ }));
+    await waitFor(() => expect(why().textContent).not.toContain('Gamma.'));
+    expect(right().getByRole('button', { name: 'Show All of Why' })).toBeTruthy();
+  });
+
+  it('Careful works the same, on its own: with both notes, each has its own Show All', async () => {
+    save({ 'src/a.ts': SHORT }, { 'src/a.ts': 'changes the order retries are written in, and what reads them' });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    expect(why().hasAttribute('data-both')).toBe(true);
+    expect(note(0).getAttribute('data-careful')).toBe('true');
+    // Both fit: no button, and the band reads as before.
+    expect(right().queryByRole('button', { name: /^Show (All|Less)/ })).toBeNull();
+    resize(30); // the careful reason now runs past two lines; the why does not
+    const careful = right().getByRole('button', { name: 'Show All of Careful' });
+    expect(careful.parentElement).toBe(note(0));
+    expect(right().queryByRole('button', { name: 'Show All of Why' })).toBeNull();
+    fireEvent.click(careful);
+    expect(note(0).hasAttribute('data-clamped')).toBe(false);
+    expect(note(1).hasAttribute('data-clamped')).toBe(true);
+    // The careful line keeps its tooltip with the full reason, on the text:
+    // hovering Show All shows none.
+    const flow = note(0).querySelector('.gd-diff-why-flow')!;
+    expect(flow.getAttribute('title')).toBe('Review carefully: changes the order retries are written in, and what reads them');
+    expect(note(0).hasAttribute('title')).toBe(false);
+    expect(right().getByRole('button', { name: 'Show Less of Careful' }).closest('[title]')).toBeNull();
+  });
+
+  it('Show Less on a note that now fits: the button goes, and focus goes to the note, not the page', async () => {
+    save({ 'src/a.ts': LONG });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    fireEvent.click(await right().findByRole('button', { name: 'Show All of Why' }));
+    const less = right().getByRole('button', { name: 'Show Less of Why' });
+    less.focus();
+    perLine = 200; // the pane grew while it was open: closed, it fits
+    fireEvent.click(less);
+    expect(right().queryByRole('button', { name: /^Show (All|Less)/ })).toBeNull();
+    expect(document.activeElement).toBe(note(0));
+    expect(note(0).getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('a button that goes without focus moves no focus', async () => {
+    save({ 'src/a.ts': LONG });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    await right().findByRole('button', { name: 'Show All of Why' });
+    const before = document.activeElement;
+    resize(200);
+    expect(right().queryByRole('button', { name: 'Show All of Why' })).toBeNull();
+    expect(document.activeElement).toBe(before);
+    expect(document.activeElement).not.toBe(note(0));
+  });
+});
+
 describe('notes after the groups (#224)', () => {
   // Three groups of two files, each +3 -3: all are asked about.
   let big: BranchDiff;
