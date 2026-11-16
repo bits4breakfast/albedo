@@ -56,8 +56,8 @@ export type PrQuery =
 
 /**
  * What was typed, as a question. A number, with or without `#`, is that PR;
- * anything else is words of a title. Nothing (or a lone `#`) is the recent
- * list.
+ * anything else is words of a title. Nothing (or a lone `#`, or only
+ * characters that cannot be searched for, like `\`) is the recent list.
  */
 export function parsePrQuery(typed: string): PrQuery {
   const t = typed.trim();
@@ -70,7 +70,9 @@ export function parsePrQuery(typed: string): PrQuery {
   const terms = t
     .replace(/^#$/, '')
     .split(/\s+/)
-    .map((w) => w.replace(/"/g, ''))
+    // Quotes and a trailing backslash cannot be searched for, and would
+    // break a quoted word; a word left empty is no word.
+    .map((w) => w.replace(/"/g, '').replace(/\\+$/, ''))
     .filter((w) => w.length > 0);
   return terms.length === 0 ? { kind: 'recent' } : { kind: 'title', terms };
 }

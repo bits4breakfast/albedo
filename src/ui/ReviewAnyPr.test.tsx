@@ -115,6 +115,7 @@ async function openDropdown() {
   return r;
 }
 
+const nextFrame = () => act(() => new Promise<void>((res) => requestAnimationFrame(() => res())));
 const field = () => screen.getByRole('combobox', { name: /Search open pull requests/ });
 const options = () => screen.queryAllByRole('option');
 
@@ -385,6 +386,7 @@ describe('review fixes (#388)', () => {
     const r = render(ui(), { container: scroller });
     fireEvent.click(screen.getByRole('button', { name: /Review a PR…/ }));
     await screen.findByText('Recently updated · open');
+    await nextFrame();
     fireEvent.scroll(screen.getByRole('listbox'));
     const pane = document.createElement('div');
     document.body.appendChild(pane);
@@ -395,6 +397,53 @@ describe('review fixes (#388)', () => {
     r.unmount();
     scroller.remove();
     pane.remove();
+  });
+
+  it('a scroll that opening itself causes does not close it; one a frame later does', async () => {
+    const scroller = document.createElement('div');
+    document.body.appendChild(scroller);
+    const r = render(ui(), { container: scroller });
+    fireEvent.click(screen.getByRole('button', { name: /Review a PR…/ }));
+    // As when the error line under the button goes and a scrolled list clamps,
+    // or the webview scrolls to reveal the field.
+    fireEvent.scroll(scroller);
+    fireEvent.scroll(document);
+    expect(screen.queryByRole('combobox')).not.toBeNull();
+    await nextFrame();
+    fireEvent.scroll(scroller);
+    expect(screen.queryByRole('combobox')).toBeNull();
+    r.unmount();
+    scroller.remove();
+  });
+
+  it('the field is focused once the dropdown is placed, without scrolling to reveal it', async () => {
+    const seen: { placed: boolean; options: FocusOptions | undefined }[] = [];
+    const real = HTMLInputElement.prototype.focus;
+    HTMLInputElement.prototype.focus = function (this: HTMLInputElement, options?: FocusOptions) {
+      if (this.getAttribute('role') === 'combobox') {
+        const pop = this.closest<HTMLElement>('.review-any-pop');
+        seen.push({ placed: pop?.style.top !== '' && pop?.style.visibility !== 'hidden', options });
+      }
+      return real.call(this, options);
+    };
+    try {
+      await openDropdown();
+      expect(seen).toEqual([{ placed: true, options: { preventScroll: true } }]);
+      expect(document.activeElement).toBe(field());
+    } finally {
+      HTMLInputElement.prototype.focus = real;
+    }
+  });
+
+  it('typing only what cannot be searched for (a backslash) is the recent list, asked nothing new', async () => {
+    await openDropdown();
+    fireEvent.change(field(), { target: { value: '\\' } });
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, SEARCH_DEBOUNCE_MS + 50));
+    });
+    expect(calls).toHaveLength(1);
+    expect(screen.getByText('Recently updated · open')).toBeTruthy();
+    expect(options()).toHaveLength(3);
   });
 
   it('after choosing with Return, focus is back on the button', async () => {

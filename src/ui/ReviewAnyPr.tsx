@@ -131,6 +131,7 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, onOp
     first.current = true;
     openedOn.current = null;
     setOpen(false);
+    setPlace(null);
     setTyped('');
     setAnswer(null);
     setRecent([]);
@@ -182,21 +183,35 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, onOp
       const r = buttonRef.current?.getBoundingClientRect();
       if (r) setPlace(dropdownPlace(r, { width: window.innerWidth, height: window.innerHeight }));
     };
+    // Not armed until the dropdown is placed and a frame has passed: opening
+    // itself can scroll an ancestor (the error line under the button goes,
+    // and a scrolled list clamps), and that is not the person scrolling.
+    let armed = false;
+    const frame = window.requestAnimationFrame(() => {
+      armed = true;
+    });
     const onScroll = (e: Event) => {
       const t = e.target;
       const button = buttonRef.current;
-      if (!button) return;
+      if (!armed || !button) return;
       if (t === document || (t instanceof Node && t.contains(button))) close(false);
     };
     measure();
-    inputRef.current?.focus();
     window.addEventListener('resize', measure);
     window.addEventListener('scroll', onScroll, true);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener('resize', measure);
       window.removeEventListener('scroll', onScroll, true);
     };
   }, [open]);
+
+  // The field takes focus once the dropdown is placed, and without scrolling
+  // anything to reveal it: it is already where it will stay.
+  const placed = open && place !== null;
+  useLayoutEffect(() => {
+    if (placed) inputRef.current?.focus({ preventScroll: true });
+  }, [placed]);
 
   // A press anywhere else closes it. Capture, so it is seen first; a press on
   // the button is the button's own toggle.
@@ -350,7 +365,7 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, onOp
           <div
             ref={popRef}
             className="review-any-pop"
-            style={place ?? undefined}
+            style={place ?? { visibility: 'hidden' }}
             // Keep focus in the field: a click on a row must not blur it first.
             onMouseDown={(e) => {
               if (e.target !== inputRef.current) e.preventDefault();

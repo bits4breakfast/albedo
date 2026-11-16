@@ -71,6 +71,10 @@ describe('parsePrQuery', () => {
     expect(parsePrQuery('')).toEqual({ kind: 'recent' });
     expect(parsePrQuery('  ')).toEqual({ kind: 'recent' });
     expect(parsePrQuery('#')).toEqual({ kind: 'recent' });
+    // Only what cannot be searched for: no words, so no `in:title` with nothing after it.
+    expect(parsePrQuery('\\')).toEqual({ kind: 'recent' });
+    expect(parsePrQuery(' \\ "" ')).toEqual({ kind: 'recent' });
+    expect(parsePrQuery('fix\\')).toEqual({ kind: 'title', terms: ['fix'] });
     expect(parsePrQuery('0')).toEqual({ kind: 'title', terms: ['0'] });
     // Past GraphQL's Int: a word, not a lookup GitHub would refuse.
     expect(parsePrQuery('12345678901').kind).toBe('title');
