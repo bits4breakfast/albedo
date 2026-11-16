@@ -4,7 +4,7 @@ import type { Task } from '../../types';
 import { applyZoom, stepZoom, storedZoom } from '../zoom';
 import { pushPrompt } from '../gitPrompts';
 import { sendPrompt } from '../sendPrompt';
-import { GUIDE_KEY_EXCEPT, TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from '../shortcuts';
+import { GUIDE_AREA, GUIDE_KEY_EXCEPT, TASK_TERMINAL_INPUT, useDoubleShift, useShortcuts } from '../shortcuts';
 import { stepProjectTab } from '../projectStep';
 import { focusArea, modalOpen, useFocusAreaCycle } from '../focusAreas';
 import type { remoteControlItem } from '../RemoteMark';
@@ -141,9 +141,11 @@ export default function useAppShortcuts({
     // works wherever focus is (shortcuts.ts). Only where the ⋯ item is
     // offered: a selected task with a live session and Remote Control off.
     // Already on, it does nothing -- the Remote mark beside the title opens
-    // the session. Never over another dialog, as the palette.
+    // the session. Never over another dialog, as the palette. Not from the
+    // Review Guide, where ⇧⌘R marks the group reviewed (#391).
     'mod+shift+r': {
       phase: 'capture',
+      standAsideIn: GUIDE_AREA,
       run: () => {
         if (!selected || !remoteItem) return;
         if (modalOpen()) return;

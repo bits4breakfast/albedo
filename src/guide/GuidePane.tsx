@@ -35,6 +35,7 @@ import { ON_ITS_WAY, sendLabel, useToSend, useToSendFrozen } from '../ui/transcr
 import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
 import { asFocus, firstMatch, projectFocus, type GuideFocus } from './focus';
 import { chosenFocus, draftOf, GuideOptions, useTaskProject } from './GuideOptions';
+import { GUIDE_AREA_ATTR } from '../ui/shortcuts';
 import { FlagIcon } from '../ui/icons';
 import '../ui/worktree.css';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
@@ -405,6 +406,48 @@ function GuideIntro({
 // The guide
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a key is the user's text, for ⌘R and ⇧⌘R: a text field, never a
+ * checkbox, radio or button, which take no letters.
+ */
+const TYPING_FIELD =
+  'textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"])';
+
+/** The last mark ⌘R or ⇧⌘R made, which the same key undoes. */
+interface LastMark {
+  kind: 'file' | 'group';
+  /** What it marked: only what was not marked already. */
+  keys: string[];
+  /** Where it was made, to go back to, and what to say there. */
+  group: string;
+  path: string;
+  said: string;
+  /** When it was made: past {@link UNDO_MS}, the key marks again. */
+  at: number;
+  /** The groups and their files then: if they change, the mark is forgotten. */
+  shape: string;
+}
+
+/**
+ * How long the same key undoes its mark. A reader who moves on without a key
+ * or a click -- scrolling the next file with the trackpad -- and then marks
+ * it must not unmark the previous one.
+ */
+export const UNDO_MS = 2000;
+
+/** The groups as the Reviewed keys see them: an undo is only safe on the same. */
+function shapeOf(groups: readonly GroupView[]): string {
+  return groups.map((g) => `${g.key}:${g.files.map((f) => reviewedKey(f.path, f.blocks)).join(',')}`).join('|');
+}
+
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Meta', 'Shift', 'Control', 'Alt', 'CapsLock', 'Fn']);
+
+/** ⌘R is the file's key, ⇧⌘R the group's; null for any other key. */
+function markKind(e: KeyboardEvent): 'file' | 'group' | null {
+  if (e.code !== 'KeyR' || !e.metaKey || e.ctrlKey || e.altKey) return null;
+  return e.shiftKey ? 'group' : 'file';
+}
+
 function writtenAgo(at: number): string {
   const age = relativeTime(at, Date.now());
   return age === 'now' ? 'just now' : `${age} ago`;
@@ -761,6 +804,131 @@ function GuideBody({
 
   const stepGroup = (delta: number) => goTo(at + delta);
 
+  // ⌘R and ⇧⌘R (#390, #391): the two Reviewed boxes, from the keyboard. Each
+  // toggles and moves on exactly as a click on its box does. Pressed again
+  // within UNDO_MS, with no other key, click, wheel or move between and the
+  // groups as they were, it undoes the mark it just made and goes back to
+  // where it was made: the owner's "pressing again undoes". Read's,
+  // anywhere in it, as the other keys are; a checkbox or button with focus
+  // is not typing, so they work from there too, but not from a comment box,
+  // the search field or any other text field, nor from an open menu. ⇧⌘R is Remote Control everywhere else: that binding stands aside
+  // inside a guide on screen (GUIDE_AREA, shortcuts.ts), so it never fires
+  // here, even on the Map. From `code`, as the app's ⇧⌘R is; Command only. A
+  // held key does not repeat: auto-repeat would toggle a run of files.
+  const lastMark = useRef<LastMark | null>(null);
+  // Anything else -- a key, a click, the window losing focus, a wheel or
+  // trackpad scroll in the guide -- forgets it. A wheel, not `scroll`: the
+  // guide scrolls itself as a file opens, and that is not the reader moving.
+  useEffect(() => {
+    const forget = (e: Event) => {
+      const m = lastMark.current;
+      if (m === null) return;
+      if (e instanceof KeyboardEvent && (MODIFIER_KEYS.has(e.key) || markKind(e) === m.kind)) return;
+      if (e.type === 'wheel' && !(e.target instanceof Node && rootRef.current?.contains(e.target))) return;
+      lastMark.current = null;
+    };
+    window.addEventListener('keydown', forget, true);
+    window.addEventListener('pointerdown', forget, true);
+    window.addEventListener('wheel', forget, { capture: true, passive: true });
+    window.addEventListener('blur', forget);
+    return () => {
+      window.removeEventListener('keydown', forget, true);
+      window.removeEventListener('pointerdown', forget, true);
+      window.removeEventListener('wheel', forget, { capture: true });
+      window.removeEventListener('blur', forget);
+    };
+  }, []);
+
+  const undoMark = (m: LastMark) => {
+    lastMark.current = null;
+    setReviewed(task.id, m.keys, false);
+    setPlace((p) => ({ ...p, group: m.group, picked: { ...p.picked, [m.group]: m.path } }));
+    setSaid(m.said);
+  };
+
+  const reviewKey = (e: ReactKeyboardEvent<HTMLDivElement>): boolean => {
+    const kind = markKind(e.nativeEvent);
+    if (kind === null || !active) return false;
+    const t = e.target as HTMLElement;
+    if (t.closest(TYPING_FIELD) || t.closest('[role="menu"]')) return false;
+    e.preventDefault();
+    if (e.repeat || shownView === 'map' || !group || !file) return true;
+    // The box with focus may go with the file it belongs to: keep focus in
+    // the guide, so the next press is heard here too.
+    if (document.activeElement !== rootRef.current) rootRef.current?.focus({ preventScroll: true });
+    const m = lastMark.current;
+    lastMark.current = null;
+    if (m !== null && m.kind === kind && Date.now() - m.at < UNDO_MS && m.shape === shapeOf(groups)) {
+      undoMark(m);
+      return true;
+    }
+    const files = kind === 'group' ? group.files : [file];
+    const keys = files.filter((f) => !isFileReviewed(f)).map((f) => reviewedKey(f.path, f.blocks));
+    if (kind === 'group') toggleGroup(group);
+    else toggleFile(file);
+    // Only a mark is remembered: an unmark stays where it is, and the key
+    // again simply marks it once more.
+    if (keys.length > 0) {
+      const said = kind === 'group' ? `Unmarked ${group.title}` : `Unmarked ${splitPath(file.path).name}`;
+      lastMark.current = { kind, keys, group: group.key, path: file.path, said, at: Date.now(), shape: shapeOf(groups) };
+    }
+    return true;
+  };
+
+  // Focus never falls out of the guide on its own: a box that unmounts with
+  // focus in it (a file's header as the next opens, a comment box saved or
+  // cancelled) leaves it on the page's body, where the guide's keys are not
+  // heard and ⇧⌘R would be Remote Control. Watched on the DOM, not on this
+  // component's renders: a comment box goes in a render of its own. Focus
+  // put elsewhere on purpose -- a click outside, the terminal, another tab --
+  // is never taken back.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let inside = el.contains(document.activeElement);
+    // Left for nothing, and not known yet whether by a click (it stays in
+    // the page) or by being removed (it goes): an engine may say so before
+    // the removal or not at all.
+    let lost: Node | null = null;
+    const regain = () => {
+      if (lost?.isConnected) return;
+      const now = document.activeElement;
+      if (inside && activeRef.current && (now === null || now === document.body)) el.focus({ preventScroll: true });
+    };
+    const onIn = () => {
+      inside = true;
+      lost = null;
+    };
+    const onOut = (e: FocusEvent) => {
+      const to = e.relatedTarget;
+      if (to instanceof Node) {
+        inside = el.contains(to);
+        return;
+      }
+      const from = e.target as Node;
+      lost = from;
+      window.setTimeout(() => {
+        if (lost !== from) return;
+        lost = null;
+        // Still in the page: a click on something that takes no focus, the
+        // user's choice. Gone: a removal, not a choice.
+        if (from.isConnected) inside = false;
+        else regain();
+      }, 0);
+    };
+    const watch = new MutationObserver(regain);
+    watch.observe(el, { childList: true, subtree: true });
+    el.addEventListener('focusin', onIn);
+    el.addEventListener('focusout', onOut);
+    return () => {
+      watch.disconnect();
+      el.removeEventListener('focusin', onIn);
+      el.removeEventListener('focusout', onOut);
+    };
+  }, []);
+
   // Search (#413). The field takes focus once per ⌘F / ⇧⌘F, a switch or an
   // opened match, also when its bar mounts after the request (another file).
   const [search, setSearch] = useState<GuideSearchState>(CLOSED_SEARCH);
@@ -831,6 +999,7 @@ function GuideBody({
       return;
     }
     const t = e.target as HTMLElement;
+    if (reviewKey(e)) return;
     if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
     // Esc closes the search from anywhere in the guide but a field (a
     // comment's Esc is its own); handled, so full screen stays (#267).
@@ -872,7 +1041,16 @@ function GuideBody({
 
   return (
     // A focus stop of its own, so its keys work from a click anywhere in it.
-    <div className="gd" ref={rootRef} tabIndex={-1} onKeyDown={onKeyDown} aria-label="Review Guide">
+    <div
+      className="gd"
+      ref={rootRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      aria-label="Review Guide"
+      // On screen, ⇧⌘R is the group's key here, not Remote Control
+      // (shortcuts.ts). A hidden guide stays mounted and claims nothing.
+      {...(active ? { [GUIDE_AREA_ATTR]: '' } : {})}
+    >
       {/* One row, one Rewrite (#197): a guide the branch has moved on from
           says so here, on the banner's ground, rather than in a second row
           with a second button. */}
@@ -1003,8 +1181,13 @@ function GuideBody({
                   {pad2(at + 1)} / {pad2(led.length)}
                 </span>
               )}
-              <label className="gd-check">
-                <input type="checkbox" checked={isGroupReviewed(group)} onChange={() => toggleGroup(group)} />
+              <label className="gd-check" title="Mark the group reviewed (⇧⌘R)">
+                <input
+                  type="checkbox"
+                  checked={isGroupReviewed(group)}
+                  onChange={() => toggleGroup(group)}
+                  aria-keyshortcuts="Meta+Shift+R"
+                />
                 Reviewed
               </label>
               {groupChanged(group) > 0 ? (
@@ -1462,8 +1645,8 @@ function GuideFileDiff({
         <button type="button" className="gd-link" onClick={() => openFile({ path: file.path })} title="Open the file in the editor">
           Open
         </button>
-        <label className="gd-check gd-diff-check">
-          <input type="checkbox" checked={reviewed} onChange={onToggleReviewed} />
+        <label className="gd-check gd-diff-check" title="Mark this file reviewed (⌘R)">
+          <input type="checkbox" checked={reviewed} onChange={onToggleReviewed} aria-keyshortcuts="Meta+R" />
           Reviewed
         </label>
       </div>
