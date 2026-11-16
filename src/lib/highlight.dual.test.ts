@@ -154,6 +154,37 @@ describe('one grammar pass gives what two gave', () => {
     expect(await highlightLines(code, 'typescript')).toEqual(twoPassSliced(hl, code, 'typescript', 2, 6_000));
   });
 
+  it('an empty line leaves the grammar state where it was, as in Shiki', async () => {
+    // Shiki skips an empty line without advancing the grammar; tokenizing it
+    // instead ends the case arm below early and colours what follows differently.
+    const code = [
+      '#!/bin/bash -eu',
+      '',
+      'for arg in "$@"; do',
+      '    case $arg in',
+      '        --dry)',
+      '            DRY=true',
+      '            ;;',
+      '    esac',
+      'done',
+      '',
+      'case `uname -s` in',
+      '    Darwin*)    echo mac;;',
+      '    *)          echo other: `uname -s`; exit 1;;',
+      'esac',
+      '',
+      'TMP=`mktemp -d`',
+      '',
+      'pushd "${TMP}"',
+      '',
+      'if [ "$DRY" = true ]; then',
+      '    echo dry',
+      'fi',
+      '',
+    ].join('\n');
+    expect(await highlightToTokens(code, 'shellscript')).toEqual(twoPass(hl, code, 'shellscript'));
+  });
+
   it('the light and dark themes agree on font style for these files', () => {
     // highlight.ts emits one font style for both themes; if a file ever
     // disagreed, the comparisons above would not see the difference.

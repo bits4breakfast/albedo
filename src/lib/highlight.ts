@@ -8,7 +8,8 @@
  *
  * ## Theming
  *
- * Code is tokenized against BOTH themes at once and every token carries two
+ * Code is tokenized for BOTH themes at once -- one grammar pass, see "One
+ * grammar pass for both themes" below -- and every token carries two
  * colours as CSS custom properties (`--shiki-light` / `--shiki-dark`); a CSS
  * rule picks which one applies. Switching theme is then a pure CSS repaint:
  * nothing re-tokenizes, nothing re-renders, there is no flash of unstyled code,
@@ -298,7 +299,10 @@ export function styleToCss(style: Record<string, string>): string {
  * whole files in several languages. The seam is vscode-textmate's own: the
  * registry every grammar asks for its theme (`grammar.themeProvider`) takes
  * any object with `match` and `getDefaults`, and gets its own theme back the
- * moment the pass ends, so Shiki's own calls see nothing changed.
+ * moment the pass ends, so Shiki's own calls see nothing changed. That getter
+ * and the registry's `_theme` are not Shiki's public API: they are what Shiki
+ * 4.5.0 ships, and the comparison tests are what would catch an upgrade that
+ * moves them (every token would differ, or be plain).
  */
 
 type ScopePath = NonNullable<Parameters<Theme['match']>[0]>;
@@ -550,7 +554,8 @@ export async function highlightToTokens(code: string, lang: string): Promise<Dua
  * A diff that has both whole files colours every row from its own line in
  * them, so no grammar state runs across the lines it hides. Tokenizing a
  * whole file in one call blocks the main thread for as long as it takes
- * (measured: ~6 lines/ms for PHP, two themes), so it goes a slice at a time,
+ * (measured: ~6 lines/ms for PHP when each theme took its own grammar pass,
+ * about twice that since #418), so it goes a slice at a time,
  * carrying Shiki's grammar state from one slice to the next and yielding to
  * the browser between them. A slice is at most this many lines...
  */
@@ -565,7 +570,8 @@ const SLICE_CHARS = 6_000;
 /**
  * A line this long is left plain rather than tokenized: one minified line can
  * otherwise cost a second on its own, and a slice cannot split a line.
- * Measured (TSX, both themes): a 4,900-character line took 1.5 s, and lines
+ * Measured (TSX, a grammar pass per theme, before #418 halved it): a
+ * 4,900-character line took 1.5 s, and lines
  * of 2,000 characters at most 284 ms. Shiki's `tokenizeTimeLimit` was not
  * used instead: it cuts a line off mid-way and carries on from a guessed
  * state, which colours what follows wrongly.
