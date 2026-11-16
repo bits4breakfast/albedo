@@ -119,6 +119,7 @@ import './editor.css';
 import './comments.css';
 import { inDiff } from '../../gh/reviewSubmit';
 import { usePrRanges } from '../reviewDrafts';
+import { useCarriedCodeIds } from '../transcript/codeComments';
 
 /** Files past this size are edited without colour. Tokenising them janks. */
 const MAX_HIGHLIGHT_CHARS = 300_000;
@@ -1147,6 +1148,8 @@ export default function FileEditor({
   const [fileComments, setFileComments] = useState<ReviewComment[]>([]);
   const prRanges = usePrRanges(task);
   const [outdated, setOutdated] = useState<ReviewComment[]>([]);
+  /** The task's code comments a held message carries (#409): their cards say Held. */
+  const carried = useCarriedCodeIds(task.id);
   /** Comments that resolved themselves while this file was open (#222): their trace, until it closes. */
   const [traces, setTraces] = useState<ReviewComment[]>([]);
   useEffect(() => setTraces([]), [task.id, current]);
@@ -1208,6 +1211,7 @@ export default function FileEditor({
             from: view.state.doc.line(line).from,
             to: view.state.doc.line(line).to,
             removed: { below: gone.before === null },
+            held: carried.has(c.id),
             outside: c.github === 'draft' && prRanges !== null && !inDiff(prRanges, c.path, gone.lineStart, gone.lineEnd, 'old'),
           });
           // Only from a base that is final: one read before the PR's base is
@@ -1242,6 +1246,8 @@ export default function FileEditor({
         to: view.state.doc.line(at.lineEnd).to,
         // #287: a draft for GitHub on lines outside the PR's diff says it goes in the summary.
         outside: c.github === 'draft' && prRanges !== null && !inDiff(prRanges, c.path, at.lineStart, at.lineEnd),
+        // #409: carried by a held message, its chip says Held.
+        held: carried.has(c.id),
       });
       // Moved in the file on disk: remember where. Not while the buffer holds
       // unsaved typing, which is not the file the comment refers to.
@@ -1260,7 +1266,7 @@ export default function FileEditor({
       reportFailure(resolveComments(task.id, resolving.map((c) => c.id)), 'resolve the comments whose lines changed');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileComments, phase.kind, doc?.key, prRanges, baseRead]);
+  }, [fileComments, phase.kind, doc?.key, prRanges, baseRead, carried]);
 
   /** A comment write that failed says so, rather than leaving the list quietly wrong. */
   const reportFailure = (write: Promise<unknown>, what: string) => {

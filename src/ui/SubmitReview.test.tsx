@@ -83,6 +83,8 @@ describe('the action', () => {
     state.input = INPUT;
     render(<ReviewBadge task={TASK} />);
     expect(screen.getByRole('button', { name: '#34 on GitHub' })).toBeTruthy();
+    // One name for them (#409).
+    expect(screen.getByRole('button', { name: 'Submit Review · 2' }).title).toMatch(/^2 GitHub Drafts\. /);
     fireEvent.click(screen.getByRole('button', { name: 'Submit Review · 2' }));
     expect(await screen.findByRole('dialog', { name: 'Submit Review' })).toBeTruthy();
     expect(await screen.findByText('1 comment')).toBeTruthy();

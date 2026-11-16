@@ -216,11 +216,11 @@
  * the editor's Previous Changed File. Neither terminal takes them from
  * anyone: xterm 5.5 sends nothing for an arrow with ⌘ held.
  *
- * ## ⇧⌘S: send the waiting comments
+ * ## ⇧⌘S: send To Send
  *
  * From anywhere (#258), as the Send beside them in Files and the guide: the
- * selected task's waiting comments go, and the transcript shows. Nothing
- * waiting, nothing happens. ⌘S is the editor's Save (exact match, so ⇧⌘S
+ * selected task's To Send list goes (#404), and the transcript shows.
+ * Nothing to send, nothing happens. ⌘S is the editor's Save (exact match, so ⇧⌘S
  * never saves); Ctrl+S stays the terminals'. No CodeMirror keymap binds it.
  *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
@@ -342,7 +342,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
   { combo: 'mod+shift+t', keys: '⇧⌘T', description: 'Transcript Tab' },
   { combo: 'mod+shift+e', keys: '⇧⌘E', description: 'Files Tab (or the Files column, when pinned)' },
-  { combo: 'mod+shift+s', keys: '⇧⌘S', description: 'Send the Waiting Comments, then Show the Transcript' },
+  { combo: 'mod+shift+s', keys: '⇧⌘S', description: 'Send To Send, then Show the Transcript' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   {
     combo: 'transcript arrowup',
@@ -380,7 +380,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
     keys: '⇧⌘R',
     description: 'Review Guide: Mark the Group Reviewed and Go to the Next (Again Within 2 s: Undo)',
   },
-  { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
+  { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send To Send, then Show the Transcript' },
   { combo: 'guide mod+f', keys: '⌘F', description: 'Review Guide: Search This File (↩ / ⇧↩ Next / Previous, Esc Closes)' },
   { combo: 'guide mod+shift+f', keys: '⇧⌘F', description: 'Review Guide: Search All the Guide’s Files' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },

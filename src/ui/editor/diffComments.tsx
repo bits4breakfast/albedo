@@ -33,6 +33,7 @@ import {
   type NewComment,
   type ReviewComment,
 } from '../../db/comments';
+import { useCarriedCodeIds } from '../transcript/codeComments';
 import { CommentCardView, CommentDraftView, CommentsBar, ThreadCardView, ThreadsAside } from './CommentViews';
 import { inDiff } from '../../gh/reviewSubmit';
 import { placeThread, useReviewThreads, type ReviewThread } from '../../gh/reviewThreads';
@@ -99,6 +100,8 @@ export function useDiffComments(
   const ranges = usePrRanges(isReview ? review : null);
   const drafts = useGithubDrafts(isReview ? review : null);
   const [comments, setComments] = useState<ReviewComment[]>([]);
+  // Carried by a held message (#409): their cards say Held.
+  const carried = useCarriedCodeIds(taskId);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [picking, setPicking] = useState<{ from: number; to: number } | null>(null);
   const [pickingRemoved, setPickingRemoved] = useState<{ from: number; to: number } | null>(null);
@@ -382,6 +385,7 @@ export function useDiffComments(
             <CommentCardView
               key={p.comment.id}
               outside={p.comment.github === 'draft' && ranges !== null && !inDiff(ranges, path, p.from, p.to)}
+              held={carried.has(p.comment.id)}
               comment={{ ...p.comment, lineStart: p.from, lineEnd: p.to }}
               onEdit={() => setDraft({ from: p.from, to: p.to, editing: p.comment })}
               onResolve={() => report(resolveComment(taskId, p.comment.id), 'resolve the comment')}
@@ -407,6 +411,7 @@ export function useDiffComments(
             <CommentCardView
               key={p.comment.id}
               outside={p.comment.github === 'draft' && ranges !== null && !inDiff(ranges, path, p.from, p.to, 'old')}
+              held={carried.has(p.comment.id)}
               comment={{ ...p.comment, lineStart: p.from, lineEnd: p.to }}
               onEdit={() => setDraft({ from: p.from, to: p.to, row: p.row, side: 'old', editing: p.comment })}
               onResolve={() => report(resolveComment(taskId, p.comment.id), 'resolve the comment')}

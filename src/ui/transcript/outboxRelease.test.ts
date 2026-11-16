@@ -58,6 +58,7 @@ import {
   RETRY_MS,
   canRelease,
   conditionsFor,
+  heldGoes,
   heldHint,
   heldLabel,
   noteShownStatus,
@@ -133,32 +134,45 @@ describe('the gate', () => {
     expect(canRelease({ offline: false, promptOpen: false, turnRunning: true })).toBe(false);
   });
 
-  it('says what actually stops the messages', () => {
+  it('one name while anything holds them, Held (#409); Sending once nothing does', () => {
     const ok = { offline: false, promptOpen: false, turnRunning: false, live: true, headMaybeSent: false, failed: false };
     expect(heldLabel(ok)).toBe('Sending');
-    expect(heldLabel({ ...ok, headMaybeSent: true, offline: true })).toBe(
-      'Waiting for you to resend or remove the first message',
-    );
-    expect(heldLabel({ ...ok, offline: true, promptOpen: true })).toBe('Waiting for connection');
-    expect(heldLabel({ ...ok, promptOpen: true })).toBe('Waiting for your answer');
-    expect(heldLabel({ ...ok, live: false })).toBe('Waiting for the session to start');
-    expect(heldLabel({ ...ok, failed: true })).toBe('Couldn\u2019t send \u2014 retrying');
-    expect(heldLabel({ ...ok, turnRunning: true })).toBe('Queued');
-    // A prompt is the turn's, and says more than the turn does.
-    expect(heldLabel({ ...ok, turnRunning: true, promptOpen: true })).toBe('Waiting for your answer');
+    for (const c of [
+      { headMaybeSent: true },
+      { offline: true },
+      { promptOpen: true },
+      { turnRunning: true },
+      { live: false },
+      { failed: true },
+    ]) {
+      expect(heldLabel({ ...ok, ...c })).toBe('Held');
+    }
   });
 
-  it('says when they will go, where it can', () => {
+  it('the hint says why, what actually stops them first', () => {
     const ok = { offline: false, promptOpen: false, turnRunning: false, live: true, headMaybeSent: false, failed: false };
     expect(heldHint(ok)).toBeNull();
-    expect(heldHint({ ...ok, offline: true, turnRunning: true })).toBe('sent in order once it is back');
-    expect(heldHint({ ...ok, turnRunning: true })).toBe('sent when Claude finishes this turn');
-    expect(heldHint({ ...ok, turnRunning: true, promptOpen: true })).toBeNull();
-    expect(heldHint({ ...ok, turnRunning: true, headMaybeSent: true })).toBeNull();
-    // Two or more go as one (#240), and the hint says so.
-    expect(heldHint({ ...ok, turnRunning: true }, 2)).toBe('sent together when Claude finishes this turn');
-    expect(heldHint({ ...ok, offline: true }, 3)).toBe('sent together once it is back');
-    expect(heldHint({ ...ok, offline: true }, 1)).toBe('sent in order once it is back');
+    expect(heldHint({ ...ok, headMaybeSent: true, offline: true })).toBe('until you resend or remove the first one');
+    expect(heldHint({ ...ok, offline: true, promptOpen: true })).toBe('until you\u2019re online');
+    expect(heldHint({ ...ok, promptOpen: true })).toBe('until you answer');
+    // A prompt is the turn's, and says more than the turn does.
+    expect(heldHint({ ...ok, turnRunning: true, promptOpen: true })).toBe('until you answer');
+    expect(heldHint({ ...ok, turnRunning: true })).toBe('until this turn ends');
+    expect(heldHint({ ...ok, live: false })).toBe('until the session starts');
+    expect(heldHint({ ...ok, failed: true })).toBe('couldn\u2019t send \u2014 retrying');
+  });
+
+  it('the head\u2019s tooltip says how they will go, where it can', () => {
+    const ok = { offline: false, promptOpen: false, turnRunning: false, live: true, headMaybeSent: false, failed: false };
+    expect(heldGoes(ok)).toBeNull();
+    expect(heldGoes({ ...ok, offline: true, turnRunning: true })).toBe('Sent in order once you\u2019re online');
+    expect(heldGoes({ ...ok, turnRunning: true })).toBe('Sent when Claude finishes this turn');
+    expect(heldGoes({ ...ok, turnRunning: true, promptOpen: true })).toBeNull();
+    expect(heldGoes({ ...ok, turnRunning: true, headMaybeSent: true })).toBeNull();
+    // Two or more go as one (#240), and the tooltip says so.
+    expect(heldGoes({ ...ok, turnRunning: true }, 2)).toBe('Sent together, as one message, when Claude finishes this turn');
+    expect(heldGoes({ ...ok, offline: true }, 3)).toBe('Sent together, as one message, once you\u2019re online');
+    expect(heldGoes({ ...ok, offline: true }, 1)).toBe('Sent in order once you\u2019re online');
   });
 
   it('offers Send Now only for what the turn alone holds, and allows it with no prompt and a live session', () => {

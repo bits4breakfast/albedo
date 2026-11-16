@@ -46,7 +46,7 @@ const noop = () => {};
 describe('the card', () => {
   it('a waiting comment: its chip says where it goes, Edit is the action, Resolve and Delete behind ⋯', () => {
     render(<CommentCardView comment={base} onEdit={noop} onResolve={noop} onDelete={noop} />);
-    expect(screen.getByText('Waiting · goes with your next message').getAttribute('data-state')).toBe('waiting');
+    expect(screen.getByText('To Send · goes with your next message').getAttribute('data-state')).toBe('waiting');
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '✓ Resolve' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
@@ -90,6 +90,57 @@ describe('the card', () => {
       view.destroy();
       host.remove();
     }
+  });
+
+  it('one a held message carries (#409): Held, in the Diff card and the File widget alike, and redrawn when that changes', () => {
+    render(<CommentCardView comment={base} held onEdit={noop} onResolve={noop} onDelete={noop} />);
+    expect(screen.getByText('Held · goes when the held message goes').getAttribute('data-state')).toBe('waiting');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({ doc: 'one\ntwo\nthree', extensions: [commentsExtension(() => null)] }),
+    });
+    try {
+      const at = { comment: base, from: view.state.doc.line(2).from, to: view.state.doc.line(2).to };
+      view.dispatch({ effects: setPlacedComments.of([{ ...at, held: true }]) });
+      expect(host.querySelector('.ed-cmt-chip')?.textContent).toBe('Held · goes when the held message goes');
+      // Delivered or removed: the same comment, no longer held, is redrawn.
+      view.dispatch({ effects: setPlacedComments.of([{ ...at, held: false }]) });
+      expect(host.querySelector('.ed-cmt-chip')?.textContent).toBe('To Send · goes with your next message');
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it('a Diff card says Held for a comment a held message carries (#409)', async () => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    const { __resetOutbox, holdMessage } = await import('../transcript/outbox');
+    __resetOutbox();
+    db.rows = [base, { ...base, id: 2, lineStart: 3, lineEnd: 3, anchorText: 'three', body: 'And this.' }];
+    holdMessage(1, 'carrying the first', Date.now(), [1]);
+    const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', 'one\ntwo\nthree\n', false));
+    await waitFor(() => expect(result.current.annotations?.after(3)).toBeTruthy());
+    render(
+      <>
+        {result.current.annotations!.after(2)}
+        {result.current.annotations!.after(3)}
+      </>,
+    );
+    expect([...document.querySelectorAll('.ed-cmt-chip')].map((c) => c.textContent)).toEqual([
+      'Held · goes when the held message goes',
+      'To Send · goes with your next message',
+    ]);
+    __resetOutbox();
   });
 
   it('says how long ago in plain words', () => {

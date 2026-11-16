@@ -85,7 +85,7 @@ interface Draft {
   defaultBaseBranch: string;
   /** Initial prompt sent to `claude` as argv on a task's first spawn. */
   taskPromptTemplate: string;
-  /** What a queued CI failure carries (#280). */
+  /** What a CI failure To Send carries (#280). */
   ciDetails: CiDetailsMode;
   /** Kept while another mode is chosen, so switching back loses nothing. */
   ciDetailsCommand: string;
@@ -1012,7 +1012,7 @@ function CiDetailsField({
   return (
     <div className="wt-field" role="radiogroup" aria-labelledby="wt-proj-ci-label">
       <span className="wt-label" id="wt-proj-ci-label">
-        CI Details <span className="wt-label-optional">What a queued CI failure carries</span>
+        CI Details <span className="wt-label-optional">What a CI failure To Send carries</span>
       </span>
       {CI_DETAILS_OPTIONS.map((o) => (
         <label key={o.mode} className="wt-option" data-selected={draft.ciDetails === o.mode}>

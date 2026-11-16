@@ -312,7 +312,7 @@ export function PassageComments({
       const row = scroller.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
       if (!row) continue;
       row.dataset.comments = String(n);
-      row.querySelector(':scope > .tx-gutter')?.setAttribute('title', `${n} comment${n === 1 ? '' : 's'} waiting to be sent`);
+      row.querySelector(':scope > .tx-gutter')?.setAttribute('title', `${n} comment${n === 1 ? '' : 's'} to send`);
     }
   }, [comments, messages, scrollRef]);
   useEffect(

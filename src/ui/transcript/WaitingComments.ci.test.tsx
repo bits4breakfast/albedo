@@ -10,7 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { WaitingComments } from './WaitingComments';
-import { __resetQueuedCi, detailsKey, observeCiQueue, queuedCiOf, setQueuedCiDetails } from './ciFailure';
+import { __resetQueuedCi, detailsKey, observeCiQueue, queuedCiOf, setQueuedCiDetails, useQueuedCi } from './ciFailure';
+import { toSendOf } from './toSend';
 import { parsePrView, type PrStatus } from '../../gh/prStatus';
 import type { CiDetailsState } from '../../gh/ciDetails';
 
@@ -46,11 +47,16 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** The list as the composer hands it over: the CI failure from its store. */
+function Listed() {
+  return <WaitingComments taskId={7} frozen={false} list={toSendOf(useQueuedCi(7), [], [])} />;
+}
+
 function show(details?: CiDetailsState) {
   if (details) act(() => setQueuedCiDetails(7, detailsKey(queuedCiOf(7)!), details));
-  render(<WaitingComments taskId={7} frozen={false} />);
+  render(<Listed />);
   fireEvent.click(screen.getByRole('button', { name: /CI failed/ }));
-  return screen.getByRole('group', { name: 'Waiting to be sent' });
+  return screen.getByRole('group', { name: 'To Send, 1' });
 }
 
 const READY: CiDetailsState = {

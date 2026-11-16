@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  *
  * ↑ in an empty message box takes every held message into it, to edit as
- * one (#399): the box and the Queued band together, as the app shows them.
+ * one (#399): the box and the band together, as the app shows them.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -80,7 +80,7 @@ function Pane({ taskId }: { taskId: number }) {
 }
 
 const box = () => screen.getByRole('textbox') as HTMLTextAreaElement;
-const band = () => screen.getByRole('status', { name: 'Queued messages' });
+const band = () => screen.getByRole('status', { name: 'In Claude Code and Held messages' });
 const up = () => fireEvent.keyDown(box(), { key: 'ArrowUp' });
 const esc = () => fireEvent.keyDown(box(), { key: 'Escape' });
 
@@ -123,7 +123,7 @@ describe('↑ in an empty box', () => {
     expect(band().textContent).toContain('Edit All');
     up();
     expect(box().value).toBe(THREE.join('\n\n'));
-    expect(band().textContent).toBe('Queued 3being edited in the message box');
+    expect(band().textContent).toBe('Held · 3being edited in the message box');
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     const note = screen.getByRole('note');
     expect(note.textContent).toBe('Sends as one message, held like the others until the turn endsEsc Put Back as 3');
@@ -348,7 +348,7 @@ describe('sending', () => {
     expect(box().value).toBe('');
     expect(getDraft(1)).toBeNull();
     expect(submitPty).not.toHaveBeenCalled();
-    expect(band().textContent).toContain('Queued 1');
+    expect(band().textContent).toContain('Held · 1');
     act(() => fact(1, 'turn-end'));
     await waitFor(() => expect(heldFor(1)).toHaveLength(0));
     act(() => fact(1, 'turn-end'));
@@ -437,7 +437,7 @@ describe('while they are in the box', () => {
     render(<Pane taskId={1} />);
     expect(box().value).toBe(THREE.join('\n\n'));
     expect(inBoxFor(1)).toHaveLength(3);
-    expect(band().textContent).toBe('Queued 3being edited in the message box');
+    expect(band().textContent).toBe('Held · 3being edited in the message box');
   });
 
   it('a box that comes up empty puts them back: the draft never made it to disk', () => {
@@ -514,6 +514,6 @@ describe('while they are in the box', () => {
     act(() => void holdMessage(1, 'held meanwhile', T + 10));
     expect(screen.getByText('held meanwhile')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
-    expect(band().textContent).toContain('sent after the message being edited');
+    expect(band().textContent).toContain('until the message being edited is sent');
   });
 });

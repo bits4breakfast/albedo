@@ -65,7 +65,7 @@ export { COMPACTING_HINT };
 
 /**
  * Why a command cannot go to the session now, or null when it can. Only on an
- * idle, live session with nothing waiting to send: while a turn runs, typed
+ * idle, live session with no message held: while a turn runs, typed
  * input is queued behind it and the command would land at a moment nobody
  * chose; on a permission prompt it would be typed into the prompt. Nor while
  * a `/compact` Albedo sent is still compacting (commandEcho.ts): the session
@@ -76,7 +76,7 @@ export function commandBlocker(live: boolean, status: TaskStatus, waiting: boole
   if (!live) return 'No session is running for this task.';
   if (compacting) return COMPACTING_HINT;
   if (!atRest(status)) return 'Available once the session is idle.';
-  if (waiting) return 'Not available while messages are waiting to send';
+  if (waiting) return 'Not available while messages are held';
   return null;
 }
 

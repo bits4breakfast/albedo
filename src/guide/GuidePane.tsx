@@ -29,11 +29,9 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
-import { commentMarks, groupCommentCount, useOpenComments } from './commentMarks';
-import { useWaitingCodeComments } from '../ui/transcript/codeComments';
-import { useComments } from '../ui/transcript/drafts';
+import { commentMarks, groupCommentCount } from './commentMarks';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
-import { useQueuedCi } from '../ui/transcript/ciFailure';
+import { ON_ITS_WAY, sendLabel, useToSend, useToSendFrozen } from '../ui/transcript/toSend';
 import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
 import { asFocus, firstMatch, projectFocus, type GuideFocus } from './focus';
 import { chosenFocus, draftOf, GuideOptions, useTaskProject } from './GuideOptions';
@@ -578,31 +576,39 @@ function GuideBody({
     setShownView(v);
   };
 
-  // Every comment waiting to go with the next message, the composer's queue:
-  // on code (this guide, the editor, diffs) and on transcript passages (#254).
-  const commentCount = useWaitingCodeComments(task.id).length + useComments(task.id).length;
-  // And a PR's failing checks, queued for Claude like a comment (#280).
-  const ciWaiting = useQueuedCi(task.id) !== null;
-  const waitingCount = commentCount + (ciWaiting ? 1 : 0);
+  // To Send (#404), the list every view reads: a PR's failing checks (#280),
+  // comments on code (this guide, the editor, diffs) and on transcript
+  // passages (#254). Send N shows the same N as the list above the box.
+  const toSend = useToSend(task.id);
+  const waitingCount = toSend.count;
+  // A send already carries them (#404): a second would carry them again.
+  const sendFrozen = useToSendFrozen(task.id);
   // The transcript is shown after (#254): where it lands, sent or held.
   const sendComments = () => void sendWaitingComments(task.id);
-  const commentsWord = `${commentCount} ${commentCount === 1 ? 'Comment' : 'Comments'}`;
   const sendButton =
     waitingCount > 0 ? (
       <button
         type="button"
         className={view.stale ? 'gd-btn' : 'gd-btn gd-btn-primary'}
         onClick={sendComments}
-        aria-keyshortcuts="Meta+Enter"
-        title="Send everything waiting to Claude now, and show the transcript (⌘↩). What you're typing in the message box stays there."
+        disabled={sendFrozen}
+        aria-keyshortcuts="Meta+Shift+S Meta+Enter"
+        title={
+          sendFrozen
+            ? ON_ITS_WAY
+            : `Send the ${waitingCount} To Send to Claude now, and show the transcript (⇧⌘S, or ⌘↩ here). What you're typing in the message box stays there.`
+        }
       >
-        Send {ciWaiting ? (commentCount > 0 ? `CI Failure + ${commentsWord}` : 'CI Failure') : commentsWord}
+        {sendLabel(waitingCount)}{' '}
+        <span className="gd-btn-key" aria-hidden="true">
+          ⇧⌘S
+        </span>
       </button>
     ) : null;
 
-  // Where the open comments are (#252), so one left on a file is found again here.
-  const openComments = useOpenComments(task.id);
-  const marks = useMemo(() => commentMarks(groups, diff, openComments), [groups, diff, openComments]);
+  // Where the comments To Send are (#252, #404), so one left on a file is
+  // found again here: sent ones and GitHub drafts are not counted.
+  const marks = useMemo(() => commentMarks(groups, diff, toSend.code), [groups, diff, toSend.code]);
   const fileComments = (g: GroupView, f: GroupFile) => marks.get(g.key)?.get(f.path) ?? 0;
 
   const reviewed = loadReviewed(task.id);
@@ -1004,10 +1010,11 @@ function GuideBody({
       closeSearch();
       return;
     }
-    // ⌘⏎: Send Comments (#256). A comment box is a textarea, returned above,
-    // so there ⌘⏎ still saves the comment and never sends.
+    // ⌘⏎: Send N (#256, #404), not while a send already carries them. A
+    // comment box is a textarea, returned above, so there ⌘⏎ still saves
+    // the comment and never sends.
     if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
-      if (waitingCount === 0) return;
+      if (waitingCount === 0 || sendFrozen) return;
       e.preventDefault();
       sendComments();
       return;
@@ -1092,8 +1099,8 @@ function GuideBody({
             </label>
           </>
         )}
-        {/* Out of date, Rewrite leads and Send Comments waits beside it;
-            otherwise comments waiting make Send the row's action (#254). */}
+        {/* Out of date, Rewrite leads and Send N sits beside it; otherwise
+            anything To Send makes Send N the row's action (#254, #404). */}
         {view.stale ? sendButton : null}
         <button
           type="button"

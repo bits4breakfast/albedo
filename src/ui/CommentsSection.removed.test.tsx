@@ -15,7 +15,10 @@ const bases = vi.hoisted(() => new Map<string, string>());
 const baseReads = vi.hoisted(() => [] as string[]);
 // The measured base, as useMeasuredBase gives it: '' and settled until asked for.
 const measured = vi.hoisted(() => ({ settled: true, asked: [] as boolean[] }));
-vi.mock('./transcript/composerBridge', () => ({ sendWaitingComments: () => true }));
+vi.mock('./transcript/composerBridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./transcript/composerBridge')>()),
+  sendWaitingComments: () => true,
+}));
 vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => harness.db } }));
 vi.mock('./editor/removedBase', () => ({
   baseTextOf: async (_worktree: string, base: string, path: string) => {
@@ -85,7 +88,7 @@ describe('comments on removed lines in the list', () => {
   it('are named as removed lines, by the base', async () => {
     await addRemoved('Why drop two?');
     render(list());
-    const waiting = await screen.findByRole('group', { name: 'Waiting, 1' });
+    const waiting = await screen.findByRole('group', { name: 'To Send, 1' });
     expect(waiting.querySelector('.tf-comment-where')!.textContent).toBe('a.ts removed 2');
     expect(waiting.querySelector('.tf-comment-open')!.getAttribute('title')).toBe('src/a.ts: removed line 2\n\nWhy drop two?');
   });

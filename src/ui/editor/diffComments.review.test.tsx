@@ -77,7 +77,7 @@ describe('a new comment on a review task', () => {
   it('goes to GitHub unless you say so', async () => {
     openBox(REVIEW);
     const group = screen.getByRole('group', { name: 'Where this comment goes' });
-    expect(within(group).getByRole('button', { name: 'Draft for GitHub' }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(group).getByRole('button', { name: 'GitHub Draft' }).getAttribute('aria-pressed')).toBe('true');
     const box = screen.getByPlaceholderText(/sent with Submit Review/);
     fireEvent.change(box, { target: { value: 'Rename this.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add Draft' }));
@@ -111,7 +111,7 @@ describe('a draft for GitHub', () => {
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, REVIEW));
     await waitFor(() => expect(result.current.annotations!.after(2)).not.toBeNull());
     render(<>{result.current.annotations!.after(2)}</>);
-    expect(screen.getByText('↑ Draft · not in the diff: in the summary')).toBeTruthy();
+    expect(screen.getByText('↑ GitHub Draft · not in the diff: in the summary')).toBeTruthy();
   });
 });
 
@@ -122,7 +122,7 @@ describe('a draft for GitHub, with the PR’s diff not known', () => {
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, REVIEW));
     await waitFor(() => expect(result.current.annotations!.after(2)).not.toBeNull());
     render(<>{result.current.annotations!.after(2)}</>);
-    expect(screen.getByText('↑ Draft · goes with Submit Review')).toBeTruthy();
+    expect(screen.getByText('↑ GitHub Draft · goes with Submit Review')).toBeTruthy();
   });
 });
 
@@ -135,7 +135,7 @@ describe('other reviewers’ threads', () => {
     expect(screen.getByText('Why three?')).toBeTruthy();
     expect(screen.getByText('alice')).toBeTruthy();
     expect(screen.getByText('Because of the retries.')).toBeTruthy();
-    expect(screen.getByText('↑ Draft · goes with Submit Review')).toBeTruthy();
+    expect(screen.getByText('↑ GitHub Draft · goes with Submit Review')).toBeTruthy();
   });
 
   it('two buttons: Reply, and one that says what the thread holds and opens it on GitHub (#327)', () => {
