@@ -404,9 +404,26 @@ interface LastMark {
   kind: 'file' | 'group';
   /** What it marked: only what was not marked already. */
   keys: string[];
-  /** Where it was made, to go back to. */
+  /** Where it was made, to go back to, and what to say there. */
   group: string;
   path: string;
+  said: string;
+  /** When it was made: past {@link UNDO_MS}, the key marks again. */
+  at: number;
+  /** The groups and their files then: if they change, the mark is forgotten. */
+  shape: string;
+}
+
+/**
+ * How long the same key undoes its mark. A reader who moves on without a key
+ * or a click -- scrolling the next file with the trackpad -- and then marks
+ * it must not unmark the previous one.
+ */
+export const UNDO_MS = 2000;
+
+/** The groups as the Reviewed keys see them: an undo is only safe on the same. */
+function shapeOf(groups: readonly GroupView[]): string {
+  return groups.map((g) => `${g.key}:${g.files.map((f) => reviewedKey(f.path, f.blocks)).join(',')}`).join('|');
 }
 
 const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Meta', 'Shift', 'Control', 'Alt', 'CapsLock', 'Fn']);
@@ -767,9 +784,9 @@ function GuideBody({
 
   // ⌘R and ⇧⌘R (#390, #391): the two Reviewed boxes, from the keyboard. Each
   // toggles and moves on exactly as a click on its box does. Pressed again
-  // straight away, with no other key, click or move between, it undoes the
-  // mark it just made and goes back to where it was made: the owner's
-  // "pressing again undoes". Read's, anywhere in it, as the other keys are; a
+  // within UNDO_MS, with no other key, click, wheel or move between and the
+  // groups as they were, it undoes the mark it just made and goes back to
+  // where it was made: the owner's "pressing again undoes". Read's, anywhere in it, as the other keys are; a
   // checkbox or button with focus is not typing, so they work from there too,
   // but not from a comment box or any other text field, nor from an open
   // menu. ⇧⌘R is Remote Control everywhere else: that binding stands aside
@@ -777,19 +794,26 @@ function GuideBody({
   // here, even on the Map. From `code`, as the app's ⇧⌘R is; Command only. A
   // held key does not repeat: auto-repeat would toggle a run of files.
   const lastMark = useRef<LastMark | null>(null);
-  // Anything else -- a key, a click, a move by any other means -- forgets it.
+  // Anything else -- a key, a click, the window losing focus, a wheel or
+  // trackpad scroll in the guide -- forgets it. A wheel, not `scroll`: the
+  // guide scrolls itself as a file opens, and that is not the reader moving.
   useEffect(() => {
     const forget = (e: Event) => {
       const m = lastMark.current;
       if (m === null) return;
       if (e instanceof KeyboardEvent && (MODIFIER_KEYS.has(e.key) || markKind(e) === m.kind)) return;
+      if (e.type === 'wheel' && !(e.target instanceof Node && rootRef.current?.contains(e.target))) return;
       lastMark.current = null;
     };
     window.addEventListener('keydown', forget, true);
     window.addEventListener('pointerdown', forget, true);
+    window.addEventListener('wheel', forget, { capture: true, passive: true });
+    window.addEventListener('blur', forget);
     return () => {
       window.removeEventListener('keydown', forget, true);
       window.removeEventListener('pointerdown', forget, true);
+      window.removeEventListener('wheel', forget, { capture: true });
+      window.removeEventListener('blur', forget);
     };
   }, []);
 
@@ -797,6 +821,7 @@ function GuideBody({
     lastMark.current = null;
     setReviewed(task.id, m.keys, false);
     setPlace((p) => ({ ...p, group: m.group, picked: { ...p.picked, [m.group]: m.path } }));
+    setSaid(m.said);
   };
 
   const reviewKey = (e: ReactKeyboardEvent<HTMLDivElement>): boolean => {
@@ -810,7 +835,8 @@ function GuideBody({
     // the guide, so the next press is heard here too.
     if (document.activeElement !== rootRef.current) rootRef.current?.focus({ preventScroll: true });
     const m = lastMark.current;
-    if (m !== null && m.kind === kind) {
+    lastMark.current = null;
+    if (m !== null && m.kind === kind && Date.now() - m.at < UNDO_MS && m.shape === shapeOf(groups)) {
       undoMark(m);
       return true;
     }
@@ -820,7 +846,10 @@ function GuideBody({
     else toggleFile(file);
     // Only a mark is remembered: an unmark stays where it is, and the key
     // again simply marks it once more.
-    lastMark.current = keys.length > 0 ? { kind, keys, group: group.key, path: file.path } : null;
+    if (keys.length > 0) {
+      const said = kind === 'group' ? `Unmarked ${group.title}` : `Unmarked ${splitPath(file.path).name}`;
+      lastMark.current = { kind, keys, group: group.key, path: file.path, said, at: Date.now(), shape: shapeOf(groups) };
+    }
     return true;
   };
 

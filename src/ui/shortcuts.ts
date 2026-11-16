@@ -292,11 +292,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
-  { combo: 'guide mod+r', keys: '⌘R', description: 'Review Guide: Mark the File Reviewed and Open the Next (Again at Once: Undo)' },
+  { combo: 'guide mod+r', keys: '⌘R', description: 'Review Guide: Mark the File Reviewed and Open the Next (Again Within 2 s: Undo)' },
   {
     combo: 'guide mod+shift+r',
     keys: '⇧⌘R',
-    description: 'Review Guide: Mark the Group Reviewed and Go to the Next (Again at Once: Undo)',
+    description: 'Review Guide: Mark the Group Reviewed and Go to the Next (Again Within 2 s: Undo)',
   },
   { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },

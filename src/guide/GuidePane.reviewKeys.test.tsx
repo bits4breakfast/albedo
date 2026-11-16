@@ -37,7 +37,7 @@ vi.mock('../ui/editor/diffComments', () => ({
 }));
 vi.mock('../ui/zoom', () => ({ applyZoom: async () => {}, stepZoom: (z: number) => z, storedZoom: () => 1 }));
 
-const { default: GuidePane, resetGuideViewsForTests } = await import('./GuidePane');
+const { default: GuidePane, resetGuideViewsForTests, UNDO_MS } = await import('./GuidePane');
 const { resetGuideStoreForTests, saveGuide } = await import('./store');
 const { default: useAppShortcuts } = await import('../ui/app/useAppShortcuts');
 const { CommentDraftView } = await import('../ui/editor/CommentViews');
@@ -49,6 +49,8 @@ const task = {
 } as unknown as Task;
 
 let remoteAsked: number[] = [];
+let blocks: { l1: string; l2: string; o1: string; g1: string };
+let writtenAt = 0;
 
 /** The app's shortcut table as App wires it, with Remote Control on offer. */
 function Shell({ active = true }: { active?: boolean }) {
@@ -102,9 +104,11 @@ beforeEach(async () => {
   );
   const [l1, l2, o1, g1] = diff.order as [string, string, string, string];
   loaded = { diff, base: 'base1', fromMergeBase: true, uncommitted: new Set() };
+  blocks = { l1, l2, o1, g1 };
+  writtenAt = Date.now();
   saveGuide(task.id, {
     diffHash: diff.hash,
-    writtenAt: Date.now(),
+    writtenAt,
     base: 'main',
     groups: [
       { title: 'Fuel', summary: '', blocks: [l1, o1] },
@@ -121,7 +125,10 @@ async function mount() {
   return view;
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const root = () => screen.getByLabelText('Review Guide');
 const left = () => within(screen.getByRole('region', { name: 'Group' }));
@@ -172,6 +179,65 @@ describe('⌘R: the file’s Reviewed box (#390)', () => {
     press('ArrowDown'); // oil is the last: stays
     cmdR(); // oil, the last: Fuel is done
     expect(heading()).toBe('Housing');
+  });
+
+  it('the undo says so, as every other move does', () => {
+    cmdR();
+    cmdR();
+    const said = screen.getAllByRole('status').map((x) => x.textContent).join('|');
+    expect(said).toContain('Unmarked lamp.ts');
+  });
+
+  it(`only within ${UNDO_MS / 1000} s: later, the key marks the file on screen`, () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    cmdR(); // lamp, on to oil
+    vi.setSystemTime(Date.now() + UNDO_MS + 1);
+    cmdR(); // oil, the last: Fuel is done
+    expect(heading()).toBe('Housing');
+  });
+
+  it('a wheel or trackpad scroll in the guide forgets it; one elsewhere does not', () => {
+    cmdR(); // lamp, on to oil
+    fireEvent.wheel(screen.getByRole('button', { name: 'Elsewhere' }), { deltaY: 40 });
+    cmdR(); // undone: back on lamp
+    expect(heading()).toBe('Fuel');
+    expect(current()).toContain('lamp.ts');
+    expect(fileBox().checked).toBe(false);
+    cmdR(); // lamp, on to oil
+    fireEvent.wheel(screen.getByRole('region', { name: 'Diff' }), { deltaY: 40 });
+    cmdR(); // oil, the last: Fuel is done
+    expect(heading()).toBe('Housing');
+  });
+
+  it('the window losing focus forgets it', () => {
+    cmdR(); // lamp, on to oil
+    fireEvent.blur(window);
+    cmdR();
+    expect(heading()).toBe('Housing');
+  });
+
+  it('groups changed since the mark: forgotten, never undone onto them', () => {
+    cmdR(); // lamp, on to oil
+    act(() =>
+      saveGuide(task.id, {
+        diffHash: loaded.diff.hash,
+        writtenAt,
+        base: 'main',
+        groups: [
+          { title: 'Fuel', summary: '', blocks: [blocks.l1, blocks.o1, blocks.g1] },
+          { title: 'Housing', summary: '', blocks: [blocks.l2] },
+        ],
+        files: fileBlockIndex(loaded.diff),
+        fallback: null,
+      }),
+    );
+    expect(current()).toContain('oil.ts');
+    cmdR(); // oil, on to vitrine
+    expect(current()).toContain('vitrine.ts');
+    press('ArrowUp');
+    press('ArrowUp');
+    expect(current()).toContain('lamp.ts');
+    expect(fileBox().checked).toBe(true);
   });
 
   it('a click in between forgets it too; the last file still to read goes to the next group', () => {
