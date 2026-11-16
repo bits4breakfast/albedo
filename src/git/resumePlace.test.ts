@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Project } from '../types';
-import { planResumePlace, projectOwningPath, recreateWorktree, switchMainCheckout, type ResumePlacePlan } from './resumePlace';
+import {
+  directlyUnder,
+  planResumePlace,
+  projectOwningPath,
+  recreateWorktree,
+  stripRemote,
+  switchMainCheckout,
+  type ResumePlacePlan,
+} from './resumePlace';
 import { setGitRunner, setPathExistsProbe, type GitRunner, type ParsedWorktree, type PathExistsProbe } from './worktree';
 
 function wt(path: string, branch: string | null, extra: Partial<ParsedWorktree> = {}): ParsedWorktree {
@@ -35,6 +43,8 @@ describe('planResumePlace', () => {
       recreate: true,
       source: 'local',
       startPoint: null,
+      origin: null,
+      preselect: true,
       elsewhere: null,
       main: { path: '/w/albedo', current: 'main', dirty: null },
       needsPrune: false,
@@ -116,15 +126,17 @@ describe('planResumePlace', () => {
 });
 
 describe('planResumePlace, the branch gone too (#395)', () => {
-  const gone = { ...base, branchExists: false, worktrees: [wt('/w/albedo', 'main')] };
+  const gone = { ...base, branchExists: false, worktrees: [wt('/w/albedo', 'main')], ownedPath: true };
 
-  it('recreates from origin when the remote still has the branch', () => {
-    expect(planResumePlace({ ...gone, onRemote: true, baseStart: null })).toEqual({
+  it('recreates from origin when origin has the branch, preselected', () => {
+    expect(planResumePlace({ ...gone, origin: 'present', trackingRef: true, baseStart: null })).toEqual({
       repoPath: '/w/albedo',
       branch: 'polishing',
       recreate: true,
       source: 'remote',
       startPoint: 'origin/polishing',
+      origin: 'present',
+      preselect: true,
       elsewhere: null,
       main: null,
       needsPrune: false,
@@ -132,47 +144,85 @@ describe('planResumePlace, the branch gone too (#395)', () => {
     });
   });
 
-  it('cuts a new branch from the base when origin does not have it either', () => {
-    const plan = planResumePlace({ ...gone, onRemote: false, baseStart: 'origin/main' });
+  it('cuts a new branch from the base, preselected, once origin says it is gone', () => {
+    const plan = planResumePlace({ ...gone, origin: 'absent', baseStart: 'origin/main' });
     expect(plan?.source).toBe('base');
+    expect(plan?.origin).toBe('absent');
+    expect(plan?.preselect).toBe(true);
     expect(plan?.startPoint).toBe('origin/main');
     expect(plan?.baseBranch).toBe('main');
-    expect(plan?.recreate).toBe(true);
     // No branch to switch the main checkout to.
     expect(plan?.main).toBeNull();
   });
 
+  it('origin unreachable: recreates from the last fetch’s copy when there is one', () => {
+    const plan = planResumePlace({ ...gone, origin: 'unknown', trackingRef: true, baseStart: 'main' });
+    expect(plan?.source).toBe('remote');
+    expect(plan?.origin).toBe('unknown');
+    expect(plan?.preselect).toBe(true);
+  });
+
+  it('origin unreachable and no copy: offers the base, but does not choose it', () => {
+    const plan = planResumePlace({ ...gone, origin: 'unknown', trackingRef: false, baseStart: 'main' });
+    expect(plan?.source).toBe('base');
+    expect(plan?.origin).toBe('unknown');
+    expect(plan?.preselect).toBe(false);
+  });
+
+  it('a stale tracking ref does not count once origin says the branch is gone', () => {
+    expect(planResumePlace({ ...gone, origin: 'absent', trackingRef: true, baseStart: 'main' })?.source).toBe('base');
+  });
+
   it('offers nothing when neither origin nor a base can make it', () => {
-    expect(planResumePlace({ ...gone, onRemote: false, baseStart: null })).toBeNull();
-    expect(planResumePlace({ ...gone, onRemote: false, baseStart: 'main', baseBranch: null })).toBeNull();
+    expect(planResumePlace({ ...gone, origin: 'absent', baseStart: null })).toBeNull();
+    expect(planResumePlace({ ...gone, origin: 'absent', baseStart: 'main', baseBranch: null })).toBeNull();
     // The base is the branch itself: no base at all.
-    expect(planResumePlace({ ...gone, onRemote: false, baseStart: 'polishing', baseBranch: 'polishing' })).toBeNull();
+    expect(planResumePlace({ ...gone, origin: 'absent', baseStart: 'polishing', baseBranch: 'polishing' })).toBeNull();
     expect(planResumePlace({ ...gone })).toBeNull();
   });
 
   it('offers nothing while something occupies the old path', () => {
-    expect(planResumePlace({ ...gone, onRemote: true, pathOccupied: true })).toBeNull();
+    expect(planResumePlace({ ...gone, origin: 'present', pathOccupied: true })).toBeNull();
     const registered = planResumePlace({
       ...gone,
-      onRemote: true,
+      origin: 'present',
       worktrees: [wt('/w/albedo', 'main'), wt('/w/albedo-agents/polishing', 'other')],
     });
     expect(registered).toBeNull();
   });
 
+  it('offers nothing for a folder that was never a worktree of its own', () => {
+    expect(planResumePlace({ ...gone, origin: 'present', ownedPath: false })).toBeNull();
+    expect(planResumePlace({ ...gone, origin: 'present', ownedPath: undefined })).toBeNull();
+  });
+
   it('prunes a stale registration of the old path first', () => {
     const plan = planResumePlace({
       ...gone,
-      onRemote: true,
+      origin: 'present',
       worktrees: [wt('/w/albedo', 'main'), wt('/w/albedo-agents/polishing', 'polishing', { prunable: true })],
     });
     expect(plan?.source).toBe('remote');
     expect(plan?.needsPrune).toBe(true);
   });
+});
 
-  it('never records the branch itself as its base: that hides its commits and its PR', () => {
-    expect(planResumePlace({ ...base, baseBranch: null, worktrees: [] })?.baseBranch).toBeNull();
-    expect(planResumePlace({ ...base, baseBranch: 'polishing', worktrees: [] })?.baseBranch).toBeNull();
+describe('directlyUnder', () => {
+  it('is true only one level under the root, expanding ~', () => {
+    expect(directlyUnder('~/www/shop-worktree', '/Users/m/www/shop-worktree/412-x', '/Users/m')).toBe(true);
+    expect(directlyUnder('/w/shop-worktree/', '/w/shop-worktree/412-x/', '/h')).toBe(true);
+    expect(directlyUnder('/w/shop-worktree', '/w/shop-worktree/412-x/app', '/h')).toBe(false);
+    expect(directlyUnder('/w/shop-worktree', '/w/shop-worktree', '/h')).toBe(false);
+    expect(directlyUnder('/w/shop', '/w/shop-worktree/412-x', '/h')).toBe(false);
+  });
+});
+
+describe('stripRemote', () => {
+  it('drops a leading remote, longest first, and leaves a local name alone', () => {
+    expect(stripRemote('origin/main', ['origin'])).toBe('main');
+    expect(stripRemote('team/upstream/main', ['team', 'team/upstream'])).toBe('main');
+    expect(stripRemote('feature/main', ['origin'])).toBe('feature/main');
+    expect(stripRemote('origin/', ['origin'])).toBe('origin/');
   });
 });
 
@@ -229,6 +279,8 @@ describe('recreateWorktree', () => {
     recreate: true,
     source: 'local',
     startPoint: null,
+    origin: null,
+    preselect: true,
     elsewhere: null,
     main: null,
     needsPrune: false,
@@ -271,6 +323,8 @@ describe('switchMainCheckout', () => {
     recreate: true,
     source: 'local',
     startPoint: null,
+    origin: null,
+    preselect: true,
     elsewhere: null,
     main: { path: '/w/albedo', current: 'main', dirty: 0 },
     needsPrune: false,

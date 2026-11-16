@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { PastSession } from '../db/sessions';
 import type { ResumePlacePlan } from '../git/resumePlace';
 
@@ -28,6 +28,14 @@ const session: PastSession = {
   taskId: null,
   cwdExists: false,
 };
+const other: PastSession = {
+  ...session,
+  sessionId: 'sess-2',
+  cwd: '/w/shop-worktree/388-tidy-rates',
+  title: 'Tidy the rates',
+  branch: '388-tidy-rates',
+};
+let rows: PastSession[] = [session];
 
 const probeResumePlace = vi.fn<(cwd: string, branch: string | null) => Promise<ResumePlacePlan | null>>();
 const recreateWorktree = vi.fn(async () => {});
@@ -35,7 +43,7 @@ const createTask = vi.fn(async (t: Record<string, unknown>) => ({ ...t, id: 9, s
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 vi.mock('@tauri-apps/plugin-fs', () => ({ exists: vi.fn(async () => false) }));
-vi.mock('../db/sessions', () => ({ listPastSessions: vi.fn(async () => [session]), PROMPT_CHARS: 120 }));
+vi.mock('../db/sessions', () => ({ listPastSessions: vi.fn(async () => rows), PROMPT_CHARS: 120 }));
 vi.mock('../capture', () => ({ importTranscripts: vi.fn(), listDiskSessions: vi.fn(async () => []) }));
 vi.mock('../db', () => ({ createTask, adoptSessionIntoTask: vi.fn(async () => {}) }));
 vi.mock('../capture/sessionLink', () => ({ linkTaskSession: vi.fn(async () => {}), newSessionId: () => 'fork-1' }));
@@ -57,6 +65,7 @@ const { default: SessionBrowser } = await import('./SessionBrowser');
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  rows = [session];
 });
 
 const plan = (o: Partial<ResumePlacePlan>): ResumePlacePlan => ({
@@ -65,6 +74,8 @@ const plan = (o: Partial<ResumePlacePlan>): ResumePlacePlan => ({
   recreate: true,
   source: 'local',
   startPoint: null,
+  origin: null,
+  preselect: true,
   elsewhere: null,
   main: null,
   needsPrune: false,
@@ -85,7 +96,7 @@ const warning = () => document.querySelector('.sb-warn')?.textContent?.replace(/
 
 describe('SessionBrowser, folder and branch both gone', () => {
   it('offers recreating from origin, preselected, and makes it before the task', async () => {
-    const onResumed = await openOn(plan({ source: 'remote', startPoint: `origin/${BRANCH}` }));
+    const onResumed = await openOn(plan({ source: 'remote', startPoint: `origin/${BRANCH}`, origin: 'present' }));
     const radio = await screen.findByRole('radio', { name: /Recreate the Worktree Here from origin/ });
     expect((radio as HTMLInputElement).checked).toBe(true);
     expect(warning()).toBe(
@@ -106,7 +117,7 @@ describe('SessionBrowser, folder and branch both gone', () => {
   });
 
   it('offers a new worktree from the base when origin lacks it too, and says the work may not be in it', async () => {
-    const onResumed = await openOn(plan({ source: 'base', startPoint: 'origin/main' }));
+    const onResumed = await openOn(plan({ source: 'base', startPoint: 'origin/main', origin: 'absent' }));
     const radio = await screen.findByRole('radio', { name: /New Worktree Here from main/ });
     expect((radio as HTMLInputElement).checked).toBe(true);
     expect(warning()).toBe(`That folder no longer exists, and neither does its branch ${BRANCH}, here or on origin.`);
@@ -122,7 +133,7 @@ describe('SessionBrowser, folder and branch both gone', () => {
   });
 
   it('labels Continue for a new branch', async () => {
-    await openOn(plan({ source: 'base', startPoint: 'main' }));
+    await openOn(plan({ source: 'base', startPoint: 'main', origin: 'absent' }));
     expect(await screen.findByRole('button', { name: 'Create and Continue' })).toBeTruthy();
   });
 
@@ -139,5 +150,90 @@ describe('SessionBrowser, folder and branch both gone', () => {
     expect(screen.queryByRole('radiogroup', { name: 'Where to resume' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Choose Folder…' })).toBeTruthy();
     expect(warning()).toMatch(/^That folder no longer exists\. The conversation's file paths point at it/);
+  });
+});
+
+describe('SessionBrowser, origin could not be asked', () => {
+  it('recreates from the last fetch’s copy, and says so', async () => {
+    await openOn(plan({ source: 'remote', startPoint: `origin/${BRANCH}`, origin: 'unknown' }));
+    const radio = await screen.findByRole('radio', { name: /Recreate the Worktree Here from origin/ });
+    expect((radio as HTMLInputElement).checked).toBe(true);
+    expect(warning()).toBe(
+      `That folder no longer exists, and neither does its local branch ${BRANCH}. Couldn't reach origin; using its copy from the last fetch.`,
+    );
+  });
+
+  it('offers the base without choosing it, never calls the branch gone, and can ask again', async () => {
+    await openOn(plan({ source: 'base', startPoint: 'main', origin: 'unknown', preselect: false }));
+    const radio = await screen.findByRole('radio', { name: /New Worktree Here from main/ });
+    expect((radio as HTMLInputElement).checked).toBe(false);
+    expect(warning()).toBe(
+      `That folder no longer exists, and neither does its local branch ${BRANCH}. Couldn't reach origin to check for ${BRANCH}. Try Again`,
+    );
+    expect(warning()).not.toMatch(/here or on/);
+    // Nothing chosen yet, so nothing to continue with.
+    expect((screen.getByRole('button', { name: 'Continue This Session' }) as HTMLButtonElement).disabled).toBe(true);
+
+    probeResumePlace.mockResolvedValue(plan({ source: 'remote', startPoint: `origin/${BRANCH}`, origin: 'present' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+    await waitFor(() => expect(probeResumePlace).toHaveBeenCalledTimes(2));
+    expect(((await screen.findByRole('radio', { name: /from origin/ })) as HTMLInputElement).checked).toBe(true);
+    expect(warning()).toMatch(/It is still on origin\.$/);
+  });
+
+  it('choosing the base by hand makes it', async () => {
+    const onResumed = await openOn(plan({ source: 'base', startPoint: 'main', origin: 'unknown', preselect: false }));
+    fireEvent.click(await screen.findByRole('radio', { name: /New Worktree Here from main/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create and Continue' }));
+    await waitFor(() => expect(onResumed).toHaveBeenCalled());
+    expect(recreateWorktree).toHaveBeenCalledWith(expect.objectContaining({ source: 'base' }), CWD);
+  });
+});
+
+describe('SessionBrowser while the probe is out', () => {
+  function deferred() {
+    let resolve: (p: ResumePlacePlan | null) => void = () => {};
+    const promise = new Promise<ResumePlacePlan | null>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it('says it is checking origin, keeps Choose Folder…, then shows the options', async () => {
+    const d = deferred();
+    probeResumePlace.mockReturnValue(d.promise);
+    render(<SessionBrowser open onClose={() => {}} onOpenTask={() => {}} onResumed={() => {}} />);
+    fireEvent.click(await screen.findByText('Use the max availability'));
+    await waitFor(() => expect(warning()).toBe(`That folder no longer exists. Checking origin for ${BRANCH}…`));
+    expect(screen.getByRole('button', { name: 'Choose Folder…' })).toBeTruthy();
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+
+    await act(async () => d.resolve(plan({ source: 'remote', startPoint: `origin/${BRANCH}`, origin: 'present' })));
+    expect(warning()).toMatch(/It is still on origin\.$/);
+    expect(screen.getByRole('radio', { name: /from origin/ })).toBeTruthy();
+  });
+
+  it('switching rows before the first probe answers never shows its answer under the other row', async () => {
+    rows = [session, other];
+    const first = deferred();
+    const second = deferred();
+    probeResumePlace.mockImplementation((cwd) => (cwd === CWD ? first.promise : second.promise));
+    render(<SessionBrowser open onClose={() => {}} onOpenTask={() => {}} onResumed={() => {}} />);
+    fireEvent.click(await screen.findByText('Use the max availability'));
+    await waitFor(() => expect(probeResumePlace).toHaveBeenCalledWith(CWD, BRANCH));
+    fireEvent.click(screen.getByText('Tidy the rates'));
+    await waitFor(() => expect(probeResumePlace).toHaveBeenCalledWith(other.cwd, other.branch));
+    expect(warning()).toBe('That folder no longer exists. Checking origin for 388-tidy-rates…');
+
+    // The first row's answer lands late: ignored.
+    await act(async () => first.resolve(plan({ source: 'remote', startPoint: `origin/${BRANCH}`, origin: 'present' })));
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(warning()).toBe('That folder no longer exists. Checking origin for 388-tidy-rates…');
+
+    await act(async () =>
+      second.resolve(plan({ branch: '388-tidy-rates', source: 'base', startPoint: 'main', origin: 'absent' })),
+    );
+    expect(warning()).toBe('That folder no longer exists, and neither does its branch 388-tidy-rates, here or on origin.');
+    expect(screen.queryByRole('radio', { name: /from origin/ })).toBeNull();
   });
 });

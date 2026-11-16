@@ -163,8 +163,15 @@ export default function SessionBrowser({
   const [busy, setBusy] = useState(false);
   /** A folder to resume in instead of the recorded cwd. */
   const [cwdOverride, setCwdOverride] = useState<string | null>(null);
-  /** What a gone folder could be replaced with; null while unknown or nothing. */
-  const [place, setPlace] = useState<ResumePlacePlan | null>(null);
+  /**
+   * What a gone folder could be replaced with, for the row it was probed for.
+   * Keyed by session so a late answer can never show under another row.
+   */
+  const [placeFor, setPlaceFor] = useState<{ sessionId: string; plan: ResumePlacePlan } | null>(null);
+  /** The row whose probe is still out (it may be asking origin), or null. */
+  const [probing, setProbing] = useState<string | null>(null);
+  /** Bumped by Try Again to probe the same row again. */
+  const [probeRun, setProbeRun] = useState(0);
   /**
    * Git work to do before resuming, in place of a folder: recreate the gone
    * worktree at its old path, or switch the main checkout to its branch.
@@ -336,6 +343,7 @@ export default function SessionBrowser({
     [sessions, selectedId],
   );
 
+  const place = placeFor && placeFor.sessionId === selectedId ? placeFor.plan : null;
   const effectiveCwd = cwdOverride ?? selected?.cwd ?? null;
   // `cwdExists` is null when capture did not check; only false is a real problem.
   const folderGone = selected !== null && cwdOk(selected) === false;
@@ -351,20 +359,26 @@ export default function SessionBrowser({
   const goneCwd = folderGone ? selected.cwd : null;
   const goneBranch = folderGone ? selected.branch : null;
   useEffect(() => {
-    setPlace(null);
+    setPlaceFor(null);
     setAction(null);
-    if (!goneCwd) return;
+    setProbing(null);
+    if (!goneCwd || !selectedId) return;
+    const sessionId = selectedId;
     let cancelled = false;
+    // Only a named branch can mean a trip to origin, so only it says so.
+    if (goneBranch && goneBranch !== 'HEAD') setProbing(sessionId);
     void probeResumePlace(goneCwd, goneBranch).then((plan) => {
-      if (cancelled || !aliveRef.current || !plan) return;
-      setPlace(plan);
-      if (plan.recreate) setAction('recreate');
+      if (cancelled || !aliveRef.current) return;
+      setProbing(null);
+      if (!plan) return;
+      setPlaceFor({ sessionId, plan });
+      if (plan.recreate && plan.preselect) setAction('recreate');
       else if (plan.elsewhere) setCwdOverride((o) => o ?? plan.elsewhere);
     });
     return () => {
       cancelled = true;
     };
-  }, [selectedId, goneCwd, goneBranch]);
+  }, [selectedId, goneCwd, goneBranch, probeRun]);
 
   const pickFolder = useCallback(async () => {
     try {
@@ -682,11 +696,36 @@ export default function SessionBrowser({
 
             {folderGone && (
               <div className="sb-warn">
-                {place?.source === 'remote' ? (
+                {probing === selected.sessionId && selected.branch ? (
+                  <>
+                    That folder no longer exists. Checking {RESUME_REMOTE} for{' '}
+                    <span className="wt-mono">{selected.branch}</span>…
+                  </>
+                ) : place?.source === 'remote' ? (
                   <>
                     That folder no longer exists, and neither does its local branch{' '}
-                    <span className="wt-mono">{place.branch}</span>. It is still on{' '}
-                    <span className="wt-mono">{RESUME_REMOTE}</span>.
+                    <span className="wt-mono">{place.branch}</span>.{' '}
+                    {place.origin === 'unknown' ? (
+                      <>Couldn't reach {RESUME_REMOTE}; using its copy from the last fetch.</>
+                    ) : (
+                      <>
+                        It is still on <span className="wt-mono">{RESUME_REMOTE}</span>.
+                      </>
+                    )}
+                  </>
+                ) : place?.source === 'base' && place.origin !== 'absent' ? (
+                  <>
+                    That folder no longer exists, and neither does its local branch{' '}
+                    <span className="wt-mono">{place.branch}</span>. Couldn't reach {RESUME_REMOTE} to
+                    check for <span className="wt-mono">{place.branch}</span>.{' '}
+                    <button
+                      type="button"
+                      className="btn btn-ghost sb-warn-action"
+                      disabled={busy}
+                      onClick={() => setProbeRun((n) => n + 1)}
+                    >
+                      Try Again
+                    </button>
                   </>
                 ) : place?.source === 'base' ? (
                   <>

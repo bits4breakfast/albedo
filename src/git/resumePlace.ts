@@ -18,13 +18,18 @@
  * When the branch is gone too -- typically worktree and branch removed after
  * the PR merged -- the worktree can still be put back at the old path (#395):
  *
- *  - **from origin**: the branch is still on the remote (one branch fetched,
- *    nothing else), so a local branch is cut from it, tracking it.
- *  - **from the base**: gone from the remote too, so a new branch of the same
- *    name is cut from the project's base branch, freshly fetched. The earlier
- *    work is in it only if it was merged.
+ *  - **from origin**: the branch is still on the remote (asked with
+ *    `ls-remote`, then that one branch fetched), so a local branch is cut from
+ *    it, tracking it. When origin cannot be reached, the last fetch's copy of
+ *    it serves, if there is one.
+ *  - **from the base**: origin answered and has no such branch, so a new
+ *    branch of the same name is cut from the project's base branch, freshly
+ *    fetched. The earlier work is in it only if it was merged. When origin
+ *    could not be asked and there is no copy, this is still offered but not
+ *    chosen: the branch may well be there.
  *
- * Neither is offered while something occupies the old path.
+ * Neither is offered while something occupies the old path, nor for a folder
+ * that was not a worktree of its own (a session started in a subfolder).
  *
  * The decision is pure ({@link planResumePlace}); the probing around it is not.
  *
@@ -40,13 +45,16 @@ import {
   cutPoint,
   defaultBranchOf,
   fetchRemoteBranch,
+  git,
   gitOk,
   listWorktreesDetailed,
   probePath,
   refExists,
+  remoteBranchState,
   switchCleanCheckout,
   uncommittedChanges,
   type ParsedWorktree,
+  type RemoteBranchState,
 } from './worktree';
 import { expandTilde, normalizePath } from './reconcile';
 import { isValidRefName } from './slug';
@@ -69,6 +77,17 @@ export interface ResumePlacePlan {
   source: 'local' | 'remote' | 'base';
   /** What a `remote` or `base` worktree is cut from; null for `local`. */
   startPoint: string | null;
+  /**
+   * The branch is gone locally: what origin said about it. `unknown` when it
+   * could not be asked -- then `remote` cuts from the last fetch's copy, and
+   * `base` must not be described as "gone from origin". Null for `local`.
+   */
+  origin: RemoteBranchState | null;
+  /**
+   * Whether recreating is chosen up front. Not for `base` while origin could
+   * not be asked: the branch may still be there, and a new one would hide it.
+   */
+  preselect: boolean;
   /** A live worktree with `branch` checked out, or null. */
   elsewhere: string | null;
   /**
@@ -101,15 +120,23 @@ export function planResumePlace(o: {
   baseBranch: string | null;
   /** Uncommitted changes in the main working tree; null when unreadable. */
   mainDirty?: number | null;
-  /** The branch is gone locally: whether fetching it from origin worked. */
-  onRemote?: boolean;
+  /** The branch is gone locally: what origin said about it (see remoteBranchState). */
+  origin?: RemoteBranchState;
+  /** `refs/remotes/origin/<branch>` exists, current or from the last fetch. */
+  trackingRef?: boolean;
   /**
-   * The branch is gone here and on origin: what a new one would be cut from
-   * (the base, or its fetched upstream). Null when the base cannot be found.
+   * What a new branch of the same name would be cut from (the base, or its
+   * fetched upstream). Null when the base cannot be found.
    */
   baseStart?: string | null;
   /** Something is at the old path now, whatever git says. */
   pathOccupied?: boolean;
+  /**
+   * The old path is one Albedo can put a worktree at: a task's own worktree,
+   * or exactly one level under the project's worktree root -- never a
+   * subfolder a session happened to start in.
+   */
+  ownedPath?: boolean;
 }): ResumePlacePlan | null {
   const branch = o.branch;
   // A detached session records `HEAD`, which names no branch to check out.
@@ -132,6 +159,8 @@ export function planResumePlace(o: {
     recreate: live === undefined,
     source: 'local',
     startPoint: null,
+    origin: null,
+    preselect: live === undefined,
     elsewhere: live?.path ?? null,
     main,
     needsPrune,
@@ -145,29 +174,53 @@ export function planResumePlace(o: {
  * live registration. No main-checkout switch: there is no branch to switch to.
  */
 function planGoneBranch(
-  o: { repoPath: string; worktrees: readonly ParsedWorktree[]; onRemote?: boolean; baseStart?: string | null; pathOccupied?: boolean },
+  o: {
+    repoPath: string;
+    worktrees: readonly ParsedWorktree[];
+    origin?: RemoteBranchState;
+    trackingRef?: boolean;
+    baseStart?: string | null;
+    pathOccupied?: boolean;
+    ownedPath?: boolean;
+  },
   branch: string,
   here: (w: ParsedWorktree) => boolean,
   baseBranch: string | null,
   needsPrune: boolean,
 ): ResumePlacePlan | null {
-  if (o.pathOccupied) return null;
+  if (o.ownedPath !== true || o.pathOccupied) return null;
   if (o.worktrees.some((w) => here(w) && !w.prunable)) return null;
   // git refuses `-b` for a branch a live worktree still names.
   if (o.worktrees.some((w) => w.branch === branch && !w.prunable)) return null;
-  const remote = o.onRemote === true;
-  if (!remote && (!baseBranch || !o.baseStart)) return null;
-  return {
-    repoPath: o.repoPath,
-    branch,
-    recreate: true,
-    source: remote ? 'remote' : 'base',
-    startPoint: remote ? `${RESUME_REMOTE}/${branch}` : (o.baseStart ?? null),
-    elsewhere: null,
-    main: null,
-    needsPrune,
-    baseBranch,
-  };
+  const origin = o.origin ?? 'unknown';
+  const shared = { repoPath: o.repoPath, branch, recreate: true, origin, elsewhere: null, main: null, needsPrune, baseBranch };
+  // Origin has it -- or could not be asked, and the last fetch left a copy.
+  if (origin === 'present' || (origin === 'unknown' && o.trackingRef === true)) {
+    return { ...shared, source: 'remote', startPoint: `${RESUME_REMOTE}/${branch}`, preselect: true };
+  }
+  if (!baseBranch || !o.baseStart) return null;
+  return { ...shared, source: 'base', startPoint: o.baseStart, preselect: origin === 'absent' };
+}
+
+/** Whether `cwd` is exactly one level under `root`. Pure; `home` expands `~`. */
+export function directlyUnder(root: string, cwd: string, home: string): boolean {
+  const r = normalizePath(expandTilde(root, home));
+  const path = normalizePath(cwd);
+  if (!r || !path.startsWith(`${r}/`)) return false;
+  const rest = path.slice(r.length + 1);
+  return rest.length > 0 && !rest.includes('/');
+}
+
+/**
+ * `origin/main` -> `main`: a base recorded with its remote names the same
+ * branch, and freshBase wants the local name. Longest remote first, because a
+ * remote may itself contain a slash. Pure.
+ */
+export function stripRemote(base: string, remotes: readonly string[]): string {
+  const remote = [...remotes]
+    .sort((a, b) => b.length - a.length)
+    .find((r) => base.startsWith(`${r}/`) && base.length > r.length + 1);
+  return remote ? base.slice(remote.length + 1) : base;
 }
 
 /** The project whose worktree root holds `cwd`. Pure; `home` expands `~`. */
@@ -185,8 +238,9 @@ export function projectOwningPath(projects: readonly Project[], cwd: string, hom
  * folder picker: the repo cannot be identified, or the old path cannot take a
  * worktree. Never throws -- every failure means "nothing to suggest".
  *
- * When the branch is gone it fetches: that one branch from origin, and, when
- * origin does not have it, the base branch's upstream.
+ * When the branch is gone it asks origin about that one branch (fetching it
+ * when there), and otherwise fetches the base branch's upstream. One such
+ * probe per repo, branch and base runs at a time (probeGoneBranch).
  */
 export async function probeResumePlace(cwd: string, branch: string | null): Promise<ResumePlacePlan | null> {
   try {
@@ -195,11 +249,16 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
     const task = await findTaskByWorktreePath(cwd).catch(() => null);
     let repoPath = task?.repoPath ?? null;
     let baseBranch = task?.baseBranch ?? null;
+    // A task's own folder is a worktree by definition; a project's, only one
+    // level under its root (a session may have started in a subfolder).
+    let ownedPath = repoPath !== null;
     if (!repoPath) {
       const { homeDir } = await import('@tauri-apps/api/path');
-      const project = projectOwningPath(await listProjects(), cwd, await homeDir());
+      const home = await homeDir();
+      const project = projectOwningPath(await listProjects(), cwd, home);
       repoPath = project?.repoPath ?? null;
       baseBranch = project?.defaultBaseBranch ?? null;
+      ownedPath = project !== null && directlyUnder(project.worktreeRoot, cwd, home);
     }
     // A detached session records `HEAD`: nothing to check out, nothing to fetch.
     if (!repoPath || !branch || branch === 'HEAD' || !isValidRefName(branch)) return null;
@@ -207,10 +266,15 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
     const exists = await refExists(repoPath, `refs/heads/${branch}`);
     const worktrees = await listWorktreesDetailed(repoPath);
     if (!exists) {
+      if (!ownedPath) return null;
       const pathOccupied = await probePath(cwd).catch(() => false);
       if (pathOccupied) return null;
-      const onRemote = await fetchRemoteBranch(repoPath, RESUME_REMOTE, branch).catch(() => false);
-      const baseStart = onRemote || !baseBranch || baseBranch === branch ? null : await freshBase(repoPath, baseBranch);
+      const remotes = await git(['remote'], repoPath).then(
+        (r) => (r.code === 0 ? r.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : []),
+        () => [],
+      );
+      const base = baseBranch ? stripRemote(baseBranch, remotes) : null;
+      const gone = await probeGoneBranch(repoPath, branch, base && base !== branch ? base : null);
       return planResumePlace({
         cwd,
         repoPath,
@@ -218,9 +282,9 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
         branchExists: false,
         worktrees,
         baseBranch,
-        onRemote,
-        baseStart,
+        ...gone,
         pathOccupied,
+        ownedPath,
       });
     }
     const first = worktrees[0];
@@ -240,6 +304,37 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
   } catch {
     return null;
   }
+}
+
+interface GoneBranchProbe {
+  origin: RemoteBranchState;
+  trackingRef: boolean;
+  baseStart: string | null;
+}
+
+/**
+ * One probe per repo, branch and base at a time: selecting a row again while
+ * its probe is still out reuses that probe instead of asking origin twice.
+ */
+const goneProbes = new Map<string, Promise<GoneBranchProbe>>();
+
+/** Ask origin about a gone branch and, unless it can be had from there, find the base. */
+function probeGoneBranch(repoPath: string, branch: string, base: string | null): Promise<GoneBranchProbe> {
+  const key = [repoPath, branch, base ?? ''].join('\0');
+  const running = goneProbes.get(key);
+  if (running) return running;
+  const probe = (async (): Promise<GoneBranchProbe> => {
+    const origin = await remoteBranchState(repoPath, RESUME_REMOTE, branch).catch((): RemoteBranchState => 'unknown');
+    const trackingRef =
+      origin === 'present' ||
+      (origin === 'unknown' &&
+        (await refExists(repoPath, `refs/remotes/${RESUME_REMOTE}/${branch}`).catch(() => false)));
+    const fromRemote = origin !== 'absent' && trackingRef;
+    const baseStart = fromRemote || !base ? null : await freshBase(repoPath, base).catch(() => null);
+    return { origin, trackingRef, baseStart };
+  })().finally(() => goneProbes.delete(key));
+  goneProbes.set(key, probe);
+  return probe;
 }
 
 /**

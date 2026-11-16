@@ -235,6 +235,22 @@
   padding: 8px 10px;
 }
 
+/* Try Again, inline in the warning: a link in the warning's own text tier
+   (--banner-text, 7.65 | 11.27 on --banner-bg), not a button that would make
+   the line taller. Specificity, not load order, beats .btn and .btn-ghost. */
+.sb-warn .btn.sb-warn-action,
+.sb-warn .btn.sb-warn-action:hover {
+  display: inline;
+  height: auto;
+  padding: 0;
+  font: inherit;
+  color: var(--banner-text);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .sb-actions { display: flex; align-items: center; gap: 8px; }
 
 .sb-note {
