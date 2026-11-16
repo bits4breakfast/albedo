@@ -286,7 +286,7 @@ mode shows the same way, with **Approve** and **Keep Planning**.
 
 Tool calls are compact rows, thinking folds away, and edits open into diffs
 with word-level highlighting. Click any file path to open the file. Code
-blocks and inline code have a copy icon. **⌘↓** jumps to the latest
+blocks and inline code have a copy icon. **⌥⌘↓** jumps to the latest
 message.
 
 When Claude answers with a diagram (a ` ```mermaid ` block: a sequence, flow
@@ -615,6 +615,7 @@ you resume or import from History.
 | ⌘1…9 | Jump to the Nth task |
 | ⌥1…9 | Jump to the Nth project |
 | ⌘[ / ⌘] | Previous / next task |
+| ⌘↑ / ⌘↓ | Previous / next task (not in a text field; macOS only) |
 | ⇧⌘[ / ⇧⌘] | Previous / next project |
 | ⌥⌘T | Collapse / expand the task list |
 | ⌘← / ⌘→ | Previous / next reading tab |
@@ -631,7 +632,7 @@ you resume or import from History.
 | ⇧⌘S | Send the waiting comments, then show the transcript |
 | ⇧F6 or F2 | Rename the selected task |
 | ⌘U | Attach files to the message |
-| ⌘↓ | Jump to the latest message |
+| ⌥⌘↓ | Jump to the latest message (in the transcript) |
 | ⌘B or ⌘-click | Go to Declaration; on a declaration, its usages (in the editor) |
 | ⌥F7 | Find Usages (in the editor) |
 | ⌥⌘B | Go to Implementation: implementers, subclasses or trait users (in the editor, PHP) |

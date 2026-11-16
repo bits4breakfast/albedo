@@ -146,6 +146,61 @@
  * other keydown listener in src (none reads T), and the native menu (only
  * ⌘Q and ⌘W). Nothing else binds ⌥⌘T.
  *
+ * ## ⌘↑ / ⌘↓: previous and next task
+ *
+ * The same step as ⌘[ / ⌘] (#398), in the list's own order. macOS only
+ * (off a Mac there is no Command, and Ctrl+↑/↓ belong to others), Command only,
+ * read from `key` (an arrow has no character for Option or the layout to
+ * change), and no Shift or Option: ⇧⌘↑/↓ select to the start or end of a
+ * field, and ⌥⌘↓ is Jump to the Latest Message in the transcript and Next
+ * Changed File in the editor. Not Control either: Ctrl+↑/↓ is Claude Code's
+ * own in the task terminal (its diff file list and agent groups, 2.1.325),
+ * CodeMirror's page up/down on macOS, and Mission Control outside the app.
+ *
+ * Not in a text field (`whenTyping: 'ignore'`), where they are start and end
+ * of the text, as ⌘←/⌘→ are start and end of the line: the message box, a
+ * task title, the editor (contenteditable; CodeMirror's Cmd-ArrowUp/Down are
+ * cursorDocStart/End), and the shell drawer, whose terminal input is a
+ * textarea. Live in the TASK terminal, where focus lands right after a task
+ * is selected, so a held ⌘↓ keeps walking: Claude Code binds neither key
+ * (its `cmd`/`super` keys reach it only through a terminal that reports
+ * Command, and xterm 5.5 sends nothing for ⌘ with an arrow: no bytes, no
+ * scrolling), so the task terminal gives both up (TAKEN_FROM_TASK_TERMINAL)
+ * and the binding names its input in `typingExcept`, as Rename does.
+ *
+ * And not where something focused already answered the arrow
+ * (`whenHandled: 'ignore'`): an open menu (⋯, the git menu, closed
+ * projects) and the editor's symbol results move on any ↑/↓, Command or
+ * not, so there ⌘↓ stays theirs rather than doing two things at once. The
+ * lists that care -- the task list's rows, the rail, the Files list and
+ * tree, the Review Guide -- already refuse Command and leave it to this.
+ *
+ * And they stand down entirely (`taskArrowStandsDown`, in TASK_ARROW_TERMS):
+ * under a modal dialog, in a code editor on screen (a read-only one can hold
+ * no focus, so it counts when it was the last thing clicked), while an input method
+ * composes, and on auto-repeat -- a held ⌘↓ would mount every task it passed
+ * and spawn `claude --resume` for each. Other reading surfaces that are not
+ * fields -- the Review Guide, a diff in Files, a preview -- do step tasks,
+ * as the owner decided ("everywhere except text fields").
+ *
+ * Checked: CodeMirror's default, history and search keymaps (Cmd-ArrowUp/
+ * Down, Ctrl-ArrowUp/Down, Mod-Alt-ArrowUp/Down for add cursor -- which the
+ * editor's own ⌥⌘↑/↓ preempts, in the capture phase), editorKeys.ts,
+ * focusAreas.ts, every other keydown listener in src that reads an arrow,
+ * and the native menu (only ⌘Q and ⌘W). Nothing else binds ⌘↑ or ⌘↓.
+ *
+ * ## ⌥⌘↓: Jump to the Latest Message, in the transcript
+ *
+ * Was ⌘↓ until #398 gave that to the task step. Not a combo here: the
+ * transcript listens for it (TranscriptPane.tsx, jumpKey.ts) only while it is
+ * on screen and the keyboard is free there -- nothing focused, or focus in
+ * the transcript and not in a field. The editor's ⌥⌘↓ is Next Changed File
+ * (FileEditor.tsx), heard on the window in the capture phase even while its
+ * tab is hidden; it lets ⌥⌘↓ through exactly when the transcript would take
+ * it, and keeps it everywhere else (its own tab, the Files list). ⌥⌘↑ stays
+ * the editor's Previous Changed File. Neither terminal takes them from
+ * anyone: xterm 5.5 sends nothing for an arrow with ⌘ held.
+ *
  * ## ⇧⌘S: send the waiting comments
  *
  * From anywhere (#258), as the Send beside them in Files and the guide: the
@@ -159,7 +214,7 @@
 
 import { useEffect, useRef } from 'react';
 import { detectPlatform, type Platform } from '../lib/platform';
-import { terminalYieldsKey } from './focusAreas';
+import { modalOpen, terminalYieldsKey } from './focusAreas';
 
 /** A combo, in the syntax `mod+<key>`; `mod+digit` matches 1 through 9. */
 export type Combo =
@@ -171,6 +226,8 @@ export type Combo =
   | 'mod+shift+]'
   | 'mod+arrowleft'
   | 'mod+arrowright'
+  | 'mod+arrowup'
+  | 'mod+arrowdown'
   | 'mod+/'
   | 'mod+='
   | 'mod+-'
@@ -210,7 +267,7 @@ export type Gesture =
   | 'editor mod+shift+c'
   | 'editor mod+alt+shift+c'
   | 'editor mod+alt+m'
-  | 'transcript mod+arrowdown'
+  | 'transcript mod+alt+arrowdown'
   | 'transcript arrowup'
   | "transcript mod+'"
   | 'new-task mod+enter'
@@ -226,6 +283,8 @@ export interface ShortcutDoc {
   /** How the key is written for a person: ⌘N, ⌘], ⌘←. */
   keys: string;
   description: string;
+  /** Bound on macOS only; the help list leaves it out elsewhere. */
+  macOnly?: true;
 }
 
 /**
@@ -238,6 +297,8 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+alt+digit', keys: '⌥1…9', description: 'Jump to the Nth Project (Alt+1…9 on Windows and Linux)' },
   { combo: 'mod+[', keys: '⌘[', description: 'Previous Task' },
   { combo: 'mod+]', keys: '⌘]', description: 'Next Task' },
+  { combo: 'mod+arrowup', keys: '⌘↑', description: 'Previous Task (not in a Text Field)', macOnly: true },
+  { combo: 'mod+arrowdown', keys: '⌘↓', description: 'Next Task (not in a Text Field)', macOnly: true },
   { combo: 'mod+shift+[', keys: '⇧⌘[', description: 'Previous Project' },
   { combo: 'mod+shift+]', keys: '⇧⌘]', description: 'Next Project' },
   { combo: 'mod+alt+t', keys: '⌥⌘T', description: 'Collapse / Expand the Task List' },
@@ -287,7 +348,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'editor mod+shift+c', keys: '⇧⌘C', description: 'In the Editor: Copy Full Path' },
   { combo: 'editor mod+alt+shift+c', keys: '⌥⇧⌘C', description: 'In the Editor: Copy Path (from the Worktree)' },
   { combo: 'editor mod+alt+m', keys: '⌥⌘M', description: 'In the Editor: Comment on the Selected Lines' },
-  { combo: 'transcript mod+arrowdown', keys: '⌘↓', description: 'Transcript: Jump to the Latest Message (not while typing)' },
+  {
+    combo: 'transcript mod+alt+arrowdown',
+    keys: '⌥⌘↓',
+    description: 'Transcript: Jump to the Latest Message (not while typing)',
+  },
   { combo: "transcript mod+'", keys: '⌘\'', description: 'Transcript: Comment on the Selected Text (inside one message)' },
   { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
@@ -320,6 +385,17 @@ export interface Handler {
    * count as typing for this binding (the task terminal, for Rename).
    */
   typingExcept?: string;
+  /**
+   * `'ignore'` skips the binding when something below the window already
+   * handled the key (`defaultPrevented`): a focused menu that moves on it.
+   */
+  whenHandled?: 'ignore';
+  /**
+   * Skips the binding, leaving the key alone (not prevented), when this
+   * returns true: a situation-specific stand-down such as
+   * {@link taskArrowStandsDown}.
+   */
+  unless?: (e: KeyboardEvent) => boolean;
   /**
    * `'capture'` hears the key on the way down, before the focused element:
    * for a binding that must work wherever focus is, even inside a component
@@ -431,6 +507,18 @@ export function comboOf(
   if (e.code === 'F2' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
     return { combo: 'f2', digit: null };
   }
+  // Previous / next task (#398). macOS only, Command only, no Shift or
+  // Option; see the module comment.
+  if (
+    platform === 'macos' &&
+    (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+    e.metaKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
+    return { combo: e.key === 'ArrowUp' ? 'mod+arrowup' : 'mod+arrowdown', digit: null };
+  }
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
   const key = e.key.toLowerCase();
   if (key >= '1' && key <= '9') return { combo: 'mod+digit', digit: Number(key) };
@@ -492,7 +580,7 @@ export function terminalTakesKey(e: KeyboardEvent): boolean {
 }
 
 /** Combos the Claude Code task terminal gives up as well; the shell drawer keeps them. */
-const TAKEN_FROM_TASK_TERMINAL: ReadonlySet<Combo> = new Set(['shift+f6', 'f2']);
+const TAKEN_FROM_TASK_TERMINAL: ReadonlySet<Combo> = new Set(['shift+f6', 'f2', 'mod+arrowup', 'mod+arrowdown']);
 
 /**
  * For ⇧⌘G's `typingExcept`: every field counts as not typing, except inside
@@ -512,9 +600,65 @@ export const TASK_TERMINAL_ATTR = 'data-task-terminal';
 export const TASK_TERMINAL_INPUT = `[${TASK_TERMINAL_ATTR}]`;
 
 /**
+ * When ⌘↑ / ⌘↓ stand down and leave the key alone (#398):
+ *
+ *  - a modal dialog is open (`aria-modal`): the step would switch the task
+ *    behind it and pull focus into that task's terminal;
+ *  - the user is in a code editor on screen, read-only ones included (the
+ *    project view's file): in an editable one they are start and end of
+ *    the document. A read-only CodeMirror is not contenteditable and cannot
+ *    hold focus -- a click there leaves focus on the body -- so neither
+ *    `whenTyping` nor the focused element shows it; the last pointerdown
+ *    does (`lastPointerDown`). There ⌘↑ / ⌘↓ simply do nothing;
+ *  - an input method is composing;
+ *  - the key is auto-repeating: every task a held ⌘↓ passed would mount
+ *    its terminal and spawn `claude --resume`. One step per press.
+ */
+export function taskArrowStandsDown(e: KeyboardEvent): boolean {
+  if (e.repeat || e.isComposing || e.keyCode === 229) return true;
+  if (modalOpen()) return true;
+  if (inEditorOnScreen(e.target) || inEditorOnScreen(document.activeElement)) return true;
+  // Nothing holds focus: the user is where they last clicked.
+  const active = document.activeElement;
+  const nothingFocused = active === null || active === document.body || active === document.documentElement;
+  return nothingFocused && lastPointerDown !== null && lastPointerDown.isConnected && inEditorOnScreen(lastPointerDown);
+}
+
+/** Inside a CodeMirror editor that is not in a hidden tab (as FileEditor.tsx checks its own root). */
+function inEditorOnScreen(n: unknown): boolean {
+  if (!(n instanceof Element)) return false;
+  return n.closest('.cm-editor') !== null && n.closest('[hidden]') === null;
+}
+
+/**
+ * Where the last pointerdown landed, for {@link taskArrowStandsDown}: heard on
+ * the window in the capture phase, before CodeMirror's own mousedown handling,
+ * and only read, never acted on.
+ */
+let lastPointerDown: Element | null = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener(
+    'pointerdown',
+    (e) => {
+      lastPointerDown = e.target instanceof Element ? e.target : null;
+    },
+    true,
+  );
+}
+
+/** How TaskList binds ⌘↑ / ⌘↓, shared so a test binds them the same way. */
+export const TASK_ARROW_TERMS = {
+  whenTyping: 'ignore',
+  typingExcept: TASK_TERMINAL_INPUT,
+  whenHandled: 'ignore',
+  unless: taskArrowStandsDown,
+} as const satisfies Omit<Handler, 'run'>;
+
+/**
  * {@link terminalTakesKey} for a task's Claude Code terminal: also false for
- * ⇧F6 and F2 (Rename), which Claude Code does not use. The shell drawer
- * keeps using `terminalTakesKey`, so its shell still gets them.
+ * ⇧F6 and F2 (Rename) and ⌘↑ / ⌘↓ (previous / next task), which Claude Code
+ * does not use. The shell drawer keeps using `terminalTakesKey`, so its shell
+ * still gets them.
  */
 export function taskTerminalTakesKey(e: KeyboardEvent): boolean {
   if (!terminalTakesKey(e)) return false;
@@ -543,6 +687,8 @@ export function useShortcuts(bindings: Bindings): void {
       if ((handler.phase ?? 'bubble') !== phase) return;
       if (handler.whenTyping === 'ignore' && isTyping(e.target) && !matches(e.target, handler.typingExcept)) return;
       if (matches(e.target, handler.standAsideIn)) return;
+      if (handler.whenHandled === 'ignore' && e.defaultPrevented) return;
+      if (handler.unless?.(e)) return;
       e.preventDefault();
       handler.run(e, hit.digit);
     };

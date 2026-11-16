@@ -38,7 +38,7 @@
     "mermaid": "^12.2.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "shiki": "^4.5.0"
+    "shiki": "4.5.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
@@ -53,5 +53,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "@shikijs/vscode-textmate": "10.1.0"
   }
 }

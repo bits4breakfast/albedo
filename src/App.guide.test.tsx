@@ -239,6 +239,10 @@ describe('opening the Review Guide', () => {
     await settle();
     const tab = screen.getByRole('tab', { name: 'Guide' });
     expect(tab.getAttribute('aria-selected')).toBe('false');
+    // Each tab's tooltip names its key (#425).
+    expect(tab.title).toMatch(/^Guide \(⇧⌘G\)/);
+    expect(screen.getByRole('tab', { name: 'Transcript' }).title).toMatch(/^Transcript \(⇧⌘T\)/);
+    expect(screen.getByRole('tab', { name: 'Files' }).title).toMatch(/^Files \(⇧⌘E\)/);
     expect(screen.queryByRole('button', { name: 'Close the guide' })).toBeNull();
 
     fireEvent.click(within(document.querySelector<HTMLElement>('.main-bar')!).getByRole('button', { name: 'Actions for Fix the login retry' }));
