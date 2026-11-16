@@ -166,8 +166,8 @@
  * tree, the Review Guide -- already refuse Command and leave it to this.
  *
  * And they stand down entirely (`taskArrowStandsDown`, in TASK_ARROW_TERMS):
- * under a modal dialog, in any code editor (a read-only one is not
- * contenteditable, so `whenTyping` alone misses it), while an input method
+ * under a modal dialog, in a code editor on screen (a read-only one can hold
+ * no focus, so it counts when it was the last thing clicked), while an input method
  * composes, and on auto-repeat -- a held ⌘↓ would mount every task it passed
  * and spawn `claude --resume` for each. Other reading surfaces that are not
  * fields -- the Review Guide, a diff in Files, a preview -- do step tasks,
@@ -271,6 +271,8 @@ export interface ShortcutDoc {
   /** How the key is written for a person: ⌘N, ⌘], ⌘←. */
   keys: string;
   description: string;
+  /** Bound on macOS only; the help list leaves it out elsewhere. */
+  macOnly?: true;
 }
 
 /**
@@ -283,8 +285,8 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+alt+digit', keys: '⌥1…9', description: 'Jump to the Nth Project (Alt+1…9 on Windows and Linux)' },
   { combo: 'mod+[', keys: '⌘[', description: 'Previous Task' },
   { combo: 'mod+]', keys: '⌘]', description: 'Next Task' },
-  { combo: 'mod+arrowup', keys: '⌘↑', description: 'Previous Task (not in a Text Field)' },
-  { combo: 'mod+arrowdown', keys: '⌘↓', description: 'Next Task (not in a Text Field)' },
+  { combo: 'mod+arrowup', keys: '⌘↑', description: 'Previous Task (not in a Text Field)', macOnly: true },
+  { combo: 'mod+arrowdown', keys: '⌘↓', description: 'Next Task (not in a Text Field)', macOnly: true },
   { combo: 'mod+shift+[', keys: '⇧⌘[', description: 'Previous Project' },
   { combo: 'mod+shift+]', keys: '⇧⌘]', description: 'Next Project' },
   { combo: 'mod+alt+t', keys: '⌥⌘T', description: 'Collapse / Expand the Task List' },
@@ -567,10 +569,12 @@ export const TASK_TERMINAL_INPUT = `[${TASK_TERMINAL_ATTR}]`;
  *
  *  - a modal dialog is open (`aria-modal`): the step would switch the task
  *    behind it and pull focus into that task's terminal;
- *  - focus or the key is inside a code editor, read-only ones included (the
- *    project view's file): there they are start and end of the document,
- *    and a read-only CodeMirror is not contenteditable, so `whenTyping`
- *    does not see it;
+ *  - the user is in a code editor on screen, read-only ones included (the
+ *    project view's file): in an editable one they are start and end of
+ *    the document. A read-only CodeMirror is not contenteditable and cannot
+ *    hold focus -- a click there leaves focus on the body -- so neither
+ *    `whenTyping` nor the focused element shows it; the last pointerdown
+ *    does (`lastPointerDown`). There ⌘↑ / ⌘↓ simply do nothing;
  *  - an input method is composing;
  *  - the key is auto-repeating: every task a held ⌘↓ passed would mount
  *    its terminal and spawn `claude --resume`. One step per press.
@@ -578,8 +582,33 @@ export const TASK_TERMINAL_INPUT = `[${TASK_TERMINAL_ATTR}]`;
 export function taskArrowStandsDown(e: KeyboardEvent): boolean {
   if (e.repeat || e.isComposing || e.keyCode === 229) return true;
   if (modalOpen()) return true;
-  const inEditor = (n: unknown) => n instanceof Element && n.closest('.cm-editor') !== null;
-  return inEditor(e.target) || inEditor(document.activeElement);
+  if (inEditorOnScreen(e.target) || inEditorOnScreen(document.activeElement)) return true;
+  // Nothing holds focus: the user is where they last clicked.
+  const active = document.activeElement;
+  const nothingFocused = active === null || active === document.body || active === document.documentElement;
+  return nothingFocused && lastPointerDown !== null && lastPointerDown.isConnected && inEditorOnScreen(lastPointerDown);
+}
+
+/** Inside a CodeMirror editor that is not in a hidden tab (as FileEditor.tsx checks its own root). */
+function inEditorOnScreen(n: unknown): boolean {
+  if (!(n instanceof Element)) return false;
+  return n.closest('.cm-editor') !== null && n.closest('[hidden]') === null;
+}
+
+/**
+ * Where the last pointerdown landed, for {@link taskArrowStandsDown}: heard on
+ * the window in the capture phase, before CodeMirror's own mousedown handling,
+ * and only read, never acted on.
+ */
+let lastPointerDown: Element | null = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener(
+    'pointerdown',
+    (e) => {
+      lastPointerDown = e.target instanceof Element ? e.target : null;
+    },
+    true,
+  );
 }
 
 /** How TaskList binds ⌘↑ / ⌘↓, shared so a test binds them the same way. */

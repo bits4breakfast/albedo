@@ -445,20 +445,53 @@ describe('⌘↑ / ⌘↓, previous / next task (#398): the page, a row, the tas
     expect(steps).toEqual([]);
   });
 
-  it('leaves them to a read-only editor (the project view’s file), which is not contenteditable', () => {
+  it('do nothing after a click in a read-only editor (the project view’s file), which holds no focus', () => {
     const steps: number[] = [];
     render(<StepHarness onStep={(d) => steps.push(d)} />);
     const { view, dispose } = editor(true);
     try {
       expect(view.contentDOM.getAttribute('contenteditable')).toBe('false');
-      press(view.contentDOM, DOWN);
-      view.scrollDOM.tabIndex = -1;
-      view.scrollDOM.focus();
-      expect(press(view.scrollDOM, UP).defaultPrevented).toBe(false);
+      // The real path: a click there leaves focus on the body.
+      const line = view.contentDOM.querySelector('.cm-line')!;
+      fireEvent.pointerDown(line);
+      fireEvent.mouseDown(line);
+      fireEvent.mouseUp(line);
+      fireEvent.click(line);
+      // CodeMirror's mousedown focuses its content. WebKit refuses: with
+      // contenteditable="false" and no tabindex it is not focusable, and focus
+      // stays on the body. jsdom counts any contenteditable attribute as
+      // focusable, so put it where WebKit leaves it.
+      (document.activeElement as HTMLElement).blur();
+      expect(document.activeElement).toBe(document.body);
+      expect(press(document.activeElement!, DOWN).defaultPrevented).toBe(false);
+      press(document.activeElement!, UP);
+      expect(steps).toEqual([]);
+      // A click anywhere else gives the keys back.
+      fireEvent.pointerDown(document.body);
+      press(document.activeElement!, DOWN);
+      expect(steps).toEqual([1]);
     } finally {
       dispose();
     }
-    expect(steps).toEqual([]);
+  });
+
+  it('step again once that editor is hidden behind another tab', () => {
+    const steps: number[] = [];
+    render(<StepHarness onStep={(d) => steps.push(d)} />);
+    const { view, dispose } = editor(true);
+    try {
+      const line = view.contentDOM.querySelector('.cm-line')!;
+      fireEvent.pointerDown(line);
+      fireEvent.mouseDown(line);
+      (document.activeElement as HTMLElement).blur(); // where WebKit leaves focus; see above
+      press(document.activeElement!, DOWN);
+      expect(steps).toEqual([]);
+      view.dom.parentElement!.hidden = true;
+      press(document.activeElement!, DOWN);
+      expect(steps).toEqual([1]);
+    } finally {
+      dispose();
+    }
   });
 
   it('leaves them to an open ⋯ menu, which moves on the arrow', () => {
