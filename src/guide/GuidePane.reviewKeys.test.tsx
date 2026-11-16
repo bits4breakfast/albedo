@@ -333,6 +333,31 @@ describe('after a comment box closes, focus is back in the guide', () => {
   });
 });
 
+describe('beside the guide’s search (#413)', () => {
+  beforeEach(() => mount());
+  const field = () => screen.getByLabelText(/^Search (This File|All Guide Files)$/) as HTMLInputElement;
+
+  it('typing in the field keeps focus there; neither key acts from it; Esc puts focus on the guide, where they work', async () => {
+    fireEvent.keyDown(focused(), { code: 'KeyF', key: 'f', metaKey: true });
+    await waitFor(() => expect(document.activeElement).toBe(field()));
+    fireEvent.change(field(), { target: { value: 'wick' } });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400)); // past the search's debounce: it re-renders
+    });
+    expect(document.activeElement).toBe(field());
+    expect(cmdR()).toBe(true); // the field's, not prevented
+    shiftCmdR();
+    expect(document.activeElement).toBe(field());
+    expect(fileBox().checked).toBe(false);
+    expect(groupBox().checked).toBe(false);
+    expect(remoteAsked).toEqual([]);
+    fireEvent.keyDown(field(), { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(document.activeElement).toBe(root()));
+    cmdR();
+    expect(current()).toContain('oil.ts');
+  });
+});
+
 describe('⇧⌘R: the group’s Reviewed box (#391), not Remote Control in the guide', () => {
   it('marks the group and goes to the next; pressed again straight away, it undoes that and goes back', async () => {
     await mount();

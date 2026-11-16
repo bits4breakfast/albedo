@@ -132,6 +132,13 @@
   --del: #a8241d;                             /* 5.75 */
   --del-soft: #fbe9e8;
   --on-del-soft: #8a1d17;                     /* 7.90 on --del-soft */
+  /* Search matches (#413): a match's own ground, opaque, over any row (a
+     diff's add / del tint, a word change, a picked result), and its own text
+     tier, so the ratio never depends on the row: --on-hit 15.96 on --hit,
+     10.82 on --hit-cur. Syntax colour gives way inside a match for this. */
+  --hit: #ffe58a;
+  --hit-cur: #f5b400;
+  --on-hit: #08090b;
   --focus: #4650c0;                           /* 5.32 */
 
   /* --- status (light) ----------------------------------------------------- */
@@ -388,6 +395,10 @@
     --del: #ff8f8a;                             /* 7.03 */
     --del-soft: #2a1719;
     --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
+    /* Search matches (#413): --on-hit 8.03 on --hit, 5.30 on --hit-cur. */
+    --hit: #5c4a10;
+    --hit-cur: #806300;
+    --on-hit: #f7f7f8;
     --focus: #9aa2ff;                           /* 6.62 */
 
     /* --- status (dark) --- text worst first: --row-selected | --accent-soft-strong |
@@ -543,6 +554,10 @@
   --del: #ff8f8a;                             /* 7.03 */
   --del-soft: #2a1719;
   --on-del-soft: #ffb3b0;                     /* 9.98 on --del-soft */
+  /* Search matches (#413): --on-hit 8.03 on --hit, 5.30 on --hit-cur. */
+  --hit: #5c4a10;
+  --hit-cur: #806300;
+  --on-hit: #f7f7f8;
   --focus: #9aa2ff;                           /* 6.62 */
 
   /* --- status (dark) --- text worst first: --row-selected | --accent-soft-strong |
