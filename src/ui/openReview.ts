@@ -29,7 +29,11 @@ async function homeDir(): Promise<string> {
  * project's worktree root (`review-<n>`), and record the task. Throws with
  * git's words; a worktree whose task could not be saved is removed again.
  */
-export async function openReviewTask(project: Project, pr: ReviewPr, home?: string): Promise<Task> {
+export async function openReviewTask(
+  project: Project,
+  pr: Pick<ReviewPr, 'url' | 'number' | 'title' | 'baseBranch'>,
+  home?: string,
+): Promise<Task> {
   const ref = parsePrUrl(pr.url);
   if (!ref) throw new Error(`Not a pull request link Albedo can check out: ${pr.url}`);
   const branch = await fetchReviewHead(project.repoPath, ref, pr.baseBranch);
