@@ -12,7 +12,7 @@ import { highlightToTokens, peekTokens, plainTokens } from '../../lib/highlight'
 import type { DualToken } from '../../lib/highlight';
 
 /** Past this many lines, highlighting a blob costs more than it gives. */
-const MAX_HIGHLIGHT_LINES = 6000;
+export const MAX_HIGHLIGHT_LINES = 6000;
 
 /**
  * Tokenize a blob, re-rendering when the async result lands. Starts from the
