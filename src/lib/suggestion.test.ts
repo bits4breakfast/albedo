@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commentHeadline, fenceFor, indentOf, joinSuggestion, linesOf, replacesLabel, splitSuggestion } from './suggestion';
+import { changeLabel, commentHeadline, commentWords, fenceFor, suggestionFrom, indentOf, joinSuggestion, linesOf, replacesLabel, splitSuggestion } from './suggestion';
 
 describe('a suggestion in a comment body (#411)', () => {
   it('is stored as GitHub writes one, before the text', () => {
@@ -57,5 +57,19 @@ describe('a suggestion in a comment body (#411)', () => {
     expect(indentOf(['  a', '    b'])).toBe('  ');
     expect(indentOf(['    a', '        b'])).toBe('    ');
     expect(indentOf(['a', ''])).toBe('    ');
+  });
+
+  it('code left as the lines is no change, and is stored as no suggestion', () => {
+    expect(suggestionFrom('a\nb', ['a', 'b'])).toBeNull();
+    expect(suggestionFrom('a\nB', ['a', 'b'])).toEqual(['a', 'B']);
+    expect(suggestionFrom('', ['a'])).toEqual([]);
+    expect(changeLabel(['a', 'b'], 'a\nb')).toBe('no change');
+    expect(changeLabel(['a', 'b'], 'c')).toBe('replaces 2 lines with 1');
+  });
+
+  it('a tooltip gets every word, and never the fence', () => {
+    expect(commentWords(joinSuggestion(['x'], 'A.\nB.'))).toBe('Suggested change\n\nA.\nB.');
+    expect(commentWords(joinSuggestion(['x'], ''))).toBe('Suggested change');
+    expect(commentWords(' Plain. ')).toBe('Plain.');
   });
 });

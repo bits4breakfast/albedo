@@ -79,7 +79,7 @@ describe('the box in Diff mode (and the guide)', () => {
     const code = screen.getByRole('textbox', { name: 'Suggested code' }) as HTMLTextAreaElement;
     expect(code.value).toBe(base.anchorText);
     expect(document.activeElement).toBe(code);
-    expect(screen.getByText('replaces 3 lines with 3')).toBeTruthy();
+    expect(screen.getByText('no change')).toBeTruthy();
     fireEvent.change(code, { target: { value: '  return range.reduce((a, b) => a + b, 0);' } });
     expect(screen.getByText('replaces 3 lines with 1')).toBeTruthy();
     fireEvent.change(area, { target: { value: ' One pass. ' } });
@@ -117,6 +117,32 @@ describe('the box in Diff mode (and the guide)', () => {
     fireEvent.keyDown(code, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(addComment).toHaveBeenCalledOnce());
     expect((addComment.mock.calls[0]![0] as { body: string }).body).toBe('```suggestion\n```');
+  });
+
+  it('code left as the lines themselves is no suggestion: saved as the words alone', async () => {
+    const area = openDiffBox();
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest Change' }));
+    expect(screen.getByText('no change')).toBeTruthy();
+    fireEvent.change(area, { target: { value: 'Just a note.' } });
+    fireEvent.keyDown(area, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(addComment).toHaveBeenCalledOnce());
+    expect((addComment.mock.calls[0]![0] as { body: string }).body).toBe('Just a note.');
+  });
+
+  it('Tab types through the browser, so ⌘Z undoes it', () => {
+    const exec = vi.fn(() => false);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
+    try {
+      render(<CommentDraftView from={2} to={4} initial="" editing={false} onSave={noop} onCancel={noop} lines={base.anchorText.split('\n')} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Suggest Change' }));
+      const code = screen.getByRole('textbox', { name: 'Suggested code' }) as HTMLTextAreaElement;
+      code.setSelectionRange(0, 0);
+      fireEvent.keyDown(code, { key: 'Tab' });
+      expect(exec).toHaveBeenCalledWith('insertText', false, '  ');
+      expect(code.value.startsWith('    let sum')).toBe(true); // refused here: set directly instead
+    } finally {
+      delete (document as { execCommand?: unknown }).execCommand;
+    }
   });
 
   it('Tab indents in the code as its lines do, and stays in the box; Esc cancels', () => {
@@ -175,11 +201,22 @@ describe('the card', () => {
 
   it('in the bar, one whose lines are gone says its suggestion is against older lines', async () => {
     db.rows = [{ ...base, body: joinSuggestion(['x'], 'Shorter.') }];
-    const { result } = renderHook(() => useDiffComments(1, 'src/total.ts', 'something else\n', false));
-    await waitFor(() => {
-      render(<>{result.current.bar}</>);
-      expect(screen.getByText(/Lines 2–4: Shorter\. · suggested change to older lines/)).toBeTruthy();
-    });
+    function Bar() {
+      return <>{useDiffComments(1, 'src/total.ts', 'something else\n', false).bar}</>;
+    }
+    render(<Bar />);
+    const item = await screen.findByText(/Lines 2–4: Shorter\. · suggested change to older lines/);
+    expect(item.closest('[title]')?.getAttribute('title')).not.toContain('```');
+  });
+
+  it('a resolved trace\'s tooltip has the words, never the fence', async () => {
+    db.rows = [{ ...base, sentAt: 5, body: joinSuggestion(['x'], 'Shorter.') }];
+    function Bar() {
+      return <>{useDiffComments(1, 'src/total.ts', 'something else\n', false).bar}</>;
+    }
+    render(<Bar />);
+    const trace = (await screen.findByText(/Resolved:/)).closest('.ed-cmt-trace')!;
+    expect(trace.getAttribute('title')).toBe('Suggested change\n\nShorter.');
   });
 });
 
@@ -207,7 +244,7 @@ describe('the File mode widget', () => {
       expect(toggle.getAttribute('aria-pressed')).toBe('true');
       expect(code.closest('.ed-cmt-sug')!.hasAttribute('hidden')).toBe(false);
       expect(code.value).toBe(base.anchorText);
-      expect(box.getByText('replaces 3 lines with 3')).toBeTruthy();
+      expect(box.getByText('no change')).toBeTruthy();
       code.value = '  return sum(range);';
       code.setSelectionRange(0, 0);
       expect(fireEvent.keyDown(code, { key: 'Tab' })).toBe(false);
@@ -222,6 +259,97 @@ describe('the File mode widget', () => {
       fireEvent.keyDown(host.querySelector('.ed-cmt-input')!, { key: 'Enter', metaKey: true });
       expect(save.mock.calls[1]![1]).toBe('Use the helper.');
     } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it('a box moved to other lines suggests from those lines, and names them', () => {
+    const save = vi.fn();
+    const { host, view } = editor(() => ({ save, edit: noop, resolve: noop, remove: noop }));
+    try {
+      const doc = view.state.doc;
+      view.dispatch({ effects: setDraft.of({ from: doc.line(1).from, to: doc.line(2).to, editing: null }) });
+      const box = host.querySelector('.ed-cmt-draft') as HTMLElement;
+      (box.querySelector('.ed-cmt-input') as HTMLTextAreaElement).value = 'Kept.';
+      expect(box.querySelector('.ed-cmt-foot .ed-cmt-where')?.textContent).toBe('Lines 1–2');
+      // A new drag: the same box, moved.
+      view.dispatch({ effects: setDraft.of({ from: doc.line(2).from, to: doc.line(4).to, editing: null }) });
+      const moved = host.querySelector('.ed-cmt-draft') as HTMLElement;
+      expect((moved.querySelector('.ed-cmt-input') as HTMLTextAreaElement).value).toBe('Kept.');
+      expect(moved.querySelector('.ed-cmt-foot .ed-cmt-where')?.textContent).toBe('Lines 2–4');
+      fireEvent.click(within(moved).getByRole('button', { name: 'Suggest Change' }));
+      const code = moved.querySelector('.ed-cmt-code') as HTMLTextAreaElement;
+      expect(code.value).toBe(base.anchorText);
+      code.value = '  return sum(range);';
+      fireEvent.input(code);
+      expect(within(moved).getByText('replaces 3 lines with 1')).toBeTruthy();
+      fireEvent.keyDown(code, { key: 'Enter', metaKey: true });
+      expect(save.mock.calls[0]![1]).toBe('```suggestion\n  return sum(range);\n```\nKept.');
+      const d = save.mock.calls[0]![0] as { from: number; to: number };
+      expect([view.state.doc.lineAt(d.from).number, view.state.doc.lineAt(d.to).number]).toEqual([2, 4]);
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it('code left as the lines themselves is stored as the words alone', () => {
+    const save = vi.fn();
+    const { host, view } = editor(() => ({ save, edit: noop, resolve: noop, remove: noop }));
+    try {
+      view.dispatch({ effects: setDraft.of({ from: view.state.doc.line(2).from, to: view.state.doc.line(4).to, editing: null }) });
+      fireEvent.click(within(host).getByRole('button', { name: 'Suggest Change' }));
+      expect(within(host).getByText('no change')).toBeTruthy();
+      (host.querySelector('.ed-cmt-input') as HTMLTextAreaElement).value = 'Just a note.';
+      fireEvent.keyDown(host.querySelector('.ed-cmt-code')!, { key: 'Enter', metaKey: true });
+      expect(save.mock.calls[0]![1]).toBe('Just a note.');
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it('asks CodeMirror to measure again when the box grows or shrinks', () => {
+    const { host, view } = editor(() => ({ save: noop, edit: noop, resolve: noop, remove: noop }));
+    try {
+      view.dispatch({ effects: setDraft.of({ from: view.state.doc.line(2).from, to: view.state.doc.line(4).to, editing: null }) });
+      const measure = vi.spyOn(view, 'requestMeasure');
+      fireEvent.click(within(host).getByRole('button', { name: 'Suggest Change' }));
+      expect(measure).toHaveBeenCalled();
+      measure.mockClear();
+      const code = host.querySelector('.ed-cmt-code') as HTMLTextAreaElement;
+      code.value = 'one\ntwo\nthree\nfour';
+      fireEvent.input(code);
+      expect(measure).toHaveBeenCalled();
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it('keys typed in the code box reach neither CodeMirror nor the window', () => {
+    const cmKeys = vi.fn(() => false);
+    const winKeys = vi.fn();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: FILE,
+        extensions: [commentsExtension(() => ({ save: noop, edit: noop, resolve: noop, remove: noop })), EditorView.domEventHandlers({ keydown: cmKeys })],
+      }),
+    });
+    window.addEventListener('keydown', winKeys);
+    try {
+      view.dispatch({ effects: setDraft.of({ from: view.state.doc.line(2).from, to: view.state.doc.line(4).to, editing: null }) });
+      fireEvent.click(within(host).getByRole('button', { name: 'Suggest Change' }));
+      const code = host.querySelector('.ed-cmt-code') as HTMLTextAreaElement;
+      for (const key of ['a', 'Enter', 'Tab', 'Backspace', 'ArrowUp', 'z']) fireEvent.keyDown(code, { key, metaKey: key === 'z' });
+      expect(cmKeys).not.toHaveBeenCalled();
+      expect(winKeys).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', winKeys);
       view.destroy();
       host.remove();
     }

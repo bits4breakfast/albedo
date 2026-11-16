@@ -25,7 +25,7 @@ import {
 } from '../db/comments';
 import { useReadFile } from './editor/openFile';
 import { Disclosure } from './Disclosure';
-import { commentHeadline } from '../lib/suggestion';
+import { commentHeadline, commentWords } from '../lib/suggestion';
 import { sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
 import { useGithubDrafts } from './reviewDrafts';
@@ -122,7 +122,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         type="button"
         className="tf-comment-open"
         onClick={() => onOpen(c.path, c.lineStart)}
-        title={`${commentLocation(c)}\n\n${c.body}`}
+        title={`${commentLocation(c)}\n\n${commentWords(c.body)}`}
       >
         {/* The name gives way, never the line (#258): a long one ellipsizes
             inside its row instead of running under the ✓. */}
@@ -261,7 +261,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                   type="button"
                   className="tf-comment-open"
                   onClick={() => onOpen(c.path, c.lineStart)}
-                  title={`${commentLocation(c)}\n\n${c.body}`}
+                  title={`${commentLocation(c)}\n\n${commentWords(c.body)}`}
                 >
                   <span className="tf-comment-where">
                     <span className="tf-name">{c.path.split('/').pop()}</span>:

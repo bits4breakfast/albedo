@@ -10,7 +10,18 @@ import type { ReactNode } from 'react';
 import type { ReviewComment } from '../../db/comments';
 import type { ReviewThread } from '../../gh/reviewThreads';
 import { openExternal } from '../../lib/openUrl';
-import { commentHeadline, indentOf, insertIndent, joinSuggestion, linesOf, replacesLabel, splitSuggestion } from '../../lib/suggestion';
+import {
+  changeLabel,
+  commentHeadline,
+  commentWords,
+  indentOf,
+  insertIndent,
+  joinSuggestion,
+  linesOf,
+  replacesLabel,
+  splitSuggestion,
+  suggestionFrom,
+} from '../../lib/suggestion';
 import {
   ACTION_LABEL,
   DESTINATIONS,
@@ -145,7 +156,7 @@ export function CommentsBar({
     <div className="ed-cmt-bar">
       {aside}
       {traces.map((c) => (
-        <div key={`t${c.id}`} className="ed-cmt-trace" title={c.body}>
+        <div key={`t${c.id}`} className="ed-cmt-trace" title={commentWords(c.body)}>
           <span className="ed-cmt-trace-mark" aria-hidden="true">
             ✓
           </span>
@@ -267,7 +278,7 @@ function SuggestionEditor({
         <div className="ed-cmt-sug">
           <div className="ed-cmt-sug-head">
             <span>Suggested</span>
-            <span>{replacesLabel(lines.length, linesOf(code).length)}</span>
+            <span>{changeLabel(lines, code)}</span>
           </div>
           <textarea
             ref={ref}
@@ -277,7 +288,7 @@ function SuggestionEditor({
             autoCapitalize="off"
             autoCorrect="off"
             wrap="off"
-            rows={Math.max(1, Math.min(12, linesOf(code).length))}
+            rows={Math.max(1, Math.min(12, code.split('\n').length))}
             value={code}
             onChange={(e) => onCode(e.target.value)}
             onKeyDown={(e) => {
@@ -341,8 +352,9 @@ export function CommentDraftView({
   const [github, setGithub] = useState<'draft' | null>(destination ?? null);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => ref.current?.focus(), []);
-  // Kept as stored when there is no Suggest Change here to show it.
-  const suggestion = code !== null ? linesOf(code) : null;
+  // Kept as stored when there is no Suggest Change here to show it. Code
+  // left as the lines themselves suggests nothing, and is stored as nothing.
+  const suggestion = code === null ? null : lines === null ? linesOf(code) : suggestionFrom(code, lines);
   const save = () => {
     if (text.trim() !== '' || suggestion !== null) onSave(joinSuggestion(suggestion, text), github);
   };

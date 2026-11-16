@@ -12,7 +12,7 @@
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from '@codemirror/view';
 import type { ReviewComment } from '../../db/comments';
-import { indentOf, insertIndent, joinSuggestion, linesOf, replacesLabel, splitSuggestion } from '../../lib/suggestion';
+import { changeLabel, indentOf, insertIndent, joinSuggestion, replacesLabel, splitSuggestion, suggestionFrom } from '../../lib/suggestion';
 import { ACTION_LABEL, DESTINATIONS, SUGGEST_HINT, SUGGEST_LABEL, cardState, draftPlaceholder, draftSaveLabel } from './commentLabels';
 
 /** A comment placed in this document. */
@@ -193,6 +193,9 @@ class CommentCard extends WidgetType {
   }
 }
 
+/** A draft box's refresh when it moves to other lines (DraftBox.updateDOM). */
+const moved = new WeakMap<HTMLElement, (view: EditorView) => void>();
+
 class DraftBox extends WidgetType {
   constructor(
     readonly draft: Draft,
@@ -201,9 +204,17 @@ class DraftBox extends WidgetType {
     super();
   }
   // Stable while typing: the textarea keeps its own value, and recreating the
-  // widget on every transaction would throw the text away.
+  // widget on every transaction would throw the text away. A box that moved
+  // (a new drag, ⌥⌘M on another selection) is not equal, and is updated in
+  // place by updateDOM: same text, its lines named again.
   eq(other: DraftBox): boolean {
-    return other.draft.editing?.id === this.draft.editing?.id;
+    return other.draft.editing?.id === this.draft.editing?.id && other.draft.from === this.draft.from && other.draft.to === this.draft.to;
+  }
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    const refresh = moved.get(dom);
+    if (!refresh) return false;
+    refresh(view);
+    return true;
   }
   toDOM(view: EditorView): HTMLElement {
     const box = el('div', 'ed-cmt ed-cmt-draft');
@@ -220,12 +231,18 @@ class DraftBox extends WidgetType {
     const stored = splitSuggestion(this.draft.editing?.body ?? '');
     area.value = stored.suggestion === null ? (this.draft.editing?.body ?? '') : stored.text;
     // The commented lines as they are now: what Suggest Change starts from.
-    const doc = view.state.doc;
-    const lines = doc.sliceString(doc.lineAt(this.draft.from).from, doc.lineAt(this.draft.to).to).split('\n');
+    // Read from the draft where it is at the moment asked, never kept: the
+    // box moves when a new range is picked, and keeps its DOM when it does.
+    const lines = (): string[] => {
+      const d = view.state.field(commentsField).draft ?? this.draft;
+      const doc = view.state.doc;
+      return doc.sliceString(doc.lineAt(d.from).from, doc.lineAt(d.to).to).split('\n');
+    };
     const code = el('textarea', 'ed-cmt-code');
     const save = () => {
       const text = area.value.trim();
-      const suggestion = sug.hidden ? null : linesOf(code.value);
+      // Code left as the lines themselves suggests nothing.
+      const suggestion = sug.hidden ? null : suggestionFrom(code.value, lines());
       if (text === '' && suggestion === null) return;
       const draft = view.state.field(commentsField).draft;
       if (draft) this.actions.save(draft, joinSuggestion(suggestion, text), view.state, github);
@@ -269,9 +286,10 @@ class DraftBox extends WidgetType {
     code.setAttribute('autocorrect', 'off');
     code.setAttribute('wrap', 'off');
     const fit = () => {
-      const n = linesOf(code.value).length;
-      count.textContent = replacesLabel(lines.length, n);
-      code.rows = Math.max(1, Math.min(12, n));
+      count.textContent = changeLabel(lines(), code.value);
+      code.rows = Math.max(1, Math.min(12, code.value.split('\n').length));
+      // The widget's height changed: CodeMirror's line heights must follow.
+      view.requestMeasure();
     };
     code.addEventListener('input', fit);
     code.addEventListener('keydown', (e) => {
@@ -286,7 +304,7 @@ class DraftBox extends WidgetType {
         if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
           // Indent, as in the file, rather than leave the box.
           e.preventDefault();
-          insertIndent(code, indentOf(lines));
+          insertIndent(code, indentOf(lines()));
           fit();
         }
         e.stopPropagation();
@@ -297,7 +315,7 @@ class DraftBox extends WidgetType {
     mark.setAttribute('aria-hidden', 'true');
     const toggle = button(SUGGEST_LABEL, () => {
       if (sug.hidden) {
-        code.value = lines.join('\n');
+        code.value = lines().join('\n');
         show(true);
         code.focus();
       } else {
@@ -313,6 +331,7 @@ class DraftBox extends WidgetType {
       if (on) toggle.append(mark);
       else mark.remove();
       fit();
+      view.requestMeasure();
     };
     if (stored.suggestion !== null) code.value = stored.suggestion.join('\n');
     show(stored.suggestion !== null);
@@ -335,12 +354,14 @@ class DraftBox extends WidgetType {
       }
     });
     const foot = el('div', 'ed-cmt-foot');
-    foot.append(
-      el('span', 'ed-cmt-where', rangeLabel(view, this.draft.from, this.draft.to)),
-      button('Cancel', cancel),
-      primary,
-    );
+    const where = el('span', 'ed-cmt-where', rangeLabel(view, this.draft.from, this.draft.to));
+    foot.append(where, button('Cancel', cancel), primary);
     box.append(area, foot);
+    moved.set(box, (v) => {
+      const d = v.state.field(commentsField).draft;
+      if (d) where.textContent = rangeLabel(v, d.from, d.to);
+      if (!sug.hidden) fit();
+    });
     setTimeout(() => area.focus(), 0);
     return box;
   }

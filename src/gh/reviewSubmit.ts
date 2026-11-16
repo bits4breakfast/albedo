@@ -158,11 +158,12 @@ function where(d: Pick<GithubDraft, 'path' | 'lineStart' | 'lineEnd'>): string {
  * on no line GitHub could apply it to, so it is shown as plain code under
  * "Suggested change:" rather than as a `suggestion` block.
  */
-function bodyOutside(body: string): string {
-  const { suggestion, text } = splitSuggestion(body);
-  if (suggestion === null) return body.trim();
+function bodyOutside(d: Pick<GithubDraft, 'body' | 'lineStart' | 'lineEnd'>): string {
+  const { suggestion, text } = splitSuggestion(d.body);
+  if (suggestion === null) return d.body.trim();
   const fence = fenceFor(suggestion);
-  const code = suggestion.length === 0 ? 'Suggested change: delete these lines.' : `Suggested change:\n${fence}\n${suggestion.join('\n')}\n${fence}`;
+  const these = d.lineStart === d.lineEnd ? 'this line' : 'these lines';
+  const code = suggestion.length === 0 ? `Suggested change: delete ${these}.` : `Suggested change:\n${fence}\n${suggestion.join('\n')}\n${fence}`;
   return text === '' ? code : `${code}\n${text}`;
 }
 
@@ -173,7 +174,7 @@ function bodyOutside(body: string): string {
 export function reviewBody(summary: string, outside: readonly GithubDraft[]): string {
   const head = summary.trim();
   if (outside.length === 0) return head;
-  const items = outside.map((d) => `\`${where(d)}\`${d.lost ? ' (this code has changed since)' : ''}\n${bodyOutside(d.body).split('\n').map((l) => `> ${l}`).join('\n')}`);
+  const items = outside.map((d) => `\`${where(d)}\`${d.lost ? ' (this code has changed since)' : ''}\n${bodyOutside(d).split('\n').map((l) => `> ${l}`).join('\n')}`);
   return [head, `**On lines outside the diff:**\n\n${items.join('\n\n')}`].filter((p) => p !== '').join('\n\n');
 }
 

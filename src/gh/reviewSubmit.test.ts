@@ -163,7 +163,7 @@ describe('a suggested edit (#411)', () => {
     const body = reviewBody('', [off, gone]);
     expect(body).toBe(
       '**On lines outside the diff:**\n\n`README.md:4-6`\n> Suggested change:\n> ```\n> New intro.\n> ```\n> Shorter.\n\n' +
-        '`README.md:9` (this code has changed since)\n> Suggested change: delete these lines.',
+        '`README.md:9` (this code has changed since)\n> Suggested change: delete this line.',
     );
     expect(body).not.toContain('suggestion');
   });

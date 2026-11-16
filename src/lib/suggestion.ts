@@ -58,6 +58,26 @@ export function linesOf(code: string): string[] {
   return code === '' ? [] : code.split('\n');
 }
 
+/** Whether a suggestion is the lines it would replace: no change at all. */
+export function sameLines(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((l, i) => l === b[i]);
+}
+
+/**
+ * The suggestion to store from a box's code, against the lines it replaces:
+ * null when it changes nothing, so an untouched box is no suggestion.
+ */
+export function suggestionFrom(code: string, lines: readonly string[]): string[] | null {
+  const after = linesOf(code);
+  return sameLines(after, lines) ? null : after;
+}
+
+/** The box's header: what the code replaces, or "no change" while it is the lines themselves. */
+export function changeLabel(lines: readonly string[], code: string): string {
+  const after = linesOf(code);
+  return sameLines(after, lines) ? 'no change' : replacesLabel(lines.length, after.length);
+}
+
 /** "replaces 3 lines with 1", "replaces 1 line with nothing". */
 export function replacesLabel(before: number, after: number): string {
   const lines = (n: number) => (n === 1 ? '1 line' : `${n} lines`);
@@ -73,6 +93,16 @@ export function commentHeadline(body: string): string {
   const { suggestion, text } = splitSuggestion(body);
   if (text !== '') return text.split('\n')[0]!;
   return suggestion === null ? '' : 'Suggested change';
+}
+
+/**
+ * A comment's words for a tooltip, which has room for all of them: the text,
+ * led by "Suggested change" when it carries one. Never the fence.
+ */
+export function commentWords(body: string): string {
+  const { suggestion, text } = splitSuggestion(body);
+  if (suggestion === null) return text;
+  return text === '' ? 'Suggested change' : `Suggested change\n\n${text}`;
 }
 
 /**
@@ -94,9 +124,17 @@ export function indentOf(lines: readonly string[]): string {
 
 /**
  * Tab in a suggestion's box: the indentation at the caret, replacing any
- * selection, instead of moving focus out of the box. Changes the element's
- * value directly; the caller reads it back.
+ * selection, instead of moving focus out of the box. Typed through the
+ * browser's own editing (`insertText`) so ⌘Z undoes it with the rest; set
+ * directly only where that is refused. The caller reads the value back.
  */
 export function insertIndent(area: HTMLTextAreaElement, indent: string): void {
-  area.setRangeText(indent, area.selectionStart, area.selectionEnd, 'end');
+  area.focus();
+  let typed = false;
+  try {
+    typed = typeof document.execCommand === 'function' && document.execCommand('insertText', false, indent);
+  } catch {
+    typed = false;
+  }
+  if (!typed) area.setRangeText(indent, area.selectionStart, area.selectionEnd, 'end');
 }
