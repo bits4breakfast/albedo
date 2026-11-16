@@ -157,17 +157,40 @@ export interface SubmitInput {
 }
 
 /**
+ * The commit GitHub numbers a review comment's LEFT side by (#402): the
+ * merge base of the PR's base (its SHA, from GitHub) and the reviewed commit,
+ * as GitHub computes it -- not this copy's own merge base, which a stale
+ * local base branch can put elsewhere. Null when GitHub cannot be asked.
+ */
+export async function prLeftBase(task: ReviewTask, commitId: string): Promise<string | null> {
+  const pr = reviewPr(task);
+  if (!pr) return null;
+  const host = pr.host === 'github.com' ? [] : ['--hostname', pr.host];
+  const repo = `repos/${encodeURIComponent(pr.owner)}/${encodeURIComponent(pr.repo)}`;
+  const ask = async (path: string, jq: string): Promise<string | null> => {
+    const r = await gh(['api', ...host, path, '--jq', jq], task.worktreePath).catch(() => null);
+    const out = r && r.code === 0 ? r.stdout.trim() : '';
+    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+  };
+  const baseSha = await ask(`${repo}/pulls/${pr.number}`, '.base.sha');
+  if (!baseSha) return null;
+  return ask(`${repo}/compare/${baseSha}...${commitId}`, '.merge_base_commit.sha');
+}
+
+/**
  * What Submit Review sends, read fresh: the drafts, each line draft found
  * again in its file at HEAD (by its text, as the cards place it), the PR's
  * diff, and the commit checked out -- the one reviewed. A draft on removed
- * lines (#402) is found again in the file at the PR's merge base instead,
- * and goes on GitHub's left side there; when its text is not there, or its
- * lines are back at HEAD, it goes in the summary like a lost one.
+ * lines (#402) is found again in the file at GitHub's left-side base
+ * ({@link prLeftBase}; this copy's merge base only when GitHub cannot say),
+ * and goes on GitHub's left side there, judged against that diff's old side;
+ * when its text is not there, or its lines are back at HEAD, it goes in the
+ * summary like a lost one.
  */
 export async function prepareSubmit(task: ReviewTask): Promise<SubmitInput> {
   const rows = await listGithubDrafts(task.id);
   const commitId = (await gitOk(['rev-parse', 'HEAD'], task.worktreePath)).trim();
-  const ranges = await prDiffRanges(task);
+  let ranges = await prDiffRanges(task);
   const texts = new Map<string, string | null>();
   const bases = new Map<string, string | null>();
   let mergeBase: string | null | undefined;
@@ -177,7 +200,14 @@ export async function prepareSubmit(task: ReviewTask): Promise<SubmitInput> {
     const d: GithubDraft = { id: c.id, path: c.path, lineStart: c.lineStart, lineEnd: c.lineEnd, body: c.body, replyTo: c.replyTo };
     if (c.replyTo === null && sideOf(c) === 'old') {
       d.side = 'old';
-      if (mergeBase === undefined) mergeBase = await taskBase(task.worktreePath, await reviewBase(task)).catch(() => null);
+      if (mergeBase === undefined) {
+        mergeBase = (await prLeftBase(task, commitId)) ?? (await taskBase(task.worktreePath, await reviewBase(task)).catch(() => null));
+        // The old side's hunks from that same base: the lines LEFT may name.
+        if (mergeBase && ranges) {
+          const r = await git(['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-U3', '-M', mergeBase, 'HEAD'], task.worktreePath);
+          if (r.code === 0) ranges = Object.assign(new Map(ranges), { old: parseDiffRanges(r.stdout).old });
+        }
+      }
       if (!bases.has(c.path)) {
         bases.set(c.path, mergeBase ? await readTextAtRev(task.worktreePath, mergeBase, c.path).catch(() => null) : null);
       }

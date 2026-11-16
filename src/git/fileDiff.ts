@@ -233,10 +233,14 @@ export async function readTextAtRev(worktreePath: string, rev: string, relPath: 
   return side.kind === 'text' ? side.text : null;
 }
 
-/** {@link readTextAtRev} at the task's base, where its Diff mode's old side is read; null without a base. */
+/**
+ * {@link readTextAtRev} at the task's merge base, where its Diff mode's old
+ * side is read. Null without a merge base: the Diff mode then stands in HEAD,
+ * which a comment on removed lines must never be placed or resolved against.
+ */
 export async function readTaskBaseText(worktreePath: string, baseBranch: string, relPath: string): Promise<string | null> {
   const merge = await taskBase(worktreePath, baseBranch);
-  return readTextAtRev(worktreePath, merge ?? 'HEAD', relPath);
+  return merge === null ? null : readTextAtRev(worktreePath, merge, relPath);
 }
 
 /** Reads the working-tree file; null when it does not exist. */

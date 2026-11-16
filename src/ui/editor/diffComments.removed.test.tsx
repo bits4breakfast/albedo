@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@t
 import type { ReviewComment } from '../../db/comments';
 
 const addComment = vi.fn(async () => 1);
+const addCommentsTogether = vi.fn(async () => {});
 vi.mock('../../db/comments', async () => {
   const actual = await vi.importActual<typeof import('../../db/comments')>('../../db/comments');
   return {
@@ -17,6 +18,7 @@ vi.mock('../../db/comments', async () => {
     listComments: vi.fn(async () => []),
     onCommentsChanged: vi.fn(() => () => {}),
     addComment,
+    addCommentsTogether,
     editComment: vi.fn(async () => {}),
     resolveComment: vi.fn(async () => {}),
     resolveComments: vi.fn(async () => {}),
@@ -30,6 +32,7 @@ const { useDiffComments } = await import('./diffComments');
 afterEach(() => {
   cleanup();
   addComment.mockClear();
+  addCommentsTogether.mockClear();
   vi.mocked(db.listComments).mockResolvedValue([]);
   vi.mocked(db.resolveComments).mockClear();
 });
@@ -94,7 +97,7 @@ describe('writing one', () => {
     expect(result.current.annotations!.removed!.after(2)).toBeNull();
   });
 
-  it('a selection over both sides: one box, saved as one comment per side', async () => {
+  it('a selection over both sides: one box, saved as one comment per side, in one write', async () => {
     const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, null, BASE));
     act(() => result.current.annotations!.pickBoth!({ from: 2, to: 2 }, { from: 2, to: 3 }));
     render(<>{result.current.annotations!.after(2)}</>);
@@ -102,11 +105,35 @@ describe('writing one', () => {
     const box = screen.getByPlaceholderText(/Leave a comment/);
     fireEvent.change(box, { target: { value: 'Same question.' } });
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(2));
-    expect(addComment).toHaveBeenCalledWith({ taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'run(2);', body: 'Same question.' });
-    expect(addComment).toHaveBeenCalledWith({
-      taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 3, anchorText: 'if (!ready) return;\nrun(1);', body: 'Same question.', side: 'old',
-    });
+    await waitFor(() => expect(addCommentsTogether).toHaveBeenCalledOnce());
+    expect(addCommentsTogether).toHaveBeenCalledWith([
+      { taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 3, anchorText: 'if (!ready) return;\nrun(1);', body: 'Same question.', side: 'old' },
+      { taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'run(2);', body: 'Same question.' },
+    ]);
+    expect(addComment).not.toHaveBeenCalled();
+  });
+
+  it('a failed write of both sides keeps the box, and stores neither', async () => {
+    addCommentsTogether.mockRejectedValueOnce(new Error('disk full'));
+    const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', NOW, false, true, null, BASE));
+    act(() => result.current.annotations!.pickBoth!({ from: 2, to: 2 }, { from: 2, to: 3 }));
+    render(<>{result.current.annotations!.after(2)}</>);
+    const box = screen.getByPlaceholderText(/Leave a comment/);
+    fireEvent.change(box, { target: { value: 'Same question.' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(result.current.notice).toMatch(/Could not save the comment.*disk full/));
+    expect(addComment).not.toHaveBeenCalled();
+  });
+
+  it('a base read before the PR status settled places a removed comment but never resolves it', async () => {
+    vi.mocked(db.listComments).mockResolvedValue([comment({ sentAt: 5 })]);
+    const back = 'start\nif (!ready) return;\nrun(2);\nend\n';
+    const { result } = renderHook(() => useDiffComments(1, 'src/a.ts', back, false, true, null, BASE, false));
+    await waitFor(() => expect(vi.mocked(db.listComments)).toHaveBeenCalled());
+    await settle();
+    expect(db.resolveComments).not.toHaveBeenCalled();
+    render(<>{result.current.bar}</>);
+    expect(screen.getByText(/its lines are back/)).toBeTruthy();
   });
 });
 

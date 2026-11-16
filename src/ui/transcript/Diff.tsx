@@ -836,6 +836,11 @@ export interface SelectedRows {
    * mean. Null in a unified diff.
    */
   side: 'old' | 'new' | null;
+  /**
+   * Unchanged rows' left halves it covers (#402), by their line in the file
+   * now: what a selection made in a split diff's left column means on them.
+   */
+  same: Array<{ line: number; text: string }>;
 }
 
 /**
@@ -860,17 +865,32 @@ export function selectedDiffRows(sel: Selection | null): SelectedRows | null {
   if (rows.length === 0) return null;
   const lines: SelectedRows['lines'] = [];
   const removed: SelectedRows['removed'] = [];
+  const same: SelectedRows['same'] = [];
+  const take = (into: Array<{ line: number; text: string }>, value: string | null, text: string) => {
+    const n = Number(value);
+    if (value !== null && Number.isInteger(n) && n > 0 && !into.some((l) => l.line === n)) into.push({ line: n, text });
+  };
   for (const r of rows) {
     const text = r.querySelector('.tx-d-code')?.textContent ?? '';
-    const o = Number(r.getAttribute('data-old-line'));
-    if (Number.isInteger(o) && o > 0 && !removed.some((l) => l.line === o)) removed.push({ line: o, text });
-    const n = Number(r.getAttribute('data-new-line'));
-    if (!Number.isInteger(n) || n <= 0 || lines.some((l) => l.line === n)) continue;
-    lines.push({ line: n, text });
+    take(removed, r.getAttribute('data-old-line'), text);
+    take(same, r.getAttribute('data-same-line'), text);
+    take(lines, r.getAttribute('data-new-line'), text);
   }
-  const split = at(range.startContainer)?.closest('.tx-d-split')?.getAttribute('data-select');
-  const side = split === 'old' || split === 'new' ? split : null;
-  return { root, lines, deletedOnly: lines.length === 0, removed, side };
+  return { root, lines, deletedOnly: lines.length === 0, removed, side: columnOf(range, at), same };
+}
+
+/**
+ * The column of a split diff a selection was made in: the half it starts in,
+ * else the half it ends in, else the column the last press chose. Null in a
+ * unified diff.
+ */
+function columnOf(range: Range, at: (n: Node | null) => Element | null): 'old' | 'new' | null {
+  const start = at(range.startContainer);
+  if (!start?.closest('.tx-d-split')) return null;
+  const half = start.closest('.tx-d-half') ?? at(range.endContainer)?.closest('.tx-d-half') ?? null;
+  if (half) return half.previousElementSibling ? 'new' : 'old';
+  const chosen = start.closest('.tx-d-split')?.getAttribute('data-select');
+  return chosen === 'old' || chosen === 'new' ? chosen : null;
 }
 
 /** "Line 4", "Lines 2–4", "Removed Line 3": a range of rows, as a button names it. */
@@ -888,8 +908,9 @@ function selectionTargets(
 ): { added: SelectedRows['lines']; removed: SelectedRows['removed'] } | null {
   if (!annotate) return null;
   // Split: only the column the selection was made in, once deleted rows take
-  // comments; before that, as it always was.
-  const added = annotate.removed && rows.side === 'old' ? [] : rows.lines;
+  // comments -- the left column's unchanged rows by their line now; before
+  // that, as it always was.
+  const added = annotate.removed && rows.side === 'old' ? rows.same : rows.lines;
   // Deleted rows count only where they take comments, and alongside added
   // ones only where one comment can go to both sides.
   const removed = annotate.removed && rows.side !== 'new' && (added.length === 0 || annotate.pickBoth) ? rows.removed : [];
@@ -1107,6 +1128,9 @@ function SplitBody({
             <div
               className={`tx-d-half tx-d-${p.left ? p.left.line.kind : 'blank'}${removed !== null ? edge(annotate, removed, 'old') : ''}`}
               data-old-line={removed ?? undefined}
+              // An unchanged row's left half (#402): its line in the file now,
+              // for a selection made in this column.
+              data-same-line={p.left?.line.kind === 'context' ? (p.left.line.newNumber ?? undefined) : undefined}
             >
               {p.left ? (
                 <>

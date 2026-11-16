@@ -29,7 +29,7 @@ vi.mock('../../lib/highlight', async () => {
   };
 });
 // Diff mode: the base had "old", the file now has "beta" in its place.
-const fileDiff = vi.hoisted(() => ({ change: 'modified' as 'modified' | 'unchanged' }));
+const fileDiff = vi.hoisted(() => ({ change: 'modified' as 'modified' | 'unchanged', fromMergeBase: true }));
 vi.mock('../../git/fileDiff', async () => {
   const { diffStrings } = await vi.importActual<typeof import('../../lib/diff')>('../../lib/diff');
   const actual = await vi.importActual<typeof import('../../git/fileDiff')>('../../git/fileDiff');
@@ -41,7 +41,7 @@ vi.mock('../../git/fileDiff', async () => {
       return {
         result: { kind: 'diff', change: fileDiff.change, diff: diffStrings(oldText, newText, 'src/a.ts'), oldText, newText },
         base: 'abc1234',
-        fromMergeBase: true,
+        fromMergeBase: fileDiff.fromMergeBase,
       };
     }),
   };
@@ -75,9 +75,11 @@ vi.mock('../../db/comments', async () => {
 });
 
 // The base, as the File mode reads it for a file with a removed comment.
-const base = vi.hoisted(() => ({ text: 'alpha\nold\ngamma\n' as string | null | undefined }));
-const useBaseText = vi.fn((_task: unknown, _path: string | null, needed: boolean) => (needed ? base.text : undefined));
-vi.mock('./removedBase', () => ({ useBaseText, baseTextOf: vi.fn(async () => base.text ?? null) }));
+const base = vi.hoisted(() => ({ text: 'alpha\nold\ngamma\n' as string | null, settled: true }));
+const useBaseText = vi.fn((_task: unknown, _path: string | null, needed: boolean) =>
+  needed ? { text: base.text, settled: base.settled } : undefined,
+);
+vi.mock('./removedBase', () => ({ useBaseText, baseTextOf: vi.fn(async () => base.text) }));
 
 // jsdom has no layout; CodeMirror measures selections with these.
 Object.assign(Range.prototype, { getClientRects: () => [], getBoundingClientRect: () => new DOMRect() });
@@ -101,7 +103,9 @@ afterEach(() => {
   listComments.mockClear();
   useBaseText.mockClear();
   base.text = 'alpha\nold\ngamma\n';
+  base.settled = true;
   fileDiff.change = 'modified';
+  fileDiff.fromMergeBase = true;
 });
 
 async function editorContent(): Promise<HTMLElement> {
@@ -181,5 +185,27 @@ describe('comments on removed lines (#402)', { timeout: 15_000 }, () => {
     expect(await screen.findByText('Why beta?')).toBeTruthy();
     expect(useBaseText).toHaveBeenCalled();
     for (const call of useBaseText.mock.calls) expect(call[2]).toBe(false);
+  });
+
+  it('in File mode, a base read before the PR status settled neither moves nor resolves a comment', async () => {
+    const db = await import('../../db/comments');
+    vi.mocked(db.moveComment).mockClear();
+    vi.mocked(db.resolveComments).mockClear();
+    base.settled = false;
+    // Stored at line 5; this base has its text at 2, and a second one is back in the file.
+    stored.push(removed({ lineStart: 5, lineEnd: 5 }), removed({ id: 12, sentAt: 5, anchorText: 'beta', body: 'Sent one.' }));
+    base.text = 'alpha\nold\nbeta\ngamma\n';
+    await editorContent();
+    expect(await screen.findByText('Why drop old?')).toBeTruthy();
+    expect(await screen.findByText(/On removed line 2 · its lines are back: Sent one\./)).toBeTruthy();
+    expect(db.moveComment).not.toHaveBeenCalled();
+    expect(db.resolveComments).not.toHaveBeenCalled();
+  });
+
+  it('in Diff mode against HEAD (no merge base), deleted rows take no comment', async () => {
+    fileDiff.fromMergeBase = false;
+    render(<FileEditor task={task} request={{ path: 'src/a.ts' }} onClose={() => {}} initialMode="diff" />);
+    expect(await screen.findByRole('button', { name: 'Comment on line 2' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Comment on removed line/ })).toBeNull();
   });
 });

@@ -91,9 +91,12 @@ export function CommentsBar({
   onResolve,
   onDelete,
   aside = null,
+  back,
 }: {
   traces: readonly ReviewComment[];
   outdated: readonly ReviewComment[];
+  /** #402: of `outdated`, the unsent comments on removed lines whose lines are back in the file. */
+  back?: ReadonlySet<number>;
   onReopen: (c: ReviewComment) => void;
   onResolve: (c: ReviewComment) => void;
   onDelete: (c: ReviewComment) => void;
@@ -125,7 +128,8 @@ export function CommentsBar({
           {outdated.map((c) => (
             <span key={`o${c.id}`} className="ed-cmt-outdated-item" title={c.anchorText}>
               <span className="ed-cmt-outdated-body">
-                {placeOf(c)}: {c.body.split('\n')[0]}
+                {placeOf(c)}
+                {back?.has(c.id) ? ' · its lines are back' : ''}: {c.body.split('\n')[0]}
               </span>
               <button type="button" className="ed-cmt-btn" onClick={() => onResolve(c)}>
                 ✓ Resolve

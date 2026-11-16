@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 import type { DiffAnnotations, RemovedAnnotations } from '../transcript/Diff';
 import {
   addComment,
+  addCommentsTogether,
   deleteComment,
   editComment,
   setCommentGithub,
@@ -29,6 +30,7 @@ import {
   shouldAutoResolve,
   sideOf,
   type CommentSide,
+  type NewComment,
   type ReviewComment,
 } from '../../db/comments';
 import { CommentCardView, CommentDraftView, CommentsBar, ThreadCardView, ThreadsAside } from './CommentViews';
@@ -84,6 +86,12 @@ export function useDiffComments(
    * made shows in the bar.
    */
   oldText: string | null = null,
+  /**
+   * #402: `oldText` is from the final base (gh has answered for the PR). A
+   * base read before then may be the wrong branch's: it places comments on
+   * removed lines but never resolves one.
+   */
+  oldSettled = true,
 ): { annotations: DiffAnnotations | null; notice: string | null; clearNotice: () => void; bar: ReactNode } {
   const isReview = !!review?.reviewUrl;
   const pr = isReview ? reviewPr(review) : null;
@@ -124,11 +132,12 @@ export function useDiffComments(
   // One on removed lines (#402) sits under its deleted rows while they are
   // still removed; back in the file, it resolves when sent, and is in the
   // bar otherwise, as is one whose text the base no longer has.
-  const { placed, removed, outdated, resolving } = useMemo(() => {
+  const { placed, removed, outdated, back, resolving } = useMemo(() => {
     const out = {
       placed: [] as Array<{ comment: ReviewComment; from: number; to: number }>,
       removed: [] as Array<{ comment: ReviewComment; from: number; to: number; row: number }>,
       outdated: [] as ReviewComment[],
+      back: new Set<number>(),
       resolving: [] as ReviewComment[],
     };
     if (newText === null) return out;
@@ -136,8 +145,11 @@ export function useDiffComments(
       if (sideOf(c) === 'old') {
         const gone = oldText === null ? null : placeRemoved(c, oldText, newText);
         if (gone?.state === 'removed') out.removed.push({ comment: c, from: gone.lineStart, to: gone.lineEnd, row: gone.row });
-        else if (gone?.state === 'back' && !unsaved && fresh && shouldAutoResolve(c, newText, oldText)) out.resolving.push(c);
-        else out.outdated.push(c);
+        else if (gone?.state === 'back' && oldSettled && !unsaved && fresh && shouldAutoResolve(c, newText, oldText)) out.resolving.push(c);
+        else {
+          if (gone?.state === 'back') out.back.add(c.id);
+          out.outdated.push(c);
+        }
         continue;
       }
       const at = relocate(c, newText);
@@ -147,7 +159,7 @@ export function useDiffComments(
       else out.outdated.push(c);
     }
     return out;
-  }, [comments, newText, oldText, unsaved, fresh]);
+  }, [comments, newText, oldText, oldSettled, unsaved, fresh]);
 
   const resolvingKey = resolving.map((c) => c.id).join(',');
   useEffect(() => {
@@ -224,10 +236,10 @@ export function useDiffComments(
       // Only a review task's comment says where it goes (#287).
       const where = isReview ? { github } : {};
       // On removed lines (#402): the base's lines, quoted from the base.
-      const removedComment = (r: { from: number; to: number }) =>
+      const removedRow = (r: { from: number; to: number }): NewComment | null =>
         oldText === null
-          ? Promise.reject(new Error('the base of this diff is not known'))
-          : addComment({
+          ? null
+          : {
               taskId,
               path,
               lineStart: r.from,
@@ -236,25 +248,32 @@ export function useDiffComments(
               body: text,
               ...where,
               side: 'old',
-            });
-      const write = editing
-        ? editComment(taskId, editing.id, text).then(() =>
-            isReview && github !== editing.github ? setCommentGithub(taskId, editing.id, github) : undefined,
-          )
-        : d.side === 'old'
-          ? removedComment(d)
-          : Promise.all([
-              addComment({
-                taskId,
-                path,
-                lineStart: d.from,
-                lineEnd: d.to,
-                anchorText: newText.split('\n').slice(d.from - 1, d.to).join('\n'),
-                body: text,
-                ...where,
-              }),
-              ...(d.removed ? [removedComment(d.removed)] : []),
-            ]);
+            };
+      const newRow: NewComment = {
+        taskId,
+        path,
+        lineStart: d.from,
+        lineEnd: d.to,
+        anchorText: newText.split('\n').slice(d.from - 1, d.to).join('\n'),
+        body: text,
+        ...where,
+      };
+      const unknownBase = () => Promise.reject(new Error('the base of this diff is not known'));
+      let write: Promise<unknown>;
+      if (editing) {
+        write = editComment(taskId, editing.id, text).then(() =>
+          isReview && github !== editing.github ? setCommentGithub(taskId, editing.id, github) : undefined,
+        );
+      } else if (d.side === 'old') {
+        const row = removedRow(d);
+        write = row ? addComment(row) : unknownBase();
+      } else if (d.removed) {
+        // Both sides in one statement: both stored, or neither.
+        const row = removedRow(d.removed);
+        write = row ? addCommentsTogether([row, newRow]) : unknownBase();
+      } else {
+        write = addComment(newRow);
+      }
       write.then(
         () => {
           setNotice(null);
@@ -417,6 +436,7 @@ export function useDiffComments(
     <CommentsBar
       traces={traces}
       outdated={outdated}
+      back={back}
       onReopen={(c) => {
         setTraces((prev) => prev.filter((t) => t.id !== c.id));
         report(reopenComment(taskId, c.id), 'reopen the comment');

@@ -12,6 +12,8 @@
 
 import { anchorBlock, fileLines } from '../lib/anchor';
 import { diffSequences } from '../lib/diff';
+
+type SeqOp = ReturnType<typeof diffSequences>[number];
 import { getDb } from './index';
 
 export interface ReviewComment {
@@ -193,6 +195,36 @@ export async function setCommentGithub(taskId: number, id: number, github: 'draf
   changed(taskId);
 }
 
+export type NewComment = Parameters<typeof addComment>[0];
+
+/**
+ * One comment on both sides of a diff (#402: a selection over deleted and
+ * added lines), written in ONE statement: either both rows are stored or
+ * neither is, so a failed save leaves nothing behind to be duplicated by the
+ * next. Both get the same created_at, which is how {@link formatForClaude}
+ * knows them for one comment.
+ */
+export async function addCommentsTogether(rows: readonly NewComment[]): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getDb();
+  const now = Date.now();
+  const values: string[] = [];
+  const binds: unknown[] = [];
+  for (const c of rows) {
+    const github = c.replyTo != null ? 'draft' : (c.github ?? null);
+    const n = binds.length;
+    const at = (k: number) => `$${n + k}`;
+    values.push(`(${[1, 2, 3, 4, 5, 6, 7, 7, 8, 9, 10].map(at).join(', ')})`);
+    binds.push(c.taskId, c.path, c.lineStart, c.lineEnd, c.anchorText, c.body, now, github, c.replyTo ?? null, c.side === 'old' ? 'old' : 'new');
+  }
+  await db.execute(
+    `INSERT INTO comments (task_id, path, line_start, line_end, anchor_text, body, created_at, updated_at, github, reply_to, side)
+     VALUES ${values.join(', ')}`,
+    binds,
+  );
+  for (const id of new Set(rows.map((c) => c.taskId))) changed(id);
+}
+
 export async function addComment(c: {
   taskId: number;
   path: string;
@@ -314,35 +346,70 @@ export type RemovedPlacement =
   /** Its text is not in the base (the diff's base moved on): it cannot be placed. */
   | { state: 'outdated' };
 
+/** Lines as the diff compares them: a CRLF file's `\r` is not part of a line (CodeMirror drops it too). */
+function plainLines(text: string): string[] {
+  return text === '' ? [] : fileLines(text).map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
+}
+
+/** The last line diff asked for: every comment on a file asks with the same two texts. */
+let lastOps: { base: string; now: string; ops: SeqOp[] } | null = null;
+
+function opsFor(base: string, now: string, old: readonly string[], cur: readonly string[]): SeqOp[] {
+  if (lastOps && lastOps.base === base && lastOps.now === now) return lastOps.ops;
+  const ops = diffSequences(old, cur);
+  lastOps = { base, now, ops };
+  return ops;
+}
+
 /**
  * Where a comment on removed lines (#402) stands: found again by its text in
- * `base`, the diff's old side, then followed through the change to `now`,
- * the file as it is. The same line diff the diff view draws (`diffSequences`),
- * so "back" means exactly that its rows are no longer deleted rows there --
- * never merely that the same text occurs somewhere in the file, which a
- * removed `}` always does.
+ * `base`, the diff's old side, among the copies the change REMOVES -- the
+ * nearest to its last place with at least one deleted line -- then followed
+ * through the change to `now`, the file as it is. The same line diff the diff
+ * view draws (`diffSequences`), so "back" means no copy of its text is
+ * removed any more: never merely that the text occurs somewhere, nor that the
+ * copy nearest its old line number is unchanged (a `}` always is, once the
+ * base moves).
  */
 export function placeRemoved(comment: Pick<ReviewComment, 'anchorText' | 'lineStart'>, base: string, now: string): RemovedPlacement {
-  const block = comment.anchorText.split('\n');
-  const old = fileLines(base);
-  const found = anchorBlock(old, block, comment.lineStart);
-  if (!found.ok) return { state: 'outdated' };
-  const first = found.offset;
-  const last = found.offset + block.length - 1;
-  const cur = now === '' ? [] : fileLines(now);
-  let removed = -1;
+  const block = comment.anchorText.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
+  const old = plainLines(base);
+  const cur = plainLines(now);
+  // Every exact copy of its text in the base.
+  const copies: number[] = [];
+  for (let i = 0; i + block.length <= old.length; i++) {
+    let hit = true;
+    for (let j = 0; j < block.length && hit; j++) hit = old[i + j] === block[j];
+    if (hit) copies.push(i);
+  }
+  if (block.length === 0 || copies.length === 0) return { state: 'outdated' };
+  const ops = opsFor(base, now, old, cur);
+  const deleted = new Set<number>();
+  for (const op of ops) if (op.kind === 'del') deleted.add(op.oldIndex);
+  // Of the copies the change removes (a line of it or more), the nearest.
+  const want = comment.lineStart - 1;
+  let first = -1;
+  for (const at of copies) {
+    let removes = false;
+    for (let j = 0; j < block.length && !removes; j++) removes = deleted.has(at + j);
+    if (removes && (first < 0 || Math.abs(at - want) < Math.abs(first - want))) first = at;
+  }
+  if (first < 0) return { state: 'back' };
+  const last = first + block.length - 1;
+  let row = first;
+  for (let i = first; i <= last; i++) if (deleted.has(i)) row = i;
+  // The line of the file that took the removal's place: the first after its
+  // last removed line (or an added line in its stead).
   let before: number | null = null;
   let past = false;
-  for (const op of diffSequences(old, cur)) {
-    if (op.kind === 'del' && op.oldIndex >= first && op.oldIndex <= last) removed = op.oldIndex;
-    if (op.oldIndex > last || (op.kind === 'add' && removed >= 0)) past = true;
-    if (past && op.newIndex >= 0) {
+  for (const op of ops) {
+    if (op.kind === 'del' && op.oldIndex === row) past = true;
+    else if (past && op.newIndex >= 0) {
       before = op.newIndex + 1;
       break;
     }
   }
-  if (removed < 0) return { state: 'back' };
-  return { state: 'removed', lineStart: first + 1, lineEnd: last + 1, row: removed + 1, before, last: cur.length };
+  return { state: 'removed', lineStart: first + 1, lineEnd: last + 1, row: row + 1, before, last: cur.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -413,13 +480,34 @@ export const DEFAULT_COMMENTS_INTRO = 'I left some review comments on your chang
  * with enough backticks that code containing ``` cannot close it.
  */
 export function formatForClaude(comments: readonly ReviewComment[], intro: string = DEFAULT_COMMENTS_INTRO): string {
-  const items = comments.map((c, i) => {
+  // One comment written on both sides of a diff (#402) is two rows with the
+  // same file, text and moment, one per side: one item, both places and both
+  // quotes, its text once.
+  const groups: ReviewComment[][] = [];
+  for (const c of comments) {
+    const twin = groups.find(
+      (g) =>
+        g.length === 1 &&
+        g[0]!.path === c.path &&
+        g[0]!.body === c.body &&
+        g[0]!.createdAt === c.createdAt &&
+        sideOf(g[0]!) !== sideOf(c),
+    );
+    if (twin) twin.push(c);
+    else groups.push([c]);
+  }
+  const quote = (c: ReviewComment) => {
     const longest = Math.max(2, ...(c.anchorText.match(/`+/g) ?? []).map((m) => m.length));
     const fence = '`'.repeat(longest + 1);
     // On removed lines (#402) the code quoted is what was taken out, and
     // Claude is told so: those lines are not in the file to look for.
     const where = sideOf(c) === 'old' ? `${commentLocation(c)} (in the base, not in the file now)` : commentLocation(c);
-    return `${i + 1}. ${where}\n${fence}\n${c.anchorText}\n${fence}\n${c.body.trim()}`;
+    return `${where}\n${fence}\n${c.anchorText}\n${fence}`;
+  };
+  const items = groups.map((g, i) => {
+    // The removed lines first, as the diff shows them.
+    const [a, b] = g.length === 2 && sideOf(g[1]!) === 'old' ? [g[1]!, g[0]!] : [g[0]!, g[1]];
+    return `${i + 1}. ${quote(a)}${b ? `\nand ${quote(b)}` : ''}\n${a.body.trim()}`;
   });
   const head = intro.trim();
   return `${head === '' ? '' : `${head}\n\n`}${items.join('\n\n')}`;

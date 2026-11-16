@@ -13,12 +13,18 @@ import type { Task } from '../types';
 const harness = vi.hoisted(() => ({ db: null as unknown }));
 const bases = vi.hoisted(() => new Map<string, string>());
 const baseReads = vi.hoisted(() => [] as string[]);
+// The measured base, as useMeasuredBase gives it: '' and settled until asked for.
+const measured = vi.hoisted(() => ({ settled: true, asked: [] as boolean[] }));
 vi.mock('./transcript/composerBridge', () => ({ sendWaitingComments: () => true }));
 vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => harness.db } }));
 vi.mock('./editor/removedBase', () => ({
-  baseTextOf: async (_task: unknown, path: string) => {
-    baseReads.push(path);
+  baseTextOf: async (_worktree: string, base: string, path: string) => {
+    baseReads.push(`${base}:${path}`);
     return bases.get(path) ?? null;
+  },
+  useRemovedBase: (_task: unknown, needed: boolean) => {
+    measured.asked.push(needed);
+    return { base: needed ? 'main' : '', settled: needed && measured.settled };
   },
   useBaseText: () => undefined,
 }));
@@ -48,6 +54,8 @@ beforeEach(async () => {
   bases.clear();
   bases.set('src/a.ts', 'one\ntwo\nthree\n');
   baseReads.length = 0;
+  measured.settled = true;
+  measured.asked.length = 0;
   files = new Map([['src/a.ts', 'one\nthree\n']]);
   task = await createTask({
     title: 't', projectId: null, repoPath: '/r', baseBranch: 'main', branch: 'b', worktreePath: '/wt/a',
@@ -87,7 +95,7 @@ describe('comments on removed lines in the list', () => {
     await markCommentsSent(task.id, [id]);
     render(list());
     await screen.findByRole('group', { name: 'Sent, 1' });
-    await waitFor(() => expect(baseReads).toEqual(['src/a.ts']));
+    await waitFor(() => expect(baseReads).toEqual(['main:src/a.ts']));
     await settle();
     expect(screen.queryByRole('group', { name: /Resolved/ })).toBeNull();
   });
@@ -112,5 +120,32 @@ describe('comments on removed lines in the list', () => {
     await screen.findByRole('group', { name: 'Sent, 1' });
     await settle();
     expect(baseReads).toEqual([]);
+    expect(measured.asked.every((n) => !n)).toBe(true);
+  });
+
+  it('not from a base read before the PR status settled', async () => {
+    measured.settled = false;
+    const id = await addRemoved('Why drop two?');
+    await markCommentsSent(task.id, [id]);
+    files.set('src/a.ts', 'one\ntwo\nthree\n');
+    render(list());
+    await screen.findByRole('group', { name: 'Sent, 1' });
+    await waitFor(() => expect(baseReads).toEqual(['main:src/a.ts']));
+    await settle();
+    expect(screen.queryByRole('group', { name: /Resolved/ })).toBeNull();
+  });
+
+  it('a resolved one is read at the base only while the Resolved group is open', async () => {
+    const id = await addRemoved('Why drop two?');
+    await markCommentsSent(task.id, [id]);
+    const { resolveComment } = await import('../db/comments');
+    await resolveComment(task.id, id);
+    render(list());
+    const resolved = await screen.findByRole('group', { name: 'Resolved, 1' });
+    await settle();
+    expect(baseReads).toEqual([]);
+    fireEvent.click(within(resolved).getByRole('button', { name: /Resolved · 1/ }));
+    await waitFor(() => expect(baseReads).toEqual(['main:src/a.ts']));
+    expect(within(resolved).getByText(/resolved by you/)).toBeTruthy();
   });
 });

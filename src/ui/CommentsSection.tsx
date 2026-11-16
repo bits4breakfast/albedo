@@ -25,7 +25,7 @@ import {
   type ReviewComment,
 } from '../db/comments';
 import { useReadFile } from './editor/openFile';
-import { baseTextOf } from './editor/removedBase';
+import { baseTextOf, useRemovedBase } from './editor/removedBase';
 import { Disclosure } from './Disclosure';
 import { sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
@@ -88,13 +88,16 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
     .filter((p, i, a) => a.indexOf(p) === i)
     .join('\n');
   // Of those, the files with a sent comment on removed lines (#402): only
-  // they are read at the base too.
+  // they are read at the base too -- an open one, which may resolve, and a
+  // resolved one only while the Resolved group is open to say why.
   const removedPaths = all
-    .filter((c) => c.sentAt !== null && sideOf(c) === 'old')
+    .filter((c) => c.sentAt !== null && sideOf(c) === 'old' && (c.resolvedAt === null || showResolved))
     .map((c) => c.path)
     .sort()
     .filter((p, i, a) => a.indexOf(p) === i)
     .join('\n');
+  // The task's measured base, asked for only when such a comment exists.
+  const removedBase = useRemovedBase(task, removedPaths !== '');
   useEffect(() => {
     if (sentPaths === '') {
       setTexts(new Map());
@@ -106,12 +109,15 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
       const next = new Map<string, string | null>();
       for (const p of sentPaths.split('\n')) next.set(p, await read(p).catch(() => null));
       const atBase = new Map<string, string | null>();
-      if (removedPaths !== '') for (const p of removedPaths.split('\n')) atBase.set(p, await baseTextOf(task, p));
+      // One base for the pass, every file read at it.
+      const base = removedBase.base;
+      if (removedPaths !== '') for (const p of removedPaths.split('\n')) atBase.set(p, await baseTextOf(task.worktreePath, base, p));
       if (!live) return;
       setTexts(next);
       setBases(atBase);
+      // A removed comment resolves only from a base that is final (#402).
       const resolvable = all
-        .filter((c) => shouldAutoResolve(c, next.get(c.path) ?? null, atBase.get(c.path) ?? null))
+        .filter((c) => shouldAutoResolve(c, next.get(c.path) ?? null, removedBase.settled ? (atBase.get(c.path) ?? null) : null))
         .map((c) => c.id);
       if (resolvable.length > 0) {
         resolveComments(task.id, resolvable).catch((err: unknown) => console.warn('[comments] could not resolve', err));
@@ -122,7 +128,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
     };
     // `all` is read for the ids only; the paths decide when to look again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.id, sentPaths, removedPaths, reloadKey, read]);
+  }, [task.id, sentPaths, removedPaths, removedBase.base, removedBase.settled, reloadKey, read]);
 
   const comments = all.filter((c) => c.resolvedAt === null);
   const resolved = all.filter((c) => c.resolvedAt !== null);

@@ -1176,7 +1176,9 @@ export default function FileEditor({
   // Comments on removed lines (#402) are placed through the task's base,
   // read only for a file that has one.
   const hasRemoved = fileComments.some((c) => sideOf(c) === 'old');
-  const baseText = useBaseText(task, current, commentsOn && hasRemoved, doc?.key);
+  const baseRead = useBaseText(task, current, commentsOn && hasRemoved, doc?.key);
+  /** Unsent comments on removed lines that are back in the file: in the bar, saying so. */
+  const [backIds, setBackIds] = useState<ReadonlySet<number>>(() => new Set());
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1185,10 +1187,12 @@ export default function FileEditor({
     const placed: PlacedComment[] = [];
     const lost: ReviewComment[] = [];
     const resolving: ReviewComment[] = [];
+    const back = new Set<number>();
     for (const c of fileComments) {
       if (sideOf(c) === 'old') {
         // Until the base is read it is neither placed nor listed as lost.
-        if (baseText === undefined) continue;
+        if (baseRead === undefined) continue;
+        const baseText = baseRead.text;
         const gone = baseText === null ? null : placeRemoved(c, baseText, text);
         const line = gone?.state === 'removed' ? (gone.before ?? gone.last) : 0;
         if (gone?.state === 'removed' && line > 0) {
@@ -1201,16 +1205,19 @@ export default function FileEditor({
             removed: { below: gone.before === null },
             outside: c.github === 'draft' && prRanges !== null && !inDiff(prRanges, c.path, gone.lineStart, gone.lineEnd, 'old'),
           });
-          if (gone.lineStart !== c.lineStart || gone.lineEnd !== c.lineEnd) {
+          // Only from a base that is final: one read before the PR's base is
+          // known may be the wrong branch's.
+          if (baseRead.settled && (gone.lineStart !== c.lineStart || gone.lineEnd !== c.lineEnd)) {
             // The base moved under it: remember where its text is now.
             moveComment(task.id, c.id, gone.lineStart, gone.lineEnd).catch((err: unknown) =>
               console.warn('[comments] could not record the new position', err),
             );
           }
-        } else if (gone?.state === 'back' && !dirtyRef.current && shouldAutoResolve(c, text, baseText)) {
+        } else if (gone?.state === 'back' && baseRead.settled && !dirtyRef.current && shouldAutoResolve(c, text, baseText)) {
           // Sent, and its lines are back in the file on disk: resolved, with a trace.
           resolving.push(c);
         } else {
+          if (gone?.state === 'back') back.add(c.id);
           lost.push(c);
         }
         continue;
@@ -1242,12 +1249,13 @@ export default function FileEditor({
     }
     view.dispatch({ effects: setPlacedComments.of(placed) });
     setOutdated(lost);
+    setBackIds(back);
     if (resolving.length > 0) {
       setTraces((prev) => [...prev.filter((t) => !resolving.some((r) => r.id === t.id)), ...resolving]);
       reportFailure(resolveComments(task.id, resolving.map((c) => c.id)), 'resolve the comments whose lines changed');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileComments, phase.kind, doc?.key, prRanges, baseText]);
+  }, [fileComments, phase.kind, doc?.key, prRanges, baseRead]);
 
   /** A comment write that failed says so, rather than leaving the list quietly wrong. */
   const reportFailure = (write: Promise<unknown>, what: string) => {
@@ -1567,6 +1575,7 @@ export default function FileEditor({
       <CommentsBar
         traces={traces}
         outdated={outdated}
+        back={backIds}
         onReopen={(c) => {
           setTraces((prev) => prev.filter((t) => t.id !== c.id));
           reportFailure(reopenComment(task.id, c.id), 'reopen the comment');

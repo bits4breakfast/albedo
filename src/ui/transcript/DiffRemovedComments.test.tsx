@@ -180,3 +180,26 @@ describe('a selection in a split diff', () => {
     expect(removed.pick).not.toHaveBeenCalled();
   });
 });
+
+describe('a selection in a split diff (review of #417)', () => {
+  it('in the left column over unchanged rows: Comment on them, by their line in the file now', () => {
+    const pick = vi.fn();
+    renderDiff('split', annotations({ pick, removed: removedHooks(), pickBoth: vi.fn() }));
+    fireEvent.mouseDown(document.querySelector('.tx-d-half[data-same-line="3"]')!);
+    // The first cell with this text is the left half's.
+    select('keep 4', 'keep 5');
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on Selected Lines 3–4' }));
+    expect(pick).toHaveBeenCalledWith(3, 4, true);
+  });
+
+  it('with no column chosen by a press, the column it starts in decides', () => {
+    const pickBoth = vi.fn();
+    const removed = removedHooks({ pick: vi.fn() });
+    renderDiff('split', annotations({ removed, pickBoth }));
+    expect(document.querySelector('.tx-d-split')!.getAttribute('data-select')).toBeNull();
+    select('old 2', 'old 3');
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on Removed Lines 2–3' }));
+    expect(removed.pick).toHaveBeenCalledWith(2, 3, true);
+    expect(pickBoth).not.toHaveBeenCalled();
+  });
+});
