@@ -168,3 +168,71 @@
 .ed-cmt[data-state='thread'] .ed-cmt-where { flex: none; white-space: nowrap; }
 /* Folded, the head is the whole card. */
 .ed-cmt[data-state='thread'] > .ed-cmt-head:last-child { margin-bottom: 0; }
+
+/* Suggest Change (#411). The toggle, pressed, is the accent's soft pair
+   (--on-accent-soft on --accent-soft), as the Waiting chip. The code box is
+   the comment box in the editor's mono face. On the card, the suggestion is
+   a small diff on the diff rows' own grounds: --text on --add-soft and
+   --del-soft, the marks in --add and --del, each measured on its tint
+   (styles.css; commentsContrast.test.ts). */
+.ed-cmt-suggest { border: 1px solid var(--border-strong); }
+.ed-cmt-suggest[aria-pressed='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--on-accent-soft);
+}
+.ed-cmt-sug {
+  margin-bottom: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.ed-cmt-sug[hidden] { display: none; }
+.ed-cmt-sug-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.ed-cmt-code {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  resize: vertical;
+  border: 0;
+  background: var(--panel-inset);
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 4;
+}
+.ed-cmt-code:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.ed-cmt-sug-diff {
+  /* One column as wide as the longest line, so every row's tint runs the
+     whole width when the diff scrolls sideways. */
+  display: grid;
+  grid-template-columns: minmax(100%, max-content);
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.ed-cmt-sug-line {
+  padding: 0 8px;
+  white-space: pre;
+  color: var(--text);
+}
+.ed-cmt-sug-line[data-kind='del'] { background: var(--del-soft); }
+.ed-cmt-sug-line[data-kind='add'] { background: var(--add-soft); }
+.ed-cmt-sug-line[data-kind='del']::before { content: '− '; color: var(--del); }
+.ed-cmt-sug-line[data-kind='add']::before { content: '+ '; color: var(--add); }

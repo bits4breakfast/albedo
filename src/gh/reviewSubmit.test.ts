@@ -10,6 +10,7 @@ import {
   type GithubDraft,
   type SubmitIo,
 } from './reviewSubmit';
+import { joinSuggestion } from '../lib/suggestion';
 
 const PR = { host: 'github.com', owner: 'example', repo: 'relay', number: 34 };
 
@@ -142,6 +143,29 @@ describe('planReview', () => {
 describe('reviewBody', () => {
   it('is the summary alone when every draft is on the diff', () => {
     expect(reviewBody('  Hi  ', [])).toBe('Hi');
+  });
+});
+
+describe('a suggested edit (#411)', () => {
+  const ranges = parseDiffRanges(DIFF);
+
+  it('goes to GitHub as a suggestion block on the multi-line comment, so the author can commit it', () => {
+    const body = joinSuggestion(['  return backoff(n);'], 'Use the helper.');
+    const plan = planReview({ drafts: [draft({ lineStart: 43, lineEnd: 44, body })], ranges, summary: '', verdict: 'COMMENT', commitId: 'abc' });
+    expect(plan.review?.comments).toEqual([
+      { path: 'src/retry.ts', line: 44, side: 'RIGHT', start_line: 43, start_side: 'RIGHT', body: '```suggestion\n  return backoff(n);\n```\nUse the helper.' },
+    ]);
+  });
+
+  it('outside the diff it is on no line to apply to: plain code in the summary, never a suggestion block', () => {
+    const off = draft({ path: 'README.md', lineStart: 4, lineEnd: 6, body: joinSuggestion(['New intro.'], 'Shorter.') });
+    const gone = draft({ id: 2, path: 'README.md', lineStart: 9, lineEnd: 9, body: joinSuggestion([], ''), lost: true });
+    const body = reviewBody('', [off, gone]);
+    expect(body).toBe(
+      '**On lines outside the diff:**\n\n`README.md:4-6`\n> Suggested change:\n> ```\n> New intro.\n> ```\n> Shorter.\n\n' +
+        '`README.md:9` (this code has changed since)\n> Suggested change: delete this line.',
+    );
+    expect(body).not.toContain('suggestion');
   });
 });
 

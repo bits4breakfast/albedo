@@ -311,6 +311,34 @@
 }
 .tx-queued-edit:focus { outline: none; border-color: var(--border-strong); }
 
+/* Edit all in the message box (#399). "↑ Edit All" ends the held group's
+   head, after its hint or Send All Now; Claude Code's group says under its
+   entries that they are changed in the terminal. Both in the head's --muted
+   on --panel, the key cap in --text on the same ground, its edge
+   --border-strong: no new ground, no new text tier. */
+.tx-queued-key { flex: none; margin-left: auto; white-space: nowrap; }
+.tx-queued-hint + .tx-queued-key,
+.tx-queued-all + .tx-queued-key { margin-left: 10px; }
+.tx-queued-aside {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.tx-queued-aside + .tx-queued-head { margin-top: 6px; }
+.tx-queued kbd,
+.tx-composer-inbox kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0 4px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  text-align: center;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
 /* --- background work -------------------------------------------------------- */
 
 /* What the session keeps running outside the turn (BackgroundStrip.tsx): the
@@ -441,6 +469,19 @@
   padding: 4px 8px 8px 10px;
 }
 .tx-composer-accessory { display: flex; align-items: center; min-width: 0; }
+/* Under the box while held messages are in it (#399): what Send does, and
+   Esc's way back. The composer's --panel, the queued head's --muted. */
+.tx-composer-inbox {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.tx-composer-inbox-key { white-space: nowrap; }
 /* Attach: a "+" inside the box at its bottom left, as on claude.ai; the
    controls that act on the message stay at the right, by Send. Quiet like
    the model picker until hovered. */
@@ -2272,6 +2313,9 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A comment carrying a suggested edit (#411): what it is, above its words,
+   in the tier the item's place already uses on this ground. */
+.tx-waiting-suggests { display: block; color: var(--muted); font-size: var(--fs-xs); }
 
 /* An API error Claude Code wrote into the session (#338): its own tinted box,
    so it reads as an error and not as Claude's reply. Opaque --danger-soft

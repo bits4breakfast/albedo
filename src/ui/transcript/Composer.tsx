@@ -19,13 +19,16 @@ import { useMentions } from './useMentions';
 import { SkillPopover, SkillStrip, skillOptionId } from './SkillPopover';
 import { useSkillMenu } from './useSkillMenu';
 import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type ComposerInsert } from './composerBridge';
-import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
+import { commentsOf, dropDraftText, flushDrafts, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
 import { type RevealPassage } from './passages';
 import { WaitingComments } from './WaitingComments';
 import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useWaitingCodeComments, type Carried } from './codeComments';
 import { queuedCiOf, useQueuedCi, type QueuedCiFailure } from './ciFailure';
 import { useCommentsIntro } from '../commentsIntro';
-import { holdMessage } from './outbox';
+import { holdMessage, inBoxFor, putBackFromBox, replaceInBox, takeIntoBox, useHeld } from './outbox';
+import { heldAsDraft, noteBoxShown } from './heldInBox';
+import { markQuotes } from './transcriptQuotes';
+import { useTurnRunning } from './turn';
 import { promptOpen } from './outboxRelease';
 import { isSlashCommand, mustHold, submitLocked } from './send';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -163,6 +166,13 @@ export function Composer({
   const [notice, setNotice] = useState<string | null>(null);
   const [live, setLive] = useState(true);
   const offline = useOffline();
+  /**
+   * Held messages taken into the box with ↑ to be edited as one (#399):
+   * they stay in the outbox, out of the queue, until Send replaces them or
+   * Esc puts them back.
+   */
+  const inBoxCount = useHeld(taskId).filter((h) => h.inBox).length;
+  const turnRunning = useTurnRunning(taskId);
   /** Files are being dragged over the window. */
   const [dropping, setDropping] = useState(false);
 
@@ -326,8 +336,15 @@ export function Composer({
       pendingRef.current = null;
       keepUnsent(left, textRef.current, pastesRef.current, Date.now(), mentionsRef.current);
     }
+    // Left with held messages in an emptied box: they go back to the queue
+    // now, rather than wait out of it for a box nobody is looking at (#399).
+    if (left !== null && left !== taskId && textRef.current.trim() === '') putBackFromBox(left);
     const draft = getDraft(taskId);
     draftOwnerRef.current = taskId;
+    // Held messages taken into a box that comes up empty -- emptied before a
+    // switch, or the app stopped before the draft was written -- go back to
+    // the queue: nothing else would ever let them go (#399).
+    if ((draft?.text ?? '').trim() === '') putBackFromBox(taskId);
     setText(draft?.text ?? '');
     pastesRef.current = new Map(draft?.pastes);
     mentionsRef.current = new Map(draft?.mentions);
@@ -349,6 +366,33 @@ export function Composer({
     timerRef.current = 0;
   }, [taskId]);
 
+  // The pane is keyed by task (App.tsx), so a switch unmounts the box: held
+  // messages left in an emptied one go back to the queue then (#399). While
+  // it is shown, nothing else puts them back under it (`noteBoxShown`).
+  // Relies on main.tsx not using <StrictMode>: its rehearsal unmount would
+  // run this with the box still empty, before the draft is in it.
+  useEffect(() => {
+    noteBoxShown(taskId);
+  }, [taskId]);
+  useEffect(
+    () => () => {
+      const owner = draftOwnerRef.current;
+      noteBoxShown(null);
+      if (owner !== null && textRef.current.trim() === '') putBackFromBox(owner);
+    },
+    [],
+  );
+
+  /** An empty box: its text, pastes and references gone. */
+  const clearBox = useCallback(() => {
+    setText('');
+    pastesRef.current = new Map();
+    pasteSeqRef.current = 0;
+    mentionsRef.current = new Map();
+    setNotice(null);
+    requestAnimationFrame(grow);
+  }, [grow]);
+
   /**
      Put the body in the outbox (outbox.ts), with the ids of the review
      comments it carries, and empty the box: it is no longer a draft. The
@@ -362,14 +406,25 @@ export function Composer({
       // with the message that carries them.
       holdMessage(taskId, body, Date.now(), carried.code);
       takeHeldCarried(taskId, carried);
-      setText('');
-      pastesRef.current = new Map();
-      pasteSeqRef.current = 0;
-      mentionsRef.current = new Map();
-      setNotice(null);
-      requestAnimationFrame(grow);
+      clearBox();
     },
-    [taskId, grow],
+    [taskId, clearBox],
+  );
+
+  /**
+     Send while held messages are in the box (#399): the message takes their
+     place in the outbox, carrying their review comments and its own, and
+     goes by the usual rules -- held while a turn runs, sent when nothing
+     holds it. Never straight to the pty, so it cannot overtake what is
+     queued behind them.
+  */
+  const replaceBody = useCallback(
+    (body: string, carried: Carried) => {
+      replaceInBox(taskId, body, Date.now(), carried.code);
+      takeHeldCarried(taskId, carried);
+      clearBox();
+    },
+    [taskId, clearBox],
   );
 
   /**
@@ -741,14 +796,31 @@ export function Composer({
     const code = command ? [] : waitingCodeRef.current;
     // And a PR's failing checks, queued for Claude (#280), ahead of them all.
     const ci = command ? null : queuedCiOf(taskId);
+    // Held messages in the box (#399) are replaced only by a message from the
+    // box. Emptied, it never replaces them: they go back as they were, and
+    // whatever else waits (comments, a CI failure) goes the usual way, held
+    // behind them.
+    let inBox = inBoxFor(taskId);
+    if (inBox.length > 0 && text.trim().length === 0) {
+      putBackFromBox(taskId);
+      clearBox();
+      inBox = [];
+    }
     if (text.trim().length === 0 && comments.length === 0 && code.length === 0 && ci === null) return;
     // What Claude Code receives: the draft with its paste placeholders filled,
     // each paste in its marker so the transcript can fold it again (#155),
     // and each picked reference in its own (#154). References first: a
     // paste's text is never read for tokens.
-    const box = markPastes(markMentions(text, mentionsRef.current), pastesRef.current);
+    // Held messages in the box (#399) bring their quoted passages as tokens;
+    // the same messages give the same numbers back (heldInBox.ts).
+    const quotes = inBox.length > 0 ? heldAsDraft(inBox).quotes : new Map<number, string>();
+    const box = markPastes(markQuotes(markMentions(text, mentionsRef.current), quotes), pastesRef.current);
     const body = composeMessage(code, introRef.current, comments, box, ci);
     const carried = carriedBy(comments, code, ci);
+    if (inBox.length > 0) {
+      replaceBody(body, carried);
+      return;
+    }
     /*
        It waits in the outbox (outbox.ts) rather than in Claude Code's queue
        while offline (Claude Code retries, and may drop it), behind messages
@@ -831,7 +903,40 @@ export function Composer({
       // The switch already cleared it; the other task may have a send of its own.
       if (draftOwnerRef.current === owner) setBusy(false);
     }
-  }, [text, taskId, status, succeeded, holdBody, leftDuringSend]);
+  }, [text, taskId, status, succeeded, holdBody, replaceBody, clearBox, leftDuringSend]);
+
+  /**
+     ↑ in an empty box (#399), Claude Code's own key for it: the run of held
+     messages it can take (`takeableRun`) comes into the box, oldest first,
+     each as the band's Edit shows it, joined by a blank line. True when it
+     took the key.
+  */
+  const takeHeldIntoBox = useCallback((): boolean => {
+    const taken = takeIntoBox(taskId);
+    if (taken.length === 0) return false;
+    const d = heldAsDraft(taken);
+    pastesRef.current = d.pastes;
+    pasteSeqRef.current = Math.max(0, ...d.pastes.keys());
+    mentionsRef.current = d.mentions;
+    setText(d.text);
+    // On disk at once, with the flags: a draft written 400 ms later could be
+    // lost to a crash, and an older one come back to replace them.
+    saveDraft(taskId, d.text, d.pastes, Date.now(), d.mentions);
+    flushDrafts();
+    setNotice(null);
+    requestAnimationFrame(() => {
+      grow();
+      const el = ref.current;
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+    return true;
+  }, [taskId, grow]);
+
+  /** Esc while they are in the box: back to the queue as they were, and the box empty (#399). */
+  const putBack = useCallback(() => {
+    putBackFromBox(taskId);
+    clearBox();
+  }, [taskId, clearBox]);
 
   /*
      Copy note: say what it means for the user's work, not what the process is
@@ -945,6 +1050,24 @@ export function Composer({
           if (mention.onKeyDown(e)) return;
           // Then the `/` list (#349), the same way: Return inserts, never sends.
           if (skill.onKeyDown(e)) return;
+          // 229: a key an IME is still composing with (as escapeKeepsFullscreen.ts).
+          const plain =
+            !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229;
+          const frozen = busy || awaiting || held;
+          // ↑ in an empty box takes the held messages into it (#399). With
+          // text in the box it moves the caret, as always.
+          if (e.key === 'ArrowUp' && plain && !frozen && inBoxCount === 0 && e.currentTarget.value === '') {
+            if (takeHeldIntoBox()) e.preventDefault();
+            return;
+          }
+          // Esc puts them back, the box emptied. One press, one thing: after
+          // the lists above, and nothing behind the box sees it.
+          if (e.key === 'Escape' && plain && !frozen && inBoxCount > 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            putBack();
+            return;
+          }
           // Match the TUI: Enter sends, Shift+Enter is a newline. `isComposing`
           // keeps an IME's Enter from submitting a half-typed word.
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -996,6 +1119,21 @@ export function Composer({
         </button>
       </div>
       </div>
+      {inBoxCount > 0 ? (
+        <div className="tx-composer-inbox" role="note">
+          <span>
+            Sends as one message
+            {turnRunning
+              ? ', held like the others until the turn ends'
+              : offline
+                ? ', held like the others until the connection is back'
+                : ''}
+          </span>
+          <span className="tx-composer-inbox-key">
+            <kbd>Esc</kbd> {inBoxCount > 1 ? `Put Back as ${inBoxCount}` : 'Put Back'}
+          </span>
+        </div>
+      ) : null}
     </div>
     </>
   );

@@ -56,6 +56,14 @@ function list(reloadKey = 0) {
 }
 
 describe('the Comments list', () => {
+  it('a comment with a suggested edit (#411) shows its words and tooltip, never the fence', async () => {
+    await add('two', '```suggestion\nTWO\n```\nShout it.');
+    render(list());
+    const row = (await screen.findByText('Shout it.')).closest('.tf-comment-open')!;
+    expect(row.getAttribute('title')).toBe('src/a.ts:2\n\nSuggested change\n\nShout it.');
+    expect(row.textContent).not.toContain('```');
+  });
+
   it('a queued CI failure (#280) waits first, counts in Waiting, and ✕ drops it', async () => {
     const { __resetQueuedCi, observeCiQueue, queuedCiOf } = await import('./transcript/ciFailure');
     __resetQueuedCi();

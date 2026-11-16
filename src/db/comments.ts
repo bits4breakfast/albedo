@@ -11,6 +11,7 @@
  */
 
 import { anchorBlock, fileLines } from '../lib/anchor';
+import { fenceFor, splitSuggestion } from '../lib/suggestion';
 import { getDb } from './index';
 
 export interface ReviewComment {
@@ -329,12 +330,25 @@ export const DEFAULT_COMMENTS_INTRO = 'I left some review comments on your chang
  * The message for Claude Code: the intro, then one numbered item per comment
  * with its place, the code as it was commented on, and the comment. Fenced
  * with enough backticks that code containing ``` cannot close it.
+ *
+ * A comment carrying a suggested edit (#411) says so before its code, and
+ * gives the replacement after it. The code quoted is always the lines as
+ * they were commented on, which is what the suggestion replaces, even when
+ * the file has moved on since.
  */
 export function formatForClaude(comments: readonly ReviewComment[], intro: string = DEFAULT_COMMENTS_INTRO): string {
   const items = comments.map((c, i) => {
-    const longest = Math.max(2, ...(c.anchorText.match(/`+/g) ?? []).map((m) => m.length));
-    const fence = '`'.repeat(longest + 1);
-    return `${i + 1}. ${commentLocation(c)}\n${fence}\n${c.anchorText}\n${fence}\n${c.body.trim()}`;
+    const { suggestion, text } = splitSuggestion(c.body);
+    const fence = fenceFor([...c.anchorText.split('\n'), ...(suggestion ?? [])]);
+    const quoted = `${fence}\n${c.anchorText}\n${fence}`;
+    const tail = text === '' ? '' : `\n${text}`;
+    if (suggestion === null) return `${i + 1}. ${commentLocation(c)}\n${quoted}${tail}`;
+    const these = c.lineStart === c.lineEnd ? 'this line' : 'these lines';
+    const change =
+      suggestion.length === 0
+        ? `Suggested change: delete ${these}\n${quoted}`
+        : `Suggested change: replace ${these}\n${quoted}\nwith\n${fence}\n${suggestion.join('\n')}\n${fence}`;
+    return `${i + 1}. ${commentLocation(c)}\n${change}${tail}`;
   });
   const head = intro.trim();
   return `${head === '' ? '' : `${head}\n\n`}${items.join('\n\n')}`;

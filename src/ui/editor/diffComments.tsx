@@ -262,12 +262,15 @@ export function useDiffComments(
               onCancel={() => setDraft(null)}
               // A review task's comment goes to GitHub unless you say so (#287).
               destination={isReview ? (draft.editing ? draft.editing.github : 'draft') : undefined}
+              // Suggest Change starts from the lines as they are now (#411).
+              // Without a CRLF file's \r, which no box shows or should store.
+              lines={newText === null ? null : newText.split('\n').slice(draft.from - 1, draft.to).map((l) => l.replace(/\r$/, ''))}
             />
           ) : null}
         </>
       );
     },
-    [placed, draft, taskId, report, save, threadsAt, threadCard, ranges, path, isReview],
+    [placed, draft, taskId, report, save, threadsAt, threadCard, ranges, path, isReview, newText],
   );
 
   // The lines an open comment covers get an edge (#252), so a card's lines
