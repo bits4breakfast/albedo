@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Project } from '../types';
-import { planResumePlace, projectOwningPath, switchMainCheckout, type ResumePlacePlan } from './resumePlace';
-import { setGitRunner, type GitRunner, type ParsedWorktree } from './worktree';
+import { planResumePlace, projectOwningPath, recreateWorktree, switchMainCheckout, type ResumePlacePlan } from './resumePlace';
+import { setGitRunner, setPathExistsProbe, type GitRunner, type ParsedWorktree, type PathExistsProbe } from './worktree';
 
 function wt(path: string, branch: string | null, extra: Partial<ParsedWorktree> = {}): ParsedWorktree {
   return {
@@ -33,6 +33,8 @@ describe('planResumePlace', () => {
       repoPath: '/w/albedo',
       branch: 'polishing',
       recreate: true,
+      source: 'local',
+      startPoint: null,
       elsewhere: null,
       main: { path: '/w/albedo', current: 'main', dirty: null },
       needsPrune: false,
@@ -101,10 +103,71 @@ describe('planResumePlace', () => {
     expect(plan?.needsPrune).toBe(false);
   });
 
-  it('offers nothing when the branch is gone, detached or missing', () => {
-    expect(planResumePlace({ ...base, branchExists: false, worktrees: [] })).toBeNull();
+  it('offers nothing when the branch is detached or missing', () => {
     expect(planResumePlace({ ...base, branch: 'HEAD', worktrees: [] })).toBeNull();
     expect(planResumePlace({ ...base, branch: null, worktrees: [] })).toBeNull();
+  });
+
+  it('marks a branch that exists as local, with nothing to cut from', () => {
+    const plan = planResumePlace({ ...base, worktrees: [] });
+    expect(plan?.source).toBe('local');
+    expect(plan?.startPoint).toBeNull();
+  });
+});
+
+describe('planResumePlace, the branch gone too (#395)', () => {
+  const gone = { ...base, branchExists: false, worktrees: [wt('/w/albedo', 'main')] };
+
+  it('recreates from origin when the remote still has the branch', () => {
+    expect(planResumePlace({ ...gone, onRemote: true, baseStart: null })).toEqual({
+      repoPath: '/w/albedo',
+      branch: 'polishing',
+      recreate: true,
+      source: 'remote',
+      startPoint: 'origin/polishing',
+      elsewhere: null,
+      main: null,
+      needsPrune: false,
+      baseBranch: 'main',
+    });
+  });
+
+  it('cuts a new branch from the base when origin does not have it either', () => {
+    const plan = planResumePlace({ ...gone, onRemote: false, baseStart: 'origin/main' });
+    expect(plan?.source).toBe('base');
+    expect(plan?.startPoint).toBe('origin/main');
+    expect(plan?.baseBranch).toBe('main');
+    expect(plan?.recreate).toBe(true);
+    // No branch to switch the main checkout to.
+    expect(plan?.main).toBeNull();
+  });
+
+  it('offers nothing when neither origin nor a base can make it', () => {
+    expect(planResumePlace({ ...gone, onRemote: false, baseStart: null })).toBeNull();
+    expect(planResumePlace({ ...gone, onRemote: false, baseStart: 'main', baseBranch: null })).toBeNull();
+    // The base is the branch itself: no base at all.
+    expect(planResumePlace({ ...gone, onRemote: false, baseStart: 'polishing', baseBranch: 'polishing' })).toBeNull();
+    expect(planResumePlace({ ...gone })).toBeNull();
+  });
+
+  it('offers nothing while something occupies the old path', () => {
+    expect(planResumePlace({ ...gone, onRemote: true, pathOccupied: true })).toBeNull();
+    const registered = planResumePlace({
+      ...gone,
+      onRemote: true,
+      worktrees: [wt('/w/albedo', 'main'), wt('/w/albedo-agents/polishing', 'other')],
+    });
+    expect(registered).toBeNull();
+  });
+
+  it('prunes a stale registration of the old path first', () => {
+    const plan = planResumePlace({
+      ...gone,
+      onRemote: true,
+      worktrees: [wt('/w/albedo', 'main'), wt('/w/albedo-agents/polishing', 'polishing', { prunable: true })],
+    });
+    expect(plan?.source).toBe('remote');
+    expect(plan?.needsPrune).toBe(true);
   });
 
   it('never records the branch itself as its base: that hides its commits and its PR', () => {
@@ -140,6 +203,61 @@ describe('projectOwningPath', () => {
   });
 });
 
+describe('recreateWorktree', () => {
+  let restoreRunner: GitRunner | null = null;
+  let restoreProbe: PathExistsProbe | null = null;
+  afterEach(() => {
+    if (restoreRunner) setGitRunner(restoreRunner);
+    if (restoreProbe) setPathExistsProbe(restoreProbe);
+    restoreRunner = null;
+    restoreProbe = null;
+  });
+
+  function fake() {
+    const calls: string[][] = [];
+    restoreRunner = setGitRunner(async (args) => {
+      calls.push(args);
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    restoreProbe = setPathExistsProbe(async () => false);
+    return calls;
+  }
+
+  const plan: ResumePlacePlan = {
+    repoPath: '/w/albedo',
+    branch: 'polishing',
+    recreate: true,
+    source: 'local',
+    startPoint: null,
+    elsewhere: null,
+    main: null,
+    needsPrune: false,
+    baseBranch: 'main',
+  };
+  const cwd = '/w/albedo-agents/polishing';
+
+  it('checks out the existing branch at the old path', async () => {
+    const calls = fake();
+    await recreateWorktree(plan, cwd);
+    expect(calls).toEqual([['worktree', 'add', '--', cwd, 'polishing']]);
+  });
+
+  it('cuts a local branch tracking origin when only the remote has it', async () => {
+    const calls = fake();
+    await recreateWorktree({ ...plan, source: 'remote', startPoint: 'origin/polishing', needsPrune: true }, cwd);
+    expect(calls).toEqual([
+      ['worktree', 'prune'],
+      ['worktree', 'add', '--track', '-b', 'polishing', '--', cwd, 'origin/polishing'],
+    ]);
+  });
+
+  it('cuts a new, untracked branch of the same name from the base', async () => {
+    const calls = fake();
+    await recreateWorktree({ ...plan, source: 'base', startPoint: 'origin/main' }, cwd);
+    expect(calls).toEqual([['worktree', 'add', '--no-track', '-b', 'polishing', '--', cwd, 'origin/main']]);
+  });
+});
+
 describe('switchMainCheckout', () => {
   let restore: GitRunner | null = null;
   afterEach(() => {
@@ -151,6 +269,8 @@ describe('switchMainCheckout', () => {
     repoPath: '/w/albedo',
     branch: 'polishing',
     recreate: true,
+    source: 'local',
+    startPoint: null,
     elsewhere: null,
     main: { path: '/w/albedo', current: 'main', dirty: 0 },
     needsPrune: false,

@@ -1662,3 +1662,29 @@ export async function baseFreshness(
   const ab = counts.code === 0 ? parseAheadBehind(counts.stdout) : null;
   return ab ? { upstream, ...ab, fetched } : null;
 }
+
+/**
+ * Fetch one branch from `remote` into `refs/remotes/<remote>/<branch>` and say
+ * whether the remote has it. The refspec names its destination, so the answer
+ * never rests on a stale remote-tracking ref or on the remote's fetch config.
+ * False on every failure -- offline, no such remote, no such branch, a
+ * timeout -- which callers read as "not on the remote". Never prompts.
+ */
+export async function fetchRemoteBranch(repoPath: string, remote: string, branch: string): Promise<boolean> {
+  assertValidRefName(branch, 'branch');
+  assertValidRefName(remote, 'remote');
+  const fetch = git(
+    ['fetch', '--quiet', '--no-tags', '--', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+    repoPath,
+    { GIT_TERMINAL_PROMPT: '0' },
+  ).then((r) => r.code === 0, () => false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), FETCH_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([fetch, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

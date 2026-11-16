@@ -32,6 +32,7 @@ import { defaultBranchOf, listBranches, repoRootFor } from '../git/worktree';
 import {
   probeResumePlace,
   recreateWorktree,
+  RESUME_REMOTE,
   switchMainCheckout,
   type ResumePlacePlan,
 } from '../git/resumePlace';
@@ -449,8 +450,11 @@ export default function SessionBrowser({
           // main checkout is still the user's own and stays false.
           worktreePath: cwd,
           ownsWorktree: act === 'recreate',
-          // The session's branch was the user's before Albedo saw it.
-          createdBranch: false,
+          // The session's branch was the user's before Albedo saw it -- unless
+          // it was gone and Albedo just cut a new one of that name from the
+          // base. A local copy of origin's branch is still the user's, as in
+          // New Task.
+          createdBranch: act === 'recreate' && place?.source === 'base',
           // A session picked up from History is work on its branch. Opening
           // one as a chat is not offered (#49 keeps chats to New Task).
           kind: 'work',
@@ -678,11 +682,27 @@ export default function SessionBrowser({
 
             {folderGone && (
               <div className="sb-warn">
-                That folder no longer exists.{' '}
-                {place
-                  ? <>Its branch <span className="wt-mono">{place.branch}</span> still does.</>
-                  : <>The conversation's file paths point at it, so resuming elsewhere will not
-                    line up perfectly — pick the closest equivalent.</>}
+                {place?.source === 'remote' ? (
+                  <>
+                    That folder no longer exists, and neither does its local branch{' '}
+                    <span className="wt-mono">{place.branch}</span>. It is still on{' '}
+                    <span className="wt-mono">{RESUME_REMOTE}</span>.
+                  </>
+                ) : place?.source === 'base' ? (
+                  <>
+                    That folder no longer exists, and neither does its branch{' '}
+                    <span className="wt-mono">{place.branch}</span>, here or on{' '}
+                    <span className="wt-mono">{RESUME_REMOTE}</span>.
+                  </>
+                ) : (
+                  <>
+                    That folder no longer exists.{' '}
+                    {place
+                      ? <>Its branch <span className="wt-mono">{place.branch}</span> still does.</>
+                      : <>The conversation's file paths point at it, so resuming elsewhere will not
+                        line up perfectly — pick the closest equivalent.</>}
+                  </>
+                )}
               </div>
             )}
 
@@ -703,15 +723,36 @@ export default function SessionBrowser({
                         setCwdOverride(null);
                       }}
                     />
-                    <span>
-                      <span className="wt-option-label">Recreate the Worktree Here</span>
-                      <span className="wt-option-detail">
-                        <span className="wt-mono">git worktree add</span> at{' '}
-                        <span className="wt-mono">{homeRelative(selected.cwd)}</span> on{' '}
-                        <span className="wt-mono">{place.branch}</span>. The conversation's file
-                        paths line up exactly.
+                    {place.source === 'base' ? (
+                      <span>
+                        <span className="wt-option-label">New Worktree Here from {place.baseBranch}</span>
+                        <span className="wt-option-detail">
+                          A new branch <span className="wt-mono">{place.branch}</span> from{' '}
+                          <span className="wt-mono">{place.baseBranch}</span>, at the old path, so the
+                          file paths line up. The earlier work is only in it if it was merged into{' '}
+                          <span className="wt-mono">{place.baseBranch}</span>.
+                        </span>
                       </span>
-                    </span>
+                    ) : (
+                      <span>
+                        <span className="wt-option-label">
+                          {place.source === 'remote'
+                            ? `Recreate the Worktree Here from ${RESUME_REMOTE}`
+                            : 'Recreate the Worktree Here'}
+                        </span>
+                        <span className="wt-option-detail">
+                          <span className="wt-mono">git worktree add</span> at{' '}
+                          <span className="wt-mono">{homeRelative(selected.cwd)}</span> on{' '}
+                          <span className="wt-mono">{place.branch}</span>
+                          {place.source === 'remote' && (
+                            <>
+                              , tracking <span className="wt-mono">{place.startPoint}</span>
+                            </>
+                          )}
+                          . The conversation's file paths line up exactly.
+                        </span>
+                      </span>
+                    )}
                   </label>
                 )}
                 {place.elsewhere && (
@@ -842,7 +883,9 @@ export default function SessionBrowser({
                     onClick={() => void resume(selected, 'continue')}
                   >
                     {pending === 'recreate'
-                      ? 'Recreate and Continue'
+                      ? place?.source === 'base'
+                        ? 'Create and Continue'
+                        : 'Recreate and Continue'
                       : pending === 'switch'
                         ? 'Switch and Continue'
                         : 'Continue This Session'}
