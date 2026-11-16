@@ -11,7 +11,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { hasLivePty, ptyLiveSince, submitPty } from '../Terminal';
 import { Composer } from './Composer';
 import { QueuedStrip } from './QueuedStrip';
-import { __resetDrafts, dropDraft, flushDrafts, getDraft } from './drafts';
+import { __resetDrafts, addComment, dropDraft, flushDrafts, getDraft } from './drafts';
 import { __resetOutbox, heldFor, holdMessage, inBoxFor } from './outbox';
 import { startOutboxRelease } from './outboxRelease';
 import { __resetTurns, noteTaskSessions } from './turn';
@@ -205,7 +205,67 @@ describe('a quoted passage from the transcript (#187)', () => {
   });
 });
 
+describe('a command among them', () => {
+  it('↑ takes only the run before it, so nothing comes back ahead of it', async () => {
+    turnRunning(1);
+    holdMessage(1, 'a', T);
+    holdMessage(1, '/clear', T + 1);
+    holdMessage(1, 'b', T + 2);
+    render(<Pane taskId={1} />);
+    up();
+    expect(box().value).toBe('a');
+    fireEvent.change(box(), { target: { value: 'a, edited' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual(['a, edited', '/clear', 'b']));
+  });
+});
+
+describe('an emptied box with comments waiting', () => {
+  const comment: TranscriptComment = {
+    id: 'c1', messageId: 9, quote: 'The export runs nightly.', code: false, comment: 'Since when?', at: T, offset: 0, addedAt: T,
+  };
+
+  it('Send puts the held messages back, and the comments are held behind them, not in their place', async () => {
+    turnRunning(1);
+    holdThree();
+    const before = structuredClone(heldFor(1));
+    addComment(1, comment);
+    render(<Pane taskId={1} />);
+    up();
+    fireEvent.change(box(), { target: { value: '  ' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(heldFor(1)).toHaveLength(4));
+    expect(heldFor(1).slice(0, 3)).toEqual(before);
+    expect(heldFor(1)[3]!.text).toBe(composeWithComments([comment], ''));
+    expect(inBoxFor(1)).toEqual([]);
+    expect(submitPty).not.toHaveBeenCalled();
+  });
+
+  it('with nothing else waiting, Send on the emptied box puts them back', () => {
+    turnRunning(1);
+    holdThree();
+    const before = structuredClone(heldFor(1));
+    render(<Pane taskId={1} />);
+    up();
+    fireEvent.change(box(), { target: { value: '' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(heldFor(1)).toEqual(before);
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+});
+
 describe('Esc', () => {
+  it('while an IME is composing, is the IME\u2019s', () => {
+    turnRunning(1);
+    holdThree();
+    render(<Pane taskId={1} />);
+    up();
+    fireEvent.keyDown(box(), { key: 'Escape', keyCode: 229 });
+    expect(inBoxFor(1)).toHaveLength(3);
+    fireEvent.keyDown(box(), { key: 'Escape' });
+    expect(inBoxFor(1)).toEqual([]);
+  });
+
   it('puts them back exactly as they were and empties the box, changed or not', () => {
     turnRunning(1);
     holdMessage(1, THREE[0]!, T, [4]);
@@ -324,13 +384,14 @@ describe('while they are in the box', () => {
   it('a task switch keeps the draft and keeps them out of the queue; back again, Esc still puts them back', () => {
     turnRunning(1);
     holdThree();
-    const { rerender } = render(<Pane taskId={1} />);
+    // The pane is keyed by task in App.tsx: a switch remounts the box.
+    const { rerender } = render(<Pane key="tx-1" taskId={1} />);
     up();
     fireEvent.change(box(), { target: { value: `${THREE.join('\n\n')} soon` } });
-    rerender(<Pane taskId={2} />);
+    rerender(<Pane key="tx-2" taskId={2} />);
     expect(box().value).toBe('');
     expect(inBoxFor(1)).toHaveLength(3);
-    rerender(<Pane taskId={1} />);
+    rerender(<Pane key="tx-1" taskId={1} />);
     expect(box().value).toBe(`${THREE.join('\n\n')} soon`);
     expect(screen.getByRole('note').textContent).toContain('Put Back as 3');
     esc();
@@ -365,7 +426,18 @@ describe('while they are in the box', () => {
     expect(heldFor(1).map((h) => h.text)).toEqual(THREE);
   });
 
-  it('leaving with the box emptied puts them back at once', () => {
+  it('leaving with the box emptied puts them back at once: the pane remounts, keyed by task as in App', () => {
+    turnRunning(1);
+    holdThree();
+    const { rerender } = render(<Pane key="tx-1" taskId={1} />);
+    up();
+    fireEvent.change(box(), { target: { value: '' } });
+    rerender(<Pane key="tx-2" taskId={2} />);
+    expect(inBoxFor(1)).toEqual([]);
+    expect(heldFor(1).map((h) => h.text)).toEqual(THREE);
+  });
+
+  it('leaving with the box emptied puts them back too when the same box stays mounted', () => {
     turnRunning(1);
     holdThree();
     const { rerender } = render(<Pane taskId={1} />);
@@ -373,6 +445,27 @@ describe('while they are in the box', () => {
     fireEvent.change(box(), { target: { value: '' } });
     rerender(<Pane taskId={2} />);
     expect(inBoxFor(1)).toEqual([]);
+  });
+
+  it('the draft is on disk the moment they are taken, not 400 ms later', () => {
+    turnRunning(1);
+    holdThree();
+    render(<Pane taskId={1} />);
+    up();
+    __resetDrafts(); // memory gone at once: a crash
+    expect(getDraft(1)?.text).toBe(THREE.join('\n\n'));
+  });
+
+  it('Send All Now says the ones in the box stay there', () => {
+    turnRunning(1);
+    holdMessage(1, 'a', T);
+    holdMessage(1, 'b', T + 1);
+    render(<Pane taskId={1} />);
+    up();
+    act(() => void holdMessage(1, 'c', T + 2));
+    act(() => void holdMessage(1, 'd', T + 3));
+    const all = screen.getByRole('button', { name: 'Send All Now' });
+    expect(all.title).toContain('The ones being edited in the message box stay there.');
   });
 
   it('↑ again takes nothing more', () => {

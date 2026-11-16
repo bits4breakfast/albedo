@@ -24,7 +24,8 @@ import {
   takeableIntoBox,
   takeIntoBox,
 } from './outbox';
-import { heldAsDraft } from './heldInBox';
+import { heldAsDraft, putBackWhereNoDraft } from './heldInBox';
+import { __resetDrafts, saveDraft } from './drafts';
 import { KEYS } from '../persisted';
 import { draftOf, markPastes, placeholderFor } from './pastedText';
 import { markMentions } from './mentions';
@@ -47,6 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __resetOutbox();
+  __resetDrafts();
 });
 
 const texts = (taskId = 1) => heldFor(taskId).map((h) => h.text);
@@ -67,15 +69,27 @@ describe('taking held messages into the box', () => {
     expect(heldFor(1).every((h) => h.inBox === true)).toBe(true);
   });
 
-  it('leaves a command, one being written, one that may have been sent, and one open in the band', () => {
-    holdMessage(1, 'first', T0);
-    holdMessage(1, '/compact', T0 + 1);
-    const open = holdMessage(1, 'open in the band', T0 + 2)!;
-    holdMessage(1, 'last', T0 + 3);
+  it('takes only the unbroken run: nothing past a command, so nothing comes back ahead of it', () => {
+    holdMessage(1, 'a', T0);
+    holdMessage(1, '/clear', T0 + 1);
+    holdMessage(1, 'b', T0 + 2);
+    expect(takeableIntoBox(1).map((h) => h.text)).toEqual(['a']);
+    expect(takeIntoBox(1).map((h) => h.text)).toEqual(['a']);
+    // Sent from the box, it takes a's place: b still goes after /clear.
+    replaceInBox(1, 'a, edited', T0 + 10);
+    expect(texts()).toEqual(['a, edited', '/clear', 'b']);
+  });
+
+  it('nor past one open in the band: the run starts at the first it can take and stops at the next it cannot', () => {
+    holdMessage(1, '/compact', T0);
+    holdMessage(1, 'first', T0 + 1);
+    holdMessage(1, 'second', T0 + 2);
+    const open = holdMessage(1, 'open in the band', T0 + 3)!;
+    holdMessage(1, 'last', T0 + 4);
     setEditing(1, open.id, true);
-    expect(takeableIntoBox(1).map((h) => h.text)).toEqual(['first', 'last']);
-    expect(takeIntoBox(1).map((h) => h.text)).toEqual(['first', 'last']);
-    expect(heldFor(1).filter((h) => !h.inBox).map((h) => h.text)).toEqual(['/compact', 'open in the band']);
+    expect(takeableIntoBox(1).map((h) => h.text)).toEqual(['first', 'second']);
+    expect(takeIntoBox(1).map((h) => h.text)).toEqual(['first', 'second']);
+    expect(heldFor(1).filter((h) => !h.inBox).map((h) => h.text)).toEqual(['/compact', 'open in the band', 'last']);
   });
 
   it('never takes a message being written or one that may already have gone', async () => {
@@ -151,10 +165,10 @@ describe('while in the box, nothing sends them', () => {
 describe('putting them back', () => {
   it('restores them exactly: ids, order, texts, comments, times', async () => {
     holdMessage(1, 'first', T0, [7]);
-    holdMessage(1, '/compact', T0 + 1);
-    holdMessage(1, 'third', T0 + 2, [8, 9]);
+    holdMessage(1, 'second', T0 + 1, [8, 9]);
+    holdMessage(1, '/compact', T0 + 2);
     const before = structuredClone(heldFor(1));
-    takeIntoBox(1);
+    expect(takeIntoBox(1)).toHaveLength(2);
     putBackFromBox(1);
     expect(heldFor(1)).toEqual(before);
     __resetOutbox();
@@ -168,18 +182,19 @@ describe('putting them back', () => {
 describe('replacing them with the message from the box', () => {
   it('one message in the place of the first, carrying every comment, the rest kept in order', () => {
     holdMessage(1, 'first', T0, [7]);
-    holdMessage(1, '/compact', T0 + 1);
-    holdMessage(1, 'third', T0 + 2, [8]);
-    takeIntoBox(1);
-    holdMessage(1, 'held after', T0 + 3);
-    const entry = replaceInBox(1, 'first and third, edited', T0 + 10, [12])!;
-    expect(texts()).toEqual(['first and third, edited', '/compact', 'held after']);
+    holdMessage(1, 'second', T0 + 1, [8]);
+    holdMessage(1, '/compact', T0 + 2);
+    holdMessage(1, 'fourth', T0 + 3);
+    expect(takeIntoBox(1).map((h) => h.text)).toEqual(['first', 'second']);
+    holdMessage(1, 'held after', T0 + 4);
+    const entry = replaceInBox(1, 'first and second, edited', T0 + 10, [12])!;
+    expect(texts()).toEqual(['first and second, edited', '/compact', 'fourth', 'held after']);
     expect(entry.commentIds).toEqual([7, 8, 12]);
     expect(entry.heldAt).toBe(T0);
     expect(entry.inBox).toBeUndefined();
     expect(inBoxFor(1)).toEqual([]);
     // An ordinary held message now: the release sends it first.
-    expect(nextRun(heldFor(1)).map((h) => h.text)).toEqual(['first and third, edited']);
+    expect(nextRun(heldFor(1)).map((h) => h.text)).toEqual(['first and second, edited']);
   });
 
   it('whitespace alone puts them back instead', () => {
@@ -240,5 +255,22 @@ describe('heldAsDraft: what the box shows', () => {
     const held = [{ text: composeWithComments([quote], 'x') }, { text: composeWithComments([quote], 'y') }];
     expect(heldAsDraft(held).quotes).toEqual(heldAsDraft(held).quotes);
     expect(heldAsDraft(held).quotes.size).toBe(2);
+  });
+});
+
+describe('putBackWhereNoDraft: a box with no draft to show them', () => {
+  it('puts back the messages of a task whose draft is gone or blank, and keeps those with one', () => {
+    holdMessage(1, 'no draft for these', T0);
+    holdMessage(2, 'a draft shows these', T0);
+    holdMessage(3, 'a blank draft', T0);
+    takeIntoBox(1);
+    takeIntoBox(2);
+    takeIntoBox(3);
+    saveDraft(2, 'a draft shows these, edited', new Map());
+    saveDraft(3, '   ', new Map());
+    putBackWhereNoDraft();
+    expect(inBoxFor(1)).toEqual([]);
+    expect(inBoxFor(2).map((h) => h.text)).toEqual(['a draft shows these']);
+    expect(inBoxFor(3)).toEqual([]);
   });
 });

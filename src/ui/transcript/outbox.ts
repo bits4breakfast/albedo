@@ -439,9 +439,27 @@ export function canTakeIntoBox(h: HeldMessage, editingIds: ReadonlySet<string> =
   return !h.sending && !h.maybeSent && !h.inBox && !editingIds.has(h.id) && !isSlashCommand(h.text);
 }
 
-/** The held messages ↑ would take into the box, oldest first. */
+/**
+ * What ↑ takes, oldest first: the unbroken run of takeable messages that
+ * starts at the first takeable one, up to the first that is not. A message
+ * past a command (or any it leaves) stays held, so nothing taken can come
+ * back ahead of something it was behind: [a, /clear, b] takes [a] alone,
+ * and b still goes after /clear. Exported for tests.
+ */
+export function takeableRun(held: readonly HeldMessage[], editingIds: ReadonlySet<string> = new Set()): HeldMessage[] {
+  const start = held.findIndex((h) => canTakeIntoBox(h, editingIds));
+  if (start === -1) return [];
+  const run: HeldMessage[] = [];
+  for (const h of held.slice(start)) {
+    if (!canTakeIntoBox(h, editingIds)) break;
+    run.push(h);
+  }
+  return run;
+}
+
+/** The held messages ↑ would take into the box, oldest first (`takeableRun`). */
 export function takeableIntoBox(taskId: number): HeldMessage[] {
-  return heldFor(taskId).filter((h) => canTakeIntoBox(h, editing));
+  return takeableRun(heldFor(taskId), editing);
 }
 
 /** The task's held messages now in the message box, oldest first. */
@@ -450,7 +468,7 @@ export function inBoxFor(taskId: number): HeldMessage[] {
 }
 
 /**
- * ↑ in an empty box: mark every held message that can be (`canTakeIntoBox`)
+ * ↑ in an empty box: mark the run of held messages it takes (`takeableRun`)
  * as in the box, in one write, and return them oldest first. They stay in the
  * outbox, in their places and unchanged, so nothing about them is lost if
  * the app stops; only no release passes them. Does nothing while some are
@@ -459,7 +477,7 @@ export function inBoxFor(taskId: number): HeldMessage[] {
 export function takeIntoBox(taskId: number): HeldMessage[] {
   const held = heldFor(taskId);
   if (held.some((h) => h.inBox)) return [];
-  const taken = held.filter((h) => canTakeIntoBox(h, editing));
+  const taken = takeableRun(held, editing);
   if (taken.length === 0) return [];
   const ids = new Set(taken.map((h) => h.id));
   commit(

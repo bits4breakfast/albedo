@@ -19,7 +19,7 @@ import { useMentions } from './useMentions';
 import { SkillPopover, SkillStrip, skillOptionId } from './SkillPopover';
 import { useSkillMenu } from './useSkillMenu';
 import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type ComposerInsert } from './composerBridge';
-import { commentsOf, dropDraftText, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
+import { commentsOf, dropDraftText, flushDrafts, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
 import { type RevealPassage } from './passages';
 import { WaitingComments } from './WaitingComments';
 import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useWaitingCodeComments, type Carried } from './codeComments';
@@ -365,6 +365,16 @@ export function Composer({
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
   }, [taskId]);
+
+  // The pane is keyed by task (App.tsx), so a switch unmounts the box: held
+  // messages left in an emptied one go back to the queue then (#399).
+  useEffect(
+    () => () => {
+      const owner = draftOwnerRef.current;
+      if (owner !== null && textRef.current.trim() === '') putBackFromBox(owner);
+    },
+    [],
+  );
 
   /** An empty box: its text, pastes and references gone. */
   const clearBox = useCallback(() => {
@@ -779,6 +789,16 @@ export function Composer({
     const code = command ? [] : waitingCodeRef.current;
     // And a PR's failing checks, queued for Claude (#280), ahead of them all.
     const ci = command ? null : queuedCiOf(taskId);
+    // Held messages in the box (#399) are replaced only by a message from the
+    // box. Emptied, it never replaces them: they go back as they were, and
+    // whatever else waits (comments, a CI failure) goes the usual way, held
+    // behind them.
+    let inBox = inBoxFor(taskId);
+    if (inBox.length > 0 && text.trim().length === 0) {
+      putBackFromBox(taskId);
+      clearBox();
+      inBox = [];
+    }
     if (text.trim().length === 0 && comments.length === 0 && code.length === 0 && ci === null) return;
     // What Claude Code receives: the draft with its paste placeholders filled,
     // each paste in its marker so the transcript can fold it again (#155),
@@ -786,7 +806,6 @@ export function Composer({
     // paste's text is never read for tokens.
     // Held messages in the box (#399) bring their quoted passages as tokens;
     // the same messages give the same numbers back (heldInBox.ts).
-    const inBox = inBoxFor(taskId);
     const quotes = inBox.length > 0 ? heldAsDraft(inBox).quotes : new Map<number, string>();
     const box = markPastes(markQuotes(markMentions(text, mentionsRef.current), quotes), pastesRef.current);
     const body = composeMessage(code, introRef.current, comments, box, ci);
@@ -877,11 +896,11 @@ export function Composer({
       // The switch already cleared it; the other task may have a send of its own.
       if (draftOwnerRef.current === owner) setBusy(false);
     }
-  }, [text, taskId, status, succeeded, holdBody, replaceBody, leftDuringSend]);
+  }, [text, taskId, status, succeeded, holdBody, replaceBody, clearBox, leftDuringSend]);
 
   /**
-     ↑ in an empty box (#399), Claude Code's own key for it: every held
-     message that can be (`canTakeIntoBox`) comes into the box, oldest first,
+     ↑ in an empty box (#399), Claude Code's own key for it: the run of held
+     messages it can take (`takeableRun`) comes into the box, oldest first,
      each as the band's Edit shows it, joined by a blank line. True when it
      took the key.
   */
@@ -893,6 +912,10 @@ export function Composer({
     pasteSeqRef.current = Math.max(0, ...d.pastes.keys());
     mentionsRef.current = d.mentions;
     setText(d.text);
+    // On disk at once, with the flags: a draft written 400 ms later could be
+    // lost to a crash, and an older one come back to replace them.
+    saveDraft(taskId, d.text, d.pastes, Date.now(), d.mentions);
+    flushDrafts();
     setNotice(null);
     requestAnimationFrame(() => {
       grow();
@@ -1020,7 +1043,9 @@ export function Composer({
           if (mention.onKeyDown(e)) return;
           // Then the `/` list (#349), the same way: Return inserts, never sends.
           if (skill.onKeyDown(e)) return;
-          const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing;
+          // 229: a key an IME is still composing with (as escapeKeepsFullscreen.ts).
+          const plain =
+            !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229;
           const frozen = busy || awaiting || held;
           // ↑ in an empty box takes the held messages into it (#399). With
           // text in the box it moves the caret, as always.

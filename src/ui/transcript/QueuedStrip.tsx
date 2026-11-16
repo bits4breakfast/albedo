@@ -175,7 +175,7 @@ function HeldGroup({
   const hint = menu && turnHint !== null && !conditions.offline && !behindBox ? REMOTE_MENU_HINT : turnHint;
   // ↑ in the empty message box takes them all into it (#399): said here once
   // there are two or more it would take.
-  const editAll = inBox === 0 && takeableIntoBox(taskId).length >= 2;
+  const editAll = inBox === 0 ? takeableIntoBox(taskId).length : 0;
   const allSize = allNowSize(taskId);
   const allOffered = sendAllNowOffered(conditions, allSize);
   const allowed = sendNowAllowed(conditions);
@@ -183,7 +183,8 @@ function HeldGroup({
   const allTitle = allowed
     ? `Send these ${allSize} into the running turn now, as one message: Claude takes it at its next step.` +
       (hint !== null ? ` Left alone: ${hint}.` : '') +
-      (left === 1 ? ' The one you\u2019re editing stays queued.' : left > 1 ? ' The ones you\u2019re editing stay queued.' : '')
+      (left === 1 ? ' The one you\u2019re editing stays queued.' : left > 1 ? ' The ones you\u2019re editing stay queued.' : '') +
+      (inBox > 0 ? ' The ones being edited in the message box stay there.' : '')
     : 'Not while Claude is asking you something, or the session is not running';
   return (
     <>
@@ -211,10 +212,10 @@ function HeldGroup({
         ) : hint !== null ? (
           <span className="tx-queued-hint">{hint}</span>
         ) : null}
-        {editAll ? (
+        {editAll >= 2 ? (
           <span
             className="tx-queued-key"
-            title="In the empty message box, press ↑ to edit every held message there as one; Esc puts them back"
+            title={`In the empty message box, press \u2191 to edit ${editAll === held.length ? 'these' : `${editAll} of these, up to the next one it can\u2019t take,`} there as one message; Esc puts them back`}
           >
             <kbd>{'\u2191'}</kbd> Edit All
           </span>

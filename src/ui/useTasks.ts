@@ -29,6 +29,7 @@ import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
 import { forgetQueuedCi, keepQueuedCiFor } from './transcript/ciFailure';
 import { keepOutboxFor } from './transcript/outbox';
+import { putBackWhereNoDraft } from './transcript/heldInBox';
 import { noteTaskSessions } from './transcript/turn';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
@@ -391,6 +392,8 @@ export function useTasks(): UseTasksResult {
       // saved for it since (a request's prompt as its draft) stays.
       keepDraftsFor(live, Date.now(), readStartedAt);
       keepOutboxFor(live, readStartedAt);
+      // Held messages taken into a message box whose draft is gone (#399).
+      putBackWhereNoDraft();
       keepRequestsFor(live);
       keepQueuedCiFor(live);
       setLoadError(null);

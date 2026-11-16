@@ -253,7 +253,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   {
     combo: 'transcript arrowup',
     keys: '↑',
-    description: 'Message Box, While Empty: Edit Every Held Message There as One (Esc Puts Them Back)',
+    description: 'Message Box, While Empty: Edit the Held Messages There as One (Esc Puts Them Back)',
   },
   {
     combo: 'shift+f6',

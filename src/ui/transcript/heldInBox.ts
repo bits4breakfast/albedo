@@ -8,13 +8,14 @@
  * reference as `@Title`. Images and attached files are paths in the text, so
  * they come along where they were.
  *
- * Pure: the outbox (outbox.ts) keeps the messages, the composer the box.
+ * The outbox (outbox.ts) keeps the messages, the composer the box.
  */
 
 import { draftOf } from './pastedText';
 import { unmarkMentions, type Mention } from './mentions';
 import { unmarkQuotes } from './transcriptQuotes';
-import { RUN_JOINER, type HeldMessage } from './outbox';
+import { RUN_JOINER, inBoxFor, putBackFromBox, tasksWithHeld, type HeldMessage } from './outbox';
+import { getDraft } from './drafts';
 
 export interface HeldAsDraft {
   /** What the box shows. */
@@ -39,4 +40,17 @@ export function heldAsDraft(held: readonly Pick<HeldMessage, 'text'>[]): HeldAsD
   const q = unmarkQuotes(d.text);
   const u = unmarkMentions(q.text);
   return { text: u.text, pastes: d.pastes, mentions: u.mentions, quotes: q.quotes };
+}
+
+/**
+ * Held messages in a box that has no draft to show them -- the draft lost,
+ * expired, or emptied while its pane was gone -- go back to the queue:
+ * nothing else would ever let them go, and a box that comes up empty cannot
+ * replace them. Run with the task list's refresh, the first at startup.
+ */
+export function putBackWhereNoDraft(now = Date.now()): void {
+  for (const taskId of tasksWithHeld()) {
+    if (inBoxFor(taskId).length === 0) continue;
+    if ((getDraft(taskId, now)?.text ?? '').trim() === '') putBackFromBox(taskId);
+  }
 }
