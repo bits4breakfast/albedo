@@ -3,9 +3,9 @@
  *
  * Its own module, with no stylesheet, because the editor asks it too: the
  * editor's ⌥⌘↓ (Next Changed File, FileEditor.tsx) listens on the window in
- * the capture phase and stays live while its tab is hidden behind the
- * transcript, so without asking it would take the key before the transcript
- * hears it. It yields exactly when {@link transcriptTakesJumpKey} is true.
+ * the capture phase, ahead of the transcript. It acts only while the editor
+ * is on screen (#428), and even then yields exactly when
+ * {@link transcriptTakesJumpKey} is true.
  */
 
 /** Marks a transcript's scroller, the element ⌥⌘↓ scrolls (TranscriptPane.tsx). */
