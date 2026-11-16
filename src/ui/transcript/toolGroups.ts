@@ -171,6 +171,13 @@ function countLines(m: Message, result: Message | null): { added: number; remove
   if (edit === null) return null;
   let added = 0;
   let removed = 0;
+  // A Write whose result keeps only hunks (#387): the lines the row draws.
+  for (const h of edit.patch ?? []) {
+    for (const l of h.lines) {
+      if (l.kind === 'add') added++;
+      else if (l.kind === 'del') removed++;
+    }
+  }
   for (const p of edit.pairs) {
     const c = lineChangeCounts(p.oldText, p.newText);
     added += c.added;

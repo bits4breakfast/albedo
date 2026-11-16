@@ -14,7 +14,7 @@
 import { memo, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
-import { diffStrings, langForPath, parseUnifiedDiff } from '../../lib/diff';
+import { diffStrings, langForPath, parseUnifiedDiff, patchHunks } from '../../lib/diff';
 import { CollapsibleDiff } from './Diff';
 import { CodeLines } from './codeTokens';
 import { Disclosure } from '../Disclosure';
@@ -47,8 +47,8 @@ import {
   peerMessageIdOf,
   senderTaskOf,
   skillSourceToolUseIdOf,
+  toolErrorTextOf,
 } from '../../capture';
-import { toolErrorTextOf } from '../../capture/adapter';
 import { useTaskOpener } from '../openTask';
 import { dateText } from '../../reminders/when';
 import { ReminderGlyph } from '../reminders/ReminderGlyph';
@@ -805,7 +805,10 @@ function ToolUseRow({
   if (rendered && rendered.diffs.length > 0) {
     // A Write that replaced a file shows what changed (#387); the whole file
     // is one click further, under the diff.
-    const footer = write?.kind === 'replaced' ? <WholeFile path={rendered.diffs[0]?.path ?? ''} content={write.content} /> : null;
+    const footer =
+      write?.kind === 'replaced' || write?.kind === 'patched' ? (
+        <WholeFile path={rendered.diffs[0]?.path ?? ''} content={write.content} />
+      ) : null;
     return (
       <div className="tx-row tx-row-tool" data-message-id={message.id}>
         <div className="tx-gutter" />
@@ -840,9 +843,11 @@ function linesLabel(n: number): string {
 }
 
 /**
- * Under a replaced file's diff (#387): the whole file as written, the same
- * listing the chip's input shows, behind one button. Highlighted only once
- * it is opened.
+ * Under a replaced file's diff (#387): the whole file, in the listing the
+ * chip's input uses, behind one button. Highlighted only once it is opened.
+ * It is the result's `content` -- the file as it is on disk -- which can
+ * differ from the input the chip shows, what was sent: Claude Code stamps
+ * front matter on a memory file, say.
  */
 function WholeFile({ path, content }: { path: string; content: string }): ReactNode {
   const [open, setOpen] = useState(false);
@@ -901,6 +906,28 @@ interface RenderedDiffs {
   absoluteLines: boolean;
 }
 
+/**
+ * A file-changing call's diffs, from the same pairs the run's line counts
+ * (#362). For a Write, the result decides (#387): a replaced file diffs
+ * against the file as it was, or draws the hunks its result kept.
+ */
+function editDiffs(message: Message, result: Message | null): RenderedDiffs | null {
+  const edit = editPairsOf(message, result);
+  if (edit === null) return null;
+  if (edit.patch) {
+    const diff: FileDiff = { path: edit.path, lang: langForPath(edit.path), hunks: patchHunks(edit.patch) };
+    return { diffs: [diff], expand: [null], absoluteLines: true };
+  }
+  return {
+    diffs: edit.pairs.map((p) => diffStrings(p.oldText, p.newText, edit.path)),
+    expand: edit.pairs.map((p) => ({ oldText: p.oldText, newText: p.newText })),
+    absoluteLines: edit.absoluteLines,
+  };
+}
+
+/** A Write's built diffs, per result row object (never changed once captured); weak, so they go with it. */
+const writeDiffs = new WeakMap<Message, RenderedDiffs | null>();
+
 /** Decide whether this tool call is a diff, and build it if so. */
 function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | null {
   const resultText = result ? toolResultText(result) : '';
@@ -909,15 +936,17 @@ function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | 
     const input = toolInput(message);
 
     if (DIFF_TOOLS.has(tool)) {
-      // The result, for a Write: a replaced file diffs against the file as
-      // it was, the same pairs the run's line counts (#387).
-      const edit = editPairsOf(message, result);
-      if (edit === null) return null;
-      return {
-        diffs: edit.pairs.map((p) => diffStrings(p.oldText, p.newText, edit.path)),
-        expand: edit.pairs.map((p) => ({ oldText: p.oldText, newText: p.newText })),
-        absoluteLines: edit.absoluteLines,
-      };
+      // A Write with its result is built once per result row, not once per
+      // mount: a task switch or a scroll back remounts the row, and a
+      // replaced file's diff is the costly one (#387).
+      if (tool === 'Write' && result !== null) {
+        const hit = writeDiffs.get(result);
+        if (hit !== undefined) return hit;
+        const built = editDiffs(message, result);
+        writeDiffs.set(result, built);
+        return built;
+      }
+      return editDiffs(message, result);
     }
 
     if (tool === 'Bash') {

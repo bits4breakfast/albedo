@@ -381,6 +381,33 @@ export function diffStrings(oldText: string, newText: string, path: string): Fil
 }
 
 /**
+ * Hunks someone else computed -- a Write's `structuredPatch` (#387) -- as
+ * this module's own: numbered from each hunk's start, refined to the word
+ * inside paired changed lines, and headed as `diffStrings` heads them.
+ */
+export function patchHunks(
+  patch: ReadonlyArray<{
+    oldStart: number;
+    newStart: number;
+    lines: ReadonlyArray<{ kind: 'add' | 'del' | 'context'; content: string }>;
+  }>,
+): DiffHunk[] {
+  return patch.map((h) => {
+    let oldNo = h.oldStart;
+    let newNo = h.newStart;
+    const lines: DiffLine[] = h.lines.map((l) =>
+      l.kind === 'add'
+        ? { kind: 'add', oldNumber: null, newNumber: newNo++, content: l.content }
+        : l.kind === 'del'
+          ? { kind: 'del', oldNumber: oldNo++, newNumber: null, content: l.content }
+          : { kind: 'context', oldNumber: oldNo++, newNumber: newNo++, content: l.content },
+    );
+    refineLines(lines);
+    return { header: hunkHeader(lines, h.oldStart, h.newStart), lines };
+  });
+}
+
+/**
  * Lines added and removed between two strings: the same counts as the add and
  * del lines of `diffStrings`' hunks (every changed line is in a hunk, and the
  * word-level refinement never changes a line's kind), without building the

@@ -8,15 +8,25 @@
  *  - Created one: the whole listing, as before, tagged "New File".
  *  - Failed: the error first, the content folded, "Not Written", no counts.
  *  - No result, or one that does not say: as before.
+ *  - Replaced, but the result keeps only the hunks (no originalFile): those
+ *    hunks, on the row and the run's line alike.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { parseLine, writeResultOf } from '../../capture/adapter';
+import { toolErrorTextOf } from '../../capture';
+import * as diffLib from '../../lib/diff';
 import type { Message } from '../../types';
 import { MessageRow } from './MessageRow';
 import { WRITE_DIFF_MAX_CHARS, editPairsOf, writeOutcomeOf } from './editPairs';
 import { linesChanged, runFacts } from './toolGroups';
+
+// diffStrings, counted: the row's built diff is kept per result row.
+vi.mock('../../lib/diff', async (actual) => {
+  const real = await actual<typeof import('../../lib/diff')>();
+  return { ...real, diffStrings: vi.fn(real.diffStrings) };
+});
 
 afterEach(cleanup);
 
@@ -68,14 +78,34 @@ function headCounts(container: HTMLElement): string {
 describe('the adapter reads a Write result', () => {
   it('update, create, and nothing for any other shape', () => {
     const u = updated('a', '/f.ts', 'old\n', 'new\n');
-    expect(writeResultOf(u.rawJson)).toEqual({ kind: 'update', content: 'new\n', originalFile: 'old\n' });
-    expect(writeResultOf(created('b', '/f.ts', 'x\n').rawJson)).toEqual({ kind: 'create', content: 'x\n', originalFile: null });
+    expect(writeResultOf(u.rawJson)).toEqual({ kind: 'update', content: 'new\n', originalFile: 'old\n', patch: null });
+    expect(writeResultOf(created('b', '/f.ts', 'x\n').rawJson)).toEqual({ kind: 'create', content: 'x\n', originalFile: null, patch: null });
     expect(writeResultOf(failed('c').rawJson)).toBeNull();
     expect(writeResultOf(result('d', 'ok').rawJson)).toBeNull();
     // An Edit's result has originalFile too, but no type: not a Write's.
     expect(writeResultOf(result('e', 'ok', { toolUseResult: { filePath: '/f.ts', originalFile: 'a', oldString: 'a', newString: 'b' } }).rawJson)).toBeNull();
-    // An update that lost its old file says nothing.
+    // An update with neither its old file nor a patch says nothing.
     expect(writeResultOf(result('f', 'ok', { toolUseResult: { type: 'update', content: 'x', originalFile: null } }).rawJson)).toBeNull();
+    expect(writeResultOf(result('g', 'ok', { toolUseResult: { type: 'update', content: 'x', originalFile: null, structuredPatch: [] } }).rawJson)).toBeNull();
+  });
+
+  it('an update with no old file: its structuredPatch hunks, or nothing if they do not read as hunks', () => {
+    const hunk = { oldStart: 9, oldLines: 3, newStart: 9, newLines: 3, lines: [' a', '-b', '+B', ' c', '\\ No newline at end of file'] };
+    const res = (patch: unknown) => result('p', 'ok', { toolUseResult: { type: 'update', filePath: '/f.ts', content: 'a\nB\nc', originalFile: null, structuredPatch: patch } });
+    expect(writeResultOf(res([hunk]).rawJson)).toEqual({
+      kind: 'update',
+      content: 'a\nB\nc',
+      originalFile: null,
+      patch: [{ oldStart: 9, newStart: 9, lines: [{ kind: 'context', content: 'a' }, { kind: 'del', content: 'b' }, { kind: 'add', content: 'B' }, { kind: 'context', content: 'c' }] }],
+    });
+    // Counts that disagree with the lines, a line without its mark, a hunk without numbers: not a patch.
+    expect(writeResultOf(res([{ ...hunk, oldLines: 4 }]).rawJson)).toBeNull();
+    expect(writeResultOf(res([{ ...hunk, lines: [' a', 'b', '+B', ' c'] }]).rawJson)).toBeNull();
+    expect(writeResultOf(res([{ lines: hunk.lines }]).rawJson)).toBeNull();
+  });
+
+  it('toolErrorTextOf is reached through the capture module', () => {
+    expect(toolErrorTextOf(failed('z'))).toBe('File has not been read yet. Read it first before writing to it.');
   });
 });
 
@@ -140,6 +170,27 @@ describe('a Write that replaced a file', () => {
     expect(listing?.textContent).toContain('line 20b');
     fireEvent.click(screen.getByRole('button', { name: 'Hide Whole File' }));
     expect(container.querySelector('.tx-d-whole')).toBeNull();
+  });
+
+  it('a 300K file is past the cap (200K): read as before', () => {
+    const old = 'a\n'.repeat(75_000);
+    const now = old + 'b\n';
+    const call = write('/src/big.txt', now, 'w9');
+    const res = updated('w9', '/src/big.txt', old, now);
+    expect(old.length + now.length).toBeGreaterThan(300_000);
+    expect(writeOutcomeOf(call, res)).toEqual({ kind: 'unknown' });
+    expect(linesChanged(call, res)).toEqual({ added: 75_001, removed: 0 });
+  });
+
+  it('builds its diff once per result: a remount does not diff again', () => {
+    const call = write('/src/f.ts', after, 'w10');
+    const res = updated('w10', '/src/f.ts', before, after);
+    const spy = vi.mocked(diffLib.diffStrings);
+    spy.mockClear();
+    render(<MessageRow message={call} result={res} />);
+    cleanup();
+    render(<MessageRow message={call} result={res} />);
+    expect(spy.mock.calls.filter(([a]) => a === before).length).toBe(1);
   });
 
   it('past the size cap, reads as before: the whole content as added', () => {
@@ -245,5 +296,46 @@ describe('the chip', () => {
     const { container } = render(<MessageRow message={write('/src/s.ts', 'a\nb\nc\n')} result={null} />);
     expect(container.querySelector('.tx-chip-summary')?.textContent).toBe('3 lines');
     expect(headCounts(container)).toBe('+3');
+  });
+});
+
+describe('a Write that replaced a file, whose result keeps only its hunks', () => {
+  /** Lines 10 and 30 of a 40-line file changed: two hunks, as Claude Code writes them. */
+  const patch = [
+    { oldStart: 7, oldLines: 7, newStart: 7, newLines: 7, lines: [' line 7', ' line 8', ' line 9', '-line 10', '+line ten', ' line 11', ' line 12', ' line 13'] },
+    { oldStart: 27, oldLines: 7, newStart: 27, newLines: 8, lines: [' line 27', ' line 28', ' line 29', '-line 30', '+line thirty', '+line 30b', ' line 31', ' line 32', ' line 33'] },
+  ];
+  const content = before.replace('line 10\n', 'line ten\n').replace('line 30\n', 'line thirty\nline 30b\n');
+  function patched(useId: string): Message {
+    return result(useId, 'The file /src/p.ts has been updated successfully.', {
+      toolUseResult: { type: 'update', filePath: '/src/p.ts', content, originalFile: null, structuredPatch: patch, userModified: false },
+    });
+  }
+
+  it('draws those hunks with their own line numbers, and counts +3 -2 on the row and the run line (all-added before)', () => {
+    const call = write('/src/p.ts', content, 'p1');
+    const res = patched('p1');
+    const { container } = render(<MessageRow message={call} result={res} />);
+    expect(headCounts(container)).toBe('+3-2');
+    expect(linesChanged(call, res)).toEqual({ added: 3, removed: 2 });
+    expect(runFacts([call], new Map([[call.id, res]])).lines).toEqual({ added: 3, removed: 2 });
+    expect(container.querySelector('.tx-chip-tag')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff of p.ts' }));
+    expect([...container.querySelectorAll('.tx-d-hunk-head')].map((h) => h.textContent)).toEqual(['@@ -7,7 +7,7 @@', '@@ -27,7 +27,8 @@']);
+    const dels = [...container.querySelectorAll('.tx-d-row.tx-d-del')].map((r) => r.textContent ?? '');
+    expect(dels.length).toBe(2);
+    expect(dels[0]).toContain('10');
+    expect(dels[1]).toContain('30');
+    const adds = [...container.querySelectorAll('.tx-d-row.tx-d-add')].map((r) => r.textContent ?? '');
+    expect(adds[2]).toContain('31');
+    expect(adds[2]).toContain('line 30b');
+  });
+
+  it('offers the whole file from the content written', () => {
+    const call = write('/src/p.ts', content, 'p2');
+    const { container } = render(<MessageRow message={call} result={patched('p2')} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff of p.ts' }));
+    act(() => fireEvent.click(screen.getByRole('button', { name: 'Show Whole File (41 Lines)' })));
+    expect(container.querySelector('.tx-d-whole')?.textContent).toContain('line 30b');
   });
 });

@@ -12,7 +12,7 @@
  */
 
 import type { Message } from '../../types';
-import { writeResultOf } from '../../capture/adapter';
+import { writeResultOf, type WritePatchHunk } from '../../capture/adapter';
 import { isObj, str, targetOf, toolInput, toolResultIsError } from './ToolChip';
 
 export const DIFF_TOOLS: ReadonlySet<string> = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -25,23 +25,32 @@ export interface EditPairs {
    * whole file from line 1), false for edits, whose texts are fragments.
    */
   absoluteLines: boolean;
+  /**
+   * A replaced file whose result has no old text, only its change as hunks
+   * (#387): the change itself, with `pairs` empty. The row draws these hunks
+   * and the run's line counts their lines, so the two still agree.
+   */
+  patch?: WritePatchHunk[];
 }
 
 /**
  * A replaced file is diffed against the file as it was only up to this many
  * characters, old and new together (#387); past it the row is today's whole
- * listing. Writes seen in real transcripts are a few thousand characters. A
- * megabyte is ~9,000 lines of code, where the worst case -- every line
- * changed -- diffs in ~40 ms (measured on Node 22); the Myers search behind it
- * is capped at an edit distance of 1,200, so the cost grows with size, not
- * with size squared.
+ * listing. Writes seen in real transcripts are a few thousand characters
+ * (the largest old file seen, ~6K). Building the row's diff near a million
+ * characters measured 155-316 ms; at 200K the worst case is about a fifth of
+ * that, paid once per result (the row's diff and the run's count are both
+ * cached per row object). The Myers search behind it is capped at an edit
+ * distance of 1,200, so the cost grows with size, not with size squared.
  */
-export const WRITE_DIFF_MAX_CHARS = 1_000_000;
+export const WRITE_DIFF_MAX_CHARS = 200_000;
 
 /**
  * What a Write did, as its result tells it (#387):
  *  - `created`: a new file.
  *  - `replaced`: an existing file, whose old text is `originalFile`.
+ *  - `patched`: an existing file whose result keeps only the change, as
+ *    hunks (`originalFile: null`, Claude Code 2.1.301-2.1.312).
  *  - `failed`: its result is an error; nothing was written.
  *  - `unknown`: no result yet, or one that does not say (an older
  *    transcript): read as today, the whole content as added lines.
@@ -50,6 +59,7 @@ export const WRITE_DIFF_MAX_CHARS = 1_000_000;
 export type WriteOutcome =
   | { kind: 'created' }
   | { kind: 'replaced'; originalFile: string; content: string }
+  | { kind: 'patched'; patch: WritePatchHunk[]; content: string }
   | { kind: 'failed' }
   | { kind: 'unknown' };
 
@@ -80,6 +90,7 @@ function readOutcome(result: Message): WriteOutcome {
   const written = writeResultOf(result.rawJson);
   if (written === null) return UNKNOWN;
   if (written.kind === 'create') return Object.freeze({ kind: 'created' });
+  if (written.patch !== null) return Object.freeze({ kind: 'patched', patch: written.patch, content: written.content });
   const originalFile = written.originalFile ?? '';
   // Too large to diff on a render: the whole listing, as before.
   if (originalFile.length + written.content.length > WRITE_DIFF_MAX_CHARS) return UNKNOWN;
@@ -100,6 +111,10 @@ export function editPairsOf(message: Message, result: Message | null = null): Ed
   if (tool === 'Write') {
     const write = writeOutcomeOf(message, result);
     if (write?.kind === 'failed') return null;
+    if (write?.kind === 'patched') return { path, pairs: [], absoluteLines: true, patch: write.patch };
+    // A replaced file diffs the result's `content`, the file as it is now on
+    // disk, which can differ from what was sent (a memory file gets front
+    // matter stamped on it, say); the chip's input view shows what was sent.
     if (write?.kind === 'replaced') pairs.push({ oldText: write.originalFile, newText: write.content });
     else {
       const content = str(input.content);

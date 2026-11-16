@@ -1845,18 +1845,30 @@ export function toolUseIdOf(message: ToolRow & Pick<Message, 'role'>): string | 
  * originalFile, structuredPatch, userModified}`. A new file is `create` with
  * `originalFile: null`; a replaced one is `update` with the file as it was.
  *
- * `structuredPatch` is not read: the renderer diffs `originalFile` against
- * `content` with the same code an Edit row uses, so the row and the run's
- * counts come from one diff. Null for any other shape -- an error result
- * (whose `toolUseResult` is the error string), an older transcript, a row
- * stored as a bare block -- which the caller reads as "not known".
+ * When `originalFile` is there, `structuredPatch` is not read: the renderer
+ * diffs `originalFile` against `content` with the same code an Edit row
+ * uses. Some `update`s carry no `originalFile` (`null`; seen on Claude Code
+ * 2.1.301-2.1.312, mostly in subagents), only `structuredPatch`; then its
+ * hunks are the change, in `patch`. Null for any other shape -- an error
+ * result (whose `toolUseResult` is the error string), an older transcript,
+ * a row stored as a bare block, a patch that does not read as one -- which
+ * the caller reads as "not known".
  */
 export interface WriteResult {
   kind: 'create' | 'update';
-  /** What was written. */
+  /** What was written: the file as it is now on disk. */
   content: string;
-  /** The file before the write; null for `create`. */
+  /** The file before the write; null for `create`, and for an `update` that only has `patch`. */
   originalFile: string | null;
+  /** The change as hunks, for an `update` with no `originalFile`; null otherwise. */
+  patch: WritePatchHunk[] | null;
+}
+
+/** One hunk of a Write's `structuredPatch`: where it starts on each side, and its lines. */
+export interface WritePatchHunk {
+  oldStart: number;
+  newStart: number;
+  lines: Array<{ kind: 'add' | 'del' | 'context'; content: string }>;
 }
 
 export function writeResultOf(rawJson: string): WriteResult | null {
@@ -1866,11 +1878,44 @@ export function writeResultOf(rawJson: string): WriteResult | null {
   if (r === null) return null;
   const content = r['content'];
   if (typeof content !== 'string') return null;
-  if (r['type'] === 'create') return { kind: 'create', content, originalFile: null };
-  if (r['type'] === 'update' && typeof r['originalFile'] === 'string') {
-    return { kind: 'update', content, originalFile: r['originalFile'] };
+  if (r['type'] === 'create') return { kind: 'create', content, originalFile: null, patch: null };
+  if (r['type'] !== 'update') return null;
+  if (typeof r['originalFile'] === 'string') return { kind: 'update', content, originalFile: r['originalFile'], patch: null };
+  const patch = writePatchOf(r['structuredPatch']);
+  return patch === null ? null : { kind: 'update', content, originalFile: null, patch };
+}
+
+/**
+ * `structuredPatch`: `[{oldStart, oldLines, newStart, newLines, lines}]`,
+ * each line its text behind " ", "+" or "-" (jsdiff's shape). A
+ * "\ No newline at end of file" marker is dropped. Null when it is empty or
+ * anything in it is not that shape, or a hunk's counts disagree with its
+ * lines: a patch read wrong would show a change that never happened.
+ */
+function writePatchOf(v: unknown): WritePatchHunk[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const out: WritePatchHunk[] = [];
+  for (const h of v) {
+    if (!isRecord(h) || !Array.isArray(h['lines'])) return null;
+    const { oldStart, newStart, oldLines, newLines } = h;
+    if (![oldStart, newStart, oldLines, newLines].every((n) => typeof n === 'number' && Number.isInteger(n) && n >= 0)) return null;
+    const lines: WritePatchHunk['lines'] = [];
+    let olds = 0;
+    let news = 0;
+    for (const l of h['lines'] as unknown[]) {
+      if (typeof l !== 'string') return null;
+      const mark = l.charAt(0);
+      if (mark === '\\') continue;
+      const kind = mark === '+' ? 'add' : mark === '-' ? 'del' : mark === ' ' ? 'context' : null;
+      if (kind === null) return null;
+      if (kind !== 'add') olds++;
+      if (kind !== 'del') news++;
+      lines.push({ kind, content: l.slice(1) });
+    }
+    if (olds !== oldLines || news !== newLines) return null;
+    out.push({ oldStart: oldStart as number, newStart: newStart as number, lines });
   }
-  return null;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
