@@ -29,6 +29,7 @@ import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
 import { forgetQueuedCi, keepQueuedCiFor } from './transcript/ciFailure';
 import { keepOutboxFor } from './transcript/outbox';
+import { putBackWhereNoDraftAtStartup } from './transcript/heldInBox';
 import { noteTaskSessions } from './transcript/turn';
 import type { CaptureHandle, ContextUsage } from '../capture';
 
@@ -391,6 +392,9 @@ export function useTasks(): UseTasksResult {
       // saved for it since (a request's prompt as its draft) stays.
       keepDraftsFor(live, Date.now(), readStartedAt);
       keepOutboxFor(live, readStartedAt);
+      // Held messages taken into a message box whose draft did not survive a
+      // restart (#399): the first read only.
+      putBackWhereNoDraftAtStartup();
       keepRequestsFor(live);
       keepQueuedCiFor(live);
       setLoadError(null);
