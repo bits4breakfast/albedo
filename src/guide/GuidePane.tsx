@@ -399,6 +399,24 @@ function GuideIntro({
 const TYPING_FIELD =
   'textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"])';
 
+/** The last mark ⌘R or ⇧⌘R made, which the same key undoes. */
+interface LastMark {
+  kind: 'file' | 'group';
+  /** What it marked: only what was not marked already. */
+  keys: string[];
+  /** Where it was made, to go back to. */
+  group: string;
+  path: string;
+}
+
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Meta', 'Shift', 'Control', 'Alt', 'CapsLock', 'Fn']);
+
+/** ⌘R is the file's key, ⇧⌘R the group's; null for any other key. */
+function markKind(e: KeyboardEvent): 'file' | 'group' | null {
+  if (e.code !== 'KeyR' || !e.metaKey || e.ctrlKey || e.altKey) return null;
+  return e.shiftKey ? 'group' : 'file';
+}
+
 function writtenAgo(at: number): string {
   const age = relativeTime(at, Date.now());
   return age === 'now' ? 'just now' : `${age} ago`;
@@ -748,24 +766,117 @@ function GuideBody({
   const stepGroup = (delta: number) => goTo(at + delta);
 
   // ⌘R and ⇧⌘R (#390, #391): the two Reviewed boxes, from the keyboard. Each
-  // toggles and moves on exactly as a click on its box does: on a file or
-  // group already reviewed it unmarks it and stays, so a mistake is ↑ or ⌥↑
-  // and the same key again. Read's, anywhere in it, as the other keys are; a
+  // toggles and moves on exactly as a click on its box does. Pressed again
+  // straight away, with no other key, click or move between, it undoes the
+  // mark it just made and goes back to where it was made: the owner's
+  // "pressing again undoes". Read's, anywhere in it, as the other keys are; a
   // checkbox or button with focus is not typing, so they work from there too,
-  // but not from a comment box or any other text field. ⇧⌘R is Remote
-  // Control everywhere else: that binding stands aside inside the guide
-  // (GUIDE_AREA, shortcuts.ts), so it never fires here, even on the Map.
-  // From `code`, as the app's ⇧⌘R is; Command only. A held key does not
-  // repeat: auto-repeat would toggle a run of files.
+  // but not from a comment box or any other text field, nor from an open
+  // menu. ⇧⌘R is Remote Control everywhere else: that binding stands aside
+  // inside a guide on screen (GUIDE_AREA, shortcuts.ts), so it never fires
+  // here, even on the Map. From `code`, as the app's ⇧⌘R is; Command only. A
+  // held key does not repeat: auto-repeat would toggle a run of files.
+  const lastMark = useRef<LastMark | null>(null);
+  // Anything else -- a key, a click, a move by any other means -- forgets it.
+  useEffect(() => {
+    const forget = (e: Event) => {
+      const m = lastMark.current;
+      if (m === null) return;
+      if (e instanceof KeyboardEvent && (MODIFIER_KEYS.has(e.key) || markKind(e) === m.kind)) return;
+      lastMark.current = null;
+    };
+    window.addEventListener('keydown', forget, true);
+    window.addEventListener('pointerdown', forget, true);
+    return () => {
+      window.removeEventListener('keydown', forget, true);
+      window.removeEventListener('pointerdown', forget, true);
+    };
+  }, []);
+
+  const undoMark = (m: LastMark) => {
+    lastMark.current = null;
+    setReviewed(task.id, m.keys, false);
+    setPlace((p) => ({ ...p, group: m.group, picked: { ...p.picked, [m.group]: m.path } }));
+  };
+
   const reviewKey = (e: ReactKeyboardEvent<HTMLDivElement>): boolean => {
-    if (e.code !== 'KeyR' || !e.metaKey || e.ctrlKey || e.altKey) return false;
-    if ((e.target as HTMLElement).closest(TYPING_FIELD)) return false;
+    const kind = markKind(e.nativeEvent);
+    if (kind === null || !active) return false;
+    const t = e.target as HTMLElement;
+    if (t.closest(TYPING_FIELD) || t.closest('[role="menu"]')) return false;
     e.preventDefault();
-    if (e.repeat || shownView === 'map' || !group) return true;
-    if (e.shiftKey) toggleGroup(group);
-    else if (file) toggleFile(file);
+    if (e.repeat || shownView === 'map' || !group || !file) return true;
+    // The box with focus may go with the file it belongs to: keep focus in
+    // the guide, so the next press is heard here too.
+    if (document.activeElement !== rootRef.current) rootRef.current?.focus({ preventScroll: true });
+    const m = lastMark.current;
+    if (m !== null && m.kind === kind) {
+      undoMark(m);
+      return true;
+    }
+    const files = kind === 'group' ? group.files : [file];
+    const keys = files.filter((f) => !isFileReviewed(f)).map((f) => reviewedKey(f.path, f.blocks));
+    if (kind === 'group') toggleGroup(group);
+    else toggleFile(file);
+    // Only a mark is remembered: an unmark stays where it is, and the key
+    // again simply marks it once more.
+    lastMark.current = keys.length > 0 ? { kind, keys, group: group.key, path: file.path } : null;
     return true;
   };
+
+  // Focus never falls out of the guide on its own: a box that unmounts with
+  // focus in it (a file's header as the next opens, a comment box saved or
+  // cancelled) leaves it on the page's body, where the guide's keys are not
+  // heard and ⇧⌘R would be Remote Control. Watched on the DOM, not on this
+  // component's renders: a comment box goes in a render of its own. Focus
+  // put elsewhere on purpose -- a click outside, the terminal, another tab --
+  // is never taken back.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let inside = el.contains(document.activeElement);
+    // Left for nothing, and not known yet whether by a click (it stays in
+    // the page) or by being removed (it goes): an engine may say so before
+    // the removal or not at all.
+    let lost: Node | null = null;
+    const regain = () => {
+      if (lost?.isConnected) return;
+      const now = document.activeElement;
+      if (inside && activeRef.current && (now === null || now === document.body)) el.focus({ preventScroll: true });
+    };
+    const onIn = () => {
+      inside = true;
+      lost = null;
+    };
+    const onOut = (e: FocusEvent) => {
+      const to = e.relatedTarget;
+      if (to instanceof Node) {
+        inside = el.contains(to);
+        return;
+      }
+      const from = e.target as Node;
+      lost = from;
+      window.setTimeout(() => {
+        if (lost !== from) return;
+        lost = null;
+        // Still in the page: a click on something that takes no focus, the
+        // user's choice. Gone: a removal, not a choice.
+        if (from.isConnected) inside = false;
+        else regain();
+      }, 0);
+    };
+    const watch = new MutationObserver(regain);
+    watch.observe(el, { childList: true, subtree: true });
+    el.addEventListener('focusin', onIn);
+    el.addEventListener('focusout', onOut);
+    return () => {
+      watch.disconnect();
+      el.removeEventListener('focusin', onIn);
+      el.removeEventListener('focusout', onOut);
+    };
+  }, []);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
@@ -807,8 +918,9 @@ function GuideBody({
       tabIndex={-1}
       onKeyDown={onKeyDown}
       aria-label="Review Guide"
-      // ⇧⌘R is the group's key here, not Remote Control (shortcuts.ts).
-      {...{ [GUIDE_AREA_ATTR]: '' }}
+      // On screen, ⇧⌘R is the group's key here, not Remote Control
+      // (shortcuts.ts). A hidden guide stays mounted and claims nothing.
+      {...(active ? { [GUIDE_AREA_ATTR]: '' } : {})}
     >
       {/* One row, one Rewrite (#197): a guide the branch has moved on from
           says so here, on the banner's ground, rather than in a second row

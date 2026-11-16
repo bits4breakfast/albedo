@@ -61,7 +61,8 @@
  * reviewed (#391) beside ⌘R for the file (#390). Capture runs before the
  * guide's own handler can say anything, so the binding is told where to stand
  * aside instead (`standAsideIn`, {@link GUIDE_AREA}): with focus anywhere in
- * the guide it neither runs nor prevents the key, and the guide's handler
+ * a guide on screen (a hidden one claims nothing) it neither runs nor
+ * prevents the key, and the guide's handler
  * gets it as if nothing were bound. Everywhere else it is Remote Control, as
  * before. Plain ⌘R binds nothing in the app, in CodeMirror's keymaps or in
  * the native menu, so the guide takes it without a fight.
@@ -291,11 +292,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
-  { combo: 'guide mod+r', keys: '⌘R', description: 'Review Guide: Mark the File Reviewed and Open the Next (on a Reviewed One: Unmark)' },
+  { combo: 'guide mod+r', keys: '⌘R', description: 'Review Guide: Mark the File Reviewed and Open the Next (Again at Once: Undo)' },
   {
     combo: 'guide mod+shift+r',
     keys: '⇧⌘R',
-    description: 'Review Guide: Mark the Group Reviewed and Go to the Next (on a Reviewed One: Unmark)',
+    description: 'Review Guide: Mark the Group Reviewed and Go to the Next (Again at Once: Undo)',
   },
   { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
