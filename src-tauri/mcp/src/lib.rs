@@ -38,7 +38,10 @@
 //!
 //! No network. Nothing read back but the page named and the app's answers.
 //! The caller's identity is the task id Albedo put in the environment, never
-//! anything in a request.
+//! anything in a request. Albedo also gives each spawn a random
+//! `ALBEDO_TASK_TOKEN` (#427), written into every line: the app's GitHub
+//! tools act only on lines carrying the task's current one. It is never
+//! logged.
 //!
 //! ## Protocol versions
 //!
@@ -129,6 +132,10 @@ deletion there waits for their approval.";
 pub struct Env {
     /// `ALBEDO_TASK_ID`, when it is a positive integer.
     pub task: Option<u64>,
+    /// `ALBEDO_TASK_TOKEN` (#427), when it has the right shape: written into
+    /// every line, so the app can tell this spawn's lines from any other's.
+    /// Never logged.
+    pub token: Option<String>,
     /// `~/.albedo/inbox`, when `HOME` is known.
     pub inbox_dir: Option<PathBuf>,
     /// `~/.albedo/previews`, when `HOME` is known (`show_preview`, #348).
@@ -145,6 +152,9 @@ impl Env {
         let task = std::env::var("ALBEDO_TASK_ID")
             .ok()
             .and_then(|s| parse_task_id(&s));
+        let token = std::env::var("ALBEDO_TASK_TOKEN")
+            .ok()
+            .and_then(|s| parse_task_token(&s));
         let home = std::env::var_os("HOME").filter(|h| !h.is_empty());
         let inbox_dir = home
             .as_ref()
@@ -154,6 +164,7 @@ impl Env {
             .map(|h| preview::dir_under(std::path::Path::new(h)));
         Env {
             task,
+            token,
             inbox_dir,
             previews_dir,
             cwd: std::env::current_dir().ok(),
@@ -173,6 +184,13 @@ pub fn parse_task_id(s: &str) -> Option<u64> {
         return None;
     }
     s.parse().ok().filter(|&n| n > 0)
+}
+
+/// A session token (#427): letters, digits and `-`, 16 to 100 of them. Anything else is none.
+pub fn parse_task_token(s: &str) -> Option<String> {
+    let ok =
+        (16..=100).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    ok.then(|| s.to_string())
 }
 
 /// A call waiting for the app's answer: `show_preview`, or a GitHub tool (#427).
@@ -310,7 +328,14 @@ impl Server {
         let mut args = Map::new();
         args.insert("request".into(), w.request.clone().into());
         args.insert("reason".into(), reason.into());
-        match inbox::line(w.task, w.cancel_tool, args, now, &id) {
+        match inbox::line_with_token(
+            w.task,
+            w.cancel_tool,
+            args,
+            now,
+            &id,
+            self.env.token.as_deref(),
+        ) {
             Ok(bytes) => {
                 if let Err(e) = inbox::append(&inbox::file_for(&dir, w.task), &bytes) {
                     eprintln!("albedo-mcp: could not record a cancelled call: {e}");
@@ -503,7 +528,14 @@ impl Server {
             });
         } else if tools::answered(accepted.tool) != tools::Answered::Now {
             // The GitHub tools (#427): the app answers, through the same
-            // folder and the same names as a preview's answer.
+            // folder and the same names as a preview's answer. A posted
+            // comment's deletion carries its transcript id, as a preview
+            // does, so the app retires its card when the call is over.
+            if accepted.tool == tools::DELETE_POSTED_COMMENT {
+                if let Some(t) = tool_use_id(params) {
+                    accepted.args.insert("toolUseId".into(), t.into());
+                }
+            }
             let Some(previews) = self.env.previews_dir.clone() else {
                 return now_result(tool_error(
                     "HOME is not set, so Albedo's answers folder cannot be found.",
@@ -528,7 +560,14 @@ impl Server {
             });
         }
 
-        let bytes = match inbox::line(task, accepted.tool, accepted.args, now, &id) {
+        let bytes = match inbox::line_with_token(
+            task,
+            accepted.tool,
+            accepted.args,
+            now,
+            &id,
+            self.env.token.as_deref(),
+        ) {
             Ok(b) => b,
             Err(msg) => return now_result(tool_error(&msg)),
         };
@@ -662,6 +701,7 @@ mod tests {
     fn server(task: Option<u64>, dir: Option<PathBuf>, clock: Rc<Cell<i64>>) -> Server {
         Server::new(Env {
             task,
+            token: None,
             inbox_dir: dir,
             previews_dir: None,
             cwd: None,
@@ -884,6 +924,37 @@ mod tests {
     }
 
     #[test]
+    fn a_posted_deletion_carries_its_transcript_id() {
+        let home = scratch("gh-tooluse");
+        let mut s = github_server(9, &home, Rc::new(Cell::new(NOW)));
+        let call = json!({"name": "delete_posted_comment", "arguments": {"id": 7}, "_meta": {"claudecode/toolUseId": "toolu_01XYZ"}});
+        assert!(s.handle(&req(6, "tools/call", call)).is_none());
+        let lines = inbox_lines(&home, 9);
+        assert_eq!(
+            lines[0]["args"],
+            json!({"id": 7, "toolUseId": "toolu_01XYZ"})
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn tokens_have_one_plain_shape() {
+        assert_eq!(
+            parse_task_token("0123456789abcdef0123"),
+            Some("0123456789abcdef0123".into())
+        );
+        for bad in [
+            "",
+            "short",
+            "has space 0123456789",
+            "x\n0123456789abcdef",
+            &"a".repeat(101),
+        ] {
+            assert_eq!(parse_task_token(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn task_ids_are_positive_integers_only() {
         assert_eq!(parse_task_id("42"), Some(42));
         for bad in [
@@ -902,6 +973,7 @@ mod tests {
     fn github_server(task: u64, home: &std::path::Path, clock: Rc<Cell<i64>>) -> Server {
         Server::new(Env {
             task: Some(task),
+            token: Some("feedfacefeedface0001".into()),
             inbox_dir: Some(inbox::dir_under(home)),
             previews_dir: Some(preview::dir_under(home)),
             cwd: None,
@@ -1035,6 +1107,9 @@ mod tests {
         assert!(!s.waiting());
         let lines = inbox_lines(&home, 9);
         assert_eq!(lines[0]["tool"], "delete_posted_comment");
+        // The session's token on the call and on its cancel (#427).
+        assert_eq!(lines[0]["token"], "feedfacefeedface0001");
+        assert_eq!(lines[1]["token"], "feedfacefeedface0001");
         assert_eq!(lines[1]["tool"], "github_cancelled");
         assert_eq!(
             lines[1]["args"],

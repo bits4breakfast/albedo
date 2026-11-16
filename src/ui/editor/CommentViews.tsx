@@ -118,7 +118,9 @@ export function RemovedDraftCardView({
 }): ReactNode {
   const what = comment.replyTo === null ? commentHeadline(comment.body) : `Reply: ${comment.body.split('\n')[0]}`;
   return (
-    <div className="ed-cmt" data-state="removed" data-side={sideOf(comment) === 'old' ? 'old' : undefined}>
+    // No data-side: a removed draft's edge is grey whichever side it was on;
+    // its place still says "On removed line N".
+    <div className="ed-cmt" data-state="removed">
       <div className="ed-cmt-head">
         {comment.replyTo === null ? <span className="ed-cmt-where">{placeOf(comment)}</span> : null}
         <span className="ed-cmt-chip" data-state="removed">

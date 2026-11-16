@@ -1,6 +1,6 @@
-{"args":{},"at":1793692800000,"id":"fixture-g1","task":12,"tool":"list_github_drafts","v":1}
-{"args":{"id":41,"reason":"Same point as the draft on line 58"},"at":1793692800000,"id":"fixture-g2","task":12,"tool":"delete_github_draft","v":1}
-{"args":{"id":42},"at":1793692800000,"id":"fixture-g3","task":12,"tool":"delete_github_draft","v":1}
-{"args":{},"at":1793692800000,"id":"fixture-g4","task":12,"tool":"list_posted_comments","v":1}
-{"args":{"id":1834567890,"reason":"Already fixed in the latest commit"},"at":1793692800000,"id":"fixture-g5","task":12,"tool":"delete_posted_comment","v":1}
-{"args":{"reason":"AbortError: user-cancel","request":"fixture-g5"},"at":1793692800001,"id":"fixture-g6","task":12,"tool":"github_cancelled","v":1}
+{"args":{},"at":1793692800000,"id":"fixture-g1","task":12,"token":"0f1e2d3c4b5a69788796a5b4","tool":"list_github_drafts","v":1}
+{"args":{"id":41,"reason":"Same point as the draft on line 58"},"at":1793692800000,"id":"fixture-g2","task":12,"token":"0f1e2d3c4b5a69788796a5b4","tool":"delete_github_draft","v":1}
+{"args":{"id":42},"at":1793692800000,"id":"fixture-g3","task":12,"token":"0f1e2d3c4b5a69788796a5b4","tool":"delete_github_draft","v":1}
+{"args":{},"at":1793692800000,"id":"fixture-g4","task":12,"token":"0f1e2d3c4b5a69788796a5b4","tool":"list_posted_comments","v":1}
+{"args":{"id":1834567890,"reason":"Already fixed in the latest commit","toolUseId":"toolu_01DEL"},"at":1793692800000,"id":"fixture-g5","task":12,"token":"0f1e2d3c4b5a69788796a5b4","tool":"delete_posted_comment","v":1}
+{"args":{"reason":"AbortError: user-cancel","request":"fixture-g5"},"at":1793692800001,"id":"fixture-g6","task":12,"token":"0f1e2d3c4b5a69788796a5b4","tool":"github_cancelled","v":1}

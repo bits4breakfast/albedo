@@ -9,6 +9,7 @@ import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startH
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
 import { endTaskPreviews } from '../capture/previewGate';
 import { endTaskDeletions } from '../capture/githubGate';
+import { newTaskToken } from '../capture/mcpToken';
 import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
 import { getTaskModel } from './taskModel';
 import { isResumePlan, planSpawn, withMcpConfig } from './sessionSpawn';
@@ -670,7 +671,7 @@ export default function Terminal({
       // binary (a dev build before `npm run build:mcp`) it starts as before.
       const server = await mcpServerPath();
       if (disposed) return;
-      if (server) spawnArgs = withMcpConfig(spawnArgs, task.id, server);
+      if (server) spawnArgs = withMcpConfig(spawnArgs, task.id, server, newTaskToken(task.id));
 
       // A folder Claude Code has never trusted opens on its trust dialog, before
       // any hook runs and before there is a transcript, so neither channel can

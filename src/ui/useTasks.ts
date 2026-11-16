@@ -24,7 +24,7 @@ import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { finishedPreviewCalls, onPreviewChange, pendingPreview, retireFinishedPreviews } from '../capture/previewGate';
-import { onDeletionChange, pendingDeletion } from '../capture/githubGate';
+import { finishedDeletionCalls, onDeletionChange, pendingDeletion, retireFinishedDeletions } from '../capture/githubGate';
 import { noteQuestion, noteStatusChange } from './attention';
 import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
@@ -564,6 +564,8 @@ export function useTasks(): UseTasksResult {
         // A preview call (#348) is over once the transcript has its result --
         // an error when Esc or the timeout cancelled it.
         await retireFinishedPreviews(taskId, finishedPreviewCalls(messages));
+        // A posted comment's deletion (#427) the same way.
+        retireFinishedDeletions(taskId, finishedDeletionCalls(messages));
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
         // Nor a preview waiting for its answer (capture/previewGate.ts), nor

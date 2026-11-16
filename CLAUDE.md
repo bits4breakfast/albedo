@@ -81,13 +81,18 @@ task, the session may read and remove the user's GitHub Drafts and read the
 user's own comments posted on the task's PR, and ask for one to be deleted --
 `list_github_drafts`, `delete_github_draft`, `list_posted_comments`,
 `delete_posted_comment`, scoped to the calling task by `ALBEDO_TASK_ID` and
-nothing else. Unlike the rest of the fifth, these answer the session: the
+nothing else. Albedo also gives each spawn a random `ALBEDO_TASK_TOKEN`, which
+the server writes into every line; these tools act only on lines carrying the
+task's current token, so another session's line in this task's file does
+nothing. The token is never logged. Unlike the rest of the fifth, these answer the session: the
 server never opens the database or the network, but writes its line and waits
 for `answer-<task>-<request>.json`, which the app writes. A list and a local
 draft's removal are answered at once, with no click, and only while the call
 can still be waiting (the server gives up after 30 s; the app never acts on a
 line older than 15 s). A removed draft stays visible in the task, with what was
-removed, the session's reason and Undo, which restores the exact row. Deleting
+removed, the session's reason and Undo, which restores the exact row. A draft
+open in an edit box, or while Submit Review is open or sending, is never
+removed: the session is told to try again later. Deleting
 a posted comment is a "waiting on you" card, and nothing is deleted on GitHub
 without its click; right before deleting, Albedo checks with GitHub that the
 comment's author is the signed-in user and that it is on this task's PR.

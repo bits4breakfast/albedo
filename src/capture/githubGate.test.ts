@@ -33,6 +33,8 @@ const { readInbox, startInbox, stopInbox } = await import('./inbox');
 const removals = await import('./draftRemovals');
 const gate = await import('./githubGate');
 const { setGhRunner, resetViewerLoginForTests } = await import('../gh/gh');
+const tokens = await import('./mcpToken');
+const comments = await import('../db/comments');
 
 const PR_URL = 'https://github.com/acme-labs/widget/pull/412';
 const ME = 'sam-reviewer';
@@ -40,15 +42,22 @@ const ME = 'sam-reviewer';
 let reviewTask = 0;
 let workTask = 0;
 let ghCalls: string[][] = [];
+/** A path whose gh call never ends. */
+let ghHang: string | null = null;
+/** Who `gh api user` says is signed in now. */
+let ghUser = 'sam-reviewer';
 /** What the stand-in gh answers, by the API path asked for. */
 let ghAnswers: Record<string, { code: number; stdout: string; stderr?: string }> = {};
 
 const inboxFile = (task: number) => join(h.home, '.albedo/inbox', `task-${task}.jsonl`);
 const answerFile = (task: number, req: string) => join(h.home, '.albedo/previews', `answer-${task}-${req}.json`);
 
-function call(task: number, id: string, tool: string, args: Record<string, unknown> = {}, at = Date.now()): void {
+/** Each task's session token, as Terminal makes one per spawn (mcpToken.ts). */
+const tokenOf = (task: number) => `token-of-task-${task}-0000`;
+
+function call(task: number, id: string, tool: string, args: Record<string, unknown> = {}, at = Date.now(), token: string | null = tokenOf(task)): void {
   mkdirSync(join(h.home, '.albedo/inbox'), { recursive: true });
-  appendFileSync(inboxFile(task), `${JSON.stringify({ v: 1, task, tool, args, at, id })}\n`);
+  appendFileSync(inboxFile(task), `${JSON.stringify({ v: 1, task, tool, args, at, id, ...(token ? { token } : {}) })}\n`);
 }
 
 async function read(): Promise<void> {
@@ -84,12 +93,16 @@ beforeEach(async () => {
   h.db = createTestDb();
   ghCalls = [];
   ghAnswers = {};
+  ghHang = null;
   setGhRunner(async (_program, args) => {
     ghCalls.push(args);
+    if (args[1] === 'user') return { code: 0, stdout: `${ghUser}\n`, stderr: '' };
+    if (ghHang && args.some((a) => a.includes(ghHang!))) return new Promise(() => {});
     const path = args.find((a) => a.startsWith('repos/')) ?? '';
     return { stderr: '', ...(ghAnswers[`${args.includes('DELETE') ? 'DELETE ' : ''}${path}`] ?? { code: 1, stdout: '', stderr: 'HTTP 404: Not Found' }) };
   });
   resetViewerLoginForTests(ME);
+  ghUser = ME;
   const base = { projectId: null, repoPath: '/repo', baseBranch: 'main', ownsWorktree: true, createdBranch: true } as const;
   reviewTask = (await createTask({ ...base, title: 'Review 412', branch: 'review/412', worktreePath: '/wt/review', kind: 'work', reviewUrl: PR_URL })).id;
   workTask = (await createTask({ ...base, title: 'Work', branch: 'feat', worktreePath: '/wt/work', kind: 'work' })).id;
@@ -99,6 +112,8 @@ beforeEach(async () => {
   ]);
   gate.__resetGithubGate();
   removals.__resetDraftRemovals();
+  tokens.__setTaskTokenForTests(reviewTask, tokenOf(reviewTask));
+  tokens.__setTaskTokenForTests(workTask, tokenOf(workTask));
   await stopInbox();
   gate.startGithubGate((id) => tasks.get(id) ?? null);
   await startInbox(() => {});
@@ -260,8 +275,12 @@ describe('delete_posted_comment', () => {
     expect(ghCalls.some((a) => a.includes('DELETE'))).toBe(false);
     const asked = ghCalls.length;
     expect(await gate.answerDeletion(gate.pendingDeletion(reviewTask)!, 'delete')).toBe('deleted');
-    // Asked GitHub again, then deleted.
-    expect(ghCalls.slice(asked).map((a) => a.includes('DELETE'))).toEqual([false, true]);
+    // Asked who is signed in and whose the comment is, again, then deleted.
+    expect(ghCalls.slice(asked).map((a) => (a.includes('DELETE') ? 'delete' : a[1] === 'user' ? 'user' : 'comment'))).toEqual([
+      'user',
+      'comment',
+      'delete',
+    ]);
     expect(answer(reviewTask, 'x-2')).toEqual({ text: expect.stringContaining('Deleted comment 11') });
   });
 
@@ -315,5 +334,100 @@ describe('delete_posted_comment', () => {
     gate.endTaskDeletions(reviewTask);
     expect(gate.pendingDeletion(reviewTask)).toBeNull();
     expect(answer(reviewTask, 'x-0')).toBeNull();
+  });
+});
+
+describe('after the independent review (#427)', () => {
+  const single = 'repos/acme-labs/widget/pulls/comments/11';
+
+  it("acts only on lines carrying the task's current session token", async () => {
+    const id = await draft(reviewTask);
+    call(reviewTask, 't-1', 'delete_github_draft', { id }, Date.now(), null);
+    call(reviewTask, 't-2', 'delete_github_draft', { id }, Date.now(), tokenOf(workTask));
+    call(reviewTask, 't-3', 'list_github_drafts', {}, Date.now(), 'an-old-spawns-token-0000');
+    await read();
+    expect(answer(reviewTask, 't-1')).toBeNull();
+    expect(answer(reviewTask, 't-2')).toBeNull();
+    expect(answer(reviewTask, 't-3')).toBeNull();
+    expect((await listGithubDrafts(reviewTask)).map((d) => d.id)).toEqual([id]);
+  });
+
+  it('refuses to remove a draft while Submit Review is open or sending', async () => {
+    const id = await draft(reviewTask);
+    const release = removals.holdSubmitReview(reviewTask);
+    call(reviewTask, 's-1', 'delete_github_draft', { id });
+    await read();
+    expect(answer(reviewTask, 's-1')).toEqual({ text: expect.stringContaining('submitting this review'), isError: true });
+    expect((await listGithubDrafts(reviewTask)).map((d) => d.id)).toEqual([id]);
+    release();
+    call(reviewTask, 's-2', 'delete_github_draft', { id });
+    await read();
+    expect(await listGithubDrafts(reviewTask)).toEqual([]);
+  });
+
+  it('removes only a draft still unsent, in the same statement', async () => {
+    const id = await draft(reviewTask);
+    await comments.markDraftsPosted(reviewTask, [id]);
+    expect(await comments.deleteUnsentDraft(reviewTask, id)).toBe(false);
+    const other = await draft(workTask);
+    expect(await comments.deleteUnsentDraft(reviewTask, other)).toBe(false);
+    const forClaude = await draft(reviewTask, { github: null });
+    expect(await comments.deleteUnsentDraft(reviewTask, forClaude)).toBe(false);
+    expect((await listComments(reviewTask, { includeResolved: true })).map((c) => c.id).sort()).toEqual([id, forClaude].sort());
+    const live = await draft(reviewTask);
+    expect(await comments.deleteUnsentDraft(reviewTask, live)).toBe(true);
+  });
+
+  it('takes a cancel at once, even while another call waits on gh, and never acts on the cancelled call', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      ghAnswers[single] = { code: 0, stdout: JSON.stringify(posted(11)) };
+      call(reviewTask, 'c-1', 'delete_posted_comment', { id: 11 });
+      await readInbox();
+      await vi.waitFor(() => expect(gate.pendingDeletion(reviewTask)).not.toBeNull());
+      const d = gate.pendingDeletion(reviewTask)!;
+      // A list stuck on gh holds the queue; a draft removal waits behind it.
+      ghHang = '/pulls/412/comments';
+      const id = await draft(reviewTask);
+      call(reviewTask, 'c-2', 'list_posted_comments');
+      call(reviewTask, 'c-3', 'delete_github_draft', { id });
+      call(reviewTask, 'c-4', 'github_cancelled', { request: 'c-1', reason: 'AbortError: user-cancel' });
+      call(reviewTask, 'c-5', 'github_cancelled', { request: 'c-3', reason: 'AbortError: user-cancel' });
+      await readInbox();
+      // The cancel is in, though the list still waits on gh.
+      expect(gate.pendingDeletion(reviewTask)).toBeNull();
+      expect(await gate.answerDeletion(d, 'delete')).toBe('refused');
+      expect(ghCalls.some((a) => a.includes('DELETE'))).toBe(false);
+      // The stuck call gives up after 20 s, and the cancelled removal never runs.
+      await vi.advanceTimersByTimeAsync(gate.GH_TIMEOUT_MS);
+      await gate.githubLinesSettled();
+      expect(answer(reviewTask, 'c-2')).toEqual({ text: expect.stringContaining('did not answer within 20 s'), isError: true });
+      expect(answer(reviewTask, 'c-3')).toBeNull();
+      expect((await listGithubDrafts(reviewTask)).map((x) => x.id)).toEqual([id]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('asks gh who is signed in on the click, not the cached login', async () => {
+    ghAnswers[single] = { code: 0, stdout: JSON.stringify(posted(11)) };
+    ghAnswers[`DELETE ${single}`] = { code: 0, stdout: '' };
+    call(reviewTask, 'l-1', 'delete_posted_comment', { id: 11 });
+    await read();
+    ghUser = 'another-account';
+    expect(await gate.answerDeletion(gate.pendingDeletion(reviewTask)!, 'delete')).toBe('failed');
+    expect(ghCalls.some((a) => a.includes('DELETE'))).toBe(false);
+    expect(answer(reviewTask, 'l-1')!.text).toContain('another-account');
+  });
+
+  it('retires the card when the transcript records the call’s result', async () => {
+    ghAnswers[single] = { code: 0, stdout: JSON.stringify(posted(11)) };
+    call(reviewTask, 'r-1', 'delete_posted_comment', { id: 11, toolUseId: 'toolu_01DEL' });
+    await read();
+    expect(gate.pendingDeletion(reviewTask)?.toolUseId).toBe('toolu_01DEL');
+    gate.retireFinishedDeletions(reviewTask, new Set(['toolu_other']));
+    expect(gate.pendingDeletion(reviewTask)).not.toBeNull();
+    gate.retireFinishedDeletions(reviewTask, new Set(['toolu_01DEL']));
+    expect(gate.pendingDeletion(reviewTask)).toBeNull();
   });
 });

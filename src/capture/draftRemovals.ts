@@ -47,7 +47,7 @@ export function onDraftRemovals(cb: (taskId: number) => void): () => void {
   };
 }
 
-/** A task's removals, oldest first. The same array until they change. */
+/** A task's removals, by file then line. The same array until they change. */
 export function draftRemovalsOf(taskId: number): readonly DraftRemoval[] {
   return byTask.get(taskId) ?? NONE;
 }
@@ -56,7 +56,11 @@ export function draftRemovalsOf(taskId: number): readonly DraftRemoval[] {
 export function noteDraftRemoved(removal: DraftRemoval): void {
   const taskId = removal.row.taskId;
   const rest = (byTask.get(taskId) ?? []).filter((r) => r.row.id !== removal.row.id);
-  byTask.set(taskId, [...rest, removal]);
+  // By file then line, as the drafts beside them are listed.
+  const next = [...rest, removal].sort(
+    (a, b) => (a.row.path < b.row.path ? -1 : a.row.path > b.row.path ? 1 : a.row.lineStart - b.row.lineStart || a.row.id - b.row.id),
+  );
+  byTask.set(taskId, next);
   emit(taskId);
 }
 
@@ -126,11 +130,36 @@ export function isDraftBeingEdited(commentId: number): boolean {
   return editing.has(commentId);
 }
 
+/** Task id -> how many holds Submit Review has on it (its dialog open, a send running). */
+const submitting = new Map<number, number>();
+
+/**
+ * Submit Review is open, or sending, on this task: the drafts it read are
+ * the ones it will post, so the session removes none meanwhile. Returns the
+ * release; call it once.
+ */
+export function holdSubmitReview(taskId: number): () => void {
+  submitting.set(taskId, (submitting.get(taskId) ?? 0) + 1);
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    const n = (submitting.get(taskId) ?? 1) - 1;
+    if (n <= 0) submitting.delete(taskId);
+    else submitting.set(taskId, n);
+  };
+}
+
+export function isSubmitReviewBusy(taskId: number): boolean {
+  return submitting.has(taskId);
+}
+
 /** Test seam: forget everything. */
 export function __resetDraftRemovals(): void {
   byTask.clear();
   listeners.clear();
   undoing.clear();
   editing.clear();
+  submitting.clear();
   shown = null;
 }

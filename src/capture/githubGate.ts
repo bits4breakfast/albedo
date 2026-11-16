@@ -35,21 +35,34 @@
  * thing that deletes anything on GitHub, and only while that exact call
  * still waits.
  *
+ * ## Whose lines, and when
+ *
+ * A line acts only when it carries its task's current session token
+ * (mcpToken.ts). Lines are answered one at a time, in order, but a
+ * `github_cancelled` acts the moment it is read, never behind a call still
+ * waiting on gh, and a call it ended is never acted on afterwards. Every gh
+ * call here gives up after {@link GH_TIMEOUT_MS}. A draft open in an edit
+ * box, or while Submit Review is open or sending, is not removed, and the
+ * removal itself happens only while the row is still an unsent draft.
+ *
  * ## GitHub
  *
  * Through `gh`, as the rest of the review does (reviewThreads.ts reads,
  * reviewSubmit.ts posts). A comment is deleted only when GitHub says, right
- * before the delete, that its author is the signed-in user and that it is on
+ * before the delete, that its author is the user signed in to gh right then and that it is on
  * this task's PR: asked once when the card is made, and again on the click.
  */
 
 import { homeDir } from '@tauri-apps/api/path';
 import { mkdir, rename, writeTextFile } from '@tauri-apps/plugin-fs';
 import type { Task } from '../types';
-import { commentLocation, deleteComment, listGithubDrafts, sideOf, type ReviewComment } from '../db/comments';
+import type { Message } from '../types';
+import { commentLocation, deleteUnsentDraft, listGithubDrafts, sideOf, type ReviewComment } from '../db/comments';
 import { parsePrUrl, type PrRef } from '../git/reviewCheckout';
-import { gh, ghMessage, loadViewerLogin } from '../gh/gh';
-import { isDraftBeingEdited, noteDraftRemoved } from './draftRemovals';
+import { gh as runGh, ghMessage, loadViewerLogin, type GhResult } from '../gh/gh';
+import { toolUseIdOf } from './adapter';
+import { isTaskToken } from './mcpToken';
+import { isDraftBeingEdited, isSubmitReviewBusy, noteDraftRemoved } from './draftRemovals';
 import { ALBEDO_DIR } from './hookEvents';
 import { onGithubLine, type GithubLine } from './inbox';
 import { MAX_ANSWER_CHARS, previewAnswerFileName } from './previewGate';
@@ -212,10 +225,40 @@ export function postedAnswer(pr: PrRef, login: string, comments: readonly Posted
   return fitted({ pr: `${pr.owner}/${pr.repo}#${pr.number}`, author: login }, 'comments', items);
 }
 
+/** How long a gh call may take before the gate stops waiting for it. */
+export const GH_TIMEOUT_MS = 20_000;
+
+/** A gh call the gate waits for at most {@link GH_TIMEOUT_MS}; 'timeout' when it took longer. */
+async function gh(args: string[], cwd?: string): Promise<GhResult | null | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), GH_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([runGh(args, cwd).catch(() => null), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const NO_GH = 'GitHub CLI (gh) could not be run.';
+const SLOW_GH = `GitHub did not answer within ${GH_TIMEOUT_MS / 1000} s.`;
+
+/**
+ * The signed-in login, asked of gh now -- never the run's cached one: on a
+ * click that deletes, who is signed in is read at that moment.
+ */
+async function freshLogin(): Promise<string | null> {
+  const r = await gh(['api', 'user', '--jq', '.login']);
+  const login = r && r !== 'timeout' && r.code === 0 ? r.stdout.trim() : '';
+  return /^[A-Za-z0-9_-]+(\[bot\])?$/.test(login) ? login : null;
+}
+
 /** One comment, fresh from GitHub; a sentence for the session when it cannot be had. */
 async function fetchComment(pr: PrRef, id: number, cwd: string): Promise<PostedComment | string> {
-  const r = await gh(['api', ...hostArgs(pr), `${repoPath(pr)}/pulls/comments/${id}`, '--jq', COMMENT_JQ], cwd).catch(() => null);
-  if (!r) return 'GitHub CLI (gh) could not be run.';
+  const r = await gh(['api', ...hostArgs(pr), `${repoPath(pr)}/pulls/comments/${id}`, '--jq', COMMENT_JQ], cwd);
+  if (r === 'timeout') return SLOW_GH;
+  if (!r) return NO_GH;
   if (r.code !== 0) return /\b404\b|Not Found/i.test(r.stderr) ? `GitHub has no review comment ${id}.` : ghMessage(r);
   return parsePostedLines(r.stdout)[0] ?? `GitHub did not return review comment ${id}.`;
 }
@@ -224,8 +267,8 @@ async function fetchComment(pr: PrRef, id: number, cwd: string): Promise<PostedC
  * Whether the user may have this comment deleted: theirs, on this PR. The
  * comment when so, else why not, in a sentence for the session.
  */
-async function checkOwn(pr: PrRef, id: number, cwd: string): Promise<PostedComment | string> {
-  const login = await loadViewerLogin();
+async function checkOwn(pr: PrRef, id: number, cwd: string, fresh = false): Promise<PostedComment | string> {
+  const login = fresh ? await freshLogin() : await loadViewerLogin();
   if (login === null) return 'Albedo could not tell which GitHub user is signed in to gh, so it cannot check whose comment this is. Nothing was deleted.';
   const c = await fetchComment(pr, id, cwd);
   if (typeof c === 'string') return `${c} Nothing was deleted.`;
@@ -250,6 +293,8 @@ export interface PendingDeletion {
   at: number;
   /** The task's worktree, where gh runs. */
   cwd: string;
+  /** Claude Code's id for the call in the transcript, when it gave one. */
+  toolUseId: string | null;
 }
 
 let taskOf: (id: number) => GateTask | null = () => null;
@@ -351,7 +396,14 @@ async function removeDraft(line: DeleteLine): Promise<Answer> {
   if (isDraftBeingEdited(row.id)) {
     return refuse(`The owner is editing GitHub Draft ${row.id} right now; try again later. Nothing was removed.`);
   }
-  await deleteComment(line.taskId, row.id);
+  // Submit Review open or sending: it posts the drafts it read, so none goes now.
+  if (isSubmitReviewBusy(line.taskId)) {
+    return refuse('The owner is submitting this review right now; try again later. Nothing was removed.');
+  }
+  // Removed only while still an unsent draft of this task, in one statement.
+  if (!(await deleteUnsentDraft(line.taskId, row.id))) {
+    return refuse(`GitHub Draft ${row.id} was submitted or removed meanwhile. Nothing was removed.`);
+  }
   noteDraftRemoved({ row, reason: line.reason, at: Date.now() });
   return ok(
     `Removed GitHub Draft ${row.id} (${commentLocation(row)}). It had not been sent; the user sees what was removed, and can undo it.`,
@@ -366,15 +418,16 @@ async function listPosted(line: GithubLine): Promise<Answer> {
   const res = await gh(
     ['api', ...hostArgs(r.pr), `${repoPath(r.pr)}/pulls/${r.pr.number}/comments?per_page=100`, '--paginate', '--jq', `.[] | ${COMMENT_JQ}`],
     r.task.worktreePath,
-  ).catch(() => null);
-  if (!res) return refuse('GitHub CLI (gh) could not be run.');
+  );
+  if (res === 'timeout') return refuse(SLOW_GH);
+  if (!res) return refuse(NO_GH);
   if (res.code !== 0) return refuse(`GitHub did not list the comments: ${ghMessage(res)}`);
   const mine = parsePostedLines(res.stdout).filter((c) => sameLogin(c.author, login));
   return ok(postedAnswer(r.pr, login, mine));
 }
 
 /** A deletion asked for: checked, then a card. An answer now only when it cannot be asked. */
-async function askDeletion(line: DeleteLine): Promise<Answer | null> {
+async function askDeletion(line: Extract<GithubLine, { tool: 'delete_posted_comment' }>): Promise<Answer | null> {
   const r = reviewOf(line.taskId);
   if ('text' in r) return r;
   const c = await checkOwn(r.pr, line.commentId, r.task.worktreePath);
@@ -388,17 +441,22 @@ async function askDeletion(line: DeleteLine): Promise<Answer | null> {
     reason: line.reason,
     at: line.at,
     cwd: r.task.worktreePath,
+    toolUseId: line.toolUseId,
   });
   notify(line.taskId);
   return null;
 }
 
+/** The call ended without an answer: never acted on or answered after. */
+function cancelled(request: string): void {
+  over.add(request);
+  retire(request);
+}
+
 async function handle(line: GithubLine): Promise<void> {
-  if (line.tool === 'github_cancelled') {
-    over.add(line.request);
-    retire(line.request);
-    return;
-  }
+  if (line.tool === 'github_cancelled') return cancelled(line.request);
+  // Cancelled while it waited its turn here.
+  if (over.has(line.id)) return;
   // From an earlier run: its session ended with that run, and its call too.
   if (line.at < startedAt) return;
   // The server stops waiting after 30 s; this acts only well inside that.
@@ -429,6 +487,17 @@ async function handle(line: GithubLine): Promise<void> {
 let queue: Promise<void> = Promise.resolve();
 
 function onLine(line: GithubLine): void {
+  // Only from the session Albedo started for this task, this time (mcpToken.ts).
+  if (!isTaskToken(line.taskId, line.token)) {
+    console.warn(`[github] dropped a line for task ${line.taskId} that its current session did not write`);
+    return;
+  }
+  // A cancel acts at once, never behind a call still being answered: a click
+  // after it must find the call over.
+  if (line.tool === 'github_cancelled') {
+    cancelled(line.request);
+    return;
+  }
   const work = () => handle(line).catch((err: unknown) => console.warn('[github] could not answer a session', err));
   queue = queue.then(work, work);
 }
@@ -489,7 +558,8 @@ export async function answerDeletion(d: PendingDeletion, choice: 'delete' | 'kee
       answer = ok(`The user kept comment ${id}. It was not deleted.`);
       result = 'kept';
     } else {
-      const c = await checkOwn(d.pr, id, d.cwd);
+      // Who is signed in, and whose the comment is, asked again now.
+      const c = await checkOwn(d.pr, id, d.cwd, true);
       if (typeof c === 'string') {
         answer = refuse(c);
         result = 'failed';
@@ -497,12 +567,15 @@ export async function answerDeletion(d: PendingDeletion, choice: 'delete' | 'kee
         // The call ended while GitHub was asked (Esc, or the session closed).
         return 'refused';
       } else {
-        const r = await gh(['api', ...hostArgs(d.pr), '-X', 'DELETE', `${repoPath(d.pr)}/pulls/comments/${id}`], d.cwd).catch(() => null);
-        if (r && r.code === 0) {
+        const r = await gh(['api', ...hostArgs(d.pr), '-X', 'DELETE', `${repoPath(d.pr)}/pulls/comments/${id}`], d.cwd);
+        if (r === 'timeout') {
+          answer = refuse(`The user approved, but ${SLOW_GH} Comment ${id} may or may not be deleted: list_posted_comments says which.`);
+          result = 'failed';
+        } else if (r && r.code === 0) {
           answer = ok(`Deleted comment ${id} on GitHub, as the user approved.`);
           result = 'deleted';
         } else {
-          answer = refuse(`The user approved, but GitHub did not delete comment ${id}: ${r ? ghMessage(r) : 'GitHub CLI (gh) could not be run.'}`);
+          answer = refuse(`The user approved, but GitHub did not delete comment ${id}: ${r ? ghMessage(r) : NO_GH}`);
           result = 'failed';
         }
       }
@@ -516,6 +589,38 @@ export async function answerDeletion(d: PendingDeletion, choice: 'delete' | 'kee
   } finally {
     answering.delete(d.requestId);
     retire(d.requestId);
+  }
+}
+
+/** The tool's name in a transcript. */
+export const DELETE_POSTED_TOOL = 'mcp__albedo__delete_posted_comment';
+
+/** The `delete_posted_comment` calls `messages` hold a result for, by tool_use id. */
+export function finishedDeletionCalls(messages: readonly Message[]): Set<string> {
+  const calls = new Set<string>();
+  for (const m of messages) {
+    if (m.role === 'tool_use' && m.toolName === DELETE_POSTED_TOOL) {
+      const id = toolUseIdOf(m);
+      if (id) calls.add(id);
+    }
+  }
+  const out = new Set<string>();
+  for (const m of messages) {
+    if (m.role !== 'tool_result') continue;
+    const id = toolUseIdOf(m);
+    if (id && (calls.has(id) || m.toolName === DELETE_POSTED_TOOL)) out.add(id);
+  }
+  return out;
+}
+
+/**
+ * The transcript recorded results for these calls: whichever way they
+ * ended, a card still up for one is over (as `retireFinishedPreviews`).
+ */
+export function retireFinishedDeletions(taskId: number, finished: ReadonlySet<string>): void {
+  if (finished.size === 0) return;
+  for (const d of [...waiting.values()]) {
+    if (d.taskId === taskId && d.toolUseId !== null && finished.has(d.toolUseId) && !answering.has(d.requestId)) cancelled(d.requestId);
   }
 }
 

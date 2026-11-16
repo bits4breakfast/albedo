@@ -335,6 +335,23 @@ export async function restoreComment(c: ReviewComment): Promise<void> {
   changed(c.taskId);
 }
 
+/**
+ * Remove one GitHub Draft the session asked to remove (#427): only while it
+ * is still a draft of this task waiting for Submit Review, checked in the
+ * same statement. True when it was removed. Not `deleteComment`, which
+ * removes whatever the person points at, and stays that way.
+ */
+export async function deleteUnsentDraft(taskId: number, id: number): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.execute(
+    `DELETE FROM comments WHERE id = $1 AND task_id = $2 AND github = 'draft' AND sent_at IS NULL AND resolved_at IS NULL`,
+    [id, taskId],
+  );
+  const removed = Number(res.rowsAffected ?? 0) > 0;
+  if (removed) changed(taskId);
+  return removed;
+}
+
 export async function deleteComment(taskId: number, id: number): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM comments WHERE id = $1`, [id]);

@@ -176,6 +176,7 @@ impl Live {
             .env_clear()
             .env("HOME", home)
             .env("ALBEDO_TASK_ID", task)
+            .env("ALBEDO_TASK_TOKEN", "c0ffee00c0ffee00c0ffee00")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -375,6 +376,8 @@ fn a_draft_list_is_answered_by_the_app_through_its_file() {
     until("the inbox line", || !inbox_lines(&home, "14").is_empty());
     let line = inbox_lines(&home, "14").remove(0);
     assert_eq!(line["tool"], "list_github_drafts");
+    // The spawn's token, from the environment, on the line (#427).
+    assert_eq!(line["token"], "c0ffee00c0ffee00c0ffee00");
     let req = line["id"].as_str().unwrap().to_string();
     assert!(s.reply(Duration::from_millis(400)).is_none(), "it waits");
     let previews = home.join(".albedo/previews");

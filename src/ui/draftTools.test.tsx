@@ -106,6 +106,31 @@ describe('a draft the session removed, in Files ▸ Comments', () => {
   });
 });
 
+describe('the GitHub Draft group after the review (#427)', () => {
+  it('offers no Submit Review… when only removals are left, and lists removals by file then line', async () => {
+    await sessionRemoves({ path: 'src/z.ts', lineStart: 1, lineEnd: 1, anchorText: 'one', body: 'Zed' });
+    await sessionRemoves({ path: 'src/a.ts', lineStart: 3, lineEnd: 3, anchorText: 'three', body: 'Ay three' });
+    await sessionRemoves({ path: 'src/a.ts', lineStart: 1, lineEnd: 1, anchorText: 'one', body: 'Ay one' });
+    render(list());
+    const group = await screen.findByRole('group', { name: 'GitHub Draft, 0' });
+    expect(within(group).queryByRole('button', { name: /Submit Review/ })).toBeNull();
+    const order = within(group)
+      .getAllByText(/Removed by the session/)
+      .map((n) => n.textContent);
+    expect(order.map((t) => /“(.*)”/.exec(t ?? '')?.[1])).toEqual(['Ay one', 'Ay three', 'Zed']);
+  });
+
+  it('draws a removed draft on removed lines with the grey edge, not the red one', async () => {
+    const { RemovedDraftCardView } = await import('./editor/CommentViews');
+    const row = { id: 9, taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'x', body: 'Old', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: 'draft' as const, replyTo: null, side: 'old' as const };
+    const { container } = render(<RemovedDraftCardView comment={row} reason={null} onUndo={() => {}} />);
+    const card = container.querySelector('.ed-cmt')!;
+    expect(card.getAttribute('data-state')).toBe('removed');
+    expect(card.hasAttribute('data-side')).toBe(false);
+    expect(card.textContent).toContain('On removed line 2');
+  });
+});
+
 describe('To Send', () => {
   it('never counts or shows a GitHub Draft or a removal line', async () => {
     await addComment({ taskId: task.id, path: 'src/a.ts', lineStart: 1, lineEnd: 1, anchorText: 'one', body: 'Kept draft', github: 'draft' });
@@ -161,7 +186,7 @@ describe('the card asking to delete a posted comment', () => {
         id: 11, author: 'sam', path: 'src/report/daily.ts', line: 42, originalLine: 42, side: 'RIGHT', body: 'use the account timezone',
         createdAt: Date.now() - 2 * 3_600_000, url: null, inReplyTo: null, prApiUrl: null,
       },
-      reason: 'Already fixed in the latest commit.', at: Date.now(), cwd: '/wt/a',
+      reason: 'Already fixed in the latest commit.', at: Date.now(), cwd: '/wt/a', toolUseId: null,
     };
     gate.__seedDeletionForTests(d);
     render(<DeletionCard taskId={task.id} />);

@@ -43,7 +43,8 @@
  * written as a preview's is; `github_cancelled` is the server's record that
  * one ended without it. They go to {@link onGithubLine}, and only
  * `githubGate.ts` answers them. The line carries what the session asked
- * (`id`, `reason`), never which task: that is the file's.
+ * (`id`, `reason`), never which task: that is the file's. It also carries the
+ * spawn's `token` (mcpToken.ts), read here for its shape only.
  *
  * ## Nothing in a line is trusted
  *
@@ -197,7 +198,7 @@ export type PreviewLine =
     });
 
 /** The checks every line shares: version, the task's own file, id, time, args. */
-function lineHead(line: string, fileTaskId: number): { base: Base; tool: unknown; a: Args } | null {
+function lineHead(line: string, fileTaskId: number): { base: Base; tool: unknown; a: Args; token: string | null } | null {
   if (line.length === 0 || new TextEncoder().encode(line).length >= MAX_LINE_BYTES) return null;
   let raw: unknown;
   try {
@@ -214,10 +215,14 @@ function lineHead(line: string, fileTaskId: number): { base: Base; tool: unknown
   if (typeof o.at !== 'number' || !Number.isFinite(o.at) || o.at <= 0) return null;
   const args = o.args;
   if (typeof args !== 'object' || args === null || Array.isArray(args)) return null;
-  return { base: { id: o.id, taskId: fileTaskId, at: o.at }, tool: o.tool, a: args as Args };
+  // The session's token (#427), when the server had one: checked by whoever acts on the line.
+  const token = typeof o.token === 'string' && TOKEN.test(o.token) ? o.token : null;
+  return { base: { id: o.id, taskId: fileTaskId, at: o.at }, tool: o.tool, a: args as Args, token };
 }
 
 const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,100}$/;
+/** A session's token (#427, mcpToken.ts): its shape only; whose it is, the gate decides. */
+const TOKEN = /^[A-Za-z0-9-]{16,100}$/;
 
 /**
  * One preview line of `task-<fileTaskId>.jsonl`, or null when it is anything
@@ -307,15 +312,26 @@ export function parseInboxLine(line: string, fileTaskId: number): InboxRequest |
  * an answer. Not a queued request: see the module header. `commentId` is
  * the session's `id`: a draft's row id, or a GitHub comment's REST id.
  */
-export type GithubLine =
-  | (Base & { tool: 'list_github_drafts' | 'list_posted_comments' })
-  | (Base & { tool: 'delete_github_draft' | 'delete_posted_comment'; commentId: number; reason: string | null })
-  | (Base & {
-      tool: 'github_cancelled';
-      /** The call's line id. */
-      request: string;
-      reason: string;
-    });
+export type GithubLine = Base & {
+  /** The writing session's token (mcpToken.ts), or null when the line had none. */
+  token: string | null;
+} & (
+    | { tool: 'list_github_drafts' | 'list_posted_comments' }
+    | { tool: 'delete_github_draft'; commentId: number; reason: string | null }
+    | {
+        tool: 'delete_posted_comment';
+        commentId: number;
+        reason: string | null;
+        /** Claude Code's id for the call in the transcript, when it gave one. */
+        toolUseId: string | null;
+      }
+    | {
+        tool: 'github_cancelled';
+        /** The call's line id. */
+        request: string;
+        reason: string;
+      }
+  );
 
 /**
  * One GitHub line of `task-<fileTaskId>.jsonl`, or null when it is anything
@@ -324,19 +340,24 @@ export type GithubLine =
 export function parseGithubLine(line: string, fileTaskId: number): GithubLine | null {
   const head = lineHead(line, fileTaskId);
   if (!head) return null;
-  const { base, tool, a } = head;
+  const { tool, a } = head;
+  const base = { ...head.base, token: head.token };
   switch (tool) {
     case 'list_github_drafts':
     case 'list_posted_comments':
       return onlyKeys(a, []) ? { ...base, tool } : null;
     case 'delete_github_draft':
     case 'delete_posted_comment': {
-      if (!onlyKeys(a, ['id', 'reason'])) return null;
+      const posted = tool === 'delete_posted_comment';
+      if (!onlyKeys(a, posted ? ['id', 'reason', 'toolUseId'] : ['id', 'reason'])) return null;
       const id = a.id;
       if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0 || id > MAX_TOOL_ID) return null;
       const reason = optionalText(a, 'reason', CAPS.deleteReason);
       if (reason === undefined) return null;
-      return { ...base, tool, commentId: id, reason };
+      if (!posted) return { ...base, tool, commentId: id, reason };
+      const t = a.toolUseId;
+      if (t !== undefined && (typeof t !== 'string' || !TOOL_USE_ID.test(t))) return null;
+      return { ...base, tool, commentId: id, reason, toolUseId: typeof t === 'string' ? t : null };
     }
     case 'github_cancelled': {
       if (!onlyKeys(a, ['request', 'reason'])) return null;

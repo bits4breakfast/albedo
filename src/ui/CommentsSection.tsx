@@ -417,7 +417,9 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
           <div className="tf-comments-sub">
             GitHub Draft · {drafts.length}
             {/* The same dialog as the task bar's Submit Review, as Send above
-                is ⇧⌘S's: where the drafts are listed, they can go. */}
+                is ⇧⌘S's: where the drafts are listed, they can go. Not on a
+                group left with only removals (#427): nothing here to send. */}
+            {drafts.length > 0 ? (
             <button
               type="button"
               className="tf-btn tf-comments-send"
@@ -426,6 +428,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
             >
               Submit Review…
             </button>
+            ) : null}
           </div>
           {drafts.map((c) =>
             c.replyTo === null ? (

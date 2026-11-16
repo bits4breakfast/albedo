@@ -116,10 +116,23 @@ fn github_lines() -> String {
             json!({"id": 1834567890u64, "reason": "Already fixed in the latest commit"}),
         ),
     ];
+    const TOKEN: &str = "0f1e2d3c4b5a69788796a5b4";
     let mut out = String::new();
     for (i, (tool, args)) in calls.iter().enumerate() {
-        let a = tools::validate(tool, Some(args), NOW).expect("fixture calls are valid");
-        let bytes = inbox::line(TASK, a.tool, a.args, NOW, &format!("fixture-g{}", i + 1)).unwrap();
+        let mut a = tools::validate(tool, Some(args), NOW).expect("fixture calls are valid");
+        // As `Server::call` adds it for a posted comment's deletion.
+        if a.tool == tools::DELETE_POSTED_COMMENT {
+            a.args.insert("toolUseId".into(), "toolu_01DEL".into());
+        }
+        let bytes = inbox::line_with_token(
+            TASK,
+            a.tool,
+            a.args,
+            NOW,
+            &format!("fixture-g{}", i + 1),
+            Some(TOKEN),
+        )
+        .unwrap();
         out.push_str(std::str::from_utf8(&bytes).unwrap());
     }
     let mut c = serde_json::Map::new();
@@ -128,7 +141,15 @@ fn github_lines() -> String {
         "reason".into(),
         albedo_mcp::preview::clean_reason(Some("AbortError: user-cancel")).into(),
     );
-    let cancel = inbox::line(TASK, inbox::GITHUB_CANCELLED, c, NOW + 1, "fixture-g6").unwrap();
+    let cancel = inbox::line_with_token(
+        TASK,
+        inbox::GITHUB_CANCELLED,
+        c,
+        NOW + 1,
+        "fixture-g6",
+        Some(TOKEN),
+    )
+    .unwrap();
     out.push_str(std::str::from_utf8(&cancel).unwrap());
     out
 }

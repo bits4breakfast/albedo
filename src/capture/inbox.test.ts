@@ -264,7 +264,7 @@ describe('GitHub tool lines (#427)', () => {
     const { reqs, previews, github } = parseAllLines(text, 12);
     expect(reqs).toEqual([]);
     expect(previews).toEqual([]);
-    const base = { taskId: 12, at: NOW };
+    const base = { taskId: 12, at: NOW, token: '0f1e2d3c4b5a69788796a5b4' };
     expect(github).toEqual([
       { ...base, id: 'fixture-g1', tool: 'list_github_drafts' },
       { ...base, id: 'fixture-g2', tool: 'delete_github_draft', commentId: 41, reason: 'Same point as the draft on line 58' },
@@ -276,8 +276,9 @@ describe('GitHub tool lines (#427)', () => {
         tool: 'delete_posted_comment',
         commentId: 1834567890,
         reason: 'Already fixed in the latest commit',
+        toolUseId: 'toolu_01DEL',
       },
-      { taskId: 12, at: NOW + 1, id: 'fixture-g6', tool: 'github_cancelled', request: 'fixture-g5', reason: 'AbortError: user-cancel' },
+      { taskId: 12, at: NOW + 1, token: '0f1e2d3c4b5a69788796a5b4', id: 'fixture-g6', tool: 'github_cancelled', request: 'fixture-g5', reason: 'AbortError: user-cancel' },
     ]);
   });
 
@@ -292,6 +293,12 @@ describe('GitHub tool lines (#427)', () => {
       expect(parseGithubLine(gl('delete_posted_comment', { id }), 12)).toBeNull();
     }
     expect(parseGithubLine(gl('delete_github_draft', {}), 12)).toBeNull();
+    // A transcript id only on a posted comment's deletion, and of the plain shape.
+    expect(parseGithubLine(gl('delete_github_draft', { id: 3, toolUseId: 'toolu_1' }), 12)).toBeNull();
+    expect(parseGithubLine(gl('delete_posted_comment', { id: 3, toolUseId: 'a b' }), 12)).toBeNull();
+    // A token not of the token's shape is no token.
+    const odd = JSON.stringify({ v: 1, task: 12, tool: 'list_github_drafts', args: {}, at: NOW, id: 'g-1', token: 'x y' });
+    expect(parseGithubLine(odd, 12)).toMatchObject({ token: null });
   });
 
   it('refuses a reason on two lines or over the cap', () => {

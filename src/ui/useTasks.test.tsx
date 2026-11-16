@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
   previewListeners: new Set<(taskId: number) => void>(),
   deletion: new Map<number, unknown>(),
   deletionListeners: new Set<(taskId: number) => void>(),
+  retireDeletions: vi.fn(),
 }));
 
 vi.mock('../db', () => ({
@@ -77,6 +78,7 @@ vi.mock('../capture/previewGate', async () => ({
 vi.mock('../capture/githubGate', async () => ({
   ...(await vi.importActual<typeof import('../capture/githubGate')>('../capture/githubGate')),
   pendingDeletion: (taskId: number) => h.deletion.get(taskId) ?? null,
+  retireFinishedDeletions: h.retireDeletions,
   onDeletionChange: (cb: (taskId: number) => void) => {
     h.deletionListeners.add(cb);
     return () => h.deletionListeners.delete(cb);
@@ -550,6 +552,15 @@ describe('waiting on you outside the transcript: a prompt, the trust dialog, a p
       expect(result.current.tasks[0]?.status).toBe('idle');
     });
   }
+
+  it('a status read also retires deletion cards whose call the transcript ended (#427)', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), finished('s1', T0 - 60_000)]);
+    h.retireDeletions.mockClear();
+    renderHook(() => useTasks());
+    await tick();
+    expect(h.retireDeletions).toHaveBeenCalledWith(1, expect.any(Set));
+  });
 
   it('leaves an archived task alone, and stops listening on unmount', async () => {
     h.rows = [task({ status: 'archived' })];
