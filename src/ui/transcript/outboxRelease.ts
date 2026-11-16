@@ -23,6 +23,7 @@
 
 import { onPromptChange, pendingPrompt } from '../../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
+import { onPreviewChange, pendingPreview } from '../../capture/previewGate';
 import { markCommentsSent } from '../../db/comments';
 import { isOffline, onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import type { TaskStatus } from '../../types';
@@ -165,7 +166,9 @@ export function noteShownStatus(taskId: number | null, status: TaskStatus | null
 /** Whether typed text would land in a dialog. `status` defaults to what `noteShownStatus` said. */
 export function promptOpen(taskId: number, status?: TaskStatus | null): boolean {
   const s = status !== undefined ? status : shown?.taskId === taskId ? shown.status : null;
-  return pendingPrompt(taskId) !== null || isTrustWaiting(taskId) || s === 'blocked';
+  // A waiting preview (#348) too: the session is inside a tool call that
+  // waits, and typed text would only queue behind it.
+  return pendingPrompt(taskId) !== null || isTrustWaiting(taskId) || pendingPreview(taskId) !== null || s === 'blocked';
 }
 
 export function conditionsFor(taskId: number, status?: TaskStatus | null): ReleaseConditions {
@@ -230,6 +233,9 @@ function start(): () => void {
     }),
     onTrustWaiting((id, waiting) => {
       if (!waiting) tryRelease(id);
+    }),
+    onPreviewChange((id) => {
+      if (pendingPreview(id) === null) tryRelease(id);
     }),
     onTurnChange(tryRelease),
     onHeldReleased((id, held) => {

@@ -149,13 +149,18 @@ describe('Albedo MCP server (#157)', () => {
     expect(withMcpConfig([], 7, server).slice(4)).toEqual(['--']);
   });
 
-  it('allows exactly the four tools', () => {
+  it('allows exactly the five tools', () => {
     expect(MCP_TOOLS).toEqual([
       'mcp__albedo__create_reminder',
       'mcp__albedo__request_session',
       'mcp__albedo__notify_blocked',
       'mcp__albedo__set_task_summary',
+      'mcp__albedo__show_preview',
     ]);
+  });
+
+  it('sets no timeout of its own: a preview waits as long as Claude Code allows (#348)', () => {
+    expect(JSON.parse(mcpConfigArg(7, server)).mcpServers.albedo).not.toHaveProperty('timeout');
   });
 
   it('keeps every planned flag for every spawn mode', () => {

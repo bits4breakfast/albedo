@@ -30,13 +30,8 @@ const bar = (over: Partial<Parameters<typeof GitBar>[0]> = {}) => (
 );
 
 describe('GitBar head controls', () => {
-  it('opens the Review Guide from the head, and offers none for a chat (#186)', () => {
-    const onGuide = vi.fn();
-    render(bar({ onGuide }));
-    fireEvent.click(screen.getByRole('button', { name: 'Review Guide' }));
-    expect(onGuide).toHaveBeenCalledTimes(1);
-    cleanup();
-    render(bar({ onGuide, task: { ...task, kind: 'chat' } as Task }));
+  it('has no Review Guide button: the Guide tab is beside Files (#335)', () => {
+    render(bar());
     expect(screen.queryByRole('button', { name: 'Review Guide' })).toBeNull();
   });
 

@@ -1,0 +1,2 @@
+{"args":{"note":"Buttons moved onto the row","question":"Does the popover read as attached to the row?\nBe blunt.","title":"Proposed row","toolUseId":"toolu_01ABCdef"},"at":1793692800000,"id":"fixture-p1","task":12,"tool":"show_preview","v":1}
+{"args":{"reason":"AbortError: user-cancel","request":"fixture-p1"},"at":1793692800001,"id":"fixture-p2","task":12,"tool":"preview_cancelled","v":1}

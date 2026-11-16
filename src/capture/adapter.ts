@@ -18,7 +18,7 @@
  *    into several rows without renumbering anything that came before.
  */
 
-import type { Message, MessageRole, ParsedMessage } from '../types';
+import type { ApiErrorKind, Message, MessageRole, ParsedMessage } from '../types';
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -50,35 +50,15 @@ const TRUNCATION_MARKER = '\n… [truncated by Albedo; full payload in raw_json]
  * `file-history-delta`, `frame-link`, `artifact-autoreact-ledger`,
  * `artifact-comment-monitor`). An allowlist means a new bookkeeping type is
  * ignored by default rather than polluting history.
+ *
+ * Every type known to be left out, so "why is X missing?" has an answer here:
+ * `mode`, `permission-mode`, `atis-latch`, `ai-title`, `custom-title`,
+ * `last-prompt`, `bridge-session`, `queue-operation`, `file-history-snapshot`,
+ * `file-history-delta`, `agent-name`, `pr-link`, `frame-link`,
+ * `worktree-state`, `relocated`, `cost-state`, `artifact-autoreact-ledger`,
+ * `artifact-comment-monitor`, `attachment`, `summary`.
  */
 const PERSISTED_LINE_TYPES = new Set(['user', 'assistant', 'system']);
-
-/**
- * Documented for humans only — the parser is allowlist-driven, so this set is
- * not consulted. Kept so the "why is X missing?" question has an answer here.
- */
-export const BOOKKEEPING_LINE_TYPES: readonly string[] = [
-  'mode',
-  'permission-mode',
-  'atis-latch',
-  'ai-title',
-  'custom-title',
-  'last-prompt',
-  'bridge-session',
-  'queue-operation',
-  'file-history-snapshot',
-  'file-history-delta',
-  'agent-name',
-  'pr-link',
-  'frame-link',
-  'worktree-state',
-  'relocated',
-  'cost-state',
-  'artifact-autoreact-ledger',
-  'artifact-comment-monitor',
-  'attachment',
-  'summary',
-];
 
 /** Input keys that name the file a tool acted on, in priority order. */
 const PATH_INPUT_KEYS = ['file_path', 'path', 'notebook_path'] as const;
@@ -133,10 +113,19 @@ export function fullBodyOf(row: Pick<ParsedMessage, 'body' | 'rawJson' | 'seq'>)
  * `text` must contain only complete lines; the watcher holds back a partial
  * trailing line until the newline arrives. If one slips through anyway it
  * fails to parse and is dropped, which is the correct outcome either way.
+ *
+ * `file` names the transcript the chunk was read from, when the caller tails
+ * one chunk at a time. A tool's result is written once the tool has run,
+ * nearly always in a later file event than its call, and pairing within one
+ * chunk left most live results with no tool name (#362). With `file`, what
+ * the calls said is kept per file across chunks ({@link FILE_PAIRING_MAX_FILES}
+ * files, {@link FILE_PAIRING_MAX_CALLS} calls each, least recent out first),
+ * and a chunk from line 0 -- a new or rewritten file -- starts it afresh.
+ * Without `file`, the text is the whole story and pairs only within itself.
  */
-export function parseTranscript(text: string, fromLineIndex = 0): ParsedMessage[] {
+export function parseTranscript(text: string, fromLineIndex = 0, file?: string): ParsedMessage[] {
   const out: ParsedMessage[] = [];
-  const pairing: ToolUsePairing = new Map();
+  const pairing: ToolUsePairing = file === undefined ? new Map() : filePairing(file, fromLineIndex === 0);
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -144,7 +133,39 @@ export function parseTranscript(text: string, fromLineIndex = 0): ParsedMessage[
     const rows = parseLineWithContext(line, fromLineIndex + i, pairing);
     for (const r of rows) out.push(r);
   }
+  if (file !== undefined) trimPairing(pairing);
   return out;
+}
+
+/** Transcripts whose calls are remembered across chunks. */
+export const FILE_PAIRING_MAX_FILES = 64;
+/** Calls remembered per transcript, newest kept. */
+export const FILE_PAIRING_MAX_CALLS = 2000;
+const filePairings = new Map<string, ToolUsePairing>();
+
+function filePairing(file: string, fresh: boolean): ToolUsePairing {
+  let pairing = filePairings.get(file);
+  filePairings.delete(file);
+  if (pairing === undefined || fresh) pairing = new Map();
+  filePairings.set(file, pairing);
+  while (filePairings.size > FILE_PAIRING_MAX_FILES) {
+    const oldest = filePairings.keys().next();
+    if (oldest.done === true) break;
+    filePairings.delete(oldest.value);
+  }
+  return pairing;
+}
+
+function trimPairing(pairing: ToolUsePairing): void {
+  for (const id of pairing.keys()) {
+    if (pairing.size <= FILE_PAIRING_MAX_CALLS) return;
+    pairing.delete(id);
+  }
+}
+
+/** For tests: forget every file's calls, as a restart does. */
+export function __resetFilePairings(): void {
+  filePairings.clear();
 }
 
 /**
@@ -176,7 +197,7 @@ export function countLines(text: string): number {
  */
 export function toolCallIdOf(m: Pick<ParsedMessage, 'role' | 'seq' | 'rawJson'>): string | null {
   if (m.role !== 'tool_use' && m.role !== 'tool_result') return null;
-  const line = safeParse(m.rawJson);
+  const line = rowLine(m.rawJson);
   if (!line) return null;
   const blocks = contentBlocksOf(line);
   if (!blocks) return null;
@@ -202,6 +223,8 @@ export interface LineUsage {
  * Read defensively: the field set drifts between Claude Code releases.
  */
 export function extractUsage(rawJson: string): LineUsage | null {
+  // Uncached: the in-memory usage fallbacks scan thousands of rows at once,
+  // which would push the visible pane's parses out of the row cache.
   const line = safeParse(rawJson);
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
@@ -292,7 +315,7 @@ export function contextUsedFrom(usage: LineUsage): number {
 
 /** `message.model` off an assistant line, or null. */
 export function modelOf(rawJson: string): string | null {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -320,7 +343,7 @@ const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp
  * request the app never meant to make.
  */
 export function imageAt(rawJson: string, seq: number): TranscriptImage | null {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   const message = line?.['message'];
   if (!isRecord(message) || !Array.isArray(message['content'])) return null;
   return imageOf((message['content'] as unknown[])[seq % SEQ_STRIDE]);
@@ -333,7 +356,7 @@ export function imageAt(rawJson: string, seq: number): TranscriptImage | null {
  * with an `[image]` line per picture -- this is how those are recovered.
  */
 export function imagesIn(rawJson: string): TranscriptImage[] {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line) return [];
   const message = line['message'];
   const att = line['attachment'];
@@ -374,7 +397,11 @@ function imageOf(block: unknown): TranscriptImage | null {
  * callers must fall back rather than assume 'finished'.
  */
 export function stopReasonOf(rawJson: string): string | null {
-  const line = safeParse(rawJson);
+  return stopReasonIn(rowLine(rawJson));
+}
+
+/** {@link stopReasonOf} on a line already parsed (ingest parses its own). */
+function stopReasonIn(line: Record<string, unknown> | null): string | null {
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -392,6 +419,64 @@ export const TURN_ENDING_STOP_REASONS: ReadonlySet<string> = new Set([
   'stop_sequence',
 ]);
 
+/** An API error line, as {@link apiErrorOf} reads it. */
+export interface ApiErrorLine {
+  kind: ApiErrorKind;
+  /** Claude Code's own text ("API Error: The response stopped arriving. …"). */
+  text: string;
+}
+
+/**
+ * The API error an assistant line records, or null for any other line (#338).
+ *
+ * Claude Code writes a failed request into the transcript as an assistant
+ * line of its own: `isApiErrorMessage: true`, model `<synthetic>`, one text
+ * block with what it shows in the terminal, `error` (the class:
+ * `server_error`, `rate_limit`, `authentication_failed`, `invalid_request`,
+ * …) and, on newer builds, `apiError` (the cause: `stream_idle_timeout`,
+ * `computer_slept`, `connection_failed`). Measured across this machine's
+ * transcripts (2.1.30x-2.1.322), main thread and subagents:
+ *
+ *   apiError             error                  text
+ *   stream_idle_timeout  server_error           API Error: The response stopped arriving. …
+ *   computer_slept       server_error           API Error: Your computer went to sleep mid-response. …
+ *   connection_failed    server_error           API Error: Can't reach the API server — … (ENOTFOUND)
+ *   (none)               server_error           the same two, on older builds
+ *   (none)               server_error           API Error: Connection lost while your computer was asleep
+ *   (none)               authentication_failed  Login expired · Please run /login
+ *   (none)               invalid_request        API Error: … safeguards flagged this message …
+ *
+ * Overloaded and rate-limit errors did not occur here; they are read from
+ * `error: rate_limit` and from the words, which is all there is to go on.
+ * Anything not recognised is `other`, never dropped: the row still says the
+ * turn stopped on an error.
+ */
+export function apiErrorOf(rawJson: string): ApiErrorLine | null {
+  if (!rawJson.includes('isApiErrorMessage')) return null;
+  const line = rowLine(rawJson);
+  if (!line || line['type'] !== 'assistant' || line['isApiErrorMessage'] !== true) return null;
+  const blocks = contentBlocksOf(line);
+  const message = line['message'];
+  const text = (
+    blocks
+      ? blocks.flatMap((b) => (isRecord(b) && b['type'] === 'text' && typeof b['text'] === 'string' ? [b['text']] : [])).join('\n')
+      : isRecord(message) && typeof message['content'] === 'string'
+        ? message['content']
+        : ''
+  ).trim();
+  return { kind: apiErrorKindOf(stringOr(line['apiError'], ''), stringOr(line['error'], ''), text), text };
+}
+
+function apiErrorKindOf(cause: string, error: string, text: string): ApiErrorKind {
+  if (cause === 'stream_idle_timeout' || /response stopped arriving/i.test(text)) return 'stopped';
+  if (cause === 'computer_slept' || /computer (?:went to sleep|was asleep)/i.test(text)) return 'slept';
+  if (cause === 'connection_failed' || /reach the API server/i.test(text)) return 'offline';
+  if (error === 'authentication_failed' || /\/login\b/.test(text)) return 'signed-out';
+  if (error === 'rate_limit' || /rate.?limit|usage limit/i.test(text)) return 'rate-limited';
+  if (cause === 'overloaded' || /overloaded|\b529\b/i.test(text)) return 'overloaded';
+  return 'other';
+}
+
 /**
  * True for the line that closes a slash command Claude Code ran itself, with
  * no model turn -- `/clear`, `/model`. Without it the command's envelope, a
@@ -403,7 +488,7 @@ export const TURN_ENDING_STOP_REASONS: ReadonlySet<string> = new Set([
  * with `<local-command-stdout>` (`/model`).
  */
 export function endsLocalCommand(rawJson: string): boolean {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line) return false;
   if (line['type'] === 'system') return line['subtype'] === 'local_command';
   if (line['type'] !== 'user') return false;
@@ -411,6 +496,17 @@ export function endsLocalCommand(rawJson: string): boolean {
   if (!isRecord(message)) return false;
   const content = message['content'];
   return typeof content === 'string' && content.trimStart().startsWith('<local-command-stdout>');
+}
+
+/**
+ * True for a stored `user` row carrying what a local command printed to
+ * stderr: how a `/compact` that throws ends ("No messages to compact",
+ * "Error during compaction"; Claude Code 2.1.323). Kept apart from
+ * `endsLocalCommand`, which the turn and queue rules read: only the echo of
+ * a command Albedo sent (ui/transcript/commandEcho.ts) uses this.
+ */
+export function isLocalCommandStderr(m: { role: string; body: string | null }): boolean {
+  return m.role === 'user' && (m.body ?? '').trimStart().startsWith('<local-command-stderr>');
 }
 
 /**
@@ -427,7 +523,7 @@ export function endsLocalCommand(rawJson: string): boolean {
  * reads as user rows already. The content is the same envelope either way.
  */
 export function isLocalCommandLine(rawJson: string): boolean {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line !== null && line['type'] === 'system' && line['subtype'] === 'local_command';
 }
 
@@ -444,7 +540,7 @@ export const SEND_MESSAGE_TOOL = 'SendMessage';
 
 /** `origin.msg_id` of a line another session sent. Null for anything else. */
 export function peerMessageIdOf(rawJson: string): string | null {
-  const origin = safeParse(rawJson)?.['origin'];
+  const origin = rowLine(rawJson)?.['origin'];
   if (!isRecord(origin) || origin['kind'] !== 'peer') return null;
   const id = origin['msg_id'];
   return typeof id === 'string' && id.length > 0 ? id : null;
@@ -452,7 +548,7 @@ export function peerMessageIdOf(rawJson: string): string | null {
 
 /** The `msg_id` a `SendMessage` tool_result reports as delivered. */
 export function sentMessageIdOf(rawJson: string): string | null {
-  const message = safeParse(rawJson)?.['message'];
+  const message = rowLine(rawJson)?.['message'];
   const content = isRecord(message) ? message['content'] : null;
   if (!Array.isArray(content)) return null;
   for (const block of content) {
@@ -477,7 +573,7 @@ export function sentMessageIdOf(rawJson: string): string | null {
  * "run directly in Claude Code" caveat), never something anyone typed.
  */
 export function isMetaLine(rawJson: string): boolean {
-  return safeParse(rawJson)?.['isMeta'] === true;
+  return rowLine(rawJson)?.['isMeta'] === true;
 }
 
 /**
@@ -524,7 +620,7 @@ export type HarnessInput = 'wakeup' | 'scheduled-prompt' | 'note';
 export function harnessInputOf(rawJson: string): HarnessInput | null {
   // Cheap pre-filter: nearly every row is neither.
   if (!rawJson.includes('isMeta') && !rawJson.includes('scheduled_task_fire')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line) return null;
   if (line['type'] === 'system') return line['subtype'] === 'scheduled_task_fire' ? 'wakeup' : null;
   if (line['type'] !== 'user' || line['isMeta'] !== true || line['origin'] !== undefined) return null;
@@ -563,7 +659,7 @@ export function harnessInputOf(rawJson: string): HarnessInput | null {
 export function skillSourceToolUseIdOf(rawJson: string): string | null {
   // Cheap pre-filter: nearly every row is not one.
   if (!rawJson.includes('sourceToolUseID')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'user' || line['isMeta'] !== true || line['origin'] !== undefined) return null;
   const id = line['sourceToolUseID'];
   if (typeof id !== 'string' || id === '') return null;
@@ -602,7 +698,7 @@ export interface CompactBoundary {
  */
 export function compactBoundaryOf(rawJson: string): CompactBoundary | null {
   if (!rawJson.includes('compact_boundary')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'system' || line['subtype'] !== 'compact_boundary') return null;
   const meta = isRecord(line['compactMetadata']) ? line['compactMetadata'] : {};
   const trigger = meta['trigger'];
@@ -632,7 +728,7 @@ export interface CompactSummary {
  */
 export function compactSummaryOf(rawJson: string): CompactSummary | null {
   if (!rawJson.includes('isCompactSummary')) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'user' || line['isCompactSummary'] !== true) return null;
   const message = line['message'];
   const text = isRecord(message) ? textOfUnknown(message['content']) : null;
@@ -652,7 +748,7 @@ export function compactSummaryOf(rawJson: string): CompactSummary | null {
  */
 export function isNoticeLine(rawJson: string): boolean {
   if (!rawJson.includes('informational')) return false;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line?.['type'] === 'system' && line['subtype'] === 'informational';
 }
 
@@ -663,16 +759,18 @@ export function isNoticeLine(rawJson: string): boolean {
  * Stored as a `system` row; the `bridge-session` lines that follow are
  * bookkeeping and are not.
  *
- * Measured on Claude Code 2.1.296-2.1.312: 11 such lines, all "is active", all
- * with `url`. No line is written when it goes off -- it ends with the process
- * -- so this says only that it came on, and when (the row's `ts`).
+ * Measured on Claude Code 2.1.282-2.1.316: 10 such lines, all "is active", all
+ * with `url`; none on 2.1.317 or later here, where no `/remote-control`
+ * was recorded at all (no command envelope either). It says only that it came on in this process, and when (the row's `ts`). A
+ * process that comes back with Remote Control already on (a resume) writes no
+ * such line: see {@link RemoteSessionFact}.
  */
 export const REMOTE_CONTROL_SUBTYPE = 'bridge_status';
 
 /** The session's claude.ai link from a "Remote Control is active" line, else null. */
 export function remoteControlUrlOf(rawJson: string): string | null {
   if (!rawJson.includes(REMOTE_CONTROL_SUBTYPE)) return null;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'system' || line['subtype'] !== REMOTE_CONTROL_SUBTYPE) return null;
   if (line['isSidechain'] === true) return null;
   const content = typeof line['content'] === 'string' ? line['content'] : '';
@@ -681,6 +779,179 @@ export function remoteControlUrlOf(rawJson: string): string | null {
   if (typeof url === 'string' && url.trim() !== '') return url.trim();
   // A build that carries the link only in the text.
   return /https?:\/\/\S+/.exec(content)?.[0] ?? null;
+}
+
+/**
+ * Which claude.ai link the session is reachable at, as Claude Code tells the
+ * model: `{type: "attachment", attachment: {type: "remote_session_change",
+ * url: "https://claude.ai/code/session_…" | null, commit, pr, …}}`. `url` is
+ * the Remote Control link while Remote Control is on, null while it is off.
+ *
+ * Measured across the transcripts on this machine, Claude Code 2.1.282-2.1.322
+ * (201 such lines, 12 sessions with a link): it is written with the first
+ * prompt of every `claude` process -- null, or the link when the process came
+ * back with Remote Control already on -- and again with the first prompt after
+ * the link changes. A session resumed after `/remote-control` was used in it
+ * comes back on: every later process in those sessions wrote the link at its
+ * first prompt, with no "is active" line and no `/remote-control` anywhere
+ * after. Every link matched the session's own "is active" line where there was
+ * one. It is an attachment, a bookkeeping line: never stored as a row (a new
+ * kind of row is read as the session's last word -- see REGRESSIONS.md), only
+ * read as it is ingested (capture/remoteSession.ts).
+ */
+export interface RemoteSessionFact {
+  sessionId: string;
+  /** The link while Remote Control is on; null while it is off. */
+  url: string | null;
+  ts: number;
+}
+
+const REMOTE_SESSION_ATTACHMENT = 'remote_session_change';
+
+/** The {@link RemoteSessionFact} a raw line carries, or null. Main thread only. */
+export function remoteSessionFactOf(rawLine: string): RemoteSessionFact | null {
+  if (!rawLine.includes(`"${REMOTE_SESSION_ATTACHMENT}"`)) return null;
+  const line = safeParse(rawLine);
+  if (!line || line['type'] !== 'attachment' || line['isSidechain'] === true) return null;
+  const att = line['attachment'];
+  if (!isRecord(att) || att['type'] !== REMOTE_SESSION_ATTACHMENT) return null;
+  const sessionId = stringOr(line['sessionId'], '');
+  if (sessionId === '') return null;
+  const url = typeof att['url'] === 'string' && att['url'].trim() !== '' ? att['url'].trim() : null;
+  return { sessionId, url, ts: parseTs(line['timestamp']) };
+}
+
+/** Every {@link RemoteSessionFact} in a chunk, in file order. */
+export function remoteSessionFactsIn(text: string): RemoteSessionFact[] {
+  const out: RemoteSessionFact[] = [];
+  if (!text.includes(`"${REMOTE_SESSION_ATTACHMENT}"`)) return out;
+  for (const line of text.split('\n')) {
+    const fact = line.length === 0 ? null : remoteSessionFactOf(line);
+    if (fact) out.push(fact);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The skills a session can run (#349)
+// ---------------------------------------------------------------------------
+
+/**
+ * The skills Claude Code tells the model about, as it tells it:
+ * `{type: "attachment", attachment: {type: "skill_listing", content, names,
+ * skillCount, isInitial, digests}}`.
+ *
+ *  - `names` is the skills' names, in the listing's order; a plugin's carry
+ *    its prefix (`plugin:skill`).
+ *  - `content` is one item per skill, `- name: description`, and
+ *    `- name (alias): description` for a plugin skill also known by another
+ *    name. A description may be missing (`- name`), may hold ": " and " - ",
+ *    and may run over several lines. So an item is found by its name from
+ *    `names`, never by splitting on ": ".
+ *  - `isInitial: true` is the whole list. `false` is a delta: only the skills
+ *    added or changed since, never the rest.
+ *
+ * Measured on this machine, Claude Code 2.1.291-2.1.322 (240 listings in 135
+ * main transcripts, none on a sidechain; subagent files carry their own,
+ * `isSidechain: true`): every `isInitial: true` listing is complete --
+ * `skillCount` equals `names`, and a later one in the same file restates
+ * every skill still there (54, then 42 after a resume: the dropped twelve
+ * are gone). Every `isInitial: false` one is small (1 to 18 skills) and
+ * follows a full one of 30-65; 16 of 45 share no name with what came before
+ * (new skills: a plugin installed mid-session), and of the names a delta
+ * repeats, 55 come with a changed description and 32 unchanged. Nothing
+ * says a skill was removed short of the next full listing. A full listing is
+ * written with the first prompt of each `claude` process (and after a
+ * compaction), so a session that has sent nothing has none yet.
+ *
+ * An attachment, a bookkeeping line: never stored as a row, only read as it
+ * is ingested, or from the file on demand (capture/skills.ts).
+ */
+export interface SkillListing {
+  sessionId: string;
+  /** The line's own id, so the same line read twice is applied once. */
+  uuid: string;
+  ts: number;
+  /** The whole list; false for a delta of added or changed skills. */
+  initial: boolean;
+  skills: { name: string; description: string }[];
+}
+
+const SKILL_LISTING_ATTACHMENT = 'skill_listing';
+
+/** The {@link SkillListing} a raw line carries, or null. Main-session lines only. */
+export function skillListingOf(rawLine: string): SkillListing | null {
+  if (!rawLine.includes(`"${SKILL_LISTING_ATTACHMENT}"`)) return null;
+  const line = safeParse(rawLine);
+  if (!line || line['type'] !== 'attachment' || line['isSidechain'] === true) return null;
+  const att = line['attachment'];
+  if (!isRecord(att) || att['type'] !== SKILL_LISTING_ATTACHMENT) return null;
+  const sessionId = stringOr(line['sessionId'], '');
+  if (sessionId === '') return null;
+  const names = Array.isArray(att['names'])
+    ? att['names'].filter((n): n is string => typeof n === 'string' && n.trim() !== '')
+    : [];
+  const content = typeof att['content'] === 'string' ? att['content'] : '';
+  const ts = parseTs(line['timestamp']);
+  return {
+    sessionId,
+    uuid: stringOr(line['uuid'], '') || `${sessionId}@${ts}`,
+    ts,
+    initial: att['isInitial'] !== false,
+    skills: skillItemsOf(content, names),
+  };
+}
+
+/** Every {@link SkillListing} in a chunk, in file order. */
+export function skillListingsIn(text: string): SkillListing[] {
+  const out: SkillListing[] = [];
+  if (!text.includes(`"${SKILL_LISTING_ATTACHMENT}"`)) return out;
+  for (const line of text.split('\n')) {
+    const listing = line.length === 0 ? null : skillListingOf(line);
+    if (listing) out.push(listing);
+  }
+  return out;
+}
+
+/**
+ * Pair each name with its item in `content`. An item starts a line with
+ * "- " and a name, followed by ":", " (" or the line's end; the longest
+ * name wins, so `review` never claims `review-pr`'s line. Every other line
+ * continues the item above it.
+ */
+function skillItemsOf(content: string, names: readonly string[]): { name: string; description: string }[] {
+  const unique = [...new Set(names)];
+  const byLength = [...unique].sort((a, b) => b.length - a.length);
+  const found = new Map<string, string[]>();
+  let current: string[] | null = null;
+  for (const raw of content.split('\n')) {
+    const name = raw.startsWith('- ') ? byLength.find((n) => !found.has(n) && itemStartsWith(raw, n)) : undefined;
+    if (name !== undefined) {
+      let rest = raw.slice(2 + name.length);
+      if (rest.startsWith(' (')) {
+        const close = rest.indexOf(')');
+        rest = close < 0 ? '' : rest.slice(close + 1);
+      }
+      if (rest.startsWith(':')) rest = rest.slice(1);
+      current = [rest.trim()];
+      found.set(name, current);
+    } else if (current) {
+      current.push(raw.trim());
+    }
+  }
+  return unique.map((name) => ({
+    name,
+    description: (found.get(name) ?? [])
+      .filter((part) => part !== '')
+      .join('\n')
+      .trim(),
+  }));
+}
+
+function itemStartsWith(line: string, name: string): boolean {
+  if (!line.startsWith(name, 2)) return false;
+  const next = line.slice(2 + name.length, 4 + name.length);
+  return next === '' || next.startsWith(':') || next === ' (';
 }
 
 /**
@@ -804,7 +1075,7 @@ export function isBackgroundNoticeLine(line: Record<string, unknown>): boolean {
 /** {@link isBackgroundNoticeLine} for a stored row's raw line. */
 export function isBackgroundNotice(rawJson: string): boolean {
   if (!rawJson.includes('"queued_command"')) return false;
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line !== null && isBackgroundNoticeLine(line);
 }
 
@@ -836,7 +1107,7 @@ export function backgroundFactsOf(m: Pick<Message, 'role' | 'seq' | 'rawJson' | 
 function notificationTextOf(m: Pick<Message, 'role' | 'rawJson'>): string | null {
   if (m.role !== 'user' && m.role !== 'system') return null;
   if (!m.rawJson.includes('<task-notification>')) return null;
-  const line = safeParse(m.rawJson);
+  const line = rowLine(m.rawJson);
   if (!line) return null;
   let text = '';
   if (line['type'] === 'user') text = userTextOf(line);
@@ -867,11 +1138,18 @@ function backgroundCallFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): 
 }
 
 function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
-  const line = safeParse(m.rawJson);
+  const line = rowLine(m.rawJson);
   if (!line) return [];
   const toolUseId = textOf(blockFor(m, 'tool_result')?.['tool_use_id']);
   if (toolUseId === null) return [];
   const ok = !toolResultIsErrorOf(m);
+  // TaskStop on a task that is gone fails, and that failure is the proof it
+  // is not running (#350): a shell can end before the result that started it
+  // is written, or end with a notice this never paired.
+  if (!ok) {
+    const gone = NO_TASK_FOUND.exec(flattenContent(blockFor(m, 'tool_result')?.['content']).trim());
+    if (gone?.[1]) return [{ fact: 'stop', taskId: gone[1] }];
+  }
   const r = isRecord(line['toolUseResult']) ? line['toolUseResult'] : {};
   const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
   const positive = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
@@ -891,6 +1169,12 @@ function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>)
     },
   ];
 }
+
+/**
+ * TaskStop's error for a task id that does not exist (any more), measured on
+ * 2.1.322: `<tool_use_error>No task found with ID: b6anvlma8</tool_use_error>`.
+ */
+const NO_TASK_FOUND = /^(?:<tool_use_error>)?No task found with ID: ([A-Za-z0-9_-]+)(?:<\/tool_use_error>)?$/;
 
 /** The trimmed, non-empty values of every `<tag>…</tag>` in an envelope. */
 function tagValues(body: string, tag: string): string[] {
@@ -919,6 +1203,7 @@ export function backgroundSqlPredicate(): string {
     '"timeoutMs":',
     '"task_type":',
     '"cancelledWakeups":',
+    'No task found with ID: ',
   ];
   return `(
     (role = 'tool_use' AND tool_name IN ('Monitor', 'ScheduleWakeup', 'CronCreate', 'CronDelete'))
@@ -970,7 +1255,7 @@ const WAITING_ON_OWN_WORK = /\bis waiting on its own background work\b|\bwith ba
 export function subagentMarksOf(m: Pick<Message, 'role' | 'rawJson'>): SubagentMark[] {
   if (m.role === 'tool_result') {
     if (!m.rawJson.includes('"resumedAgentId"')) return [];
-    const line = safeParse(m.rawJson);
+    const line = rowLine(m.rawJson);
     const r = line !== null && isRecord(line['toolUseResult']) ? line['toolUseResult'] : null;
     const id = r?.['resumedAgentId'];
     if (r === null || r['success'] === false || typeof id !== 'string' || id === '') return [];
@@ -1001,6 +1286,60 @@ export function subagentMarkSqlPredicate(): string {
     (role = 'tool_result' AND instr(raw_json, '"resumedAgentId":"') > 0)
     OR (role IN ('user', 'system') AND instr(raw_json, '<task-notification>') > 0)
   )`;
+}
+
+// ---------------------------------------------------------------------------
+// A subagent's name: the call that started it (#377)
+// ---------------------------------------------------------------------------
+
+/**
+ * Measured on Claude Code 2.1.28x-2.1.322, in the PARENT's transcript (the
+ * subagent's own lines say nothing about the call that started it):
+ *
+ *  - **The call.** An `Agent` tool_use (`Task` before) whose input carries
+ *    `description` -- the short name the terminal shows -- `prompt` and
+ *    `subagent_type`.
+ *  - **The link.** Its tool_result's `toolUseResult.agentId` is the id the
+ *    agent's own lines carry. 470 of 470 results here were async
+ *    (`isAsync: true, status: "async_launched"`), written right after the
+ *    call. A synchronous one was not seen; it is read the same way if it
+ *    carries `agentId`, and is linked only once its result is written.
+ */
+export const AGENT_TOOL_NAMES: readonly string[] = ['Agent', 'Task'];
+
+/** What a call to start a subagent said about it. */
+export interface AgentCall {
+  toolUseId: string;
+  /** The short name the call gave it. Null when empty. */
+  description: string | null;
+  /** `general-purpose`, `Explore`, ... Null when absent. */
+  subagentType: string | null;
+}
+
+/** An `Agent`/`Task` tool_use row's id, description and agent type; null for any other row. */
+export function agentCallOf(m: ToolRow & Pick<Message, 'role'>): AgentCall | null {
+  if (m.role !== 'tool_use' || !AGENT_TOOL_NAMES.includes(m.toolName ?? '')) return null;
+  const toolUseId = toolUseIdOf(m);
+  if (toolUseId === null) return null;
+  const input = toolInputOf(m);
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+  return { toolUseId, description: text(input['description']), subagentType: text(input['subagent_type']) };
+}
+
+/** The agent a tool_result row says was started, by the call it answers; null for any other row. */
+export function spawnedAgentOf(m: ToolRow & Pick<Message, 'role'>): { toolUseId: string; agentId: string } | null {
+  if (m.role !== 'tool_result' || !m.rawJson.includes('"agentId"')) return null;
+  const line = rowLine(m.rawJson);
+  const r = line !== null && isRecord(line['toolUseResult']) ? line['toolUseResult'] : null;
+  const agentId = r?.['agentId'];
+  if (typeof agentId !== 'string' || agentId === '') return null;
+  const toolUseId = toolUseIdOf(m);
+  return toolUseId === null ? null : { toolUseId, agentId };
+}
+
+/** SQLite predicate for the rows {@link agentCallOf} reads, over `role` and `tool_name`. */
+export function agentCallSqlPredicate(): string {
+  return `(role = 'tool_use' AND tool_name IN (${AGENT_TOOL_NAMES.map((n) => `'${n}'`).join(', ')}))`;
 }
 
 /**
@@ -1191,7 +1530,7 @@ export function queueFactsIn(text: string): QueueFact[] {
       continue;
     }
     if (obj['type'] === 'assistant') {
-      if (TURN_ENDING_STOP_REASONS.has(stopReasonOf(line) ?? '')) out.push({ op: 'turn-end', sessionId, ts });
+      if (TURN_ENDING_STOP_REASONS.has(stopReasonIn(obj) ?? '')) out.push({ op: 'turn-end', sessionId, ts });
       else if (obj['isApiErrorMessage'] !== true) out.push({ op: 'turn-step', sessionId, ts });
       continue;
     }
@@ -1237,7 +1576,7 @@ function userTextOf(obj: Record<string, unknown>): string {
  * sidechain traffic: callers keep to the main session's rows.
  */
 export function turnEdgeOf(rawJson: string): 'prompt' | 'end' | null {
-  const obj = safeParse(rawJson);
+  const obj = rowLine(rawJson);
   if (!obj) return null;
   if (obj['type'] === 'system') {
     return obj['subtype'] === 'turn_duration' || obj['subtype'] === 'local_command' ? 'end' : null;
@@ -1260,7 +1599,7 @@ export function turnEdgeOf(rawJson: string): 'prompt' | 'end' | null {
  * tokens", 37,527). Null for any other line, or one without both fields.
  */
 export function outputTokensOf(rawJson: string): { messageId: string; outputTokens: number } | null {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   if (!line || line['type'] !== 'assistant') return null;
   const message = line['message'];
   if (!isRecord(message)) return null;
@@ -1362,11 +1701,14 @@ export function gitBranchSqlExpr(column = 'raw_json'): string {
 
 /** `isSidechain` — true for subagent traffic. See the watcher's scan comment. */
 export function isSidechainOf(rawJson: string): boolean {
-  const line = safeParse(rawJson);
+  const line = rowLine(rawJson);
   return line?.['isSidechain'] === true;
 }
 
-/** The `cwd` recorded on a line, used by the watcher to match a task. */
+/**
+ * The `cwd` recorded on a line, used by the watcher to match a task. Asked of
+ * lines fresh out of a chunk, so it parses without the row cache (see rowLine).
+ */
 export function cwdOf(rawJson: string): string | null {
   const line = safeParse(rawJson);
   if (!line) return null;
@@ -1395,7 +1737,7 @@ function blocksOfRow(raw: Record<string, unknown>): unknown[] {
  * the only way to disambiguate a line carrying two calls to the same tool.
  */
 function blockFor(message: ToolRow, type: 'tool_use' | 'tool_result'): Record<string, unknown> | null {
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (!raw) return null;
   if (raw['type'] === type) return raw;
 
@@ -1413,7 +1755,7 @@ function blockFor(message: ToolRow, type: 'tool_use' | 'tool_result'): Record<st
 export function toolInputOf(message: ToolRow): Record<string, unknown> {
   const block = blockFor(message, 'tool_use');
   if (block && isRecord(block['input'])) return block['input'];
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (raw && isRecord(raw['input'])) return raw['input'];
   return {};
 }
@@ -1451,7 +1793,7 @@ export function toolResultTextOf(message: (ToolRow & Pick<Message, 'body'>) | nu
     const text = flattenContent(block['content']);
     if (text.length > 0) return text;
   }
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (raw) {
     const text = flattenContent(raw['toolUseResult']);
     if (text.length > 0) return text;
@@ -1459,12 +1801,23 @@ export function toolResultTextOf(message: (ToolRow & Pick<Message, 'body'>) | nu
   return message.body ?? '';
 }
 
+/**
+ * A failed result's text without the `<tool_use_error>…</tool_use_error>`
+ * Claude Code wraps a tool's own error in (#387): "File has not been read
+ * yet. …". Any other text is returned as it is.
+ */
+export function toolErrorTextOf(message: (ToolRow & Pick<Message, 'body'>) | null | undefined): string {
+  const text = toolResultTextOf(message).trim();
+  const wrapped = /^<tool_use_error>([\s\S]*)<\/tool_use_error>$/.exec(text);
+  return wrapped ? (wrapped[1] ?? '').trim() : text;
+}
+
 /** True when the result reported failure: an error, a denial, or an interrupt. */
 export function toolResultIsErrorOf(message: ToolRow | null | undefined): boolean {
   if (!message) return false;
   const block = blockFor(message, 'tool_result');
   if (block && block['is_error'] === true) return true;
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (raw) {
     if (raw['is_error'] === true) return true;
     if (raw['toolDenialKind'] !== undefined && raw['toolDenialKind'] !== null) return true;
@@ -1476,7 +1829,7 @@ export function toolResultIsErrorOf(message: ToolRow | null | undefined): boolea
 
 /** `tool_use_id` linking a result row back to its call, from either shape. */
 export function toolUseIdOf(message: ToolRow & Pick<Message, 'role'>): string | null {
-  const raw = safeParse(message.rawJson);
+  const raw = rowLine(message.rawJson);
   if (!raw) return null;
   if (message.role === 'tool_use') {
     const block = blockFor(message, 'tool_use');
@@ -1484,6 +1837,85 @@ export function toolUseIdOf(message: ToolRow & Pick<Message, 'role'>): string | 
   }
   const block = blockFor(message, 'tool_result');
   return textOf(block?.['tool_use_id']) ?? textOf(raw['tool_use_id']);
+}
+
+/**
+ * What a Write's result says it did (#387), from the result line's
+ * `toolUseResult`: `{type: "create" | "update", filePath, content,
+ * originalFile, structuredPatch, userModified}`. A new file is `create` with
+ * `originalFile: null`; a replaced one is `update` with the file as it was.
+ *
+ * When `originalFile` is there, `structuredPatch` is not read: the renderer
+ * diffs `originalFile` against `content` with the same code an Edit row
+ * uses. Some `update`s carry no `originalFile` (`null`; seen on Claude Code
+ * 2.1.301-2.1.312, mostly in subagents), only `structuredPatch`; then its
+ * hunks are the change, in `patch`. Null for any other shape -- an error
+ * result (whose `toolUseResult` is the error string), an older transcript,
+ * a row stored as a bare block, a patch that does not read as one -- which
+ * the caller reads as "not known".
+ */
+export interface WriteResult {
+  kind: 'create' | 'update';
+  /** What was written: the file as it is now on disk. */
+  content: string;
+  /** The file before the write; null for `create`, and for an `update` that only has `patch`. */
+  originalFile: string | null;
+  /** The change as hunks, for an `update` with no `originalFile`; null otherwise. */
+  patch: WritePatchHunk[] | null;
+}
+
+/** One hunk of a Write's `structuredPatch`: where it starts on each side, and its lines. */
+export interface WritePatchHunk {
+  oldStart: number;
+  newStart: number;
+  lines: Array<{ kind: 'add' | 'del' | 'context'; content: string }>;
+}
+
+export function writeResultOf(rawJson: string): WriteResult | null {
+  if (!rawJson.includes('"toolUseResult"')) return null;
+  const line = rowLine(rawJson);
+  const r = line !== null && isRecord(line['toolUseResult']) ? line['toolUseResult'] : null;
+  if (r === null) return null;
+  const content = r['content'];
+  if (typeof content !== 'string') return null;
+  if (r['type'] === 'create') return { kind: 'create', content, originalFile: null, patch: null };
+  if (r['type'] !== 'update') return null;
+  if (typeof r['originalFile'] === 'string') return { kind: 'update', content, originalFile: r['originalFile'], patch: null };
+  const patch = writePatchOf(r['structuredPatch']);
+  return patch === null ? null : { kind: 'update', content, originalFile: null, patch };
+}
+
+/**
+ * `structuredPatch`: `[{oldStart, oldLines, newStart, newLines, lines}]`,
+ * each line its text behind " ", "+" or "-" (jsdiff's shape). A
+ * "\ No newline at end of file" marker is dropped. Null when it is empty or
+ * anything in it is not that shape, or a hunk's counts disagree with its
+ * lines: a patch read wrong would show a change that never happened.
+ */
+function writePatchOf(v: unknown): WritePatchHunk[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const out: WritePatchHunk[] = [];
+  for (const h of v) {
+    if (!isRecord(h) || !Array.isArray(h['lines'])) return null;
+    const { oldStart, newStart, oldLines, newLines } = h;
+    if (![oldStart, newStart, oldLines, newLines].every((n) => typeof n === 'number' && Number.isInteger(n) && n >= 0)) return null;
+    const lines: WritePatchHunk['lines'] = [];
+    let olds = 0;
+    let news = 0;
+    for (const l of h['lines'] as unknown[]) {
+      if (typeof l !== 'string') return null;
+      const mark = l.charAt(0);
+      if (mark === '\\') continue;
+      const kind = mark === '+' ? 'add' : mark === '-' ? 'del' : mark === ' ' ? 'context' : null;
+      if (kind === null) return null;
+      if (kind !== 'add') olds++;
+      if (kind !== 'del') news++;
+      lines.push({ kind, content: l.slice(1) });
+    }
+    if (olds !== oldLines || news !== newLines) return null;
+    out.push({ oldStart: oldStart as number, newStart: newStart as number, lines });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1747,6 +2179,77 @@ function safeParse(raw: string): Record<string, unknown> | null {
     return null; // truncated tail line, mid-append — expected, not an error
   }
   return isRecord(value) ? value : null;
+}
+
+/*
+ * A stored row's raw line, parsed once (#362). The pane asks the same rows the
+ * same questions on every live append -- which call a result answers, its
+ * input, whether it starts or ends a turn -- and each asked JSON.parse again:
+ * several parses per row per append, ~50 ms on a 1,000-row window.
+ *
+ * Keyed by the raw text itself, not by the row object: a reload hands back new
+ * objects for the same rows, and a key that is the content can never answer
+ * for a line that changed -- different text is a different key. The parsed
+ * value is frozen, so a caller that tried to change what it was handed would
+ * fail at once instead of corrupting every later read of that line.
+ *
+ * Bounded by entries and by characters held, least recently used out first; a
+ * line too long to be worth holding is parsed every time, as before.
+ *
+ * Only rows read back from the database come through here. Ingest
+ * (parseLineWithContext, the chunk scanners, `cwdOf`, `queueFactsIn`) parses
+ * with `safeParse` and never touches this cache: a line split out of a chunk
+ * the watcher read is a slice that keeps the whole chunk alive (V8 and
+ * JavaScriptCore both share substrings), so caching one would hold every chunk
+ * it came from. A test ingests a chunk and checks the cache stays empty.
+ */
+const ROW_PARSE_MAX_ENTRIES = 4096;
+// Counted as twice the line's length: the parsed object held beside the key
+// costs about as much again. Small enough that a cache left behind by a task
+// you moved away from stays modest.
+const ROW_PARSE_MAX_CHARS = 16 * 1024 * 1024;
+const ROW_PARSE_MAX_LINE_CHARS = 256 * 1024;
+const rowParses = new Map<string, Record<string, unknown> | null>();
+let rowParseChars = 0;
+
+function rowLine(raw: string): Record<string, unknown> | null {
+  const hit = rowParses.get(raw);
+  if (hit !== undefined) {
+    // Most recently used goes last, so eviction takes the oldest first.
+    rowParses.delete(raw);
+    rowParses.set(raw, hit);
+    return hit;
+  }
+  const parsed = safeParse(raw);
+  if (raw.length > ROW_PARSE_MAX_LINE_CHARS) return parsed;
+  const value = parsed === null ? null : deepFreeze(parsed);
+  rowParses.set(raw, value);
+  rowParseChars += 2 * raw.length;
+  while (rowParses.size > ROW_PARSE_MAX_ENTRIES || rowParseChars > ROW_PARSE_MAX_CHARS) {
+    const oldest = rowParses.keys().next();
+    if (oldest.done === true) break;
+    rowParses.delete(oldest.value);
+    rowParseChars -= 2 * oldest.value.length;
+  }
+  return value;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const v of Object.values(value as Record<string, unknown>)) deepFreeze(v);
+  return value;
+}
+
+/** For tests: empty the row parse cache. */
+export function __clearRowParseCache(): void {
+  rowParses.clear();
+  rowParseChars = 0;
+}
+
+/** For tests: how much the row parse cache holds. */
+export function __rowParseCacheStats(): { entries: number; chars: number; maxEntries: number; maxChars: number } {
+  return { entries: rowParses.size, chars: rowParseChars, maxEntries: ROW_PARSE_MAX_ENTRIES, maxChars: ROW_PARSE_MAX_CHARS };
 }
 
 function safeStringify(value: unknown): string | null {

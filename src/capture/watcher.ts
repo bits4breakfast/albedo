@@ -24,9 +24,22 @@
  */
 
 import { homeDir } from '@tauri-apps/api/path';
-import { exists, open, readDir, SeekMode, stat, watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
+import { exists, readDir, stat, watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
+import { lastNewlineIndex, readRange } from './fileTail';
 
-import { countLines, cwdOf, lastTitleIn, parseTranscript, permissionModesIn, queueFactsIn, SEQ_STRIDE } from './adapter';
+import {
+  countLines,
+  cwdOf,
+  lastTitleIn,
+  parseTranscript,
+  permissionModesIn,
+  queueFactsIn,
+  remoteSessionFactsIn,
+  skillListingsIn,
+  SEQ_STRIDE,
+} from './adapter';
+import { recordRemoteSessions } from './remoteSession';
+import { recordSkillListings } from './skills';
 import { recordPermissionModes } from './permissionMode';
 import { recordQueueOperations, seedQueue } from './queue';
 import {
@@ -102,9 +115,6 @@ const TAIL_BYTES = 256 * 1024;
 
 /** Bytes pulled per pass. Bounds memory on the first import of a big file. */
 const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
-
-/** Per-read staging buffer. */
-const READ_BUFFER_BYTES = 256 * 1024;
 
 /**
  * How deep to walk below ~/.claude/projects. Transcripts live at depth 2
@@ -207,21 +217,6 @@ export function lineIndexAfter(lastSeq: number): number {
  */
 export function watermarkFor(nextLineIndex: number): number {
   return nextLineIndex * SEQ_STRIDE - 1;
-}
-
-/**
- * Index of the last `\n` in a UTF-8 buffer, or -1.
- *
- * Safe on raw bytes: 0x0A never occurs inside a multi-byte UTF-8 sequence, so
- * cutting here can never split a character. Cutting on the DECODED string
- * would not be safe, because a truncated trailing sequence decodes to U+FFFD
- * and the byte length of the prefix would no longer be recoverable.
- */
-export function lastNewlineIndex(bytes: Uint8Array): number {
-  for (let i = bytes.length - 1; i >= 0; i--) {
-    if (bytes[i] === 0x0a) return i;
-  }
-  return -1;
 }
 
 export interface DiskFile {
@@ -738,7 +733,7 @@ class Capture implements CaptureHandle {
       const text = new TextDecoder().decode(bytes.subarray(0, consumed));
 
       const fromLine = lineIndexAfter(lastSeq);
-      const rows = parseTranscript(text, fromLine);
+      const rows = parseTranscript(text, fromLine, path);
       const nextLineIndex = fromLine + countLines(text);
 
       // Title lines are bookkeeping and produce no message rows, so they are
@@ -752,6 +747,10 @@ class Capture implements CaptureHandle {
       recordQueueOperations(queueFactsIn(text));
       // So is the permission mode, kept in memory for the composer's label.
       recordPermissionModes(permissionModesIn(text));
+      // And whether Remote Control is on (#343): an attachment, never a row.
+      recordRemoteSessions(remoteSessionFactsIn(text));
+      // And the skills it can run (#349): an attachment too.
+      recordSkillListings(skillListingsIn(text));
 
       // Resolve identity from the rows themselves. sessionId can change
       // mid-file after a resume or compaction, so the LAST row wins and the
@@ -1007,27 +1006,12 @@ async function seedQueueFrom(path: string, upTo: number, sessionId: string): Pro
     let text = new TextDecoder().decode(await readRange(path, start, upTo - start));
     if (start > 0) text = text.slice(text.indexOf('\n') + 1);
     seedQueue([sessionId], queueFactsIn(text));
+    // The same replay brings back whether Remote Control is on (#343).
+    recordRemoteSessions(remoteSessionFactsIn(text));
+    // And the skills it can run (#349), when the last full listing is this recent.
+    recordSkillListings(skillListingsIn(text));
   } catch {
     /* a queue we cannot rebuild just starts empty */
-  }
-}
-
-async function readRange(path: string, offset: number, length: number): Promise<Uint8Array> {
-  const file = await open(path, { read: true });
-  try {
-    await file.seek(offset, SeekMode.Start);
-    const out = new Uint8Array(length);
-    let filled = 0;
-    while (filled < length) {
-      const buf = new Uint8Array(Math.min(READ_BUFFER_BYTES, length - filled));
-      const n = await file.read(buf);
-      if (n === null || n <= 0) break;
-      out.set(buf.subarray(0, n), filled);
-      filled += n;
-    }
-    return filled === length ? out : out.subarray(0, filled);
-  } finally {
-    await file.close();
   }
 }
 

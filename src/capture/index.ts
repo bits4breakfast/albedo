@@ -6,7 +6,6 @@
  *   startCapture(): Promise<CaptureHandle>
  *   onCaptureUpdate(cb): () => void
  *   deriveStatus(messages): TaskStatus
- *   usageSummary(): Promise<{ inputTokens; outputTokens; sinceTs }>
  *
  * Nothing outside this directory may import src/capture/adapter.ts: the JSONL
  * format stops here (CLAUDE.md hard rule #1).
@@ -16,6 +15,10 @@ export { startCapture, onCaptureUpdate, listDiskSessions, importTranscripts } fr
 export type { CaptureHandle, CaptureUpdate, DiskSession } from './watcher';
 
 export { deriveStatus } from './status';
+
+/** An API error line Claude Code wrote (#338); which one a turn stopped on is status.ts's. */
+export { apiErrorOf } from './adapter';
+export type { ApiErrorLine } from './adapter';
 
 /** Attached images, recovered from a placeholder row's raw line. */
 export { imageAt, imagesIn, SEQ_STRIDE } from './adapter';
@@ -31,11 +34,14 @@ export { compactBoundaryOf, compactSummaryOf, isNoticeLine } from './adapter';
 export { turnEdgeOf, outputTokensOf } from './adapter';
 
 /** A slash command Claude Code ran itself, recorded as a `system` line. */
-export { isLocalCommandLine } from './adapter';
+export { endsLocalCommand, isLocalCommandLine, isLocalCommandStderr } from './adapter';
 
 /** Input Claude Code wrote itself: a /loop wake-up, its prompt, a harness note (#138). */
 export { harnessInputOf } from './adapter';
 export type { HarnessInput } from './adapter';
+
+/** A failed tool's error without Claude Code's `<tool_use_error>` wrapper (#387). */
+export { toolErrorTextOf } from './adapter';
 
 /** A skill's text, written after the Skill call that loaded it (#150). */
 export { skillSourceToolUseIdOf } from './adapter';
@@ -53,17 +59,12 @@ export { peerMessageIdOf } from './adapter';
 export { senderTaskOf } from './peers';
 export type { CompactBoundary, CompactSummary } from './adapter';
 
-export { usageSummary } from './usage';
-export type { UsageSummary } from './usage';
-
 /** Per-session context-window occupancy, for the task list and header. */
 export { contextUsage, contextUsageForSessions, contextBands } from './context';
 export type { ContextUsage, ContextBands } from './context';
 
 /**
- * Rolling-window token totals across all sessions. `windowUsage` lives in
- * usage.ts rather than context.ts so it shares usageSummary's query and the
- * two can never drift; the exported surface is the same either way.
+ * Rolling-window token totals across all sessions (usage.ts).
  */
 export { windowUsage } from './usage';
 export type { WindowUsage } from './usage';
@@ -77,12 +78,16 @@ export type { QueuedEntry } from './queue';
 export { permissionModeFor, loadPermissionMode, onPermissionModeChange } from './permissionMode';
 export type { PermissionMode } from './adapter';
 
+// The skills each session can run, for the composer's `/` list (in memory, #349).
+export { skillsFor, loadSkills, onSkillsChange } from './skills';
+export type { Skill } from './skills';
+
 export { onCaptureProgress } from './watcher';
 export type { CaptureProgress } from './watcher';
 
 // Named constants other workstreams may want to display or reason about.
 export { RUNNING_WINDOW_MS } from './status';
-export { USAGE_WINDOW_MS, WEEK_WINDOW_MS, usageBreakdown } from './usage';
+export { USAGE_WINDOW_MS, WEEK_WINDOW_MS } from './usage';
 export type { UsageBreakdown } from './usage';
 
 // The tier table is exported so the shell can label an 'inferred' limit

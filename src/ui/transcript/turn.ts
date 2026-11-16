@@ -188,6 +188,11 @@ export function noteTaskSessions(tasks: readonly { id: number; sessionId: string
   }
 }
 
+/** The session the task is on, as `noteTaskSessions` last said; null when unknown. */
+export function sessionOfTask(taskId: number): string | null {
+  return sessions.get(taskId) ?? null;
+}
+
 /** Albedo submitted text to the task's session (send.ts). */
 export function noteSubmitted(taskId: number, at = Date.now()): void {
   submitted.set(taskId, at);

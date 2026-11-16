@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentActivity,
   agentLabel,
   agentState,
+  agentTitle,
+  agentTokens,
   agentStatusDetail,
   agentStatusWord,
   COLLAPSE_AFTER,
@@ -14,9 +17,15 @@ import {
   stripSummary,
 } from './subagentView';
 import type { SubagentRun } from '../db/subagents';
+import type { Message } from '../types';
 
 const run = (o: Partial<SubagentRun> & Pick<SubagentRun, 'agentId'>): SubagentRun => ({
   label: null,
+  prompt: null,
+  name: null,
+  kind: null,
+  lastCall: null,
+  tokens: null,
   status: 'idle',
   waiting: false,
   firstTs: 0,
@@ -129,5 +138,68 @@ describe('nextExpiry', () => {
   it('is the earliest moment any status goes stale', () => {
     expect(nextExpiry([])).toBeNull();
     expect(nextExpiry([{ expiresAt: null }, { expiresAt: 9_000 }, { expiresAt: 5_000 }])).toBe(5_000);
+  });
+});
+
+/** A tool call row as the strip reads it from the agent's transcript. */
+const call = (toolName: string, input: Record<string, unknown>, targetPath: string | null = null): Message => ({
+  id: 0,
+  taskId: null,
+  sessionId: 's',
+  seq: 100,
+  role: 'tool_use',
+  toolName,
+  targetPath,
+  body: null,
+  rawJson: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't', name: toolName, input }] } }),
+  agentId: 'a',
+  ts: 0,
+});
+
+describe('agentTitle (#377)', () => {
+  it('is the name the Agent call gave, and the prompt line without one', () => {
+    expect(agentTitle({ name: 'Build #365 polling', label: 'Fix GitHub issue #365', agentId: 'a' })).toBe('Build #365 polling');
+    expect(agentTitle({ name: null, label: 'Fix GitHub issue #365', agentId: 'a' })).toBe('Fix GitHub issue #365');
+    expect(agentTitle({ name: null, label: null, agentId: 'a1b2c3d4e5f6' })).toBe('Agent a1b2c3d4');
+  });
+});
+
+describe('agentActivity (#377)', () => {
+  const at = (lastCall: Message | null, o: Partial<SubagentRun> = {}) => agentActivity(run({ agentId: 'a', status: 'running', lastCall, ...o }));
+
+  it('reads a command as its description, as the terminal does', () => {
+    expect(at(call('Bash', { command: 'npx vitest run --reporter json', description: 'Running vitest JSON reporter for totals' }))).toBe(
+      'Running vitest JSON reporter for totals',
+    );
+  });
+
+  it('reads a command without a description as its row does', () => {
+    expect(at(call('Bash', { command: 'git status' }))).toBe('Bash git status');
+  });
+
+  it('reads any other call in the words of its transcript row', () => {
+    expect(at(call('Read', { file_path: '/w/src/ui/app/useLayout.ts' }, '/w/src/ui/app/useLayout.ts'))).toBe('Read useLayout.ts');
+    expect(at(call('Grep', { pattern: 'listSubagents', glob: 'src/**' }))).toBe('Grep /listSubagents/ in src/**');
+    expect(at(call('Edit', { file_path: '/w/a.ts', old_string: 'a', new_string: 'b' }, '/w/a.ts'))).toBe('Edit a.ts');
+    expect(at(call('mcp__x__y', {}))).toBe('mcp__x__y');
+  });
+
+  it('says Starting… for an agent at work before its first call, and nothing for one that stopped', () => {
+    expect(at(null)).toBe('Starting…');
+    expect(at(null, { status: 'blocked' })).toBe('Starting…');
+    expect(at(null, { status: 'idle' })).toBe('');
+    expect(at(null, { status: 'idle', waiting: true })).toBe('');
+  });
+
+  it('still says what an agent waiting on its own work last did', () => {
+    expect(at(call('Bash', { command: 'sleep 1', description: 'Wait for CI' }), { status: 'idle', waiting: true })).toBe('Wait for CI');
+  });
+});
+
+describe('agentTokens (#377)', () => {
+  it('reads the count as the terminal shortens it, and nothing without one', () => {
+    expect(agentTokens({ tokens: 345_212 })).toBe('345.2k tokens');
+    expect(agentTokens({ tokens: null })).toBeNull();
+    expect(agentTokens({ tokens: 1 })).toBe('1 token');
   });
 });

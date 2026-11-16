@@ -40,7 +40,7 @@ import {
 import { insertIntoComposer } from './transcript/composerBridge';
 import { removeQueuedCi } from './transcript/ciFailure';
 import { headKey } from '../gh/ciTransition';
-import { Disclosure } from './transcript/Diff';
+import { Disclosure } from './Disclosure';
 import './quickopen.css';
 import './findinfiles.css';
 import './checks.css';

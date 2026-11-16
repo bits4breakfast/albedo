@@ -12,20 +12,17 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { updateRecordOf, useSinceReviewVersion } from '../guide/copyUpdate';
 import type { ReactNode } from 'react';
 import type { OpenFileRequest, Task, TouchedFile } from '../types';
 import { compareTouched, touchedFilesDetailed } from '../db/touched';
 import CommentsSection from './CommentsSection';
 import { stat } from '@tauri-apps/plugin-fs';
 import {
-  branchCommits,
-  changeKinds,
-  committedFileTimes,
-  lineChanges,
+  loadChangeSet,
   unmergedCommits,
   type BranchCommit,
   type UnmergedCommits,
-  taskBase,
   type ChangeKind,
   type LineChange,
 } from '../git/worktree';
@@ -33,7 +30,6 @@ import { useMeasuredBase } from './useMeasuredBase';
 import { setTouchedOrder } from './touchedOrder';
 import { sendPrompt } from './sendPrompt';
 import GitBar from './GitBar';
-import { requestGuide } from '../guide/openGuide';
 import ProjectTree from './ProjectTree';
 import { Disclosure } from './Disclosure';
 import { FileIcon } from './fileIcons';
@@ -43,8 +39,9 @@ import { onHandEditedChange } from '../lib/handEdited';
 import { useOpenFile, type OpenFile, type OpenFileOptions } from './editor/openFile';
 import { adjacent, useListOpen, type ListOpen } from './filesListOpen';
 import { relativeTime } from './TaskList';
-import { useActivate } from './transcript/Diff';
+import { useActivate } from './transcript/links';
 import { KEYS, oneOfCodec, readPersisted, writePersisted } from './persisted';
+import { useFilesView } from './filesView';
 import './touched.css';
 
 type ViewMode = 'branch' | 'commit';
@@ -60,13 +57,7 @@ function writeMode(m: ViewMode): ViewMode {
 }
 
 /** What the pane lists: the change set, or every file in the worktree. */
-export type FilesView = 'changes' | 'project';
-const viewCodec = oneOfCodec<FilesView>(['changes', 'project']);
-
-function writeView(v: FilesView): FilesView {
-  writePersisted(KEYS.touchedView, viewCodec, v);
-  return v;
-}
+export type { FilesView } from './filesView';
 
 /** Capture fires per batch of rows; coalesce bursts into one reload. */
 const REFRESH_DEBOUNCE_MS = 300;
@@ -79,9 +70,21 @@ export interface TouchedFilesProps {
   activePath?: string | null;
   /** The pane head's slot for the git ⋯ menu (see GitBar). */
   menuSlot?: HTMLElement | null;
+  /**
+   * Whether anything reads this list now: it is on screen, or the editor
+   * steps through its order (#363). While false, a capture update, a focus or
+   * a save marks the list stale instead of asking git again, and one reload
+   * runs when it turns true. The first load on mount always runs.
+   */
+  active?: boolean;
 }
 
-export default function TouchedFiles({ task, activePath = null, menuSlot = null }: TouchedFilesProps): ReactNode {
+export default function TouchedFiles({
+  task,
+  activePath = null,
+  menuSlot = null,
+  active = true,
+}: TouchedFilesProps): ReactNode {
   const [files, setFiles] = useState<TouchedFile[]>([]);
   const [gitError, setGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +107,19 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   const [baseMissing, setBaseMissing] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [reloadKey, setReloadKey] = useState(0);
+  // A reload asked for while nothing reads the list waits for it to be read.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const staleRef = useRef(false);
+  const reload = useCallback(() => {
+    if (activeRef.current) setReloadKey((k) => k + 1);
+    else staleRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!active || !staleRef.current) return;
+    staleRef.current = false;
+    setReloadKey((k) => k + 1);
+  }, [active]);
   /** +/- per path against the task's base. Empty when git cannot say. */
   const [lines, setLines] = useState<Map<string, LineChange>>(() => new Map());
   /** A / M / D / T per path against the task's base. Empty when git cannot say. */
@@ -117,7 +133,9 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   /** Commits not on the upstream yet. Null when git could not say. */
   const [remote, setRemote] = useState<UnmergedCommits | null>(null);
   const [mode, setMode] = useState<ViewMode>(readMode);
-  const [filesView, setFilesView] = useState<FilesView>(() => readPersisted(KEYS.touchedView, viewCodec, 'changes'));
+  // Per task, shared by the tab and the pinned column (#335): Changes until
+  // this task's view is changed, then whatever it was left on.
+  const [filesView, setFilesView] = useFilesView(task.id);
   /** Commits the user folded away in the by-commit view. */
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -127,22 +145,19 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   useEffect(() => {
     let live = true;
     setLoading(true);
-    // Line counts are a nicety beside the change set: a failure here leaves
-    // the rows without them rather than failing the list.
-    void lineChanges(task.worktreePath, base)
-      .then((m) => {
-        if (live) setLines(m);
-      })
-      .catch(() => {
-        if (live) setLines(new Map());
-      });
-    void changeKinds(task.worktreePath, base)
-      .then((m) => {
-        if (live) setKinds(m);
-      })
-      .catch(() => {
-        if (live) setKinds(new Map());
-      });
+    // Line counts, kinds and commits are a nicety beside the change set: a
+    // failure leaves the rows without them rather than failing the list.
+    // One read resolves the base once for all of them (#363).
+    void loadChangeSet(task.worktreePath, base).then((cs) => {
+      if (!live) return;
+      setLines(cs.lines);
+      setKinds(cs.kinds);
+      setCommits(cs.commits);
+      setCommittedAt(cs.committedAt);
+      // '' is the main checkout's browse diff, against HEAD's upstream: no
+      // upstream there means uncommitted changes only, which is not an error.
+      setBaseMissing(base !== '' && cs.merge === null ? base : null);
+    });
     void unmergedCommits(task.worktreePath, base)
       .then((r) => {
         if (live) setRemote(r);
@@ -150,28 +165,6 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
       .catch(() => {
         if (live) setRemote(null);
       });
-    void branchCommits(task.worktreePath, base)
-      .then((c) => {
-        if (live) setCommits(c);
-      })
-      .catch(() => {
-        if (live) setCommits([]);
-      });
-    void committedFileTimes(task.worktreePath, base)
-      .then((m) => {
-        if (live) setCommittedAt(m);
-      })
-      .catch(() => {
-        if (live) setCommittedAt(new Map());
-      });
-    // '' is the main checkout's browse diff, against HEAD's upstream: no
-    // upstream there means uncommitted changes only, which is not an error.
-    void (base === ''
-      ? Promise.resolve(null)
-      : taskBase(task.worktreePath, base).then((merge) => (merge === null ? base : null))
-    ).then((missing) => {
-      if (live) setBaseMissing(missing);
-    });
     void touchedFilesDetailed(task.id)
       .then((res) => {
         if (!live) return;
@@ -240,7 +233,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
       if (timer !== 0) return;
       timer = window.setTimeout(() => {
         timer = 0;
-        setReloadKey((k) => k + 1);
+        reload();
       }, REFRESH_DEBOUNCE_MS);
     });
     return () => {
@@ -254,10 +247,23 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   // transcript row. They happen while Albedo is in the background, so coming
   // back to it is when to look again. This replaced a Refresh menu item.
   useEffect(() => {
-    const onFocus = () => setReloadKey((k) => k + 1);
+    const onFocus = () => reload();
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [task.id]);
+
+  // --- refresh when a review copy moves (#352) ------------------------------
+  // Update Copy moves HEAD without a tool call or a focus change: the new
+  // head recorded for the task is the signal. Not on mount: the first load
+  // has it already.
+  useSinceReviewVersion();
+  const copyMovedTo = task.reviewUrl ? (updateRecordOf(task.id)?.next ?? null) : null;
+  const copySeen = useRef(copyMovedTo);
+  useEffect(() => {
+    if (copySeen.current === copyMovedTo) return;
+    copySeen.current = copyMovedTo;
+    reload();
+  }, [copyMovedTo]);
 
   // --- hand-edited marker ---------------------------------------------------
   // Saving in the built-in editor writes to the worktree without going through
@@ -265,7 +271,7 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
   useEffect(() => {
     let off: (() => void) | null = null;
     try {
-      off = onHandEditedChange(() => setReloadKey((k) => k + 1));
+      off = onHandEditedChange(() => reload());
     } catch {
       off = null; // the editor workstream is optional to this view
     }
@@ -575,10 +581,9 @@ export default function TouchedFiles({ task, activePath = null, menuSlot = null 
           mode={mode}
           onMode={(m) => setMode(writeMode(m))}
           view={filesView}
-          onView={(v) => setFilesView(writeView(v))}
+          onView={setFilesView}
           menuSlot={menuSlot}
           actionSlot={actionSlot}
-          onGuide={() => requestGuide(task.id)}
         />
       ) : null}
     </div>

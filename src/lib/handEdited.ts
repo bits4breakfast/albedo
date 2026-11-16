@@ -67,12 +67,6 @@ export function onHandEditedChange(cb: () => void): () => void {
   };
 }
 
-/** Every hand-edited path for a task, for the touched-files view. */
-export function handEditedFiles(taskId: number): string[] {
-  const set = edited.get(taskId);
-  return set ? [...set] : [];
-}
-
 /**
  * Drop everything a task recorded. Used when a task is archived and its
  * worktree removed -- the paths no longer refer to anything.

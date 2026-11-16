@@ -15,10 +15,17 @@
  *
  * It was one line of chips, each label cut at a fixed width. That was easy to
  * miss and said almost nothing: "Review the backend…" is not what an agent is
- * doing. Each agent is now its own row -- status mark and word, the label
- * wrapped to two lines, elapsed time -- like a list in a macOS sidebar, and
- * past COLLAPSE_AFTER agents the strip folds to one summary line so it can
- * never take over the transcript.
+ * doing. Each agent is now its own row -- status mark and word, two lines,
+ * elapsed time -- like a list in a macOS sidebar, and past COLLAPSE_AFTER
+ * agents the strip folds to one summary line so it can never take over the
+ * transcript.
+ *
+ * The two lines are the terminal's (#377): the agent's name -- the short
+ * description its `Agent` call gave it, with its type beside it -- and what it
+ * is doing now, its newest tool call. Each is cut with an ellipsis, never
+ * wrapped, so every row is exactly two lines. The first two lines of its
+ * prompt, which this showed before, were mostly setup ("Fix GitHub issue …
+ * Your worktree: …"); the prompt stays one hover away.
  *
  * ## The inspector
  *
@@ -42,15 +49,19 @@ import { onCaptureUpdate } from '../capture';
 import StatusDot from './StatusDot';
 import SubagentInspector from './SubagentInspector';
 import {
+  agentActivity,
   agentLabel,
+  agentTokens,
   agentState,
   agentStatusDetail,
   agentStatusWord,
   elapsedMs,
   formatElapsed,
   nextExpiry,
+  agentTitle,
   shouldCollapse,
   spokenElapsed,
+  STARTING,
   stripRuns,
   stripSummary,
 } from './subagentView';
@@ -94,7 +105,7 @@ export default function Subagents({ sessionId, taskTitle = null }: SubagentsProp
       return;
     }
     let cancelled = false;
-    void listSubagents(sessionId)
+    void listSubagents(sessionId, { detail: true })
       .then((next) => {
         if (!cancelled && alive.current) setRuns(next);
       })
@@ -197,10 +208,13 @@ export default function Subagents({ sessionId, taskTitle = null }: SubagentsProp
         {shown.length > 0 ? (
           <ul className="sa-list">
             {shown.map((run) => {
-              const label = agentLabel(run);
+              const title = agentTitle(run);
+              const activity = agentActivity(run);
               const ms = elapsedMs(run, now);
               const state = agentState(run);
               const atWork = state === 'running' || state === 'blocked';
+              const named = [title, run.kind, activity].filter((s) => s !== null && s !== '').join(', ');
+              const tokens = agentTokens(run);
               return (
                 <li key={run.agentId}>
                   <button
@@ -210,20 +224,37 @@ export default function Subagents({ sessionId, taskTitle = null }: SubagentsProp
                     data-state={state}
                     data-agent-id={run.agentId}
                     aria-current={inspecting?.agentId === run.agentId ? 'true' : undefined}
-                    aria-label={`${label}. ${
+                    aria-label={`${named}. ${
                       atWork
                         ? `${agentStatusWord(run)} for ${spokenElapsed(ms)}`
                         : `${agentStatusDetail(run)}. Its last run took ${spokenElapsed(ms)}`
-                    }. Open its transcript.`}
-                    title={label}
+                    }${tokens === null ? '' : `, ${tokens}`}. Open its transcript.`}
+                    // The whole prompt, for when the name is not enough.
+                    title={run.prompt ?? agentLabel(run)}
                     onClick={() => setInspecting(run)}
                   >
                     <span className="sa-status" title={agentStatusDetail(run)}>
                       <StatusDot status={run.status} />
                       <span className="sa-status-word">{agentStatusWord(run)}</span>
                     </span>
-                    <span className="sa-label">{label}</span>
-                    <span className="sa-elapsed">{formatElapsed(ms)}</span>
+                    <span className="sa-main">
+                      <span className="sa-title">
+                        <span className="sa-name">{title}</span>
+                        {run.kind !== null ? <span className="sa-kind">{run.kind}</span> : null}
+                      </span>
+                      <span className="sa-now" data-starting={activity === STARTING ? 'true' : undefined}>
+                        {activity}
+                      </span>
+                    </span>
+                    <span className="sa-elapsed sa-meter">
+                      <span className="sa-clock">{formatElapsed(ms)}</span>
+                      {tokens !== null ? (
+                        <>
+                          <span className="sa-meter-sep"> · </span>
+                          <span className="sa-tokens">{tokens}</span>
+                        </>
+                      ) : null}
+                    </span>
                   </button>
                 </li>
               );

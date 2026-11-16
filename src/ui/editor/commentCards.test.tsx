@@ -39,7 +39,7 @@ afterEach(() => {
 
 const base: ReviewComment = {
   id: 1, taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'two', body: 'Rename this.',
-  createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null,
+  createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null,
 };
 const noop = () => {};
 

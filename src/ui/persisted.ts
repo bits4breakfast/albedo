@@ -18,7 +18,7 @@
  * rather than returning null, and no remembered preference is worth an error.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 export const KEYS = {
@@ -35,7 +35,10 @@ export const KEYS = {
   activeProject: 'albedo.shell.activeProject',
   /** Where each project tab was last left: a task, or the project view (app/useSelection.ts owns the shape). */
   projectPlaces: 'albedo.shell.projectPlaces',
+  /** The reading pane's tab in the project view. Tasks keep theirs in taskTabs. */
   rightTab: 'albedo.shell.rightTab',
+  /** The reading pane's tab, per task (app/useTaskTabs.ts owns the shape, #314). */
+  taskTabs: 'albedo.shell.taskTabs',
   filesPinned: 'albedo.shell.filesPinned',
   filesWidth: 'albedo.shell.filesWidth',
   shellOpen: 'albedo.shell.shellDrawerOpen',
@@ -49,7 +52,10 @@ export const KEYS = {
   /** The new-task dialog's default project. */
   lastProjectId: 'albedo.worktree.lastProjectId',
   touchedMode: 'albedo.touched.mode',
-  /** The Files pane: the change set, or the whole worktree as a tree. */
+  /**
+   * The Files pane's view, once remembered. No longer read or written (#335):
+   * the view is per task, for the run (ui/filesView.ts). Kept so the name is not reused.
+   */
   touchedView: 'albedo.touched.view',
   /** The editor's "PHPantom isn't installed" notice was dismissed (editor/phpantomNotice.ts). */
   phpantomMissingDismissed: 'albedo.editor.phpantomMissingDismissed',
@@ -74,6 +80,8 @@ export const KEYS = {
   ciNotifications: 'albedo.notifications.ci',
   /** "Keep the Mac Awake While Tasks Run" (ui/keepAwake.ts, #283). Absent means on. */
   keepAwake: 'albedo.keepAwake',
+  /** "Group Tool Calls" in the transcript (ui/transcript/groupToolCalls.ts, #358). Absent means on. */
+  groupToolCalls: 'albedo.transcript.groupToolCalls',
   commentsIntro: 'albedo.comments.intro',
   /** The build last run here, for What's New (ui/whatsNew.ts owns the shape). */
   whatsNewSeen: 'albedo.whatsNew.seen',
@@ -81,6 +89,10 @@ export const KEYS = {
   reviewGuides: 'albedo.guide.guides',
   /** What the Review Guide has marked Reviewed, per task (guide/store.ts owns the shape). */
   reviewGuideReviewed: 'albedo.guide.reviewed',
+  /** When something was last marked Reviewed, per task (guide/store.ts owns the shape, #315). */
+  reviewGuideReviewedAt: 'albedo.guide.reviewedAt',
+  /** Each review copy's last Update Copy: the heads before and after, and its explanation (guide/sinceReview.ts owns the shape, #352). */
+  reviewUpdates: 'albedo.review.updates',
   /** What you saw of each PR you review, keyed by its url (gh/reviewStore.ts owns the shape, #287). */
   reviewSeen: 'albedo.reviews.seen',
   /** Squash and Merge's "Delete the branch on GitHub" choice (ui/MergeDialog.tsx, #236). Absent means on. */
@@ -177,10 +189,73 @@ export const stringListCodec: Codec<string[]> = {
   encode: (value) => JSON.stringify(value),
 };
 
+/** Only 'off' is stored; on removes the key. Anything else reads as on. */
+const onOffCodec: Codec<boolean> = {
+  decode: (raw) => raw !== 'off',
+  encode: (on) => (on ? null : 'off'),
+};
+
 /** One of a fixed set of strings; anything else reads as the fallback. */
 export function oneOfCodec<T extends string>(values: readonly T[]): Codec<T> {
   return {
     decode: (raw) => ((values as readonly string[]).includes(raw) ? (raw as T) : null),
     encode: (value) => value,
   };
+}
+
+// ---------------------------------------------------------------------------
+// On/off switches
+// ---------------------------------------------------------------------------
+
+/** An on-by-default preference, from {@link persistedSwitch}. */
+export interface PersistedSwitch {
+  /** The setting. Never throws: no storage reads as on. */
+  get: () => boolean;
+  /** Remember it, and tell every component showing it. */
+  set: (on: boolean) => void;
+  subscribe: (cb: () => void) => () => void;
+}
+
+/**
+ * An on/off preference stored under `key`, on by default: only 'off' is
+ * stored, on removes the key -- the format the hand-written copies used.
+ *
+ * The value is read from storage once and then held, so a component asking
+ * on every render costs nothing; `set` drops the held value, so the next read
+ * is storage's answer again (a write storage refused still reads as on). The
+ * held value belongs to the storage it came from: a different
+ * `window.localStorage` (a test's fresh store) is read afresh.
+ */
+export function persistedSwitch(key: string): PersistedSwitch {
+  const listeners = new Set<() => void>();
+  let held: { store: unknown; on: boolean } | null = null;
+  const get = (): boolean => {
+    let store: unknown;
+    try {
+      store = window.localStorage;
+    } catch {
+      return true;
+    }
+    if (held !== null && held.store === store) return held.on;
+    const on = readPersisted(key, onOffCodec, true);
+    held = { store, on };
+    return on;
+  };
+  const set = (on: boolean): void => {
+    writePersisted(key, onOffCodec, on);
+    held = null;
+    for (const l of [...listeners]) l();
+  };
+  const subscribe = (cb: () => void): (() => void) => {
+    listeners.add(cb);
+    return () => {
+      listeners.delete(cb);
+    };
+  };
+  return { get, set, subscribe };
+}
+
+/** A switch for the component that shows or obeys it: re-rendered when it is set. */
+export function usePersistedSwitch(sw: PersistedSwitch): [boolean, (on: boolean) => void] {
+  return [useSyncExternalStore(sw.subscribe, sw.get), sw.set];
 }

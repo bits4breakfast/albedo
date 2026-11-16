@@ -44,6 +44,7 @@ import {
   deleteComment,
   editComment,
   listComments,
+  setCommentGithub,
   moveComment,
   onCommentsChanged,
   relocate,
@@ -111,6 +112,8 @@ import { notePty } from '../Terminal';
 import { editorMayTakeFocus, onFocusEditor } from './editorFocus';
 import './editor.css';
 import './comments.css';
+import { inDiff } from '../../gh/reviewSubmit';
+import { usePrRanges } from '../reviewDrafts';
 
 /** Files past this size are edited without colour. Tokenising them janks. */
 const MAX_HIGHLIGHT_CHARS = 300_000;
@@ -1133,6 +1136,7 @@ export default function FileEditor({
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const [fileComments, setFileComments] = useState<ReviewComment[]>([]);
+  const prRanges = usePrRanges(task);
   const [outdated, setOutdated] = useState<ReviewComment[]>([]);
   /** Comments that resolved themselves while this file was open (#222): their trace, until it closes. */
   const [traces, setTraces] = useState<ReviewComment[]>([]);
@@ -1182,7 +1186,13 @@ export default function FileEditor({
         else lost.push(c);
         continue;
       }
-      placed.push({ comment: c, from: view.state.doc.line(at.lineStart).from, to: view.state.doc.line(at.lineEnd).to });
+      placed.push({
+        comment: c,
+        from: view.state.doc.line(at.lineStart).from,
+        to: view.state.doc.line(at.lineEnd).to,
+        // #287: a draft for GitHub on lines outside the PR's diff says it goes in the summary.
+        outside: c.github === 'draft' && prRanges !== null && !inDiff(prRanges, c.path, at.lineStart, at.lineEnd),
+      });
       // Moved in the file on disk: remember where. Not while the buffer holds
       // unsaved typing, which is not the file the comment refers to.
       if (!dirtyRef.current && (at.lineStart !== c.lineStart || at.lineEnd !== c.lineEnd)) {
@@ -1199,7 +1209,7 @@ export default function FileEditor({
       reportFailure(resolveComments(task.id, resolving.map((c) => c.id)), 'resolve the comments whose lines changed');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileComments, phase.kind, doc?.key]);
+  }, [fileComments, phase.kind, doc?.key, prRanges]);
 
   /** A comment write that failed says so, rather than leaving the list quietly wrong. */
   const reportFailure = (write: Promise<unknown>, what: string) => {
@@ -1209,12 +1219,18 @@ export default function FileEditor({
   commentActionsRef.current =
     commentsOn && current !== null
       ? {
-          save: (draft, text, state) => {
+          // A review task's box offers Ask Claude or Draft for GitHub (#287),
+          // starting at GitHub; any other task's offers nothing.
+          destination: (editing) => (task.reviewUrl ? (editing ? editing.github : 'draft') : undefined),
+          save: (draft, text, state, github) => {
             const view = viewRef.current;
             if (!view) return;
             let write: Promise<unknown>;
             if (draft.editing) {
-              write = editComment(task.id, draft.editing.id, text);
+              const editing = draft.editing;
+              write = editComment(task.id, editing.id, text).then(() =>
+                task.reviewUrl && github !== editing.github ? setCommentGithub(task.id, editing.id, github) : undefined,
+              );
             } else {
               // The comment quotes the file as Claude Code will read it, so
               // it is refused while the buffer differs from what is on disk.
@@ -1231,6 +1247,8 @@ export default function FileEditor({
                 lineEnd: b.number,
                 anchorText: state.doc.sliceString(a.from, b.to),
                 body: text,
+                // Only a review task's comment says where it goes (#287).
+                ...(task.reviewUrl ? { github } : {}),
               });
             }
             // The box closes only once the comment is stored: until then the

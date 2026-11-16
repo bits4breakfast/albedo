@@ -5,7 +5,7 @@ import type { NewTaskPrefill } from '../followUp';
 /**
  * Which of the frame's dialogs are open, and what they were opened on. State
  * only: what opening one means (a follow-up's title, what a dialog's close
- * refreshes) stays with the code that opens it in App.tsx.
+ * refreshes) stays with the code that opens it, in App.tsx and AppDialogs.tsx.
  *
  * Go to / Find in Files are not here: whether they may open depends on the
  * selection and on no other modal showing, so they live beside that.

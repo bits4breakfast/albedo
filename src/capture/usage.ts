@@ -82,8 +82,7 @@ export interface UsageBreakdown {
 }
 
 /**
- * One query for a window, shared by usageSummary and windowUsage so the two
- * can never drift apart.
+ * One query for a window.
  *
  * Primary path aggregates in SQLite. The fallback re-derives in TypeScript
  * from raw rows, for a SQLite build without the JSON1 functions.
@@ -92,7 +91,7 @@ async function aggregateWindow(startTs: number, endTs: number): Promise<UsageBre
   try {
     const totals = await getWindowUsageTotals(startTs, endTs);
     // Counters come back separately, exactly as sumUsage reports them, so
-    // usageBreakdown() means the same thing on both paths.
+    // the breakdown means the same thing on both paths.
     return {
       inputTokens: totals.inputTokens,
       outputTokens: totals.outputTokens,
@@ -110,53 +109,18 @@ async function aggregateWindow(startTs: number, endTs: number): Promise<UsageBre
 }
 
 // ---------------------------------------------------------------------------
-// usageSummary — the header's existing call. Signature unchanged.
+// What a window spent
 // ---------------------------------------------------------------------------
-
-export interface UsageSummary {
-  /**
-   * Fresh input-side tokens the window actually spent:
-   * `input_tokens + cache_creation_input_tokens`.
-   *
-   * Deliberately EXCLUDES `cache_read_input_tokens` -- see the header of this
-   * file. Adding it in re-counts the same cached context once per turn and
-   * inflates a five-hour figure by ~35x.
-   */
-  inputTokens: number;
-  outputTokens: number;
-  /**
-   * Cached context re-read over the window. Real and worth showing -- it is
-   * the measure of how much cached context the fleet is re-reading -- but it
-   * is NOT additive with the other two. Never fold it into a total.
-   */
-  cacheReadTokens: number;
-  /** Start of the window, epoch ms: always `now - 5h`. */
-  sinceTs: number;
-}
-
-export async function usageSummary(now: number = Date.now()): Promise<UsageSummary> {
-  const b = await usageBreakdown(now);
-  return {
-    inputTokens: freshInputTokens(b),
-    outputTokens: b.outputTokens,
-    cacheReadTokens: b.cacheReadInputTokens,
-    sinceTs: b.sinceTs,
-  };
-}
 
 /**
  * Input-side tokens a window actually spent. The single place this is
- * computed, so the headline figure cannot drift between usageSummary,
- * windowUsage and the burn rate.
+ * computed, so the headline figure cannot drift between windowUsage and
+ * the burn rate.
  */
 export function freshInputTokens(
   totals: Pick<UsageBreakdown, 'inputTokens' | 'cacheCreationInputTokens'>,
 ): number {
   return totals.inputTokens + totals.cacheCreationInputTokens;
-}
-
-export async function usageBreakdown(now: number = Date.now()): Promise<UsageBreakdown> {
-  return aggregateWindow(now - USAGE_WINDOW_MS, now);
 }
 
 // ---------------------------------------------------------------------------
@@ -183,8 +147,7 @@ export interface WindowUsage {
  * ON THE WINDOW BOUNDS. Anthropic's real quota anchor is not on disk, so this
  * models a TRUE ROLLING window and says so:
  *
- *   windowStart = now - span. The earliest turn still counted. (Matches
- *                 usageSummary().sinceTs, which the header already uses.)
+ *   windowStart = now - span. The earliest turn still counted.
  *   windowEnd   = oldest counted turn + span. The instant that turn ages out
  *                 and headroom starts coming back. With nothing in the window
  *                 there is nothing to wait for, so it is `now`.

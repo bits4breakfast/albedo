@@ -7,7 +7,8 @@
  * what they read out of `rawJson` lives in src/capture/adapter.ts.
  */
 
-import { useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
+import { REQUEST_SESSION_TOOL, SpinOutContext } from '../spinOut';
 import type { ReactNode } from 'react';
 import type { Message } from '../../types';
 import {
@@ -17,7 +18,9 @@ import {
   toolResultTextOf,
   toolUseIdOf,
 } from '../../capture/adapter';
-import { CodeLines, Disclosure, LinkifiedText, PathLink, useActivate } from './Diff';
+import { Disclosure } from '../Disclosure';
+import { CodeLines } from './codeTokens';
+import { LinkifiedText, PathLink, useActivate } from './links';
 import {
   inputViewFor,
   parseQuestionAnswers,
@@ -92,6 +95,15 @@ export function withoutLeadingCd(command: string, target: string | null): string
   return rest.trim() === '' ? command : rest;
 }
 
+/**
+ * Lines in a file's text, as its diff counts them (lib/diff's splitLines): a
+ * final line break does not start one, and an empty text has none (#387).
+ */
+export function fileLineCount(text: string): number {
+  if (text === '') return 0;
+  return text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n').length;
+}
+
 /** The compact, tool-specific detail shown on the collapsed chip. */
 export function summaryOf(message: Message): string | null {
   const input = toolInput(message);
@@ -134,8 +146,11 @@ export function summaryOf(message: Message): string | null {
       return qs.length > 1 ? `${head} (+${qs.length - 1} more)` : head;
     }
     case 'Write': {
+      // Counted as the diff counts them (#387): a final line break does not start a line.
       const content = str(input.content);
-      return content === null ? null : `${content.split('\n').length} lines`;
+      if (content === null) return null;
+      const n = fileLineCount(content);
+      return `${n} ${n === 1 ? 'line' : 'lines'}`;
     }
     case 'Skill': {
       // Which skill, and what it was asked to do (#150): "claude-in-chrome",
@@ -145,6 +160,9 @@ export function summaryOf(message: Message): string | null {
       const args = firstLine(str(input.args) ?? '');
       return args ? `${skill} · ${args}` : skill;
     }
+    case REQUEST_SESSION_TOOL:
+      // The proposed task's title (#332): the brief's first line said less.
+      return firstLine(str(input.title) ?? str(input.prompt) ?? '');
     default: {
       const command = str(input.command);
       if (command) return firstLine(command);
@@ -176,9 +194,19 @@ export interface ToolChipProps {
    * Claude Code writes on a line of its own after the call (#150).
    */
   more?: ReactNode;
+  /**
+   * A word on what the call did, beside its outcome: "New File" or "Not
+   * Written" on a Write (#387). Nothing by default.
+   */
+  tag?: string | null;
+  /**
+   * The row already shows the result under the chip -- a failed Write's
+   * error (#387) -- so the open chip does not repeat it.
+   */
+  resultShown?: boolean;
 }
 
-export function ToolChip({ message, result = null, defaultOpen = false, more = null }: ToolChipProps): ReactNode {
+export function ToolChip({ message, result = null, defaultOpen = false, more = null, tag = null, resultShown = false }: ToolChipProps): ReactNode {
   const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
 
@@ -233,6 +261,8 @@ export function ToolChip({ message, result = null, defaultOpen = false, more = n
             {chosen}
           </span>
         ) : null}
+        {message.toolName === REQUEST_SESSION_TOOL ? <SpinOutNote input={input} /> : null}
+        {tag ? <span className="tx-chip-tag">{tag}</span> : null}
         <span className="tx-chip-state" title={state}>
           {pending ? '…' : error ? '✕' : '✓'}
         </span>
@@ -267,24 +297,65 @@ export function ToolChip({ message, result = null, defaultOpen = false, more = n
               )}
             </section>
           ) : null}
-          <section className="tx-chip-section">
-            <h4 className="tx-chip-label">{error ? 'Error' : 'Result'}</h4>
-            {pending ? (
-              <div className="tx-chip-empty">No result yet</div>
-            ) : resultText.length === 0 ? (
-              <div className="tx-chip-empty">Empty</div>
-            ) : (
-              // Stack traces and compiler errors live here; this is where a
-              // clickable path pays off most.
-              <pre className={`tx-pre ${error ? 'tx-pre-error' : ''}`}>
-                <LinkifiedText text={resultText} />
-              </pre>
-            )}
-          </section>
+          {resultShown ? null : (
+            <section className="tx-chip-section">
+              <h4 className="tx-chip-label">{error ? 'Error' : 'Result'}</h4>
+              {pending ? (
+                <div className="tx-chip-empty">No result yet</div>
+              ) : resultText.length === 0 ? (
+                <div className="tx-chip-empty">Empty</div>
+              ) : (
+                // Stack traces and compiler errors live here; this is where a
+                // clickable path pays off most.
+                <pre className={`tx-pre ${error ? 'tx-pre-error' : ''}`}>
+                  <LinkifiedText text={resultText} />
+                </pre>
+              )}
+            </section>
+          )}
           {more}
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * What a session's request for a new task became (#332), after the chip's
+ * title: "Proposed · in the task list", "Spun out as <task>", or "Not spun
+ * out". No buttons: Approve… and Deny are on the Proposed row only. The task
+ * is a link while it is in the list; an archived or deleted one is named.
+ * Nothing at all when the status is unknown (an expired request).
+ */
+function SpinOutNote({ input }: { input: Obj }): ReactNode {
+  const lookup = useContext(SpinOutContext);
+  const status = lookup?.statusOf({ title: input.title, prompt: input.prompt }) ?? null;
+  if (!lookup || !status) return null;
+  if (status.kind === 'pending') return <span className="tx-spinout">Proposed · in the task list</span>;
+  if (status.kind === 'denied') return <span className="tx-spinout">Not spun out</span>;
+  return (
+    <span className="tx-spinout">
+      Spun out as{' '}
+      {status.live ? (
+        <button
+          type="button"
+          className="tx-spinout-link"
+          title={`Show ${status.title}`}
+          // The head toggles the chip on click; this one opens the task only.
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            lookup.openTask(status.taskId);
+          }}
+        >
+          {status.title}
+        </button>
+      ) : (
+        <span className="tx-spinout-gone" title="Archived or deleted">
+          {status.title}
+        </span>
+      )}
+    </span>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { QueuedRequest, SessionRequest } from './requestQueue';
+import type { QueuedRequest } from './requestQueue';
 import './requests.css';
 
 /** The panel's width plus its border; used only to keep it on screen. */
@@ -16,17 +16,20 @@ export function panelPosition(
   return { left: Math.max(EDGE, left), top: anchor.bottom + 2 };
 }
 
-/** The header button's label: what kind of thing is waiting, and how many. */
-export function requestsLabel(items: readonly QueuedRequest[]): string {
-  const n = items.length;
-  return n === 1 ? '1 Request' : `${n} Requests`;
+/**
+ * What the header lists: everything but a request for a new session, which
+ * waits in the task list's Proposed group instead (#332).
+ */
+export type HeaderRequest = Exclude<QueuedRequest, { tool: 'request_session' }>;
+
+export function isHeaderRequest(r: QueuedRequest): r is HeaderRequest {
+  return r.tool !== 'request_session';
 }
 
-/** The first lines of a prompt, for the preview. The whole text is one click away (Approve). */
-export function promptPreview(prompt: string, maxLines = 4, maxChars = 320): string {
-  const lines = prompt.split('\n').slice(0, maxLines).join('\n');
-  const cut = lines.length > maxChars ? `${lines.slice(0, maxChars - 1)}…` : lines;
-  return cut.length < prompt.length && !cut.endsWith('…') ? `${cut}\n…` : cut;
+/** The header button's label: what kind of thing is waiting, and how many. */
+export function requestsLabel(items: readonly HeaderRequest[]): string {
+  const n = items.length;
+  return n === 1 ? '1 Request' : `${n} Requests`;
 }
 
 function when(ms: number): string {
@@ -44,12 +47,11 @@ function when(ms: number): string {
 }
 
 export interface RequestsProps {
+  /** The whole queue; requests for a new session are left out here (#332). */
   items: readonly QueuedRequest[];
   /** The requesting task's title, for "from …". */
   titleOf: (taskId: number) => string | null;
-  /** Approve a session request: New Task opens filled in from it. */
-  onApprove: (req: SessionRequest) => void;
-  /** Deny a session request, or dismiss anything else. */
+  /** Dismiss a reminder that couldn't be set, or a message. */
   onDismiss: (id: string) => void;
   /** Go to the requesting task. */
   onOpenTask: (taskId: number) => void;
@@ -59,12 +61,16 @@ export interface RequestsProps {
  * "N Requests" in the header, and the panel it opens: what sessions asked
  * Albedo for through its MCP server (#157), waiting on the user. Absent when
  * nothing is waiting, so it costs the header nothing the rest of the time.
+ * A request for a new session is not here: it is a row in the task list's
+ * Proposed group (#332), so it neither counts nor shows the button. Nothing
+ * opens the panel but a click on the button.
  *
  * Dismissal as the other header menus: a press outside, Esc (focus back on
  * the button), blur, resize. A panel, not a menu: each item has its own
  * buttons, so Tab moves through them rather than arrows.
  */
-export default function Requests({ items, titleOf, onApprove, onDismiss, onOpenTask }: RequestsProps) {
+export default function Requests({ items: queue, titleOf, onDismiss, onOpenTask }: RequestsProps) {
+  const items = queue.filter(isHeaderRequest);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -126,7 +132,7 @@ export default function Requests({ items, titleOf, onApprove, onDismiss, onOpenT
         onClick={toggle}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="What sessions asked Albedo for: new sessions to approve, reminders, and messages"
+        title="What sessions asked Albedo for: reminders it couldn't set, and messages"
       >
         <span className="requests-dot" aria-hidden="true" />
         <span className="usage-figure">{requestsLabel(items)}</span>
@@ -164,7 +170,7 @@ export default function Requests({ items, titleOf, onApprove, onDismiss, onOpenT
                     </span>
                   </div>
 
-                  <RequestBody r={r} close={close} onApprove={onApprove} onDismiss={onDismiss} onOpenTask={onOpenTask} />
+                  <RequestBody r={r} close={close} onDismiss={onDismiss} onOpenTask={onOpenTask} />
                 </li>
               ))}
             </ul>
@@ -176,10 +182,8 @@ export default function Requests({ items, titleOf, onApprove, onDismiss, onOpenT
 }
 
 /** What kind of request, as the item's first word. */
-export function kindLabel(r: QueuedRequest): string {
+export function kindLabel(r: HeaderRequest): string {
   switch (r.tool) {
-    case 'request_session':
-      return 'New session';
     case 'create_reminder':
       return 'Reminder';
     case 'notify_blocked':
@@ -194,41 +198,10 @@ export function kindLabel(r: QueuedRequest): string {
 function RequestBody({
   r,
   close,
-  onApprove,
   onDismiss,
   onOpenTask,
-}: { r: QueuedRequest; close: () => void } & Pick<RequestsProps, 'onApprove' | 'onDismiss' | 'onOpenTask'>) {
+}: { r: HeaderRequest; close: () => void } & Pick<RequestsProps, 'onDismiss' | 'onOpenTask'>) {
   switch (r.tool) {
-    case 'request_session':
-      return (
-        <>
-          <div className="requests-title">{r.title}</div>
-          <div className="requests-text">{r.reason}</div>
-          <pre className="requests-prompt">{promptPreview(r.prompt)}</pre>
-          {(r.project || r.branch) && (
-            <div className="requests-meta">
-              {r.project && <span>Project: {r.project}</span>}
-              {r.branch && <span>Branch: {r.branch}</span>}
-            </div>
-          )}
-          <div className="requests-actions">
-            <button type="button" className="btn btn-ghost" onClick={() => onDismiss(r.id)}>
-              Deny
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              title="Opens New Task filled in from this request. Nothing is created until you press Create."
-              onClick={() => {
-                close();
-                onApprove(r);
-              }}
-            >
-              Approve…
-            </button>
-          </div>
-        </>
-      );
     case 'create_reminder':
       return (
         <>

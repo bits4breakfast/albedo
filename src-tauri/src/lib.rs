@@ -3,6 +3,7 @@ mod fsscope;
 mod fsx;
 mod keep_awake;
 mod mcp;
+mod navguard;
 mod oneshot;
 mod pty;
 
@@ -19,6 +20,13 @@ const CLOSE_TAB_ID: &str = "close-tab";
 /// Asks the webview to confirm quitting while tasks are busy.
 const QUIT_REQUESTED_EVENT: &str = "albedo://quit-requested";
 const QUIT_ID: &str = "albedo-quit";
+
+/// How long quitting waits for the terminals' process groups to leave on
+/// SIGHUP before it SIGKILLs them. The same as closing a task (pty.rs
+/// KILL_GRACE), so Claude Code can finish its transcript write and SessionEnd
+/// hooks; quit returns as soon as every group has gone, so this is only spent
+/// while something refuses to exit.
+const QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How many tasks are mid-turn or waiting on the user, as the webview last
 /// reported (`set_busy_tasks`). Quitting kills their `claude` processes, so
@@ -132,6 +140,22 @@ const M0011_TASK_SUMMARY: &str = include_str!("../../src/db/migrations/0011_task
 const M0012_CI_DETAILS: &str = include_str!("../../src/db/migrations/0012_ci_details.sql");
 /// v13: tasks.review_url -- the pull request a review task is for (#287).
 const M0013_REVIEW_URL: &str = include_str!("../../src/db/migrations/0013_review_url.sql");
+/// v14: projects.guide_set_aside and guide_careful -- a project's Review Guide
+/// defaults (#295).
+const M0014_GUIDE_FOCUS: &str = include_str!("../../src/db/migrations/0014_guide_focus.sql");
+/// v15: comments.github and reply_to -- drafts for GitHub on a review task
+/// (#287).
+const M0015_COMMENT_GITHUB: &str = include_str!("../../src/db/migrations/0015_comment_github.sql");
+/// v16: tasks.api_error and api_error_text -- the last turn stopped on an API
+/// error (#338).
+const M0016_API_ERROR: &str = include_str!("../../src/db/migrations/0016_api_error.sql");
+/// v17: tasks.spun_from_task_id -- the task a task was spun out of (#332).
+const M0017_SPUN_FROM: &str = include_str!("../../src/db/migrations/0017_spun_from.sql");
+/// v18: previews -- HTML mockups a session showed the user for approval (#348).
+const M0018_PREVIEWS: &str = include_str!("../../src/db/migrations/0018_previews.sql");
+/// v19: messages_au re-indexes search only when id or body is written (#361).
+const M0019_FTS_BODY_UPDATES: &str =
+    include_str!("../../src/db/migrations/0019_fts_body_updates.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -213,9 +237,48 @@ pub fn run() {
             sql: M0013_REVIEW_URL,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 14,
+            description: "projects.guide_set_aside",
+            sql: M0014_GUIDE_FOCUS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 15,
+            description: "comments.github",
+            sql: M0015_COMMENT_GITHUB,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 16,
+            description: "tasks.api_error",
+            sql: M0016_API_ERROR,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 17,
+            description: "tasks.spun_from_task_id",
+            sql: M0017_SPUN_FROM,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 18,
+            description: "previews",
+            sql: M0018_PREVIEWS,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 19,
+            description: "messages_au on id and body only",
+            sql: M0019_FTS_BODY_UPDATES,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
+        // Every frame stays on the app's own pages: a preview's sandboxed
+        // page (#348) cannot navigate itself out to the network.
+        .plugin(navguard::plugin())
         .menu(build_menu)
         .setup(|app| {
             attention::install(app.handle());
@@ -268,6 +331,7 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_kill,
             pty::pty_kill_stale,
+            pty::pty_ack,
             fsx::canonicalize_path,
             fsscope::allow_project_dir,
             fsscope::allow_outside_file,
@@ -288,6 +352,9 @@ pub fn run() {
             // crash needs nothing -- the OS ends the activity with the process.
             if let RunEvent::Exit = event {
                 app.state::<keep_awake::KeepAwake>().release();
+                // End every terminal's process group, dev servers included:
+                // HUP, up to QUIT_GRACE for them to go, then KILL (#360).
+                app.state::<pty::PtyRegistry>().shutdown(QUIT_GRACE);
             }
         });
 }

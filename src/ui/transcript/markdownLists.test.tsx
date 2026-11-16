@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 
-import { Markdown } from './MessageRow';
+import { Markdown } from './Markdown';
 
 afterEach(cleanup);
 

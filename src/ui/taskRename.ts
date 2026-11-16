@@ -39,6 +39,7 @@
 import { holdMessage } from './transcript/outbox';
 import { promptOpen } from './transcript/outboxRelease';
 import { mustHold, sendToSession } from './transcript/send';
+import { SEND_FROM } from './transcript/sendFrom';
 import { hasLivePty, onPtyPresenceChange } from './Terminal';
 import type { Task } from '../types';
 import type { OverflowItem } from './OverflowMenu';
@@ -65,7 +66,7 @@ export const RENAME_KEYS = '⇧F6';
 export const RENAME_HINT =
   'Renames the task in Albedo and its Claude Code session (/rename). The branch and the folder stay as they are.';
 
-/** "Rename Task…" for the task bar's ⋯ menu: opens the name for editing in place. */
+/** "Rename Task…" for the task's ⋯ menus (#331): opens the name for editing where the menu is. */
 export function renameMenuItem(onSelect: () => void): OverflowItem {
   return { id: 'rename', label: 'Rename Task…', aside: RENAME_KEYS, title: RENAME_HINT, onSelect };
 }
@@ -134,7 +135,8 @@ const defaultDeps: SessionRenameDeps = {
   live: hasLivePty,
   mustHold,
   promptOpen: (taskId) => promptOpen(taskId),
-  send: sendToSession,
+  // Labelled, so its echo says it came from renaming the task (#384).
+  send: (taskId, text) => sendToSession(taskId, text, SEND_FROM.rename),
   hold: (taskId, text) => holdMessage(taskId, text) !== null,
   onLive: (cb) =>
     onPtyPresenceChange((taskId, live) => {

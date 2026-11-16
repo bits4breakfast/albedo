@@ -1,0 +1,23 @@
+-- v16: the session's last turn stopped on an API error (#338).
+--
+-- Decided by the owner (schema.sql and migrations are a shared contract;
+-- 2026-11-10). When a turn ends on an API error ("The response stopped
+-- arriving", overloaded, a rate limit), the task used to drop into Idle as if
+-- Claude had finished. These hold what the transcript says, derived in
+-- capture like `status` (src/capture/status.ts `lastApiError`), so the task
+-- list can put it in Stopped on an Error from the moment it loads.
+--
+-- api_error       NULL, or which error: stopped | slept | offline |
+--                 overloaded | rate-limited | signed-out | other
+--                 (`ApiErrorKind`, src/types.ts). An unknown value reads as
+--                 'other'.
+-- api_error_text  Claude Code's own text for it, for the row's tooltip.
+--                 NULL exactly when api_error is.
+--
+-- Both are cleared by a new prompt (from anywhere), Mark as Done and Archive.
+-- Nothing is backfilled: every existing row reads "no error" until its
+-- session's status is next derived. raw_json is untouched.
+--
+-- v16 may need a bump at merge: #332 adds a migration in parallel.
+ALTER TABLE tasks ADD COLUMN api_error TEXT;
+ALTER TABLE tasks ADD COLUMN api_error_text TEXT;

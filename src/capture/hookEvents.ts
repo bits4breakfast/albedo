@@ -63,16 +63,15 @@ import { homeDir } from '@tauri-apps/api/path';
 import {
   exists,
   mkdir,
-  open,
   readDir,
   readTextFile,
   rename,
-  SeekMode,
   stat,
   watch,
   writeTextFile,
   type UnwatchFn,
 } from '@tauri-apps/plugin-fs';
+import { completeLines, readRange, serialQueue } from './fileTail';
 
 // ---------------------------------------------------------------------------
 // What a prompt is
@@ -917,49 +916,28 @@ const tails = new Map<number, Tail>();
  */
 export const COMPACT_AT_BYTES = 64 * 1024;
 
-/**
- * The complete lines at the head of `bytes`, and how many bytes they span.
- * Cut on the raw `\n` byte, which never occurs inside a UTF-8 sequence.
- */
-export function completeLines(bytes: Uint8Array): { text: string; consumed: number } {
-  let cut = -1;
-  for (let i = bytes.length - 1; i >= 0; i--) {
-    if (bytes[i] === 0x0a) {
-      cut = i;
-      break;
-    }
-  }
-  if (cut < 0) return { text: '', consumed: 0 };
-  return { text: new TextDecoder().decode(bytes.subarray(0, cut + 1)), consumed: cut + 1 };
-}
-
-async function readFrom(path: string, offset: number, length: number): Promise<Uint8Array> {
-  const file = await open(path, { read: true });
+/** The file's size, or null when it is not there (or cannot be read). */
+async function sizeOf(path: string): Promise<number | null> {
   try {
-    await file.seek(offset, SeekMode.Start);
-    const out = new Uint8Array(length);
-    let filled = 0;
-    while (filled < length) {
-      const n = await file.read(out.subarray(filled));
-      if (n === null || n <= 0) break;
-      filled += n;
-    }
-    return out.subarray(0, filled);
-  } finally {
-    await file.close();
+    return (await stat(path)).size;
+  } catch {
+    return null;
   }
 }
 
-/** Apply the complete lines of `path` past `tail.offset`; returns them. */
-async function consume(path: string, tail: Tail): Promise<HookEvent[]> {
-  const size = (await stat(path)).size;
+/**
+ * Apply the complete lines of `path` past `tail.offset`; returns them.
+ * `known` is its size when the caller has just read it.
+ */
+async function consume(path: string, tail: Tail, known?: number): Promise<HookEvent[]> {
+  const size = known ?? (await stat(path)).size;
   if (size < tail.offset) {
     // Shorter than what was read: emptied under us. Start over with it.
     tail.offset = 0;
     tail.state = emptyPending();
   }
   if (size === tail.offset) return [];
-  const { text, consumed } = completeLines(await readFrom(path, tail.offset, size - tail.offset));
+  const { text, consumed } = completeLines(await readRange(path, tail.offset, size - tail.offset));
   if (consumed === 0) return [];
   const events = parseHookLines(text);
   applyHookEvents(tail.state, events);
@@ -999,16 +977,7 @@ async function compact(path: string, tail: Tail): Promise<HookEvent[]> {
 }
 
 /** Per-task queue: two reads of one file at once would apply its lines twice. */
-const queues = new Map<number, Promise<void>>();
-
-function serial(taskId: number, work: () => Promise<void>): Promise<void> {
-  const next = (queues.get(taskId) ?? Promise.resolve()).then(work, work);
-  queues.set(taskId, next);
-  void next.finally(() => {
-    if (queues.get(taskId) === next) queues.delete(taskId);
-  });
-  return next;
-}
+const serial = serialQueue<number>();
 
 async function eventsPath(taskId: number): Promise<string> {
   return `${await home()}/${ALBEDO_DIR}/events/task-${taskId}.jsonl`;
@@ -1023,8 +992,10 @@ function refreshTask(taskId: number): Promise<void> {
     try {
       const path = await eventsPath(taskId);
       // Missing is normal right after a compaction: nothing new, state stands.
-      if (await exists(path)) {
-        events.push(...(await consume(path, tail)));
+      // One stat says both whether it is there and how far it goes (#365).
+      const size = await sizeOf(path);
+      if (size !== null) {
+        events.push(...(await consume(path, tail, size)));
         if (isQuiet(tail.state) && tail.offset >= COMPACT_AT_BYTES) events.push(...(await compact(path, tail)));
       }
     } catch {
@@ -1106,7 +1077,7 @@ export async function startHookEvents(): Promise<string> {
     await mkdir(`${base}/events`, { recursive: true });
     await installScript(scriptPath);
     const sweep = () =>
-      void Promise.all([...live].flatMap((id) => [refreshTask(id), readSnapshot(id)]));
+      void Promise.all([...live].flatMap((id) => [refreshTask(id), sweepSnapshot(id)]));
     // Whatever the last sessions reported, so the strip has figures at launch.
     try {
       for (const e of await readDir(`${base}/events`)) {
@@ -1246,6 +1217,11 @@ export async function endTaskEvents(taskId: number): Promise<void> {
   publish(taskId, null);
 }
 
+/**
+ * Stop the sweep and the watcher. The app never calls it -- both end with the
+ * process -- but the runtime tests restart through it (a launch with the
+ * script already installed, the sweep under fake timers).
+ */
 export async function stopHookEvents(): Promise<void> {
   if (timer !== null) clearInterval(timer);
   timer = null;
@@ -1372,18 +1348,47 @@ export function planUsage(): { fiveHour: PlanWindow | null; sevenDay: PlanWindow
   return best && { fiveHour: best.fiveHour, sevenDay: best.sevenDay, at: best.at };
 }
 
-async function readSnapshot(taskId: number): Promise<void> {
+async function snapshotPath(taskId: number): Promise<string> {
+  return `${await home()}/${ALBEDO_DIR}/events/${STATUS_PREFIX}${taskId}.json`;
+}
+
+/**
+ * What the 2 s sweep last read of each status file: its inode, mtime and
+ * size (#365). The file is replaced by rename on every refresh, so a new one
+ * is a new inode; one that is the same file as last time is not read again.
+ * The watcher's reads do not go through this: they always read.
+ */
+const snapshotSeen = new Map<number, string>();
+
+/** The sweep's read of a status file: only when the file is another one. */
+async function sweepSnapshot(taskId: number): Promise<void> {
+  let key: string | null = null;
+  try {
+    const st = await stat(await snapshotPath(taskId));
+    // Without an inode or a time there is nothing to tell files apart by.
+    if (st.ino != null && st.mtime) key = `${st.ino}:${st.mtime.getTime()}:${st.size}`;
+  } catch {
+    return; // not there: as readSnapshot would find it
+  }
+  if (key !== null && snapshotSeen.get(taskId) === key) return;
+  // The key is from before the read: a file replaced in between is newer
+  // than the key, and so read again next time, never skipped.
+  if ((await readSnapshot(taskId)) && key !== null) snapshotSeen.set(taskId, key);
+}
+
+/** Read a status file and publish what changed. True when it was read. */
+async function readSnapshot(taskId: number): Promise<boolean> {
   let text: string;
   try {
-    const path = `${await home()}/${ALBEDO_DIR}/events/${STATUS_PREFIX}${taskId}.json`;
-    if (!(await exists(path))) return;
+    const path = await snapshotPath(taskId);
+    if (!(await exists(path))) return false;
     text = await readTextFile(path);
   } catch {
-    return;
+    return false;
   }
-  if (snapshotText.get(taskId) === text) return;
+  if (snapshotText.get(taskId) === text) return true;
   const snap = parseStatusSnapshot(text);
-  if (snap === null) return;
+  if (snap === null) return true;
   snapshotText.set(taskId, text);
   snapshots.set(taskId, snap);
   for (const cb of [...snapshotListeners]) {
@@ -1393,4 +1398,5 @@ async function readSnapshot(taskId: number): Promise<void> {
       /* a broken subscriber must not stall the others */
     }
   }
+  return true;
 }

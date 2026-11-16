@@ -5,7 +5,7 @@ import fixture from '../../capture/fixtures/compaction.jsonl?raw';
 import { parseTranscript } from '../../capture/adapter';
 import type { Message } from '../../types';
 import { compactionAt, compactionLabel, isPromptRow, noticeParts } from './compaction';
-import { groupRows } from './TranscriptPane';
+import { groupRows } from './grouping';
 
 /** The fixture as stored rows: ids in file order. */
 const rows: Message[] = parseTranscript(fixture).map((r, i) => ({ ...r, id: i + 1, taskId: 1 }));

@@ -5,11 +5,14 @@
  */
 
 import { liveRuns, type SubagentRun } from '../db/subagents';
+import type { Message } from '../types';
+import { str, summaryOf, targetOf, toolInput } from './transcript/ToolChip';
+import { formatTokens, stepDetail } from './transcript/working';
 
 /**
  * Past this many live agents the strip collapses to one summary line.
  *
- * Every row is up to two lines of label, so five agents is already ten lines of
+ * Every row is two lines, so five agents is already ten lines of
  * transcript height spent on chrome -- the strip exists to answer "what is
  * running", not to become the pane. Four still fits a laptop-height window with
  * the transcript readable beneath it.
@@ -146,4 +149,48 @@ export function nextExpiry(runs: readonly Pick<SubagentRun, 'expiresAt'>[]): num
 /** What a row is called when the agent has not said anything yet. */
 export function agentLabel(run: Pick<SubagentRun, 'label' | 'agentId'>): string {
   return run.label ?? `Agent ${run.agentId.slice(0, 8)}`;
+}
+
+/**
+ * A row's first line (#377): the short name the agent's call gave it, as the
+ * terminal shows it; without one, the first line of its prompt as before.
+ */
+export function agentTitle(run: Pick<SubagentRun, 'name' | 'label' | 'agentId'>): string {
+  return run.name ?? agentLabel(run);
+}
+
+/** Said until an agent at work makes its first tool call. */
+export const STARTING = 'Starting…';
+
+/**
+ * A row's second line (#377): what the agent is doing now, in the words its
+ * newest tool call's row uses in the transcript ("Read useLayout.ts", "Grep
+ * /pattern/ in src") -- except a command, which reads as its description
+ * when it has one ("Run the tests"), as the terminal shows it. "Starting…"
+ * for an agent at work with no call yet; nothing for one that stopped without
+ * any.
+ */
+export function agentActivity(run: Pick<SubagentRun, 'lastCall' | 'status' | 'waiting'>): string {
+  const call = run.lastCall;
+  if (call === null) {
+    const state = agentState(run);
+    return state === 'running' || state === 'blocked' ? STARTING : '';
+  }
+  return callActivity(call);
+}
+
+function callActivity(call: Message): string {
+  if (call.toolName === 'Bash') {
+    const description = str(toolInput(call).description)?.trim().split('\n')[0]?.trim();
+    if (description) return description;
+  }
+  return stepDetail({ kind: 'tool', name: call.toolName ?? 'Tool', target: targetOf(call), summary: summaryOf(call) }) ?? '';
+}
+
+/**
+ * The tokens beside a row's elapsed time: "345.2k tokens", or null when its
+ * rows carry no usage.
+ */
+export function agentTokens(run: Pick<SubagentRun, 'tokens'>): string | null {
+  return run.tokens === null ? null : formatTokens(run.tokens);
 }

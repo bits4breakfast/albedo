@@ -26,7 +26,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@t
 import { useFocusAreaCycle } from '../focusAreas';
 
 import { canResume, hasLivePty, onPtyPresenceChange, ptyLiveSince, startPty, submitPty } from '../Terminal';
-import { Composer } from './TranscriptPane';
+import { Composer } from './Composer';
 import { __resetDrafts, addComment, commentsOf, flushDrafts, getDraft, saveDraft } from './drafts';
 import type { TranscriptComment } from './transcriptQuotes';
 import { __resetOutbox, heldFor, holdMessage, removeHeld } from './outbox';
@@ -94,7 +94,7 @@ const pressEnter = () => fireEvent.keyDown(box(), { key: 'Enter' });
 function codeComment(id: number, over: Partial<import('../../db/comments').ReviewComment> = {}): import('../../db/comments').ReviewComment {
   return {
     id, taskId: 1, path: 'src/a.ts', lineStart: 3, lineEnd: 3, anchorText: 'const x = 1;', body: 'Name it.',
-    createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, ...over,
+    createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null, ...over,
   };
 }
 
@@ -655,7 +655,7 @@ describe('pasting a screenshot', () => {
 
 describe('shellEscapePath', () => {
   it('escapes spaces and shell characters the way a terminal does on drop', async () => {
-    const { shellEscapePath } = await import('./TranscriptPane');
+    const { shellEscapePath } = await import('./Composer');
     expect(shellEscapePath('/T/Screenshot 2026-10-17 at 00.36.49.png')).toBe('/T/Screenshot\\ 2026-10-17\\ at\\ 00.36.49.png');
     expect(shellEscapePath("/a/it's (1).png")).toBe("/a/it\\'s\\ \\(1\\).png");
     expect(shellEscapePath('/plain/path.png')).toBe('/plain/path.png');
@@ -1122,6 +1122,19 @@ describe('(o) offline, a send waits in the outbox', () => {
     expect(vi.mocked(submitPty).mock.calls[0]![1]).toContain('1. src/a.ts:3');
     codeRows.rows = [];
     stop();
+  });
+
+  it('never carries a draft for GitHub to Claude (#287): it waits for Submit Review', async () => {
+    codeRows.rows = [codeComment(7), codeComment(8, { github: 'draft', body: 'For the PR.' })];
+    render(<Composer taskId={5} onSent={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    type('go');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalled());
+    const sent = vi.mocked(submitPty).mock.calls[0]![1];
+    expect(sent).toContain('Name it.');
+    expect(sent).not.toContain('For the PR.');
+    codeRows.rows = [];
   });
 
   it('a code comment a held message carries is not carried again by the next one; removing the held one brings it back (#222)', async () => {

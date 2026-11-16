@@ -4,7 +4,6 @@ import {
   cutPoint,
   parseAheadBehind,
   probeWorkAtRisk,
-  parseCommitFileTimes,
   parseCommitLog,
   parseNameStatus,
   parseNumstat,
@@ -41,6 +40,9 @@ import {
   setPathExistsProbe,
   shortenRef,
   commitsOnBranch,
+  baseOrUpstream,
+  defaultBranchOf,
+  refExists,
   fetchAll,
   guessBaseBranch,
   localCheckoutFor,
@@ -1257,20 +1259,6 @@ describe('parseNameStatus', () => {
   });
 });
 
-describe('parseCommitFileTimes', () => {
-  it('keeps the newest commit time per path', () => {
-    const out = '\u00001700000200\n\nsrc/a.ts\nsrc/b.ts\n\u00001700000100\n\nsrc/a.ts\nsrc/c.ts\n';
-    const m = parseCommitFileTimes(out);
-    expect(m.get('src/a.ts')).toBe(1700000200_000);
-    expect(m.get('src/b.ts')).toBe(1700000200_000);
-    expect(m.get('src/c.ts')).toBe(1700000100_000);
-    expect(m.size).toBe(3);
-  });
-  it('is empty for empty output', () => {
-    expect(parseCommitFileTimes('').size).toBe(0);
-  });
-});
-
 describe('parseCommitLog', () => {
   it('reads commits newest first, each with its files and counts', () => {
     const out =
@@ -1446,6 +1434,85 @@ describe('guessBaseBranch', () => {
   it('is null when nothing can be compared', async () => {
     install(() => ({ code: 128, stdout: '', stderr: 'bad' }));
     expect(await guessBaseBranch('/repo', 'x', ['main'])).toBeNull();
+  });
+});
+
+describe('refExists (#367)', () => {
+  it('asks rev-parse --verify --quiet in the folder given, and reads its exit code', async () => {
+    const calls = install(({ args }) => (args[3] === 'refs/heads/gone' ? { code: 1, stdout: '', stderr: '' } : undefined));
+    expect(await refExists('/repo', 'refs/heads/main')).toBe(true);
+    expect(await refExists('/repo', 'refs/heads/gone')).toBe(false);
+    expect(calls).toEqual([
+      { args: ['rev-parse', '--verify', '--quiet', 'refs/heads/main'], cwd: '/repo' },
+      { args: ['rev-parse', '--verify', '--quiet', 'refs/heads/gone'], cwd: '/repo' },
+    ]);
+  });
+
+  it('rejects when git cannot be run, as git() does', async () => {
+    const prev = setGitRunner(async () => {
+      throw new Error('no such cwd');
+    });
+    restoreRunner = () => setGitRunner(prev);
+    await expect(refExists('/gone', 'HEAD')).rejects.toThrow('no such cwd');
+  });
+});
+
+describe('baseOrUpstream: a base only origin has (#237)', () => {
+  it("checks the local branch, then origin's, and measures against origin's", async () => {
+    const calls = install(({ args }) =>
+      args[1] === '--abbrev-ref' || args[3] === 'refs/heads/feature-a' ? { code: 1, stdout: '', stderr: '' } : undefined,
+    );
+    expect(await baseOrUpstream('/w', 'feature-a')).toBe('origin/feature-a');
+    expect(calls.map((c) => c.args)).toEqual([
+      ['rev-parse', '--abbrev-ref', 'feature-a@{upstream}'],
+      ['rev-parse', '--verify', '--quiet', 'refs/heads/feature-a'],
+      ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feature-a'],
+    ]);
+  });
+
+  it('keeps the name when neither exists, and when git cannot say', async () => {
+    install(({ args }) => (args[0] === 'rev-parse' ? { code: 1, stdout: '', stderr: '' } : undefined));
+    expect(await baseOrUpstream('/w', 'nowhere')).toBe('nowhere');
+    const prev = setGitRunner(async (args) => {
+      if (args[1] === '--verify') throw new Error('spawn failed');
+      return { code: 1, stdout: '', stderr: '' };
+    });
+    const outer = restoreRunner;
+    restoreRunner = () => {
+      setGitRunner(prev);
+      outer?.();
+    };
+    expect(await baseOrUpstream('/w', 'nowhere')).toBe('nowhere');
+  });
+});
+
+describe('defaultBranchOf', () => {
+  it("prefers origin's HEAD, else a local main, else master", async () => {
+    let calls = install(({ args }) =>
+      args[0] === 'symbolic-ref' ? { code: 0, stdout: 'origin/trunk\n', stderr: '' } : undefined,
+    );
+    expect(await defaultBranchOf('/repo')).toBe('trunk');
+    expect(calls).toHaveLength(1);
+    restoreRunner?.();
+    calls = install(({ args }) =>
+      args[0] === 'symbolic-ref' || args[3] === 'refs/heads/main' ? { code: 1, stdout: '', stderr: '' } : undefined,
+    );
+    expect(await defaultBranchOf('/repo')).toBe('master');
+    expect(calls.map((c) => c.args)).toEqual([
+      ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'],
+      ['rev-parse', '--verify', '--quiet', 'refs/heads/main'],
+      ['rev-parse', '--verify', '--quiet', 'refs/heads/master'],
+    ]);
+    expect(calls.every((c) => c.cwd === '/repo')).toBe(true);
+  });
+
+  it('reads a check git could not run as "not there", and goes on', async () => {
+    const prev = setGitRunner(async (args) => {
+      if (args[0] === 'symbolic-ref' || args[3] === 'refs/heads/main') throw new Error('spawn failed');
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    restoreRunner = () => setGitRunner(prev);
+    expect(await defaultBranchOf('/repo')).toBe('master');
   });
 });
 

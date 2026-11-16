@@ -25,7 +25,7 @@ vi.mock('./Terminal', async (importOriginal) => ({
 }));
 vi.mock('../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db')>()),
-  remoteControlUrlSince: async () => URL,
+  remoteControlLineSince: async () => ({ url: URL, ts: 6_000 }),
 }));
 const opened = vi.hoisted(() => [] as string[]);
 vi.mock('../lib/openUrl', () => ({ openExternal: async (url: string) => void opened.push(url) }));
@@ -36,7 +36,7 @@ afterEach(cleanup);
 
 const base = {
   projectId: 1, repoPath: '/r/app', createdBranch: false, kind: 'work', baseBranch: 'main',
-  ownsWorktree: true, status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null,
+  ownsWorktree: true, status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null, reviewUrl: null, apiError: null, apiErrorText: null, spunFromTaskId: null,
 } as const;
 const remote: Task = { ...base, id: 1, title: 'Fix login', sessionId: 's1', branch: 'fix-login', worktreePath: '/w/fix-login' };
 const local: Task = { ...base, id: 2, title: 'Add search', sessionId: 's2', branch: 'add-search', worktreePath: '/w/add-search' };

@@ -25,6 +25,8 @@ import type { Task } from '../types';
 import { atRest } from '../capture/status';
 import { contextUsage, onCaptureUpdate } from '../capture';
 import { sendToSession, useSendsWait } from './transcript/send';
+import { SEND_FROM } from './transcript/sendFrom';
+import { COMPACTING_HINT, useCompacting } from './transcript/commandEcho';
 import { loadDefaultModel, loadModelChoices, type ModelChoice } from '../capture/modelCatalog';
 import { getTaskModel, setTaskModel } from './taskModel';
 
@@ -36,6 +38,26 @@ const FALLBACK_CHOICES: ModelChoice[] = [
 ];
 
 const FALLBACK_MS = 15_000;
+
+/**
+ * The model a session last replied with. In PTY mode the picker is mounted
+ * twice -- in the task bar, and in the hidden composer -- and both read on the
+ * same capture event (#364): the second shares the first's read instead of
+ * asking the database again. Shared only within the same synchronous turn
+ * (one event's listeners, one commit's effects): a read asked for after it
+ * may follow rows the first one began too early to see, so it asks afresh.
+ */
+const reading = new Map<string, Promise<string | null>>();
+function readModel(sessionId: string): Promise<string | null> {
+  const already = reading.get(sessionId);
+  if (already) return already;
+  const p = contextUsage(sessionId).then((u) => u?.model ?? null);
+  reading.set(sessionId, p);
+  queueMicrotask(() => {
+    if (reading.get(sessionId) === p) reading.delete(sessionId);
+  });
+  return p;
+}
 
 /** The choice the transcript's model id is, by exact id or by family alias. */
 function choiceFor(model: string | null, choices: readonly ModelChoice[]): string | null {
@@ -67,7 +89,7 @@ export default function ModelPicker({ task }: { task: Task }) {
     let read: string | null = null;
     if (sessionId) {
       try {
-        read = (await contextUsage(sessionId))?.model ?? null;
+        read = await readModel(sessionId);
       } catch {
         /* the gauge panel already reports unavailable usage */
       }
@@ -88,6 +110,12 @@ export default function ModelPicker({ task }: { task: Task }) {
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
+  // Only this session's rows can change the model it reads (#364): every
+  // other session's capture events used to re-query it too.
+  const sessionRef = useRef(sessionId);
+  useEffect(() => {
+    sessionRef.current = sessionId;
+  }, [sessionId]);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -102,7 +130,9 @@ export default function ModelPicker({ task }: { task: Task }) {
   useEffect(() => {
     let off: () => void = () => {};
     try {
-      const o = onCaptureUpdate(() => void loadRef.current());
+      const o = onCaptureUpdate((u) => {
+        if (sessionRef.current !== null && u?.sessionId === sessionRef.current) void loadRef.current();
+      });
       if (typeof o === 'function') off = o;
     } catch {
       /* polling below still covers it */
@@ -125,12 +155,15 @@ export default function ModelPicker({ task }: { task: Task }) {
   // While a send would be held (offline, messages waiting, a turn running),
   // there is no switching: the picker shows the switch as under way at once.
   const waiting = useSendsWait(task.id);
+  // A /compact Albedo sent is running (#384): a /model now would land in the
+  // middle of it, and its echo could not replace the compaction's.
+  const compacting = useCompacting(task.id);
   const choose = async (choice: string) => {
     if (choice === current && !pending) return;
     setFailed(false);
     // Held only if sends started waiting since the menu was offered: it then
     // goes once the session is idle, so the switch is under way all the same.
-    const ok = (await sendToSession(task.id, `/model ${choice}`)) !== 'failed';
+    const ok = (await sendToSession(task.id, `/model ${choice}`, SEND_FROM.model)) !== 'failed';
     if (ok) {
       setPending(choice);
       // The process is on it from now, reply or not: a /clear before the
@@ -145,7 +178,9 @@ export default function ModelPicker({ task }: { task: Task }) {
   const label = shown ? shown.replace(/^claude-/, '') : 'Model Unknown';
   const title =
     (model ? `${model}. ` : assumed ? `Probably ${assumed}: confirmed on the first reply. ` : '') +
-    (!idle
+    (compacting
+      ? COMPACTING_HINT
+      : !idle
       ? 'Switching models is only offered while the task is idle'
       : waiting
         ? 'Not available while messages are waiting to send'
@@ -165,7 +200,7 @@ export default function ModelPicker({ task }: { task: Task }) {
         className="model-pick-select"
         aria-label="Change model"
         title={title}
-        disabled={!idle || waiting}
+        disabled={!idle || waiting || compacting}
         value={pending ?? current ?? ''}
         onChange={(e) => void choose(e.target.value)}
       >

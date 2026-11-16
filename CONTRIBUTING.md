@@ -181,7 +181,10 @@ PR badge, its review state and threads, and the Checks dialog with each job's
 steps, for the two made-up pull requests. It also answers the Reviewing
 tab: four made-up pull requests in `recipe-app` asking `sam-rivera` for a
 review, one with new activity, two requested (one through a team) and one
-reviewed and quiet.
+reviewed and quiet. #34 has two review threads, one open with the author's
+answer and one resolved. Submit Review on a demo task is recorded in
+`~/.albedo-demo/posted-reviews.jsonl`, never sent, and shows as threads
+from then on.
 
 **A reset** rebuilds everything from the scenario, timed from now, and keeps
 the app's own preferences (zoom, theme, layout, the selected task), which

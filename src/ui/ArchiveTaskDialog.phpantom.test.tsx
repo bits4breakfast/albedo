@@ -48,6 +48,9 @@ const task: Task = {
   worktreePath: '/wt/fix-importer', sessionId: 's', ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 describe('ArchiveTaskDialog after a failed PHPantom start', () => {

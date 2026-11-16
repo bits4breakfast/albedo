@@ -24,7 +24,9 @@
 .tasklist-head .tasklist-tabs {
   display: inline-grid;
   grid-auto-flow: column;
-  grid-auto-columns: max-content;
+  /* Each tab as wide as its content while both fit; when they don't, both
+     shrink by the same amount from there (#306), keeping their padding. */
+  grid-auto-columns: minmax(0, max-content);
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -33,9 +35,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 0 12px;
   white-space: nowrap;
 }
+/* The label gives way, never the count or the padding (#306). */
+.tasklist-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tasklist-tabs button[aria-selected='true'] {
   color: var(--text-strong);
   background: var(--seg-on);
@@ -43,7 +48,7 @@
 }
 /* What waits on you in Reviewing. --muted, a tier the segment clears on
    --panel-chrome and on --seg-on alike. */
-.tasklist-tab-count { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--muted); }
+.tasklist-tab-count { flex: none; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--muted); }
 .tasklist-tabs button[aria-selected='true'] .tasklist-tab-count { color: var(--text); }
 
 .tasklist-scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 8px 8px; }
@@ -73,6 +78,9 @@
    light, 7.36 dark; Ready to Review 6.48, 11.99. The rest keep --faint. */
 .group-label[data-tone='blocked'] { color: var(--status-blocked); }
 .group-label[data-tone='review'] { color: var(--status-review); }
+/* Stopped on an Error (#338) waits on you too: --danger, 6.34 light, 7.91
+   dark on --panel-chrome; 6.98 | 8.37 on the popover's --panel. */
+.group-label[data-tone='errored'] { color: var(--danger); }
 
 .group-count { font-variant-numeric: tabular-nums; }
 
@@ -81,6 +89,7 @@
    Done's check in its -ink (4.5 on its fill). Archived: the thin ring. */
 .group-pie { display: block; flex: 0 0 auto; color: var(--status-idle-edge); }
 .group-pie[data-hue='blocked'] { color: var(--status-blocked-edge); }
+.group-pie[data-hue='errored'] { color: var(--status-errored-edge); }
 .group-pie[data-hue='running'] { color: var(--status-running-edge); }
 .group-pie[data-hue='review'] { color: var(--status-review-edge); }
 .group-pie[data-hue='team'] { color: var(--status-team-edge); }
@@ -224,6 +233,10 @@
 /* An unsent draft in the composer: a word in the caption, --muted (cleared
    against --panel-raised). */
 .task-draft { color: var(--muted); }
+/* A /compact Albedo sent is running (#384): the word in Running's colour,
+   --status-running, which the token block clears on every row ground
+   (5.15+ light, 9.24+ dark). */
+.task-compacting { color: var(--status-running); font-weight: 600; white-space: nowrap; }
 /* A reminder is back (#156): --accent, the reminder card's own colour, with
    its glyph, so it is never colour alone. Measured, light | dark: --panel-chrome
    5.87 | 7.44, --panel-hover 5.62 | 7.04, --panel-raised 5.32 | 6.62,
@@ -286,6 +299,34 @@
    and a word in the Needs You text tier (4.5 on every ground a row has,
    styles.css). State: it stays while they fail. */
 .task-checks-failing { color: var(--status-blocked); font-weight: 600; white-space: nowrap; }
+/* Stopped on an Error (#338): which error, on a line of its own under the
+   title, and Try Again at the row's end. The label is --danger on every
+   ground an idle row has, light | dark: --panel-chrome 6.34 | 7.91,
+   --panel-hover 6.07 | 7.48, --panel-raised 5.75 | 7.03, --row-selected
+   5.53 | 6.46, --panel-active 5.39 | 8.07. Words, never colour alone; the
+   full text is the row's tooltip. */
+.task-why {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A mockup waiting for approval (#348): why the task is in Needs You, in the
+   Needs You text tier, cleared on every ground a row has (styles.css,
+   status): light 5.12 | 5.47 | 5.26 | 5.21 | 5.89 on --panel-active |
+   --panel-raised | --row-selected | --accent-soft-strong | --row-blocked-hover,
+   dark 6.01 | 5.99 | 6.55 | 6.90. Words, never colour alone. */
+.task-why[data-why='preview'] { color: var(--status-blocked); }
+.task-row > .try-again {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  justify-self: end;
+}
+
 /* Agents still working under the task: a count, quiet like the age. */
 .task-agents { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* A question for you: the accent pair the chosen rows use (5.32 light on

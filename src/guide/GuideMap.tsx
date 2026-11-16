@@ -19,8 +19,9 @@ import { CommentCount, commentsSaid } from './CommentCount';
 import { importGraph, type ImportGraph } from './imports';
 import { buildChangeMap, groupColour, layoutMap, NODE_H, NODE_W, type MapNode } from './map';
 import { repoFiles } from './repoFiles';
-import type { GroupView } from './validate';
+import { carefulWhy, type CarefulMark, type GroupView } from './validate';
 import { useOpenFile } from '../ui/editor/openFile';
+import { FlagIcon } from '../ui/icons';
 
 /** Imports read, per worktree and change, as repoFiles keeps its list: flipping views costs nothing. */
 const graphs = new Map<string, ImportGraph>();
@@ -97,9 +98,14 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
   const [canvasRef, width] = useWidth();
   const layout = useMemo(() => layoutMap(map.nodes, map.edges, width), [map, width]);
   const [hot, setHot] = useState<string | null>(null);
+  // A group hovered or focused in the key (#308): its boxes are ringed and
+  // their arrows drawn as a hovered box's are.
+  const [hotGroup, setHotGroup] = useState<string | null>(null);
   const openFile = useOpenFile();
-  const isHot = (r: { from: string; to: string }) => hot !== null && (r.from === hot || r.to === hot);
   const nodeOf = useMemo(() => new Map(map.nodes.map((n) => [n.id, n] as const)), [map]);
+  const inHotGroup = (id: string) => hotGroup !== null && (nodeOf.get(id)?.groups.includes(hotGroup) ?? false);
+  const isHot = (r: { from: string; to: string }) =>
+    (hot !== null && (r.from === hot || r.to === hot)) || inHotGroup(r.from) || inHotGroup(r.to);
 
   const titleOf = new Map(groups.map((g) => [g.key, g.title] as const));
   const linksOf = (id: string) => ({
@@ -140,8 +146,19 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
     const name = (id: string) => map.nodes.find((x) => x.id === id)?.label ?? id;
     if (l.out.length > 0) parts.push(`imports ${l.out.map(name).join(', ')}`);
     if (l.in.length > 0) parts.push(`imported by ${l.in.map(name).join(', ')}`);
+    if (n.careful) parts.push(`review carefully: ${n.careful}`);
     return parts.join('; ') + commentsSaid(n.comments, '; ');
   };
+
+  // The careful files (#295), once each, in group order: listed in the key with why.
+  const careful: Array<{ key: string; path: string; mark: CarefulMark }> = [];
+  for (const g of groups) {
+    for (const f of g.files) {
+      if (f.careful && !careful.some((c) => c.path === f.path)) {
+        careful.push({ key: g.key, path: f.path, mark: f.careful });
+      }
+    }
+  }
 
   return (
     <div className="gd-body gd-map-body">
@@ -163,6 +180,10 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
                   type="button"
                   className="gd-file gd-map-group"
                   onClick={() => onOpenGroup(g.key)}
+                  onMouseEnter={() => setHotGroup(g.key)}
+                  onMouseLeave={() => setHotGroup((h) => (h === g.key ? null : h))}
+                  onFocus={() => setHotGroup(g.key)}
+                  onBlur={() => setHotGroup((h) => (h === g.key ? null : h))}
                   title={`Read ${g.title}`}
                 >
                   <span className="gd-map-swatch" data-colour={colour ?? 'none'} aria-hidden="true" />
@@ -173,6 +194,43 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
             );
           })}
         </ul>
+        {careful.length > 0 ? (
+          <>
+            <h3 className="gd-map-subhead">
+              <FlagIcon className="gd-careful-icon" />
+              Review carefully
+            </h3>
+            <ul className="gd-files" aria-label="Files to review carefully">
+              {careful.map((c) => {
+                const at = c.path.lastIndexOf('/');
+                return (
+                  <li key={c.path}>
+                    <button
+                      type="button"
+                      className="gd-file gd-map-careful"
+                      onClick={() => onOpen(c.key, c.path)}
+                      title={`${c.path}: review carefully, ${carefulWhy(c.mark)}`}
+                    >
+                      {/* 12px: the swatch column's width, so the names line up with the groups'. */}
+                      <FlagIcon size={12} className="gd-careful-icon" />
+                      <span className="gd-file-base">{c.path.slice(at + 1)}</span>
+                      <span className="gd-file-dir">{c.path.slice(0, at + 1)}</span>
+                      <span className="gd-file-careful">
+                        <span>
+                          {c.mark.reason ?? (
+                            <>
+                              Matches <span className="gd-pattern">{c.mark.pattern}</span>
+                            </>
+                          )}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : null}
         {map.notes.length > 0 ? (
           <div className="gd-map-notes" role="note">
             {map.notes.map((n) => (
@@ -208,6 +266,7 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
                   className="gd-map-node"
                   data-kind={n.kind}
                   aria-current={n.kind === 'file' && n.id === current ? 'true' : undefined}
+                  data-group-hot={inHotGroup(n.id) || undefined}
                   style={{ left: p.x, top: p.y, width: NODE_W, height: NODE_H }}
                   onClick={() => open(n)}
                   onMouseEnter={() => setHot(n.id)}
@@ -215,7 +274,7 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
                   onFocus={() => setHot(n.id)}
                   onBlur={() => setHot((h) => (h === n.id ? null : h))}
                   aria-label={describe(n)}
-                  title={n.id}
+                  title={n.careful ? `${n.id}\nReview carefully: ${n.careful}` : n.id}
                 >
                   {n.kind === 'unchanged' ? null : (
                     <span className="gd-map-stripe" aria-hidden="true">
@@ -224,7 +283,10 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
                       ))}
                     </span>
                   )}
-                  <span className="gd-map-name">{n.label}</span>
+                  <span className="gd-map-name">
+                    {n.careful ? <FlagIcon className="gd-careful-icon" /> : null}
+                    {n.label}
+                  </span>
                   <span className="gd-map-facts">
                     <NodeFacts n={n} />
                     <CommentCount n={n.comments} />

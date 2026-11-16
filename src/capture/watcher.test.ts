@@ -10,13 +10,13 @@ import {
   firstCwdIn,
   findUnreportedGrowth,
   isTranscriptPath,
-  lastNewlineIndex,
   lineIndexAfter,
   owningSessionOfPath,
   sessionIdFromPath,
   watermarkFor,
 } from './watcher';
 import { countLines, parseTranscript, SEQ_STRIDE } from './adapter';
+import { lastNewlineIndex } from './fileTail';
 
 describe('lineIndexAfter / watermarkFor round-trip', () => {
   it('starts at line 0 when nothing has been ingested', () => {
@@ -42,32 +42,6 @@ describe('lineIndexAfter / watermarkFor round-trip', () => {
   it('tolerates a corrupt watermark instead of parsing from a negative line', () => {
     expect(lineIndexAfter(Number.NaN)).toBe(0);
     expect(lineIndexAfter(-5000)).toBe(0);
-  });
-});
-
-describe('lastNewlineIndex', () => {
-  const enc = new TextEncoder();
-
-  it('finds the final newline', () => {
-    expect(lastNewlineIndex(enc.encode('a\nb\n'))).toBe(3);
-    expect(lastNewlineIndex(enc.encode('a\nb'))).toBe(1);
-  });
-
-  it('returns -1 when no line is complete yet', () => {
-    expect(lastNewlineIndex(enc.encode(''))).toBe(-1);
-    expect(lastNewlineIndex(enc.encode('{"type":"user"'))).toBe(-1);
-  });
-
-  it('never cuts a multi-byte character in half', () => {
-    // The last byte of the buffer is the middle of a 3-byte sequence, which is
-    // what a mid-append read looks like. Cutting at the newline must yield a
-    // prefix that decodes cleanly.
-    const full = enc.encode('{"t":"é 日本"}\n{"t":"partial 日');
-    const truncated = full.subarray(0, full.length - 1);
-    const cut = lastNewlineIndex(truncated);
-    expect(cut).toBeGreaterThan(0);
-    const prefix = new TextDecoder('utf-8', { fatal: true }).decode(truncated.subarray(0, cut + 1));
-    expect(prefix).toBe('{"t":"é 日本"}\n');
   });
 });
 

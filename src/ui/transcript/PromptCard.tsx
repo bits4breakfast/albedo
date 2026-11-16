@@ -43,7 +43,7 @@ import {
 } from '../../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { useOpenFile } from '../editor/openFile';
-import { Markdown } from './MessageRow';
+import { Markdown } from './Markdown';
 import { PlanDocument } from './PlanDocument';
 import { inDocumentOrder, planCommentKey, usePlanComments } from './planComments';
 import {
@@ -231,7 +231,7 @@ export function waitedText(ms: number): string {
   return m % 60 === 0 ? `${h}h` : `${h}h ${m % 60}m`;
 }
 
-function Waited({ at }: { at: number }): ReactNode {
+export function Waited({ at }: { at: number }): ReactNode {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     // Every second while it reads in seconds, then every half minute.

@@ -54,6 +54,12 @@ export interface HeaderProps {
   keepAwake?: boolean;
   onKeepAwakeChange?: (on: boolean) => void;
   /**
+   * "Group Tool Calls" (ui/transcript/groupToolCalls.ts, #358): each run of
+   * tool calls in the transcript as one line. Optional; absent, not shown.
+   */
+  groupToolCalls?: boolean;
+  onGroupToolCallsChange?: (on: boolean) => void;
+  /**
    * The task list drawn as its rail (#266), and the switch: "Collapse Task
    * List" / "Expand Task List". Optional; absent, the item is not shown.
    */
@@ -91,6 +97,8 @@ export default function Header({
   onCiNotifyChange,
   keepAwake,
   onKeepAwakeChange,
+  groupToolCalls,
+  onGroupToolCallsChange,
   taskListCollapsed,
   onTaskListCollapsedChange,
   tabs,
@@ -193,6 +201,20 @@ export default function Header({
                     checked: keepAwake,
                     group: !(onCiNotifyChange && ciNotify !== undefined),
                     onSelect: () => onKeepAwakeChange(!keepAwake),
+                  },
+                ]
+              : []),
+            // How the transcript reads: its own group.
+            ...(onGroupToolCallsChange && groupToolCalls !== undefined
+              ? [
+                  {
+                    id: 'group-tool-calls',
+                    label: 'Group Tool Calls',
+                    title:
+                      'Each run of tool calls between two of Claude’s messages reads as one line, with the lines added and removed. Click the line to see the calls.',
+                    checked: groupToolCalls,
+                    group: true,
+                    onSelect: () => onGroupToolCallsChange(!groupToolCalls),
                   },
                 ]
               : []),

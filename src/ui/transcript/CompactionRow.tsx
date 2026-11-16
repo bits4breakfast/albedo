@@ -8,7 +8,7 @@
 import { memo, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Disclosure } from '../Disclosure';
-import { Markdown } from './MessageRow';
+import { Markdown } from './Markdown';
 import { compactionLabel, noticeParts, type Compaction } from './compaction';
 import { splitCompactSummary, systemRowText } from './envelopes';
 

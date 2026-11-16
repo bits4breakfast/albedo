@@ -9,15 +9,18 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 import { archiveTask, createTask, deleteTask, resetDb } from './index';
 import {
   addComment,
+  commentFacts,
   deleteComment,
   editComment,
   formatForClaude,
   listComments,
+  listGithubDrafts,
   markCommentsSent,
+  markDraftsPosted,
+  setCommentGithub,
   moveComment,
   onCommentsChanged,
   relocate,
-  autoResolveComments,
   commentState,
   reopenComment,
   resolveComment,
@@ -117,7 +120,7 @@ describe('relocate', () => {
 describe('formatForClaude', () => {
   const base: ReviewComment = {
     id: 1, taskId: 1, path: 'src/A.php', lineStart: 3, lineEnd: 4, anchorText: 'a\nb',
-    body: 'Rename this.\nAnd add a test.', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null,
+    body: 'Rename this.\nAnd add a test.', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null,
   };
 
   it('numbers each comment with its place, code and text', () => {
@@ -176,22 +179,6 @@ describe('the life of a comment (#222)', () => {
     expect(resolvedReason({ ...at, sentAt: 1, resolvedAt: null }, changed)).toBeNull();
   });
 
-  it('autoResolveComments resolves the sent ones whose lines are gone, reading each file once', async () => {
-    const t = await task();
-    const gone = await comment(t, { path: 'a.ts', anchorText: 'two\nthree' });
-    const kept = await comment(t, { path: 'a.ts', anchorText: 'one' });
-    const waiting = await comment(t, { path: 'b.ts', anchorText: 'nope' });
-    await markCommentsSent(t, [gone, kept]);
-    const reads: string[] = [];
-    const ids = await autoResolveComments(t, await listComments(t), async (p) => {
-      reads.push(p);
-      return p === 'a.ts' ? changed : '';
-    });
-    expect(ids).toEqual([gone]);
-    expect(reads).toEqual(['a.ts']);
-    expect((await listComments(t)).map((c) => c.id).sort()).toEqual([kept, waiting].sort());
-  });
-
   it('reopening makes it open and unsent: it waits for your next message', async () => {
     const t = await task();
     const id = await comment(t);
@@ -199,5 +186,85 @@ describe('the life of a comment (#222)', () => {
     await resolveComment(t, id);
     await reopenComment(t, id);
     expect((await listComments(t))[0]).toMatchObject({ id, sentAt: null, resolvedAt: null });
+  });
+});
+
+describe('drafts for GitHub on a review task (#287, v15)', () => {
+  it('a plain comment is for Claude, as every comment before v15', async () => {
+    const t = await task();
+    await comment(t);
+    const [c] = await listComments(t);
+    expect(c).toMatchObject({ github: null, replyTo: null });
+    expect(await listGithubDrafts(t)).toEqual([]);
+  });
+
+  it('keeps a draft and a reply until GitHub takes them; a reply is never on the code', async () => {
+    const t = await task();
+    const line = await comment(t, { github: 'draft' });
+    const reply = await comment(t, { anchorText: '', body: 'Agreed.', replyTo: 9001 });
+    await comment(t, { body: 'for Claude' });
+    // The code's comments: the draft and Claude's, never the reply.
+    expect((await listComments(t)).map((c) => c.id).sort()).not.toContain(reply);
+    const drafts = await listGithubDrafts(t);
+    expect(drafts.map((d) => [d.id, d.github, d.replyTo])).toEqual([
+      [line, 'draft', null],
+      [reply, 'draft', 9001],
+    ]);
+
+    await markDraftsPosted(t, [line]);
+    expect((await listGithubDrafts(t)).map((d) => d.id)).toEqual([reply]);
+    const posted = (await listComments(t, { includeResolved: true })).find((c) => c.id === line)!;
+    expect(posted.sentAt).not.toBeNull();
+    expect(posted.resolvedAt).toBe(posted.sentAt);
+  });
+
+  it('a message to Claude delivered late never marks a comment switched to GitHub since as sent', async () => {
+    const t = await task();
+    const id = await comment(t);
+    // Held in the outbox with this comment, then the comment became a draft.
+    await setCommentGithub(t, id, 'draft');
+    await markCommentsSent(t, [id]);
+    expect((await listGithubDrafts(t)).map((d) => d.id)).toEqual([id]);
+  });
+
+  it('moves a comment between Ask Claude and Draft for GitHub, as unsent', async () => {
+    const t = await task();
+    const id = await comment(t);
+    await markCommentsSent(t, [id]);
+    await setCommentGithub(t, id, 'draft');
+    expect((await listGithubDrafts(t)).map((d) => d.id)).toEqual([id]);
+    await setCommentGithub(t, id, null);
+    expect(await listGithubDrafts(t)).toEqual([]);
+    expect((await listComments(t))[0]).toMatchObject({ github: null, sentAt: null });
+  });
+});
+
+describe('what a review task has written, for Review Started (#315)', () => {
+  it('counts every comment and the drafts not yet submitted, with the latest change, in one read for several tasks', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const a = await task();
+      const b = await task();
+      const none = await task();
+      vi.setSystemTime(1000);
+      await comment(a, { github: 'draft' });
+      vi.setSystemTime(2000);
+      const posted = await comment(a, { github: 'draft' });
+      await markDraftsPosted(a, [posted]);
+      vi.setSystemTime(3000);
+      const forClaude = await comment(a);
+      await markCommentsSent(a, [forClaude]);
+      vi.setSystemTime(4000);
+      const edited = await comment(b);
+      vi.setSystemTime(5000);
+      await editComment(b, edited, 'changed');
+      const facts = await commentFacts([a, b, none]);
+      expect(facts.get(a)).toEqual({ total: 3, drafts: 1, latestAt: 3000 });
+      expect(facts.get(b)).toEqual({ total: 1, drafts: 0, latestAt: 5000 });
+      expect(facts.has(none)).toBe(false);
+      expect((await commentFacts([])).size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

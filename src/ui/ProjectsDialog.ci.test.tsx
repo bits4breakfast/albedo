@@ -54,6 +54,8 @@ const SAVED: Project = {
   taskPromptTemplate: null,
   ciDetails: 'link',
   ciDetailsCommand: null,
+  guideSetAside: null,
+  guideCareful: null,
   createdAt: 0,
   archivedAt: null,
 };

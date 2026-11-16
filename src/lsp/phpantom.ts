@@ -51,6 +51,7 @@
 import { Command, type Child } from '@tauri-apps/plugin-shell';
 import { exists, mkdir, watch, writeTextFile, type UnwatchFn } from '@tauri-apps/plugin-fs';
 import { Connection, type Transport } from './jsonrpc';
+import { withoutAnthropicKeys } from '../lib/spawnEnv';
 
 /** The name in `capabilities/default.json`'s shell scope. */
 const SCOPE_NAME = 'phpantom';
@@ -472,7 +473,7 @@ async function start(root: string): Promise<PhpServer | null> {
     // The plugin cannot clear an environment and add to it at once, so the
     // inherited one is kept and the Anthropic credentials are blanked: the
     // rule is that no process Albedo spawns carries them (see pty.rs).
-    env: { XDG_CONFIG_HOME: configHome, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' },
+    env: withoutAnthropicKeys({ XDG_CONFIG_HOME: configHome }),
   };
   // The copy bundled in the app first (pinned with this build), then one the
   // user installed. A build without the bundled copy refuses the sidecar

@@ -76,7 +76,7 @@ an exhaustive list.
 | `watcher.ts` | tailing, backfill, polling, import | `startCapture`, `onCaptureUpdate`, `onCaptureProgress`, `listDiskSessions`, `importTranscripts`, `reconsiderSession` |
 | `status.ts` | task status from rows | `deriveStatus`, `statusExpiresAt`, `pendingQuestion`, `RUNNING_WINDOW_MS` |
 | `context.ts` | context-window occupancy | `contextUsage`, `contextUsageForSessions`, `contextBands`, `withReportedWindow`, `CONTEXT_WINDOW_TIERS` |
-| `usage.ts` | token totals over rolling windows | `usageSummary`, `windowUsage`, `usageBreakdown` |
+| `usage.ts` | token totals over rolling windows | `windowUsage` |
 | `hookEvents.ts` | the hook and status-line payloads | `startHookEvents`, `hookSettingsArg`, `pendingPrompt`, `onPromptChange`, `answerPrompt`, `onSessionStart`, `onStatusSnapshot`, `planUsage`, `snapshotForSession` |
 | `sessionLink.ts` | the only writer of `tasks.session_id` | `linkTaskSession`, `newSessionId`, `sessionTranscriptExists`, `lastModelOf` |
 | `queue.ts` | Claude Code's input queue, in memory | `queuedFor`, `onQueueChange` |
@@ -92,7 +92,7 @@ in one file.
 `index.ts` holds tasks and messages: `getDb`, `listTasks`, `getTask`,
 `createTask`, `updateTask`, `archiveTask`, `deleteTask`, `purgeTaskHistory`,
 `compactHistory`, `getMessages`, `insertMessages`, `adoptSessionIntoTask`,
-`searchMessages`, `findTaskBySessionId`, `onTasksChanged`, and the transcript
+`findTaskBySessionId`, `onTasksChanged`, and the transcript
 file records the watcher keeps. Alongside it:
 
 - `projects.ts`: `listProjects`, `createProject`, `updateProject`,
@@ -116,7 +116,7 @@ Called by `capture/`, `useTasks.ts`, `App.tsx` and most dialogs.
   everything a task's checkout needs: `createWorktree`, `removeWorktree`,
   `listWorktrees`, `uncommittedChanges`, `probeWorkAtRisk`, `assessLoss`,
   `repoRootFor`, `repoToplevel`, `listBranches`, `baseFreshness`,
-  `branchCommits`.
+  `loadChangeSet`.
 - `reconcile.ts`: path primitives, worktree ownership (`albedoOwnsWorktree`,
   `worktreeSharedWithLiveTask`), `validateWorktreeRoot`, and `findOrphans` for
   the reconcile view.
@@ -155,7 +155,7 @@ and move dialogs. Scope and packaging are in CLAUDE.md.
 - `pty.ts`: `spawnPty`, `writePty`, `resizePty`, `killPty`. Output and exit
   arrive through the `PtyHandlers` passed to `spawnPty`, as bytes.
 - `paths.ts`: `resolveInWorktree`, `parsePathRef`, `setWorktreeProbe`.
-- `handEdited.ts`: `markHandEdited`, `isHandEdited`, `handEditedFiles`.
+- `handEdited.ts`: `markHandEdited`, `isHandEdited`.
 - `issueKey.ts`: `parseIssueKey`, `fillPromptTemplate`.
 - `highlight.ts`: Shiki (`highlightToTokens`, `THEMES`).
 - `diff.ts`: `diffStrings`, `parseUnifiedDiff`, `langForPath`.

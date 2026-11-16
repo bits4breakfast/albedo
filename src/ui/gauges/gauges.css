@@ -463,7 +463,8 @@
 }
 
 /* --------------------------------------------------------------------------
-   Narrow sidebar. At the 200px minimum the "ages out in" key is the first
+   Narrow sidebar. Unreachable since the sidebar's minimum became 300px
+   (#306), kept for a larger text size: the "ages out in" key is the first
    thing to go: the countdown and its tooltip still say everything needed.
    160px is the panel's content width there, now that it is an inset card
    (8px margins, 12px padding); 224px was the old flush slab's, and hid the

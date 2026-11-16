@@ -145,12 +145,16 @@ export function isResumePlan(plan: SpawnPlan): boolean {
 export const MCP_SERVER_NAME = 'albedo';
 
 /**
- * Its four tools, allowed without a permission prompt. Each only hands
- * Albedo a request -- a new session still waits for the user's Approve, and a
- * summary (#262) is one line beside the task's title -- so a prompt in the
- * terminal first would ask the user twice for one thing.
+ * Its five tools, allowed without a permission prompt. Each only hands
+ * Albedo a request -- a new session still waits for the user's Approve, a
+ * summary (#262) is one line beside the task's title, and a preview (#348)
+ * is itself the question the user answers -- so a prompt in the terminal
+ * first would ask the user twice for one thing.
+ *
+ * No `timeout` is set for the server: `show_preview` waits for the user, and
+ * Claude Code's own default for a tool call (about 28 h, #348) applies.
  */
-export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked', 'set_task_summary'].map(
+export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked', 'set_task_summary', 'show_preview'].map(
   (t) => `mcp__${MCP_SERVER_NAME}__${t}`,
 );
 

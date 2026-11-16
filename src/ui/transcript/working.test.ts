@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseTranscript } from '../../capture/adapter';
 import type { Message } from '../../types';
-import { formatOutputTokens, formatTurnTotals, stepDetail, stepLabel, workingState } from './working';
+import { formatOutputTokens, formatTokens, formatTurnTotals, stepDetail, stepLabel, workingState } from './working';
 
 /*
  * Transcript lines in Claude Code's shape, parsed by the adapter into the
@@ -256,5 +256,12 @@ describe('formatOutputTokens', () => {
     expect(formatOutputTokens(37_640)).toBe('↓ 37.6k tokens');
     expect(formatOutputTokens(999_960)).toBe('↓ 1m tokens');
     expect(formatOutputTokens(1_240_000)).toBe('↓ 1.2m tokens');
+  });
+
+  it('is formatTokens behind the arrow, which the Agents strip reads too (#377)', () => {
+    for (const n of [0, 1, 2, 999, 1000, 37_640, 345_212, 999_960, 1_240_000, -4, 12.6]) {
+      expect(formatOutputTokens(n)).toBe(`↓ ${formatTokens(n)}`);
+    }
+    expect(formatTokens(345_212)).toBe('345.2k tokens');
   });
 });

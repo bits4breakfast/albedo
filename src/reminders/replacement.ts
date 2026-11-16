@@ -29,9 +29,9 @@ import {
   composeWorktreePath,
   createWorktree,
   defaultBranchOf,
-  git,
   listWorktreesDetailed,
   probePath,
+  refExists,
 } from '../git/worktree';
 import type { Project, Reminder, Task } from '../types';
 
@@ -51,11 +51,6 @@ let homeDir: () => Promise<string> = async () => {
 /** @internal for tests. */
 export function __setHomeDir(next: () => Promise<string>): void {
   homeDir = next;
-}
-
-async function refExists(repo: string, ref: string): Promise<boolean> {
-  const r = await git(['rev-parse', '--verify', '--quiet', ref], repo).catch(() => null);
-  return r?.code === 0;
 }
 
 async function freePath(project: Project, slug: string): Promise<string> {
@@ -86,7 +81,7 @@ async function workTask(r: Reminder, project: Project, title: string): Promise<T
   const base = project.defaultBaseBranch ?? (await defaultBranchOf(repo)) ?? 'main';
   const branch = r.branch;
 
-  if (branch && (await refExists(repo, `refs/heads/${branch}`))) {
+  if (branch && (await refExists(repo, `refs/heads/${branch}`).catch(() => false))) {
     const there = (await listWorktreesDetailed(repo).catch(() => [])).find((w) => w.branch === branch && !w.prunable);
     if (there) {
       return createTask({
@@ -104,7 +99,7 @@ async function workTask(r: Reminder, project: Project, title: string): Promise<T
 
   const slug = slugify(`reminder-${r.id}-${r.text}`);
   const fresh = branchNameFor(slug);
-  const fromSha = r.headSha !== null && (await refExists(repo, `${r.headSha}^{commit}`));
+  const fromSha = r.headSha !== null && (await refExists(repo, `${r.headSha}^{commit}`).catch(() => false));
   const path = await freePath(project, slug);
   await createWorktree({
     repoPath: repo, baseBranch: base, branch: fresh, path,

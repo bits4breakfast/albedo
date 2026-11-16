@@ -61,6 +61,7 @@ export function setReviewFetcherForTests(
   if (clock) now = clock;
   cache.clear();
   inflight.clear();
+  queued.clear();
   marks = null;
 }
 
@@ -70,9 +71,26 @@ export function reviewListState(repoPath: string): ReviewListState {
   return e.list ? { kind: 'ready', list: e.list } : { kind: 'unavailable' };
 }
 
-/** Refresh one project's list. Never rejects. */
+const queued = new Map<string, Promise<void>>();
+
+/**
+ * Refresh one project's list. Never rejects. A forced refresh while a fetch
+ * is in flight is one more fetch after it (#315): the one in flight may have
+ * been asked before what the caller just did (a submitted review), so its
+ * answer cannot stand for it. Several such calls share that one fetch.
+ */
 export function refreshReviews(repoPath: string, opts: { force?: boolean } = {}): Promise<void> {
   const already = inflight.get(repoPath);
+  if (already && opts.force) {
+    const next = queued.get(repoPath);
+    if (next) return next;
+    const after = already.then(() => {
+      queued.delete(repoPath);
+      return refreshReviews(repoPath, { force: true });
+    });
+    queued.set(repoPath, after);
+    return after;
+  }
   if (already) return already;
   const prev = cache.get(repoPath);
   if (prev && !opts.force && now() - prev.fetchedAt < REVIEW_MIN_AGE_MS) return Promise.resolve();
@@ -151,7 +169,7 @@ export function seenMarks(): ReadonlyMap<string, SeenMark> {
 }
 
 /** You looked at `pr` now: its activity so far is no longer news. */
-export function markSeen(pr: ReviewPr): void {
+export function markSeen(pr: Pick<ReviewPr, 'url' | 'headOid' | 'commitCount'>): void {
   const next = new Map(loadMarks());
   next.set(pr.url, { at: now(), head: pr.headOid, commits: pr.commitCount });
   marks = next;

@@ -27,6 +27,8 @@ import { useReadFile } from './editor/openFile';
 import { Disclosure } from './Disclosure';
 import { sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
+import { useGithubDrafts } from './reviewDrafts';
+import { requestSubmitReview } from './SubmitReview';
 
 export interface CommentsSectionProps {
   task: Task;
@@ -48,6 +50,9 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const [showResolved, setShowResolved] = useState(false);
   const read = useReadFile();
   const ci = useQueuedCi(task.id);
+  // A review task's drafts for GitHub (#287), replies included: their own
+  // group, never Waiting, whose Send goes to Claude.
+  const drafts = useGithubDrafts(task);
 
   useEffect(() => {
     let live = true;
@@ -103,9 +108,9 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
 
   const comments = all.filter((c) => c.resolvedAt === null);
   const resolved = all.filter((c) => c.resolvedAt !== null);
-  if (all.length === 0 && ci === null) return null;
+  if (all.length === 0 && ci === null && drafts.length === 0) return null;
 
-  const unsent = comments.filter((c) => c.sentAt === null);
+  const unsent = comments.filter((c) => c.sentAt === null && c.github === null);
   const waiting = unsent.length + (ci ? 1 : 0);
   const sha = ci ? shortSha(ci.sha) : null;
   const sent = comments.filter((c) => c.sentAt !== null);
@@ -135,7 +140,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   return (
     <section className="tf-section tf-comments">
       <div className="tf-section-head tf-comments-head">
-        Comments<span className="tf-section-count">{comments.length + (ci ? 1 : 0)}</span>
+        Comments<span className="tf-section-count">{comments.length + drafts.filter((d) => d.replyTo !== null).length + (ci ? 1 : 0)}</span>
       </div>
 
       {notice && <div className="tf-comments-notice">{notice}</div>}
@@ -178,6 +183,43 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
             </div>
           )}
           {unsent.map((c) => row(c, null))}
+        </div>
+      )}
+      {drafts.length > 0 && (
+        <div className="tf-comments-group" role="group" aria-label={`For GitHub, ${drafts.length}`}>
+          <div className="tf-comments-sub">
+            For GitHub · {drafts.length}
+            {/* The same dialog as the task bar's Submit Review, as Send above
+                is ⇧⌘S's: where the drafts are listed, they can go. */}
+            <button
+              type="button"
+              className="tf-btn tf-comments-send"
+              onClick={() => requestSubmitReview(task.id)}
+              title="Send these to the pull request as one review, with a summary and a verdict"
+            >
+              Submit…
+            </button>
+          </div>
+          {drafts.map((c) =>
+            c.replyTo === null ? (
+              row(c, null)
+            ) : (
+              <div key={c.id} className="tf-comment">
+                <button
+                  type="button"
+                  className="tf-comment-open"
+                  onClick={() => onOpen(c.path, c.lineStart)}
+                  title={`Reply on ${commentLocation(c)}\n\n${c.body}`}
+                >
+                  <span className="tf-comment-where">
+                    <span className="tf-name">{c.path.split('/').pop()}</span>
+                    <span className="tf-comment-line">:{c.lineStart}</span>
+                  </span>
+                  <span className="tf-comment-body">Reply: {c.body.split('\n')[0]}</span>
+                </button>
+              </div>
+            ),
+          )}
         </div>
       )}
       {sent.length > 0 && (
@@ -229,12 +271,16 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                     <span className="tf-comment-why">
                       {' '}
                       ·{' '}
-                      {resolvedReason(c, texts.get(c.path) ?? null) === 'changed'
-                        ? 'its lines changed after it was sent'
-                        : 'resolved by you'}
+                      {c.github === 'draft' && c.sentAt !== null
+                        ? 'posted to GitHub'
+                        : resolvedReason(c, texts.get(c.path) ?? null) === 'changed'
+                          ? 'its lines changed after it was sent'
+                          : 'resolved by you'}
                     </span>
                   </span>
                 </button>
+                {/* Posted to GitHub (#287): it is there now, not here to reopen. */}
+                {c.github === 'draft' && c.sentAt !== null ? null : (
                 <button
                   type="button"
                   className="tf-btn tf-comment-reopen"
@@ -245,6 +291,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                 >
                   Reopen
                 </button>
+                )}
               </div>
             ))}
         </div>

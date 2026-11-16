@@ -66,7 +66,7 @@ describe('useDiffComments', () => {
 describe('auto-resolve in a diff (#222)', () => {
   const sent = {
     id: 9, taskId: 1, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'gone line', body: 'Fix it.',
-    createdAt: 0, updatedAt: 0, sentAt: 5, resolvedAt: null,
+    createdAt: 0, updatedAt: 0, sentAt: 5, resolvedAt: null, github: null, replyTo: null,
   };
 
   it('a sent comment whose lines are gone resolves itself against a read made for this view', async () => {

@@ -68,11 +68,10 @@ export function remoteForPr(remoteVerbose: string, pr: PrRef): string | null {
 }
 
 /**
- * Fetch the PR's head into `review/<n>` (forced: the branch is Albedo's copy
- * and holds nothing of yours) and its base into the remote's tracking ref.
- * Returns the branch. Throws GitError with git's own words.
+ * The remote that holds `pr`, as {@link remoteForPr} picks it. Throws
+ * GitError, in words, when there is none.
  */
-export async function fetchReviewHead(repoPath: string, pr: PrRef, baseBranch: string): Promise<string> {
+export async function prRemote(repoPath: string, pr: PrRef): Promise<string> {
   const remotes = await git(['remote', '-v'], repoPath);
   const remote = remotes.code === 0 ? remoteForPr(remotes.stdout, pr) : null;
   if (!remote) {
@@ -84,11 +83,28 @@ export async function fetchReviewHead(repoPath: string, pr: PrRef, baseBranch: s
       stderr: `No remote of this repository is ${pr.owner}/${pr.repo}, where the pull request is, and there is no origin.`,
     });
   }
+  return remote;
+}
+
+/** The refspec that refreshes `baseBranch`'s tracking ref beside a PR fetch; null for no usable name. */
+export function baseRefspec(remote: string, baseBranch: string): string | null {
+  return baseBranch && !baseBranch.startsWith('-') ? `+refs/heads/${baseBranch}:refs/remotes/${remote}/${baseBranch}` : null;
+}
+
+/**
+ * Fetch the PR's head into `review/<n>` (forced: the branch is Albedo's copy
+ * and holds nothing of yours) and its base into the remote's tracking ref.
+ * Returns the branch. Throws GitError with git's own words.
+ *
+ * Only for a new copy: once `review/<n>` is checked out in its worktree git
+ * refuses to fetch into it. Updating a copy is reviewUpdate.ts.
+ */
+export async function fetchReviewHead(repoPath: string, pr: PrRef, baseBranch: string): Promise<string> {
+  const remote = await prRemote(repoPath, pr);
   const branch = reviewBranch(pr.number);
   const refspecs = [`+refs/pull/${pr.number}/head:refs/heads/${branch}`];
-  if (baseBranch && !baseBranch.startsWith('-')) {
-    refspecs.push(`+refs/heads/${baseBranch}:refs/remotes/${remote}/${baseBranch}`);
-  }
+  const base = baseRefspec(remote, baseBranch);
+  if (base) refspecs.push(base);
   const args = ['fetch', '--no-tags', remote, ...refspecs];
   const r = await git(args, repoPath);
   if (r.code !== 0) throw new GitError({ args, cwd: repoPath, code: r.code, stdout: r.stdout, stderr: r.stderr });

@@ -11,8 +11,8 @@
  * a moved file is a deletion and an addition, as `--no-renames` reports it.
  */
 
-import { git, taskBase } from '../git/worktree';
-import { composeFileDiff, readAtRev, sideFromText, type WorkingReader } from '../git/fileDiff';
+import { DIFF_NO_REFRESH, git, taskBase } from '../git/worktree';
+import { composeFileDiff, readAtRev, sideFromText, type Side, type WorkingReader } from '../git/fileDiff';
 import { buildBranchDiff, type BranchDiff, type ChangedFile } from './blocks';
 import { statReason } from './budget';
 
@@ -25,6 +25,28 @@ async function paths(args: string[], cwd: string): Promise<string[]> {
   const r = await git(args, cwd);
   if (r.code !== 0) throw new Error(r.stderr.trim() || `git ${args[0]} exited with ${r.code}`);
   return splitZ(r.stdout);
+}
+
+/**
+ * Paths whose content or mode differs between `rev` and the working tree:
+ * what `git diff --name-only` listed, without writing the index (#363). With
+ * the refresh off `--name-only` would also list files whose stat is merely
+ * stale; `--numstat` skips those, so the paths come from it.
+ */
+async function changedSince(rev: string, cwd: string): Promise<string[]> {
+  const r = await git([...DIFF_NO_REFRESH, '--numstat', '--no-renames', '-z', rev, '--'], cwd);
+  if (r.code !== 0) throw new Error(r.stderr.trim() || `git diff exited with ${r.code}`);
+  return numstatPathsZ(r.stdout);
+}
+
+/** The paths of `--numstat -z --no-renames` output: `<added>\t<deleted>\t<path>` NUL-terminated. */
+export function numstatPathsZ(stdout: string): string[] {
+  const out: string[] = [];
+  for (const rec of splitZ(stdout)) {
+    const m = /^(?:\d+|-)\t(?:\d+|-)\t([\s\S]+)$/.exec(rec);
+    if (m) out.push(m[1] as string);
+  }
+  return out;
 }
 
 /** Untracked files git would add (ignored ones excluded). */
@@ -56,6 +78,48 @@ async function pool<T, R>(items: readonly T[], limit: number, fn: (item: T) => P
   return out;
 }
 
+/**
+ * The old side of each file, by the commit it was read at (#365). A commit
+ * never changes, so a file read at one is the same file the next time: going
+ * back to the Guide reads the base side of every changed file again, two git
+ * calls each, for an answer already had. Only a full commit id is kept --
+ * never `HEAD`, which moves. Per folder as well, so one repo's answer is
+ * never handed to another. The last {@link MAX_BASE_READS} commits are kept,
+ * as the pane keeps the last few reads (store.ts).
+ */
+export const MAX_BASE_READS = 3;
+const baseReads = new Map<string, Map<string, Side>>();
+
+function isCommitId(rev: string): boolean {
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(rev);
+}
+
+async function readBase(worktreePath: string, rev: string, path: string): Promise<Side> {
+  if (!isCommitId(rev)) return readAtRev(worktreePath, rev, path);
+  const at = `${worktreePath}\n${rev}`;
+  let files = baseReads.get(at);
+  if (files) {
+    // Least recently used last out.
+    baseReads.delete(at);
+    baseReads.set(at, files);
+  } else {
+    files = new Map();
+    baseReads.set(at, files);
+    while (baseReads.size > MAX_BASE_READS) baseReads.delete(baseReads.keys().next().value as string);
+  }
+  const had = files.get(path);
+  if (had) return had;
+  // A failed read throws and is not kept: the next visit asks git again.
+  const side = await readAtRev(worktreePath, rev, path);
+  files.set(path, side);
+  return side;
+}
+
+/** Tests only. */
+export function forgetBaseReadsForTests(): void {
+  baseReads.clear();
+}
+
 export async function loadBranchDiff(
   worktreePath: string,
   baseBranch: string,
@@ -64,13 +128,13 @@ export async function loadBranchDiff(
   const merge = await taskBase(worktreePath, baseBranch);
   const base = merge ?? 'HEAD';
   const [tracked, loose, dirty] = await Promise.all([
-    paths(['diff', '--name-only', '--no-renames', '-z', base, '--'], worktreePath),
+    changedSince(base, worktreePath),
     untracked(worktreePath),
-    paths(['diff', '--name-only', '--no-renames', '-z', 'HEAD', '--'], worktreePath),
+    changedSince('HEAD', worktreePath),
   ]);
   const all = [...new Set([...tracked, ...loose])];
   const changed: ChangedFile[] = await pool(all, 6, async (path) => {
-    const [oldSide, newText] = await Promise.all([readAtRev(worktreePath, base, path), readWorking(path)]);
+    const [oldSide, newText] = await Promise.all([readBase(worktreePath, base, path), readWorking(path)]);
     return { path, result: composeFileDiff(oldSide, sideFromText(newText), path) };
   });
   return {

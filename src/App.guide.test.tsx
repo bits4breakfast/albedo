@@ -2,9 +2,9 @@
  * @vitest-environment jsdom
  *
  * The Review Guide's way in, in the real shell (#186): App.tsx rendered whole
- * (harness as in App.projectView.test.tsx), the task's ⋯ menu and the Files
- * pane's button opening a Guide tab in the reading pane, and its ✕ closing
- * it. The pane itself is GuidePane.test.tsx's.
+ * (harness as in App.projectView.test.tsx), its tab and the task's ⋯ menu
+ * opening it (the Files pane's button is gone, #335). The pane itself is
+ * GuidePane.test.tsx's.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,13 +12,14 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 
 import type { Project, Task } from './types';
 
-const requestGuideRef = vi.hoisted(() => ({ current: null as ((id: number) => void) | null }));
 const h = vi.hoisted(() => ({
   tasks: [] as Task[],
   projects: [] as Project[],
   transcriptMounts: [] as (number | null)[],
   terminalMounts: [] as number[],
   editors: [] as { taskId: number; path: string | null; readOnly: boolean }[],
+  /** Every render of the Files pane: its task and whether it was told it is read. */
+  files: [] as { taskId: number; active: boolean | undefined }[],
 }));
 
 vi.mock('./ui/useTasks', () => {
@@ -31,7 +32,9 @@ vi.mock('./ui/useTasks', () => {
     projects: h.projects,
     contextBySession: new Map(),
     refresh: async () => {},
-    upsertTask: () => {},
+    upsertTask: (t: Task) => {
+      h.tasks = [...h.tasks.filter((x) => x.id !== t.id), t];
+    },
     archive: async () => {},
     setDone: async () => {},
     rename: async () => true,
@@ -74,18 +77,42 @@ vi.mock('./ui/editor/EditorTabs', () => ({
   forgetEditorTabs: () => {},
 }));
 vi.mock('./ui/Subagents', () => ({ default: () => null }));
-vi.mock('./guide/GuidePane', () => ({
-  default: ({ task }: { task: Task }) => <div data-testid="guide">{`guide for ${task.id}`}</div>,
-}));
+vi.mock('./guide/GuidePane', async () => {
+  const { useOpenFile } = await import('./ui/editor/openFile');
+  return {
+    default: function GuidePane({ task }: { task: Task }) {
+      const openFile = useOpenFile();
+      return (
+        <>
+          <div data-testid="guide">{`guide for ${task.id}`}</div>
+          <button type="button" onClick={() => openFile({ path: 'src/a.ts' })}>
+            Open a.ts
+          </button>
+        </>
+      );
+    },
+  };
+});
 vi.mock('./ui/StatusBar', () => ({ default: () => null }));
+// Checking a PR out for review (#329): no git, the task it would make.
+vi.mock('./ui/openReview', async (orig) => ({
+  ...(await orig<typeof import('./ui/openReview')>()),
+  openReviewTask: async (_p: unknown, pr: { url: string; title: string }) => ({
+    ...task(99, 1, pr.title),
+    branch: 'review/7',
+    reviewUrl: pr.url,
+  }),
+}));
 vi.mock('./ui/TouchedFiles', async (orig) => ({
   ...(await orig<typeof import('./ui/TouchedFiles')>()),
-  // The Files pane's Guide button, as GitBar wires it.
-  default: ({ task }: { task: Task }) => (
-    <button type="button" onClick={() => requestGuideRef.current?.(task.id)}>
-      Files Guide
-    </button>
-  ),
+  default: (p: { task: Task; active?: boolean }) => {
+    h.files.push({ taskId: p.task.id, active: p.active });
+    return (
+      <div data-testid="files" data-focus-area="files">
+        <button type="button">{`row of ${p.task.id}`}</button>
+      </div>
+    );
+  },
 }));
 vi.mock('./git/branchSync', async (orig) => ({
   ...(await orig<typeof import('./git/branchSync')>()),
@@ -120,7 +147,7 @@ const { setGitRunner } = await import('./git/worktree');
 const { KEYS } = await import('./ui/persisted');
 const { default: App } = await import('./App');
 const { requestGuide } = await import('./guide/openGuide');
-requestGuideRef.current = (id) => void requestGuide(id);
+const reviewStore = await import('./gh/reviewStore');
 
 function project(id: number, name: string): Project {
   return {
@@ -154,6 +181,9 @@ function task(id: number, projectId: number, title: string): Task {
     seenAt: null,
     summary: null,
     reviewUrl: null,
+    apiError: null,
+    apiErrorText: null,
+    spunFromTaskId: null,
   };
 }
 
@@ -183,6 +213,7 @@ beforeEach(() => {
   h.transcriptMounts = [];
   h.terminalMounts = [];
   h.editors = [];
+  h.files = [];
   gitCalls.length = 0;
   setGitRunner(async (args, cwd) => {
     gitCalls.push({ args, cwd });
@@ -220,15 +251,242 @@ describe('opening the Review Guide', () => {
     await settle();
     expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('false');
   });
+});
 
-  it('from the Files pane’s button', async () => {
+describe('the reading tab, per task (#314)', () => {
+  const tabSelected = (name: string) => screen.getByRole('tab', { name }).getAttribute('aria-selected');
+  const row = (title: string) => screen.getByRole('option', { name: new RegExp(title) });
+
+  it('each task comes back on the tab it was left on', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
     store.set(KEYS.activeProject, 'p1');
     store.set(KEYS.selectedTask, '10');
     render(<App />);
     await settle();
-    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Files Guide' }));
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
     await settle();
+    expect(tabSelected('Guide')).toBe('true');
+
+    // A task not looked at yet opens on Transcript, not on the Guide just chosen.
+    fireEvent.click(row('Speed up the build'));
+    await settle();
+    expect(tabSelected('Transcript')).toBe('true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
+    await settle();
+
+    fireEvent.click(row('Fix the login retry'));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+
+    fireEvent.click(row('Speed up the build'));
+    await settle();
+    expect(tabSelected('Files')).toBe('true');
+
+    // Kept across a restart.
+    expect(JSON.parse(store.get(KEYS.taskTabs)!)).toEqual([
+      [10, 'guide'],
+      [11, 'files'],
+    ]);
+  });
+
+  it('closing a file opened from the Guide goes back to the Guide, not to Transcript (#322)', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open a.ts' }));
+    await settle();
+    expect(tabSelected('Editor')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+    // From Files, the same: back to Files.
+    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Open a.ts' }));
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+  });
+
+  it('a PR opened from Reviewing lands on its Guide (#329)', async () => {
+    reviewStore.setReviewFetcherForTests(async () => ({
+      viewer: 'me',
+      prs: [
+        {
+          url: 'https://github.com/acme/api/pull/7', number: 7, title: 'Retry webhook delivery', isDraft: false, author: 'alice',
+          additions: 1, deletions: 1, headOid: 'h1', baseBranch: 'main', commitCount: 1, lastCommitAt: 0, createdAt: 0, updatedAt: 0,
+          requestedAt: 0, teams: [], talk: [], forcePushedAt: null, yourReview: null, approved: false, section: 'requested',
+        },
+      ],
+    }));
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: /Reviewing/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Retry webhook delivery/ }));
+    await settle();
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+    expect(screen.getByTestId('guide').textContent).toBe('guide for 99');
+  });
+
+  it('a guide asked for another task lands on that task, not on the one on screen', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    act(() => void requestGuide(11));
+    await settle();
+    expect(tabSelected('Transcript')).toBe('true');
+    fireEvent.click(row('Speed up the build'));
+    await settle();
+    expect(tabSelected('Guide')).toBe('true');
+  });
+});
+
+describe('the task’s two ⋯ menus (#331)', () => {
+  const row = (title: string) => screen.getByRole('option', { name: new RegExp(title) });
+  /** What a menu offers: each item's label, shortcut, greyed or not, tooltip, and where a group starts. */
+  const offered = () =>
+    [...screen.getByRole('menu').querySelectorAll('[role=menuitem]')].map((b) => ({
+      label: b.querySelector('.row-menu-label')?.textContent,
+      aside: b.querySelector('.row-menu-aside')?.textContent ?? null,
+      disabled: (b as HTMLButtonElement).disabled,
+      group: b.getAttribute('data-group') === 'true',
+      title: b.getAttribute('title'),
+    }));
+  const barMenu = () =>
+    fireEvent.click(within(document.querySelector<HTMLElement>('.main-bar')!).getByRole('button', { name: /^Actions for / }));
+  const rowMenu = (title: string) => fireEvent.contextMenu(row(title));
+
+  it.each([
+    ['a task on a branch', task(10, 1, 'Fix the login retry')],
+    ['a chat', { ...task(10, 1, 'Fix the login retry'), kind: 'chat' as const, branch: '', worktreePath: '/code/x' }],
+    ['a task marked done', { ...task(10, 1, 'Fix the login retry'), status: 'done' as const }],
+  ])('offer the same items, in the same order, for %s', async (_, t) => {
+    h.tasks = [t];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+
+    barMenu();
+    const fromBar = offered();
+    expect(screen.getByRole('menu').querySelector('.row-menu-head')).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await settle();
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    rowMenu('Fix the login retry');
+    const fromRow = offered();
+    // The row's menu says which task was right-clicked; the bar's sits beside the name.
+    expect(screen.getByRole('menu').querySelector('.row-menu-head')?.textContent).toBe('Fix the login retry');
+    expect(fromRow).toEqual(fromBar);
+    expect(fromRow.length).toBeGreaterThan(5);
+  });
+
+  it('Review Guide from another task’s row selects that task and shows its Guide', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    expect(row('Speed up the build').getAttribute('aria-selected')).toBe('false');
+
+    rowMenu('Speed up the build');
+    fireEvent.click(screen.getByRole('menuitem', { name: /Review Guide/ }));
+    await settle();
+    expect(row('Speed up the build').getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Guide' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('guide').textContent).toBe('guide for 11');
+  });
+
+  it('another item from a row acts on that row’s task and leaves the selection alone', async () => {
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+
+    rowMenu('Speed up the build');
+    fireEvent.click(screen.getByRole('menuitem', { name: /Remind Me/ }));
+    await settle();
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Speed up the build')).toBeTruthy();
+    expect(row('Fix the login retry').getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+describe('the Files pane, mounted once and read only when shown (#363)', () => {
+  const tabSelected = (name: string) => screen.getByRole('tab', { name }).getAttribute('aria-selected');
+
+  it('pinned as a column that fits: one Files pane, the column’s, and no second copy in the hidden tab', async () => {
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 4000 });
+    try {
+      store.set(KEYS.activeProject, 'p1');
+      store.set(KEYS.selectedTask, '10');
+      store.set(KEYS.filesPinned, '1');
+      store.set(KEYS.paneMode, 'transcript');
+      render(<App />);
+      await settle();
+      const panes = screen.getAllByTestId('files');
+      expect(panes).toHaveLength(1);
+      expect(panes[0]!.closest('.pane-files')).not.toBeNull();
+      expect(screen.queryByRole('tab', { name: 'Files' })).toBeNull();
+      // The column is always on screen: it reloads as it always has.
+      expect(h.files.at(-1)).toEqual({ taskId: 10, active: undefined });
+      // ⇧⌘E goes into the column. It used to find the hidden tab's copy
+      // first, which could not take focus.
+      fireEvent.keyDown(window, { key: 'E', code: 'KeyE', metaKey: true, shiftKey: true });
+      await settle();
+      expect(document.activeElement?.closest('.pane-files')).not.toBeNull();
+    } finally {
+      // jsdom defines clientWidth on Element: put back exactly what was there.
+      if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
+  });
+
+  it('as a tab: one Files pane, read only while its tab is open', async () => {
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    expect(screen.getAllByTestId('files')).toHaveLength(1);
+    expect(document.querySelector('.pane-files')).toBeNull();
+    expect(tabSelected('Transcript')).toBe('true');
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: false });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
+    await settle();
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: true });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: false });
+  });
+
+  it('as a tab, with a file of this task in the editor: read, since the editor steps through its order', async () => {
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Guide' }));
+    await settle();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open a.ts' }));
+    await settle();
+    expect(tabSelected('Editor')).toBe('true');
+    expect(h.files.at(-1)).toEqual({ taskId: 10, active: true });
   });
 });

@@ -41,3 +41,11 @@
 }
 .remote-mark-bar:hover { text-decoration: none; background: var(--panel-hover); border-color: var(--border-strong); }
 .remote-mark-bar:active { background: var(--panel-active); }
+
+/* "Turning on Remote…" (#343): asked for, not on yet. A word, not a button:
+   nothing to open yet. --muted, the caption's own tier, on the same grounds as
+   the row's repo and time (5.67 on --panel-raised light; every row tint
+   >= 5.62), so it reads as a state rather than a link. */
+.remote-mark-pending { color: var(--muted); cursor: default; }
+.remote-mark-pending:hover { text-decoration: none; }
+.remote-mark-bar.remote-mark-pending:hover { background: transparent; border-color: var(--border); }

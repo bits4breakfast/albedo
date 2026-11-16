@@ -10,6 +10,10 @@
  * Review tasks whose PR has left the list -- merged, closed, or no longer
  * asking for you -- stay listed last, so they can still be read and
  * archived.
+ *
+ * "Review a PR…" at the top (#386, ReviewAnyPr.tsx) finds any other open PR
+ * in the repo. A PR chosen there goes through the same `open` as a row; its
+ * task is then listed last with the others whose PR is not asking for you.
  */
 
 import { useState } from 'react';
@@ -18,12 +22,16 @@ import type { Project, Task } from '../types';
 import {
   activityWords,
   REVIEW_GROUP_TITLE,
+  startWords,
   type ReviewGroup,
   type ReviewRow,
 } from '../gh/reviewActivity';
 import { markSeen, type ReviewListState } from '../gh/reviewStore';
 import type { ReviewPr } from '../gh/reviewRequests';
 import { openReviewTask, reviewTaskFor } from './openReview';
+import ReviewAnyPr from './ReviewAnyPr';
+import { behindWords, isUpdating, runReviewUpdate, useCopyBehind } from '../guide/copyUpdate';
+import './reviewupdate.css';
 import './reviewlist.css';
 
 export interface ReviewListProps {
@@ -51,6 +59,7 @@ function Row({
   opening,
   error,
   onClick,
+  onUpdate,
   age,
 }: {
   row: ReviewRow;
@@ -59,10 +68,18 @@ function Row({
   opening: boolean;
   error: string | null;
   onClick: () => void;
+  /** Update Copy for the row's task (#352). */
+  onUpdate: () => void;
   age: (ts: number) => string;
 }) {
   const { pr, activity } = row;
-  const news = activityWords(activity);
+  // The copy behind the PR (#352): said once, on its own line with Update;
+  // the news words then leave the commits out rather than say them twice.
+  const behind = useCopyBehind(task, pr);
+  const busy = task !== null && isUpdating(task.id);
+  const news = activityWords(behind ? { ...activity, newCommits: 0, forcePushed: false } : activity);
+  // How far into it you are (#315): only on Review Started's rows.
+  const progress = row.start ? startWords(row.start) : [];
   return (
     <>
       <button
@@ -89,12 +106,33 @@ function Row({
           {pr.isDraft && <span>Draft</span>}
           {pr.author && <span>{pr.author}</span>}
           {news.length > 0 && <span className="review-news">{news.join(' · ')}</span>}
+          {progress.map((p) => (
+            <span key={p}>{p}</span>
+          ))}
           {pr.teams.length > 0 && <span>team {pr.teams[0]}</span>}
           <span className="review-size">
             <span className="review-add">+{pr.additions}</span> <span className="review-del">−{pr.deletions}</span>
           </span>
         </span>
       </button>
+      {task && (behind || busy) && (
+        <button
+          type="button"
+          className="review-update"
+          disabled={busy}
+          aria-busy={busy || undefined}
+          title="Fetch the pull request’s head from GitHub and move your copy to it, then show the review"
+          onClick={onUpdate}
+        >
+          {busy ? (
+            'Updating…'
+          ) : (
+            <>
+              {behind ? behindWords(behind) : ''} · <span className="review-update-verb">Update</span>
+            </>
+          )}
+        </button>
+      )}
       {error && (
         <p className="review-error" role="alert">
           {error}
@@ -116,8 +154,15 @@ export default function ReviewList({
 }: ReviewListProps) {
   const [opening, setOpening] = useState<string | null>(null);
   const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map());
+  /**
+   * The last PR chosen from "Review a PR…": its progress and error show under
+   * the button, in its own project only. ReviewList is not remounted on a
+   * project switch, so the project is kept with it.
+   */
+  const [picked, setPicked] = useState<{ projectId: number; url: string; number: number } | null>(null);
 
-  const open = async (pr: ReviewPr) => {
+  /** A row's PR, or one chosen from "Review a PR…": the same path for both. */
+  const open = async (pr: Pick<ReviewPr, 'url' | 'number' | 'title' | 'baseBranch' | 'headOid' | 'commitCount'>) => {
     markSeen(pr);
     const existing = reviewTaskFor(reviewTasks, pr.url);
     if (existing) {
@@ -148,6 +193,10 @@ export default function ReviewList({
   const listed = new Set(groups.flatMap((g) => g.rows.map((r) => r.pr.url)));
   const leftOver = state.kind === 'ready' ? reviewTasks.filter((t) => t.reviewUrl && !listed.has(t.reviewUrl)) : [];
 
+  // Under the button only when no row shows it already.
+  const pickedShown = picked !== null && picked.projectId === project.id && !listed.has(picked.url) ? picked : null;
+  const pickedError = pickedShown ? (errors.get(pickedShown.url) ?? null) : null;
+
   let body: ReactNode = null;
   if (state.kind === 'loading') body = <p className="review-empty">Asking GitHub…</p>;
   else if (state.kind === 'unavailable') {
@@ -163,6 +212,30 @@ export default function ReviewList({
 
   return (
     <>
+      {onOpened && (
+        <ReviewAnyPr
+          project={project}
+          reviewTasks={reviewTasks}
+          busy={opening !== null}
+          onChoose={(pr) => {
+            setPicked({ projectId: project.id, url: pr.url, number: pr.number });
+            return open(pr);
+          }}
+          // A new search: the last choice's error has been read.
+          onOpen={() => setPicked(null)}
+          age={age}
+        />
+      )}
+      {pickedShown && opening === pickedShown.url && (
+        <p className="review-empty" role="status">
+          Checking out #{pickedShown.number}…
+        </p>
+      )}
+      {pickedError && (
+        <p className="review-error" role="alert">
+          {pickedError}
+        </p>
+      )}
       {body}
       {groups.map((g) => (
         <div key={g.key} className="task-group" role="group" aria-labelledby={`review-group-${g.key}`}>
@@ -181,6 +254,11 @@ export default function ReviewList({
                 opening={opening === row.pr.url}
                 error={errors.get(row.pr.url) ?? null}
                 onClick={() => void open(row.pr)}
+                onUpdate={() => {
+                  if (!task) return;
+                  onSelect(task.id);
+                  void runReviewUpdate(task);
+                }}
                 age={age}
               />
             );

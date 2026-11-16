@@ -105,7 +105,7 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     load.kind === 'ready' && 'newText' in load.data.result && load.data.result.change !== 'deleted'
       ? load.data.result.newText
       : null;
-  const comments = useDiffComments(task.id, target.relative, currentText, unsaved);
+  const comments = useDiffComments(task.id, target.relative, currentText, unsaved, true, task);
 
   if (load.kind === 'loading') return <div className="ed-message">Reading the change…</div>;
   if (load.kind === 'error') {

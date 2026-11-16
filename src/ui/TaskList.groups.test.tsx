@@ -47,7 +47,7 @@ afterEach(cleanup);
 
 const base = {
   projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false, baseBranch: 'main',
-  ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1_000, summary: null, reviewUrl: null,
+  ownsWorktree: true, kind: 'work', status: 'idle', createdAt: 1, lastActivityAt: 1, seenAt: 1_000, summary: null, reviewUrl: null, apiError: null, apiErrorText: null, spunFromTaskId: null,
 } as const;
 const row = (id: number, title: string, over: Partial<Task> = {}): Task => ({
   ...base, id, title, branch: `b${id}`, worktreePath: `/w/${id}`, ...over,
@@ -78,7 +78,7 @@ async function renderList(onSetDone = vi.fn()) {
   prs.set(3, 'open');
   prs.set(6, 'merged');
   const view = render(
-    <TaskList tasks={tasks} signals={signals} selectedId={null} onSelect={() => {}} onNew={() => {}} onSetDone={onSetDone} onArchive={() => {}} />,
+    <TaskList tasks={tasks} signals={signals} selectedId={null} onSelect={() => {}} onNew={() => {}} actions={{ setDone: onSetDone, archive: () => {} }} />,
   );
   // The git probe answers asynchronously.
   await act(async () => {

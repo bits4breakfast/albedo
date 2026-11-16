@@ -70,6 +70,8 @@ const PROJECT: Project = {
   taskPromptTemplate: null,
   ciDetails: 'command',
   ciDetailsCommand: './scripts/ci-details.sh',
+  guideSetAside: null,
+  guideCareful: null,
   createdAt: 0,
   archivedAt: null,
 };

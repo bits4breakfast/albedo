@@ -43,18 +43,18 @@ import {
   getTask,
   onTasksChanged,
   resetDb,
-  searchMessages,
   setTranscriptTitle,
   renameTask,
   touchTaskActivity,
   updateTask,
   setTaskSummary,
 } from './index';
-import { listPastSessions, listSessionCwds, PROMPT_CHARS } from './sessions';
+import { listPastSessions, PROMPT_CHARS } from './sessions';
 import { deriveStatus } from '../capture/status';
-import { usageBreakdown, usageSummary, windowUsage } from '../capture/usage';
+import { windowUsage } from '../capture/usage';
 import { contextUsage } from '../capture/context';
 import { touchedFiles } from './touched';
+import { DEFAULT_CAREFUL, DEFAULT_SET_ASIDE, projectFocus } from '../guide/focus';
 import {
   backfillProjectsFromTasks,
   createProject,
@@ -96,6 +96,8 @@ describe('the harness itself', () => {
     expect(taskCols).toContain('kind');
     expect(taskCols).toContain('seen_at');
     expect(taskCols).toContain('summary');
+    expect(taskCols).toContain('api_error');
+    expect(taskCols).toContain('api_error_text');
   });
 
   it('rewrites $n placeholders positionally, including reuse and reordering', () => {
@@ -192,14 +194,6 @@ describe('listPastSessions — executed', () => {
     expect(s?.cwd).toBe('/w');
     expect(s?.messageCount).toBe(6);
     expect(await listPastSessions({ cwd: '/w/.claude/worktrees/a1' })).toEqual([]);
-  });
-
-  it('offers only cwds a main transcript ran in as filters (#74)', async () => {
-    seedTranscriptFile(db, { path: '/p/proj/s1.jsonl', sessionId: 's1', cwd: '/w', updatedAt: 1 });
-    seedTranscriptFile(db, {
-      path: '/p/proj/s1/subagents/agent-a1.jsonl', sessionId: 's1', cwd: '/w/.claude/worktrees/a1', updatedAt: 9,
-    });
-    expect(await listSessionCwds()).toEqual(['/w']);
   });
 
   it("reports a titleless main transcript's '' sentinel as no title", async () => {
@@ -324,7 +318,7 @@ describe('usage and context aggregates — executed', () => {
 
   it('does not let cache_read grow the window total with turn count', async () => {
     seedRepeatedTurns(50);
-    const a = await usageSummary(NOW);
+    const a = await windowUsage('5h', NOW);
     expect(a.inputTokens).toBe(50 * 110); // input + cache_creation only
     expect(a.outputTokens).toBe(50 * 50);
     expect(a.cacheReadTokens).toBe(50 * CACHE);
@@ -335,18 +329,17 @@ describe('usage and context aggregates — executed', () => {
   it('scales spend with turns while cache_read stays out of it', async () => {
     seedRepeatedTurns(10, 'a');
     seedRepeatedTurns(40, 'b');
-    const all = await usageSummary(NOW);
+    const all = await windowUsage('5h', NOW);
     expect(all.inputTokens).toBe(50 * 110); // counted across sessions
     expect(all.cacheReadTokens).toBe(50 * CACHE);
   });
 
   it('de-duplicates the three rows each turn expanded into', async () => {
     seedRepeatedTurns(7);
-    const b = await usageBreakdown(NOW);
-    expect(b.lineCount).toBe(7); // not 21
-    expect(b.inputTokens).toBe(70);
-    expect(b.cacheCreationInputTokens).toBe(700);
-    expect(b.cacheReadInputTokens).toBe(7 * CACHE);
+    const w = await windowUsage('5h', NOW);
+    expect(w.inputTokens).toBe(7 * 110); // input + cache_creation, once per line, not 21 times
+    expect(w.outputTokens).toBe(7 * 50);
+    expect(w.cacheReadTokens).toBe(7 * CACHE);
   });
 
   it('keeps the burn rate free of the same inflation', async () => {
@@ -360,7 +353,7 @@ describe('usage and context aggregates — executed', () => {
   it('excludes turns outside the window', async () => {
     seedTurn(db, { sessionId: 's1', line: 0, ts: NOW - 6 * 3_600_000, usage: { input: 999_999 } });
     seedTurn(db, { sessionId: 's1', line: 1, ts: NOW - 60_000, usage: { input: 7 } });
-    expect((await usageSummary(NOW)).inputTokens).toBe(7);
+    expect((await windowUsage('5h', NOW)).inputTokens).toBe(7);
   });
 
   it('contextUsage sums ALL THREE counters — the opposite rule, on one turn', async () => {
@@ -391,33 +384,6 @@ describe('usage and context aggregates — executed', () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-
-describe('searchMessages — executed', () => {
-  beforeEach(async () => {
-    await insertMessages([
-      { taskId: null, sessionId: 's1', seq: 0, role: 'user', toolName: null, targetPath: null,
-        body: 'please fix the uploader retry logic', rawJson: '{}', agentId: null, ts: 1 },
-      { taskId: null, sessionId: 's1', seq: 100, role: 'tool_use', toolName: 'Edit',
-        targetPath: '/repo/src/uploader.ts', body: 'Edit: /repo/src/uploader.ts', rawJson: '{}', agentId: null, ts: 2 },
-    ]);
-  });
-
-  it('returns a highlighted snippet from the real FTS index', async () => {
-    const hits = await searchMessages('uploader');
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0]?.snippet).toContain('<mark>');
-    expect(hits[0]?.snippet.toLowerCase()).toContain('uploader');
-  });
-
-  it('filters by tool name', async () => {
-    expect(await searchMessages('uploader', { toolName: 'Edit' })).toHaveLength(1);
-    expect(await searchMessages('uploader', { toolName: 'Bash' })).toHaveLength(0);
-  });
-
-  it('does not raise a syntax error on punctuation', async () => {
-    await expect(searchMessages(`it's: "quoted" -x NEAR(a b)`)).resolves.toBeInstanceOf(Array);
-  });
-});
 
 // ---------------------------------------------------------------------------
 
@@ -1010,11 +976,10 @@ describe('deleteTask — removes the task and the conversation copy Albedo holds
 
   it('empties the search index and the session browser for that session', async () => {
     const { taskId } = await seedTaskWithSession();
-    expect(await searchMessages('uploader')).not.toHaveLength(0);
+    expect(db.raw.prepare('SELECT COUNT(*) c FROM messages_fts').get()).not.toEqual({ c: 0 });
 
     await deleteTask(taskId);
 
-    expect(await searchMessages('uploader')).toHaveLength(0);
     expect(db.raw.prepare('SELECT COUNT(*) c FROM messages_fts').get()).toEqual({ c: 0 });
     expect(await listPastSessions()).toHaveLength(0);
   });
@@ -1536,6 +1501,56 @@ describe('projects.ci_details (v12, #280)', () => {
   });
 });
 
+describe('projects.guide_set_aside / guide_careful (v14, #295)', () => {
+  const NEW = { name: 'recipe-app', repoPath: '/repo/recipe-app', worktreeRoot: '/wt/recipe-app', defaultBaseBranch: null };
+
+  it('leaves every existing project on Albedo’s starting set (NULL)', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v14 = all.findIndex((m) => m.name.endsWith('0014_guide_focus.sql'));
+    expect(v14).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v14)) raw.exec(m.sql);
+    raw
+      .prepare(`INSERT INTO projects (name, repo_path, worktree_root, created_at) VALUES ('old', '/repo/old', '/wt/old', 0)`)
+      .run();
+    raw.exec((all[v14] as { sql: string }).sql);
+    expect(raw.prepare(`SELECT guide_set_aside, guide_careful FROM projects WHERE name = 'old'`).get()).toEqual({
+      guide_set_aside: null,
+      guide_careful: null,
+    });
+    raw.close();
+  });
+
+  it('a new project has none of its own: null, which reads as Albedo’s set', async () => {
+    const p = await createProject(NEW);
+    expect(p).toMatchObject({ guideSetAside: null, guideCareful: null });
+    expect(await getProject(p.id)).toEqual(p);
+    expect(projectFocus(p)).toEqual({ setAside: [...DEFAULT_SET_ASIDE], careful: [...DEFAULT_CAREFUL] });
+  });
+
+  it('round-trips its own lists as JSON, cleaned; [] is none; the starting set is stored as NULL', async () => {
+    const p = await createProject({ ...NEW, guideSetAside: [' *.css ', '', '*.css', '**/*.test.*'] });
+    expect((await getProject(p.id))?.guideSetAside).toEqual(['*.css', '**/*.test.*']);
+    expect(db.raw.prepare('SELECT guide_set_aside FROM projects WHERE id = ?').get(p.id)).toEqual({
+      guide_set_aside: '["*.css","**/*.test.*"]',
+    });
+    await updateProject(p.id, { guideCareful: [] });
+    expect(await getProject(p.id)).toMatchObject({ guideSetAside: ['*.css', '**/*.test.*'], guideCareful: [] });
+    await updateProject(p.id, { guideSetAside: [...DEFAULT_SET_ASIDE], guideCareful: null });
+    expect(db.raw.prepare('SELECT guide_set_aside, guide_careful FROM projects WHERE id = ?').get(p.id)).toEqual({
+      guide_set_aside: null,
+      guide_careful: null,
+    });
+  });
+
+  it('reads a column that is not a list of strings as the starting set', async () => {
+    const p = await createProject(NEW);
+    db.raw.prepare(`UPDATE projects SET guide_careful = '{"x":1}' WHERE id = ?`).run(p.id);
+    expect((await getProject(p.id))?.guideCareful).toBeNull();
+  });
+});
+
 describe('tasks.summary (v11, #262)', () => {
   const work = {
     title: 'ABC-1234', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'abc-1234',
@@ -1582,6 +1597,104 @@ describe('tasks.summary (v11, #262)', () => {
     raw.exec((all[v11] as { sql: string }).sql);
     const row = raw.prepare(`SELECT summary FROM tasks WHERE title = 'old'`).get() as { summary: string | null };
     expect(row.summary).toBeNull();
+    raw.close();
+  });
+});
+
+describe('tasks.api_error (v16, #338)', () => {
+  const work = {
+    title: 'Ticket triage', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'triage',
+    worktreePath: '/wt/triage', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
+  };
+  const STOPPED = 'API Error: The response stopped arriving. The response above may be incomplete.';
+
+  it('starts null on a new task', async () => {
+    const t = await createTask(work);
+    expect(t).toMatchObject({ apiError: null, apiErrorText: null });
+    expect(await getTask(t.id)).toMatchObject({ apiError: null, apiErrorText: null });
+  });
+
+  it('is written and cleared by updateTask, and read back by every reader', async () => {
+    const t = await createTask(work);
+    await updateTask(t.id, { apiError: 'stopped', apiErrorText: STOPPED });
+    expect(await getTask(t.id)).toMatchObject({ apiError: 'stopped', apiErrorText: STOPPED });
+    expect((await listTasks()).find((x) => x.id === t.id)).toMatchObject({ apiError: 'stopped', apiErrorText: STOPPED });
+    await updateTask(t.id, { apiError: null, apiErrorText: null });
+    expect(await getTask(t.id)).toMatchObject({ apiError: null, apiErrorText: null });
+  });
+
+  it('reads a kind this build does not know as "other", and never a text without a kind', async () => {
+    const t = await createTask(work);
+    db.raw.prepare(`UPDATE tasks SET api_error = 'brand_new', api_error_text = 'API Error: new' WHERE id = ?`).run(t.id);
+    expect(await getTask(t.id)).toMatchObject({ apiError: 'other', apiErrorText: 'API Error: new' });
+    db.raw.prepare(`UPDATE tasks SET api_error = NULL WHERE id = ?`).run(t.id);
+    expect(await getTask(t.id)).toMatchObject({ apiError: null, apiErrorText: null });
+  });
+
+  it('is cleared by archiving', async () => {
+    const t = await createTask(work);
+    await updateTask(t.id, { apiError: 'overloaded', apiErrorText: 'API Error: Overloaded' });
+    await archiveTask(t.id);
+    expect(await getTask(t.id)).toMatchObject({ status: 'archived', apiError: null, apiErrorText: null });
+  });
+
+  it('leaves every existing row without one', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v16 = all.findIndex((m) => m.name.endsWith('0016_api_error.sql'));
+    expect(v16).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v16)) raw.exec(m.sql);
+    raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    raw.exec((all[v16] as { sql: string }).sql);
+    const row = raw.prepare(`SELECT api_error, api_error_text FROM tasks WHERE title = 'old'`).get();
+    expect(row).toEqual({ api_error: null, api_error_text: null });
+    raw.close();
+  });
+});
+
+describe('tasks.spun_from_task_id (v17, #332)', () => {
+  const work = {
+    title: 'Refund not applied', projectId: null, repoPath: '/repo', baseBranch: 'main', branch: 'refund',
+    worktreePath: '/wt/refund', ownsWorktree: true, createdBranch: true, kind: 'work' as const,
+  };
+
+  it('is null on a task created without it', async () => {
+    const t = await createTask(work);
+    expect(t.spunFromTaskId).toBeNull();
+    expect((await getTask(t.id))?.spunFromTaskId).toBeNull();
+  });
+
+  it('is written at creation and read back by every reader, the source archived or not', async () => {
+    const source = await createTask({ ...work, title: 'Ticket triage', branch: 'triage', worktreePath: '/wt/triage' });
+    const t = await createTask({ ...work, spunFromTaskId: source.id });
+    expect(t.spunFromTaskId).toBe(source.id);
+    expect((await getTask(t.id))?.spunFromTaskId).toBe(source.id);
+    await archiveTask(source.id);
+    expect((await listTasks()).find((x) => x.id === t.id)?.spunFromTaskId).toBe(source.id);
+  });
+
+  it('leaves every existing row not spun out', () => {
+    const raw = new BetterSqlite3(':memory:');
+    raw.exec(schemaSql);
+    const all = migrationsInOrder();
+    const v17 = all.findIndex((m) => m.name.endsWith('0017_spun_from.sql'));
+    expect(v17).toBeGreaterThan(-1);
+    for (const m of all.slice(0, v17)) raw.exec(m.sql);
+    raw
+      .prepare(
+        `INSERT INTO tasks (title, repo_path, base_branch, branch, worktree_path, owns_worktree, status, created_at)
+         VALUES ('old', '/repo', 'main', 'fix', '/wt/old', 1, 'idle', 0)`,
+      )
+      .run();
+    raw.exec((all[v17] as { sql: string }).sql);
+    const row = raw.prepare(`SELECT spun_from_task_id FROM tasks WHERE title = 'old'`).get();
+    expect(row).toEqual({ spun_from_task_id: null });
     raw.close();
   });
 });

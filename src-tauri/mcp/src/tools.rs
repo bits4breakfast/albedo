@@ -1,6 +1,8 @@
-//! The four tools: what Claude is told about them, and what a call must hold.
+//! The five tools: what Claude is told about them, and what a call must hold.
 //! The fourth, `set_task_summary`, is by the owner's decision (issue #262):
-//! its one line is shown beside the task's title, never acted on.
+//! its one line is shown beside the task's title, never acted on. The fifth,
+//! `show_preview` (#348), is the one that waits: the user's answer to a
+//! mockup is its result (see `lib.rs`).
 //!
 //! Every limit here is repeated in `src/capture/inbox.ts`, which checks each
 //! line again: this process runs inside the session, so the app never takes
@@ -20,6 +22,13 @@ pub const MAX_PROJECT: usize = 200;
 pub const MAX_BRANCH: usize = 200;
 pub const MAX_MESSAGE: usize = 1_000;
 pub const MAX_TASK_SUMMARY: usize = 120;
+/// `show_preview` (#348): the file's path, the preview's title (versions are
+/// counted per title), the question for the user, and the session's one-line
+/// note on what changed since the last version.
+pub const MAX_PREVIEW_PATH: usize = 4_096;
+pub const MAX_PREVIEW_TITLE: usize = 120;
+pub const MAX_PREVIEW_QUESTION: usize = 1_000;
+pub const MAX_PREVIEW_NOTE: usize = 200;
 
 /// A reminder further out than this is a typo more often than a plan.
 pub const MAX_DUE_AHEAD_MS: i64 = 366 * 24 * 60 * 60 * 1000;
@@ -30,13 +39,20 @@ pub const CREATE_REMINDER: &str = "create_reminder";
 pub const REQUEST_SESSION: &str = "request_session";
 pub const NOTIFY_BLOCKED: &str = "notify_blocked";
 pub const SET_TASK_SUMMARY: &str = "set_task_summary";
+pub const SHOW_PREVIEW: &str = "show_preview";
+
+/// `request_session`'s `start` (#332): a fresh session from the brief, or a
+/// copy of the asking conversation. Only a suggestion; the user picks.
+pub const START_BRIEF: &str = "brief";
+pub const START_FORK: &str = "fork";
 
 /// Every tool, in the order `tools/list` gives them.
-pub const NAMES: [&str; 4] = [
+pub const NAMES: [&str; 5] = [
     CREATE_REMINDER,
     REQUEST_SESSION,
     NOTIFY_BLOCKED,
     SET_TASK_SUMMARY,
+    SHOW_PREVIEW,
 ];
 
 /// The `tools/list` result's `tools`, in a fixed order.
@@ -68,9 +84,13 @@ pub fn definitions() -> Value {
             "description": "Ask the user to start a separate Albedo task for work that does not belong in this session \
                 (a follow-up, an unrelated bug you found, work in another project). Nothing starts on its own: the \
                 request waits in Albedo until the user approves or denies it, and you are not told which. If they \
-                approve, `prompt` becomes the new task's first message, unsent, for them to edit. Write `prompt` so \
-                that it stands alone -- the new session has none of this conversation. Do not use it to hand off the \
-                work of this session, and do not ask twice for the same thing.",
+                approve, the new task starts from `prompt`, which they can edit and which is sent as its first message \
+                unless they untick that. Write `prompt` so that it stands alone -- by default the new session has \
+                none of this conversation: carry over what was already found, the links and identifiers, what was \
+                checked and what is left. `start` suggests how it begins: \"brief\" (the default) is a fresh \
+                session from `prompt`; \"fork\" is a copy of this conversation, with `prompt` sent after it -- for \
+                when the history matters more than the noise it brings. The user picks either way. Do not use it to \
+                hand off the work of this session, and do not ask twice for the same thing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -78,7 +98,8 @@ pub fn definitions() -> Value {
                     "prompt": {"type": "string", "description": "The new session's opening message, self-contained.", "maxLength": MAX_PROMPT},
                     "reason": {"type": "string", "description": "Why it should be a separate session, for the user deciding.", "maxLength": MAX_REASON},
                     "project": {"type": "string", "description": "Albedo project name, if not this task's project.", "maxLength": MAX_PROJECT},
-                    "branch": {"type": "string", "description": "A branch to suggest for the new task.", "maxLength": MAX_BRANCH}
+                    "branch": {"type": "string", "description": "A branch to suggest for the new task.", "maxLength": MAX_BRANCH},
+                    "start": {"type": "string", "enum": [START_BRIEF, START_FORK], "description": "How the new session should begin: \"brief\" (default), a fresh session from `prompt`; \"fork\", a copy of this conversation."}
                 },
                 "required": ["title", "prompt", "reason"],
                 "additionalProperties": false
@@ -114,6 +135,31 @@ pub fn definitions() -> Value {
                     "summary": {"type": "string", "description": "What the task is about, one line, e.g. \"Import pictures from a URL\".", "maxLength": MAX_TASK_SUMMARY}
                 },
                 "required": ["summary"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": SHOW_PREVIEW,
+            "title": "Show the user an HTML mockup for approval",
+            "description": "Show the user a UI mockup or HTML preview you wrote, for their approval, in Albedo. \
+                Write it first as ONE self-contained .html file -- inline <style> and <script>, images as data: \
+                URIs -- because the page is shown sandboxed with no network: it cannot load anything, and nothing \
+                external renders. Albedo copies the file when you call, so each call is a fixed version (v1, v2, \
+                ...) of `title`; call again with the same `title` for the next version, with `note` saying in one \
+                line what changed. THE CALL WAITS until the user answers in Albedo, and the answer is its result: \
+                \"approved\", or \"changes requested on vN:\" followed by their comments (a comment may name a \
+                numbered pin and where it sits on the page, as a percentage across and down). Do not build what the \
+                mockup shows before it is approved. If the user presses Esc in the terminal the call is cancelled; \
+                then wait for them to say what to do.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Absolute path of the .html file you wrote.", "maxLength": MAX_PREVIEW_PATH},
+                    "title": {"type": "string", "description": "What the mockup is, short, e.g. \"Proposed row\". The same title for every version.", "maxLength": MAX_PREVIEW_TITLE},
+                    "question": {"type": "string", "description": "What you want the user to judge, e.g. \"Does the popover read as attached to the row?\"", "maxLength": MAX_PREVIEW_QUESTION},
+                    "note": {"type": "string", "description": "From the second version on: what changed since the last one, one line.", "maxLength": MAX_PREVIEW_NOTE}
+                },
+                "required": ["path", "title"],
                 "additionalProperties": false
             }
         }
@@ -167,7 +213,10 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
             })
         }
         REQUEST_SESSION => {
-            only(args, &["title", "prompt", "reason", "project", "branch"])?;
+            only(
+                args,
+                &["title", "prompt", "reason", "project", "branch", "start"],
+            )?;
             let mut out = Map::new();
             out.insert(
                 "title".into(),
@@ -187,6 +236,17 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
             if let Some(b) = optional(args, "branch", MAX_BRANCH)? {
                 check_branch(&b)?;
                 out.insert("branch".into(), b.into());
+            }
+            match args.get("start") {
+                None | Some(Value::Null) => {}
+                Some(Value::String(s)) if s == START_BRIEF || s == START_FORK => {
+                    out.insert("start".into(), s.as_str().into());
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "`start` must be \"{START_BRIEF}\" or \"{START_FORK}\"."
+                    ))
+                }
             }
             Ok(Accepted {
                 tool: REQUEST_SESSION,
@@ -222,6 +282,34 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
                 reply: "Albedo shows this beside the task's title.".into(),
             })
         }
+        SHOW_PREVIEW => {
+            only(args, &["path", "title", "question", "note"])?;
+            let path = field(args, "path", MAX_PREVIEW_PATH, Lines::One)?;
+            let lower = path.to_ascii_lowercase();
+            if !(lower.ends_with(".html") || lower.ends_with(".htm")) {
+                return Err(format!(
+                    "`path` ({path}) is not an .html file. Write the mockup as one self-contained .html file."
+                ));
+            }
+            let mut out = Map::new();
+            out.insert("path".into(), path.into());
+            out.insert(
+                "title".into(),
+                field(args, "title", MAX_PREVIEW_TITLE, Lines::One)?.into(),
+            );
+            if let Some(q) = optional_text(args, "question", MAX_PREVIEW_QUESTION, Lines::Many)? {
+                out.insert("question".into(), q.into());
+            }
+            if let Some(n) = optional_text(args, "note", MAX_PREVIEW_NOTE, Lines::One)? {
+                out.insert("note".into(), n.into());
+            }
+            Ok(Accepted {
+                tool: SHOW_PREVIEW,
+                args: out,
+                // Never sent: this call's result is the user's answer (lib.rs).
+                reply: String::new(),
+            })
+        }
         _ => Err(format!("Unknown tool: {name}")),
     }
 }
@@ -253,10 +341,20 @@ fn field(args: &Map<String, Value>, key: &str, max: usize, lines: Lines) -> Resu
 }
 
 fn optional(args: &Map<String, Value>, key: &str, max: usize) -> Result<Option<String>, String> {
+    optional_text(args, key, max, Lines::One)
+}
+
+/// An optional string: absent, null or blank is None; anything else as [`field`].
+fn optional_text(
+    args: &Map<String, Value>,
+    key: &str,
+    max: usize,
+    lines: Lines,
+) -> Result<Option<String>, String> {
     match args.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) if s.trim().is_empty() => Ok(None),
-        Some(Value::String(s)) => clean(key, s, max, Lines::One).map(Some),
+        Some(Value::String(s)) => clean(key, s, max, lines).map(Some),
         Some(_) => Err(format!("`{key}` must be a string.")),
     }
 }
@@ -309,7 +407,7 @@ mod tests {
     const NOW: i64 = 1_793_692_800_000; // 2026-11-03T08:00:00Z
 
     #[test]
-    fn definitions_list_the_four_tools_in_order_with_strict_schemas() {
+    fn definitions_list_the_five_tools_in_order_with_strict_schemas() {
         let defs = definitions();
         let names: Vec<_> = defs
             .as_array()
@@ -323,7 +421,8 @@ mod tests {
                 CREATE_REMINDER,
                 REQUEST_SESSION,
                 NOTIFY_BLOCKED,
-                SET_TASK_SUMMARY
+                SET_TASK_SUMMARY,
+                SHOW_PREVIEW
             ]
         );
         assert_eq!(names, NAMES);
@@ -430,6 +529,51 @@ mod tests {
     }
 
     #[test]
+    fn a_session_request_may_suggest_how_it_starts() {
+        let call = |start: Value| {
+            validate(
+                REQUEST_SESSION,
+                Some(&json!({"title": "T", "prompt": "P", "reason": "R", "start": start})),
+                NOW,
+            )
+        };
+        assert_eq!(call(json!("fork")).unwrap().args["start"], "fork");
+        assert_eq!(call(json!("brief")).unwrap().args["start"], "brief");
+        assert!(!call(Value::Null).unwrap().args.contains_key("start"));
+        for bad in [json!("Fork"), json!("copy"), json!(""), json!(1)] {
+            let err = call(bad.clone()).unwrap_err();
+            assert_eq!(err, "`start` must be \"brief\" or \"fork\".", "{bad}");
+        }
+        let without = validate(
+            REQUEST_SESSION,
+            Some(&json!({"title": "T", "prompt": "P", "reason": "R"})),
+            NOW,
+        )
+        .unwrap();
+        assert!(!without.args.contains_key("start"));
+    }
+
+    #[test]
+    fn the_schema_offers_start_as_brief_or_fork() {
+        let defs = definitions();
+        let req = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == REQUEST_SESSION)
+            .unwrap();
+        assert_eq!(
+            req["inputSchema"]["properties"]["start"]["enum"],
+            json!(["brief", "fork"])
+        );
+        assert!(!req["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("start")));
+        assert!(req["description"].as_str().unwrap().contains("\"fork\""));
+    }
+
+    #[test]
     fn branch_suggestions_are_plain_names() {
         for bad in ["-rf", "a b", "a..b", "x/", "/x", "feat;rm", "ü"] {
             let r = validate(
@@ -493,5 +637,74 @@ mod tests {
                 "{err}"
             );
         }
+    }
+
+    #[test]
+    fn a_preview_keeps_path_title_and_only_the_optional_fields_given() {
+        let a = validate(
+            SHOW_PREVIEW,
+            Some(&json!({"path": " /tmp/row.html ", "title": " Proposed row ", "question": "Does it read?\nBe honest", "note": "  "})),
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(a.tool, SHOW_PREVIEW);
+        assert_eq!(a.args["path"], "/tmp/row.html");
+        assert_eq!(a.args["title"], "Proposed row");
+        assert_eq!(a.args["question"], "Does it read?\nBe honest");
+        assert!(!a.args.contains_key("note"), "a blank note is no note");
+        let b = validate(
+            SHOW_PREVIEW,
+            Some(&json!({"path": "/tmp/ROW.HTM", "title": "T", "note": "Buttons moved onto the row"})),
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(b.args["note"], "Buttons moved onto the row");
+        assert!(!b.args.contains_key("question"));
+    }
+
+    #[test]
+    fn a_preview_is_an_html_file_with_a_one_line_title_and_note() {
+        let call = |v: Value| validate(SHOW_PREVIEW, Some(&v), NOW);
+        assert!(call(json!({"path": "/tmp/row.md", "title": "T"}))
+            .unwrap_err()
+            .contains("not an .html file"));
+        assert!(call(json!({"path": "/tmp/row.html", "title": "a\nb"}))
+            .unwrap_err()
+            .contains("control"));
+        assert!(
+            call(json!({"path": "/tmp/row.html", "title": "T", "note": "a\nb"}))
+                .unwrap_err()
+                .contains("control")
+        );
+        assert_eq!(
+            call(json!({"path": "/tmp/row.html"})).unwrap_err(),
+            "`title` is required."
+        );
+        assert!(
+            call(json!({"path": "/tmp/row.html", "title": "T", "html": "<p>"}))
+                .unwrap_err()
+                .starts_with("Unknown argument `html`")
+        );
+        let long = "n".repeat(MAX_PREVIEW_NOTE + 1);
+        assert!(
+            call(json!({"path": "/tmp/row.html", "title": "T", "note": long}))
+                .unwrap_err()
+                .contains("at most 200")
+        );
+    }
+
+    #[test]
+    fn the_preview_schema_requires_path_and_title_and_says_it_waits() {
+        let defs = definitions();
+        let p = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == SHOW_PREVIEW)
+            .unwrap();
+        assert_eq!(p["inputSchema"]["required"], json!(["path", "title"]));
+        let d = p["description"].as_str().unwrap();
+        assert!(d.contains("THE CALL WAITS"), "{d}");
+        assert!(d.contains("self-contained"), "{d}");
     }
 }

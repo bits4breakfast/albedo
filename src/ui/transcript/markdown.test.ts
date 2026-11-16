@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseBlocks, splitRow } from './MessageRow';
+import { parseBlocks, splitRow } from './Markdown';
 
 describe('splitRow', () => {
   it('splits on pipes, outer pipes optional', () => {

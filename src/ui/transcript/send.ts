@@ -74,23 +74,64 @@ export function withPtyLock<T>(taskId: number, fn: () => Promise<T>): Promise<T>
 }
 
 /**
+ * Which button sent a command, in the words its echo uses after "from":
+ * "Compact Now", "the model picker" (commandEcho.ts). Only a label: it never
+ * changes what is written or how.
+ */
+export type SendSource = string;
+
+/**
+ * `startedAt`: when the write began, before the paste. Claude Code stamps
+ * what it records of the text no earlier than that, so a row stamped after
+ * it is the text's and a row from before is not.
+ */
+type SubmitListener = (taskId: number, text: string, from?: SendSource, startedAt?: number) => void;
+
+const submitted = new Set<SubmitListener>();
+
+/**
+ * Hear every text delivered to a session, whichever path sent it: the
+ * composer, a button, the outbox's release. Called once the write succeeded,
+ * before the caller learns it did, with the button that sent it when the
+ * caller named one. For what follows a particular command (remoteWait.ts:
+ * `/remote-control`; commandEcho.ts); nothing here changes how text is sent.
+ */
+export function onSessionSubmit(cb: SubmitListener): () => void {
+  submitted.add(cb);
+  return () => void submitted.delete(cb);
+}
+
+/**
  * `submitPty`, after any other submit to the same task has finished. A
  * delivered submit starts a turn as far as turn.ts knows, until the
  * transcript says otherwise.
  */
-export function submitLocked(taskId: number, text: string): Promise<boolean> {
+export function submitLocked(taskId: number, text: string, from?: SendSource): Promise<boolean> {
   return withPtyLock(taskId, async () => {
+    const startedAt = Date.now();
     const ok = await submitPty(taskId, text);
-    if (ok) noteSubmitted(taskId);
+    if (ok) {
+      noteSubmitted(taskId);
+      for (const cb of [...submitted]) {
+        try {
+          cb(taskId, text, from, startedAt);
+        } catch (err) {
+          console.warn('[send] a submit listener failed', err);
+        }
+      }
+    }
     return ok;
   });
 }
 
-/** Send text to the task's session now, or hold it in the outbox (`mustHold`). */
-export async function sendToSession(taskId: number, text: string): Promise<SessionSendOutcome> {
+/**
+ * Send text to the task's session now, or hold it in the outbox (`mustHold`).
+ * `from` names the button, for the echo of what it sent (commandEcho.ts).
+ */
+export async function sendToSession(taskId: number, text: string, from?: SendSource): Promise<SessionSendOutcome> {
   if (mustHold(taskId)) return holdMessage(taskId, text) ? 'held' : 'failed';
   try {
-    return (await submitLocked(taskId, text)) ? 'sent' : 'failed';
+    return (await submitLocked(taskId, text, from)) ? 'sent' : 'failed';
   } catch {
     return 'failed';
   }

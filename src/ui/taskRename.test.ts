@@ -32,6 +32,7 @@ vi.mock('./transcript/outboxRelease', () => ({ promptOpen: () => h.prompt }));
 
 import { __resetConnectivity } from '../lib/connectivity';
 import { __resetOutbox, heldFor, holdMessage } from './transcript/outbox';
+import { onSessionSubmit } from './transcript/send';
 import { __resetTurns, noteTaskSessions } from './transcript/turn';
 import { recordQueueOperations, seedQueue } from '../capture/queue';
 import {
@@ -143,6 +144,18 @@ describe('renameSession: where /rename goes', () => {
     h.live.add(1);
     expect(await renameSession({ id: 1, sessionId: 's1' }, 'New name')).toBe('sent');
     expect(h.writes).toEqual([[1, '/rename New name']]);
+  });
+
+  it('labels the write as from Rename, for its echo (#384)', async () => {
+    h.live.add(1);
+    const heard: unknown[][] = [];
+    const off = onSessionSubmit((...args) => void heard.push(args));
+    try {
+      expect(await renameSession({ id: 1, sessionId: 's1' }, 'New name')).toBe('sent');
+    } finally {
+      off();
+    }
+    expect(heard).toEqual([[1, '/rename New name', 'Rename', expect.any(Number)]]);
   });
 
   it('a live session mid-turn: held in the outbox, not typed into the turn', async () => {

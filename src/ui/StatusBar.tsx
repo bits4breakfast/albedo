@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { onCaptureUpdate, windowUsage } from '../capture';
 import type { WindowUsage } from '../capture';
 import { onStatusSnapshot, planUsage, type PlanWindow } from '../capture/hookEvents';
+import { messageDeletions } from '../db';
 import { exactTokens } from './gauges/format';
 import './statusbar.css';
 
@@ -47,6 +48,18 @@ function asWindowUsage(v: unknown): WindowUsage | null {
   const w = v as Partial<WindowUsage>;
   if (!finite(w.inputTokens) || !finite(w.outputTokens)) return null;
   return w as WindowUsage;
+}
+
+/**
+ * Until when the token figures cannot change unless a capture update arrives
+ * or messages are deleted (#365): the instant the oldest turn counted in
+ * either window ages out of it. Nothing to wait for (an empty window, or one
+ * whose oldest turn is at its edge) or a failed read: no time at all, so the
+ * next tick reads again, as it always did.
+ */
+export function unchangedUntil(five: WindowUsage | null, week: WindowUsage | null): number {
+  if (!five || !week || five.resetsInMs <= 0 || week.resetsInMs <= 0) return -Infinity;
+  return Math.min(five.windowEnd, week.windowEnd);
 }
 
 const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -140,15 +153,20 @@ export default function StatusBar({ awake = 0 }: StatusBarProps = {}) {
   const [now, setNow] = useState(() => Date.now());
   const aliveRef = useRef(true);
   const loadedAtRef = useRef(0);
+  /** Capture updates seen, and what the last load saw (#365). */
+  const arrivalsRef = useRef(0);
+  const lastLoadRef = useRef<{ arrivals: number; deletions: number; until: number } | null>(null);
 
   const loadTokens = useCallback(async () => {
     loadedAtRef.current = Date.now();
+    const seen = { arrivals: arrivalsRef.current, deletions: messageDeletions() };
+    lastLoadRef.current = null;
     const [rFive, rWeek] = await Promise.allSettled([windowUsage('5h'), windowUsage('week')]);
     if (!aliveRef.current) return;
-    setTokens({
-      five: rFive.status === 'fulfilled' ? asWindowUsage(rFive.value) : null,
-      week: rWeek.status === 'fulfilled' ? asWindowUsage(rWeek.value) : null,
-    });
+    const five = rFive.status === 'fulfilled' ? asWindowUsage(rFive.value) : null;
+    const week = rWeek.status === 'fulfilled' ? asWindowUsage(rWeek.value) : null;
+    lastLoadRef.current = { ...seen, until: unchangedUntil(five, week) };
+    setTokens({ five, week });
   }, []);
 
   useEffect(() => {
@@ -156,13 +174,26 @@ export default function StatusBar({ awake = 0 }: StatusBarProps = {}) {
     void loadTokens();
     let timer: ReturnType<typeof setTimeout> | null = null;
     let offCapture: () => void = () => {};
+    // The figures are tooltip detail: not read while the window is hidden,
+    // nor when nothing could have changed them (#365) -- caught up on return.
+    const refresh = () => {
+      if (document.hidden) return;
+      const last = lastLoadRef.current;
+      const unchanged =
+        last !== null &&
+        last.arrivals === arrivalsRef.current &&
+        last.deletions === messageDeletions() &&
+        Date.now() <= last.until;
+      if (!unchanged) void loadTokens();
+    };
     try {
       const off = onCaptureUpdate(() => {
-        if (timer !== null) return;
+        arrivalsRef.current += 1;
+        if (timer !== null || document.hidden) return;
         const due = loadedAtRef.current + TOKENS_MIN_INTERVAL_MS - Date.now();
         timer = setTimeout(() => {
           timer = null;
-          void loadTokens();
+          refresh();
         }, Math.max(0, due));
       });
       if (typeof off === 'function') offCapture = off;
@@ -172,12 +203,17 @@ export default function StatusBar({ awake = 0 }: StatusBarProps = {}) {
     const offSnapshot = onStatusSnapshot(() => setPlan(planUsage()));
     // A snapshot read before this mounted has no event to announce it.
     setPlan(planUsage());
-    const fallback = setInterval(() => void loadTokens(), FALLBACK_MS);
+    const fallback = setInterval(refresh, FALLBACK_MS);
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     const tick = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => {
       aliveRef.current = false;
       offCapture();
       offSnapshot();
+      document.removeEventListener('visibilitychange', onVisible);
       clearInterval(fallback);
       clearInterval(tick);
       if (timer !== null) clearTimeout(timer);

@@ -84,11 +84,23 @@ stripped as for every spawn. It runs on demand only ("Write Guide" /
 "Rewrite"), in `~/.albedo/guide` (so no project's CLAUDE.md or hooks reach
 it), with the change described on stdin; its answer is the one JSON result
 `--output-format json` prints on stdout, parsed -- never terminal bytes. The
-model only proposes groups of block ids and their words; the diff, the ids and
-every count come from git, and Albedo checks the answer against them.
+model only proposes groups of block ids and their words, and -- by the owner's
+decision (2026-11-09, issue #295) -- at most five files to review carefully,
+each a path it was sent and a one-line reason; the diff, the ids, the paths and
+every count come from git, and Albedo checks the answer against them (a flag on
+a path it was not sent is dropped). Files a guide sets aside (the project's
+patterns, `src/guide/focus.ts`) are never sent to it.
 `src-tauri/src/oneshot.rs` fixes the flags, and `src/guide/writer.ts` is the
 only file that knows that output's shape. Nothing else may be built on this
 run without the same decision.
+
+One more use of it, by the owner's decision (2026-11-11, issue #352): after
+Update Copy moves a review copy, the same run writes "Since your review"'s
+explanation, two to four sentences, once, right after that click, and again
+only on its Rewrite link. It is sent the commit messages of `prev..new` and
+the diff between those two heads, cut to `CHANGES_DIFF_MAX_CHARS` (the model
+and the reader are told when it was cut), never the whole PR. The result is
+kept with the two heads (`src/guide/copyUpdate.ts`).
 
 A seventh, by the owner's decision (2026-11-06, issue #272): for Claude
 Code's plan mode only, the waiting prompt derived from a `PermissionRequest`

@@ -1,7 +1,7 @@
 import type { OverflowItem } from '../OverflowMenu';
 
 /**
- * "Remind Me…" for the task bar's ⋯ menu (#156): opens the dialog that sets
+ * "Remind Me…" for the task's ⋯ menus (#156, #331): opens the dialog that sets
  * one and lists those still to come, which the item counts.
  */
 export function remindMenuItem(pending: number, onSelect: () => void): OverflowItem {

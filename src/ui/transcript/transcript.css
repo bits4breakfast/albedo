@@ -146,6 +146,30 @@
   overflow: hidden;
 }
 
+/* A command a button sent (#384): the command as typed, in mono and
+   --text-strong like a sent message, then which button and where it stands in
+   --muted; no reply in --warn. All on --user-row: --text-strong 17.54 | 15.84,
+   --muted 6.46 | 7.13, --warn 6.86 | 9.19 (light | dark). */
+.tx-echo-command {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+.tx-echo-meta {
+  margin-left: 6px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.tx-echo-meta[data-no-reply] { color: var(--warn); }
+/* Remote Control's menu notice's Dismiss (.btn-ghost), after the words. On
+   --user-row its --muted is 6.46 | 7.13; hovered, --text on --panel-hover
+   14.44 | 13.07; pressed, --text-strong on --panel-active 15.00 | 16.57
+   (light | dark). */
+.tx-echo-dismiss { margin-left: 10px; vertical-align: baseline; }
+/* A running /compact's clock, under the command. */
+.tx-echo-running { margin-top: 4px; }
+
 .tx-row-working { margin: 6px 0 14px; }
 .tx-working {
   display: flex;
@@ -533,8 +557,10 @@
 .tx-paste-act:hover:not(:disabled) { color: var(--text); background: var(--panel-hover); }
 .tx-paste-act:disabled { color: var(--faint); }
 /* The inspector's text: the code block's face on the inset ground, as tall
-   as the dialog allows rather than .tx-pre's transcript cap. */
-.tx-paste-view {
+   as the dialog allows rather than .tx-pre's transcript cap. It is a
+   `.tx-pre` too, and .tx-pre comes later in this file: naming both outranks
+   it (#382). */
+.tx-pre.tx-paste-view {
   max-height: min(60vh, 640px);
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -1179,6 +1205,21 @@ ol.tx-md-list { list-style-type: decimal; }
   white-space: nowrap;
 }
 
+/* What a Write did (#387): "New File", "Not Written". --muted on every ground
+   the head takes -- --panel 7.15 light / 7.74 dark, --panel-chrome (open)
+   6.50 / 7.31, --panel-hover (hovered, closed) 6.22 / 6.91 -- and 5.89 / 6.50
+   on --panel-raised. */
+.tx-chip-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
 .tx-chip-state {
   flex: none;
   margin-left: auto;
@@ -1289,6 +1330,31 @@ ol.tx-md-list { list-style-type: decimal; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* What a request for a new task became (#332), after the chip's title. Text
+   tokens only, each already cleared on the chip's grounds (--panel, and
+   --panel-chrome when open): --muted for the words, --accent for the task
+   that is a link, --faint (the floor tier) for one archived or deleted. */
+.tx-spinout {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx-spinout-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.tx-spinout-link:hover { text-decoration: underline; }
+.tx-spinout-gone { color: var(--faint); }
 
 .tx-questions { display: flex; flex-direction: column; gap: 8px; }
 .tx-question + .tx-question { border-top: 1px solid var(--border); padding-top: 7px; }
@@ -1683,6 +1749,21 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-more-label {
   color: var(--muted);
   font-size: var(--fs-xs);
+}
+
+/* A replaced file's whole text, under its diff (#387): the chip's listing,
+   on the diff's own well (--panel-inset). Compound selectors, so neither
+   depends on stylesheet order against .tx-pre / .tx-pre-code. */
+.tx-pre.tx-d-whole {
+  border-top: 1px solid var(--border);
+}
+
+/* A Write that failed (#387): its error first, under the chip, on the pane's
+   ground (--panel), with the failed chip's --del edge. --del on --panel: 6.98
+   light / 8.37 dark. */
+.tx-pre.tx-write-error {
+  margin: 3px 0 0;
+  border-left: 2px solid var(--del);
 }
 
 /* --- path links ----------------------------------------------------------- */
@@ -2191,3 +2272,48 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* An API error Claude Code wrote into the session (#338): its own tinted box,
+   so it reads as an error and not as Claude's reply. Opaque --danger-soft
+   with a --danger edge; the text tiers on it are measured in the token block
+   (light | dark): --text 14.53 | 13.51, --danger 6.11 | 7.73, and a disabled
+   Try Again's --faint 5.20 | 5.56. */
+.tx-api-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.tx-api-error-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.tx-api-error-head { color: var(--danger); font-weight: 600; }
+.tx-api-error > .try-again { flex: 0 0 auto; }
+
+/* --- a run of tool calls as one line (#358) --------------------------------
+   The subagent group's head and body (.tx-sidechain-*), so a folded run and a
+   folded subagent read as the same kind of line. The counts are the diff
+   header's (.tx-d-stat). The parts are spans with a gap: a flex box drops the
+   spaces between its parts. */
+.tx-toolrun-head { gap: 6px; max-width: 100%; min-width: 0; text-align: left; }
+.tx-toolrun-head .disc { flex: none; }
+.tx-toolrun-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* --del / --warn on --panel and --panel-hover, as the tool row's state. */
+.tx-toolrun-failed { flex: none; color: var(--del); }
+.tx-toolrun-live { display: inline-flex; gap: 6px; min-width: 0; color: var(--warn); }
+.tx-toolrun-now {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Opened, the calls sit just inside the rule, not a second speaker gutter
+   further in: the run's line already has the gutter. 22px still holds a
+   comment count on a row (.tx-row[data-comments]). */
+.tx-toolrun-body > .tx-row { grid-template-columns: 22px minmax(0, 1fr); gap: 4px; }

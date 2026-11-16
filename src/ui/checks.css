@@ -125,7 +125,10 @@ button.ck-row:hover .tx-disc { color: var(--text); }
 /* The failed step's log, annotations and actions, under the step's name. */
 .ck-failure { padding: 4px 0 6px calc(1.2em + 8px); }
 
-.ck-log {
+/* The log is a transcript `.tx-pre` with its own height and margins. Two
+   classes so it wins by specificity, not by which stylesheet the bundle
+   happens to load last (#368: moving imports reordered them). */
+.tx-pre.ck-log {
   max-height: none;
   margin: 2px 0 6px;
   background: var(--panel-inset);

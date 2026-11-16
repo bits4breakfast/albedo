@@ -5,9 +5,11 @@
    never fans out pays no transcript height for it.
 
    Rows, laid out like a macOS sidebar list: a status mark that is a dot AND a
-   word (colour is never the only signal), the label in --text at --fs-sm
-   wrapped to two lines, the elapsed time right-aligned in tabular figures so a
-   column of clocks does not jitter as they tick.
+   word (colour is never the only signal), two lines -- the agent's name in
+   --text-strong at --fs-sm with its type in --faint beside it, then what it is
+   doing now in --muted at --fs-xs, each cut with an ellipsis (#377) -- and the
+   elapsed time and tokens right-aligned in tabular figures so a column of
+   clocks does not jitter as they tick.
 
    No ground is invented here. Every surface is a token:
      strip / inspector header   --panel
@@ -17,13 +19,17 @@
      inspector body             --bg (via .tx-pane)
    Measured, worst case across those grounds (light / dark):
      --text           11.42 / 10.72
-     --muted           5.77 /  6.42
-     --faint           4.71 /  4.64   (only on hints, never on the label)
+     --text-strong    15.00 / 14.45   (the name; #377, panel/hover/active/raised)
+     --muted           5.52 /  6.50   (what it is doing, the meter; #377, same)
+     --faint           4.59 /  5.06   (the agent type, "Starting…"; #377, same;
+                                       never on the name)
      --status-running  5.15 / 10.10
      --status-blocked  5.10 /  6.84
    -------------------------------------------------------------------------- */
 
 .sa-bar {
+  /* The rows' meter stacks when the strip is narrow (below). */
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -114,17 +120,43 @@
 .sa-status[data-state='waiting'] .sa-status-word,
 .sa-row[data-state='waiting'] .sa-status-word { color: var(--muted); }
 
-.sa-label {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--text);
-  font-size: var(--fs-sm);
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+.sa-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
+
+/* Two lines, each cut rather than wrapped, so every row is the same height. */
+.sa-title,
+.sa-now {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sa-title {
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+/* The agent type: a lighter word after the name, cut first when the line is full. */
+.sa-kind {
+  margin-left: 8px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+
+.sa-now {
+  /* Holds its line when empty: an agent that stopped before any call. */
+  min-height: calc(var(--fs-xs) * 1.35);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+}
+.sa-now[data-starting='true'] { color: var(--faint); }
 
 .sa-elapsed {
   flex: none;
@@ -135,6 +167,27 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* A row's meter: elapsed, then tokens (#377), on one line beside the name.
+   In a narrow strip the tokens go under the clock, beside what the agent is
+   doing, so the name keeps its room. */
+.sa-clock {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(var(--fs-sm) * 1.35);
+}
+
+/* Its spaces are kept: a flex item's edge spaces would otherwise collapse. */
+.sa-meter-sep { white-space: pre; }
+
+@container (max-width: 560px) {
+  .sa-meter {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  .sa-meter-sep { display: none; }
+  .sa-tokens { line-height: 1.35; }
 }
 
 /* --------------------------------------------------------------------------

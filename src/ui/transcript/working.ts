@@ -192,6 +192,15 @@ export function stepDetail(step: WorkingStep): string | null {
 
 /** "↓ 37.6k tokens", as Claude Code counts them. */
 export function formatOutputTokens(n: number): string {
+  return `↓ ${formatTokens(n)}`;
+}
+
+/**
+ * "37.6k tokens", "1.2m tokens": a count of tokens the way Claude Code's
+ * terminal shortens one. The working line's output tokens and the Agents
+ * strip's per-agent count (#377) both read it.
+ */
+export function formatTokens(n: number): string {
   const v = Math.max(0, Math.round(n));
   // Rounded to a tenth first, so 999,960 reads 1m rather than 1000k.
   const short =
@@ -200,7 +209,7 @@ export function formatOutputTokens(n: number): string {
       : Math.round(v / 100) < 10_000
         ? `${trimZero((v / 1000).toFixed(1))}k`
         : `${trimZero((v / 1_000_000).toFixed(1))}m`;
-  return `↓ ${short} ${v === 1 ? 'token' : 'tokens'}`;
+  return `${short} ${v === 1 ? 'token' : 'tokens'}`;
 }
 
 function trimZero(s: string): string {

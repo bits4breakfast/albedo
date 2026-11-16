@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Markdown } from './MessageRow';
+import { Markdown } from './Markdown';
 import { findPassage, offsetOf, setHighlight, squeeze } from './passages';
 import {
   addPlanComment,

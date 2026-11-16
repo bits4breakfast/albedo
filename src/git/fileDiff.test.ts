@@ -207,7 +207,7 @@ describe('loadTaskFileDiff', () => {
       const b = base(a);
       if (b) return b;
       if (a[0] === 'ls-tree') return a[5] === 'old.ts' ? blob('old.ts', 'eee', 6) : ok('');
-      if (a[0] === 'diff') return ok('R095\0old.ts\0new.ts\0');
+      if (a.includes('diff')) return ok('R095\0old.ts\0new.ts\0');
       if (a[0] === 'cat-file') return ok('a\nb\nc\n');
     });
     const r = await loadTaskFileDiff('/w', 'main', 'new.ts', async () => 'a\nb\nC\n');
@@ -221,6 +221,6 @@ describe('loadTaskFileDiff', () => {
     );
     const r = await loadTaskFileDiff('/w', 'main', 'd.ts', async () => null);
     expect(r.result.kind === 'diff' && r.result.change).toBe('deleted');
-    expect(calls.some((c) => c[0] === 'diff')).toBe(false);
+    expect(calls.some((c) => c.includes('diff'))).toBe(false);
   });
 });

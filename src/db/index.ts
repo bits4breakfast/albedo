@@ -10,7 +10,7 @@
  */
 
 import Database from '@tauri-apps/plugin-sql';
-import type { Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
+import type { ApiErrorKind, Message, MessageRole, NewTask, ParsedMessage, Task, TaskStatus } from '../types';
 import {
   backgroundFactsOf,
   backgroundSqlPredicate,
@@ -51,6 +51,8 @@ export function getDb(): Promise<Database> {
 /** Test/teardown hook: drop the memoised handle. */
 export function resetDb(): void {
   dbPromise = null;
+  forgetContextPeaks();
+  forgetUsageHours();
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +113,9 @@ interface TaskRow {
   seen_at: number | null;
   summary: string | null;
   review_url?: string | null;
+  api_error?: string | null;
+  api_error_text?: string | null;
+  spun_from_task_id?: number | null;
 }
 
 interface MessageRow {
@@ -146,11 +151,30 @@ const TASK_COLUMN: Readonly<Record<keyof Task, string>> = {
   seenAt: 'seen_at',
   summary: 'summary',
   reviewUrl: 'review_url',
+  apiError: 'api_error',
+  apiErrorText: 'api_error_text',
+  spunFromTaskId: 'spun_from_task_id',
 };
 
 const TASK_SELECT =
-  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url';
+  'id, title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url, api_error, api_error_text, spun_from_task_id';
 const MESSAGE_SELECT = 'id, task_id, session_id, seq, role, tool_name, target_path, body, raw_json, agent_id, ts';
+
+const API_ERROR_KINDS: ReadonlySet<string> = new Set<ApiErrorKind>([
+  'stopped',
+  'slept',
+  'offline',
+  'overloaded',
+  'rate-limited',
+  'signed-out',
+  'other',
+]);
+
+/** A stored `api_error`: null stays null, a value this build does not know reads as 'other'. */
+function apiErrorKind(v: string | null | undefined): ApiErrorKind | null {
+  if (v === null || v === undefined) return null;
+  return (API_ERROR_KINDS.has(v) ? v : 'other') as ApiErrorKind;
+}
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   'idle',
@@ -186,6 +210,12 @@ function toTask(r: TaskRow): Task {
     summary: r.summary ?? null,
     // Absent only on a database older than v13 that a test hands over.
     reviewUrl: r.review_url ?? null,
+    // Absent only on a database older than v16 that a test hands over. The
+    // text is kept only beside a kind: null together, as the type says.
+    apiError: apiErrorKind(r.api_error),
+    apiErrorText: apiErrorKind(r.api_error) === null ? null : (r.api_error_text ?? ''),
+    // Absent only on a database older than v17 that a test hands over.
+    spunFromTaskId: r.spun_from_task_id ?? null,
   };
 }
 
@@ -237,8 +267,8 @@ export async function createTask(t: NewTask): Promise<Task> {
     // no insert from here is allowed to fall through to it.
     // created_branch likewise: NULL is reserved for pre-v6 rows. And kind:
     // its default backfills pre-v8 rows, and is not a decision for new ones.
-    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL, NULL, $11)`,
+    `INSERT INTO tasks (title, project_id, repo_path, base_branch, branch, worktree_path, session_id, owns_worktree, created_branch, kind, status, created_at, last_activity_at, seen_at, summary, review_url, spun_from_task_id)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $9, $10, 'idle', $8, NULL, NULL, NULL, $11, $12)`,
     [
       t.title,
       t.projectId,
@@ -251,6 +281,7 @@ export async function createTask(t: NewTask): Promise<Task> {
       t.createdBranch === null ? null : t.createdBranch ? 1 : 0,
       t.kind === 'chat' ? 'chat' : 'work',
       t.reviewUrl ?? null,
+      t.spunFromTaskId ?? null,
     ],
   );
   const id = res.lastInsertId;
@@ -276,6 +307,9 @@ export async function createTask(t: NewTask): Promise<Task> {
     seenAt: null,
     summary: null,
     reviewUrl: t.reviewUrl ?? null,
+    apiError: null,
+    apiErrorText: null,
+    spunFromTaskId: t.spunFromTaskId ?? null,
   };
 }
 
@@ -385,16 +419,25 @@ export async function purgeTaskHistory(id: number): Promise<void> {
          OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
     [id, sessionId ?? ''],
   );
-  await db.execute(
-    `DELETE FROM messages
-      WHERE session_id = $2
-         OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
-    [id, sessionId ?? ''],
-  );
-  await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
+  try {
+    await db.execute(
+      `DELETE FROM messages
+        WHERE session_id = $2
+           OR session_id IN (SELECT session_id FROM messages WHERE task_id = $1)`,
+      [id, sessionId ?? ''],
+    );
+    await db.execute(`DELETE FROM messages WHERE task_id = $1`, [id]);
+  } finally {
+    // Cached context peaks and usage hours hold only while rows are only added (#361, #365).
+    forgetContextPeaks();
+    forgetUsageHours();
+  }
   // Review comments belong to the task and go with it: archived or deleted,
   // there is nothing left for them to be sent to.
   await db.execute(`DELETE FROM comments WHERE task_id = $1`, [id]);
+  // Mockups a session showed for approval (#348): copies kept for viewing,
+  // not raw_json, and nothing to answer once the task is gone.
+  await db.execute(`DELETE FROM previews WHERE task_id = $1`, [id]);
 }
 
 /**
@@ -408,7 +451,8 @@ export async function purgeTaskHistory(id: number): Promise<void> {
  */
 export async function archiveTask(id: number): Promise<void> {
   const db = await getDb();
-  await db.execute(`UPDATE tasks SET status = 'archived' WHERE id = $1`, [id]);
+  // An archived task has stopped on nothing (#338): its error mark goes with it.
+  await db.execute(`UPDATE tasks SET status = 'archived', api_error = NULL, api_error_text = NULL WHERE id = $1`, [id]);
   emitTasksChanged();
   await purgeTaskHistory(id);
 }
@@ -616,6 +660,21 @@ export function messageOrderKeys(opts: GetMessagesOptions): string[] {
   return seqScoped ? ['seq', 'ts', 'id'] : ['ts', 'seq', 'id'];
 }
 
+/**
+ * The ORDER BY getMessages sends: {@link messageOrderKeys}, minus the
+ * tiebreakers that can never decide.
+ *
+ * A parent-only read of one session pins (session_id, COALESCE(agent_id, ''))
+ * and messages_session_seq is UNIQUE on those plus seq, so no two rows share a
+ * seq and `ts, id` after it never break a tie. Dropping them gives the same
+ * order, and lets SQLite read the index in order instead of sorting.
+ */
+function sqlOrderKeys(opts: GetMessagesOptions): string[] {
+  const keys = messageOrderKeys(opts);
+  const oneParentFile = opts.parentOnly === true && opts.agentId === undefined;
+  return oneParentFile && keys[0] === 'seq' ? ['seq'] : keys;
+}
+
 /** Which end of the result set `limit` truncates. */
 export type PageDirection = 'head' | 'tail';
 
@@ -658,6 +717,12 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
     // Unary + keeps SQLite off messages_agent, a worse plan for this query;
     // messages_session_seq is ~10x faster on a long session (110 ms -> 10 ms measured).
     where.push('+agent_id IS NULL');
+    // The same rows (agent_id is NULL exactly when COALESCE(agent_id, '') is
+    // '' and agent_id IS NULL both hold), but it names messages_session_seq's
+    // second column, so a session-scoped read walks that index in seq order
+    // instead of sorting the whole session -- raw_json included -- to keep 400
+    // rows (60 ms -> 0.7 ms on a 20,000-row session, #361).
+    where.push(`COALESCE(agent_id, '') = ''`);
   }
   if (opts.afterSeq !== undefined) {
     // exclusive: pages forward from the last seq the caller already has
@@ -670,7 +735,7 @@ export async function getMessages(opts: GetMessagesOptions): Promise<Message[]> 
   }
   binds.push(Math.max(1, opts.limit ?? DEFAULT_MESSAGE_LIMIT));
 
-  const keys = messageOrderKeys(opts);
+  const keys = sqlOrderKeys(opts);
   const ascending = keys.map((k) => `${k} ASC`).join(', ');
   const descending = keys.map((k) => `${k} DESC`).join(', ');
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -707,14 +772,17 @@ export async function findToolResults(toolName: string, needle: string, limit = 
 
 /**
  * The claude.ai link of the newest "Remote Control is active" row in the
- * session written at or after `sinceTs`, or null. The caller passes when its
- * pty was spawned: Remote Control ends with the process, so a row from before
- * that describes a process that is gone.
+ * session written at or after `sinceTs`, with the row's time for weighing it
+ * against newer facts, or null. The caller passes when its pty was spawned: a
+ * row from before that describes a process that is gone.
  */
-export async function remoteControlUrlSince(sessionId: string, sinceTs: number): Promise<string | null> {
+export async function remoteControlLineSince(
+  sessionId: string,
+  sinceTs: number,
+): Promise<{ url: string; ts: number } | null> {
   const db = await getDb();
-  const rows = await db.select<{ raw_json: string }[]>(
-    `SELECT raw_json FROM messages
+  const rows = await db.select<{ raw_json: string; ts: number }[]>(
+    `SELECT raw_json, ts FROM messages
       WHERE session_id = $1 AND ts >= $2 AND role = 'system' AND +agent_id IS NULL
         AND ${remoteControlSqlPredicate('raw_json')}
       ORDER BY ts DESC, id DESC LIMIT 10`,
@@ -722,9 +790,38 @@ export async function remoteControlUrlSince(sessionId: string, sinceTs: number):
   );
   for (const row of rows) {
     const url = remoteControlUrlOf(row.raw_json);
-    if (url !== null) return url;
+    if (url !== null) return { url, ts: row.ts };
   }
   return null;
+}
+
+/**
+ * The main thread's `user` and `system` rows written at or after `sinceTs`,
+ * for the task or for the session it is on now, newest first: where a
+ * command Albedo sent shows up once Claude Code has run it (commandEcho.ts).
+ * Both ids, because `/clear` moves the task to a new session whose rows may
+ * be read before they are linked to it. Capped: the caller looks for one row
+ * a few seconds or minutes old, not at a history.
+ *
+ * Read along `messages_ts` from `sinceTs` on, never the task's whole history:
+ * the `+` keeps SQLite from answering the OR with the task and session
+ * indexes, which read every row the task has and sort them (about 0.1 s on a
+ * 35k-row task, per call; mainRowsSince.test.ts pins the plan).
+ */
+export async function mainRowsSince(
+  taskId: number,
+  sessionId: string | null,
+  sinceTs: number,
+  limit = 200,
+): Promise<Message[]> {
+  const db = await getDb();
+  const rows = await db.select<MessageRow[]>(
+    `SELECT ${MESSAGE_SELECT} FROM messages
+      WHERE ts >= $1 AND (+task_id = $2 OR +session_id = $3) AND +agent_id IS NULL AND +role IN ('user', 'system')
+      ORDER BY ts DESC, id DESC LIMIT $4`,
+    [sinceTs, taskId, sessionId ?? '', Math.max(1, limit)],
+  );
+  return (rows ?? []).map(toMessage);
 }
 
 /** Most preselected rows a background lookup reads; the newest win. */
@@ -895,19 +992,6 @@ export async function adoptSessionIntoTask(sessionId: string, taskId: number): P
 // Search
 // ---------------------------------------------------------------------------
 
-export interface SearchHit {
-  message: Message;
-  snippet: string;
-  taskTitle: string | null;
-}
-
-interface SearchRow extends MessageRow {
-  snippet: string | null;
-  task_title: string | null;
-}
-
-const DEFAULT_SEARCH_LIMIT = 100;
-
 /**
  * Turn arbitrary user input into a query FTS5 will accept.
  *
@@ -933,66 +1017,6 @@ export function toFtsQuery(query: string): string | null {
     terms.push(`"${stem.replace(/"/g, '""')}"${prefix ? '*' : ''}`);
   }
   return terms.length === 0 ? null : terms.join(' ');
-}
-
-export async function searchMessages(
-  query: string,
-  opts?: {
-    taskId?: number;
-    repoPath?: string;
-    toolName?: string;
-    since?: number;
-    until?: number;
-    limit?: number;
-  },
-): Promise<SearchHit[]> {
-  const match = toFtsQuery(query);
-  if (match === null) return [];
-
-  const binds: unknown[] = [match];
-  const where: string[] = ['messages_fts MATCH $1'];
-
-  if (opts?.taskId !== undefined) {
-    binds.push(opts.taskId);
-    where.push(`m.task_id = $${binds.length}`);
-  }
-  if (opts?.repoPath !== undefined) {
-    binds.push(opts.repoPath);
-    where.push(`t.repo_path = $${binds.length}`);
-  }
-  if (opts?.toolName !== undefined) {
-    binds.push(opts.toolName);
-    where.push(`m.tool_name = $${binds.length}`);
-  }
-  if (opts?.since !== undefined) {
-    binds.push(opts.since);
-    where.push(`m.ts >= $${binds.length}`);
-  }
-  if (opts?.until !== undefined) {
-    binds.push(opts.until);
-    where.push(`m.ts <= $${binds.length}`);
-  }
-  binds.push(Math.max(1, opts?.limit ?? DEFAULT_SEARCH_LIMIT));
-
-  const db = await getDb();
-  const rows = await db.select<SearchRow[]>(
-    `SELECT ${MESSAGE_SELECT.split(', ').map((c) => `m.${c}`).join(', ')},
-            snippet(messages_fts, 0, '<mark>', '</mark>', '…', 24) AS snippet,
-            t.title AS task_title
-       FROM messages_fts
-       JOIN messages m ON m.id = messages_fts.rowid
-       LEFT JOIN tasks t ON t.id = m.task_id
-      WHERE ${where.join(' AND ')}
-      ORDER BY rank
-      LIMIT $${binds.length}`,
-    binds,
-  );
-
-  return rows.map((r) => ({
-    message: toMessage(r),
-    snippet: r.snippet ?? '',
-    taskTitle: r.task_title,
-  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,14 +1160,51 @@ export async function getAssistantRowsSince(
 // ---------------------------------------------------------------------------
 
 /**
- * Sessions per IN(...) clause. The ids are bound twice (peak subquery and
- * outer filter), so this stays well inside MAX_BIND_PARAMS.
+ * Sessions per query. Each is bound twice (its id and its peak cursor), so
+ * this stays well inside MAX_BIND_PARAMS.
  */
 const CONTEXT_SESSION_CHUNK = 400;
 
+/**
+ * The rows of a session's OWN conversation: not its subagents', which are
+ * stored under the parent's session id with their own seq numbering (one file
+ * each). Both terms together select exactly the rows `agent_id IS NULL`
+ * does; the COALESCE names messages_session_seq's second column so SQLite
+ * walks that index, and the unary + keeps it off messages_agent, which would
+ * fetch every row of the session from the table to filter it.
+ */
+const PARENT_ROWS_SQL = `COALESCE(agent_id, '') = '' AND +agent_id IS NULL`;
+
+/**
+ * Peak context occupancy per session, and the highest message id it covers.
+ *
+ * A peak only grows while rows are only added, so each read scans just the
+ * rows inserted since the last one (ids are assigned in insertion order) and
+ * folds them in. Recomputing it from every row after each burst of appends
+ * cost ~30 ms on a 20,000-row session (#361).
+ *
+ * Rows being deleted is the one thing that lowers a peak, or lets SQLite hand
+ * out an id below a cursor again. The only code that deletes messages is
+ * purgeTaskHistory (deleteTask goes through it), and it calls
+ * {@link forgetContextPeaks}. The other writes cannot lower a peak: inserts
+ * are INSERT OR IGNORE (never a rewrite), adoptSessionIntoTask changes only
+ * task_id (the peak reads none), nothing ever changes a row's session_id or
+ * raw_json, and the migrations that delete run before the app reads.
+ * Anything new that deletes or rewrites messages must call it too.
+ */
+const contextPeaks = new Map<string, { peak: number; lastId: number }>();
+/** Bumped by every forget, so a read that began before it cannot write back. */
+let contextPeakGeneration = 0;
+
+/** Drop every cached peak; the next read recomputes from all rows. */
+export function forgetContextPeaks(): void {
+  contextPeaks.clear();
+  contextPeakGeneration++;
+}
+
 export interface SessionContextRow {
   sessionId: string;
-  /** Highest context occupancy seen anywhere in the session. */
+  /** Highest context occupancy seen anywhere in the session's own rows. */
   peakUsed: number;
   /** raw_json of the newest line carrying a usage record. */
   latestRawJson: string | null;
@@ -1158,56 +1219,102 @@ export interface SessionContextRow {
  * alternative is shipping every assistant line's raw_json across the IPC
  * bridge just to pick a denominator, which for a long session is megabytes.
  *
- * Note the outer query has exactly one aggregate, MAX(m.seq); SQLite then
- * guarantees the bare `m.ts` / `m.raw_json` columns come from the row that
- * produced that maximum. That guarantee is why peak is computed in a
- * subquery instead of as a second aggregate alongside it.
+ * Only the session's own rows count (#361). A subagent's rows share the
+ * session id, and its seq is numbered in its own file: a long Explore agent
+ * had the highest seq, so the meter showed its context and its model, and a
+ * resume could pick that model up through lastModelOf.
+ *
+ * "Latest" is the parent row with the highest seq that carries a usage record,
+ * read off the end of messages_session_seq; seq is unique among a session's
+ * parent rows, so it is one row. The peak is folded in from the rows added
+ * since the last read (see {@link contextPeaks}). Both come from one
+ * statement, so they describe the same moment.
  */
 export async function getSessionContextRows(
   sessionIds: string[],
 ): Promise<SessionContextRow[]> {
   if (sessionIds.length === 0) return [];
   const db = await getDb();
-  const usedExpr = contextUsedSqlExpr('raw_json');
+  const usedExpr = contextUsedSqlExpr('m.raw_json');
   const out: SessionContextRow[] = [];
 
   for (let start = 0; start < sessionIds.length; start += CONTEXT_SESSION_CHUNK) {
-    const chunk = sessionIds.slice(start, start + CONTEXT_SESSION_CHUNK);
-    const inner = chunk.map((_, i) => `$${i + 1}`).join(', ');
-    const outer = chunk.map((_, i) => `$${chunk.length + i + 1}`).join(', ');
-    const rows = await db.select<
-      {
-        session_id: string;
-        latest_ts: number | null;
-        latest_raw: string | null;
-        peak_used: number | null;
-      }[]
-    >(
-      `SELECT m.session_id AS session_id,
-              MAX(m.seq)   AS latest_seq,
-              m.ts         AS latest_ts,
-              m.raw_json   AS latest_raw,
-              p.peak_used  AS peak_used
-         FROM messages m
-         JOIN (
-            SELECT session_id, MAX(${usedExpr}) AS peak_used
-              FROM messages
-             WHERE session_id IN (${inner}) AND role IN ('assistant', 'tool_use')
-             GROUP BY session_id
-         ) p ON p.session_id = m.session_id
-        WHERE m.session_id IN (${outer})
-          AND m.role IN ('assistant', 'tool_use')
-          AND json_extract(m.raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
-        GROUP BY m.session_id`,
-      [...chunk, ...chunk],
-    );
-    for (const r of rows) {
-      out.push({
-        sessionId: r.session_id,
-        peakUsed: r.peak_used ?? 0,
-        latestRawJson: r.latest_raw,
-        latestTs: r.latest_ts,
-      });
+    const chunk = [...new Set(sessionIds.slice(start, start + CONTEXT_SESSION_CHUNK))];
+    // Read again if the cache was forgotten while the statement ran: its
+    // cursors then predate a delete, and folding its rows into an emptied
+    // cache would understate the peak.
+    for (;;) {
+      const generation = contextPeakGeneration;
+      const held = new Map(chunk.map((id) => [id, contextPeaks.get(id)]));
+      const binds: unknown[] = [];
+      const values = chunk
+        .map((id) => {
+          binds.push(id, held.get(id)?.lastId ?? -1);
+          return `($${binds.length - 1}, $${binds.length})`;
+        })
+        .join(', ');
+      const rows = await db.select<
+        {
+          session_id: string;
+          latest_ts: number | null;
+          latest_raw: string | null;
+          peak_used: number | null;
+          peak_last_id: number | null;
+        }[]
+      >(
+        // Scalar subqueries, not a join grouped by session: GROUP BY over a
+        // join sorted every joined row, raw_json and all, through a temp
+        // b-tree (~20x slower than the scan itself, measured).
+        `WITH c(sid, cursor_id) AS (VALUES ${values})
+         SELECT c.sid      AS session_id,
+                l.ts       AS latest_ts,
+                l.raw_json AS latest_raw,
+                (SELECT MAX(${usedExpr}) FROM messages m
+                  WHERE m.session_id = c.sid
+                    AND COALESCE(m.agent_id, '') = '' AND +m.agent_id IS NULL
+                    -- Unary +: as a rowid range, a cursor of -1 would walk the
+                    -- whole table instead of the session's index range.
+                    AND +m.id > c.cursor_id
+                    AND m.role IN ('assistant', 'tool_use')) AS peak_used,
+                -- Where the next read resumes. Every row up to it was in reach
+                -- of peak_used above (same statement, same snapshot); taking it
+                -- over more rows than the peak reads is harmless, and lets the
+                -- index answer it alone.
+                (SELECT MAX(id) FROM messages
+                  WHERE session_id = c.sid AND COALESCE(agent_id, '') = '') AS peak_last_id
+           FROM c
+           JOIN messages l ON l.id = (
+                  SELECT id FROM messages
+                   WHERE session_id = c.sid AND ${PARENT_ROWS_SQL}
+                     AND role IN ('assistant', 'tool_use')
+                     AND json_extract(raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
+                   ORDER BY seq DESC LIMIT 1)`,
+        binds,
+      );
+      if (generation !== contextPeakGeneration) continue;
+      const byId = new Map(rows.map((r) => [r.session_id, r]));
+      for (const id of chunk) {
+        const r = byId.get(id);
+        // The peak of the rows read now, folded into what the cursor covered.
+        const peak = Math.max(held.get(id)?.peak ?? 0, r?.peak_used ?? 0);
+        if (r?.peak_last_id != null) {
+          // Merged, not replaced: another read may have landed meanwhile. Each
+          // covers every row up to its own lastId, so the union is the larger.
+          const now = contextPeaks.get(id);
+          contextPeaks.set(id, {
+            peak: Math.max(peak, now?.peak ?? 0),
+            lastId: Math.max(r.peak_last_id, now?.lastId ?? -1),
+          });
+        }
+        if (r === undefined) continue;
+        out.push({
+          sessionId: id,
+          peakUsed: peak,
+          latestRawJson: r.latest_raw,
+          latestTs: r.latest_ts,
+        });
+      }
+      break;
     }
   }
   return out;
@@ -1219,6 +1326,8 @@ export async function getSessionContextRows(
  * Used when getSessionContextRows fails, which in practice means a SQLite
  * build without the JSON1 functions. Costs far more bandwidth, so it is not
  * the primary path, but it keeps the feature working rather than blanking it.
+ * The session's own rows only, as in getSessionContextRows; a subagent's seq
+ * would also collide with the parent's in aggregateUsageRows' per-line keys.
  */
 export async function getSessionUsageRows(
   sessionIds: string[],
@@ -1235,7 +1344,8 @@ export async function getSessionUsageRows(
     >(
       `SELECT session_id, seq, raw_json, ts
          FROM messages
-        WHERE session_id IN (${slots}) AND role IN ('assistant', 'tool_use')
+        WHERE session_id IN (${slots}) AND ${PARENT_ROWS_SQL}
+          AND role IN ('assistant', 'tool_use')
         ORDER BY session_id ASC, seq ASC`,
       chunk,
     );
@@ -1267,7 +1377,11 @@ export interface WindowUsageTotals {
   oldestTs: number | null;
 }
 
-export async function getWindowUsageTotals(
+/**
+ * {@link getWindowUsageTotals} in one query over the whole window: what the
+ * cached path must equal, and what it falls back to.
+ */
+export async function getWindowUsageTotalsExact(
   startTs: number,
   endTs: number,
 ): Promise<WindowUsageTotals> {
@@ -1311,6 +1425,243 @@ export async function getWindowUsageTotals(
     lineCount: r?.line_count ?? 0,
     oldestTs: r?.oldest_ts ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Window usage with the closed hours cached (#365)
+// ---------------------------------------------------------------------------
+//
+// The status strip asks for seven days every 30 s, and the query reads every
+// usage line of the week (~630 ms on the owner's data). Hours that are over
+// do not change while rows are only added, so their per-line maxima are kept
+// and only the new rows, the open hour and the window's first, partial hour
+// are read again.
+//
+// Exactly the same answer as the one query, which is pinned in a test. The
+// query groups rows by (session, line) and takes each counter's MAX and the
+// MIN ts per group, then sums. A group's rows can lie in different hours --
+// a subagent's lines share the parent's session and line numbers, measured
+// on the owner's data at 6,814 groups over 11,107 group-hours in a week -- so
+// hours are never summed on their own: the cache keeps each hour's per-group
+// maxima, and the groups are merged across the pieces (MAX of MAXes, MIN of
+// MINs) before anything is summed. MAX and MIN do not care how often a row
+// is seen, so a row folded in twice changes nothing; one never folded in
+// would, and the id cursor is what makes sure none is missed.
+//
+// Valid while rows are only added, as for the context peaks above: the only
+// code that deletes messages is purgeTaskHistory, and it (and resetDb) call
+// forgetUsageHours. Ids are assigned in insertion order, so the rows added
+// since the last read are those past the cursor.
+
+const HOUR_MS = 3_600_000;
+/** Windows shorter than this are read in one query: there is no closed hour worth keeping. */
+const CACHE_MIN_SPAN_MS = 2 * HOUR_MS;
+/** Hours older than this before the window's end are let go. */
+const CACHE_KEEP_MS = 8 * 24 * HOUR_MS;
+
+interface LineMax {
+  inT: number;
+  outT: number;
+  ccT: number;
+  crT: number;
+  minTs: number;
+}
+
+interface UsageHours {
+  /** Hour start -> group key -> that group's maxima over its rows in the hour. */
+  hours: Map<number, Map<string, LineMax>>;
+  /** Every row with an id up to this is in the hours held. -1: none read yet. */
+  lastId: number;
+}
+
+let usageHours: UsageHours = { hours: new Map(), lastId: -1 };
+let usageCacheOn = true;
+
+/**
+ * Tests that script the SQL by hand expect the one query; this turns the
+ * cache off for them. The cache itself is pinned against the one query on a
+ * real SQLite (usageHours.test.ts).
+ */
+export function setUsageHourCacheForTests(on: boolean): void {
+  usageCacheOn = on;
+  forgetUsageHours();
+}
+let usageChain: Promise<unknown> = Promise.resolve();
+let messageDeletionCount = 0;
+
+/** Drop the cached hours; the next read starts over. Called wherever messages are deleted. */
+export function forgetUsageHours(): void {
+  usageHours = { hours: new Map(), lastId: -1 };
+  messageDeletionCount++;
+}
+
+/** Bumped whenever messages may have been deleted: a usage figure read before it may be too high. */
+export function messageDeletions(): number {
+  return messageDeletionCount;
+}
+
+function mergeLine(into: Map<string, LineMax>, key: string, m: LineMax): void {
+  const had = into.get(key);
+  if (!had) {
+    into.set(key, { ...m });
+    return;
+  }
+  had.inT = Math.max(had.inT, m.inT);
+  had.outT = Math.max(had.outT, m.outT);
+  had.ccT = Math.max(had.ccT, m.ccT);
+  had.crT = Math.max(had.crT, m.crT);
+  had.minTs = Math.min(had.minTs, m.minTs);
+}
+
+interface LineRow {
+  session_id: string;
+  line: number;
+  in_t: number | null;
+  out_t: number | null;
+  cc_t: number | null;
+  cr_t: number | null;
+  min_ts: number;
+}
+
+/**
+ * Per-(group, hour) maxima of the usage lines with `from <= ts < to` (or
+ * `<= to` when `toInclusive`), optionally only ids in `(idAfter, idUpTo]`.
+ * The same row filter and the same expressions as the one query.
+ */
+async function usageLines(
+  from: number,
+  to: number,
+  opts: { toInclusive?: boolean; idAfter?: number; idUpTo?: number } = {},
+): Promise<Array<{ key: string; m: LineMax }>> {
+  const db = await getDb();
+  const params: number[] = [from, to];
+  let ids = '';
+  if (opts.idAfter !== undefined) {
+    params.push(opts.idAfter);
+    ids += ` AND id > $${params.length}`;
+  }
+  if (opts.idUpTo !== undefined) {
+    params.push(opts.idUpTo);
+    ids += ` AND id <= $${params.length}`;
+  }
+  const rows = await db.select<LineRow[]>(
+    `SELECT session_id,
+            seq / ${SEQ_STRIDE} AS line,
+            MAX(${usageSqlExpr('inputTokens')})             AS in_t,
+            MAX(${usageSqlExpr('outputTokens')})            AS out_t,
+            MAX(${usageSqlExpr('cacheCreationInputTokens')}) AS cc_t,
+            MAX(${usageSqlExpr('cacheReadInputTokens')})     AS cr_t,
+            MIN(ts) AS min_ts
+       FROM messages
+      WHERE ts >= $1 AND ts ${opts.toInclusive ? '<=' : '<'} $2${ids}
+        AND role IN ('assistant', 'tool_use')
+        AND json_extract(raw_json, '${USAGE_PRESENCE_JSON_PATH}') IS NOT NULL
+      GROUP BY session_id, seq / ${SEQ_STRIDE}, CAST(ts / ${HOUR_MS} AS INTEGER)`,
+    params,
+  );
+  return rows.map((r) => ({
+    key: `${r.session_id}\u0000${r.line}`,
+    m: { inT: r.in_t ?? 0, outT: r.out_t ?? 0, ccT: r.cc_t ?? 0, crT: r.cr_t ?? 0, minTs: r.min_ts },
+  }));
+}
+
+function hourOf(ts: number): number {
+  return Math.floor(ts / HOUR_MS) * HOUR_MS;
+}
+
+async function cachedWindowUsage(startTs: number, endTs: number): Promise<WindowUsageTotals> {
+  const st = usageHours;
+  const db = await getDb();
+  const top = await db.select<{ max_id: number | null }[]>(`SELECT MAX(id) AS max_id FROM messages`);
+  const maxId = top[0]?.max_id ?? 0;
+
+  // The closed hours wholly inside the window: [firstFull, open).
+  const firstFull = Math.ceil(startTs / HOUR_MS) * HOUR_MS;
+  const open = hourOf(endTs);
+
+  // Rows added since the last read, into every hour already held. Rows in an
+  // hour not held yet are read with it below; rows in the open hour are read
+  // every time.
+  if (st.lastId >= 0 && maxId > st.lastId && st.hours.size > 0) {
+    const held = [...st.hours.keys()];
+    const lo = Math.min(...held);
+    const hi = Math.max(...held) + HOUR_MS;
+    for (const { key, m } of await usageLines(lo, hi, { idAfter: st.lastId, idUpTo: maxId })) {
+      const bucket = st.hours.get(hourOf(m.minTs));
+      if (bucket) mergeLine(bucket, key, m);
+    }
+  }
+  st.lastId = maxId;
+
+  // The hours not held yet, in one read per run of them.
+  let runFrom: number | null = null;
+  const runs: Array<[number, number]> = [];
+  for (let h = firstFull; h < open; h += HOUR_MS) {
+    if (!st.hours.has(h)) runFrom ??= h;
+    else if (runFrom !== null) {
+      runs.push([runFrom, h]);
+      runFrom = null;
+    }
+  }
+  if (runFrom !== null) runs.push([runFrom, open]);
+  for (const [from, to] of runs) {
+    const fresh = new Map<number, Map<string, LineMax>>();
+    for (let h = from; h < to; h += HOUR_MS) fresh.set(h, new Map());
+    for (const { key, m } of await usageLines(from, to, { idUpTo: maxId })) {
+      const bucket = fresh.get(hourOf(m.minTs));
+      if (bucket) mergeLine(bucket, key, m);
+    }
+    for (const [h, bucket] of fresh) st.hours.set(h, bucket);
+  }
+  for (const h of [...st.hours.keys()]) if (h < endTs - CACHE_KEEP_MS) st.hours.delete(h);
+
+  // Merge per group: the window's first, partial hour, the held hours, and
+  // the open hour, each read as it is now.
+  const lines = new Map<string, LineMax>();
+  if (startTs < firstFull) {
+    for (const { key, m } of await usageLines(startTs, Math.min(firstFull, endTs), { toInclusive: firstFull > endTs })) {
+      mergeLine(lines, key, m);
+    }
+  }
+  for (let h = firstFull; h < open; h += HOUR_MS) {
+    for (const [key, m] of st.hours.get(h) ?? []) mergeLine(lines, key, m);
+  }
+  if (endTs >= Math.max(open, startTs)) {
+    for (const { key, m } of await usageLines(Math.max(open, startTs), endTs, { toInclusive: true })) {
+      mergeLine(lines, key, m);
+    }
+  }
+
+  const out: WindowUsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    lineCount: lines.size,
+    oldestTs: null,
+  };
+  for (const m of lines.values()) {
+    out.inputTokens += m.inT;
+    out.outputTokens += m.outT;
+    out.cacheCreationInputTokens += m.ccT;
+    out.cacheReadInputTokens += m.crT;
+    if (out.oldestTs === null || m.minTs < out.oldestTs) out.oldestTs = m.minTs;
+  }
+  return out;
+}
+
+/**
+ * Token totals over `[startTs, endTs]`, across all sessions. The closed hours
+ * of a long window come from a cache (#365); the answer is the one query's.
+ */
+export async function getWindowUsageTotals(startTs: number, endTs: number): Promise<WindowUsageTotals> {
+  if (!usageCacheOn || !(endTs - startTs >= CACHE_MIN_SPAN_MS) || endTs - startTs > CACHE_KEEP_MS) {
+    return getWindowUsageTotalsExact(startTs, endTs);
+  }
+  // One at a time: two windows read together share, and grow, one cache.
+  const run = usageChain.then(() => cachedWindowUsage(startTs, endTs));
+  usageChain = run.catch(() => {});
+  return run;
 }
 
 /**

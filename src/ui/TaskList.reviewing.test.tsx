@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Project, Task } from '../types';
 import type { ReviewPr, ReviewRequests } from '../gh/reviewRequests';
 
@@ -18,6 +18,9 @@ vi.mock('../gh/prStore', () => ({
   usePrStatusVersion: () => 0,
 }));
 vi.mock('../git/branchSync', () => ({ useBranchSync: () => {} }));
+// Review Started reads the review task's comments (#315): real SQLite, as comments.test.ts.
+const harness = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => harness.db } }));
 vi.mock('../lib/openUrl', () => ({ openExternal: vi.fn(async () => {}) }));
 const opened = vi.hoisted(() => ({ calls: [] as string[], fail: null as string | null }));
 vi.mock('./openReview', async (importOriginal) => ({
@@ -35,6 +38,10 @@ const { default: TaskList } = await import('./TaskList');
 const { openExternal } = await import('../lib/openUrl');
 const store = await import('../gh/reviewStore');
 const { KEYS } = await import('./persisted');
+const { createTestDb } = await import('../db/testkit');
+const { resetDb } = await import('../db');
+const { addComment } = await import('../db/comments');
+const guideStore = await import('../guide/store');
 
 const H = 3_600_000;
 const NOW = Date.parse('2026-11-09T12:00:00Z');
@@ -55,7 +62,7 @@ function pr(over: Partial<ReviewPr>): ReviewPr {
   return {
     url: 'https://github.com/acme/relay/pull/1', number: 1, title: 'One', isDraft: false, author: 'alice',
     additions: 84, deletions: 12, headOid: 'h1', baseBranch: 'main', commitCount: 2, lastCommitAt: NOW - 30 * H, createdAt: NOW - 30 * H,
-    updatedAt: NOW - 30 * H, requestedAt: NOW - 20 * H, teams: [], talk: [], forcePushedAt: null, section: 'requested',
+    updatedAt: NOW - 30 * H, requestedAt: NOW - 20 * H, teams: [], talk: [], forcePushedAt: null, yourReview: null, approved: false, section: 'requested',
     ...over,
   };
 }
@@ -65,6 +72,8 @@ let answer: ReviewRequests | null;
 const fetches: string[] = [];
 
 beforeEach(() => {
+  resetDb();
+  harness.db = createTestDb();
   data = new Map();
   Object.defineProperty(window, 'localStorage', {
     configurable: true,
@@ -246,5 +255,76 @@ describe('Building | Reviewing', () => {
     r.rerender(list(null, vi.fn(), [task]));
     fireEvent.click(tab(/Reviewing/));
     expect(screen.getByText('No reviews asked of you in relay.')).toBeTruthy();
+  });
+});
+
+describe('Review Started and Approved (#315)', () => {
+  const guide = {
+    diffHash: 'h', writtenAt: 1, base: 'main', fallback: null,
+    groups: [{ title: 'Parser', summary: '', blocks: ['a1'] }, { title: 'Tests', summary: '', blocks: ['b1'] }],
+    files: { 'src/parse.ts': ['a1'], 'src/parse.test.ts': ['b1'] },
+  };
+  const groupOf = (title: string) => screen.getByText(title, { selector: '.group-label span' }).closest('[role="group"]') as HTMLElement;
+  const groupTitles = () => screen.getAllByRole('group').map((g) => g.querySelector('.group-label span')?.textContent);
+
+  async function showReviewing() {
+    await renderList();
+    fireEvent.click(tab(/Reviewing/));
+  }
+
+  it('ticking Reviewed in the Guide moves the PR to Review Started at once, saying how far along', async () => {
+    guideStore.saveGuide(7, guide);
+    await showReviewing();
+    expect(within(groupOf('Requested')).getByText(/Bump parser/)).toBeTruthy();
+    act(() => guideStore.setReviewed(7, [guideStore.reviewedKey('src/parse.ts', ['a1'])], true));
+    expect(within(await screen.findByRole('group', { name: /Review Started/ })).getByText(/Bump parser/)).toBeTruthy();
+    expect(groupTitles()).toEqual(['New Activity', 'Review Started']);
+    expect(within(groupOf('Review Started')).getByText('1/2 groups')).toBeTruthy();
+    // Still waiting on you: the count is unchanged.
+    expect(within(tab(/Reviewing/)).getByText('2')).toBeTruthy();
+  });
+
+  it('a new comment moves it at once; a review submitted after it sends the PR where GitHub says', async () => {
+    await showReviewing();
+    expect(screen.queryByText('Review Started')).toBeNull();
+    await act(async () => {
+      await addComment({ taskId: 7, path: 'src/parse.ts', lineStart: 1, lineEnd: 1, anchorText: 'x', body: 'Why?', github: 'draft' });
+    });
+    const started = await screen.findByRole('group', { name: /Review Started/ });
+    expect(within(started).getByText(/Bump parser/)).toBeTruthy();
+    expect(within(started).getByText('1 draft')).toBeTruthy();
+
+    // Submitted a minute later, as a comment: Waiting on Author, not counted.
+    const at = NOW + 60_000;
+    answer = {
+      viewer: 'me',
+      prs: [
+        answer!.prs[0]!,
+        { ...answer!.prs[1]!, section: 'reviewed', yourReview: { at, state: 'COMMENTED' }, talk: [{ author: 'me', at }] },
+      ],
+    };
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh Review Requests' }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(groupTitles()).toEqual(['New Activity', 'Reviewed · Waiting on Author']));
+    expect(within(tab(/Reviewing/)).getByText('1')).toBeTruthy();
+  });
+
+  it('a PR your latest review approved is listed last, as Approved, and not counted', async () => {
+    const at = NOW - 3 * H;
+    answer = {
+      viewer: 'me',
+      prs: [
+        pr({ url: 'u/420', number: 420, title: 'Cache the index' }),
+        pr({ url: 'u/418', number: 418, title: 'Rename the queue', section: 'reviewed', yourReview: { at, state: 'APPROVED' }, approved: true, talk: [{ author: 'me', at }] }),
+        pr({ url: 'u/417', number: 417, title: 'Split the worker', section: 'reviewed', yourReview: { at, state: 'CHANGES_REQUESTED' }, talk: [{ author: 'me', at }] }),
+      ],
+    };
+    await showReviewing();
+    // The review task's own PR is not in this answer: it stays, last.
+    expect(groupTitles()).toEqual(['Requested', 'Reviewed · Waiting on Author', 'Approved', 'Closed or No Longer Asked']);
+    expect(within(groupOf('Approved')).getByText(/Rename the queue/)).toBeTruthy();
+    expect(within(tab(/Reviewing/)).getByText('1')).toBeTruthy();
   });
 });

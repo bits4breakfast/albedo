@@ -15,6 +15,12 @@ use std::path::{Path, PathBuf};
 /// The line format's version. The app ignores a line with any other.
 pub const LINE_VERSION: u64 = 1;
 
+/// Not a tool: the server's own record that a waiting `show_preview` call
+/// ended without an answer (#348) -- Esc in the terminal, Claude Code's
+/// timeout, or the session closing. Its args: `request` (the call's line id)
+/// and `reason`. The app retires that preview's card on it.
+pub const PREVIEW_CANCELLED: &str = "preview_cancelled";
+
 /// The longest line written, newline included. Matches the app's cap, and a
 /// write this size to a local file is not split.
 pub const MAX_LINE_BYTES: usize = 65_536;

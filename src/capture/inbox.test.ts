@@ -9,8 +9,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-const { CAPS, decodeStoredRequest, encodeRequest, inboxTaskOf, MAX_LINE_BYTES, parseInboxLine, parseInboxLines } =
-  await import('./inbox');
+const {
+  CAPS,
+  decodeStoredRequest,
+  encodeRequest,
+  inboxTaskOf,
+  MAX_LINE_BYTES,
+  parseAllLines,
+  parseInboxLine,
+  parseInboxLines,
+  parsePreviewLine,
+} = await import('./inbox');
 
 const fixture = readFileSync(join(__dirname, 'fixtures/mcp-inbox.jsonl'), 'utf8');
 const NOW = 1_793_692_800_000;
@@ -39,8 +48,8 @@ describe('parseInboxLine: the server\'s own lines', () => {
       dueMs: NOW + 1.5 * 3_600_000, // 09:30Z
       summary: 'Deployed build 41.\nNext: smoke test /checkout, then close the PR.',
     });
-    expect(reqs[1]).toMatchObject({ project: 'albedo', branch: 'fix/flaky-export' });
-    expect(reqs[2]).toMatchObject({ title: 'Short one', project: null, branch: null });
+    expect(reqs[1]).toMatchObject({ project: 'albedo', branch: 'fix/flaky-export', start: 'fork' });
+    expect(reqs[2]).toMatchObject({ title: 'Short one', project: null, branch: null, start: 'brief' });
     expect(reqs[3]).toMatchObject({ message: 'I need the staging database password to go on.' });
     expect(reqs[4]).toEqual({
       id: 'fixture-5',
@@ -113,6 +122,20 @@ describe('parseInboxLine: what is dropped', () => {
     for (const bad of ['-rf', 'a b', 'a..b', 'x/', '/x', 'a;b']) expect(parseInboxLine(session(bad), 12)).toBeNull();
   });
 
+  it('a session request\'s start: brief or fork, absent reads as brief (#332)', () => {
+    const session = (extra: Record<string, unknown>) =>
+      parseInboxLine(line({ tool: 'request_session' }, { title: 't', prompt: 'p', reason: 'r', ...extra }), 12);
+    expect(session({})).toMatchObject({ start: 'brief' });
+    expect(session({ start: 'brief' })).toMatchObject({ start: 'brief' });
+    expect(session({ start: 'fork' })).toMatchObject({ start: 'fork' });
+    for (const bad of ['Fork', 'copy', '', 1, null]) expect(session({ start: bad })).toBeNull();
+    // Stored as given, and the default is not written out.
+    const forked = session({ start: 'fork' })!;
+    expect(JSON.parse(encodeRequest(forked)).args.start).toBe('fork');
+    expect(JSON.parse(encodeRequest(session({})!)).args).not.toHaveProperty('start');
+    expect(decodeStoredRequest(encodeRequest(forked))).toEqual(forked);
+  });
+
   it('a reminder whose due time and milliseconds disagree', () => {
     const reminder = (due: string, dueMs: number) =>
       line({ tool: 'create_reminder' }, { text: 't', due, dueMs, summary: 's' });
@@ -158,5 +181,78 @@ describe('inboxTaskOf', () => {
     expect(inboxTaskOf('task-x.jsonl')).toBeNull();
     expect(inboxTaskOf('mytask-7.jsonl')).toBeNull();
     expect(inboxTaskOf('queue.json')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// show_preview (#348)
+// ---------------------------------------------------------------------------
+
+describe('preview lines', () => {
+  it('reads the lines the server writes, field for field (src-tauri/mcp/tests/contract.rs)', () => {
+    const text = readFileSync(join(__dirname, 'fixtures/mcp-preview.jsonl'), 'utf8');
+    const { reqs, previews } = parseAllLines(text, 12);
+    expect(reqs).toEqual([]);
+    expect(previews).toEqual([
+      {
+        id: 'fixture-p1',
+        taskId: 12,
+        at: NOW,
+        tool: 'show_preview',
+        title: 'Proposed row',
+        question: 'Does the popover read as attached to the row?\nBe blunt.',
+        note: 'Buttons moved onto the row',
+        toolUseId: 'toolu_01ABCdef',
+      },
+      { id: 'fixture-p2', taskId: 12, at: NOW + 1, tool: 'preview_cancelled', request: 'fixture-p1', reason: 'AbortError: user-cancel' },
+    ]);
+  });
+
+  const show = (args: Record<string, unknown>, task = 4) =>
+    JSON.stringify({ v: 1, task, tool: 'show_preview', args, at: 1_000, id: '12-1000-1' });
+
+  it('reads a call with only the fields it was given', () => {
+    expect(parsePreviewLine(show({ title: 'Proposed row' }), 4)).toEqual({
+      id: '12-1000-1',
+      taskId: 4,
+      at: 1_000,
+      tool: 'show_preview',
+      title: 'Proposed row',
+      question: null,
+      note: null,
+      toolUseId: null,
+    });
+    expect(
+      parsePreviewLine(show({ title: 'T', question: 'Does it\nread?', note: 'Moved the buttons', toolUseId: 'toolu_01AB' }), 4),
+    ).toMatchObject({ question: 'Does it\nread?', note: 'Moved the buttons', toolUseId: 'toolu_01AB' });
+  });
+
+  it('refuses another task, a path, a two-line note, or a strange tool_use id', () => {
+    expect(parsePreviewLine(show({ title: 'T' }, 5), 4)).toBeNull();
+    expect(parsePreviewLine(show({ title: 'T', path: '/etc/passwd' }), 4)).toBeNull();
+    expect(parsePreviewLine(show({ title: 'T', note: 'a\nb' }), 4)).toBeNull();
+    expect(parsePreviewLine(show({ title: 'T', toolUseId: '../x' }), 4)).toBeNull();
+    expect(parsePreviewLine(show({ title: 'x'.repeat(121) }), 4)).toBeNull();
+  });
+
+  it('reads the server’s cancel record', () => {
+    const line = JSON.stringify({
+      v: 1,
+      task: 4,
+      tool: 'preview_cancelled',
+      args: { request: '12-1000-1', reason: 'AbortError: user-cancel' },
+      at: 2_000,
+      id: '12-2000-2',
+    });
+    expect(parsePreviewLine(line, 4)).toMatchObject({ tool: 'preview_cancelled', request: '12-1000-1', reason: 'AbortError: user-cancel' });
+    expect(parsePreviewLine(line.replace('12-1000-1', '../../x'), 4)).toBeNull();
+  });
+
+  it('keeps preview lines out of the request queue', () => {
+    const text = `${show({ title: 'T' })}\n${JSON.stringify({ v: 1, task: 4, tool: 'notify_blocked', args: { message: 'm' }, at: 1, id: 'n-1' })}\n`;
+    const all = parseAllLines(text, 4);
+    expect(all.reqs.map((r) => r.tool)).toEqual(['notify_blocked']);
+    expect(all.previews.map((p) => p.tool)).toEqual(['show_preview']);
+    expect(parseInboxLine(show({ title: 'T' }), 4)).toBeNull();
   });
 });

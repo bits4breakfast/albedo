@@ -37,7 +37,7 @@
 //! rule 3). The prompt goes in on stdin, so no argv limit applies to it.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::Manager;
 
-use crate::pty::{login_shell, shell_script, SpawnOptions, STRIPPED_ENV};
+use crate::pty::{login_shell, login_shell_invocation, strip_env, SpawnOptions};
 
 /// The longest a caller may ask to wait. A guide call is minutes at most.
 const MAX_TIMEOUT_MS: u64 = 15 * 60 * 1000;
@@ -119,35 +119,7 @@ fn run(
     timeout: Duration,
 ) -> Result<OneshotResult, String> {
     let shell = login_shell();
-    let opts = SpawnOptions {
-        cwd: dir.to_string_lossy().into_owned(),
-        command: "claude".to_string(),
-        args: claude_args(system_prompt, json_schema),
-        cols: 80,
-        rows: 24,
-        env: None,
-    };
-    let mut cmd = Command::new(&shell);
-    cmd.arg("-l")
-        .arg("-i")
-        .arg("-c")
-        .arg(shell_script(&shell, &opts))
-        .current_dir(&dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    // Layer 1 of the strip (layer 2 is the `unset` in the script).
-    for key in STRIPPED_ENV {
-        cmd.env_remove(key);
-    }
-    // Its own process group, so a timeout ends Claude Code and anything it
-    // started, not only the first process.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-
+    let mut cmd = build_command(&shell, &dir, system_prompt, json_schema);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("could not start {shell}: {e}"))?;
@@ -195,6 +167,37 @@ fn run(
     })
 }
 
+/// The login shell running `claude` with the fixed argv, in `dir`, with the
+/// Anthropic variables stripped -- the same invocation and strip as the ptys.
+fn build_command(shell: &str, dir: &Path, system_prompt: &str, json_schema: &str) -> Command {
+    let opts = SpawnOptions {
+        cwd: dir.to_string_lossy().into_owned(),
+        command: "claude".to_string(),
+        args: claude_args(system_prompt, json_schema),
+        cols: 80,
+        rows: 24,
+        env: None,
+    };
+    let mut cmd = Command::new(shell);
+    cmd.args(login_shell_invocation(shell, &opts))
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Layer 1 of the strip (layer 2 is the `unset` in the script).
+    strip_env(|key| {
+        cmd.env_remove(key);
+    });
+    // Its own process group, so a timeout ends Claude Code and anything it
+    // started, not only the first process.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd
+}
+
 #[cfg(unix)]
 fn kill_group(pid: u32) {
     if let Ok(pgid) = i32::try_from(pid) {
@@ -227,6 +230,7 @@ fn read_capped(mut r: impl Read) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pty::shell_script;
 
     #[test]
     fn the_run_is_fixed_no_tools_haiku_json_nothing_persisted() {
@@ -246,6 +250,36 @@ mod tests {
         }
         assert!(!args.iter().any(|a| a == "--mcp-config"));
         assert!(!args.iter().any(|a| a.contains("dangerously")));
+    }
+
+    #[test]
+    fn the_command_is_the_login_shell_with_the_anthropic_variables_removed() {
+        let cmd = build_command("/bin/zsh", Path::new("/tmp/g"), "sys", "{}");
+        assert_eq!(cmd.get_program(), "/bin/zsh");
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(&args[..3], ["-l", "-i", "-c"]);
+        assert_eq!(args.len(), 4);
+        assert!(
+            args[3].starts_with("cd '/tmp/g' || exit 1; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL; exec 'claude' '-p'"),
+            "{}",
+            args[3]
+        );
+        assert_eq!(cmd.get_current_dir(), Some(Path::new("/tmp/g")));
+        let removed: Vec<_> = cmd
+            .get_envs()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        for key in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+        ] {
+            assert!(removed.iter().any(|k| k == key), "{key} not removed");
+        }
     }
 
     #[test]

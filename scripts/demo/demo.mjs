@@ -146,10 +146,22 @@ export function setup(home, now = Date.now()) {
       git(p.repo, ['checkout', '-q', '-b', `pr-${r.number}`, 'main']);
       writeFiles(p.repo, r.files ?? {});
       commitAll(p.repo, r.title, now - r.lastCommitMinutes * 60_000);
+      // The head GitHub would report, so a review task checked out from it
+      // reads as up to date.
+      r.head = git(p.repo, ['rev-parse', 'HEAD']);
       git(p.repo, ['push', '-q', 'origin', `HEAD:refs/pull/${r.number}/head`]);
       git(p.repo, ['checkout', '-q', 'main']);
       git(p.repo, ['branch', '-q', '-D', `pr-${r.number}`]);
     }
+  }
+
+  // A started review's task (#315): its worktree on `review/<n>`, at the
+  // head pushed above, as openReview.ts checks one out.
+  for (const t of scenario.reviewTasks) {
+    const r = scenario.reviews[t.repo].find((x) => x.number === t.number);
+    git(t.repo, ['branch', '-q', t.branch, r.head]);
+    mkdirSync(dirname(t.worktree), { recursive: true });
+    git(t.repo, ['worktree', 'add', '-q', t.worktree, t.branch]);
   }
 
   const hashes = new Map();

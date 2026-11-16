@@ -28,15 +28,17 @@ vi.mock('../db/touched', async (importActual) => ({
 const asked = vi.hoisted(() => ({ bases: [] as string[], resolves: true }));
 vi.mock('../git/worktree', async (importActual) => ({
   ...(await importActual<typeof import('../git/worktree')>()),
-  lineChanges: async (_w: string, base: string) => {
+  loadChangeSet: async (_w: string, base: string) => {
     asked.bases.push(base);
-    return new Map();
+    return {
+      merge: asked.resolves && base !== '' ? 'abc1234' : null,
+      lines: new Map(),
+      kinds: new Map(),
+      commits: [],
+      committedAt: new Map(),
+    };
   },
-  changeKinds: async () => new Map(),
   unmergedCommits: async () => null,
-  branchCommits: async () => [],
-  committedFileTimes: async () => new Map(),
-  taskBase: async (_w: string, base: string) => (asked.resolves && base !== '' ? 'abc1234' : null),
 }));
 vi.mock('@tauri-apps/plugin-fs', () => ({ stat: async () => Promise.reject(new Error('no fs')) }));
 vi.mock('../capture', () => ({ onCaptureUpdate: () => () => {} }));
@@ -56,6 +58,9 @@ const task: Task = {
   worktreePath: '/wt', sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
+  spunFromTaskId: null,
 };
 const retargeted = { number: 12, baseRefName: 'main', state: 'open' } as PrStatus;
 

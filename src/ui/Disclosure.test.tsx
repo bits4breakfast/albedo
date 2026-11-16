@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { Disclosure } from './Disclosure';
-import { Disclosure as FromDiff } from './transcript/Diff';
+import { SidechainGroup } from './transcript/ToolRunGroup';
 
 afterEach(cleanup);
 
@@ -31,7 +31,9 @@ describe('Disclosure', () => {
     expect((container.firstElementChild as HTMLElement).className).toBe('disc disc-open disc-inline');
   });
 
-  it('is the same component the transcript imports', () => {
-    expect(FromDiff).toBe(Disclosure);
+  it('is the one the transcript draws', () => {
+    const { container: own } = render(<Disclosure open={false} />);
+    const { container } = render(<SidechainGroup rows={[]} results={new Map()} extras={new Map()} />);
+    expect(container.querySelector('.tx-sidechain-head > .disc')!.outerHTML).toBe(own.firstElementChild!.outerHTML);
   });
 });

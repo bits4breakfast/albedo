@@ -48,6 +48,14 @@ export interface Project {
    * source of a command run this way (CLAUDE.md, the `ci-details-sh` scope).
    */
   ciDetailsCommand: string | null;
+  /**
+   * The Review Guide's defaults (#295): glob patterns of files it sets aside,
+   * and of files it marks "review carefully" (src/guide/focus.ts). Null is
+   * Albedo's starting set; [] is none. A list equal to the starting set is
+   * stored as null, so the default has one representation.
+   */
+  guideSetAside: string[] | null;
+  guideCareful: string[] | null;
   createdAt: number;
   archivedAt: number | null;
 }
@@ -71,7 +79,7 @@ export type CiDetailsMode = 'link' | 'actions' | 'command';
  */
 export type NewProject = Omit<
   Project,
-  'id' | 'createdAt' | 'archivedAt' | 'taskPromptTemplate' | 'ciDetails' | 'ciDetailsCommand'
+  'id' | 'createdAt' | 'archivedAt' | 'taskPromptTemplate' | 'ciDetails' | 'ciDetailsCommand' | 'guideSetAside' | 'guideCareful'
 > & {
   /** Omit, or pass null/'' , for no initial prompt. Normalised on write. */
   taskPromptTemplate?: string | null;
@@ -79,6 +87,9 @@ export type NewProject = Omit<
   ciDetails?: CiDetailsMode;
   /** Omit, or pass null/'', for none. Normalised on write. */
   ciDetailsCommand?: string | null;
+  /** Omit, or pass null, for Albedo's starting set (#295). */
+  guideSetAside?: string[] | null;
+  guideCareful?: string[] | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -99,6 +110,21 @@ export type TaskStatus = 'idle' | 'running' | 'blocked' | 'done' | 'archived';
  *    not to change the folder (CHAT_SYSTEM_PROMPT in ui/sessionSpawn.ts).
  */
 export type TaskKind = 'work' | 'chat';
+
+/**
+ * Which API error a session's last turn stopped on (migration v16, #338),
+ * sorted from what Claude Code records on the error line
+ * (`capture/adapter.ts` `apiErrorOf` is the only code that reads it):
+ *
+ *  - `stopped`      the response stopped arriving (a stream idle timeout)
+ *  - `slept`        the computer went to sleep mid-response
+ *  - `offline`      the API server could not be reached
+ *  - `overloaded`   the API was overloaded
+ *  - `rate-limited` a rate or usage limit was hit
+ *  - `signed-out`   the login expired or failed
+ *  - `other`        anything else, and any value this build does not know
+ */
+export type ApiErrorKind = 'stopped' | 'slept' | 'offline' | 'overloaded' | 'rate-limited' | 'signed-out' | 'other';
 
 export interface Task {
   id: number;
@@ -165,11 +191,49 @@ export interface Task {
    * by this, never by the branch. Null: your own task.
    */
   reviewUrl: string | null;
+  /**
+   * The session's last main-thread turn stopped on an API error (migration
+   * v16, #338): which kind, or null when it did not. Derived from the
+   * transcript like `status` (`capture/status.ts` `lastApiError`), and kept
+   * only while the task is idle: a new prompt, from anywhere, clears it, and
+   * so do Mark as Done and Archive. Puts the task in Stopped on an Error.
+   */
+  apiError: ApiErrorKind | null;
+  /**
+   * Claude Code's own text for that error ("API Error: The response stopped
+   * arriving. …"), shown in the row's tooltip. Null exactly when `apiError` is.
+   * Two flat fields, not one object: a Task is compared field by field on
+   * every reload (useTasks `shallowEqual`), and an object read fresh each time
+   * would make the row look changed on every transcript append.
+   */
+  apiErrorText: string | null;
+  /**
+   * The task this one was spun out of (migration v17, #332): set once, when
+   * it was created from a session's approved `request_session` or from Fork
+   * Conversation… on that task, and never changed. The source may since be
+   * archived or deleted. Null: not spun out.
+   */
+  spunFromTaskId: number | null;
 }
 
-export type NewTask = Omit<Task, 'id' | 'sessionId' | 'status' | 'createdAt' | 'lastActivityAt' | 'seenAt' | 'summary' | 'reviewUrl'> & {
+export type NewTask = Omit<
+  Task,
+  | 'id'
+  | 'sessionId'
+  | 'status'
+  | 'createdAt'
+  | 'lastActivityAt'
+  | 'seenAt'
+  | 'summary'
+  | 'reviewUrl'
+  | 'apiError'
+  | 'apiErrorText'
+  | 'spunFromTaskId'
+> & {
   /** Set only by opening a pull request for review (#287); absent is your own task. */
   reviewUrl?: string | null;
+  /** Set only by a spin-out (#332): an approved request, or Fork Conversation…. */
+  spunFromTaskId?: number | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -406,4 +470,42 @@ export interface Reminder {
   firedAt: number | null;
   /** The task whose card shows it, once fired. */
   cardTaskId: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Previews (migration v18, issue #348)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where one version stands. `pending` while the session's `show_preview`
+ * call waits for the user; then `approved`, `changes` (changes requested),
+ * or `cancelled` (Esc in the terminal, Claude Code's timeout, or the session
+ * ending before an answer).
+ */
+export type PreviewOutcome = 'pending' | 'approved' | 'changes' | 'cancelled';
+
+/**
+ * One version of an HTML mockup a session showed for approval: a copy taken
+ * when the call was made, so it never changes. Columns: 0018_previews.sql.
+ */
+export interface Preview {
+  id: number;
+  taskId: number;
+  /** The MCP server's id for the call; names its answer file. */
+  requestId: string;
+  /** Claude Code's id for the call in the transcript, when it gave one. */
+  toolUseId: string | null;
+  title: string;
+  /** 1, 2, ... per task and title. */
+  version: number;
+  /** The page as it was when the call was made. Model-written: shown sandboxed only. */
+  html: string;
+  question: string | null;
+  /** The session's own one line on what changed since the last version. */
+  note: string | null;
+  createdAt: number;
+  outcome: PreviewOutcome;
+  /** The text sent back as the call's result, once answered. */
+  answer: string | null;
+  answeredAt: number | null;
 }

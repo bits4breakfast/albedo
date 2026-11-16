@@ -81,6 +81,9 @@ const task: Task = {
   worktreePath: '/wt', sessionId: null, ownsWorktree: true, createdBranch: true, kind: 'work',
   status: 'idle', createdAt: 0, lastActivityAt: null, seenAt: null, summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
+  spunFromTaskId: null,
 };
 
 afterEach(() => {
@@ -183,7 +186,7 @@ describe('FileEditor review comments', { timeout: 15_000 }, () => {
   it('shows a stored comment as a card under its code, found by its text', async () => {
     stored.push({
       id: 9, taskId: 4, path: 'src/a.ts', lineStart: 1, lineEnd: 1, anchorText: 'beta',
-      body: 'Why beta?', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null,
+      body: 'Why beta?', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null,
     });
     await editorContent();
     expect(await screen.findByText('Why beta?')).toBeTruthy();

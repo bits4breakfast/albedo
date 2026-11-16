@@ -129,6 +129,14 @@ export function taskStop(id: string, taskId: string, ts: number): Line[] {
   ];
 }
 
+/** TaskStop on a task that is gone, as 2.1.322 writes it (#350). */
+export function taskStopMissing(id: string, taskId: string, ts: number): Line[] {
+  return [
+    callLine(id, 'TaskStop', { task_id: taskId }, ts),
+    resultLine(id, {}, ts + 50, { isError: true, text: `<tool_use_error>No task found with ID: ${taskId}</tool_use_error>` }),
+  ];
+}
+
 // --- a subagent's runs (#139), as 2.1.314 writes them ----------------------
 
 /**

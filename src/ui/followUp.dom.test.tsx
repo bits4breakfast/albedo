@@ -73,6 +73,9 @@ const task = (over: Partial<Task> = {}): Task => ({
   seenAt: null,
   summary: null,
   reviewUrl: null,
+  apiError: null,
+  apiErrorText: null,
+  spunFromTaskId: null,
   ...over,
 });
 
@@ -141,9 +144,7 @@ describe('TaskList row menu Follow-up…', () => {
         selectedId={null}
         onSelect={() => {}}
         onNew={() => {}}
-        onArchive={() => {}}
-        onDelete={() => {}}
-        onFollowUp={onFollowUp}
+        actions={{ archive: () => {}, delete: () => {}, followUp: onFollowUp }}
       />,
     );
 

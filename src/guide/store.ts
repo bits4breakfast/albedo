@@ -12,6 +12,9 @@
  *    content, so a file changed after it was ticked is simply not ticked any
  *    more: Reviewed is kept per task AND per diff. A task's marks go once its
  *    guide has (`setReviewed` prunes them), so this stays bounded too.
+ *    When something was last ticked is kept beside them (#315), pruned with
+ *    them: the Reviewing tab's Review Started compares it with your last
+ *    submitted review.
  *  - **A write in progress**, in memory only: which task it is for, and how
  *    far it got. It belongs to the task that started it -- the result is
  *    saved for that task whatever is on screen when it lands.
@@ -24,12 +27,13 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import { KEYS, readPersisted, writePersisted, type Codec } from '../ui/persisted';
+import { KEYS, writePersisted, type Codec } from '../ui/persisted';
 import type { Guide } from './validate';
 import type { BranchDiff } from './blocks';
 import type { LoadedBranchDiff } from './branchDiff';
 import { GuideError, writeGuide, writeNotes, type GroupNotes, type GuideErrorKind, type Progress } from './writer';
 import { notableFiles } from './validate';
+import { asFocus, isSetAside, type GuideFocus } from './focus';
 
 export const MAX_GUIDES = 40;
 /** Per task; a branch with more reviewed file-groups than this is not a review. */
@@ -87,12 +91,69 @@ export const reviewedCodec: Codec<Record<string, string[]>> = {
   encode: (value) => (Object.keys(value).length === 0 ? null : JSON.stringify(value)),
 };
 
+/** task id -> when something was last marked Reviewed (#315). */
+export const reviewedAtCodec: Codec<Record<string, number>> = {
+  decode: (raw) => {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed)) if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    return out;
+  },
+  encode: (value) => (Object.keys(value).length === 0 ? null : JSON.stringify(value)),
+};
+
+// ---------------------------------------------------------------------------
+// Reading storage, decoded once per stored string (#365)
+// ---------------------------------------------------------------------------
+
+/**
+ * The last string read per key and what it decoded to. The task list asks
+ * for every guide on each activity change and the pane on each render; up to
+ * 40 guides are a lot of JSON to parse and check every time. Keyed on the
+ * stored string itself, so whatever writes the key -- this store, another
+ * window, a test -- is read afresh the next time, with no event to miss.
+ *
+ * The values are shared between callers: nothing here or in a reader may
+ * change one in place (every write builds a new object, as it always has).
+ */
+const decoded = new Map<string, { raw: string; value: unknown }>();
+
+/** `readPersisted` with an empty record as the fallback, decoded once per stored string. */
+function readStored<T extends object>(key: string, codec: Codec<T>): T {
+  const empty = {} as T;
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(key);
+  } catch {
+    return empty;
+  }
+  if (raw === null) return empty;
+  const hit = decoded.get(key);
+  if (hit && hit.raw === raw) return hit.value as T;
+  let value: T | null;
+  try {
+    value = codec.decode(raw);
+  } catch {
+    value = null;
+  }
+  const out = value ?? empty;
+  decoded.set(key, { raw, value: out });
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Guides
 // ---------------------------------------------------------------------------
 
 const listeners = new Set<() => void>();
 let version = 0;
+/**
+ * Bumped only when a guide or a Reviewed mark is written (#315): what
+ * {@link guideProgress} reads. A write's progress or a focus draft changes
+ * `version` alone, so the Reviewing tab does not read storage again for them.
+ */
+let reviewedVersion = 0;
 function changed(): void {
   version++;
   for (const l of listeners) l();
@@ -103,7 +164,7 @@ function subscribe(l: () => void): () => void {
 }
 
 export function loadGuide(taskId: number): Guide | null {
-  return readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>)[String(taskId)] ?? null;
+  return readStored(KEYS.reviewGuides, guidesCodec)[String(taskId)] ?? null;
 }
 
 /** Keep the newest {@link MAX_GUIDES}. Pure. */
@@ -113,8 +174,9 @@ export function capGuides(all: Record<string, Guide>, max = MAX_GUIDES): Record<
 }
 
 export function saveGuide(taskId: number, guide: Guide): void {
-  const all = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
+  const all = readStored(KEYS.reviewGuides, guidesCodec);
   writePersisted(KEYS.reviewGuides, guidesCodec, capGuides({ ...all, [String(taskId)]: guide }));
+  reviewedVersion++;
   changed();
 }
 
@@ -128,7 +190,7 @@ export function reviewedKey(path: string, blocks: readonly string[]): string {
 }
 
 export function loadReviewed(taskId: number): ReadonlySet<string> {
-  return new Set(readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>)[String(taskId)] ?? []);
+  return new Set(readStored(KEYS.reviewGuideReviewed, reviewedCodec)[String(taskId)] ?? []);
 }
 
 /**
@@ -138,25 +200,28 @@ export function loadReviewed(taskId: number): ReadonlySet<string> {
  * moved), it no longer counts. Two reads of storage, whatever the task count.
  */
 export function reviewingTaskIds(): ReadonlySet<number> {
-  const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
-  const marks = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
+  const guides = readStored(KEYS.reviewGuides, guidesCodec);
+  const marks = readStored(KEYS.reviewGuideReviewed, reviewedCodec);
   const out = new Set<number>();
   for (const [id, keys] of Object.entries(marks)) {
     const guide = guides[id];
-    if (!guide) continue;
-    const current = keys.some((k) => {
-      const at = k.lastIndexOf('#');
-      const known = at > 0 ? guide.files[k.slice(0, at)] : undefined;
-      const blocks = at > 0 ? k.slice(at + 1).split(',').filter(Boolean) : [];
-      return known !== undefined && blocks.length > 0 && blocks.every((b) => known.includes(b));
-    });
-    if (current) out.add(Number(id));
+    if (guide && marksCurrent(guide, keys)) out.add(Number(id));
   }
   return out;
 }
 
+/** Whether any of a task's marks still names blocks in its guide (#219). Pure. */
+function marksCurrent(guide: Guide, keys: readonly string[]): boolean {
+  return keys.some((k) => {
+    const at = k.lastIndexOf('#');
+    const known = at > 0 ? guide.files[k.slice(0, at)] : undefined;
+    const blocks = at > 0 ? k.slice(at + 1).split(',').filter(Boolean) : [];
+    return known !== undefined && blocks.length > 0 && blocks.every((b) => known.includes(b));
+  });
+}
+
 export function setReviewed(taskId: number, keys: readonly string[], on: boolean): void {
-  const all = readPersisted(KEYS.reviewGuideReviewed, reviewedCodec, {} as Record<string, string[]>);
+  const all = readStored(KEYS.reviewGuideReviewed, reviewedCodec);
   const mine = new Set(all[String(taskId)] ?? []);
   for (const k of keys) {
     if (on) mine.add(k);
@@ -165,13 +230,72 @@ export function setReviewed(taskId: number, keys: readonly string[], on: boolean
   const list = [...mine].slice(-MAX_REVIEWED);
   // Bounded like the guides: marks are kept only for tasks that still have a
   // guide, so a task whose guide aged out (or was deleted) takes its own along.
-  const guides = readPersisted(KEYS.reviewGuides, guidesCodec, {} as Record<string, Guide>);
+  const guides = readStored(KEYS.reviewGuides, guidesCodec);
   const next: Record<string, string[]> = {};
   for (const [k, v] of Object.entries(all)) if (k in guides) next[k] = v;
   if (list.length === 0) delete next[String(taskId)];
   else next[String(taskId)] = list;
   writePersisted(KEYS.reviewGuideReviewed, reviewedCodec, next);
+  // When, for Review Started (#315): a tick, never an untick. Kept for the
+  // tasks whose marks are kept.
+  const times = readStored(KEYS.reviewGuideReviewedAt, reviewedAtCodec);
+  const keptTimes: Record<string, number> = {};
+  for (const [k, v] of Object.entries(times)) if (k in next) keptTimes[k] = v;
+  if (on && keys.length > 0 && String(taskId) in next) keptTimes[String(taskId)] = Date.now();
+  writePersisted(KEYS.reviewGuideReviewedAt, reviewedAtCodec, keptTimes);
+  reviewedVersion++;
   changed();
+}
+
+/** A task's Guide as the Reviewing tab tells it (#315). */
+export interface GuideProgress {
+  /** Something is marked Reviewed that still names blocks in the guide. */
+  reviewing: boolean;
+  /** When something was last ticked; null when unknown (ticked before #315). */
+  tickedAt: number | null;
+  /** The guide's groups all Reviewed, of how many. */
+  reviewed: number;
+  total: number;
+}
+
+/**
+ * Each task's guide progress, for the tasks given that have a guide. Read
+ * from the guide alone, without the diff: the guide's groups, plus Unsorted
+ * when it left blocks out, never Set Aside -- what the pane counts as "N of M
+ * reviewed" while the branch is where the guide was written. A group is
+ * Reviewed when every one of its blocks is in a Reviewed mark. Each key is
+ * read once, whatever the task count; callers re-read only on
+ * {@link useGuideReviewedVersion}.
+ */
+export function guideProgress(taskIds: readonly number[]): ReadonlyMap<number, GuideProgress> {
+  const guides = readStored(KEYS.reviewGuides, guidesCodec);
+  const marks = readStored(KEYS.reviewGuideReviewed, reviewedCodec);
+  const times = readStored(KEYS.reviewGuideReviewedAt, reviewedAtCodec);
+  const out = new Map<number, GuideProgress>();
+  for (const id of taskIds) {
+    const guide = guides[String(id)];
+    if (!guide) continue;
+    const mine = marks[String(id)] ?? [];
+    const ticked = new Set<string>();
+    for (const k of mine) {
+      const at = k.lastIndexOf('#');
+      if (at > 0) for (const b of k.slice(at + 1).split(',')) if (b) ticked.add(b);
+    }
+    const sets: string[][] = guide.groups.map((g) => g.blocks).filter((b) => b.length > 0);
+    const placed = new Set(sets.flat());
+    const focus = asFocus(guide.focus);
+    const rest = Object.entries(guide.files).flatMap(([path, ids]) =>
+      focus && isSetAside(focus, path) ? [] : ids.filter((b) => !placed.has(b)),
+    );
+    if (rest.length > 0) sets.push(rest);
+    out.set(id, {
+      reviewing: marksCurrent(guide, mine),
+      tickedAt: times[String(id)] ?? null,
+      reviewed: sets.filter((b) => b.every((x) => ticked.has(x))).length,
+      total: sets.length,
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,16 +313,18 @@ export function writeStateOf(taskId: number): WriteState | null {
 }
 
 /**
- * Write a guide for `taskId`'s diff. A second request while one runs is
- * ignored. The result is saved for the task that asked, whatever is on screen.
+ * Write a guide for `taskId`'s diff, setting aside and marking by `focus`
+ * (#295). A second request while one runs is ignored. The result is saved
+ * for the task that asked, whatever is on screen.
  */
-export async function startWrite(taskId: number, diff: BranchDiff, base: string): Promise<void> {
+export async function startWrite(taskId: number, diff: BranchDiff, base: string, focus?: GuideFocus): Promise<void> {
   if (writes.get(taskId)?.kind === 'writing') return;
   writes.set(taskId, { kind: 'writing', progress: null });
   changed();
   try {
     const guide = await writeGuide(diff, {
       base,
+      focus,
       onProgress: (p) => {
         writes.set(taskId, { kind: 'writing', progress: p });
         changed();
@@ -206,6 +332,9 @@ export async function startWrite(taskId: number, diff: BranchDiff, base: string)
     });
     saveGuide(taskId, guide);
     writes.delete(taskId);
+    // The lists as typed are done with only now (#295 review): a failed write
+    // keeps them, so Try Again writes with what was typed, never the defaults.
+    focusDrafts.delete(taskId);
     // The guide is on screen from here; its notes follow (#224).
     ensureNotes(taskId, guide, diff);
   } catch (err) {
@@ -349,9 +478,44 @@ async function pump(taskId: number, job: NotesJob): Promise<void> {
   }
 }
 
+/** Re-renders only when a guide or a Reviewed mark is written (#315). */
+export function useGuideReviewedVersion(): number {
+  return useSyncExternalStore(subscribe, () => reviewedVersion);
+}
+
 /** Re-renders on any change to guides, Reviewed or a write. */
 export function useGuideStoreVersion(): number {
   return useSyncExternalStore(subscribe, () => version);
+}
+
+// ---------------------------------------------------------------------------
+// The Write Guide screen's lists, as typed (#295)
+// ---------------------------------------------------------------------------
+
+/** The two lists as typed on the Write Guide screen, one pattern per line. */
+export interface FocusDraft {
+  setAside: string;
+  careful: string;
+}
+
+/**
+ * Per task, in memory: what was typed into the Write Guide screen's lists and
+ * not yet written, kept, as the place is, while another task is on screen.
+ * None means the project's defaults. A task with a guide AND a draft is in
+ * Rewrite With Other Options…: the screen is shown over the guide, so it
+ * survives the pane remounting on a task switch. Cleared when a write
+ * succeeds (startWrite) or the screen is cancelled, never when one starts.
+ */
+const focusDrafts = new Map<number, FocusDraft>();
+
+export function focusDraftOf(taskId: number): FocusDraft | null {
+  return focusDrafts.get(taskId) ?? null;
+}
+
+export function setFocusDraft(taskId: number, draft: FocusDraft | null): void {
+  if (draft === null) focusDrafts.delete(taskId);
+  else focusDrafts.set(taskId, draft);
+  changed();
 }
 
 // ---------------------------------------------------------------------------
@@ -408,9 +572,11 @@ export function keepLastRead(taskId: number, data: LoadedBranchDiff): void {
 
 /** Tests only. */
 export function resetGuideStoreForTests(): void {
+  decoded.clear();
   places.clear();
   lastReads.clear();
   writes.clear();
   notesJobs.clear();
+  focusDrafts.clear();
   changed();
 }

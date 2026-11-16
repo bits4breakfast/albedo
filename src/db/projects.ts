@@ -15,6 +15,7 @@
 
 import type { CiDetailsMode, NewProject, Project } from '../types';
 import { emitTasksChanged, getDb } from './index';
+import { DEFAULT_CAREFUL, DEFAULT_SET_ASIDE, parsePatterns, patternsFromJson, samePatterns } from '../guide/focus';
 
 // ---------------------------------------------------------------------------
 // Change notification
@@ -59,12 +60,14 @@ interface ProjectRow {
   task_prompt_template: string | null;
   ci_details: string | null;
   ci_details_command: string | null;
+  guide_set_aside: string | null;
+  guide_careful: string | null;
   created_at: number;
   archived_at: number | null;
 }
 
 const PROJECT_SELECT =
-  'id, name, repo_path, worktree_root, default_base_branch, task_prompt_template, ci_details, ci_details_command, created_at, archived_at';
+  'id, name, repo_path, worktree_root, default_base_branch, task_prompt_template, ci_details, ci_details_command, guide_set_aside, guide_careful, created_at, archived_at';
 
 const PROJECT_COLUMN: Readonly<Record<keyof NewProject, string>> = {
   name: 'name',
@@ -74,6 +77,8 @@ const PROJECT_COLUMN: Readonly<Record<keyof NewProject, string>> = {
   taskPromptTemplate: 'task_prompt_template',
   ciDetails: 'ci_details',
   ciDetailsCommand: 'ci_details_command',
+  guideSetAside: 'guide_set_aside',
+  guideCareful: 'guide_careful',
 };
 
 function toProject(r: ProjectRow): Project {
@@ -86,6 +91,8 @@ function toProject(r: ProjectRow): Project {
     taskPromptTemplate: r.task_prompt_template,
     ciDetails: ciDetailsFromColumn(r.ci_details),
     ciDetailsCommand: normalizePromptTemplate(r.ci_details_command),
+    guideSetAside: patternsFromJson(r.guide_set_aside),
+    guideCareful: patternsFromJson(r.guide_careful),
     createdAt: r.created_at,
     archivedAt: r.archived_at,
   };
@@ -134,6 +141,19 @@ export function ciDetailsFromColumn(value: string | null): CiDetailsMode {
 /** The column value for a mode: the default is stored as NULL, so it has one representation. */
 export function ciDetailsToColumn(mode: CiDetailsMode | null | undefined): string | null {
   return mode === 'actions' || mode === 'command' ? mode : null;
+}
+
+/**
+ * `projects.guide_set_aside` / `guide_careful` (#295): a JSON array of
+ * patterns, held to focus.ts's rules. NULL for none given, and for a list
+ * equal to Albedo's starting set, so the default has one representation and
+ * follows Albedo's set when it changes. A column that does not parse reads
+ * as the default (focus.ts).
+ */
+export function guidePatternsToColumn(list: readonly string[] | null | undefined, defaults: readonly string[]): string | null {
+  if (list === null || list === undefined) return null;
+  const clean = parsePatterns(list.join('\n'));
+  return samePatterns(clean, defaults) ? null : JSON.stringify(clean);
 }
 
 /** Folder basename of a repo path. `/a/b/` -> `b`, not `''`. */
@@ -239,13 +259,15 @@ export async function createProject(p: NewProject): Promise<Project> {
   const taskPromptTemplate = normalizePromptTemplate(p.taskPromptTemplate);
   const ciDetails = ciDetailsFromColumn(ciDetailsToColumn(p.ciDetails));
   const ciDetailsCommand = normalizePromptTemplate(p.ciDetailsCommand);
+  const setAsideColumn = guidePatternsToColumn(p.guideSetAside, DEFAULT_SET_ASIDE);
+  const carefulColumn = guidePatternsToColumn(p.guideCareful, DEFAULT_CAREFUL);
   const db = await getDb();
   let res;
   try {
     res = await db.execute(
-      `INSERT INTO projects (name, repo_path, worktree_root, default_base_branch, task_prompt_template, ci_details, ci_details_command, created_at, archived_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)`,
-      [name, repoPath, p.worktreeRoot, p.defaultBaseBranch, taskPromptTemplate, ciDetailsToColumn(ciDetails), ciDetailsCommand, createdAt],
+      `INSERT INTO projects (name, repo_path, worktree_root, default_base_branch, task_prompt_template, ci_details, ci_details_command, guide_set_aside, guide_careful, created_at, archived_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)`,
+      [name, repoPath, p.worktreeRoot, p.defaultBaseBranch, taskPromptTemplate, ciDetailsToColumn(ciDetails), ciDetailsCommand, setAsideColumn, carefulColumn, createdAt],
     );
   } catch (err: unknown) {
     // The check above races against another writer. The UNIQUE index is the
@@ -269,6 +291,8 @@ export async function createProject(p: NewProject): Promise<Project> {
     taskPromptTemplate,
     ciDetails,
     ciDetailsCommand,
+    guideSetAside: patternsFromJson(setAsideColumn),
+    guideCareful: patternsFromJson(carefulColumn),
     createdAt,
     archivedAt: null,
   };
@@ -294,6 +318,8 @@ export async function updateProject(id: number, patch: Partial<NewProject>): Pro
     if (key === 'ciDetails') value = ciDetailsToColumn(value as CiDetailsMode | null);
     // Trimmed, and '' stored as NULL, as the prompt is.
     if (key === 'ciDetailsCommand') value = normalizePromptTemplate(value as string | null | undefined);
+    if (key === 'guideSetAside') value = guidePatternsToColumn(value as string[] | null, DEFAULT_SET_ASIDE);
+    if (key === 'guideCareful') value = guidePatternsToColumn(value as string[] | null, DEFAULT_CAREFUL);
     if (key === 'repoPath') {
       const norm = normalizeRepoPath(String(value));
       // Moving a project onto another project's repo would violate the UNIQUE

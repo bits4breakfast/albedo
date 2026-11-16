@@ -87,3 +87,116 @@
   line-height: 1.45;
 }
 .review-error { margin: 2px 8px 6px 12px; color: var(--danger); white-space: pre-wrap; }
+
+/* "Review a PR…" (#386): the tab's one action, full width above the groups,
+   with a select's chevron at the end, since it opens a list. Its label is
+   .btn's --text on --panel (16.60 | 14.63); disabled, .btn's --faint. Open,
+   its edge is --accent, as the mockup has. Overrides of .btn are written
+   .btn.review-any-btn, so they win by specificity, not by stylesheet order. */
+.review-any { padding: 8px 0 2px; }
+.btn.review-any-btn {
+  width: 100%;
+  justify-content: space-between;
+  padding: 0 10px 0 12px;
+  font-size: var(--fs-md);
+}
+.btn.review-any-btn[aria-expanded='true'] { border-color: var(--accent); }
+.review-any-chevron { display: inline-flex; color: var(--muted); }
+
+/* The dropdown: the branch picker's surface (--panel, the load-bearing
+   --border-strong edge, --shadow-menu), portalled, above the panes as the
+   row menu is. The highlighted row is --row-selected, the tint a selected
+   review row has; the pointer moves the highlight, so there is no separate
+   hover ground. Text on it, measured (light | dark), WCAG 2.x:
+     on --row-selected  --text-strong 15.39 | 13.26   --muted 5.67 | 5.97
+                        --faint 4.71 | 4.64           --accent 5.12 | 6.08
+                        --add 5.69 | 7.80
+     on --panel         --text-strong 19.43 | 17.20   --muted 7.15 | 7.74
+                        --faint 5.94 | 6.02           --accent 6.46 | 7.88
+                        --add 7.19 | 10.12            --danger 6.98 | 8.37
+     on --panel-inset (the field)  --text 17.02 | 15.45  --faint 6.09 | 6.36
+   No tints over other grounds, no opacity. */
+.review-any-pop {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+}
+
+.review-any-search {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text);
+  background: var(--panel-inset);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+/* The field always has focus while the dropdown is open: its --accent edge
+   is the focus mark, so the global ring would only double it. Written to
+   outrank `:focus-visible` by specificity. */
+.review-any-pop .review-any-search:focus-visible { outline: none; }
+.review-any-search::placeholder { color: var(--faint); }
+
+.review-any-status {
+  flex: 0 0 auto;
+  padding: 6px 8px 2px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.review-any-status[data-failed] { color: var(--danger); }
+
+.review-any-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.review-any-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+.review-any-row[aria-selected='true'] { background: var(--row-selected); }
+
+.review-any-num { font-size: var(--fs-md); color: var(--muted); font-variant-numeric: tabular-nums; }
+.review-any-title {
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Matched words: weight carries it as much as colour does. */
+.review-any-hit { background: none; color: var(--accent); font-weight: 600; }
+.review-any-end {
+  justify-self: end;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.review-any-has { color: var(--add); font-weight: 600; }
+.review-any-by { grid-column: 2 / -1; font-size: var(--fs-xs); color: var(--muted); }
+.review-any-by:empty { display: none; }
+
+.review-any-foot {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}

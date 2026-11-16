@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import {
   alwaysAllowRules,
   applyHookEvents,
-  completeLines,
   currentPrompt,
   emptyPending,
   isQuiet,
@@ -544,16 +543,6 @@ describe('derivePending: a hook that ran out its window leaves the prompt waitin
     applyHookEvents(s, [pre, q]);
     applyHookEvents(s, [timedOut]);
     expect(currentPrompt(s)).toEqual(derivePending([pre, q, timedOut]));
-  });
-});
-
-describe('completeLines', () => {
-  it('holds back a trailing partial line, and cuts on bytes, not characters', () => {
-    const enc = new TextEncoder();
-    expect(completeLines(enc.encode('{"a":1}\n{"b":'))).toEqual({ text: '{"a":1}\n', consumed: 8 });
-    expect(completeLines(enc.encode('{"b":'))).toEqual({ text: '', consumed: 0 });
-    const multi = enc.encode('"é"\n');
-    expect(completeLines(multi).consumed).toBe(multi.length);
   });
 });
 

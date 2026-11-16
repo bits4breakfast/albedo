@@ -154,9 +154,9 @@ Albedo.
    pull request. The menu holds **Rename Task…** (**⇧F6** or **F2**, or
    double-click the title), **Remind Me…**, **Make Available Remotely**
    (**⇧⌘R**) and **Compact Now**.
-5. **Layout.** **PTY** shows only the terminal, **Transcript** only the
-   reading pane, **Split** both, side by side or stacked. **⌘\\** cycles
-   through them. The icon next to it opens a shell in the main checkout (**⌥F12**).
+5. **Layout.** Three icons: **PTY** shows only the terminal, **Transcript**
+   only the reading pane, **Split** both, side by side or stacked; each names
+   itself on hover. **⌘\\** cycles through them. The icon next to it opens a shell in the main checkout (**⌥F12**).
 6. **Transcript.** The conversation, read from Claude Code's session files:
    your messages, Claude's replies, tool calls and diffs.
 7. **Files.** What this task changed: uncommitted changes, then commits on
@@ -204,19 +204,23 @@ author, the size of the change and what is new:
 
 | Group | A pull request is here when |
 | --- | --- |
-| **New Activity** | Something happened since you last opened it or reviewed it: new commits, a force-push, comments by others, or your review asked for again. Newest first, with a dot |
+| **New Activity** | Something happened since you last opened it or reviewed it: new commits, a force-push, comments by others, or your review asked for again. Newest first, with a dot. This wins over every group below |
+| **Review Started** | You have started reviewing it in Albedo and not submitted a review since: something ticked Reviewed in its Guide, or a comment on its review task (for Claude or a draft for GitHub, sent or not). The row says how far along you are, such as `2/4 groups · 3 drafts` |
 | **Requested** | Your review is asked for and nothing is new. Newest request first |
 | **Reviewed · Waiting on Author** | You reviewed it and nothing has happened since |
+| **Approved** | You approved it, and nothing has happened since. A later review of yours that only comments keeps it here, as GitHub keeps you under "approved by"; requesting changes moves it out |
 
-The tab's count is what waits on you: every request, plus reviewed pull
-requests with something new, and opening a pull request counts as having
-seen what is there.
+The tab's count is what waits on you: New Activity, Review Started and
+Requested. Opening a pull request counts as having seen what is there. A
+tick or a comment moves a pull request to Review Started at once, and
+submitting a review moves it on at once, to wherever GitHub's state puts it.
 
 Click a pull request to review it in Albedo. The first click checks it out
 as a **review task**: Albedo fetches its head into a local branch
 `review/<number>` (forks included), with no upstream so nothing can be pushed
 from it, in a worktree of its own, measured against the pull request's base.
-After that a click selects the task. A review task has the Transcript, Files
+It opens on its **Guide**, ready to write. After that a click selects the
+task, on whichever tab you left it. A review task has the Transcript, Files
 and Guide tabs like any other, and a Claude Code session to ask about the
 change, which is told to explain and answer and never to edit files, commit,
 push or post anything on GitHub. The task header links to the pull request.
@@ -226,6 +230,42 @@ merged, closed or no longer asking for you stay at the end of the tab, so you
 can still read and archive them. Albedo asks GitHub once a
 minute through `gh`, in one request for the whole list, and not while the
 window is hidden.
+
+#### Review comments go to GitHub, on Submit
+
+On a review task, the comment box in the Guide, the Diff and the editor
+asks where a comment goes: **Draft for GitHub** (the default) or **Ask
+Claude**, which goes to the review session as on any other task and never
+to GitHub. Drafts stay on your machine, in Albedo's database, until you
+press **Submit Review**, beside the PR's GitHub link (GitHub's mark and `#n`) in
+the task header. The
+button shows how many drafts are waiting, and the Files tab lists them
+under **For GitHub**.
+
+Submit Review asks for an optional summary and a verdict (**Comment**,
+**Approve** or **Request Changes**). It then sends one GitHub review with your
+comments on their lines, against the commit you checked out:
+
+- A draft on a line GitHub does not take, outside the pull request's diff,
+  goes in the review's summary with its `path:line`. Its card says so when
+  you write it.
+- If the pull request has moved on GitHub since you checked it out, the
+  dialog says so. Your comments still go on the commit you reviewed, and
+  GitHub marks any whose lines changed as outdated.
+- If GitHub refuses, the dialog shows `gh`'s message and every draft is
+  kept.
+- If the review went out but a reply did not, the next click sends only
+  what is left, so nothing is posted twice.
+
+Albedo posts only from that click; the review session never posts.
+
+Other reviewers' threads appear at their lines in the Guide and the Diff,
+read only, with each comment's author and age. Resolved threads are folded
+to one line. A thread whose code is not in your copy, because it is outdated
+or on a removed line, is listed above the file instead. **Reply** writes a
+draft that goes out with Submit Review, right after the review itself.
+Threads are fetched when a view of the task opens, then again after the
+Reviewing list's own refresh, at most once a minute.
 
 ### Answer permission prompts without hunting for the terminal
 
@@ -374,12 +414,28 @@ once on Haiku, with no tools (see "Good to know").
   transcript.
 - When the branch moves on, the guide says how many files changed since and
   offers **Rewrite**. New changes it does not know yet are under Unsorted.
+- **Set aside** and **review carefully**: the Write Guide screen has two
+  pattern lists, prefilled from the project. Files matching **Set Aside**
+  (to start with: tests in JS/TS, PHP, Go, Python, Ruby and Java, PHPUnit's
+  config, stylesheets in any syntax, lockfiles, snapshots, generated files) go in
+  a group of their own, listed last and never hidden; they are not sent to
+  Claude and not in the guide's count. Files matching **Review Carefully**
+  (migrations, schema, auth, CI and build config, dependency manifests) are
+  marked with a flag and why, in their group, at its top and on the map;
+  Claude may flag up to five more, each with a one-line reason. A file in both
+  lists is not set aside. Edits on that screen apply to that guide;
+  **Save as Project Defaults** keeps them, and the Projects dialog edits the
+  defaults too. A guide written before these lists existed sets nothing
+  aside until it is rewritten. Rewrite keeps a guide's lists; **⋯ › Rewrite With Other
+  Options…** changes them. Patterns are globs on the paths git reports
+  (`*.css` matches in any folder, `src/**`, `*.{js,ts}`).
 - **Read · Map** in the guide's toolbar switches to a map of the change: a
   box per changed file in its group's colour, with a bar for its size and a
   mark for open comments, and arrows for the imports between them (read from
   the files themselves for TypeScript/JavaScript, PHP and Rust; no model).
   An unchanged file shows, dashed, when two or more changed files import it.
-  Click a box to read its blocks, or a group in the key to open that group.
+  Point at a group in the key to ring its boxes and their arrows. Click a
+  box to read its blocks, or a group in the key to open that group.
   A change of more than 60 files is drawn one box per folder.
   In a narrow pane the key goes above the map, and Read · Map and
   Uncommitted Only move into the toolbar's **⋯**.
@@ -461,8 +517,9 @@ of your Claude subscription.
 
 **The Review Guide is the one time Albedo runs Claude Code itself.** Write
 Guide and Rewrite run `claude -p` on Haiku, with no tools, MCP servers or
-hooks, and nothing saved as a session: one call for the groups, then one per
-group for its file notes. It runs under your own Claude Code login, and only
+hooks, and nothing saved as a session: one call for the groups (and up to
+five files to review carefully), then one per group for its file notes. Files
+the guide sets aside are not sent. It runs under your own Claude Code login, and only
 for a guide you asked for.
 
 **Albedo sees your shell's PATH.** It starts `claude` through your login

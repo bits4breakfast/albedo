@@ -54,7 +54,7 @@ const TEXT_GROUNDS = [
   '--row-selected', '--accent-soft', '--accent-soft-strong', '--row-blocked', '--row-blocked-hover',
 ];
 /** One per colour (#278): review is Ready to Review and My Review, team In Review and Awaiting Review. */
-const GROUPS = ['blocked', 'running', 'review', 'team', 'approved', 'idle', 'done'];
+const GROUPS = ['blocked', 'errored', 'running', 'review', 'team', 'approved', 'idle', 'done'];
 
 describe('status hues (#276)', () => {
   it('every block defines every status token, and the two dark blocks agree', () => {
@@ -104,7 +104,7 @@ describe('status hues (#276)', () => {
   });
 
   it('each group’s pie draws in its colour’s -edge, Done’s check in its -ink (#278)', () => {
-    for (const hue of ['blocked', 'running', 'review', 'team', 'approved', 'idle', 'done']) {
+    for (const hue of ['blocked', 'errored', 'running', 'review', 'team', 'approved', 'idle', 'done']) {
       expect(list).toContain(`.group-pie[data-hue='${hue}'] { color: var(--status-${hue}-edge); }`);
     }
     expect(list).toContain(".group-pie[data-hue='archived'] { color: var(--status-archived); }");
@@ -114,6 +114,34 @@ describe('status hues (#276)', () => {
   it('labels take the text tier of their group', () => {
     expect(list).toMatch(/\.group-label\[data-tone='blocked'\] \{ color: var\(--status-blocked\); \}/);
     expect(list).toMatch(/\.group-label\[data-tone='review'\] \{ color: var\(--status-review\); \}/);
+    // Stopped on an Error (#338) has no text tier of its own: it is --danger.
+    expect(list).toMatch(/\.group-label\[data-tone='errored'\] \{ color: var\(--danger\); \}/);
+  });
+
+  for (const [name, t] of Object.entries(themes)) {
+    it(`${name}: Stopped on an Error's words clear 4.5 on every ground they sit on (#338)`, () => {
+      // The group label and the row's error label: --danger on the list's and
+      // a row's grounds. The transcript's error line: its text tiers on --danger-soft.
+      for (const g of ['--panel-raised', '--panel-active', '--panel-hover', '--panel-chrome', '--panel', '--row-selected']) {
+        expect(ratio(t.get('--danger')!, t.get(g)!), `${name} --danger on ${g}`).toBeGreaterThanOrEqual(4.5);
+      }
+      for (const k of ['--danger', '--text', '--muted', '--faint']) {
+        expect(ratio(t.get(k)!, t.get('--danger-soft')!), `${name} ${k} on --danger-soft`).toBeGreaterThanOrEqual(4.5);
+      }
+      // A disabled Try Again's label, on a row.
+      for (const g of ['--panel-active', '--row-selected', '--panel-raised']) {
+        expect(ratio(t.get('--faint')!, t.get(g)!), `${name} --faint on ${g}`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  }
+
+  it('the transcript’s error line is an opaque tint with a --danger edge, never a transparent mix (#338)', () => {
+    const tx = readFileSync(new URL('./transcript/transcript.css', import.meta.url), 'utf8');
+    const rule = tx.slice(tx.indexOf('.tx-api-error {'), tx.indexOf('}', tx.indexOf('.tx-api-error {')));
+    expect(rule).toContain('border: 1px solid var(--danger);');
+    expect(rule).toContain('background: var(--danger-soft);');
+    expect(rule).not.toMatch(/opacity|transparent/);
+    expect(list).toMatch(/\.task-why \{[^}]*color: var\(--danger\);/);
   });
 
   it('context meters keep their warning colour, which is not a task status', () => {

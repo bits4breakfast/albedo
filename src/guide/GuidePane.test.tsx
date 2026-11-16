@@ -10,7 +10,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { Task } from '../types';
 import { buildBranchDiff, fileBlockIndex, type BranchDiff } from './blocks';
 import { statReason } from './budget';
-import { edited } from './fixtures';
+import { changed, edited, lines, text } from './fixtures';
 import type { LoadedBranchDiff } from './branchDiff';
 import type { Guide } from './validate';
 
@@ -276,16 +276,21 @@ describe('GuidePane', () => {
     pane();
     await screen.findByRole('heading', { name: 'Foundations' });
     const rail = within(screen.getByRole('navigation', { name: 'Groups' }));
+    // The counts arrive once the comments load, after the heading: wait for
+    // them everywhere they show, not only in the diff header (#305 did that one).
+    await waitFor(() => expect(rail.getAllByRole('button')[0]!.getAttribute('aria-label')).toBe('01 Foundations, 2 comments'));
     const [one, two] = rail.getAllByRole('button');
     expect(one!.getAttribute('aria-label')).toBe('01 Foundations, 2 comments');
     expect(one!.hasAttribute('data-comments')).toBe(true);
     expect(two!.getAttribute('aria-label')).toBe('02 Wiring, 1 comment');
     // The file row says it; the one without comments says nothing.
-    expect(within(left().getByRole('button', { name: /b\.ts/ })).getByRole('img', { name: '2 comments' })).toBeTruthy();
+    expect(await within(left().getByRole('button', { name: /b\.ts/ })).findByRole('img', { name: '2 comments' })).toBeTruthy();
     expect(within(left().getByRole('button', { name: /a\.ts/ })).queryByRole('img', { name: /comment/ })).toBeNull();
     // Open src/b.ts: its diff header says it too.
     fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
-    expect(right().getByRole('img', { name: '2 comments' })).toBeTruthy();
+    // The diff header's count arrives after the file's comments load, which
+    // is a tick later under a busy full-suite run: wait for it, don't assume.
+    expect(await right().findByRole('img', { name: '2 comments' })).toBeTruthy();
   });
 
   describe('Send Comments (#254)', () => {
@@ -593,7 +598,7 @@ describe('file notes (#202, #264)', () => {
     expect(why()).toBeNull();
   });
 
-  it('the diff has one header row: the layout toggle sits beside the size, and the diff draws no head of its own', async () => {
+  it('the diff has one header row: the layout toggle leads the actions at its end (#320), and the diff draws no head of its own', async () => {
     save({});
     pane();
     await screen.findByRole('heading', { name: 'Both' });
@@ -603,7 +608,9 @@ describe('file notes (#202, #264)', () => {
     const toggle = right().getByRole('button', { name: 'Split View' });
     expect(toggle.textContent).toBe('Split');
     expect(toggle.parentElement!.className).toBe('gd-diff-head');
-    expect(toggle.previousElementSibling!.className).toBe('gd-counts');
+    // Past the gap, with Open after it: the actions stay together (#320).
+    expect(toggle.previousElementSibling!.className).toBe('gd-diff-gap');
+    expect(toggle.nextElementSibling!.textContent).toBe('Open');
     expect(region.querySelector('.tx-d-unified')).not.toBeNull();
     fireEvent.click(toggle);
     expect(region.querySelector('.tx-d-split')).not.toBeNull();
@@ -831,6 +838,24 @@ describe('the Map (#288)', () => {
     expect(await screen.findByRole('heading', { name: 'Wiring' })).toBeTruthy();
   });
 
+  it('hovering or focusing a group in the key rings its boxes, and only those (#308)', async () => {
+    await written();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    const wiring = await mapKey().findByRole('button', { name: /Wiring/ });
+    const box = (name: RegExp) => map().getByRole('button', { name });
+    fireEvent.mouseEnter(wiring);
+    expect(box(/^src\/a\.ts;/).hasAttribute('data-group-hot')).toBe(true);
+    expect(box(/^src\/b\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+    expect(box(/^src\/c\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+    fireEvent.mouseLeave(wiring);
+    expect(box(/^src\/a\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+    // Focus does the same, for the keyboard.
+    fireEvent.focus(mapKey().getByRole('button', { name: /Foundations/ }));
+    expect(box(/^src\/a\.ts;/).hasAttribute('data-group-hot')).toBe(true);
+    expect(box(/^src\/b\.ts;/).hasAttribute('data-group-hot')).toBe(true);
+    expect(box(/^src\/c\.ts;/).hasAttribute('data-group-hot')).toBe(false);
+  });
+
   it('the file open in Read is the current box', async () => {
     await written();
     fireEvent.click(screen.getByRole('button', { name: 'Map' }));
@@ -876,10 +901,10 @@ describe('the Map (#288)', () => {
       await written();
       await waitFor(() => expect(screen.queryByRole('group', { name: 'View' })).toBeNull());
       expect(screen.queryByLabelText('Uncommitted Only')).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'View and filter' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More guide actions' }));
       fireEvent.click(screen.getByRole('menuitemradio', { name: 'Map' }));
       expect(await screen.findByRole('region', { name: 'Map' })).toBeTruthy();
-      fireEvent.click(screen.getByRole('button', { name: 'View and filter' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More guide actions' }));
       expect(screen.getByRole('menuitemradio', { name: 'Map' }).getAttribute('aria-checked')).toBe('true');
       fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Uncommitted Only' }));
       await waitFor(() => expect(map().getAllByRole('button')).toHaveLength(1));
@@ -898,5 +923,28 @@ describe('the Map (#288)', () => {
     cleanup();
     pane();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true'));
+  });
+});
+
+describe('a new file (#337)', () => {
+  it('is one column, with no layout toggle', async () => {
+    const fresh = buildBranchDiff([changed('src/new.ts', null, text(lines(5)))], statReason);
+    loaded = { ...loaded, diff: fresh };
+    saveGuide(task.id, {
+      diffHash: fresh.hash,
+      writtenAt: Date.now(),
+      base: 'main',
+      groups: [{ title: 'New', summary: 'S.', blocks: [...fresh.order] }],
+      files: fileBlockIndex(fresh),
+      fallback: null,
+    });
+    pane();
+    await screen.findByRole('heading', { name: 'New' });
+    const region = screen.getByRole('region', { name: 'Diff' });
+    await waitFor(() => expect(region.querySelector('.tx-d-code')).not.toBeNull());
+    expect(region.querySelector('.tx-d-unified')).not.toBeNull();
+    expect(region.querySelector('.tx-d-split')).toBeNull();
+    expect(right().queryByRole('button', { name: 'Split View' })).toBeNull();
+    expect(right().queryByRole('button', { name: 'Unified View' })).toBeNull();
   });
 });

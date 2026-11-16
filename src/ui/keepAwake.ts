@@ -21,21 +21,21 @@
  *    keeps the Mac awake.
  *
  * Re-read when the tasks change, when a live session's rows land, and at the
- * next deadline (`nextAt`) -- never on a tick. Released when the count drops
- * to 0, when the switch is turned off, on unmount, and in Rust on exit; the OS
- * drops it with the process on a crash.
+ * next deadline (`nextAt`) -- never on a tick, and never while switched off.
+ * Released when the count drops to 0, when the switch is turned off, on
+ * unmount, and in Rust on exit; the OS drops it with the process on a crash.
  *
  * The switch: "Keep the Mac Awake While Tasks Run" in ⋯, on by default,
  * remembered in localStorage like the other ⋯ preferences (persisted.ts).
  */
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { onCaptureUpdate, runningInBackground } from '../capture';
 import type { BackgroundItem } from '../capture/background';
 import { backgroundRowsSince } from '../db';
 import type { Message, Task, TaskStatus } from '../types';
-import { KEYS, readPersisted, writePersisted, type Codec } from './persisted';
+import { KEYS, persistedSwitch, usePersistedSwitch } from './persisted';
 import { onPtyPresenceChange, ptyLiveSince } from './Terminal';
 
 // --- what counts (pure) -------------------------------------------------------
@@ -85,34 +85,16 @@ export function keepAwakeReason(count: number): string {
 
 // --- the switch ---------------------------------------------------------------
 
-/** Only 'off' is stored; on removes the key. */
-const onOff: Codec<boolean> = {
-  decode: (raw) => raw !== 'off',
-  encode: (on) => (on ? null : 'off'),
-};
-
-const listeners = new Set<() => void>();
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
-}
+const keepAwakeSwitch = persistedSwitch(KEYS.keepAwake);
 
 /** "Keep the Mac Awake While Tasks Run". Never throws: no storage reads as "on". */
-export function keepAwakeEnabled(): boolean {
-  return readPersisted(KEYS.keepAwake, onOff, true);
-}
+export const keepAwakeEnabled = keepAwakeSwitch.get;
 
-export function setKeepAwakeEnabled(on: boolean): void {
-  writePersisted(KEYS.keepAwake, onOff, on);
-  for (const l of [...listeners]) l();
-}
+export const setKeepAwakeEnabled = keepAwakeSwitch.set;
 
 /** The setting, for the menu that shows it and the hook that obeys it. */
 export function useKeepAwakeEnabled(): [boolean, (on: boolean) => void] {
-  const on = useSyncExternalStore(subscribe, keepAwakeEnabled);
-  return [on, setKeepAwakeEnabled];
+  return usePersistedSwitch(keepAwakeSwitch);
 }
 
 // --- the hook -----------------------------------------------------------------
@@ -121,6 +103,9 @@ export function useKeepAwakeEnabled(): [boolean, (on: boolean) => void] {
 const COALESCE_MS = 1_000;
 
 const NO_ROWS: readonly Message[] = [];
+
+/** Switched off: nothing counts, and no deadline is watched. */
+const OFF: AwakeState = { count: 0, nextAt: null };
 
 /** Tasks whose background work can count: a live pty and a session. */
 function liveKeys(tasks: readonly Task[]): string {
@@ -141,11 +126,12 @@ function liveKeys(tasks: readonly Task[]): string {
  * changes.
  */
 export function useKeepAwake(tasks: readonly Task[], enabled: boolean): number {
-  // Which tasks have a live pty, re-read when one comes or goes.
+  // Which tasks have a live pty, re-read when one comes or goes. None while
+  // switched off (#364): nothing is held then, so nothing is looked up.
   const [presence, setPresence] = useState(0);
   useEffect(() => onPtyPresenceChange(() => setPresence((n) => n + 1)), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const live = useMemo(() => liveKeys(tasks), [tasks, presence]);
+  const live = useMemo(() => (enabled ? liveKeys(tasks) : ''), [tasks, presence, enabled]);
 
   const [rows, setRows] = useState<ReadonlyMap<string, readonly Message[]>>(() => new Map());
   const [now, setNow] = useState(() => Date.now());
@@ -196,7 +182,8 @@ export function useKeepAwake(tasks: readonly Task[], enabled: boolean): number {
     };
   }, [live]);
 
-  const state = useMemo(() => {
+  const state = useMemo((): AwakeState => {
+    if (!enabled) return OFF;
     const byTask = new Map<number, { key: string; since: number }>();
     for (const k of live === '' ? [] : live.split('\n')) {
       const [id, , since] = k.split('\t');
@@ -209,7 +196,7 @@ export function useKeepAwake(tasks: readonly Task[], enabled: boolean): number {
       }),
       now,
     );
-  }, [tasks, live, rows, now]);
+  }, [enabled, tasks, live, rows, now]);
 
   // A deadline passing changes the answer with no new row: re-read the clock
   // then, once.
