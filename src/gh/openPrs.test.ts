@@ -93,6 +93,11 @@ describe('searchString', () => {
       `${OPEN_PRS_SEARCH} in:title "is:closed" "-author:@me" "fix:" "a-b" "@x"`,
     );
   });
+
+  it('drops a trailing backslash from a quoted word, so it cannot escape the closing quote', () => {
+    expect(searchString({ kind: 'title', terms: ['fix:\\', '-\\', 'ok'] })).toBe(`${OPEN_PRS_SEARCH} in:title "fix:" "-" ok`);
+    expect(searchString({ kind: 'title', terms: ['@\\', 'ok'] })).toBe(`${OPEN_PRS_SEARCH} in:title "@" ok`);
+  });
 });
 
 describe('parseOpenPrs', () => {

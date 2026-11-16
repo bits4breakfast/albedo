@@ -64,6 +64,12 @@ export function dropdownPlace(
   return { left, top, width, maxHeight: Math.max(MIN_HEIGHT, viewport.height - top - EDGE) };
 }
 
+/** Nothing has focus: the element that had it went away or was disabled. */
+function focusIsLost(): boolean {
+  const el = document.activeElement;
+  return el === null || el === document.body || (el instanceof HTMLButtonElement && el.disabled);
+}
+
 /** A question's identity: two typings that ask the same thing share one answer. */
 function keyOf(q: PrQuery): string {
   if (q.kind === 'number') return `#${q.number}`;
@@ -81,11 +87,14 @@ export interface ReviewAnyPrProps {
   reviewTasks: readonly Task[];
   /** A PR is being checked out: the button waits. */
   busy: boolean;
-  onChoose: (pr: OpenPr) => void;
+  /** Settles once the choice is open (a checkout can take a while). */
+  onChoose: (pr: OpenPr) => void | Promise<unknown>;
+  /** The dropdown opened: a new search, so the last choice's leftovers can go. */
+  onOpen?: () => void;
   age: (ts: number) => string;
 }
 
-export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age }: ReviewAnyPrProps) {
+export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, onOpen, age }: ReviewAnyPrProps) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
   /** The last answer, and the question it answers. */
@@ -104,6 +113,12 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
   const generation = useRef(0);
   /** The next question is the opening one, asked at once. */
   const first = useRef(true);
+  /** The repo the dropdown was opened on: a project switch asks nothing of the next one. */
+  const openedOn = useRef<string | null>(null);
+  /** A choice's checkout ended while the button was still disabled: focus it once it is not. */
+  const refocusAfter = useRef(false);
+  const busyNow = useRef(busy);
+  busyNow.current = busy;
   const listId = useId();
 
   const query = useMemo(() => parsePrQuery(typed), [typed]);
@@ -114,6 +129,7 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
     asked.current += 1;
     generation.current += 1;
     first.current = true;
+    openedOn.current = null;
     setOpen(false);
     setTyped('');
     setAnswer(null);
@@ -130,7 +146,7 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
 
   // Ask GitHub: at once for the opening question, debounced while typing.
   useEffect(() => {
-    if (!open) return;
+    if (!open || openedOn.current !== project.repoPath) return;
     const n = ++asked.current;
     const g = generation.current;
     const ask = () => {
@@ -155,21 +171,30 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
     // `query` follows `key`: one question, asked once.
   }, [open, key, project.repoPath]);
 
-  // Fixed under the button; follows it when anything scrolls or resizes.
+  // Fixed under the button, and placed again when the window resizes. When
+  // something holding the button scrolls (the task list), the dropdown
+  // closes, as the row menu does: following it would drag the list over the
+  // tab header. Scrolls anywhere else -- the dropdown's own list, the
+  // transcript -- are not its business.
   useLayoutEffect(() => {
     if (!open) return;
-    const measure = (e?: Event) => {
-      if (e && e.target instanceof Node && popRef.current?.contains(e.target)) return;
+    const measure = () => {
       const r = buttonRef.current?.getBoundingClientRect();
       if (r) setPlace(dropdownPlace(r, { width: window.innerWidth, height: window.innerHeight }));
+    };
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      const button = buttonRef.current;
+      if (!button) return;
+      if (t === document || (t instanceof Node && t.contains(button))) close(false);
     };
     measure();
     inputRef.current?.focus();
     window.addEventListener('resize', measure);
-    window.addEventListener('scroll', measure, true);
+    window.addEventListener('scroll', onScroll, true);
     return () => {
       window.removeEventListener('resize', measure);
-      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('scroll', onScroll, true);
     };
   }, [open]);
 
@@ -187,22 +212,29 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
   }, [open]);
 
   // Checking out began elsewhere (a row): nothing may be chosen meanwhile.
+  // Once the checkout of a choice made here has ended and the button is
+  // enabled again, focus that nothing else took comes back to it.
   useEffect(() => {
     if (busy && open) close(false);
+    if (!busy && refocusAfter.current) {
+      refocusAfter.current = false;
+      if (focusIsLost()) buttonRef.current?.focus();
+    }
   }, [busy]);
 
-  const rows: OpenPr[] = useMemo(() => {
+  /** The rows, and how many of them came from the recent list alone (part of a word). */
+  const { rows, partial } = useMemo((): { rows: OpenPr[]; partial: number } => {
     const a = answer?.answer;
-    if (!a) return [];
-    if (a.kind === 'number') return a.pr ? [a.pr] : [];
-    if (a.kind !== 'list') return [];
-    if (query.kind !== 'title') return a.prs;
+    if (!a) return { rows: [], partial: 0 };
+    if (a.kind === 'number') return { rows: a.pr ? [a.pr] : [], partial: 0 };
+    if (a.kind !== 'list') return { rows: [], partial: 0 };
+    if (query.kind !== 'title') return { rows: a.prs, partial: 0 };
     const terms = query.terms;
     // GitHub matches whole words only; the recent list also answers a word
     // still being typed ("time" finds "timezone" there).
     const seen = new Set(a.prs.map((p) => p.url));
-    const partial = recent.filter((p) => !seen.has(p.url) && titleHas(p.title, terms));
-    return [...a.prs, ...partial].sort((x, y) => y.updatedAt - x.updatedAt);
+    const more = recent.filter((p) => !seen.has(p.url) && titleHas(p.title, terms));
+    return { rows: [...a.prs, ...more].sort((x, y) => y.updatedAt - x.updatedAt), partial: more.length };
   }, [answer, recent, query]);
 
   // Keep the highlighted row in view while arrowing.
@@ -213,8 +245,15 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
 
   const choose = (pr: OpenPr | undefined) => {
     if (!pr) return;
-    close(false);
-    onChoose(pr);
+    // Back on the button, where the dropdown came from: the field is about
+    // to go. Selecting the task may move focus on from there, as it likes.
+    close(true);
+    void Promise.resolve(onChoose(pr)).finally(() => {
+      // The button was disabled while the PR was checked out, and focus left
+      // it. If nothing has taken focus since, it goes back there.
+      if (busyNow.current) refocusAfter.current = true;
+      else if (focusIsLost()) buttonRef.current?.focus();
+    });
   };
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -262,11 +301,22 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
       yours: `#${a.number} is yours: GitHub doesn't let you review your own PRs.`,
     }[a.why];
   } else if (query.kind === 'title') {
-    const n = Math.max(a.total, rows.length);
-    status =
-      n === 0
-        ? `No open PR title has “${terms.join(' ')}”. GitHub matches whole words.`
-        : `${plural(n, 'open PR matches', 'open PRs match')}${n > rows.length ? ` · the ${rows.length} most recent shown` : ''}`;
+    // GitHub's count and the recent list's part-word matches, each said for
+    // what it is: never added into one number that neither of them gave.
+    const typedWords = `“${terms.join(' ')}”`;
+    const github = a.prs.length;
+    const parts: string[] = [];
+    if (a.total > 0) {
+      parts.push(
+        `${plural(a.total, 'open PR matches', 'open PRs match')}${a.total > github ? `, the ${github} most recent shown` : ''}`,
+      );
+    }
+    if (partial > 0) {
+      parts.push(
+        `${a.total > 0 ? `${partial} more recent` : plural(partial, 'recent PR', 'recent PRs')} ${partial === 1 ? 'has' : 'have'} ${typedWords} in a word`,
+      );
+    }
+    status = parts.length > 0 ? parts.join(' · ') : `No open PR title has ${typedWords}. GitHub matches whole words.`;
   } else {
     status = rows.length === 0 ? `No open PRs by others in ${project.name}.` : 'Recently updated · open';
   }
@@ -281,7 +331,12 @@ export default function ReviewAnyPr({ project, reviewTasks, busy, onChoose, age 
         aria-expanded={open}
         disabled={busy}
         title="Check out any open pull request as a review task. Nothing is sent to GitHub."
-        onClick={() => (open ? close(false) : setOpen(true))}
+        onClick={() => {
+          if (open) return close(false);
+          openedOn.current = project.repoPath;
+          onOpen?.();
+          setOpen(true);
+        }}
       >
         Review a PR…
         <span className="review-any-chevron" aria-hidden="true">

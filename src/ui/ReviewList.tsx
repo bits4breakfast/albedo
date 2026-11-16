@@ -154,8 +154,12 @@ export default function ReviewList({
 }: ReviewListProps) {
   const [opening, setOpening] = useState<string | null>(null);
   const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map());
-  /** The last PR chosen from "Review a PR…": its progress and error show under the button. */
-  const [picked, setPicked] = useState<{ url: string; number: number } | null>(null);
+  /**
+   * The last PR chosen from "Review a PR…": its progress and error show under
+   * the button, in its own project only. ReviewList is not remounted on a
+   * project switch, so the project is kept with it.
+   */
+  const [picked, setPicked] = useState<{ projectId: number; url: string; number: number } | null>(null);
 
   /** A row's PR, or one chosen from "Review a PR…": the same path for both. */
   const open = async (pr: Pick<ReviewPr, 'url' | 'number' | 'title' | 'baseBranch' | 'headOid' | 'commitCount'>) => {
@@ -190,7 +194,7 @@ export default function ReviewList({
   const leftOver = state.kind === 'ready' ? reviewTasks.filter((t) => t.reviewUrl && !listed.has(t.reviewUrl)) : [];
 
   // Under the button only when no row shows it already.
-  const pickedShown = picked !== null && !listed.has(picked.url) ? picked : null;
+  const pickedShown = picked !== null && picked.projectId === project.id && !listed.has(picked.url) ? picked : null;
   const pickedError = pickedShown ? (errors.get(pickedShown.url) ?? null) : null;
 
   let body: ReactNode = null;
@@ -214,9 +218,11 @@ export default function ReviewList({
           reviewTasks={reviewTasks}
           busy={opening !== null}
           onChoose={(pr) => {
-            setPicked({ url: pr.url, number: pr.number });
-            void open(pr);
+            setPicked({ projectId: project.id, url: pr.url, number: pr.number });
+            return open(pr);
           }}
+          // A new search: the last choice's error has been read.
+          onOpen={() => setPicked(null)}
           age={age}
         />
       )}

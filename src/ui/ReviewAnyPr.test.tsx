@@ -13,11 +13,12 @@ import { setGhRunner, type GhResult, type GhRunner } from '../gh/gh';
 import { OPEN_PRS_SEARCH } from '../gh/openPrs';
 import { dropdownPlace, SEARCH_DEBOUNCE_MS } from './ReviewAnyPr';
 
-const opened = vi.hoisted(() => ({ calls: [] as string[], fail: null as string | null }));
+const opened = vi.hoisted(() => ({ calls: [] as string[], fail: null as string | null, hold: null as Promise<void> | null }));
 vi.mock('./openReview', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./openReview')>()),
   openReviewTask: async (_project: unknown, pr: { url: string; title: string }) => {
     opened.calls.push(pr.url);
+    if (opened.hold) await opened.hold;
     if (opened.fail) throw new Error(opened.fail);
     return { ...reviewTask, id: 99, title: pr.title, reviewUrl: pr.url };
   },
@@ -79,6 +80,7 @@ beforeEach(() => {
   });
   opened.calls.length = 0;
   opened.fail = null;
+  opened.hold = null;
   onSelect.mockClear();
   onOpened.mockClear();
 });
@@ -91,10 +93,10 @@ afterEach(() => {
 
 const searches = () => calls.map((a) => a.find((x) => x.startsWith('q=') || x.startsWith('number=')));
 
-function ui(reviewTasks: Task[] = [reviewTask]) {
+function ui(reviewTasks: Task[] = [reviewTask], shown: Project = project) {
   return (
     <ReviewList
-      project={project}
+      project={shown}
       state={{ kind: 'ready', list: { viewer: 'me', prs: [] } }}
       groups={[]}
       reviewTasks={reviewTasks}
@@ -176,7 +178,8 @@ describe('Review a PR… (#386)', () => {
     };
     await openDropdown();
     fireEvent.change(field(), { target: { value: 'time' } });
-    expect(await screen.findByText('2 open PRs match')).toBeTruthy();
+    // GitHub's count and the part-word one, each for what it is.
+    expect(await screen.findByText('1 open PR matches · 1 more recent has “time” in a word')).toBeTruthy();
     const rows = options();
     expect(rows.map((r) => r.textContent?.slice(0, 4))).toEqual(['#412', '#371']);
     const marks = rows.map((r) => [...r.querySelectorAll('mark')].map((m) => m.textContent));
@@ -319,6 +322,127 @@ describe('Review a PR… (#386)', () => {
       />,
     );
     expect(screen.queryByRole('button', { name: /Review a PR…/ })).toBeNull();
+  });
+});
+
+describe('review fixes (#388)', () => {
+  const other = { id: 2, name: 'ledger', repoPath: '/r/ledger' } as Project;
+
+  it('the status never adds part-word matches into GitHub’s count', async () => {
+    answer = (args) => {
+      const q = args.find((a) => a.startsWith('q='));
+      if (q === `q=${OPEN_PRS_SEARCH}`) return list(RECENT);
+      if (q?.endsWith('in:title time')) return list([]);
+      // 24 match on GitHub, 1 of them returned.
+      return { code: 0, stdout: JSON.stringify({ data: { search: { issueCount: 24, nodes: [node(300, 'Retry the cache')] } } }), stderr: '' };
+    };
+    await openDropdown();
+    fireEvent.change(field(), { target: { value: 'time' } });
+    expect(await screen.findByText('1 recent PR has “time” in a word')).toBeTruthy();
+    fireEvent.change(field(), { target: { value: 'Retry' } });
+    expect(await screen.findByText('24 open PRs match, the 1 most recent shown · 1 more recent has “Retry” in a word')).toBeTruthy();
+  });
+
+  it('a checkout error under the button stays with its project, and goes when the dropdown opens again', async () => {
+    opened.fail = 'fatal: no such ref';
+    const r = await openDropdown();
+    fireEvent.click(options()[0]!);
+    expect((await screen.findByRole('alert')).textContent).toBe('Could not check out #418: fatal: no such ref');
+    // Another project: not its error.
+    r.rerender(ui([], other));
+    expect(screen.queryByRole('alert')).toBeNull();
+    // Back: still there, until a new search starts.
+    r.rerender(ui());
+    expect(screen.getByRole('alert')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Review a PR…/ }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('"Checking out #n…" stays with its project too', async () => {
+    let release: () => void = () => {};
+    opened.hold = new Promise<void>((res) => (release = res));
+    const r = await openDropdown();
+    fireEvent.click(options()[0]!);
+    expect(await screen.findByText('Checking out #418…')).toBeTruthy();
+    r.rerender(ui([], other));
+    expect(screen.queryByText('Checking out #418…')).toBeNull();
+    await act(async () => release());
+  });
+
+  it('a project switch while open closes it and asks the new repo nothing', async () => {
+    const r = await openDropdown();
+    r.rerender(ui([], other));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('closes when the list holding the button scrolls, not when its own list or another pane does', async () => {
+    const scroller = document.createElement('div');
+    document.body.appendChild(scroller);
+    const r = render(ui(), { container: scroller });
+    fireEvent.click(screen.getByRole('button', { name: /Review a PR…/ }));
+    await screen.findByText('Recently updated · open');
+    fireEvent.scroll(screen.getByRole('listbox'));
+    const pane = document.createElement('div');
+    document.body.appendChild(pane);
+    fireEvent.scroll(pane);
+    expect(screen.queryByRole('combobox')).not.toBeNull();
+    fireEvent.scroll(scroller);
+    expect(screen.queryByRole('combobox')).toBeNull();
+    r.unmount();
+    scroller.remove();
+    pane.remove();
+  });
+
+  it('after choosing with Return, focus is back on the button', async () => {
+    await openDropdown();
+    // #415 has a review task: selecting it moves focus nowhere here.
+    fireEvent.keyDown(field(), { key: 'ArrowDown' });
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledWith(7);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Review a PR…/ }));
+  });
+
+  it('after a checkout chosen with Return, focus comes back to the button once it is enabled again', async () => {
+    let release: () => void = () => {};
+    opened.hold = new Promise<void>((res) => (release = res));
+    await openDropdown();
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    const button = screen.getByRole('button', { name: /Review a PR…/ }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(true));
+    // WebKit drops focus from a control that is disabled; jsdom keeps it (and
+    // will not blur a disabled button), so lose it the way the app would.
+    const elsewhere = document.body.appendChild(document.createElement('input'));
+    elsewhere.focus();
+    elsewhere.remove();
+    expect(document.activeElement).toBe(document.body);
+    // Released outside act, as in the app: the checkout's promise settles
+    // before React has drawn the button enabled again.
+    release();
+    await waitFor(() => expect(onOpened).toHaveBeenCalled());
+    await waitFor(() => expect(button.disabled).toBe(false));
+    await waitFor(() => expect(document.activeElement).toBe(button));
+  });
+});
+
+describe('focus after a checkout, whichever settles first', () => {
+  it('when the button is drawn enabled before the checkout’s promise settles', async () => {
+    let release: () => void = () => {};
+    opened.hold = new Promise<void>((res) => (release = res));
+    await openDropdown();
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    const button = screen.getByRole('button', { name: /Review a PR…/ }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(true));
+    const elsewhere = document.body.appendChild(document.createElement('input'));
+    elsewhere.focus();
+    elsewhere.remove();
+    // Inside act the state updates are drawn first, then the promise settles.
+    await act(async () => release());
+    expect(button.disabled).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(button));
   });
 });
 

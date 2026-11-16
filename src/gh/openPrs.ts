@@ -78,12 +78,16 @@ export function parsePrQuery(typed: string): PrQuery {
 /**
  * The search string for the recent list or a title search. A word that
  * GitHub would read as a qualifier (`is:closed`, `author:x`) or a negation
- * (`-foo`) is quoted, so it is only ever words of a title and never widens
- * or narrows the search past "open, not yours, this repo".
+ * (`-foo`) is quoted, so it cannot widen the search past "open, not yours,
+ * this repo". A trailing backslash is dropped from a quoted word: it would
+ * escape the closing quote. `AND`, `OR` and `NOT` typed in capitals still
+ * act as GitHub's operators between the words (measured: `xterm OR types`
+ * finds both), but only within those same constraints.
  */
 export function searchString(q: Exclude<PrQuery, { kind: 'number' }>): string {
   if (q.kind === 'recent') return OPEN_PRS_SEARCH;
-  const words = q.terms.map((w) => (/[:\-]|^[^\p{L}\p{N}]/u.test(w) ? `"${w}"` : w));
+  const special = /[:\-]|^[^\p{L}\p{N}]/u;
+  const words = q.terms.map((w) => (special.test(w) ? `"${w.replace(/\\+$/, '')}"` : w)).filter((w) => w !== '""');
   return `${OPEN_PRS_SEARCH} in:title ${words.join(' ')}`;
 }
 
