@@ -1512,7 +1512,7 @@ function GapLines({
    * the old number points at another line. So a side's tokens are used only
    * where that side's line IS the row's text, else the other side's.
    */
-  const picked = useMemo(() => {
+  const sideTokens = useMemo(() => {
     if (!whole) return null;
     const pick = (line: DiffLine, first: 'old' | 'new'): DualToken[] | undefined => {
       const oldOk = line.oldNumber !== null && oldSource[line.oldNumber - 1] === line.content;
@@ -1526,8 +1526,8 @@ function GapLines({
       new: lines.map((l) => pick(l, 'new') ?? []),
     };
   }, [whole, lines, oldSource, newSource]);
-  const oldTokens = picked ? picked.old : own;
-  const newTokens = picked ? picked.new : own;
+  const oldTokens = sideTokens ? sideTokens.old : own;
+  const newTokens = sideTokens ? sideTokens.new : own;
 
   return split ? (
     <SplitBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} linkPath={linkPath} />
