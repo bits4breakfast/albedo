@@ -60,8 +60,16 @@ export const ACTION_LABEL: Record<'edit' | 'resolve' | 'delete', string> = {
   delete: 'Delete',
 };
 
-/** The trace a comment resolved on its own leaves on the file (#222). */
-export function resolvedTrace(c: Pick<ReviewComment, 'lineStart' | 'lineEnd'>): string {
+/**
+ * The trace a comment resolved on its own leaves on the file (#222). On
+ * removed lines (#402) it resolved because they are back.
+ */
+export function resolvedTrace(c: Pick<ReviewComment, 'lineStart' | 'lineEnd'> & Partial<Pick<ReviewComment, 'side'>>): string {
+  if (c.side === 'old') {
+    return c.lineStart === c.lineEnd
+      ? `Removed line ${c.lineStart} is back in the file`
+      : `Removed lines ${c.lineStart}–${c.lineEnd} are back in the file`;
+  }
   const where = c.lineStart === c.lineEnd ? `Line ${c.lineStart}` : `Lines ${c.lineStart}–${c.lineEnd}`;
   return `${where} changed after it was sent`;
 }

@@ -11,7 +11,7 @@
 
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from '@codemirror/view';
-import type { ReviewComment } from '../../db/comments';
+import { removedLines, type ReviewComment } from '../../db/comments';
 import { ACTION_LABEL, DESTINATIONS, cardState, draftPlaceholder, draftSaveLabel } from './commentLabels';
 
 /** A comment placed in this document. */
@@ -23,6 +23,12 @@ export interface PlacedComment {
   to: number;
   /** #287: a draft for GitHub on lines outside the PR's diff. */
   outside?: boolean;
+  /**
+   * #402: a comment on removed lines, which are not in this file. `from`/`to`
+   * are then the line its card goes under, and the removal sat just above
+   * it -- or, `below`, after it: it was at the end of the file.
+   */
+  removed?: { below: boolean };
 }
 
 export interface Draft {
@@ -30,6 +36,13 @@ export interface Draft {
   to: number;
   /** Set when editing an existing comment. */
   editing: ReviewComment | null;
+  /** #402: editing a comment on removed lines: its place in words, and no line shaded. */
+  label?: string;
+}
+
+/** "On removed line 4 · was above this line" (#402): a removed comment's place in the file. */
+export function removedPlace(c: Pick<ReviewComment, 'lineStart' | 'lineEnd'>, below: boolean): string {
+  return `On ${removedLines(c)} · was ${below ? 'below' : 'above'} this line`;
 }
 
 export interface CommentActions {
@@ -127,7 +140,10 @@ class CommentCard extends WidgetType {
       a.sentAt === b.sentAt &&
       a.body === b.body &&
       a.github === b.github &&
-      this.placed.outside === other.placed.outside
+      this.placed.outside === other.placed.outside &&
+      a.lineStart === b.lineStart &&
+      a.lineEnd === b.lineEnd &&
+      this.placed.removed?.below === other.placed.removed?.below
     );
   }
   toDOM(view: EditorView): HTMLElement {
@@ -137,8 +153,12 @@ class CommentCard extends WidgetType {
     const state = cardState(c, Date.now(), this.placed.outside === true);
     const card = el('div', 'ed-cmt');
     card.dataset.state = state.state;
+    const removed = this.placed.removed;
+    if (removed) card.dataset.side = 'old';
     const head = el('div', 'ed-cmt-head');
-    head.append(el('span', 'ed-cmt-where', rangeLabel(view, this.placed.from, this.placed.to)));
+    head.append(
+      el('span', 'ed-cmt-where', removed ? removedPlace(c, removed.below) : rangeLabel(view, this.placed.from, this.placed.to)),
+    );
     const chip = el('span', 'ed-cmt-chip', state.chip);
     chip.dataset.state = state.state;
     head.append(chip);
@@ -240,7 +260,7 @@ class DraftBox extends WidgetType {
     });
     const foot = el('div', 'ed-cmt-foot');
     foot.append(
-      el('span', 'ed-cmt-where', rangeLabel(view, this.draft.from, this.draft.to)),
+      el('span', 'ed-cmt-where', this.draft.label ?? rangeLabel(view, this.draft.from, this.draft.to)),
       button('Cancel', cancel),
       primary,
     );
@@ -254,6 +274,19 @@ class DraftBox extends WidgetType {
 }
 
 const commentedLine = Decoration.line({ class: 'ed-cmt-line' });
+
+/** #402: the short red mark where removed lines were, between two lines of the file. */
+class RemovedMark extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+  toDOM(): HTMLElement {
+    const mark = el('div', 'ed-cmt-gap');
+    mark.setAttribute('aria-hidden', 'true');
+    return mark;
+  }
+}
+const removedMark = new RemovedMark();
 
 /**
  * A gutter cell's content on every line: the place to press, named by its
@@ -300,14 +333,25 @@ export function commentsExtension(actions: () => CommentActions | null): Extensi
         pos = line.to + 1;
       }
     };
+    // One mark per gap (#402), however many comments it has.
+    const gaps = new Set<number>();
     for (const p of placed) {
+      if (p.removed) {
+        // Not this line's: a mark where the removed lines were, above it
+        // (or, at the end of the file, below it), and no edge.
+        const at = p.removed.below ? p.to : p.from;
+        if (!gaps.has(at)) {
+          gaps.add(at);
+          ranges.push(Decoration.widget({ widget: removedMark, block: true, side: p.removed.below ? 1 : -1 }).range(at));
+        }
+      }
       if (draft?.editing?.id === p.comment.id) continue; // the draft box replaces its card
-      shade(p.from, p.to);
-      ranges.push(Decoration.widget({ widget: new CommentCard(p, proxy), block: true, side: 1 }).range(p.to));
+      if (!p.removed) shade(p.from, p.to);
+      ranges.push(Decoration.widget({ widget: new CommentCard(p, proxy), block: true, side: p.removed?.below ? 2 : 1 }).range(p.to));
     }
     if (picking) shade(picking.from, picking.to);
     if (draft) {
-      shade(draft.from, draft.to);
+      if (draft.label === undefined) shade(draft.from, draft.to);
       ranges.push(Decoration.widget({ widget: new DraftBox(draft, proxy), block: true, side: 2 }).range(draft.to));
     }
     return Decoration.set(ranges, true);
@@ -320,7 +364,8 @@ export function commentsExtension(actions: () => CommentActions | null): Extensi
     // showed its + on the cursor's line alone, and a blank strip elsewhere.
     lineMarker(view, line) {
       const { placed } = view.state.field(commentsField);
-      return placed.some((p) => p.to >= line.from && p.from <= line.to) ? dot : empty;
+      // A comment on removed lines (#402) is not on this line: no dot.
+      return placed.some((p) => !p.removed && p.to >= line.from && p.from <= line.to) ? dot : empty;
     },
     lineMarkerChange: (update) => update.transactions.some((t) => t.effects.some((e) => e.is(setPlacedComments))),
     domEventHandlers: {

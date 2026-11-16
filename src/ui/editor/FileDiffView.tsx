@@ -105,7 +105,12 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     load.kind === 'ready' && 'newText' in load.data.result && load.data.result.change !== 'deleted'
       ? load.data.result.newText
       : null;
-  const comments = useDiffComments(task.id, target.relative, currentText, unsaved, true, task);
+  // Comments on removed lines (#402) point at the base, the old side.
+  const baseText =
+    load.kind === 'ready' && 'oldText' in load.data.result && load.data.result.change !== 'added'
+      ? load.data.result.oldText
+      : null;
+  const comments = useDiffComments(task.id, target.relative, currentText, unsaved, true, task, baseText);
 
   if (load.kind === 'loading') return <div className="ed-message">Reading the change…</div>;
   if (load.kind === 'error') {

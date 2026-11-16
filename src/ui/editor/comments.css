@@ -85,6 +85,21 @@
 .ed-cmt-chip[data-state='waiting'] { background: var(--accent-soft); color: var(--on-accent-soft); }
 .ed-cmt-chip[data-state='sent'] { color: var(--muted); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .ed-cmt[data-state='sent'] { border-left-color: var(--border-strong); }
+/* A comment on removed lines (#402): a red edge whatever its state, and its
+   place ("On removed line 4") in --del, measured on the card's --panel
+   (commentsContrast.test.ts). Two attributes, so it outranks the sent edge
+   above by specificity, not by order. */
+.ed-cmt[data-side='old'][data-state] { border-left-color: var(--del); }
+.ed-cmt[data-side='old'] > .ed-cmt-head > .ed-cmt-where { color: var(--del); font-weight: 600; }
+/* In the File mode, where removed lines were: a short red mark between two
+   lines, on the editor's --panel-inset. */
+.ed-cmt-gap {
+  width: 40px;
+  height: 3px;
+  margin: 1px 0 1px 4px;
+  border-radius: 2px;
+  background: var(--del);
+}
 .ed-cmt-actions { margin-left: auto; display: inline-flex; gap: 2px; }
 .ed-cmt-more { padding: 0 6px; letter-spacing: 1px; }
 

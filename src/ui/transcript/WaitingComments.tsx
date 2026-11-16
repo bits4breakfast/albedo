@@ -241,6 +241,8 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
   const openFile = useOpenFile();
   const name = comment.path.split('/').pop() ?? comment.path;
   const lines = comment.lineStart === comment.lineEnd ? `${comment.lineStart}` : `${comment.lineStart}–${comment.lineEnd}`;
+  // On removed lines (#402) the numbers are the base's, and it says so.
+  const removed = comment.side === 'old';
   const save = () => {
     if (draft === null || draft.trim().length === 0) return;
     editCodeComment(taskId, comment.id, draft.trim()).then(
@@ -250,8 +252,12 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
   };
   return (
     <li className="tx-waiting-item">
-      <div className="tx-waiting-where" title={`${comment.path}:${lines}\n\n${comment.anchorText}`}>
-        <span className="tx-waiting-file">{name}</span>:{lines}
+      <div
+        className="tx-waiting-where"
+        title={`${comment.path}${removed ? `: removed ${lines} (in the base)` : `:${lines}`}\n\n${comment.anchorText}`}
+      >
+        <span className="tx-waiting-file">{name}</span>
+        {removed ? ` removed ${lines}` : `:${lines}`}
       </div>
       {draft !== null ? (
         <div className="tx-waiting-edit" data-focus-keeps-tab="">

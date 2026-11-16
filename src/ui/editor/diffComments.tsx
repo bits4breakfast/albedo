@@ -1,7 +1,9 @@
 /**
  * Review comments in the editor's Diff mode: the same comments as the File
  * mode, placed on the new side of the diff by their code (`relocate`),
- * written by pressing or dragging the + on the rows.
+ * written by pressing or dragging the + on the rows. A comment on removed
+ * lines (#402) is placed on the old side instead, under its deleted rows, by
+ * its text in the base (`placeRemoved`).
  *
  * The rules are the File mode's: a comment points at the file as it is on
  * disk, so a new one is refused while the editor holds unsaved edits; a box
@@ -10,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { DiffAnnotations } from '../transcript/Diff';
+import type { DiffAnnotations, RemovedAnnotations } from '../transcript/Diff';
 import {
   addComment,
   deleteComment,
@@ -18,11 +20,15 @@ import {
   setCommentGithub,
   listComments,
   onCommentsChanged,
+  placeRemoved,
   relocate,
+  removedLines,
   reopenComment,
   resolveComment,
   resolveComments,
   shouldAutoResolve,
+  sideOf,
+  type CommentSide,
   type ReviewComment,
 } from '../../db/comments';
 import { CommentCardView, CommentDraftView, CommentsBar, ThreadCardView, ThreadsAside } from './CommentViews';
@@ -34,6 +40,17 @@ interface Draft {
   from: number;
   to: number;
   editing: ReviewComment | null;
+  /** #402: 'old' for removed lines, by the base's numbers. Absent: the file now. */
+  side?: CommentSide;
+  /** The row it is drawn under, when not `to` (a removed comment whose last line is back). */
+  row?: number;
+  /** #402: a selection over both sides: the removed lines it also covers, one comment each. */
+  removed?: { from: number; to: number };
+}
+
+/** "On removed line 4", "On removed lines 4–5" (#402): a card's place on the old side. */
+function onRemoved(from: number, to: number): string {
+  return `On ${removedLines({ lineStart: from, lineEnd: to })}`;
 }
 
 function message(err: unknown): string {
@@ -60,6 +77,13 @@ export function useDiffComments(
    * every other task, whose comments are exactly as before.
    */
   review: ReviewTask | null = null,
+  /**
+   * The diff's base, its old side (#402): where a comment on removed lines
+   * is found again, and the + on deleted rows is offered. Null or absent:
+   * no base to point at, so deleted rows take no comment and one already
+   * made shows in the bar.
+   */
+  oldText: string | null = null,
 ): { annotations: DiffAnnotations | null; notice: string | null; clearNotice: () => void; bar: ReactNode } {
   const isReview = !!review?.reviewUrl;
   const pr = isReview ? reviewPr(review) : null;
@@ -69,6 +93,7 @@ export function useDiffComments(
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [picking, setPicking] = useState<{ from: number; to: number } | null>(null);
+  const [pickingRemoved, setPickingRemoved] = useState<{ from: number; to: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** Comments that resolved themselves while this diff was open (#222). */
   const [traces, setTraces] = useState<ReviewComment[]>([]);
@@ -96,14 +121,25 @@ export function useDiffComments(
   // Where each comment sits in the file now. One whose code is gone is in
   // the bar above the diff (#222): outdated when unsent, and resolved on its
   // own, with a trace, when sent. Never pinned to whatever is there now.
-  const { placed, outdated, resolving } = useMemo(() => {
+  // One on removed lines (#402) sits under its deleted rows while they are
+  // still removed; back in the file, it resolves when sent, and is in the
+  // bar otherwise, as is one whose text the base no longer has.
+  const { placed, removed, outdated, resolving } = useMemo(() => {
     const out = {
       placed: [] as Array<{ comment: ReviewComment; from: number; to: number }>,
+      removed: [] as Array<{ comment: ReviewComment; from: number; to: number; row: number }>,
       outdated: [] as ReviewComment[],
       resolving: [] as ReviewComment[],
     };
     if (newText === null) return out;
     for (const c of comments) {
+      if (sideOf(c) === 'old') {
+        const gone = oldText === null ? null : placeRemoved(c, oldText, newText);
+        if (gone?.state === 'removed') out.removed.push({ comment: c, from: gone.lineStart, to: gone.lineEnd, row: gone.row });
+        else if (gone?.state === 'back' && !unsaved && fresh && shouldAutoResolve(c, newText, oldText)) out.resolving.push(c);
+        else out.outdated.push(c);
+        continue;
+      }
       const at = relocate(c, newText);
       if (at.state === 'current') out.placed.push({ comment: c, from: at.lineStart, to: at.lineEnd });
       // `newText` is the file on disk; unsaved typing is not.
@@ -111,7 +147,7 @@ export function useDiffComments(
       else out.outdated.push(c);
     }
     return out;
-  }, [comments, newText, unsaved, fresh]);
+  }, [comments, newText, oldText, unsaved, fresh]);
 
   const resolvingKey = resolving.map((c) => c.id).join(',');
   useEffect(() => {
@@ -148,24 +184,77 @@ export function useDiffComments(
     [unsaved],
   );
 
+  // The + on deleted rows, and a selection over them (#402): the same rules
+  // as the new side's, on the base's lines.
+  const pickRemoved = useCallback(
+    (from: number, to: number, done: boolean) => {
+      if (!done) {
+        setPickingRemoved({ from, to });
+        return;
+      }
+      setPickingRemoved(null);
+      if (unsaved) {
+        setNotice('Save your edits first: a comment refers to the file as it is on disk.');
+        return;
+      }
+      setNotice(null);
+      setDraft({ from, to, editing: null, side: 'old' });
+    },
+    [unsaved],
+  );
+
+  // A selection over deleted and added lines (#402): one box, under the
+  // added lines, saved as one comment per side.
+  const pickBoth = useCallback(
+    (added: { from: number; to: number }, gone: { from: number; to: number }) => {
+      if (unsaved) {
+        setNotice('Save your edits first: a comment refers to the file as it is on disk.');
+        return;
+      }
+      setNotice(null);
+      setDraft({ ...added, editing: null, removed: gone });
+    },
+    [unsaved],
+  );
+
   const save = useCallback(
     (d: Draft, text: string, github: 'draft' | null) => {
       if (newText === null) return;
       const editing = d.editing;
+      // Only a review task's comment says where it goes (#287).
+      const where = isReview ? { github } : {};
+      // On removed lines (#402): the base's lines, quoted from the base.
+      const removedComment = (r: { from: number; to: number }) =>
+        oldText === null
+          ? Promise.reject(new Error('the base of this diff is not known'))
+          : addComment({
+              taskId,
+              path,
+              lineStart: r.from,
+              lineEnd: r.to,
+              anchorText: oldText.split('\n').slice(r.from - 1, r.to).join('\n'),
+              body: text,
+              ...where,
+              side: 'old',
+            });
       const write = editing
         ? editComment(taskId, editing.id, text).then(() =>
             isReview && github !== editing.github ? setCommentGithub(taskId, editing.id, github) : undefined,
           )
-        : addComment({
-            taskId,
-            path,
-            lineStart: d.from,
-            lineEnd: d.to,
-            anchorText: newText.split('\n').slice(d.from - 1, d.to).join('\n'),
-            body: text,
-            // Only a review task's comment says where it goes (#287).
-            ...(isReview ? { github } : {}),
-          });
+        : d.side === 'old'
+          ? removedComment(d)
+          : Promise.all([
+              addComment({
+                taskId,
+                path,
+                lineStart: d.from,
+                lineEnd: d.to,
+                anchorText: newText.split('\n').slice(d.from - 1, d.to).join('\n'),
+                body: text,
+                ...where,
+              }),
+              ...(d.removed ? [removedComment(d.removed)] : []),
+            ]);
       write.then(
         () => {
           setNotice(null);
@@ -174,7 +263,7 @@ export function useDiffComments(
         (err: unknown) => setNotice(`Could not save the comment, which is still in its box: ${message(err)}`),
       );
     },
-    [taskId, path, newText, isReview],
+    [taskId, path, newText, oldText, isReview],
   );
 
   // Other reviewers' threads on this file (#287, step 4): at the line
@@ -232,10 +321,31 @@ export function useDiffComments(
     [review?.reviewUrl, drafts, reply, taskId, report],
   );
 
+  const draftView = useCallback((d: Draft): ReactNode => (
+    <CommentDraftView
+      key={`draft-${d.editing?.id ?? 'new'}-${d.side ?? 'new'}-${d.from}`}
+      from={d.from}
+      to={d.to}
+      label={
+        d.side === 'old'
+          ? onRemoved(d.from, d.to)
+          : d.removed
+            ? `${onRemoved(d.removed.from, d.removed.to)} and ${d.from === d.to ? `line ${d.from}` : `lines ${d.from}–${d.to}`}`
+            : undefined
+      }
+      initial={d.editing?.body ?? ''}
+      editing={d.editing !== null}
+      onSave={(text, github) => save(d, text, github)}
+      onCancel={() => setDraft(null)}
+      // A review task's comment goes to GitHub unless you say so (#287).
+      destination={isReview ? (d.editing ? d.editing.github : 'draft') : undefined}
+    />
+  ), [save, isReview]);
+
   const after = useCallback(
     (line: number): ReactNode => {
       const here = placed.filter((p) => p.to === line && p.comment.id !== draft?.editing?.id);
-      const draftHere = draft !== null && draft.to === line;
+      const draftHere = draft !== null && draft.side !== 'old' && draft.to === line;
       const threadsHere = threadsAt.get(line) ?? [];
       if (here.length === 0 && !draftHere && threadsHere.length === 0) return null;
       return (
@@ -251,31 +361,56 @@ export function useDiffComments(
               onDelete={() => report(deleteComment(taskId, p.comment.id), 'delete the comment')}
             />
           ))}
-          {draftHere && draft ? (
-            <CommentDraftView
-              key={`draft-${draft.editing?.id ?? 'new'}-${draft.from}`}
-              from={draft.from}
-              to={draft.to}
-              initial={draft.editing?.body ?? ''}
-              editing={draft.editing !== null}
-              onSave={(text, github) => save(draft, text, github)}
-              onCancel={() => setDraft(null)}
-              // A review task's comment goes to GitHub unless you say so (#287).
-              destination={isReview ? (draft.editing ? draft.editing.github : 'draft') : undefined}
-            />
-          ) : null}
+          {draftHere && draft ? draftView(draft) : null}
         </>
       );
     },
-    [placed, draft, taskId, report, save, threadsAt, threadCard, ranges, path, isReview],
+    [placed, draft, taskId, report, draftView, threadsAt, threadCard, ranges, path],
+  );
+
+  // Under a deleted row (#402): the comments on removed lines that end there, and their box.
+  const afterRemoved = useCallback(
+    (line: number): ReactNode => {
+      const here = removed.filter((p) => p.row === line && p.comment.id !== draft?.editing?.id);
+      const draftHere = draft !== null && draft.side === 'old' && (draft.row ?? draft.to) === line;
+      if (here.length === 0 && !draftHere) return null;
+      return (
+        <>
+          {here.map((p) => (
+            <CommentCardView
+              key={p.comment.id}
+              outside={p.comment.github === 'draft' && ranges !== null && !inDiff(ranges, path, p.from, p.to, 'old')}
+              comment={{ ...p.comment, lineStart: p.from, lineEnd: p.to }}
+              onEdit={() => setDraft({ from: p.from, to: p.to, row: p.row, side: 'old', editing: p.comment })}
+              onResolve={() => report(resolveComment(taskId, p.comment.id), 'resolve the comment')}
+              onDelete={() => report(deleteComment(taskId, p.comment.id), 'delete the comment')}
+            />
+          ))}
+          {draftHere && draft ? draftView(draft) : null}
+        </>
+      );
+    },
+    [removed, draft, taskId, report, draftView, ranges, path],
   );
 
   // The lines an open comment covers get an edge (#252), so a card's lines
   // read as commented after its card is scrolled past.
   const commented = useCallback((line: number) => placed.some((p) => line >= p.from && line <= p.to), [placed]);
+  const commentedRemoved = useCallback((line: number) => removed.some((p) => line >= p.from && line <= p.to), [removed]);
+  // Deleted rows take comments only with a base to point at (#402).
+  const removedHooks = useMemo<RemovedAnnotations | undefined>(
+    () =>
+      oldText === null ? undefined : { after: afterRemoved, picking: pickingRemoved, pick: pickRemoved, commented: commentedRemoved },
+    [oldText, afterRemoved, pickingRemoved, pickRemoved, commentedRemoved],
+  );
   const annotations = useMemo<DiffAnnotations | null>(
-    () => (newText === null ? null : { after, picking, pick, commented }),
-    [newText, after, picking, pick, commented],
+    () =>
+      newText === null
+        ? null
+        : removedHooks
+          ? { after, picking, pick, commented, removed: removedHooks, pickBoth }
+          : { after, picking, pick, commented },
+    [newText, after, picking, pick, commented, removedHooks, pickBoth],
   );
 
   const bar = (

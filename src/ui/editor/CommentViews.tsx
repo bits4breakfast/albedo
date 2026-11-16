@@ -7,13 +7,18 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ReviewComment } from '../../db/comments';
+import { removedLines, sideOf, type ReviewComment } from '../../db/comments';
 import type { ReviewThread } from '../../gh/reviewThreads';
 import { openExternal } from '../../lib/openUrl';
 import { ACTION_LABEL, DESTINATIONS, ago, cardState, draftPlaceholder, draftSaveLabel, resolvedTrace } from './commentLabels';
 
 function where(from: number, to: number): string {
   return from === to ? `Line ${from}` : `Lines ${from}–${to}`;
+}
+
+/** A comment's place on its card: "Line 4", or on removed lines (#402) "On removed line 4". */
+function placeOf(c: Pick<ReviewComment, 'lineStart' | 'lineEnd' | 'side'>): string {
+  return sideOf(c) === 'old' ? `On ${removedLines(c)}` : where(c.lineStart, c.lineEnd);
 }
 
 export function CommentCardView({
@@ -46,9 +51,9 @@ export function CommentCardView({
     </button>
   );
   return (
-    <div className="ed-cmt" data-state={card.state}>
+    <div className="ed-cmt" data-state={card.state} data-side={sideOf(comment) === 'old' ? 'old' : undefined}>
       <div className="ed-cmt-head">
-        <span className="ed-cmt-where">{where(comment.lineStart, comment.lineEnd)}</span>
+        <span className="ed-cmt-where">{placeOf(comment)}</span>
         <span className="ed-cmt-chip" data-state={card.state}>
           {card.chip}
         </span>
@@ -120,7 +125,7 @@ export function CommentsBar({
           {outdated.map((c) => (
             <span key={`o${c.id}`} className="ed-cmt-outdated-item" title={c.anchorText}>
               <span className="ed-cmt-outdated-body">
-                {where(c.lineStart, c.lineEnd)}: {c.body.split('\n')[0]}
+                {placeOf(c)}: {c.body.split('\n')[0]}
               </span>
               <button type="button" className="ed-cmt-btn" onClick={() => onResolve(c)}>
                 ✓ Resolve
@@ -170,6 +175,7 @@ export function DestinationSwitch({
 export function CommentDraftView({
   from,
   to,
+  label,
   initial,
   editing,
   onSave,
@@ -178,6 +184,8 @@ export function CommentDraftView({
 }: {
   from: number;
   to: number;
+  /** Its place in words, when not "Line N" (#402: "On removed line N"). */
+  label?: string;
   initial: string;
   editing: boolean;
   /** Resolves once stored; the box stays (with its text) if it rejects. */
@@ -223,7 +231,7 @@ export function CommentDraftView({
         }}
       />
       <div className="ed-cmt-foot">
-        <span className="ed-cmt-where">{where(from, to)}</span>
+        <span className="ed-cmt-where">{label ?? where(from, to)}</span>
         <button type="button" className="ed-cmt-btn" onClick={onCancel}>
           Cancel
         </button>

@@ -21,9 +21,11 @@ import {
   resolveComments,
   resolvedReason,
   shouldAutoResolve,
+  sideOf,
   type ReviewComment,
 } from '../db/comments';
 import { useReadFile } from './editor/openFile';
+import { baseTextOf } from './editor/removedBase';
 import { Disclosure } from './Disclosure';
 import { sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
@@ -46,6 +48,8 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const [all, setAll] = useState<ReviewComment[]>([]);
   /** The commented files as they are now, for why a comment was resolved. */
   const [texts, setTexts] = useState<ReadonlyMap<string, string | null>>(() => new Map());
+  /** For comments on removed lines (#402): their files at the base, which say whether the lines are back. */
+  const [bases, setBases] = useState<ReadonlyMap<string, string | null>>(() => new Map());
   const [notice, setNotice] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const read = useReadFile();
@@ -83,18 +87,32 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
     .sort()
     .filter((p, i, a) => a.indexOf(p) === i)
     .join('\n');
+  // Of those, the files with a sent comment on removed lines (#402): only
+  // they are read at the base too.
+  const removedPaths = all
+    .filter((c) => c.sentAt !== null && sideOf(c) === 'old')
+    .map((c) => c.path)
+    .sort()
+    .filter((p, i, a) => a.indexOf(p) === i)
+    .join('\n');
   useEffect(() => {
     if (sentPaths === '') {
       setTexts(new Map());
+      setBases(new Map());
       return;
     }
     let live = true;
     void (async () => {
       const next = new Map<string, string | null>();
       for (const p of sentPaths.split('\n')) next.set(p, await read(p).catch(() => null));
+      const atBase = new Map<string, string | null>();
+      if (removedPaths !== '') for (const p of removedPaths.split('\n')) atBase.set(p, await baseTextOf(task, p));
       if (!live) return;
       setTexts(next);
-      const resolvable = all.filter((c) => shouldAutoResolve(c, next.get(c.path) ?? null)).map((c) => c.id);
+      setBases(atBase);
+      const resolvable = all
+        .filter((c) => shouldAutoResolve(c, next.get(c.path) ?? null, atBase.get(c.path) ?? null))
+        .map((c) => c.id);
       if (resolvable.length > 0) {
         resolveComments(task.id, resolvable).catch((err: unknown) => console.warn('[comments] could not resolve', err));
       }
@@ -104,7 +122,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
     };
     // `all` is read for the ids only; the paths decide when to look again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.id, sentPaths, reloadKey, read]);
+  }, [task.id, sentPaths, removedPaths, reloadKey, read]);
 
   const comments = all.filter((c) => c.resolvedAt === null);
   const resolved = all.filter((c) => c.resolvedAt !== null);
@@ -127,9 +145,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
             inside its row instead of running under the ✓. */}
         <span className="tf-comment-where">
           <span className="tf-name">{c.path.split('/').pop()}</span>
-          <span className="tf-comment-line">
-            :{c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
-          </span>
+          <span className="tf-comment-line">{lineLabel(c)}</span>
         </span>
         <span className="tf-comment-body">{c.body.split('\n')[0]}</span>
       </button>
@@ -263,8 +279,8 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                   title={`${commentLocation(c)}\n\n${c.body}`}
                 >
                   <span className="tf-comment-where">
-                    <span className="tf-name">{c.path.split('/').pop()}</span>:
-                    {c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
+                    <span className="tf-name">{c.path.split('/').pop()}</span>
+                    {lineLabel(c)}
                   </span>
                   <span className="tf-comment-body">
                     {c.body.split('\n')[0]}
@@ -273,9 +289,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                       ·{' '}
                       {c.github === 'draft' && c.sentAt !== null
                         ? 'posted to GitHub'
-                        : resolvedReason(c, texts.get(c.path) ?? null) === 'changed'
-                          ? 'its lines changed after it was sent'
-                          : 'resolved by you'}
+                        : reasonText(resolvedReason(c, texts.get(c.path) ?? null, bases.get(c.path) ?? null))}
                     </span>
                   </span>
                 </button>
@@ -298,4 +312,17 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
       )}
     </section>
   );
+}
+
+/** ":12", ":12-14", or on removed lines (#402) " removed 12-14": where a comment is, after its file's name. */
+function lineLabel(c: Pick<ReviewComment, 'lineStart' | 'lineEnd' | 'side'>): string {
+  const lines = c.lineStart === c.lineEnd ? `${c.lineStart}` : `${c.lineStart}-${c.lineEnd}`;
+  return sideOf(c) === 'old' ? ` removed ${lines}` : `:${lines}`;
+}
+
+/** Why a resolved comment is, in the list's words. */
+function reasonText(why: ReturnType<typeof resolvedReason>): string {
+  if (why === 'changed') return 'its lines changed after it was sent';
+  if (why === 'back') return 'its lines are back in the file';
+  return 'resolved by you';
 }

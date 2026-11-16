@@ -11,6 +11,7 @@
  */
 
 import { anchorBlock, fileLines } from '../lib/anchor';
+import { diffSequences } from '../lib/diff';
 import { getDb } from './index';
 
 export interface ReviewComment {
@@ -35,7 +36,17 @@ export interface ReviewComment {
   github: 'draft' | null;
   /** A reply to another reviewer's thread: the REST id of its first comment. Null otherwise. */
   replyTo: number | null;
+  /**
+   * Which side of a diff its lines are on (#402, migration v20). 'new': the
+   * file as it is now, as every comment before v20. 'old': lines the change
+   * removed, numbered and quoted from the diff's base. Every row read has
+   * it; absent (a comment built elsewhere) means 'new' -- read it through
+   * {@link sideOf}.
+   */
+  side?: CommentSide;
 }
+
+export type CommentSide = 'new' | 'old';
 
 interface Row {
   id: number;
@@ -51,6 +62,7 @@ interface Row {
   resolved_at: number | null;
   github?: string | null;
   reply_to?: number | null;
+  side?: string | null;
 }
 
 function fromRow(r: Row): ReviewComment {
@@ -68,6 +80,7 @@ function fromRow(r: Row): ReviewComment {
     resolvedAt: r.resolved_at,
     github: r.github === 'draft' ? 'draft' : null,
     replyTo: typeof r.reply_to === 'number' ? r.reply_to : null,
+    side: r.side === 'old' ? 'old' : 'new',
   };
 }
 
@@ -191,15 +204,17 @@ export async function addComment(c: {
   github?: 'draft' | null;
   /** #287: a reply to the GitHub thread whose first comment has this id. */
   replyTo?: number | null;
+  /** #402: 'old' for removed lines, by the base's lines and text. Absent: the file as it is now. */
+  side?: CommentSide;
 }): Promise<number> {
   const db = await getDb();
   const now = Date.now();
   // A reply always goes to GitHub: it answers someone there.
   const github = c.replyTo != null ? 'draft' : (c.github ?? null);
   const res = await db.execute(
-    `INSERT INTO comments (task_id, path, line_start, line_end, anchor_text, body, created_at, updated_at, github, reply_to)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
-    [c.taskId, c.path, c.lineStart, c.lineEnd, c.anchorText, c.body, now, github, c.replyTo ?? null],
+    `INSERT INTO comments (task_id, path, line_start, line_end, anchor_text, body, created_at, updated_at, github, reply_to, side)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10)`,
+    [c.taskId, c.path, c.lineStart, c.lineEnd, c.anchorText, c.body, now, github, c.replyTo ?? null, c.side === 'old' ? 'old' : 'new'],
   );
   changed(c.taskId);
   return Number(res.lastInsertId ?? 0);
@@ -280,6 +295,56 @@ export function relocate(comment: Pick<ReviewComment, 'anchorText' | 'lineStart'
   return { state: 'current', lineStart: found.offset + 1, lineEnd: found.offset + block.length };
 }
 
+/** A comment's side; a row read before v20, or built without one, is on the file as it is now. */
+export function sideOf(c: Partial<Pick<ReviewComment, 'side'>>): CommentSide {
+  return c.side === 'old' ? 'old' : 'new';
+}
+
+export type RemovedPlacement =
+  /**
+   * Still removed: its lines are at lineStart..lineEnd of the base. `row` is
+   * the last of them the change removes, the diff row its card goes under.
+   * `before` is the line of the file now that took the removal's place (the
+   * card "was above this line"); null when the removal was at the end of the
+   * file, after `last`, the file's last line (0 when it is empty).
+   */
+  | { state: 'removed'; lineStart: number; lineEnd: number; row: number; before: number | null; last: number }
+  /** Every one of its lines is in the file again, unchanged: what it asked about was undone. */
+  | { state: 'back' }
+  /** Its text is not in the base (the diff's base moved on): it cannot be placed. */
+  | { state: 'outdated' };
+
+/**
+ * Where a comment on removed lines (#402) stands: found again by its text in
+ * `base`, the diff's old side, then followed through the change to `now`,
+ * the file as it is. The same line diff the diff view draws (`diffSequences`),
+ * so "back" means exactly that its rows are no longer deleted rows there --
+ * never merely that the same text occurs somewhere in the file, which a
+ * removed `}` always does.
+ */
+export function placeRemoved(comment: Pick<ReviewComment, 'anchorText' | 'lineStart'>, base: string, now: string): RemovedPlacement {
+  const block = comment.anchorText.split('\n');
+  const old = fileLines(base);
+  const found = anchorBlock(old, block, comment.lineStart);
+  if (!found.ok) return { state: 'outdated' };
+  const first = found.offset;
+  const last = found.offset + block.length - 1;
+  const cur = now === '' ? [] : fileLines(now);
+  let removed = -1;
+  let before: number | null = null;
+  let past = false;
+  for (const op of diffSequences(old, cur)) {
+    if (op.kind === 'del' && op.oldIndex >= first && op.oldIndex <= last) removed = op.oldIndex;
+    if (op.oldIndex > last || (op.kind === 'add' && removed >= 0)) past = true;
+    if (past && op.newIndex >= 0) {
+      before = op.newIndex + 1;
+      break;
+    }
+  }
+  if (removed < 0) return { state: 'back' };
+  return { state: 'removed', lineStart: first + 1, lineEnd: last + 1, row: removed + 1, before, last: cur.length };
+}
+
 // ---------------------------------------------------------------------------
 // The life of a comment (#222)
 // ---------------------------------------------------------------------------
@@ -291,7 +356,7 @@ export function commentState(c: Pick<ReviewComment, 'sentAt' | 'resolvedAt'>): C
   return c.sentAt !== null ? 'sent' : 'waiting';
 }
 
-type Anchored = Pick<ReviewComment, 'sentAt' | 'resolvedAt' | 'anchorText' | 'lineStart'>;
+type Anchored = Pick<ReviewComment, 'sentAt' | 'resolvedAt' | 'anchorText' | 'lineStart'> & Partial<Pick<ReviewComment, 'side'>>;
 
 /**
  * The owner's rule: a comment that went to Claude and whose lines are no
@@ -299,26 +364,43 @@ type Anchored = Pick<ReviewComment, 'sentAt' | 'resolvedAt' | 'anchorText' | 'li
  * file as it is on disk; null means it could not be read, which decides
  * nothing. An unsent comment never resolves on its own: its lines changing
  * means the file moved under your note, not that it was answered.
+ *
+ * A comment on removed lines (#402) is the other way round: its lines being
+ * missing is what it is about, so that never resolves it. Once sent, it
+ * resolves when they are back in the file ({@link placeRemoved}), which needs
+ * `base`, the diff's old side; without it nothing is decided.
  */
-export function shouldAutoResolve(c: Anchored, text: string | null): boolean {
+export function shouldAutoResolve(c: Anchored, text: string | null, base: string | null = null): boolean {
   if (c.sentAt === null || c.resolvedAt !== null || text === null) return false;
+  if (sideOf(c) === 'old') return base !== null && placeRemoved(c, base, text).state === 'back';
   return relocate(c, text).state === 'outdated';
 }
 
 /**
  * Why a resolved comment is resolved, for the list. Not stored (no schema
  * change): derived from what auto-resolve acts on -- it was sent and its
- * lines are gone. A sent comment resolved by hand before its lines changed
- * reads "resolved by you" until they do.
+ * lines are gone ('changed'), or for removed lines (#402), they are back
+ * ('back', which needs `base`). A sent comment resolved by hand before its
+ * lines changed reads "resolved by you" until they do.
  */
-export function resolvedReason(c: Anchored, text: string | null): 'changed' | 'you' | null {
+export function resolvedReason(c: Anchored, text: string | null, base: string | null = null): 'changed' | 'back' | 'you' | null {
   if (c.resolvedAt === null) return null;
-  if (c.sentAt !== null && text !== null && relocate(c, text).state === 'outdated') return 'changed';
-  return 'you';
+  if (c.sentAt === null || text === null) return 'you';
+  if (sideOf(c) === 'old') return base !== null && placeRemoved(c, base, text).state === 'back' ? 'back' : 'you';
+  return relocate(c, text).state === 'outdated' ? 'changed' : 'you';
 }
 
-/** `path:12` or `path:12-14`: how a comment names its place, in the message and in lists. */
-export function commentLocation(c: Pick<ReviewComment, 'path' | 'lineStart' | 'lineEnd'>): string {
+/** "removed line 12", "removed lines 12–14": a comment on removed lines (#402), by the base's numbers. */
+export function removedLines(c: Pick<ReviewComment, 'lineStart' | 'lineEnd'>): string {
+  return c.lineStart === c.lineEnd ? `removed line ${c.lineStart}` : `removed lines ${c.lineStart}–${c.lineEnd}`;
+}
+
+/**
+ * `path:12` or `path:12-14`: how a comment names its place, in the message
+ * and in lists. On removed lines (#402): `path: removed lines 12–14`.
+ */
+export function commentLocation(c: Pick<ReviewComment, 'path' | 'lineStart' | 'lineEnd'> & Partial<Pick<ReviewComment, 'side'>>): string {
+  if (sideOf(c) === 'old') return `${c.path}: ${removedLines(c)}`;
   return c.lineStart === c.lineEnd ? `${c.path}:${c.lineStart}` : `${c.path}:${c.lineStart}-${c.lineEnd}`;
 }
 
@@ -334,7 +416,10 @@ export function formatForClaude(comments: readonly ReviewComment[], intro: strin
   const items = comments.map((c, i) => {
     const longest = Math.max(2, ...(c.anchorText.match(/`+/g) ?? []).map((m) => m.length));
     const fence = '`'.repeat(longest + 1);
-    return `${i + 1}. ${commentLocation(c)}\n${fence}\n${c.anchorText}\n${fence}\n${c.body.trim()}`;
+    // On removed lines (#402) the code quoted is what was taken out, and
+    // Claude is told so: those lines are not in the file to look for.
+    const where = sideOf(c) === 'old' ? `${commentLocation(c)} (in the base, not in the file now)` : commentLocation(c);
+    return `${i + 1}. ${where}\n${fence}\n${c.anchorText}\n${fence}\n${c.body.trim()}`;
   });
   const head = intro.trim();
   return `${head === '' ? '' : `${head}\n\n`}${items.join('\n\n')}`;

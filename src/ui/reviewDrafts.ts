@@ -9,7 +9,8 @@
 
 import { useEffect, useState } from 'react';
 import type { Task } from '../types';
-import { listGithubDrafts, markDraftsPosted, moveComment, onCommentsChanged, relocate, type ReviewComment } from '../db/comments';
+import { listGithubDrafts, markDraftsPosted, moveComment, onCommentsChanged, placeRemoved, relocate, sideOf, type ReviewComment } from '../db/comments';
+import { readTextAtRev } from '../git/fileDiff';
 import { parsePrUrl, type PrRef } from '../git/reviewCheckout';
 import { git, gitOk, taskBase } from '../git/worktree';
 import { gh } from '../gh/gh';
@@ -158,18 +159,45 @@ export interface SubmitInput {
 /**
  * What Submit Review sends, read fresh: the drafts, each line draft found
  * again in its file at HEAD (by its text, as the cards place it), the PR's
- * diff, and the commit checked out -- the one reviewed.
+ * diff, and the commit checked out -- the one reviewed. A draft on removed
+ * lines (#402) is found again in the file at the PR's merge base instead,
+ * and goes on GitHub's left side there; when its text is not there, or its
+ * lines are back at HEAD, it goes in the summary like a lost one.
  */
 export async function prepareSubmit(task: ReviewTask): Promise<SubmitInput> {
   const rows = await listGithubDrafts(task.id);
   const commitId = (await gitOk(['rev-parse', 'HEAD'], task.worktreePath)).trim();
   const ranges = await prDiffRanges(task);
   const texts = new Map<string, string | null>();
+  const bases = new Map<string, string | null>();
+  let mergeBase: string | null | undefined;
   let lost = 0;
   const drafts: GithubDraft[] = [];
   for (const c of rows) {
     const d: GithubDraft = { id: c.id, path: c.path, lineStart: c.lineStart, lineEnd: c.lineEnd, body: c.body, replyTo: c.replyTo };
-    if (c.replyTo === null) {
+    if (c.replyTo === null && sideOf(c) === 'old') {
+      d.side = 'old';
+      if (mergeBase === undefined) mergeBase = await taskBase(task.worktreePath, await reviewBase(task)).catch(() => null);
+      if (!bases.has(c.path)) {
+        bases.set(c.path, mergeBase ? await readTextAtRev(task.worktreePath, mergeBase, c.path).catch(() => null) : null);
+      }
+      if (!texts.has(c.path)) texts.set(c.path, await fileAtHead(task.worktreePath, c.path));
+      const base = bases.get(c.path) ?? null;
+      const head = texts.get(c.path) ?? null;
+      const at = base === null || head === null ? null : placeRemoved(c, base, head);
+      if (at && at.state === 'removed') {
+        if (at.lineStart !== c.lineStart || at.lineEnd !== c.lineEnd) {
+          d.lineStart = at.lineStart;
+          d.lineEnd = at.lineEnd;
+          void moveComment(task.id, c.id, at.lineStart, at.lineEnd).catch(() => {});
+        }
+      } else {
+        // Not in the base, or not removed any more: no left-side line to
+        // put it on. In the summary, named by where it was.
+        d.lost = true;
+        lost += 1;
+      }
+    } else if (c.replyTo === null) {
       if (!texts.has(c.path)) texts.set(c.path, await fileAtHead(task.worktreePath, c.path));
       const text = texts.get(c.path) ?? null;
       const at = text === null ? null : relocate(c, text);

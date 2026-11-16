@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { listComments, onCommentsChanged, relocate, type ReviewComment } from '../db/comments';
+import { listComments, onCommentsChanged, placeRemoved, relocate, sideOf, type ReviewComment } from '../db/comments';
 import type { BranchDiff } from './blocks';
 import type { GroupView } from './validate';
 
@@ -20,7 +20,7 @@ export type CommentMarks = ReadonlyMap<string, ReadonlyMap<string, number>>;
 export function commentMarks(
   groups: readonly GroupView[],
   diff: BranchDiff,
-  comments: readonly Pick<ReviewComment, 'path' | 'lineStart' | 'anchorText' | 'resolvedAt'>[],
+  comments: readonly (Pick<ReviewComment, 'path' | 'lineStart' | 'anchorText' | 'resolvedAt'> & Partial<Pick<ReviewComment, 'side'>>)[],
 ): CommentMarks {
   const out = new Map<string, Map<string, number>>();
   for (const c of comments) {
@@ -32,14 +32,25 @@ export function commentMarks(
       const file = diff.files.find((f) => f.path === c.path);
       const r = file?.result;
       const text = r && r.kind === 'diff' && r.change !== 'deleted' ? r.newText : null;
-      const at = text === null ? null : relocate(c, text);
-      const line = at && at.state === 'current' ? at.lineStart : c.lineStart;
+      // On removed lines (#402): its base lines, measured against the hunks' old side.
+      const old = sideOf(c) === 'old';
+      let line = c.lineStart;
+      if (old) {
+        const at = r && r.kind === 'diff' && text !== null ? placeRemoved(c, r.oldText, text) : null;
+        if (at && at.state === 'removed') line = at.lineStart;
+      } else {
+        const at = text === null ? null : relocate(c, text);
+        if (at && at.state === 'current') line = at.lineStart;
+      }
       const hunks = r && r.kind === 'diff' ? r.diff.hunks : [];
       let best = Infinity;
       for (const h of holders) {
         for (const id of h.f.blocks) {
           const i = diff.blocks.get(id)?.hunk;
-          const nums = i === null || i === undefined ? [] : (hunks[i]?.lines ?? []).map((l) => l.newNumber).filter((n): n is number => n !== null);
+          const nums =
+            i === null || i === undefined
+              ? []
+              : (hunks[i]?.lines ?? []).map((l) => (old ? l.oldNumber : l.newNumber)).filter((n): n is number => n !== null);
           if (nums.length === 0) continue;
           const lo = Math.min(...nums);
           const hi = Math.max(...nums);
