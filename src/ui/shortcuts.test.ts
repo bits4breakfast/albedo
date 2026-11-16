@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS, taskTerminalTakesKey, terminalTakesKey } from './shortcuts';
 
 const ev = (init: Partial<KeyboardEvent> & { key: string }) =>
@@ -104,8 +104,8 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
-      comboOf(ev({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true }))?.combo,
-      comboOf(ev({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true }))?.combo,
+      comboOf(ev({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true }), 'macos')?.combo,
+      comboOf(ev({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true }), 'macos')?.combo,
     ]);
     // The one gesture is reachable through its own detector.
     const shift = createDoubleShift();
@@ -421,10 +421,19 @@ describe('createDoubleShift', () => {
 describe('⌘↑ / ⌘↓, previous and next task (#398)', () => {
   const up = (mods: Partial<KeyboardEvent> = {}) => ev({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true, ...mods });
   const down = (mods: Partial<KeyboardEvent> = {}) => ev({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true, ...mods });
+  // The webview's user agent decides the platform; these run as on a Mac.
+  beforeEach(() => vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }));
+  afterEach(() => vi.unstubAllGlobals());
 
-  it('maps ⌘↑ and ⌘↓', () => {
-    expect(comboOf(up())?.combo).toBe('mod+arrowup');
-    expect(comboOf(down())?.combo).toBe('mod+arrowdown');
+  it('maps ⌘↑ and ⌘↓ on macOS', () => {
+    expect(comboOf(up(), 'macos')?.combo).toBe('mod+arrowup');
+    expect(comboOf(down(), 'macos')?.combo).toBe('mod+arrowdown');
+  });
+
+  it('is nothing off a Mac, where the Windows key is Meta and Ctrl+↑/↓ belong to others', () => {
+    expect(comboOf(up(), 'linux')).toBeNull();
+    expect(comboOf(down(), 'other')).toBeNull();
+    expect(comboOf(down({ metaKey: false, ctrlKey: true }), 'linux')).toBeNull();
   });
 
   it('is Command only, without Shift or Option', () => {

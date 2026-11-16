@@ -10,7 +10,7 @@ import { placeMenu, type MenuPlacement } from './menuPlacement';
 import type { ContextUsage } from '../capture';
 import type { TaskSignals } from './useTasks';
 import type { AttentionKind } from './attention';
-import { TASK_TERMINAL_INPUT, useShortcuts } from './shortcuts';
+import { TASK_ARROW_TERMS, useShortcuts } from './shortcuts';
 import { MenuItemButtons } from './OverflowMenu';
 import { taskMenuItems, type TaskActions } from './taskMenuItems';
 import { useTaskMenuFacts } from './useTaskMenuFacts';
@@ -409,12 +409,12 @@ export default function TaskList({
     },
     'mod+[': () => step(-1),
     'mod+]': () => step(1),
-    // The same step on ⌘↑ / ⌘↓ (#398), but not in a text field, where they
-    // move to the start or end of the text, nor where a focused menu already
-    // moved on the arrow. The task terminal, where focus lands right after a
-    // selection, gives them up (shortcuts.ts).
-    'mod+arrowup': { run: () => step(-1), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT, whenHandled: 'ignore' },
-    'mod+arrowdown': { run: () => step(1), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT, whenHandled: 'ignore' },
+    // The same step on ⌘↑ / ⌘↓ (#398), on narrower terms: not in a text
+    // field or a code editor, not under a modal dialog, not where a focused
+    // menu already moved on the arrow, and once per press. The task terminal,
+    // where focus lands right after a selection, gives them up (shortcuts.ts).
+    'mod+arrowup': { run: () => step(-1), ...TASK_ARROW_TERMS },
+    'mod+arrowdown': { run: () => step(1), ...TASK_ARROW_TERMS },
   });
 
   // Keep the selected row in view when selection moves from elsewhere.

@@ -6,16 +6,18 @@
  * key's propagation -- because it is heard in the capture phase. The editor
  * here is a real CodeMirror view with the keymaps FileEditor loads.
  */
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 
 import { Terminal as XTerm } from '@xterm/xterm';
+import OverflowMenu from './OverflowMenu';
 import {
   GUIDE_KEY_EXCEPT,
+  TASK_ARROW_TERMS,
   TASK_TERMINAL_ATTR,
   TASK_TERMINAL_INPUT,
   taskTerminalTakesKey,
@@ -315,11 +317,17 @@ describe('⌘↑ / ⌘↓, previous / next task (#398): the page, a row, the tas
   const DOWN = { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, metaKey: true, bubbles: true, cancelable: true };
   const UP = { ...DOWN, key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 };
 
+  // macOS only: the webview's user agent says which platform this is.
+  beforeEach(() => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15');
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   // As TaskList binds them.
   function StepHarness({ onStep }: { onStep: (d: number) => void }) {
     useShortcuts({
-      'mod+arrowup': { run: () => onStep(-1), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT, whenHandled: 'ignore' },
-      'mod+arrowdown': { run: () => onStep(1), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT, whenHandled: 'ignore' },
+      'mod+arrowup': { run: () => onStep(-1), ...TASK_ARROW_TERMS },
+      'mod+arrowdown': { run: () => onStep(1), ...TASK_ARROW_TERMS },
     });
     return (
       <div>
@@ -328,17 +336,7 @@ describe('⌘↑ / ⌘↓, previous / next task (#398): the page, a row, the tas
         <div role="option" aria-selected="true" tabIndex={-1} aria-label="row">
           row
         </div>
-        {/* A menu that moves on any ↑/↓, as OverflowMenu and GitBar's do. */}
-        <div
-          role="menu"
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') e.preventDefault();
-          }}
-        >
-          <button type="button" role="menuitem">
-            item
-          </button>
-        </div>
+        <OverflowMenu label="Task Actions" items={[{ id: 'a', label: 'First', onSelect: () => {} }, { id: 'b', label: 'Second', onSelect: () => {} }]} />
       </div>
     );
   }
@@ -360,6 +358,26 @@ describe('⌘↑ / ⌘↓, previous / next task (#398): the page, a row, the tas
         host.remove();
       },
     };
+  }
+
+  function editor(readOnly: boolean) {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: 'one\ntwo',
+        extensions: [
+          history(),
+          search({ top: true }),
+          keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+          // As FileEditor makes a read-only file: not contenteditable.
+          EditorState.readOnly.of(readOnly),
+          EditorView.editable.of(!readOnly),
+        ],
+      }),
+    });
+    return { view, dispose: () => (view.destroy(), host.remove()) };
   }
 
   if (typeof window.matchMedia !== 'function') {
@@ -416,33 +434,77 @@ describe('⌘↑ / ⌘↓, previous / next task (#398): the page, a row, the tas
       expect(press(field, DOWN).defaultPrevented).toBe(false);
       expect(press(field, UP).defaultPrevented).toBe(false);
     }
-    const host = document.createElement('div');
-    document.body.appendChild(host);
-    const view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc: 'one\ntwo',
-        extensions: [history(), search({ top: true }), keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab])],
-      }),
-    });
+    const { view, dispose } = editor(false);
     try {
       view.focus();
       press(view.contentDOM, DOWN);
       press(view.contentDOM, UP);
     } finally {
-      view.destroy();
-      host.remove();
+      dispose();
     }
     expect(steps).toEqual([]);
   });
 
-  it('leaves them to a focused menu that moved on the arrow', () => {
+  it('leaves them to a read-only editor (the project view’s file), which is not contenteditable', () => {
+    const steps: number[] = [];
+    render(<StepHarness onStep={(d) => steps.push(d)} />);
+    const { view, dispose } = editor(true);
+    try {
+      expect(view.contentDOM.getAttribute('contenteditable')).toBe('false');
+      press(view.contentDOM, DOWN);
+      view.scrollDOM.tabIndex = -1;
+      view.scrollDOM.focus();
+      expect(press(view.scrollDOM, UP).defaultPrevented).toBe(false);
+    } finally {
+      dispose();
+    }
+    expect(steps).toEqual([]);
+  });
+
+  it('leaves them to an open ⋯ menu, which moves on the arrow', () => {
     const steps: number[] = [];
     const { getByRole } = render(<StepHarness onStep={(d) => steps.push(d)} />);
-    const item = getByRole('menuitem');
-    item.focus();
-    press(item, DOWN);
-    press(item, UP);
+    fireEvent.click(getByRole('button', { name: 'Task Actions' }));
+    const first = getByRole('menuitem', { name: 'First' });
+    expect(document.activeElement).toBe(first);
+    press(first, DOWN);
+    expect(document.activeElement).toBe(getByRole('menuitem', { name: 'Second' }));
+    expect(steps).toEqual([]);
+  });
+
+  it('stand down under a modal dialog, and leave the key alone', () => {
+    const steps: number[] = [];
+    render(<StepHarness onStep={(d) => steps.push(d)} />);
+    const dialog = document.body.appendChild(document.createElement('div'));
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const button = dialog.appendChild(document.createElement('button'));
+    button.textContent = 'Close';
+    button.focus();
+    expect(press(button, DOWN).defaultPrevented).toBe(false);
+    press(document.body, UP);
+    expect(steps).toEqual([]);
+    dialog.remove();
+    press(document.body, DOWN);
+    expect(steps).toEqual([1]);
+  });
+
+  it('step once per press: not on auto-repeat, not while an input method composes', () => {
+    const steps: number[] = [];
+    render(<StepHarness onStep={(d) => steps.push(d)} />);
+    press(document.body, DOWN);
+    press(document.body, { ...DOWN, repeat: true });
+    press(document.body, { ...DOWN, repeat: true });
+    press(document.body, { ...DOWN, isComposing: true });
+    press(document.body, { ...DOWN, keyCode: 229 });
+    expect(steps).toEqual([1]);
+  });
+
+  it('is nothing off a Mac', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (X11; Linux x86_64)');
+    const steps: number[] = [];
+    render(<StepHarness onStep={(d) => steps.push(d)} />);
+    expect(press(document.body, DOWN).defaultPrevented).toBe(false);
     expect(steps).toEqual([]);
   });
 });

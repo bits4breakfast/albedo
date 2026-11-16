@@ -5,9 +5,11 @@
  * screen -- and not in a text field, where they are start and end of text.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { Terminal as XTerm } from '@xterm/xterm';
 import type { Task } from '../types';
+import { TASK_TERMINAL_ATTR, taskTerminalTakesKey } from './shortcuts';
 
 vi.mock('../gh/prStore', () => ({
   getPrStatus: () => null,
@@ -21,7 +23,22 @@ const { default: TaskList } = await import('./TaskList');
 // jsdom has no layout; the list scrolls the selected row into view.
 Element.prototype.scrollIntoView ??= () => {};
 
-afterEach(cleanup);
+// macOS only: the webview's user agent says which platform this is.
+beforeEach(() => {
+  vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15');
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+// xterm asks for it; jsdom has none.
+if (typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }),
+  });
+}
 
 const base = {
   projectId: 1, repoPath: '/r/app', sessionId: null, createdBranch: false, baseBranch: 'main', ownsWorktree: true,
@@ -39,8 +56,6 @@ function setup(selectedId: number) {
     <div>
       <TaskList tasks={tasks} selectedId={selectedId} onSelect={onSelect} onNew={() => {}} />
       <textarea aria-label="message" />
-      {/* The task terminal's input, as Terminal.tsx marks xterm's textarea. */}
-      <textarea aria-label="terminal" data-task-terminal="" />
     </div>,
   );
   const order = Array.from(document.querySelectorAll('[data-task-id]')).map((el) => Number(el.getAttribute('data-task-id')));
@@ -69,13 +84,38 @@ describe('⌘↑ / ⌘↓ in the task list (#398)', () => {
     expect(onSelect.mock.calls.map((c) => c[0])).toEqual([order[i + 1]]);
   });
 
-  it('step from the task terminal, where focus lands after a selection', () => {
+  it('step from the task terminal, where focus lands after a selection; the pty gets nothing', () => {
     const { onSelect, order } = setup(tasks[1]!.id);
     const i = order.indexOf(tasks[1]!.id);
-    const input = screen.getByLabelText('terminal');
-    input.focus();
-    fireEvent.keyDown(input, { key: 'ArrowUp', code: 'ArrowUp', metaKey: true });
-    expect(onSelect.mock.calls.map((c) => c[0])).toEqual([order[i - 1]]);
+    // A real xterm, wired and marked as Terminal.tsx wires and marks it.
+    const host = document.body.appendChild(document.createElement('div'));
+    const term = new XTerm();
+    const pty: string[] = [];
+    term.onData((d) => void pty.push(d));
+    term.attachCustomKeyEventHandler(taskTerminalTakesKey);
+    term.open(host);
+    term.textarea!.setAttribute(TASK_TERMINAL_ATTR, '');
+    try {
+      term.textarea!.focus();
+      fireEvent.keyDown(term.textarea!, { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38, metaKey: true });
+      expect(onSelect.mock.calls.map((c) => c[0])).toEqual([order[i - 1]]);
+      expect(pty).toEqual([]);
+    } finally {
+      term.dispose();
+      host.remove();
+    }
+  });
+
+  it('step once per press, and not under a modal dialog', () => {
+    const { onSelect, order } = setup(tasks[1]!.id);
+    const i = order.indexOf(tasks[1]!.id);
+    fireEvent.keyDown(document.body, { key: 'ArrowDown', code: 'ArrowDown', metaKey: true });
+    fireEvent.keyDown(document.body, { key: 'ArrowDown', code: 'ArrowDown', metaKey: true, repeat: true });
+    const dialog = document.body.appendChild(document.createElement('div'));
+    dialog.setAttribute('aria-modal', 'true');
+    fireEvent.keyDown(document.body, { key: 'ArrowDown', code: 'ArrowDown', metaKey: true });
+    dialog.remove();
+    expect(onSelect.mock.calls.map((c) => c[0])).toEqual([order[i + 1]]);
   });
 
   it('leave a text field alone', () => {
