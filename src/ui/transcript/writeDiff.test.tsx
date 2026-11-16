@@ -119,6 +119,15 @@ describe('a Write that replaced a file', () => {
     expect(headCounts(container)).toBe('+3-2');
   });
 
+  it('redraws when a new result says more though its text is the same (the memo reads the result, not only its text)', () => {
+    const call = write('/src/f.ts', after, 'w8');
+    const text = 'The file /src/f.ts has been updated successfully.';
+    const { container, rerender } = render(<MessageRow message={call} result={result('w8', text)} />);
+    expect(headCounts(container)).toBe('+41');
+    rerender(<MessageRow message={call} result={updated('w8', '/src/f.ts', before, after)} />);
+    expect(headCounts(container)).toBe('+3-2');
+  });
+
   it('opens the whole file under the diff', () => {
     const call = write('/src/f.ts', after, 'w4');
     const { container } = render(<MessageRow message={call} result={updated('w4', '/src/f.ts', before, after)} />);
@@ -186,6 +195,12 @@ describe('a Write that failed', () => {
     act(() => fireEvent.click(show));
     expect(container.textContent).toContain('row 50');
 
+    // Opened, the chip does not say the error again.
+    act(() => fireEvent.click(screen.getByRole('button', { name: 'Write details' })));
+    expect(container.textContent!.split('File has not been read yet').length - 1).toBe(1);
+    expect(container.querySelector('.tx-chip-body')).not.toBeNull();
+    expect([...container.querySelectorAll('.tx-chip-label')].map((h) => h.textContent)).not.toContain('Error');
+
     expect(editPairsOf(call, res)).toBeNull();
     expect(linesChanged(call, res)).toBeNull();
     expect(runFacts([call], new Map([[call.id, res]]))).toMatchObject({ lines: null, failed: 1 });
@@ -204,5 +219,31 @@ describe('a Write with no result, or one that does not say', () => {
       expect(linesChanged(call, res)).toEqual({ added: 2, removed: 0 });
       expect(editPairsOf(call, res)).toEqual({ path: '/src/m.ts', pairs: [{ oldText: '', newText: content }], absoluteLines: true });
     }
+  });
+});
+
+describe('the chip', () => {
+  it('a Write that succeeded still shows its Result when opened', () => {
+    const call = write('/src/new.ts', 'a\n', 'k1');
+    const { container } = render(<MessageRow message={call} result={created('k1', '/src/new.ts', 'a\n')} />);
+    act(() => fireEvent.click(screen.getByRole('button', { name: 'Write details' })));
+    expect(screen.getByText('Result')).toBeTruthy();
+    expect(container.querySelector('.tx-chip-body')?.textContent).toContain('File created successfully at:');
+  });
+
+  it("counts a Write's lines as its diff does: a final line break starts no line", () => {
+    const summary = (content: string) => {
+      cleanup();
+      const { container } = render(<MessageRow message={write('/src/s.ts', content)} result={null} />);
+      return container.querySelector('.tx-chip-summary')?.textContent;
+    };
+    expect(summary('a\nb\n')).toBe('2 lines');
+    expect(summary('a\nb')).toBe('2 lines');
+    expect(summary('a\r\nb\r\n')).toBe('2 lines');
+    expect(summary('only\n')).toBe('1 line');
+    // The same number the diff header and the run's line say.
+    const { container } = render(<MessageRow message={write('/src/s.ts', 'a\nb\nc\n')} result={null} />);
+    expect(container.querySelector('.tx-chip-summary')?.textContent).toBe('3 lines');
+    expect(headCounts(container)).toBe('+3');
   });
 });

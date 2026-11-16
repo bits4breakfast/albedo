@@ -95,6 +95,15 @@ export function withoutLeadingCd(command: string, target: string | null): string
   return rest.trim() === '' ? command : rest;
 }
 
+/**
+ * Lines in a file's text, as its diff counts them (lib/diff's splitLines): a
+ * final line break does not start one, and an empty text has none (#387).
+ */
+export function fileLineCount(text: string): number {
+  if (text === '') return 0;
+  return text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n').length;
+}
+
 /** The compact, tool-specific detail shown on the collapsed chip. */
 export function summaryOf(message: Message): string | null {
   const input = toolInput(message);
@@ -137,8 +146,11 @@ export function summaryOf(message: Message): string | null {
       return qs.length > 1 ? `${head} (+${qs.length - 1} more)` : head;
     }
     case 'Write': {
+      // Counted as the diff counts them (#387): a final line break does not start a line.
       const content = str(input.content);
-      return content === null ? null : `${content.split('\n').length} lines`;
+      if (content === null) return null;
+      const n = fileLineCount(content);
+      return `${n} ${n === 1 ? 'line' : 'lines'}`;
     }
     case 'Skill': {
       // Which skill, and what it was asked to do (#150): "claude-in-chrome",
@@ -187,9 +199,14 @@ export interface ToolChipProps {
    * Written" on a Write (#387). Nothing by default.
    */
   tag?: string | null;
+  /**
+   * The row already shows the result under the chip -- a failed Write's
+   * error (#387) -- so the open chip does not repeat it.
+   */
+  resultShown?: boolean;
 }
 
-export function ToolChip({ message, result = null, defaultOpen = false, more = null, tag = null }: ToolChipProps): ReactNode {
+export function ToolChip({ message, result = null, defaultOpen = false, more = null, tag = null, resultShown = false }: ToolChipProps): ReactNode {
   const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
 
@@ -280,20 +297,22 @@ export function ToolChip({ message, result = null, defaultOpen = false, more = n
               )}
             </section>
           ) : null}
-          <section className="tx-chip-section">
-            <h4 className="tx-chip-label">{error ? 'Error' : 'Result'}</h4>
-            {pending ? (
-              <div className="tx-chip-empty">No result yet</div>
-            ) : resultText.length === 0 ? (
-              <div className="tx-chip-empty">Empty</div>
-            ) : (
-              // Stack traces and compiler errors live here; this is where a
-              // clickable path pays off most.
-              <pre className={`tx-pre ${error ? 'tx-pre-error' : ''}`}>
-                <LinkifiedText text={resultText} />
-              </pre>
-            )}
-          </section>
+          {resultShown ? null : (
+            <section className="tx-chip-section">
+              <h4 className="tx-chip-label">{error ? 'Error' : 'Result'}</h4>
+              {pending ? (
+                <div className="tx-chip-empty">No result yet</div>
+              ) : resultText.length === 0 ? (
+                <div className="tx-chip-empty">Empty</div>
+              ) : (
+                // Stack traces and compiler errors live here; this is where a
+                // clickable path pays off most.
+                <pre className={`tx-pre ${error ? 'tx-pre-error' : ''}`}>
+                  <LinkifiedText text={resultText} />
+                </pre>
+              )}
+            </section>
+          )}
           {more}
         </div>
       ) : null}

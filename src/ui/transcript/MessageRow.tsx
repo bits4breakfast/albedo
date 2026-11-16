@@ -24,7 +24,7 @@ import { lineCount } from './pastedText';
 import { PassageRevealContext } from './passages';
 import { foldQuote } from './transcriptQuotes';
 import { DIFF_TOOLS, editPairsOf, writeOutcomeOf } from './editPairs';
-import ToolChip, { FieldList, str, toolInput, toolResultText } from './ToolChip';
+import ToolChip, { FieldList, fileLineCount, str, toolInput, toolResultText } from './ToolChip';
 import { SHOW_PREVIEW_TOOL } from '../../capture/previewGate';
 import { PreviewChip } from '../preview/PreviewChip';
 import {
@@ -793,7 +793,7 @@ function ToolUseRow({
       <div className="tx-row tx-row-tool" data-message-id={message.id}>
         <div className="tx-gutter" />
         <div className="tx-content">
-          <ToolChip message={message} result={result} more={more} tag={tag} />
+          <ToolChip message={message} result={result} more={more} tag={tag} resultShown />
           <WriteNotWritten message={message} result={result} />
         </div>
       </div>
@@ -833,12 +833,6 @@ function ToolUseRow({
       </div>
     </div>
   );
-}
-
-/** Lines in a file's text, as its diff counts them: a final line break does not start one. */
-function fileLineCount(text: string): number {
-  if (text === '') return 0;
-  return text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n').length;
 }
 
 function linesLabel(n: number): string {
