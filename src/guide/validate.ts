@@ -99,8 +99,13 @@ export function cleanFlags(raw: ReadonlyArray<{ path: string; reason: string }>,
   return Object.fromEntries(Object.entries(out).slice(0, MAX_FLAGS));
 }
 
-/** A note longer than this is cut (#224). Shown in full under the file's header in the diff (#264). */
-export const NOTE_MAX_CHARS = 240;
+/**
+ * A note longer than this is cut (#224): a safety net only, so the note is
+ * kept whole (#397). The model is asked for under 220 characters and sometimes
+ * writes more; the diff's header shows two lines and Show All for the rest.
+ * Guides written before #397 keep the 240-character cut they were saved with.
+ */
+export const NOTE_MAX_CHARS = 2000;
 
 /**
  * A file's short line longer than this is cut (#264): a safety net only. The
