@@ -358,8 +358,16 @@ export function useDiffComments(
       onCancel={() => setDraft(null)}
       // A review task's comment goes to GitHub unless you say so (#287).
       destination={isReview ? (d.editing ? d.editing.github : 'draft') : undefined}
+      // Suggest Change starts from the lines as they are now (#411), without a
+      // CRLF file's \r. None on removed lines, alone or with added ones
+      // (#402): nothing in the file to replace, and GitHub's left side takes none.
+      lines={
+        newText === null || d.side === 'old' || d.removed
+          ? null
+          : newText.split('\n').slice(d.from - 1, d.to).map((l) => l.replace(/\r$/, ''))
+      }
     />
-  ), [save, isReview]);
+  ), [save, isReview, newText]);
 
   const after = useCallback(
     (line: number): ReactNode => {

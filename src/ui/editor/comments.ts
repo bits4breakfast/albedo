@@ -12,7 +12,8 @@
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from '@codemirror/view';
 import { removedLines, type ReviewComment } from '../../db/comments';
-import { ACTION_LABEL, DESTINATIONS, cardState, draftPlaceholder, draftSaveLabel } from './commentLabels';
+import { changeLabel, indentOf, insertIndent, joinSuggestion, replacesLabel, splitSuggestion, suggestionFrom } from '../../lib/suggestion';
+import { ACTION_LABEL, DESTINATIONS, SUGGEST_HINT, SUGGEST_LABEL, cardState, draftPlaceholder, draftSaveLabel } from './commentLabels';
 
 /** A comment placed in this document. */
 export interface PlacedComment {
@@ -124,6 +125,21 @@ function rangeLabel(view: EditorView, from: number, to: number): string {
   return a === b ? `Line ${a}` : `Lines ${a}–${b}`;
 }
 
+/** The same diff as CommentViews' SuggestionDiff (#411). */
+function suggestionDiff(before: readonly string[], after: readonly string[]): HTMLElement {
+  const diff = el('div', 'ed-cmt-sug-diff');
+  diff.setAttribute('role', 'group');
+  diff.setAttribute('aria-label', `Suggested change: ${replacesLabel(before.length, after.length)}`);
+  for (const [kind, lines] of [['del', before], ['add', after]] as const) {
+    for (const l of lines) {
+      const line = el('div', 'ed-cmt-sug-line', l);
+      line.dataset.kind = kind;
+      diff.append(line);
+    }
+  }
+  return diff;
+}
+
 class CommentCard extends WidgetType {
   constructor(
     readonly placed: PlacedComment,
@@ -181,13 +197,24 @@ class CommentCard extends WidgetType {
     });
     actions.append(make(state.main, state.state === 'sent'), ...extra, more);
     head.append(actions);
-    card.append(head, el('div', 'ed-cmt-body', c.body));
+    card.append(head);
+    // A suggested edit (#411) as a small diff, then the text: as the Diff
+    // mode's card draws it.
+    const { suggestion, text } = splitSuggestion(c.body);
+    if (suggestion === null) card.append(el('div', 'ed-cmt-body', c.body));
+    else {
+      card.append(suggestionDiff(c.anchorText.split('\n'), suggestion));
+      if (text !== '') card.append(el('div', 'ed-cmt-body', text));
+    }
     return card;
   }
   ignoreEvent(): boolean {
     return true;
   }
 }
+
+/** A draft box's refresh when it moves to other lines (DraftBox.updateDOM). */
+const moved = new WeakMap<HTMLElement, { id: number | null; refresh: (view: EditorView) => void }>();
 
 class DraftBox extends WidgetType {
   constructor(
@@ -197,9 +224,19 @@ class DraftBox extends WidgetType {
     super();
   }
   // Stable while typing: the textarea keeps its own value, and recreating the
-  // widget on every transaction would throw the text away.
+  // widget on every transaction would throw the text away. A box that moved
+  // (a new drag, ⌥⌘M on another selection) is not equal, and is updated in
+  // place by updateDOM: same text, its lines named again.
   eq(other: DraftBox): boolean {
-    return other.draft.editing?.id === this.draft.editing?.id;
+    return other.draft.editing?.id === this.draft.editing?.id && other.draft.from === this.draft.from && other.draft.to === this.draft.to;
+  }
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    // Only the same box, moved: a box for another comment (or a new one in
+    // place of an edit) is drawn afresh, or it would carry the old one's words.
+    const kept = moved.get(dom);
+    if (!kept || kept.id !== (this.draft.editing?.id ?? null)) return false;
+    kept.refresh(view);
+    return true;
   }
   toDOM(view: EditorView): HTMLElement {
     const box = el('div', 'ed-cmt ed-cmt-draft');
@@ -212,12 +249,25 @@ class DraftBox extends WidgetType {
     const editing = this.draft.editing !== null;
     const primary = button(draftSaveLabel(github, editing), () => save(), 'ed-cmt-btn ed-cmt-primary');
     area.placeholder = draftPlaceholder(github);
-    area.value = this.draft.editing?.body ?? '';
+    // A stored suggestion (#411) opens in the code box; the text in this one.
+    const stored = splitSuggestion(this.draft.editing?.body ?? '');
+    area.value = stored.suggestion === null ? (this.draft.editing?.body ?? '') : stored.text;
+    // The commented lines as they are now: what Suggest Change starts from.
+    // Read from the draft where it is at the moment asked, never kept: the
+    // box moves when a new range is picked, and keeps its DOM when it does.
+    const lines = (): string[] => {
+      const d = view.state.field(commentsField).draft ?? this.draft;
+      const doc = view.state.doc;
+      return doc.sliceString(doc.lineAt(d.from).from, doc.lineAt(d.to).to).split('\n');
+    };
+    const code = el('textarea', 'ed-cmt-code');
     const save = () => {
       const text = area.value.trim();
-      if (text === '') return;
+      // Code left as the lines themselves suggests nothing.
+      const suggestion = sug.hidden ? null : suggestionFrom(code.value, lines());
+      if (text === '' && suggestion === null) return;
       const draft = view.state.field(commentsField).draft;
-      if (draft) this.actions.save(draft, text, view.state, github);
+      if (draft) this.actions.save(draft, joinSuggestion(suggestion, text), view.state, github);
     };
     if (start !== undefined) {
       const head = el('div', 'ed-cmt-head');
@@ -243,6 +293,75 @@ class DraftBox extends WidgetType {
       view.dispatch({ effects: setDraft.of(null) });
       view.focus();
     };
+
+    // Suggest Change (#411), as the Diff mode's SuggestionEditor draws it:
+    // a toggle, and while it is on the lines as code to edit.
+    const suggestRow = el('div', 'ed-cmt-head');
+    const hint = el('span', 'ed-cmt-where', SUGGEST_HINT);
+    const sug = el('div', 'ed-cmt-sug');
+    const sugHead = el('div', 'ed-cmt-sug-head');
+    const count = el('span', '');
+    sugHead.append(el('span', '', 'Suggested'), count);
+    code.setAttribute('aria-label', 'Suggested code');
+    code.spellcheck = false;
+    code.setAttribute('autocapitalize', 'off');
+    code.setAttribute('autocorrect', 'off');
+    code.setAttribute('wrap', 'off');
+    const fit = () => {
+      count.textContent = changeLabel(lines(), code.value);
+      code.rows = Math.max(1, Math.min(12, code.value.split('\n').length));
+      // The widget's height changed: CodeMirror's line heights must follow.
+      view.requestMeasure();
+    };
+    code.addEventListener('input', fit);
+    code.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        save();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        cancel();
+      } else {
+        if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          // Indent, as in the file, rather than leave the box.
+          e.preventDefault();
+          insertIndent(code, indentOf(lines()));
+          fit();
+        }
+        e.stopPropagation();
+      }
+    });
+    sug.append(sugHead, code);
+    const mark = el('span', '', ' ✓');
+    mark.setAttribute('aria-hidden', 'true');
+    const toggle = button(SUGGEST_LABEL, () => {
+      if (sug.hidden) {
+        code.value = lines().join('\n');
+        show(true);
+        code.focus();
+      } else {
+        // Off drops the suggestion and keeps the text.
+        show(false);
+        area.focus();
+      }
+    }, 'ed-cmt-btn ed-cmt-suggest');
+    const show = (on: boolean) => {
+      sug.hidden = !on;
+      hint.hidden = !on;
+      toggle.setAttribute('aria-pressed', String(on));
+      if (on) toggle.append(mark);
+      else mark.remove();
+      fit();
+      view.requestMeasure();
+    };
+    if (stored.suggestion !== null) code.value = stored.suggestion.join('\n');
+    show(stored.suggestion !== null);
+    suggestRow.append(toggle, hint);
+    // No Suggest Change on removed lines (#402): there is nothing in the file
+    // for a suggestion to replace, and GitHub's left side takes none.
+    if (this.draft.label === undefined) box.append(suggestRow, sug);
+
     area.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
@@ -259,12 +378,16 @@ class DraftBox extends WidgetType {
       }
     });
     const foot = el('div', 'ed-cmt-foot');
-    foot.append(
-      el('span', 'ed-cmt-where', this.draft.label ?? rangeLabel(view, this.draft.from, this.draft.to)),
-      button('Cancel', cancel),
-      primary,
-    );
+    // A removed comment's box (#402) names its place in words, which no move changes.
+    const label = this.draft.label;
+    const where = el('span', 'ed-cmt-where', label ?? rangeLabel(view, this.draft.from, this.draft.to));
+    foot.append(where, button('Cancel', cancel), primary);
     box.append(area, foot);
+    moved.set(box, { id: this.draft.editing?.id ?? null, refresh: (v) => {
+      const d = v.state.field(commentsField).draft;
+      if (d) where.textContent = label ?? rangeLabel(v, d.from, d.to);
+      if (!sug.hidden) fit();
+    } });
     setTimeout(() => area.focus(), 0);
     return box;
   }

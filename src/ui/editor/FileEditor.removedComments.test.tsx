@@ -208,4 +208,20 @@ describe('comments on removed lines (#402)', { timeout: 15_000 }, () => {
     expect(await screen.findByRole('button', { name: 'Comment on line 2' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Comment on removed line/ })).toBeNull();
   });
+
+  it('in File mode, editing a removed comment offers no Suggest Change; a comment on the file still does', async () => {
+    stored.push(removed());
+    await editorContent();
+    expect(await screen.findByText('Why drop old?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(await screen.findByText('On removed line 2 · was above this line')).toBeTruthy();
+    expect(screen.getByDisplayValue('Why drop old?')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Suggest Change/ })).toBeNull();
+    cleanup();
+    stored.length = 0;
+    const content = await editorContent();
+    fireEvent.keyDown(content, { key: 'µ', code: 'KeyM', keyCode: 77, ctrlKey: true, altKey: true });
+    await screen.findByPlaceholderText(/Leave a comment/);
+    expect(screen.getByRole('button', { name: /Suggest Change/ })).toBeTruthy();
+  });
 });

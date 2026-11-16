@@ -56,6 +56,15 @@ describe('comment states (#222)', () => {
     expect(transcript).toMatch(/\.tx-d-selcmt-note \{ color: var\(--muted\); \}/);
     expect(transcript).toMatch(/\.tx-cmt-target \{[^}]*color: var\(--muted\)/);
     expect(transcript).toMatch(/\.tx-waiting-where \{[^}]*color: var\(--muted\)/);
+    // Suggest Change (#411): the pressed toggle, the code box, the card's diff.
+    expect(cards).toMatch(/\.ed-cmt-suggest\[aria-pressed='true'\] \{[^}]*background: var\(--accent-soft\);[^}]*color: var\(--on-accent-soft\);/);
+    expect(cards).toMatch(/\.ed-cmt-sug-head \{[^}]*color: var\(--muted\);/);
+    expect(cards).toMatch(/\.ed-cmt-code \{[^}]*background: var\(--panel-inset\);[^}]*color: var\(--text-strong\);/);
+    expect(cards).toMatch(/\.ed-cmt-sug-line \{[^}]*color: var\(--text\);/);
+    expect(cards).toMatch(/\.ed-cmt-sug-line\[data-kind='del'\] \{ background: var\(--del-soft\); \}/);
+    expect(cards).toMatch(/\.ed-cmt-sug-line\[data-kind='add'\] \{ background: var\(--add-soft\); \}/);
+    expect(cards).toMatch(/\.ed-cmt-sug-line\[data-kind='del'\]::before \{ content: '− '; color: var\(--del\); \}/);
+    expect(cards).toMatch(/\.ed-cmt-sug-line\[data-kind='add'\]::before \{ content: '\+ '; color: var\(--add\); \}/);
     // No ✓ on a state any more: it is Resolve's.
     expect(cards).not.toMatch(/ed-cmt-sent::before/);
     expect(list).not.toMatch(/tf-comment-sent::before/);
@@ -70,6 +79,11 @@ describe('comment states (#222)', () => {
         ['--muted', '--panel-hover'], // a list label under a hovered row's neighbour
         ['--muted', '--panel-raised'],
         ['--text', '--panel'], // the selection bar's button
+        ['--text-strong', '--panel-inset'], // #411: the suggestion's code box
+        ['--text', '--del-soft'], // #411: the card's diff, the lines replaced
+        ['--text', '--add-soft'], // and the lines suggested
+        ['--del', '--del-soft'], // their − and + marks
+        ['--add', '--add-soft'],
       ];
       for (const [fg, bg] of text) expect(ratio(g(fg), g(bg)), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
       const ui: Array<[string, string]> = [

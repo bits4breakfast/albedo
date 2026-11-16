@@ -35,6 +35,7 @@ import {
   type ReviewComment,
 } from '../../db/comments';
 import { useOpenFile } from '../editor/openFile';
+import { joinSuggestion, replacesLabel, splitSuggestion } from '../../lib/suggestion';
 import { useCommentsIntro, writeIntro } from '../commentsIntro';
 import { ciFailureLabel, detailOf, removeQueuedCi, shortSha, useQueuedCi, type QueuedCiFailure } from './ciFailure';
 import { failedDetailsLine, type CheckDetail } from '../../gh/ciDetails';
@@ -243,9 +244,11 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
   const lines = comment.lineStart === comment.lineEnd ? `${comment.lineStart}` : `${comment.lineStart}–${comment.lineEnd}`;
   // On removed lines (#402) the numbers are the base's, and it says so.
   const removed = comment.side === 'old';
+  // A suggested edit (#411) stays as it is: the list edits the words.
+  const { suggestion, text } = splitSuggestion(comment.body);
   const save = () => {
-    if (draft === null || draft.trim().length === 0) return;
-    editCodeComment(taskId, comment.id, draft.trim()).then(
+    if (draft === null || (draft.trim().length === 0 && suggestion === null)) return;
+    editCodeComment(taskId, comment.id, joinSuggestion(suggestion, draft)).then(
       () => setDraft(null),
       (err: unknown) => setError(`Could not save it: ${String(err)}`),
     );
@@ -283,14 +286,26 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
             <button type="button" className="tx-btn tx-queued-act" onClick={() => setDraft(null)}>
               Cancel
             </button>
-            <button type="button" className="tx-btn tx-queued-act tx-cmt-add" onClick={save} disabled={draft.trim().length === 0}>
+            <button
+              type="button"
+              className="tx-btn tx-queued-act tx-cmt-add"
+              onClick={save}
+              disabled={draft.trim().length === 0 && suggestion === null}
+            >
               Save <span className="tx-cmt-key">⌘↩</span>
             </button>
           </div>
         </div>
       ) : (
         <div className="tx-waiting-row">
-          <div className="tx-waiting-comment">{comment.body}</div>
+          <div className="tx-waiting-comment">
+            {suggestion !== null ? (
+              <span className="tx-waiting-suggests">
+                Suggested change · {replacesLabel(comment.anchorText.split('\n').length, suggestion.length)}
+              </span>
+            ) : null}
+            {suggestion === null ? comment.body : text}
+          </div>
           <button
             type="button"
             className="tx-btn tx-queued-act"
@@ -299,7 +314,7 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
           >
             Jump
           </button>
-          <button type="button" className="tx-btn tx-queued-act" onClick={() => setDraft(comment.body)} disabled={frozen}>
+          <button type="button" className="tx-btn tx-queued-act" onClick={() => setDraft(suggestion === null ? comment.body : text)} disabled={frozen}>
             Edit
           </button>
           <button

@@ -95,3 +95,10 @@ export function draftSaveLabel(github: 'draft' | null, editing: boolean): string
   if (editing) return 'Save';
   return github === 'draft' ? 'Add Draft' : 'Comment';
 }
+
+/**
+ * Suggest Change (#411): the toggle in the box, and what it says while on.
+ * The box's foot already names the lines, so the hint does not again.
+ */
+export const SUGGEST_LABEL = 'Suggest Change';
+export const SUGGEST_HINT = 'Edit the code below into what you want';

@@ -2313,6 +2313,9 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A comment carrying a suggested edit (#411): what it is, above its words,
+   in the tier the item's place already uses on this ground. */
+.tx-waiting-suggests { display: block; color: var(--muted); font-size: var(--fs-xs); }
 
 /* An API error Claude Code wrote into the session (#338): its own tinted box,
    so it reads as an error and not as Claude's reply. Opaque --danger-soft

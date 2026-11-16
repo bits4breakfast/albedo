@@ -12,9 +12,10 @@
 
 import { anchorBlock, fileLines } from '../lib/anchor';
 import { diffSequences } from '../lib/diff';
+import { fenceFor, splitSuggestion } from '../lib/suggestion';
+import { getDb } from './index';
 
 type SeqOp = ReturnType<typeof diffSequences>[number];
-import { getDb } from './index';
 
 export interface ReviewComment {
   id: number;
@@ -478,6 +479,11 @@ export const DEFAULT_COMMENTS_INTRO = 'I left some review comments on your chang
  * The message for Claude Code: the intro, then one numbered item per comment
  * with its place, the code as it was commented on, and the comment. Fenced
  * with enough backticks that code containing ``` cannot close it.
+ *
+ * A comment carrying a suggested edit (#411) says so before its code, and
+ * gives the replacement after it. The code quoted is always the lines as
+ * they were commented on, which is what the suggestion replaces, even when
+ * the file has moved on since.
  */
 export function formatForClaude(comments: readonly ReviewComment[], intro: string = DEFAULT_COMMENTS_INTRO): string {
   // One comment written on both sides of a diff (#402) is two rows with the
@@ -496,18 +502,29 @@ export function formatForClaude(comments: readonly ReviewComment[], intro: strin
     if (twin) twin.push(c);
     else groups.push([c]);
   }
-  const quote = (c: ReviewComment) => {
-    const longest = Math.max(2, ...(c.anchorText.match(/`+/g) ?? []).map((m) => m.length));
-    const fence = '`'.repeat(longest + 1);
-    // On removed lines (#402) the code quoted is what was taken out, and
-    // Claude is told so: those lines are not in the file to look for.
-    const where = sideOf(c) === 'old' ? `${commentLocation(c)} (in the base, not in the file now)` : commentLocation(c);
-    return `${where}\n${fence}\n${c.anchorText}\n${fence}`;
-  };
+  // Where it is: on removed lines (#402) the code quoted is what was taken
+  // out, and Claude is told so -- those lines are not in the file to look for.
+  const where = (c: ReviewComment) =>
+    sideOf(c) === 'old' ? `${commentLocation(c)} (in the base, not in the file now)` : commentLocation(c);
   const items = groups.map((g, i) => {
     // The removed lines first, as the diff shows them.
-    const [a, b] = g.length === 2 && sideOf(g[1]!) === 'old' ? [g[1]!, g[0]!] : [g[0]!, g[1]];
-    return `${i + 1}. ${quote(a)}${b ? `\nand ${quote(b)}` : ''}\n${a.body.trim()}`;
+    const [c, other] = g.length === 2 && sideOf(g[1]!) === 'old' ? [g[1]!, g[0]!] : [g[0]!, g[1]];
+    // A suggestion (#411) is only ever on the file now: a removed comment never carries one.
+    const { suggestion, text } = sideOf(c) === 'old' ? { suggestion: null, text: c.body.trim() } : splitSuggestion(c.body);
+    const fence = fenceFor([...c.anchorText.split('\n'), ...(suggestion ?? [])]);
+    const quoted = `${fence}\n${c.anchorText}\n${fence}`;
+    const tail = text === '' ? '' : `\n${text}`;
+    if (other) {
+      const f2 = fenceFor(other.anchorText.split('\n'));
+      return `${i + 1}. ${where(c)}\n${quoted}\nand ${where(other)}\n${f2}\n${other.anchorText}\n${f2}${tail}`;
+    }
+    if (suggestion === null) return `${i + 1}. ${where(c)}\n${quoted}${tail}`;
+    const these = c.lineStart === c.lineEnd ? 'this line' : 'these lines';
+    const change =
+      suggestion.length === 0
+        ? `Suggested change: delete ${these}\n${quoted}`
+        : `Suggested change: replace ${these}\n${quoted}\nwith\n${fence}\n${suggestion.join('\n')}\n${fence}`;
+    return `${i + 1}. ${where(c)}\n${change}${tail}`;
   });
   const head = intro.trim();
   return `${head === '' ? '' : `${head}\n\n`}${items.join('\n\n')}`;
