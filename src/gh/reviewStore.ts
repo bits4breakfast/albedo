@@ -169,7 +169,7 @@ export function seenMarks(): ReadonlyMap<string, SeenMark> {
 }
 
 /** You looked at `pr` now: its activity so far is no longer news. */
-export function markSeen(pr: ReviewPr): void {
+export function markSeen(pr: Pick<ReviewPr, 'url' | 'headOid' | 'commitCount'>): void {
   const next = new Map(loadMarks());
   next.set(pr.url, { at: now(), head: pr.headOid, commits: pr.commitCount });
   marks = next;
