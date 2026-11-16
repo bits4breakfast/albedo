@@ -264,6 +264,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
       guide={guide}
       loaded={load.data}
       fresh={load.remembered !== true}
+      baseSettled={measured.settled}
       write={write}
       onRewrite={() => writeNow(guideFocus)}
       onEditOptions={() => {
@@ -477,6 +478,7 @@ function GuideBody({
   guide,
   loaded,
   fresh,
+  baseSettled,
   write,
   onRewrite,
   onEditOptions,
@@ -492,6 +494,8 @@ function GuideBody({
   loaded: LoadedBranchDiff;
   /** The read is this visit's, not a remembered one (#222: auto-resolve). */
   fresh: boolean;
+  /** #402: gh has answered for the PR, so the base is final: a removed comment may resolve. */
+  baseSettled: boolean;
   write: WriteState | null;
   onRewrite: () => void;
   /** Rewrite With Other Options… (#295). */
@@ -1038,6 +1042,8 @@ function GuideBody({
                 task={task}
                 diff={diff}
                 fresh={fresh}
+                fromMergeBase={loaded.fromMergeBase}
+                baseSettled={baseSettled}
                 file={file}
                 reviewed={isFileReviewed(file)}
                 commentCount={group ? fileComments(group, file) : 0}
@@ -1215,6 +1221,8 @@ function GuideFileDiff({
   task,
   diff,
   fresh,
+  fromMergeBase,
+  baseSettled,
   file,
   reviewed,
   commentCount,
@@ -1223,6 +1231,9 @@ function GuideFileDiff({
   task: Task;
   diff: BranchDiff;
   fresh: boolean;
+  /** #402: the old side is a merge base, not HEAD standing in for one. */
+  fromMergeBase: boolean;
+  baseSettled: boolean;
   file: GroupFile;
   reviewed: boolean;
   commentCount: number;
@@ -1233,7 +1244,10 @@ function GuideFileDiff({
   const full = diff.files.find((f) => f.path === file.path) ?? null;
   const result = full?.result ?? null;
   const newText = result && result.kind === 'diff' && result.change !== 'deleted' ? result.newText : null;
-  const comments = useDiffComments(task.id, file.path, newText, false, fresh, task);
+  // Comments on removed lines (#402) point at the base, the old side: only a
+  // merge base, never HEAD standing in for one.
+  const oldText = fromMergeBase && result && result.kind === 'diff' && result.change !== 'added' ? result.oldText : null;
+  const comments = useDiffComments(task.id, file.path, newText, false, fresh, task, oldText, baseSettled);
   const { name, dir } = splitPath(file.path);
   const split = file.blocks.length < file.totalBlocks;
   // A stat-only file is one block standing for all of its hunks: it shows whole.

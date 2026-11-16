@@ -53,7 +53,8 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [again, setAgain] = useState(0);
   // Against the branch the header shows it merging into (#237).
-  const measuredBase = useMeasuredBase(task).base;
+  const measured = useMeasuredBase(task);
+  const measuredBase = measured.base;
 
   // Another file: drop the old diff at once. Declared first, so on a step it
   // runs before the load below and the "keep while refreshing" rule there
@@ -105,7 +106,13 @@ export default function FileDiffView({ task, target, reloadKey, unsaved }: FileD
     load.kind === 'ready' && 'newText' in load.data.result && load.data.result.change !== 'deleted'
       ? load.data.result.newText
       : null;
-  const comments = useDiffComments(task.id, target.relative, currentText, unsaved, true, task);
+  // Comments on removed lines (#402) point at the base, the old side: only a
+  // merge base, never HEAD standing in for a base that cannot be found.
+  const baseText =
+    load.kind === 'ready' && load.data.fromMergeBase && 'oldText' in load.data.result && load.data.result.change !== 'added'
+      ? load.data.result.oldText
+      : null;
+  const comments = useDiffComments(task.id, target.relative, currentText, unsaved, true, task, baseText, measured.settled);
 
   if (load.kind === 'loading') return <div className="ed-message">Reading the change…</div>;
   if (load.kind === 'error') {

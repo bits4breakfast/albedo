@@ -21,6 +21,7 @@ import type { Task } from '../types';
 import { openExternal } from '../lib/openUrl';
 import {
   cannotSubmit,
+  draftWhere,
   failureAdvice,
   planReview,
   submitReview,
@@ -353,7 +354,7 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
                 <div className="wt-derived-row">
                   <span className="wt-derived-key">In summary</span>
                   <span className="wt-derived-val">
-                    {outside}, not on lines GitHub takes: {plan.outside.map((d) => `${d.path}:${d.lineStart}`).join(', ')}
+                    {outside}, not on lines GitHub takes: {plan.outside.map((d) => (d.side === 'old' ? draftWhere({ ...d, lineEnd: d.lineStart }) : `${d.path}:${d.lineStart}`)).join(', ')}
                   </span>
                 </div>
               ) : null}

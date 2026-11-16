@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ReviewComment } from '../../db/comments';
+import { removedLines, sideOf, type ReviewComment } from '../../db/comments';
 import type { ReviewThread } from '../../gh/reviewThreads';
 import { openExternal } from '../../lib/openUrl';
 import {
@@ -36,6 +36,11 @@ import {
 
 function where(from: number, to: number): string {
   return from === to ? `Line ${from}` : `Lines ${from}–${to}`;
+}
+
+/** A comment's place on its card: "Line 4", or on removed lines (#402) "On removed line 4". */
+function placeOf(c: Pick<ReviewComment, 'lineStart' | 'lineEnd' | 'side'>): string {
+  return sideOf(c) === 'old' ? `On ${removedLines(c)}` : where(c.lineStart, c.lineEnd);
 }
 
 export function CommentCardView({
@@ -68,9 +73,9 @@ export function CommentCardView({
     </button>
   );
   return (
-    <div className="ed-cmt" data-state={card.state}>
+    <div className="ed-cmt" data-state={card.state} data-side={sideOf(comment) === 'old' ? 'old' : undefined}>
       <div className="ed-cmt-head">
-        <span className="ed-cmt-where">{where(comment.lineStart, comment.lineEnd)}</span>
+        <span className="ed-cmt-where">{placeOf(comment)}</span>
         <span className="ed-cmt-chip" data-state={card.state}>
           {card.chip}
         </span>
@@ -142,9 +147,12 @@ export function CommentsBar({
   onResolve,
   onDelete,
   aside = null,
+  back,
 }: {
   traces: readonly ReviewComment[];
   outdated: readonly ReviewComment[];
+  /** #402: of `outdated`, the unsent comments on removed lines whose lines are back in the file. */
+  back?: ReadonlySet<number>;
   onReopen: (c: ReviewComment) => void;
   onResolve: (c: ReviewComment) => void;
   onDelete: (c: ReviewComment) => void;
@@ -176,7 +184,8 @@ export function CommentsBar({
           {outdated.map((c) => (
             <span key={`o${c.id}`} className="ed-cmt-outdated-item" title={c.anchorText}>
               <span className="ed-cmt-outdated-body">
-                {where(c.lineStart, c.lineEnd)}: {commentHeadline(c.body)}
+                {placeOf(c)}
+                {back?.has(c.id) ? ' · its lines are back' : ''}: {commentHeadline(c.body)}
                 {/* #411: what it suggests replaces lines that are no longer there. */}
                 {splitSuggestion(c.body).suggestion !== null ? ' · suggested change to older lines' : ''}
               </span>
@@ -319,6 +328,7 @@ function SuggestionEditor({
 export function CommentDraftView({
   from,
   to,
+  label,
   initial,
   editing,
   onSave,
@@ -328,6 +338,8 @@ export function CommentDraftView({
 }: {
   from: number;
   to: number;
+  /** Its place in words, when not "Line N" (#402: "On removed line N"). */
+  label?: string;
   /** The stored body when editing: its suggestion, if any, opens in the code box. */
   initial: string;
   editing: boolean;
@@ -398,7 +410,7 @@ export function CommentDraftView({
         }}
       />
       <div className="ed-cmt-foot">
-        <span className="ed-cmt-where">{where(from, to)}</span>
+        <span className="ed-cmt-where">{label ?? where(from, to)}</span>
         <button type="button" className="ed-cmt-btn" onClick={onCancel}>
           Cancel
         </button>

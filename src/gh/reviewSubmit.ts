@@ -58,18 +58,30 @@ export interface GithubDraft {
   replyTo: number | null;
   /** Its code is no longer in the file: it goes in the summary, at the line it was on. */
   lost?: boolean;
+  /** #402: on removed lines: lineStart/lineEnd are the base's, and it goes on GitHub's side LEFT. */
+  side?: 'old';
 }
 
-/** path -> the new-side line ranges of the PR's diff hunks, inclusive. */
-export type DiffRanges = ReadonlyMap<string, ReadonlyArray<readonly [number, number]>>;
+/** path -> line ranges of the PR's diff hunks, inclusive. */
+export type LineRanges = ReadonlyMap<string, ReadonlyArray<readonly [number, number]>>;
+
+/**
+ * path -> the new-side line ranges of the PR's diff hunks, inclusive; and
+ * on `old` (#402), the old side's, where GitHub takes a comment on side LEFT.
+ * A map without `old` judges nothing on the old side.
+ */
+export type DiffRanges = LineRanges & { readonly old?: LineRanges };
 
 /**
  * The hunks of `git diff -U3 <merge-base> <head>`, new side: the lines GitHub
  * lets a review comment on (its diff uses three lines of context too). A
  * deleted file has no new side and no entry.
  */
-export function parseDiffRanges(diff: string): Map<string, Array<[number, number]>> {
+export function parseDiffRanges(diff: string): Map<string, Array<[number, number]>> & { old: Map<string, Array<[number, number]>> } {
   const out = new Map<string, Array<[number, number]>>();
+  // The old side (#402), filed under the file's name now: a comment on a
+  // renamed file's removed lines is posted by its new path, as GitHub names it.
+  const old = new Map<string, Array<[number, number]>>();
   let path: string | null = null;
   // Lines still to come in the hunk being read, per side. Inside a hunk a
   // line is content whatever it starts with: an added `++ x` reads `+++ x`.
@@ -99,12 +111,20 @@ export function parseDiffRanges(diff: string): Map<string, Array<[number, number
       const name = line.slice(4).replace(/\t.*$/, '');
       path = name === '/dev/null' ? null : name.replace(/^b\//, '');
     } else if (line.startsWith('@@ ')) {
-      const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
       if (m) {
-        const start = Number(m[2]);
-        const count = m[3] === undefined ? 1 : Number(m[3]);
-        oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+        const start = Number(m[3]);
+        const count = m[4] === undefined ? 1 : Number(m[4]);
+        oldLeft = m[2] === undefined ? 1 : Number(m[2]);
         newLeft = count;
+        // A pure addition has nothing on the old side; a deleted file has no
+        // name now, and no comment in Albedo to post.
+        if (path !== null && oldLeft > 0) {
+          const from = Number(m[1]);
+          const ranges = old.get(path) ?? [];
+          ranges.push([from, from + oldLeft - 1]);
+          old.set(path, ranges);
+        }
         // A pure deletion has nothing on the new side.
         if (path !== null && count > 0) {
           const ranges = out.get(path) ?? [];
@@ -115,20 +135,27 @@ export function parseDiffRanges(diff: string): Map<string, Array<[number, number
     }
     prev = line;
   }
-  return out;
+  return Object.assign(out, { old });
 }
 
-/** Whether GitHub takes a line comment on `from..to` of `path`: both ends in one hunk. */
-export function inDiff(ranges: DiffRanges, path: string, from: number, to: number): boolean {
-  return (ranges.get(path) ?? []).some(([lo, hi]) => from >= lo && to <= hi && from <= to);
+/**
+ * Whether GitHub takes a line comment on `from..to` of `path`: both ends in
+ * one hunk, of the new side, or of the old side for removed lines (#402).
+ * Old-side ranges not measured (a map without `old`): GitHub decides.
+ */
+export function inDiff(ranges: DiffRanges, path: string, from: number, to: number, side: 'new' | 'old' = 'new'): boolean {
+  const on = side === 'old' ? ranges.old : ranges;
+  if (on === undefined) return true;
+  return (on.get(path) ?? []).some(([lo, hi]) => from >= lo && to <= hi && from <= to);
 }
 
 export interface ReviewLineComment {
   path: string;
   line: number;
-  side: 'RIGHT';
+  /** RIGHT: the file now; LEFT: the base, for a comment on removed lines (#402). */
+  side: 'RIGHT' | 'LEFT';
   start_line?: number;
-  start_side?: 'RIGHT';
+  start_side?: 'RIGHT' | 'LEFT';
   body: string;
 }
 
@@ -149,9 +176,16 @@ export interface ReviewPlan {
   replies: GithubDraft[];
 }
 
-function where(d: Pick<GithubDraft, 'path' | 'lineStart' | 'lineEnd'>): string {
+function where(d: Pick<GithubDraft, 'path' | 'lineStart' | 'lineEnd' | 'side'>): string {
+  // On removed lines (#402) the numbers are the base's, and it says so.
+  if (d.side === 'old') {
+    return d.lineStart === d.lineEnd ? `${d.path}: removed line ${d.lineStart}` : `${d.path}: removed lines ${d.lineStart}-${d.lineEnd}`;
+  }
   return d.lineStart === d.lineEnd ? `${d.path}:${d.lineStart}` : `${d.path}:${d.lineStart}-${d.lineEnd}`;
 }
+
+/** `path:line`, or `path: removed line N` (#402): where a draft is, in the dialog's words. */
+export const draftWhere = where;
 
 /**
  * A draft's words for the review's body. A suggested edit (#411) there is
@@ -200,14 +234,19 @@ export function planReview(input: {
   const comments: ReviewLineComment[] = [];
   const outside: GithubDraft[] = [];
   for (const d of lines) {
-    if (d.lost || (input.ranges !== null && !inDiff(input.ranges, d.path, d.lineStart, d.lineEnd))) {
+    const side = d.side === 'old' ? 'old' : 'new';
+    if (d.lost || (input.ranges !== null && !inDiff(input.ranges, d.path, d.lineStart, d.lineEnd, side))) {
       outside.push(d);
       continue;
     }
-    const c: ReviewLineComment = { path: d.path, line: d.lineEnd, side: 'RIGHT', body: d.body.trim() };
+    // On removed lines (#402), GitHub's left side, at the base's lines.
+    const gh = side === 'old' ? 'LEFT' : 'RIGHT';
+    // A suggestion block (#411) applies to the file now; on the left side
+    // (#402) GitHub has nothing to apply it to, so it never carries one.
+    const c: ReviewLineComment = { path: d.path, line: d.lineEnd, side: gh, body: side === 'old' ? bodyOutside(d) : d.body.trim() };
     if (d.lineStart < d.lineEnd) {
       c.start_line = d.lineStart;
-      c.start_side = 'RIGHT';
+      c.start_side = gh;
     }
     comments.push(c);
   }

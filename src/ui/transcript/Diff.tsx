@@ -830,8 +830,9 @@ function DiffHeader({
 /**
  * Hooks for review comments, provided by the editor's Diff mode and absent
  * everywhere else, so a transcript diff is unchanged. Lines are NEW-side
- * numbers: a comment points at the file as it is now, so a deleted line has
- * nothing to point at and gets no handle.
+ * numbers: a comment points at the file as it is now. Deleted rows take
+ * comments only through `removed` (#402), by the base's line numbers;
+ * without it a deleted line gets no handle, as before.
  */
 export interface DiffAnnotations {
   /** What to show under the row whose new-side line is `line`: cards, a draft. */
@@ -842,54 +843,91 @@ export interface DiffAnnotations {
   commented?(line: number): boolean;
   /** A drag on the + handles moved (`done` false) or ended (`done` true). */
   pick(from: number, to: number, done: boolean): void;
+  /**
+   * Comments on deleted rows (#402): the same four, by OLD-side (base) line
+   * numbers, for the rows the change removed. Absent: deleted rows take none.
+   */
+  removed?: RemovedAnnotations;
+  /**
+   * A selection covering deleted and added lines (#402): one comment per
+   * side, written once. Absent: such a selection comments on its new-side
+   * lines only, as before.
+   */
+  pickBoth?(added: { from: number; to: number }, removed: { from: number; to: number }): void;
+}
+
+export interface RemovedAnnotations {
+  after(line: number): ReactNode;
+  picking: { from: number; to: number } | null;
+  commented?(line: number): boolean;
+  pick(from: number, to: number, done: boolean): void;
+}
+
+type Side = 'new' | 'old';
+
+/** The side's hooks: the new side's are the annotations themselves. */
+function sideOf(annotate: DiffAnnotations | null, side: Side): RemovedAnnotations | null {
+  if (!annotate) return null;
+  return side === 'old' ? (annotate.removed ?? null) : annotate;
 }
 
 export const DiffAnnotationsContext = createContext<DiffAnnotations | null>(null);
 
-/** The new-side line under the pointer, from the row's data attribute. */
-function newLineAt(x: number, y: number): number | null {
-  const row = document.elementFromPoint(x, y)?.closest('[data-new-line]');
-  const n = Number(row?.getAttribute('data-new-line'));
+/** The new-side (or, for deleted rows, old-side) line under the pointer, from the row's data attribute. */
+function lineAt(x: number, y: number, side: Side = 'new'): number | null {
+  const attr = side === 'old' ? 'data-old-line' : 'data-new-line';
+  const row = document.elementFromPoint(x, y)?.closest(`[${attr}]`);
+  const n = Number(row?.getAttribute(attr));
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** The last + pressed in each diff, for Shift-click to extend from (#222). */
-const lastHandle = new WeakMap<Element, number>();
+/** The last + pressed in each diff, for Shift-click to extend from (#222); only within its side. */
+const lastHandle = new WeakMap<Element, { line: number; side: Side }>();
 
-/** The + on a row: press for that line, drag across rows, or Shift-click another + for a range. */
-function CommentHandle({ line }: { line: number }): ReactNode {
+/**
+ * The + on a row: press for that line, drag across rows, or Shift-click
+ * another + for a range. On a deleted row (#402) it is the base's line, and
+ * a drag or a Shift-click stays on deleted rows.
+ */
+function CommentHandle({ line, side = 'new' }: { line: number; side?: Side }): ReactNode {
   const annotate = useContext(DiffAnnotationsContext);
-  if (!annotate) return null;
+  const hooks = sideOf(annotate, side);
+  if (!hooks) return null;
   return (
     <button
       type="button"
       className="tx-d-cmt-add"
       tabIndex={-1}
-      aria-label={`Comment on line ${line}`}
-      title="Comment on this line (drag, or Shift-click another +, for several)"
+      aria-label={side === 'old' ? `Comment on removed line ${line}` : `Comment on line ${line}`}
+      title={
+        side === 'old'
+          ? 'Comment on this removed line (drag, or Shift-click another +, for several)'
+          : 'Comment on this line (drag, or Shift-click another +, for several)'
+      }
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
         const root = e.currentTarget.closest('.tx-d');
-        const from = root ? lastHandle.get(root) : undefined;
-        if (root) lastHandle.set(root, line);
+        const last = root ? lastHandle.get(root) : undefined;
+        const from = last && last.side === side ? last.line : undefined;
+        if (root) lastHandle.set(root, { line, side });
         if (e.shiftKey && from !== undefined) {
-          annotate.pick(Math.min(from, line), Math.max(from, line), true);
+          hooks.pick(Math.min(from, line), Math.max(from, line), true);
           return;
         }
         const start = line;
         let end = line;
-        annotate.pick(start, end, false);
+        hooks.pick(start, end, false);
         const move = (ev: MouseEvent) => {
-          const n = newLineAt(ev.clientX, ev.clientY);
+          const n = lineAt(ev.clientX, ev.clientY, side);
           if (n === null || n === end) return;
           end = n;
-          annotate.pick(Math.min(start, end), Math.max(start, end), false);
+          hooks.pick(Math.min(start, end), Math.max(start, end), false);
         };
         const up = () => {
           window.removeEventListener('mousemove', move);
           window.removeEventListener('mouseup', up);
-          annotate.pick(Math.min(start, end), Math.max(start, end), true);
+          hooks.pick(Math.min(start, end), Math.max(start, end), true);
         };
         window.addEventListener('mousemove', move);
         window.addEventListener('mouseup', up);
@@ -907,6 +945,19 @@ export interface SelectedRows {
   lines: Array<{ line: number; text: string }>;
   /** It covers rows, but only deleted ones: nothing in the file to point at. */
   deletedOnly: boolean;
+  /** The deleted rows it covers (#402), by the base's line numbers, in order. */
+  removed: Array<{ line: number; text: string }>;
+  /**
+   * In a split diff, the column the selection was made in (#402): its range
+   * runs through the other column's halves in between, which it does not
+   * mean. Null in a unified diff.
+   */
+  side: 'old' | 'new' | null;
+  /**
+   * Unchanged rows' left halves it covers (#402), by their line in the file
+   * now: what a selection made in a split diff's left column means on them.
+   */
+  same: Array<{ line: number; text: string }>;
 }
 
 /**
@@ -930,18 +981,65 @@ export function selectedDiffRows(sel: Selection | null): SelectedRows | null {
   });
   if (rows.length === 0) return null;
   const lines: SelectedRows['lines'] = [];
+  const removed: SelectedRows['removed'] = [];
+  const same: SelectedRows['same'] = [];
+  const take = (into: Array<{ line: number; text: string }>, value: string | null, text: string) => {
+    const n = Number(value);
+    if (value !== null && Number.isInteger(n) && n > 0 && !into.some((l) => l.line === n)) into.push({ line: n, text });
+  };
   for (const r of rows) {
-    const n = Number(r.getAttribute('data-new-line'));
-    if (!Number.isInteger(n) || n <= 0 || lines.some((l) => l.line === n)) continue;
-    lines.push({ line: n, text: r.querySelector('.tx-d-code')?.textContent ?? '' });
+    const text = r.querySelector('.tx-d-code')?.textContent ?? '';
+    take(removed, r.getAttribute('data-old-line'), text);
+    take(same, r.getAttribute('data-same-line'), text);
+    take(lines, r.getAttribute('data-new-line'), text);
   }
-  return { root, lines, deletedOnly: lines.length === 0 };
+  return { root, lines, deletedOnly: lines.length === 0, removed, side: columnOf(range, at), same };
+}
+
+/**
+ * The column of a split diff a selection was made in: the half it starts in,
+ * else the half it ends in, else the column the last press chose. Null in a
+ * unified diff.
+ */
+function columnOf(range: Range, at: (n: Node | null) => Element | null): 'old' | 'new' | null {
+  const start = at(range.startContainer);
+  if (!start?.closest('.tx-d-split')) return null;
+  const half = start.closest('.tx-d-half') ?? at(range.endContainer)?.closest('.tx-d-half') ?? null;
+  if (half) return half.previousElementSibling ? 'new' : 'old';
+  const chosen = start.closest('.tx-d-split')?.getAttribute('data-select');
+  return chosen === 'old' || chosen === 'new' ? chosen : null;
+}
+
+/** "Line 4", "Lines 2–4", "Removed Line 3": a range of rows, as a button names it. */
+function linesLabel(ls: ReadonlyArray<{ line: number }>, removed: boolean): string {
+  const first = ls[0]?.line;
+  const last = ls[ls.length - 1]?.line;
+  const word = first === last ? `Line ${first}` : `Lines ${first}–${last}`;
+  return removed ? `Removed ${word}` : word;
+}
+
+/** What a selection's Comment covers, side by side (#402); null when nothing. */
+function selectionTargets(
+  annotate: DiffAnnotations | null,
+  rows: SelectedRows,
+): { added: SelectedRows['lines']; removed: SelectedRows['removed'] } | null {
+  if (!annotate) return null;
+  // Split: only the column the selection was made in, once deleted rows take
+  // comments -- the left column's unchanged rows by their line now; before
+  // that, as it always was.
+  const added = annotate.removed && rows.side === 'old' ? rows.same : rows.lines;
+  // Deleted rows count only where they take comments, and alongside added
+  // ones only where one comment can go to both sides.
+  const removed = annotate.removed && rows.side !== 'new' && (added.length === 0 || annotate.pickBoth) ? rows.removed : [];
+  return added.length === 0 && removed.length === 0 ? null : { added, removed };
 }
 
 /**
  * Select lines in a diff, then comment (#222): a Comment button at the
  * selection, and ⌥⌘M, both for the new-side lines it covers -- the same
- * `pick` the + handles use. A selection only on deleted lines says why it
+ * `pick` the + handles use. Deleted rows (#402) take a comment of their own
+ * where the provider offers `removed`, and a selection over both sides makes
+ * one per side; without it a selection only on deleted lines says why it
  * cannot be commented. Only where comments are offered (the editor's Diff
  * mode, the guide); a transcript diff's selection belongs to PassageComments.
  *
@@ -975,9 +1073,15 @@ function SelectionComment({ rootRef }: { rootRef: RefObject<HTMLDivElement | nul
     const comment = () => {
       const f = foundRef.current;
       const a = annotateRef.current;
-      if (!f || !a || f.rows.deletedOnly) return false;
-      const ns = f.rows.lines.map((l) => l.line);
-      a.pick(Math.min(...ns), Math.max(...ns), true);
+      const t = f ? selectionTargets(a, f.rows) : null;
+      if (!a || !t) return false;
+      const span = (ls: ReadonlyArray<{ line: number }>) => {
+        const ns = ls.map((l) => l.line);
+        return { from: Math.min(...ns), to: Math.max(...ns) };
+      };
+      if (t.added.length > 0 && t.removed.length > 0 && a.pickBoth) a.pickBoth(span(t.added), span(t.removed));
+      else if (t.added.length > 0) a.pick(span(t.added).from, span(t.added).to, true);
+      else a.removed?.pick(span(t.removed).from, span(t.removed).to, true);
       document.getSelection()?.removeAllRanges();
       setFound(null);
       return true;
@@ -997,11 +1101,21 @@ function SelectionComment({ rootRef }: { rootRef: RefObject<HTMLDivElement | nul
 
   if (!annotate || !found) return null;
   const { rows } = found;
-  const first = rows.lines[0]?.line;
-  const last = rows.lines[rows.lines.length - 1]?.line;
+  const targets = selectionTargets(annotate, rows);
+  // Deleted rows take comments here (#402): a selection on none of the rows
+  // that do has no button and nothing to explain.
+  if (annotate.removed && targets === null) return null;
+  const what = targets
+    ? [
+        targets.removed.length > 0 ? linesLabel(targets.removed, true) : '',
+        targets.added.length > 0 ? linesLabel(targets.added, false) : '',
+      ]
+        .filter((w) => w !== '')
+        .join(' and ')
+    : '';
   return (
     <div className="tx-d-selcmt" style={{ top: found.top, left: found.left }} role="group" aria-label="Selected lines">
-      {rows.deletedOnly ? (
+      {targets === null ? (
         <span className="tx-d-selcmt-note">Deleted lines are not in the file now: nothing to comment on</span>
       ) : (
         <button
@@ -1012,30 +1126,36 @@ function SelectionComment({ rootRef }: { rootRef: RefObject<HTMLDivElement | nul
           onClick={() => commentNow.current()}
           title="Comment on the selected lines (⌥⌘M)"
         >
-          Comment on {first === last ? `Selected Line ${first}` : `Selected Lines ${first}–${last}`}
+          {targets.removed.length === 0 ? `Comment on Selected ${what}` : `Comment on ${what}`}
         </button>
       )}
     </div>
   );
 }
 
-function picked(annotate: DiffAnnotations | null, line: number | null): boolean {
-  const p = annotate?.picking;
+function picked(hooks: RemovedAnnotations | null, line: number | null): boolean {
+  const p = hooks?.picking;
   return !!p && line !== null && line >= p.from && line <= p.to;
 }
 
 /** " tx-d-picking" or " tx-d-commented" (#252): the row's comment edge, if any. */
-function edge(annotate: DiffAnnotations | null, line: number | null): string {
-  if (picked(annotate, line)) return ' tx-d-picking';
-  return line !== null && annotate?.commented?.(line) ? ' tx-d-commented' : '';
+function edge(annotate: DiffAnnotations | null, line: number | null, side: Side = 'new'): string {
+  const hooks = sideOf(annotate, side);
+  if (picked(hooks, line)) return ' tx-d-picking';
+  return line !== null && hooks?.commented?.(line) ? ' tx-d-commented' : '';
 }
 
-/** Whatever belongs under a row: cards and drafts ending on its line. */
-function Annotation({ line }: { line: number | null }): ReactNode {
+/** Whatever belongs under a row: cards and drafts ending on its line (on a deleted row, its base line). */
+function Annotation({ line, side = 'new' }: { line: number | null; side?: Side }): ReactNode {
   const annotate = useContext(DiffAnnotationsContext);
-  if (!annotate || line === null) return null;
-  const content = annotate.after(line);
-  return content ? <div className="tx-d-annot">{content}</div> : null;
+  const hooks = sideOf(annotate, side);
+  if (!hooks || line === null) return null;
+  const content = hooks.after(line);
+  return content ? (
+    <div className="tx-d-annot" data-side={side === 'old' ? 'old' : undefined}>
+      {content}
+    </div>
+  ) : null;
 }
 
 function LineNo({ n, linkPath }: { n: number | null; linkPath: string | null }): ReactNode {
@@ -1065,18 +1185,23 @@ function UnifiedBody({
       {rows.map((r, i) => {
         const tokens = r.line.kind === 'add' ? newTokens[r.newRow] : oldTokens[r.oldRow];
         const line = r.line.newNumber;
+        // A deleted row (#402) is named by its base line, and takes comments on that side.
+        const removed = r.line.kind === 'del' ? r.line.oldNumber : null;
         return (
           <Fragment key={i}>
             <div
-              className={`tx-d-row tx-d-${r.line.kind}${edge(annotate, line)}`}
+              className={`tx-d-row tx-d-${r.line.kind}${removed !== null ? edge(annotate, removed, 'old') : edge(annotate, line)}`}
               data-new-line={line ?? undefined}
+              data-old-line={removed ?? undefined}
             >
               <LineNo n={r.line.oldNumber} linkPath={null} />
               <LineNo n={line} linkPath={linkPath} />
               <span className="tx-d-mark">{r.line.kind === 'add' ? '+' : r.line.kind === 'del' ? '-' : ' '}</span>
               <Code pieces={composePieces(r.line.content, tokens, r.line.segments)} />
               {line !== null ? <CommentHandle line={line} /> : null}
+              {removed !== null ? <CommentHandle line={removed} side="old" /> : null}
             </div>
+            <Annotation line={removed} side="old" />
             <Annotation line={line} />
           </Fragment>
         );
@@ -1111,14 +1236,24 @@ function SplitBody({
         setSide(half ? (half.previousElementSibling ? 'new' : 'old') : null);
       }}
     >
-      {pairs.map((p, i) => (
+      {pairs.map((p, i) => {
+        // The left half of a deleted row (#402): its base line, and a + of its own.
+        const removed = p.left?.line.kind === 'del' ? p.left.line.oldNumber : null;
+        return (
         <Fragment key={i}>
           <div className="tx-d-pair">
-            <div className={`tx-d-half tx-d-${p.left ? p.left.line.kind : 'blank'}`}>
+            <div
+              className={`tx-d-half tx-d-${p.left ? p.left.line.kind : 'blank'}${removed !== null ? edge(annotate, removed, 'old') : ''}`}
+              data-old-line={removed ?? undefined}
+              // An unchanged row's left half (#402): its line in the file now,
+              // for a selection made in this column.
+              data-same-line={p.left?.line.kind === 'context' ? (p.left.line.newNumber ?? undefined) : undefined}
+            >
               {p.left ? (
                 <>
                   <LineNo n={p.left.line.oldNumber} linkPath={null} />
                   <Code pieces={composePieces(p.left.line.content, oldTokens[p.left.oldRow], p.left.line.segments)} />
+                  {removed !== null ? <CommentHandle line={removed} side="old" /> : null}
                 </>
               ) : (
                 <span className="tx-d-n" />
@@ -1139,9 +1274,11 @@ function SplitBody({
               )}
             </div>
           </div>
+          <Annotation line={removed} side="old" />
           <Annotation line={p.right?.line.newNumber ?? null} />
         </Fragment>
-      ))}
+        );
+      })}
     </div>
   );
 }
