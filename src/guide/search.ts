@@ -11,7 +11,8 @@
  * unchanged lines (folded), so that group always shows it.
  */
 
-import { diffSearchMatches, type DiffMatch } from '../ui/transcript/Diff';
+import { searchDiff, type DiffMatch } from '../ui/transcript/Diff';
+import { sourceLines } from '../ui/transcript/codeTokens';
 import type { BranchDiff } from './blocks';
 import type { GroupView } from './validate';
 
@@ -75,15 +76,14 @@ export function searchGuide(
   let total = 0;
   let capped = false;
   for (const [path, firstGroup] of first) {
-    if (capped) break;
+    if (capped || total >= cap) break;
     const file = diff.files.find((f) => f.path === path);
-    if (!file || file.result.kind !== 'diff') continue;
+    // A stat-only file (a lockfile, generated, minified) is not read here:
+    // This File still searches it when it is open.
+    if (!file || file.stat !== null || file.result.kind !== 'diff') continue;
     const r = file.result;
-    for (const m of diffSearchMatches(r.diff, { oldText: r.oldText, newText: r.newText }, query)) {
-      if (total >= cap) {
-        capped = true;
-        break;
-      }
+    const res = searchDiff(r.diff, linesOf(r), query, cap - total);
+    for (const m of res.matches) {
       const groupKey = (m.hunk !== null ? owner.get(file.blocks[m.hunk] ?? '') : undefined) ?? firstGroup;
       const at = `${groupKey}\n${path}`;
       const list = found.get(at) ?? [];
@@ -92,6 +92,8 @@ export function searchGuide(
       paths.add(path);
       total++;
     }
+    // Stopped in this file, or filled the cap exactly with more to come.
+    capped = res.capped || (total >= cap && hasMore(first, path, diff, query));
   }
   const out: GuideHitGroup[] = [];
   groups.forEach((g, i) => {
@@ -105,6 +107,35 @@ export function searchGuide(
     }
   });
   return { groups: out, total, files: paths.size, capped };
+}
+
+/** Each file's lines, split once per read of the branch, not per keystroke. */
+const lines = new WeakMap<object, { old: string[]; new: string[] }>();
+
+function linesOf(r: { oldText: string; newText: string }): { old: string[]; new: string[] } {
+  let l = lines.get(r);
+  if (!l) {
+    l = { old: sourceLines(r.oldText), new: sourceLines(r.newText) };
+    lines.set(r, l);
+  }
+  return l;
+}
+
+/** At the cap exactly: whether any file after `path` has a match too. */
+function hasMore(first: ReadonlyMap<string, string>, path: string, diff: BranchDiff, query: string): boolean {
+  let after = false;
+  for (const p of first.keys()) {
+    if (p === path) {
+      after = true;
+      continue;
+    }
+    if (!after) continue;
+    const f = diff.files.find((x) => x.path === p);
+    if (f && f.stat === null && f.result.kind === 'diff' && searchDiff(f.result.diff, linesOf(f.result), query, 1).matches.length > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Matches in order, one entry per line they are on. */

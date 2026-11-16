@@ -12,8 +12,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 
-import { Diff, diffSearchMatches, findInLine, type DiffSearch } from './Diff';
-import { composePieces } from './codeTokens';
+import { Diff, diffSearchMatches, findInLine, searchDiff, DIFF_SEARCH_CAP, type DiffSearch } from './Diff';
+import { composePieces, sourceLines } from './codeTokens';
 import { diffStrings } from '../../lib/diff';
 
 afterEach(cleanup);
@@ -26,10 +26,17 @@ const OLD = lines(40, (i) => (i === 15 || i === 38 ? `line ${i} marker` : `line 
 const NEW = OLD.replace('line 3\n', 'line 3 Marker added\n').replace('line 30\n', 'line 30 changed\n');
 const EXPAND = { oldText: OLD, newText: NEW };
 
+const DIFF = diffStrings(OLD, NEW, 'notes.txt');
+const SOURCES = { old: sourceLines(OLD), new: sourceLines(NEW) };
+
+/** A search as the guide hands it to the diff: made once, of this diff. */
+function q(query: string, current: string | null): DiffSearch {
+  return { result: searchDiff(DIFF, SOURCES, query), current };
+}
+
 function view(search: DiffSearch | null, layout: 'unified' | 'split' = 'unified'): { rerender: (s: DiffSearch | null) => void } {
-  const diff = diffStrings(OLD, NEW, 'notes.txt');
   const el = (s: DiffSearch | null): ReactNode => (
-    <Diff diff={diff} expand={EXPAND} layout={layout} head={false} contextPath={null} search={s} />
+    <Diff diff={DIFF} expand={EXPAND} layout={layout} head={false} contextPath={null} search={s} />
   );
   const r = render(el(search));
   return { rerender: (s) => r.rerender(el(s)) };
@@ -106,13 +113,13 @@ describe('composePieces with matches', () => {
 
 describe('Diff with a search', () => {
   it('highlights every match, the current one stronger', () => {
-    view({ query: 'marker', current: 'n:15:8' });
+    view(q('marker', 'n:15:8'));
     expect(hits()).toEqual(['Marker', 'marker', 'marker']);
     expect(current()).toEqual(['line 15 marker']);
   });
 
   it('opens a folded run that holds a match, says so, and leaves the others folded', () => {
-    view({ query: 'line 15', current: null });
+    view(q('line 15', null));
     expect(shownLine('line 15 marker')).toBe(true);
     expect(screen.getByRole('button', { name: /20 Unchanged Lines · opened: 1 match inside/ }).getAttribute('aria-expanded')).toBe('true');
     // The run after the last hunk has no match: still folded.
@@ -121,7 +128,7 @@ describe('Diff with a search', () => {
   });
 
   it('folds the run again when the search closes', () => {
-    const v = view({ query: 'line 15', current: null });
+    const v = view(q('line 15', null));
     expect(shownLine('line 15 marker')).toBe(true);
     v.rerender(null);
     expect(shownLine('line 15 marker')).toBe(false);
@@ -129,17 +136,17 @@ describe('Diff with a search', () => {
   });
 
   it('lets the reader fold a run the search opened, but keeps the current match’s open', () => {
-    const v = view({ query: 'marker', current: 'n:3:12' });
+    const v = view(q('marker', 'n:3:12'));
     const bar = screen.getByRole('button', { name: /20 Unchanged Lines/ });
     fireEvent.click(bar);
     expect(shownLine('line 15 marker')).toBe(false);
     expect(bar.textContent).toContain('1 match inside');
-    v.rerender({ query: 'marker', current: 'n:15:8' });
+    v.rerender(q('marker', 'n:15:8'));
     expect(shownLine('line 15 marker')).toBe(true);
   });
 
   it('marks a split diff’s unchanged rows on both halves and a removed row on the left', () => {
-    view({ query: 'line 30', current: null }, 'split');
+    view(q('line 30', null), 'split');
     const left = [...document.querySelectorAll('.tx-d-pair > .tx-d-half:first-child .tx-d-hit')];
     const right = [...document.querySelectorAll('.tx-d-pair > .tx-d-half:last-child .tx-d-hit')];
     expect(left.map((e) => e.closest('.tx-d-code')?.textContent)).toContain('line 30');
@@ -155,8 +162,82 @@ describe('Diff with a search', () => {
     const el = (s: DiffSearch | null) => <Diff diff={diff} expand={{ oldText: old, newText: now }} layout="unified" head={false} contextPath={null} search={s} />;
     const r = render(el(null));
     expect(shownLine('row 390 needle!')).toBe(false);
-    r.rerender(el({ query: 'needle', current: 'n:390:8' }));
+    r.rerender(el({ result: searchDiff(diff, { old: sourceLines(old), new: sourceLines(now) }, 'needle'), current: 'n:390:8' }));
     expect(shownLine('row 390 needle!')).toBe(true);
     expect(current()).toEqual(['row 390 needle!']);
+  });
+
+  it('shows only the lines around a match in a folded run, not the whole run', () => {
+    view(q('line 15', null));
+    // The run is lines 7-26; the match on 15 shows 12-18.
+    for (const n of [12, 14, 16, 18]) expect(shownLine(`line ${n}`), `line ${n}`).toBe(true);
+    expect(shownLine('line 11')).toBe(false);
+    expect(shownLine('line 19')).toBe(false);
+    expect(document.querySelectorAll('.tx-d-gap-skip').length).toBe(2);
+    expect([...document.querySelectorAll('.tx-d-gap-skip')].map((e) => e.textContent)).toEqual([
+      '⋯ 5 Unchanged Lines',
+      '⋯ 8 Unchanged Lines',
+    ]);
+  });
+
+  it('counts a run’s searched lines against the rows drawn at first', () => {
+    // A 1,000-line file changed at its ends: every unchanged line between matches.
+    const old = lines(1000, (i) => `row ${i}`).join('\n');
+    const now = old.replace('row 1\n', 'row 1 first\n').replace(/row 1000$/, 'row 1000 last');
+    const diff = diffStrings(old, now, 'long.txt');
+    const result = searchDiff(diff, { old: sourceLines(old), new: sourceLines(now) }, 'row');
+    render(<Diff diff={diff} expand={{ oldText: old, newText: now }} layout="unified" head={false} contextPath={null} search={{ result, current: result.matches[0]!.key }} />);
+    expect(document.querySelectorAll('.tx-d-code').length).toBeLessThan(400);
+    expect(shownLine('row 1000 last')).toBe(false);
+    expect(screen.getByText(/More Lines$/)).toBeTruthy();
+  });
+
+  it('stops at the cap, and says so', () => {
+    const many = lines(1500, (i) => `x ${i}`).join('\n');
+    const diff = diffStrings('', many, 'many.txt');
+    const r = searchDiff(diff, { old: sourceLines(''), new: sourceLines(many) }, 'x');
+    expect(r.matches).toHaveLength(DIFF_SEARCH_CAP);
+    expect(r.capped).toBe(true);
+  });
+
+  it('keeps the current match’s run open, and says why, rather than folding it on a click', () => {
+    view(q('marker', 'n:15:8'));
+    const bar = screen.getByRole('button', { name: /20 Unchanged Lines/ });
+    expect(bar.getAttribute('aria-disabled')).toBe('true');
+    expect(bar.getAttribute('title')).toMatch(/current match/);
+    fireEvent.click(bar);
+    expect(shownLine('line 15 marker')).toBe(true);
+  });
+
+  it('keeps the line it was on when the search closes', () => {
+    const v = view(q('marker', 'n:15:8'));
+    v.rerender(null);
+    expect(shownLine('line 15 marker')).toBe(true);
+    expect(hits()).toEqual([]);
+    // The whole run, now the reader's to fold.
+    expect(screen.getByRole('button', { name: '20 Unchanged Lines' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('keeps the current match’s rows when the search closes past the first rows', () => {
+    const old = lines(400, (i) => `row ${i}`).join('\n');
+    const now = lines(400, (i) => (i === 390 ? `row ${i} needle!` : `row ${i}!`)).join('\n');
+    const diff = diffStrings(old, now, 'big.txt');
+    const result = searchDiff(diff, { old: sourceLines(old), new: sourceLines(now) }, 'needle');
+    const el = (s: DiffSearch | null) => <Diff diff={diff} expand={{ oldText: old, newText: now }} layout="unified" head={false} contextPath={null} search={s} />;
+    const r = render(el({ result, current: 'n:390:8' }));
+    r.rerender(el(null));
+    expect(shownLine('row 390 needle!')).toBe(true);
+  });
+
+  it('shows more from what a search drew, not from the first rows', () => {
+    // 700 changed lines are 1,400 rows; the current match is row 1,390.
+    const old = lines(700, (i) => `row ${i}`).join('\n');
+    const now = lines(700, (i) => (i === 690 ? `row ${i} needle!` : `row ${i}!`)).join('\n');
+    const diff = diffStrings(old, now, 'big.txt');
+    const result = searchDiff(diff, { old: sourceLines(old), new: sourceLines(now) }, 'needle');
+    render(<Diff diff={diff} expand={{ oldText: old, newText: now }} layout="unified" head={false} contextPath={null} search={{ result, current: result.matches[0]!.key }} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Show \d+ More$/ }));
+    expect(screen.queryByText(/More Lines$/)).toBeNull();
+    expect(shownLine('row 700!')).toBe(true);
   });
 });

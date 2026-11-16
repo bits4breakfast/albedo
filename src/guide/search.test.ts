@@ -80,4 +80,19 @@ describe('searchGuide', () => {
     expect(searchGuide(groups, diff, 'ALPHA').total).toBe(0);
     expect(searchGuide(groups, diff, 'alpha').total).toBe(3);
   });
+
+  it('leaves out a stat-only file (a lockfile), which This File still searches when open', () => {
+    const diff = buildBranchDiff([edited('src/a.ts', [3], 'alpha'), edited('package-lock.json', [3], 'alpha')], statReason);
+    const guide = {
+      diffHash: diff.hash,
+      writtenAt: 1,
+      base: 'b',
+      groups: [{ title: 'All', summary: '', blocks: [...diff.order] }],
+      files: Object.fromEntries(diff.files.map((f) => [f.path, f.blocks])),
+      fallback: null,
+    } as unknown as Guide;
+    const groups = viewGuide(guide, diff).groups;
+    const r = searchGuide(groups, diff, 'alpha');
+    expect(r.groups.flatMap((g) => g.files.map((f) => f.path))).toEqual(['src/a.ts']);
+  });
 });

@@ -377,10 +377,12 @@
 
 .gd-all-done { font-size: var(--fs-sm); color: var(--status-review); }
 
-.gd-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.gd-right { position: relative; flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .gd-diff { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-/* Under All Guide Files (#413): kept, not drawn. */
-.gd-diff[hidden] { display: none; }
+/* Under All Guide Files (#413): kept and laid out at its own size, so its
+   layout and scroll stay, but covered and not drawn. Never display: none,
+   which measures it 0 wide and turns a split diff unified. */
+.gd-diff[data-covered] { position: absolute; inset: 0; visibility: hidden; }
 .gd-diff-head {
   flex: none;
   display: flex;

@@ -7,7 +7,7 @@
  * its file in its group, and Esc closing it all without leaving full screen.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Task } from '../types';
 import { buildBranchDiff, fileBlockIndex, type BranchDiff } from './blocks';
 import { statReason } from './budget';
@@ -30,6 +30,7 @@ vi.mock('../ui/editor/diffComments', () => ({
 
 const { default: GuidePane, resetGuideViewsForTests } = await import('./GuidePane');
 const { resetGuideStoreForTests, saveGuide } = await import('./store');
+const { SEARCH_DEBOUNCE_MS } = await import('./GuideSearch');
 
 const task = {
   id: 7, title: 't', projectId: 1, repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/wt',
@@ -92,8 +93,10 @@ async function opened() {
   await waitFor(() => expect(screen.getByRole('region', { name: 'Diff' }).querySelector('.tx-d-code')).not.toBeNull());
 }
 
-function type(text: string) {
+/** Types into the field, and waits out the pause before the text is searched. */
+async function type(text: string) {
   fireEvent.change(field(), { target: { value: text } });
+  await act(() => new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 30)));
 }
 
 describe('Search in a Review Guide (#413)', () => {
@@ -104,7 +107,7 @@ describe('Search in a Review Guide (#413)', () => {
     expect(field().getAttribute('aria-label')).toBe('Search This File');
     expect(screen.getByRole('button', { name: 'This File' }).getAttribute('aria-pressed')).toBe('true');
     // Foundations shows a.ts's first block only; line 30 is folded below it.
-    type('alpha');
+    await type('alpha');
     expect(count()).toBe('1 of 2');
     expect(highlighted()).toBe(2);
     expect(currentLine()).toBe('line 3 alpha');
@@ -116,7 +119,7 @@ describe('Search in a Review Guide (#413)', () => {
     expect(count()).toBe('1 of 2');
     fireEvent.keyDown(field(), { key: 'Enter', code: 'Enter', shiftKey: true });
     expect(currentLine()).toBe('line 30 alpha');
-    type('nothing like it');
+    await type('nothing like it');
     expect(count()).toBe('No matches');
     expect(highlighted()).toBe(0);
     // Not Find in Files: the window never heard either key.
@@ -126,7 +129,7 @@ describe('Search in a Review Guide (#413)', () => {
   it('Esc closes the bar and its highlights, handled so full screen stays, and gives focus back to the guide', async () => {
     await opened();
     find(root());
-    type('alpha');
+    await type('alpha');
     expect(highlighted()).toBe(2);
     const esc = fireEvent.keyDown(field(), { key: 'Escape', code: 'Escape' });
     expect(esc).toBe(false); // preventDefault: WKWebView does not hand it to AppKit
@@ -148,7 +151,7 @@ describe('Search in a Review Guide (#413)', () => {
     find(root(), true);
     expect(windowKeys.filter((e) => e.code === 'KeyF')).toEqual([]);
     expect(field().getAttribute('aria-label')).toBe('Search All Guide Files');
-    type('alpha');
+    await type('alpha');
     expect(count()).toBe('2 in 1 file');
     const list = screen.getByRole('listbox', { name: /Matches in the guide/ });
     const groups = within(list).getAllByRole('group').filter((g) => g.parentElement === list);
@@ -163,7 +166,7 @@ describe('Search in a Review Guide (#413)', () => {
   it('↓ ↩ on a result opens its file in its group, on This File, at that match', async () => {
     await opened();
     find(root(), true);
-    type('alpha');
+    await type('alpha');
     fireEvent.keyDown(field(), { key: 'ArrowDown', code: 'ArrowDown' });
     expect(screen.getByRole('option', { name: /line 30 alpha/ }).getAttribute('aria-selected')).toBe('true');
     fireEvent.keyDown(field(), { key: 'Enter', code: 'Enter' });
@@ -178,7 +181,7 @@ describe('Search in a Review Guide (#413)', () => {
   it('a click on a result opens it too; the switch keeps the text', async () => {
     await opened();
     find(root());
-    type('beta');
+    await type('beta');
     expect(count()).toBe('No matches'); // a.ts is open, and has none
     fireEvent.click(screen.getByRole('button', { name: 'All Guide Files' }));
     expect(field().value).toBe('beta');
@@ -196,7 +199,7 @@ describe('Search in a Review Guide (#413)', () => {
   it('lists three lines a file, then “+ N more”, which ↩ opens', async () => {
     await opened();
     find(root(), true);
-    type('line 1');
+    await type('line 1');
     // a.ts: lines 1 and 10-19 match, all folded or in Foundations' hunk.
     const more = screen.getAllByRole('option').find((o) => /^\+ \d+ more$/.test(o.textContent ?? ''))!;
     expect(more.textContent).toBe('+ 8 more');
@@ -214,6 +217,45 @@ describe('Search in a Review Guide (#413)', () => {
     expect(screen.queryByRole('button', { name: /Only This Group/ })).toBeNull();
     find(field());
     expect(right().getByRole('button', { name: /Only This Group/ }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('searches once typing pauses, not on every key, in both scopes', async () => {
+    await opened();
+    find(root());
+    await type('alpha');
+    expect(count()).toBe('1 of 2');
+    fireEvent.change(field(), { target: { value: 'beta' } });
+    expect(count()).toBe('1 of 2');
+    await waitFor(() => expect(count()).toBe('No matches'));
+    find(field(), true);
+    expect(count()).toBe('1 in 1 file');
+    fireEvent.change(field(), { target: { value: 'alpha' } });
+    expect(count()).toBe('1 in 1 file');
+    await waitFor(() => expect(count()).toBe('2 in 1 file'));
+  });
+
+  it('Esc goes no further than the search: the window (the editor’s Esc, full screen) never hears it', async () => {
+    await opened();
+    find(root());
+    await type('alpha');
+    fireEvent.keyDown(field(), { key: 'Escape', code: 'Escape' });
+    expect(screen.queryByRole('search')).toBeNull();
+    find(root());
+    root().focus();
+    fireEvent.keyDown(root(), { key: 'Escape', code: 'Escape' });
+    expect(screen.queryByRole('search')).toBeNull();
+    expect(windowKeys.filter((e) => e.key === 'Escape')).toEqual([]);
+  });
+
+  it('the switch keeps the caret after the text; ⌘F selects it', async () => {
+    await opened();
+    find(root());
+    await type('alpha');
+    fireEvent.click(screen.getByRole('button', { name: 'All Guide Files' }));
+    expect(document.activeElement).toBe(field());
+    expect([field().selectionStart, field().selectionEnd]).toEqual([5, 5]);
+    find(field());
+    expect([field().selectionStart, field().selectionEnd]).toEqual([0, 5]);
   });
 
   it('opens Read from the map', async () => {

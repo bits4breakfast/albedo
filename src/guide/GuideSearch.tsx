@@ -8,8 +8,9 @@
  *                          that file in its group at the line, on This File
  *
  * The switch flips between them, keeping the text. Plain text, case-
- * insensitive unless the text has a capital (`findInLine`). Esc closes the
- * bar and its highlights, never full screen: the key is marked handled here.
+ * insensitive unless the text has a capital (`findInLine`), searched once
+ * typing pauses (`SEARCH_DEBOUNCE_MS`). Esc closes the bar and its
+ * highlights, and goes no further: not full screen, not the editor's Esc.
  *
  * GuidePane owns the state (open, scope, text, the current match) and the
  * keys that open it; this file draws the bar and the All Guide Files list.
@@ -34,6 +35,12 @@ export interface GuideSearchState {
 
 export const CLOSED_SEARCH: GuideSearchState = { open: false, scope: 'file', query: '', current: null };
 
+/** How long typing pauses before the text is searched. */
+export const SEARCH_DEBOUNCE_MS = 150;
+
+/** What a request for the field asks: focus with the text selected, or the caret at its end. */
+export type FocusAsk = 'select' | 'caret' | null;
+
 export const SCOPE_LABEL: Record<SearchScope, string> = { file: 'This File', all: 'All Guide Files' };
 
 export interface SearchBarProps {
@@ -44,8 +51,8 @@ export interface SearchBarProps {
   onClose: () => void;
   /** Bumped when ⌘F / ⇧⌘F asks for the field again: it takes focus, text selected. */
   focusTick: number;
-  /** True once per request to focus: a bar that mounts later still takes it. */
-  takeFocus: () => boolean;
+  /** The request to focus, once: a bar that mounts later still takes it. */
+  takeFocus: () => FocusAsk;
 }
 
 /** Matches on one line, cut to show where they are on a long one. Pure. */
@@ -103,9 +110,12 @@ export function SearchBar({
 }): ReactNode {
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!takeFocus()) return;
-    input.current?.focus({ preventScroll: true });
-    input.current?.select();
+    const ask = takeFocus();
+    const el = input.current;
+    if (!ask || !el) return;
+    el.focus({ preventScroll: true });
+    if (ask === 'select') el.select();
+    else el.setSelectionRange(el.value.length, el.value.length);
   }, [focusTick, takeFocus]);
   return (
     <div className="gd-search" role="search" aria-label="Search the guide">
@@ -133,8 +143,10 @@ export function SearchBar({
         onKeyDown={(e) => {
           if (e.nativeEvent.isComposing) return;
           if (e.key === 'Escape') {
-            // Handled: never also the window's (full screen, #267).
+            // Handled, and here only: not full screen's (#267), and not the
+            // editor's Esc on the window, which would close its file.
             e.preventDefault();
+            e.stopPropagation();
             onClose();
             return;
           }
@@ -178,14 +190,17 @@ function splitPath(path: string): { name: string; dir: string } {
 export function AllGuideFiles({
   groups,
   diff,
+  searched,
   onOpen,
   ...bar
 }: SearchBarProps & {
   groups: readonly GroupView[];
   diff: BranchDiff;
+  /** The text searched, once typing pauses (the field shows `query`). */
+  searched: string;
   onOpen: (hit: GuideHit) => void;
 }): ReactNode {
-  const result = useMemo(() => searchGuide(groups, diff, bar.query), [groups, diff, bar.query]);
+  const result = useMemo(() => searchGuide(groups, diff, searched), [groups, diff, searched]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [cursor, setCursor] = useState(0);
   const listId = useId();
@@ -205,7 +220,7 @@ export function AllGuideFiles({
     }
     return out;
   }, [result, expanded]);
-  useEffect(() => setCursor(0), [bar.query]);
+  useEffect(() => setCursor(0), [searched]);
   const at = Math.min(cursor, Math.max(0, rows.length - 1));
   const optionId = (i: number) => `${listId}-${i}`;
 
@@ -220,7 +235,7 @@ export function AllGuideFiles({
   };
 
   const count =
-    bar.query === ''
+    searched === ''
       ? ''
       : result.total === 0
         ? 'No matches'

@@ -17,7 +17,7 @@
  * `LinkifiedText`) live in links.tsx.
  */
 
-import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import type { DiffHunk, DiffLine, FileDiff } from '../../types';
 import type { DualToken } from '../../lib/highlight';
@@ -229,16 +229,25 @@ function gapBefore(hunk: HunkModel | undefined, prev: HunkModel | undefined): Ga
 // Search (#413)
 // ---------------------------------------------------------------------------
 
+/** The last query's compiled pattern: a search runs one query over many lines. */
+let compiled: { query: string; re: RegExp } | null = null;
+
+function patternFor(query: string): RegExp {
+  if (compiled?.query !== query) {
+    const sensitive = query !== query.toLowerCase();
+    compiled = { query, re: new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), sensitive ? 'g' : 'gi') };
+  }
+  return compiled.re;
+}
+
 /**
  * Where a query is found in a line: plain text, case-insensitive unless the
  * query has a capital in it. `[start, end)` pairs, not overlapping. Pure.
  */
 export function findInLine(text: string, query: string): Array<[number, number]> {
   if (query === '') return [];
-  const sensitive = query !== query.toLowerCase();
-  const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), sensitive ? 'g' : 'gi');
   const out: Array<[number, number]> = [];
-  for (const m of text.matchAll(re)) out.push([m.index, m.index + m[0].length]);
+  for (const m of text.matchAll(patternFor(query))) out.push([m.index, m.index + m[0].length]);
   return out;
 }
 
@@ -261,21 +270,90 @@ export interface DiffMatch {
   need: number;
 }
 
+/** Lines of a folded run shown around each match in it, either side. */
+export const MATCH_CONTEXT = 3;
+
+/** Past this many matches in one diff the search stops: one letter must not mark a whole file. */
+export const DIFF_SEARCH_CAP = 1000;
+
+/** A run's lines a search shows: `count` lines from `from`, offsets into the run. */
+export interface GapWindow {
+  from: number;
+  count: number;
+}
+
+/** A search of one diff, made once and handed to {@link Diff} (`search.result`). */
+export interface DiffSearchResult {
+  matches: DiffMatch[];
+  /** Per folded run with a match, the lines shown around its matches; not the whole run. */
+  windows: ReadonlyMap<number, readonly GapWindow[]>;
+  /** Stopped at the cap: there are more matches than these. */
+  capped: boolean;
+}
+
+const NO_SEARCH: DiffSearchResult = { matches: [], windows: new Map(), capped: false };
+
+/** One model per diff: a search of the same diff on every keystroke builds it once. */
+const models = new WeakMap<FileDiff, Model>();
+
+function modelOf(diff: FileDiff): Model {
+  let m = models.get(diff);
+  if (!m) {
+    m = buildModel(diff.hunks);
+    models.set(diff, m);
+  }
+  return m;
+}
+
 /**
  * Every match of `query` in what the diff can show: each hunk's rows -- a
  * removed line by its base number, the rest by their number now -- and,
- * with both whole texts, the unchanged lines folded between and after them.
- * The same walk as {@link Diff}'s, so a match is always somewhere it draws. Pure.
+ * with both whole texts (`sources`, split by `sourceLines`), the unchanged
+ * lines folded between and after them, of which only a few lines around
+ * each match are shown. The same walk as {@link Diff}'s, so a match is
+ * always somewhere it draws. At most `cap` matches. Pure.
  */
+export function searchDiff(
+  diff: FileDiff,
+  sources: { old: readonly string[]; new: readonly string[] } | null,
+  query: string,
+  cap = DIFF_SEARCH_CAP,
+): DiffSearchResult {
+  if (query === '' || cap <= 0) return NO_SEARCH;
+  return matchesIn(modelOf(diff), sources?.old ?? null, sources?.new ?? null, query, cap);
+}
+
+/** {@link searchDiff}'s matches, from the whole texts. */
 export function diffSearchMatches(
   diff: FileDiff,
   expand: { oldText: string; newText: string } | null,
   query: string,
 ): DiffMatch[] {
-  if (query === '') return [];
-  const oldSource = expand ? sourceLines(expand.oldText) : null;
-  const newSource = expand ? sourceLines(expand.newText) : null;
-  return matchesIn(buildModel(diff.hunks), oldSource, newSource, query);
+  const sources = expand ? { old: sourceLines(expand.oldText), new: sourceLines(expand.newText) } : null;
+  return searchDiff(diff, sources, query).matches;
+}
+
+/** The rows a run's windows draw above the line at `offset`. Pure. */
+function rowsAbove(windows: readonly GapWindow[], offset: number): number {
+  let n = 0;
+  for (const w of windows) {
+    if (offset < w.from + w.count) return n + Math.max(0, offset - w.from);
+    n += w.count;
+  }
+  return n;
+}
+
+/** Lines `C` either side of each offset, merged where they touch. Pure. */
+function windowsAround(offsets: readonly number[], count: number): GapWindow[] {
+  const out: GapWindow[] = [];
+  for (const o of offsets) {
+    const from = Math.max(0, o - MATCH_CONTEXT);
+    const to = Math.min(count, o + MATCH_CONTEXT + 1);
+    const last = out[out.length - 1];
+    if (last && from <= last.from + last.count) last.count = Math.max(last.count, to - last.from);
+    else out.push({ from, count: to - from });
+  }
+  return out;
 }
 
 function matchesIn(
@@ -283,26 +361,43 @@ function matchesIn(
   oldSource: readonly string[] | null,
   newSource: readonly string[] | null,
   query: string,
-): DiffMatch[] {
+  cap: number,
+): DiffSearchResult {
   const out: DiffMatch[] = [];
-  if (query === '') return out;
+  const windows = new Map<number, GapWindow[]>();
+  let capped = false;
   const push = (side: 'old' | 'new', line: number, text: string, hunk: number | null, gap: number | null, need: number) => {
+    if (capped) return;
     for (const [start, end] of findInLine(text, query)) {
+      if (out.length >= cap) {
+        capped = true;
+        return;
+      }
       out.push({ key: `${side === 'old' ? 'o' : 'n'}:${line}:${start}`, side, line, start, end, text, hunk, gap, need });
     }
   };
-  const gapLines = (gap: Gap, key: number, need: number) => {
-    if (!oldSource || !newSource) return;
-    for (let i = 0; i < gap.count; i++) {
+  /** A run's matches, and the rows its windows add. */
+  const gapLines = (gap: Gap, key: number, need: number): number => {
+    if (!oldSource || !newSource) return 0;
+    const first = out.length;
+    for (let i = 0; i < gap.count && !capped; i++) {
       const n = gap.newStart + i;
       push('new', n, newSource[n - 1] ?? oldSource[gap.oldStart + i - 1] ?? '', null, key, need);
     }
+    if (out.length === first) return 0;
+    const offsets = [...new Set(out.slice(first).map((m) => m.line - gap.newStart))];
+    const w = windowsAround(offsets, gap.count);
+    windows.set(key, w);
+    // A match deep in a run needs the run's rows above it drawn too.
+    for (const m of out.slice(first)) m.need = need + rowsAbove(w, m.line - gap.newStart);
+    return w.reduce((n, x) => n + x.count, 0);
   };
+  // Rows drawn before each match: hunk rows, and the windows above it.
   let before = 0;
-  for (let hi = 0; hi < model.hunks.length; hi++) {
+  for (let hi = 0; hi < model.hunks.length && !capped; hi++) {
     const hunk = model.hunks[hi]!;
     const gap = gapBefore(hunk, model.hunks[hi - 1]);
-    if (gap) gapLines(gap, hi, before + 1);
+    if (gap) before += gapLines(gap, hi, before + 1);
     hunk.rows.forEach((r, i) => {
       if (r.line.kind === 'del' && r.line.oldNumber !== null) push('old', r.line.oldNumber, r.line.content, hi, null, before + i + 1);
       else if ((r.line.kind === 'add' || r.line.kind === 'context') && r.line.newNumber !== null) {
@@ -311,11 +406,11 @@ function matchesIn(
     });
     before += hunk.rows.length;
   }
-  if (oldSource && newSource) {
+  if (oldSource && newSource && !capped) {
     const tail = tailGap(model, newSource);
     if (tail) gapLines(tail, model.hunks.length, before + 1);
   }
-  return out;
+  return { matches: out, windows, capped };
 }
 
 /** The unchanged lines after the last hunk, when the whole new text says how many. */
@@ -464,16 +559,18 @@ export interface DiffProps {
    */
   footer?: ReactNode;
   /**
-   * A search to mark (#413, the Review Guide): every match highlighted, the
-   * `current` one (a {@link DiffMatch} key) stronger. A folded run with a
-   * match opens by itself, and the rows drawn reach the current one. None
-   * by default.
+   * A search to mark (#413, the Review Guide): `result` from
+   * {@link searchDiff} of this same `diff`, made once by the caller. Every
+   * match highlighted, the `current` one (a {@link DiffMatch} key) stronger.
+   * A folded run with a match shows the lines around it, and the rows drawn
+   * reach the current one. On close, the current match's line stays drawn.
+   * None by default.
    */
   search?: DiffSearch | null;
 }
 
 export interface DiffSearch {
-  query: string;
+  result: DiffSearchResult;
   current: string | null;
 }
 
@@ -494,7 +591,7 @@ export function Diff({
   const [budget, setBudget] = useState(INITIAL_BUDGET);
   const [openGaps, setOpenGaps] = useState<Record<number, boolean>>({});
 
-  const model = useMemo(() => buildModel(diff.hunks), [diff]);
+  const model = useMemo(() => modelOf(diff), [diff]);
 
   // A forced layout is the caller's call: the Guide judges one-sidedness on
   // the whole file, not on the slice it hands over (#337).
@@ -531,12 +628,12 @@ export function Diff({
   }, [expandOldText, expandNewText, expandOld, expandNew, model]);
   const wholeOn = whole !== null;
 
-  // A search (#413): its matches, which runs they open, and the rows each
-  // line marks. The current match's run is always open, and the rows drawn
+  // A search (#413): its matches, which runs they show, and the rows each
+  // line marks. The current match's run is always shown, and the rows drawn
   // always reach it.
-  const query = search?.query ?? '';
+  const searched = search?.result ?? NO_SEARCH;
+  const matches = searched.matches;
   const currentKey = search?.current ?? null;
-  const matches = useMemo(() => matchesIn(model, expandOld, expandNew, query), [model, expandOld, expandNew, query]);
   const current = useMemo(() => matches.find((m) => m.key === currentKey) ?? null, [matches, currentKey]);
   const gapFound = useMemo(() => {
     const out = new Map<number, number>();
@@ -554,16 +651,46 @@ export function Diff({
     }
     return (side, line) => (line === null ? undefined : byRow.get(`${side}:${line}`));
   }, [matches, currentKey]);
-  /** A run is open when the reader opened it, else when it holds a match; its current match's always. */
-  const gapOpen = (i: number) => current?.gap === i || (openGaps[i] ?? gapFound.has(i));
+  /**
+   * A run is all open when the reader opened it; else, holding a match, its
+   * lines around the matches show -- the current match's always, even when
+   * the reader folded the run; else it is folded.
+   */
+  const gapMode = (i: number): 'full' | 'windows' | 'closed' => {
+    if (openGaps[i] === true) return 'full';
+    if (searched.windows.has(i) && (current?.gap === i || openGaps[i] === undefined)) return 'windows';
+    return 'closed';
+  };
+  const windowRows = (i: number) => (searched.windows.get(i) ?? []).reduce((n, w) => n + w.count, 0);
   const drawn = Math.max(budget, current?.need ?? 0);
 
+  // Closing a search keeps the line it was on (#413): its run stays open and
+  // its rows drawn, so the text the reader found does not vanish under them.
+  const lastCurrent = useRef<DiffMatch | null>(null);
+  const searching = search !== null;
+  useLayoutEffect(() => {
+    if (searching) {
+      lastCurrent.current = current;
+      return;
+    }
+    const m = lastCurrent.current;
+    lastCurrent.current = null;
+    if (!m) return;
+    if (m.gap !== null) setOpenGaps((prev) => ({ ...prev, [m.gap!]: true }));
+    setBudget((b) => Math.max(b, m.need));
+  }, [searching, current]);
+
   // Each side only as far as the last line a hunk shows, until the gap after
-  // the last hunk is opened: the lines below it are never seen otherwise.
-  const tailOpen = gapOpen(model.hunks.length);
+  // the last hunk is opened (or a search shows lines in it): the lines below
+  // are never seen otherwise.
+  const tailMode = gapMode(model.hunks.length);
+  const tailWindows = tailMode === 'windows' ? searched.windows.get(model.hunks.length) : undefined;
   const reach = useMemo(() => lastNumbers(model.hunks[model.hunks.length - 1]), [model]);
-  const wholeOldTokens = useLineTokens(whole?.old ?? '', diff.lang, tailOpen ? Infinity : reach.old);
-  const wholeNewTokens = useLineTokens(whole?.new ?? '', diff.lang, tailOpen ? Infinity : reach.new);
+  const tailEnd = tailWindows ? tailWindows[tailWindows.length - 1]! : null;
+  const reachOld = tailMode === 'full' ? Infinity : tailEnd ? reach.old + tailEnd.from + tailEnd.count : reach.old;
+  const reachNew = tailMode === 'full' ? Infinity : tailEnd ? reach.new + tailEnd.from + tailEnd.count : reach.new;
+  const wholeOldTokens = useLineTokens(whole?.old ?? '', diff.lang, reachOld);
+  const wholeNewTokens = useLineTokens(whole?.new ?? '', diff.lang, reachNew);
   const wholeTokens = useMemo<WholeTokens | null>(
     () => (wholeOn ? { old: wholeOldTokens, new: wholeNewTokens } : null),
     [wholeOn, wholeOldTokens, wholeNewTokens],
@@ -691,8 +818,56 @@ export function Diff({
   }
 
   // Budgeted rendering: a 5000-line `git diff` must not lock the webview.
+  // A search's lines in a folded run count against it like any row (#413).
   let spent = 0;
   const body: ReactNode[] = [];
+
+  /** A folded run: its bar, then all of it, or the lines around its matches. */
+  const pushGap = (key: number, gap: Gap, expandable: boolean) => {
+    const mode = expandable ? gapMode(key) : 'closed';
+    const open = mode !== 'closed';
+    body.push(
+      <GapBar
+        key={`gap-${key}`}
+        gap={gap}
+        open={open}
+        expandable={expandable}
+        found={expandable ? (gapFound.get(key) ?? 0) : 0}
+        // The run holding the current match stays open while it is current.
+        locked={current?.gap === key}
+        onClick={() => toggleGap(key, open)}
+      />,
+    );
+    if (!open || !expandOld || !expandNew) return;
+    const lines = (part: Gap, at: string) => (
+      <GapLines
+        key={`gaplines-${key}${at}`}
+        gap={part}
+        oldSource={expandOld}
+        newSource={expandNew}
+        lang={diff.lang}
+        split={resolved === 'split'}
+        linkPath={linkPath}
+        whole={wholeTokens}
+      />
+    );
+    if (mode === 'full') {
+      body.push(lines(gap, ''));
+      return;
+    }
+    // As far as the rows drawn reach; "More Lines" below offers the rest.
+    let at = 0;
+    for (const w of searched.windows.get(key) ?? []) {
+      const room = drawn - spent;
+      if (room <= 0) return;
+      if (w.from > at) body.push(<GapSkip key={`gapskip-${key}-${w.from}`} count={w.from - at} />);
+      const count = Math.min(w.count, room);
+      body.push(lines({ oldStart: gap.oldStart + w.from, newStart: gap.newStart + w.from, count }, `-${w.from}`));
+      spent += count;
+      at = w.from + count;
+    }
+    if (gap.count > at) body.push(<GapSkip key={`gapskip-${key}-end`} count={gap.count - at} />);
+  };
 
   for (let hi = 0; hi < model.hunks.length; hi++) {
     const hunk = model.hunks[hi];
@@ -700,37 +875,12 @@ export function Diff({
     if (spent >= drawn) break;
 
     const gap = gapBefore(hunk, model.hunks[hi - 1]);
-    if (gap) {
-      const open = gapOpen(hi);
-      body.push(
-        <GapBar
-          key={`gap-${hi}`}
-          gap={gap}
-          open={open}
-          expandable={expandNew !== null}
-          found={expandNew !== null ? (gapFound.get(hi) ?? 0) : 0}
-          onClick={() => toggleGap(hi, open)}
-        />,
-      );
-      if (open && expandOld && expandNew) {
-        body.push(
-          <GapLines
-            key={`gaplines-${hi}`}
-            gap={gap}
-            oldSource={expandOld}
-            newSource={expandNew}
-            lang={diff.lang}
-            split={resolved === 'split'}
-            linkPath={linkPath}
-            whole={wholeTokens}
-          />,
-        );
-      }
-    }
+    if (gap) pushGap(hi, gap, expandNew !== null);
 
-    const remaining = drawn - spent;
+    const remaining = Math.max(0, drawn - spent);
     const rows = hunk.rows.length > remaining ? hunk.rows.slice(0, remaining) : hunk.rows;
     spent += rows.length;
+    if (rows.length === 0 && hunk.rows.length > 0) break;
 
     body.push(
       <div className="tx-d-hunk" key={`h-${hi}`}>
@@ -750,38 +900,14 @@ export function Diff({
   // Trailing unchanged region, when we know how long the file actually is.
   if (spent < drawn && expandNew && expandOld) {
     const tail = tailGap(model, expandNew);
-    if (tail) {
-      const key = model.hunks.length;
-      const open = gapOpen(key);
-      body.push(
-        <GapBar
-          key="gap-tail"
-          gap={tail}
-          open={open}
-          expandable
-          found={gapFound.get(key) ?? 0}
-          onClick={() => toggleGap(key, open)}
-        />,
-      );
-      if (open) {
-        body.push(
-          <GapLines
-            key="gaplines-tail"
-            gap={tail}
-            oldSource={expandOld}
-            newSource={expandNew}
-            lang={diff.lang}
-            split={resolved === 'split'}
-            linkPath={linkPath}
-            whole={wholeTokens}
-          />,
-        );
-      }
-    }
+    if (tail) pushGap(model.hunks.length, tail, true);
   }
 
+  // Every row there is to draw: the hunks', and a search's lines in the runs.
+  let rowsInAll = model.total;
+  for (const key of searched.windows.keys()) if (gapMode(key) === 'windows') rowsInAll += windowRows(key);
   const shown = spent;
-  const hidden = model.total - shown;
+  const hidden = Math.max(0, rowsInAll - shown);
 
   /*
    * Offered optimistically, before the file is read. Whether there is anything
@@ -844,10 +970,11 @@ export function Diff({
       {hidden > 0 ? (
         <div className="tx-d-more">
           <span className="tx-d-more-label">{hidden.toLocaleString()} More Lines</span>
-          <button type="button" className="tx-btn" onClick={() => setBudget((b) => b + BUDGET_STEP)}>
+          {/* From what is drawn: a search may draw past the budget (#413). */}
+          <button type="button" className="tx-btn" onClick={() => setBudget((b) => Math.max(b, drawn) + BUDGET_STEP)}>
             Show {Math.min(BUDGET_STEP, hidden).toLocaleString()} More
           </button>
-          <button type="button" className="tx-btn" onClick={() => setBudget(model.total)}>
+          <button type="button" className="tx-btn" onClick={() => setBudget(rowsInAll)}>
             Show All
           </button>
         </div>
@@ -1449,6 +1576,7 @@ function GapBar({
   open,
   expandable,
   found = 0,
+  locked = false,
   onClick,
 }: {
   gap: Gap;
@@ -1456,6 +1584,8 @@ function GapBar({
   expandable: boolean;
   /** Search matches inside (#413): said on the bar, which they opened. */
   found?: number;
+  /** It holds the current search match (#413): it stays open, and says so. */
+  locked?: boolean;
   onClick: () => void;
 }): ReactNode {
   const label = `${gap.count.toLocaleString()} Unchanged Line${gap.count === 1 ? '' : 's'}${
@@ -1469,10 +1599,32 @@ function GapBar({
      more here" without promising a click will do anything.
   */
   if (!expandable) return <div className="tx-d-gap tx-d-gap-static">⋯ {label}</div>;
+  if (locked) {
+    return (
+      <button
+        type="button"
+        className="tx-d-gap"
+        aria-expanded
+        aria-disabled
+        title="The current match is in here: it stays open while you search"
+      >
+        <Disclosure open /> {label}
+      </button>
+    );
+  }
   return (
     <button type="button" className="tx-d-gap" onClick={onClick} aria-expanded={open}>
       <Disclosure open={open} /> {label}
     </button>
+  );
+}
+
+/** Lines of a run a search leaves folded between the lines around its matches (#413). */
+function GapSkip({ count }: { count: number }): ReactNode {
+  return (
+    <div className="tx-d-gap tx-d-gap-static tx-d-gap-skip">
+      ⋯ {count.toLocaleString()} Unchanged Line{count === 1 ? '' : 's'}
+    </div>
   );
 }
 
