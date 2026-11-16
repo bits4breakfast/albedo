@@ -99,3 +99,51 @@ fn the_apps_preview_fixture_is_exactly_what_this_crate_writes() {
         "regenerate with ALBEDO_WRITE_FIXTURE=1 if the change is deliberate"
     );
 }
+
+/// The GitHub tools (#427): each line as `Server::call` writes it, and the
+/// cancel record. `inbox.test.ts` reads `mcp-github.jsonl`.
+fn github_lines() -> String {
+    let calls = [
+        (tools::LIST_GITHUB_DRAFTS, json!({})),
+        (
+            tools::DELETE_GITHUB_DRAFT,
+            json!({"id": 41, "reason": "Same point as the draft on line 58"}),
+        ),
+        (tools::DELETE_GITHUB_DRAFT, json!({"id": "42"})),
+        (tools::LIST_POSTED_COMMENTS, json!({})),
+        (
+            tools::DELETE_POSTED_COMMENT,
+            json!({"id": 1834567890u64, "reason": "Already fixed in the latest commit"}),
+        ),
+    ];
+    let mut out = String::new();
+    for (i, (tool, args)) in calls.iter().enumerate() {
+        let a = tools::validate(tool, Some(args), NOW).expect("fixture calls are valid");
+        let bytes = inbox::line(TASK, a.tool, a.args, NOW, &format!("fixture-g{}", i + 1)).unwrap();
+        out.push_str(std::str::from_utf8(&bytes).unwrap());
+    }
+    let mut c = serde_json::Map::new();
+    c.insert("request".into(), "fixture-g5".into());
+    c.insert(
+        "reason".into(),
+        albedo_mcp::preview::clean_reason(Some("AbortError: user-cancel")).into(),
+    );
+    let cancel = inbox::line(TASK, inbox::GITHUB_CANCELLED, c, NOW + 1, "fixture-g6").unwrap();
+    out.push_str(std::str::from_utf8(&cancel).unwrap());
+    out
+}
+
+#[test]
+fn the_apps_github_fixture_is_exactly_what_this_crate_writes() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../src/capture/fixtures/mcp-github.jsonl");
+    let expected = github_lines();
+    if std::env::var_os("ALBEDO_WRITE_FIXTURE").is_some() {
+        std::fs::write(&path, &expected).unwrap();
+    }
+    let actual = std::fs::read_to_string(&path).expect("fixture present");
+    assert_eq!(
+        actual, expected,
+        "regenerate with ALBEDO_WRITE_FIXTURE=1 if the change is deliberate"
+    );
+}

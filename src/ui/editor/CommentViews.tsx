@@ -100,6 +100,40 @@ export function CommentCardView({
 }
 
 /**
+ * Where a GitHub Draft was before the session removed it (#427): what it
+ * said, the session's reason, and Undo, which puts back the same draft.
+ */
+export function RemovedDraftCardView({
+  comment,
+  reason,
+  onUndo,
+}: {
+  comment: ReviewComment;
+  reason: string | null;
+  onUndo: () => void;
+}): ReactNode {
+  const what = comment.replyTo === null ? commentHeadline(comment.body) : `Reply: ${comment.body.split('\n')[0]}`;
+  return (
+    <div className="ed-cmt" data-state="removed" data-side={sideOf(comment) === 'old' ? 'old' : undefined}>
+      <div className="ed-cmt-head">
+        {comment.replyTo === null ? <span className="ed-cmt-where">{placeOf(comment)}</span> : null}
+        <span className="ed-cmt-chip" data-state="removed">
+          Removed by the session
+        </span>
+        <span className="ed-cmt-actions">
+          <button type="button" className="ed-cmt-btn ed-cmt-primary" onClick={onUndo} title="Put the draft back as it was">
+            Undo
+          </button>
+        </span>
+      </div>
+      <div className="ed-cmt-removed-text" title={commentWords(comment.body)}>
+        “{what}”{reason ? ` · ${reason}` : ''}
+      </div>
+    </div>
+  );
+}
+
+/**
  * A suggested edit as a small diff (#411): the lines commented on, then the
  * lines suggested for them. The lines are the ones the comment was written
  * on; a card is drawn only where they are still in the file.

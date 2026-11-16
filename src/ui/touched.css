@@ -585,6 +585,20 @@ button.tf-section-head:hover .disc { color: var(--text); }
 .tf-comment-static:hover { background: transparent; }
 .tf-comment-ci-label { flex: none; color: var(--danger); font-weight: 600; white-space: nowrap; }
 .tf-comment-drop:hover { color: var(--text); background: var(--panel-hover); }
+/* A GitHub Draft the session removed (#427): its row on --panel-chrome, the
+   words in --muted, its reason in a --border-edged chip, and Undo the same
+   .tf-btn as Reopen. --text and --muted on --panel-chrome are measured in
+   draftToolsContrast.test.ts. */
+.tf-comment-removed { background: var(--panel-chrome); }
+.tf-comment-removed .tf-comment-body { color: var(--muted); }
+.tf-comment-reason {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
 
 /* --- view switch and commit groups ---------------------------------------- */
 

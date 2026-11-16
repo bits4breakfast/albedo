@@ -30,7 +30,8 @@ import { Disclosure } from './Disclosure';
 import { commentHeadline, commentWords } from '../lib/suggestion';
 import { sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
-import { useGithubDrafts } from './reviewDrafts';
+import { useDraftRemovals, useGithubDrafts } from './reviewDrafts';
+import { undoDraftRemoval, type DraftRemoval } from '../capture/draftRemovals';
 import { requestSubmitReview } from './SubmitReview';
 
 export interface CommentsSectionProps {
@@ -58,6 +59,8 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   // A review task's drafts for GitHub (#287), replies included: their own
   // group, never Waiting, whose Send goes to Claude.
   const drafts = useGithubDrafts(task);
+  // Drafts the session removed (#427): a line each where they were, with Undo.
+  const removals = useDraftRemovals(task);
 
   useEffect(() => {
     let live = true;
@@ -133,7 +136,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
 
   const comments = all.filter((c) => c.resolvedAt === null);
   const resolved = all.filter((c) => c.resolvedAt !== null);
-  if (all.length === 0 && ci === null && drafts.length === 0) return null;
+  if (all.length === 0 && ci === null && drafts.length === 0 && removals.length === 0) return null;
 
   const unsent = comments.filter((c) => c.sentAt === null && c.github === null);
   const waiting = unsent.length + (ci ? 1 : 0);
@@ -208,7 +211,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
           {unsent.map((c) => row(c, null))}
         </div>
       )}
-      {drafts.length > 0 && (
+      {(drafts.length > 0 || removals.length > 0) && (
         <div className="tf-comments-group" role="group" aria-label={`For GitHub, ${drafts.length}`}>
           <div className="tf-comments-sub">
             For GitHub · {drafts.length}
@@ -243,6 +246,15 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
               </div>
             ),
           )}
+          {removals.map((r) => (
+            <RemovedDraftRow
+              key={`removed-${r.row.id}`}
+              removal={r}
+              onUndo={() =>
+                undoDraftRemoval(task.id, r.row.id).catch((err: unknown) => setNotice(`Could not put the draft back: ${String(err)}`))
+              }
+            />
+          ))}
         </div>
       )}
       {sent.length > 0 && (
@@ -318,6 +330,40 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * A GitHub Draft the session removed (#427): where it was, what it said, the
+ * session's reason, and Undo, which puts back the same draft.
+ */
+function RemovedDraftRow({ removal, onUndo }: { removal: DraftRemoval; onUndo: () => void }): ReactNode {
+  const c = removal.row;
+  const what = c.replyTo === null ? commentHeadline(c.body) : `Reply: ${c.body.split('\n')[0]}`;
+  return (
+    <div className="tf-comment tf-comment-removed">
+      <div
+        className="tf-comment-open tf-comment-static"
+        title={`Removed by the session: ${commentLocation(c)}${removal.reason ? `\nWhy: ${removal.reason}` : ''}\n\n${commentWords(c.body)}`}
+      >
+        <span className="tf-comment-where">
+          <span className="tf-name">{c.path.split('/').pop()}</span>
+          <span className="tf-comment-line">{c.replyTo === null ? lineLabel(c) : `:${c.lineStart}`}</span>
+        </span>
+        <span className="tf-comment-body">
+          Removed by the session · “{what}”
+          {removal.reason ? <span className="tf-comment-reason">{removal.reason}</span> : null}
+        </span>
+      </div>
+      <button
+        type="button"
+        className="tf-btn tf-comment-reopen"
+        onClick={onUndo}
+        aria-label={`Undo: put back the draft on ${commentLocation(c)}`}
+      >
+        Undo
+      </button>
+    </div>
   );
 }
 

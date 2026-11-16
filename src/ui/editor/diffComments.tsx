@@ -10,7 +10,7 @@
  * closes only once its comment is stored; a failed write says so.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { DiffAnnotations, RemovedAnnotations } from '../transcript/Diff';
 import {
@@ -33,10 +33,11 @@ import {
   type NewComment,
   type ReviewComment,
 } from '../../db/comments';
-import { CommentCardView, CommentDraftView, CommentsBar, ThreadCardView, ThreadsAside } from './CommentViews';
+import { CommentCardView, CommentDraftView, CommentsBar, RemovedDraftCardView, ThreadCardView, ThreadsAside } from './CommentViews';
+import { undoDraftRemoval, type DraftRemoval } from '../../capture/draftRemovals';
 import { inDiff } from '../../gh/reviewSubmit';
 import { placeThread, useReviewThreads, type ReviewThread } from '../../gh/reviewThreads';
-import { reviewPr, useGithubDrafts, usePrRanges, type ReviewTask } from '../reviewDrafts';
+import { reviewPr, useDraftRemovals, useGithubDrafts, usePrRanges, type ReviewTask } from '../reviewDrafts';
 
 interface Draft {
   from: number;
@@ -98,6 +99,8 @@ export function useDiffComments(
   const threads = useReviewThreads(isReview ? review!.reviewUrl! : null, pr, isReview ? review!.worktreePath : null);
   const ranges = usePrRanges(isReview ? review : null);
   const drafts = useGithubDrafts(isReview ? review : null);
+  // Drafts the session removed (#427): a card where each was, with Undo.
+  const removals = useDraftRemovals(isReview ? review : null);
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [picking, setPicking] = useState<{ from: number; to: number } | null>(null);
@@ -171,6 +174,32 @@ export function useDiffComments(
     // The ids decide; `resolving` is rebuilt on every render of the same set.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, resolvingKey]);
+
+  // Where each removed draft was (#427), found by its code as a draft is: on
+  // the file now, under its deleted rows, or on its thread. One that cannot
+  // be placed is listed in Files ▸ Comments only.
+  const { removedAt, removedUnder, removedReplies } = useMemo(() => {
+    const out = {
+      removedAt: new Map<number, DraftRemoval[]>(),
+      removedUnder: new Map<number, DraftRemoval[]>(),
+      removedReplies: new Map<number, DraftRemoval[]>(),
+    };
+    const add = (m: Map<number, DraftRemoval[]>, k: number, r: DraftRemoval) => m.set(k, [...(m.get(k) ?? []), r]);
+    if (newText === null) return out;
+    for (const r of removals) {
+      const c = r.row;
+      if (c.path !== path) continue;
+      if (c.replyTo !== null) add(out.removedReplies, c.replyTo, r);
+      else if (sideOf(c) === 'old') {
+        const gone = oldText === null ? null : placeRemoved(c, oldText, newText);
+        if (gone?.state === 'removed') add(out.removedUnder, gone.row, r);
+      } else {
+        const at = relocate(c, newText);
+        if (at.state === 'current') add(out.removedAt, at.lineEnd, r);
+      }
+    }
+    return out;
+  }, [removals, path, newText, oldText]);
 
   const report = useCallback(
     (write: Promise<unknown>, what: string) => {
@@ -320,24 +349,37 @@ export function useDiffComments(
     },
     [taskId],
   );
-  const threadCard = useCallback(
-    (t: ReviewThread, line: number | null) => (
-      <ThreadCardView
-        key={t.id}
-        thread={t}
-        prUrl={review?.reviewUrl ?? ''}
-        line={line}
-        replies={drafts.filter((d) => d.replyTo === t.replyTo)}
-        onReply={(text) => reply(t, text)}
-        onEditReply={(r, text) => {
-          const write = editComment(taskId, r.id, text);
-          write.catch((err: unknown) => setNotice(`Could not save the reply, which is still in its box: ${message(err)}`));
-          return write;
-        }}
-        onDeleteReply={(r) => report(deleteComment(taskId, r.id), 'delete the reply')}
+  const removedCard = useCallback(
+    (r: DraftRemoval) => (
+      <RemovedDraftCardView
+        key={`removed-${r.row.id}`}
+        comment={r.row}
+        reason={r.reason}
+        onUndo={() => report(undoDraftRemoval(taskId, r.row.id), 'put the draft back')}
       />
     ),
-    [review?.reviewUrl, drafts, reply, taskId, report],
+    [taskId, report],
+  );
+  const threadCard = useCallback(
+    (t: ReviewThread, line: number | null) => (
+      <Fragment key={t.id}>
+        <ThreadCardView
+          thread={t}
+          prUrl={review?.reviewUrl ?? ''}
+          line={line}
+          replies={drafts.filter((d) => d.replyTo === t.replyTo)}
+          onReply={(text) => reply(t, text)}
+          onEditReply={(r, text) => {
+            const write = editComment(taskId, r.id, text);
+            write.catch((err: unknown) => setNotice(`Could not save the reply, which is still in its box: ${message(err)}`));
+            return write;
+          }}
+          onDeleteReply={(r) => report(deleteComment(taskId, r.id), 'delete the reply')}
+        />
+        {(removedReplies.get(t.replyTo) ?? []).map(removedCard)}
+      </Fragment>
+    ),
+    [review?.reviewUrl, drafts, reply, taskId, report, removedReplies, removedCard],
   );
 
   const draftView = useCallback((d: Draft): ReactNode => (
@@ -374,7 +416,8 @@ export function useDiffComments(
       const here = placed.filter((p) => p.to === line && p.comment.id !== draft?.editing?.id);
       const draftHere = draft !== null && draft.side !== 'old' && draft.to === line;
       const threadsHere = threadsAt.get(line) ?? [];
-      if (here.length === 0 && !draftHere && threadsHere.length === 0) return null;
+      const removedHere = removedAt.get(line) ?? [];
+      if (here.length === 0 && !draftHere && threadsHere.length === 0 && removedHere.length === 0) return null;
       return (
         <>
           {threadsHere.map((t) => threadCard(t, line))}
@@ -388,11 +431,12 @@ export function useDiffComments(
               onDelete={() => report(deleteComment(taskId, p.comment.id), 'delete the comment')}
             />
           ))}
+          {removedHere.map(removedCard)}
           {draftHere && draft ? draftView(draft) : null}
         </>
       );
     },
-    [placed, draft, taskId, report, draftView, threadsAt, threadCard, ranges, path],
+    [placed, draft, taskId, report, draftView, threadsAt, threadCard, ranges, path, removedAt, removedCard],
   );
 
   // Under a deleted row (#402): the comments on removed lines that end there, and their box.
@@ -400,7 +444,8 @@ export function useDiffComments(
     (line: number): ReactNode => {
       const here = removed.filter((p) => p.row === line && p.comment.id !== draft?.editing?.id);
       const draftHere = draft !== null && draft.side === 'old' && (draft.row ?? draft.to) === line;
-      if (here.length === 0 && !draftHere) return null;
+      const removedHere = removedUnder.get(line) ?? [];
+      if (here.length === 0 && !draftHere && removedHere.length === 0) return null;
       return (
         <>
           {here.map((p) => (
@@ -413,11 +458,12 @@ export function useDiffComments(
               onDelete={() => report(deleteComment(taskId, p.comment.id), 'delete the comment')}
             />
           ))}
+          {removedHere.map(removedCard)}
           {draftHere && draft ? draftView(draft) : null}
         </>
       );
     },
-    [removed, draft, taskId, report, draftView, ranges, path],
+    [removed, draft, taskId, report, draftView, ranges, path, removedUnder, removedCard],
   );
 
   // The lines an open comment covers get an edge (#252), so a card's lines

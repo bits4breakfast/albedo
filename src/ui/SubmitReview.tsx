@@ -33,6 +33,7 @@ import { refreshThreads } from '../gh/reviewThreads';
 import { refreshReviews, reviewListState, useReviewsVersion } from '../gh/reviewStore';
 import { prepareSubmit, reviewPr, submitIo, useGithubDrafts, type SubmitInput } from './reviewDrafts';
 import { wrapForTooltip } from './text';
+import { clearDraftRemovals } from '../capture/draftRemovals';
 import './worktree.css';
 
 // ---------------------------------------------------------------------------
@@ -248,6 +249,8 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
         summaries.delete(id);
         reviewPosted.delete(id);
         clearRequest(id);
+        // Drafts the session removed (#427) were for this review: it is sent.
+        clearDraftRemovals(id);
         return;
       }
       if (out.reviewSent && plan.review !== null) {

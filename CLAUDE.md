@@ -76,6 +76,24 @@ until they approve it, and approving only opens New Task filled in from it.
 Nothing flows back to the session. `src/capture/inbox.ts` is the only file in the app
 that knows the line's shape.
 
+A widening of the fifth, by the owner's decision (issue #427): on a review
+task, the session may read and remove the user's GitHub Drafts and read the
+user's own comments posted on the task's PR, and ask for one to be deleted --
+`list_github_drafts`, `delete_github_draft`, `list_posted_comments`,
+`delete_posted_comment`, scoped to the calling task by `ALBEDO_TASK_ID` and
+nothing else. Unlike the rest of the fifth, these answer the session: the
+server never opens the database or the network, but writes its line and waits
+for `answer-<task>-<request>.json`, which the app writes. A list and a local
+draft's removal are answered at once, with no click, and only while the call
+can still be waiting (the server gives up after 30 s; the app never acts on a
+line older than 15 s). A removed draft stays visible in the task, with what was
+removed, the session's reason and Undo, which restores the exact row. Deleting
+a posted comment is a "waiting on you" card, and nothing is deleted on GitHub
+without its click; right before deleting, Albedo checks with GitHub that the
+comment's author is the signed-in user and that it is on this task's PR.
+Nothing else: no adding, editing or submitting drafts, and nobody else's
+comments. `src/capture/githubGate.ts` is the only file that answers them.
+
 A sixth, by the owner's decision (2026-11-02, issue #186): for the Review
 Guide only, Albedo may run `claude -p` itself -- one-shot, never in a pty and
 never the task's own session, `--model haiku`, no tools (`--tools ""`), no MCP

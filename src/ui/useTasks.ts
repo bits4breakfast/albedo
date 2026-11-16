@@ -24,6 +24,7 @@ import { listSubagents, liveRuns } from '../db/subagents';
 import { hasHooks, onPromptChange, onStatusSnapshot, pendingPrompt } from '../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../capture/workspaceTrust';
 import { finishedPreviewCalls, onPreviewChange, pendingPreview, retireFinishedPreviews } from '../capture/previewGate';
+import { onDeletionChange, pendingDeletion } from '../capture/githubGate';
 import { noteQuestion, noteStatusChange } from './attention';
 import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
@@ -565,8 +566,15 @@ export function useTasks(): UseTasksResult {
         await retireFinishedPreviews(taskId, finishedPreviewCalls(messages));
         // The transcript cannot show a prompt that is still waiting (the turn
         // is written only when it ends); the hooks can. See hookEvents.ts.
-        // Nor a preview waiting for its answer (capture/previewGate.ts).
-        if (pendingPrompt(taskId) !== null || isTrustWaiting(taskId) || pendingPreview(taskId) !== null) status = 'blocked';
+        // Nor a preview waiting for its answer (capture/previewGate.ts), nor
+        // a comment's deletion on GitHub (#427, capture/githubGate.ts).
+        if (
+          pendingPrompt(taskId) !== null ||
+          isTrustWaiting(taskId) ||
+          pendingPreview(taskId) !== null ||
+          pendingDeletion(taskId) !== null
+        )
+          status = 'blocked';
         asked = status !== 'blocked' ? pendingQuestion(messages) : null;
         // Background agents report back to the session when they finish, and
         // it carries on by itself: a turn handed back while they work is not
@@ -842,6 +850,7 @@ export function useTasks(): UseTasksResult {
       onPromptChange((taskId, prompt) => waitingChanged(taskId, () => prompt !== null)),
       onTrustWaiting((taskId, waiting) => waitingChanged(taskId, () => waiting)),
       onPreviewChange((taskId) => waitingChanged(taskId, () => pendingPreview(taskId) !== null)),
+      onDeletionChange((taskId) => waitingChanged(taskId, () => pendingDeletion(taskId) !== null)),
     ];
     return () => {
       for (const off of offs) off();

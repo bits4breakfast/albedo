@@ -21,6 +21,12 @@ pub const LINE_VERSION: u64 = 1;
 /// and `reason`. The app retires that preview's card on it.
 pub const PREVIEW_CANCELLED: &str = "preview_cancelled";
 
+/// The same record for a GitHub tool's call (#427) that ended without an
+/// answer: cancelled, timed out waiting for the app, or the session closing.
+/// Its args are `request` and `reason`, as above. The app retires that
+/// call's card on it, and never acts on that request afterwards.
+pub const GITHUB_CANCELLED: &str = "github_cancelled";
+
 /// The longest line written, newline included. Matches the app's cap, and a
 /// write this size to a local file is not split.
 pub const MAX_LINE_BYTES: usize = 65_536;

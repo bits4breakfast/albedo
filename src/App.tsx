@@ -86,6 +86,7 @@ import { useGroupToolCalls } from './ui/transcript/groupToolCalls';
 import { useReviewNotices } from './ui/reviewNotice';
 import { fetchPrStatus } from './gh/gh';
 import type { PrStatus } from './gh/prStatus';
+import { noteShownTask } from './capture/draftRemovals';
 
 /**
  * The frame.
@@ -249,6 +250,8 @@ export default function App() {
   );
   /** What the selected task merges into, for its Create PR (#237): the header's base. */
   const selectedBase = useMeasuredBase(selected);
+  // Drafts the session removed (#427) are shown until their task is left.
+  useEffect(() => noteShownTask(selectedId), [selectedId]);
   /**
    * What's New after an update (#147). It waits while another dialog or the
    * "waiting on you" card is on screen (checked in the DOM), and while the

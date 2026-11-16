@@ -74,7 +74,11 @@ fn a_legacy_session_initializes_lists_and_calls() {
             json!("request_session"),
             json!("notify_blocked"),
             json!("set_task_summary"),
-            json!("show_preview")
+            json!("show_preview"),
+            json!("list_github_drafts"),
+            json!("delete_github_draft"),
+            json!("list_posted_comments"),
+            json!("delete_posted_comment")
         ]
     );
     assert_eq!(replies[2]["result"]["isError"], false);
@@ -360,5 +364,28 @@ fn a_preview_that_cannot_be_read_is_refused_at_once() {
         .unwrap()
         .starts_with("Could not read"));
     assert!(!home.join(".albedo/inbox").exists(), "nothing is delivered");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn a_draft_list_is_answered_by_the_app_through_its_file() {
+    let home = scratch("github-list");
+    let mut s = Live::start(&home, "14");
+    s.send(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_github_drafts", "arguments": {}}}));
+    until("the inbox line", || !inbox_lines(&home, "14").is_empty());
+    let line = inbox_lines(&home, "14").remove(0);
+    assert_eq!(line["tool"], "list_github_drafts");
+    let req = line["id"].as_str().unwrap().to_string();
+    assert!(s.reply(Duration::from_millis(400)).is_none(), "it waits");
+    let previews = home.join(".albedo/previews");
+    std::fs::create_dir_all(&previews).unwrap();
+    let answer = previews.join(format!("answer-14-{req}.json"));
+    std::fs::write(&answer, r#"{"text":"{\"drafts\":[]}"}"#).unwrap();
+    let r = s.reply(Duration::from_secs(3)).expect("the answer");
+    assert_eq!(r["id"], 3);
+    assert_eq!(r["result"]["isError"], false);
+    assert_eq!(r["result"]["content"][0]["text"], "{\"drafts\":[]}");
+    until("the answer to be taken", || !answer.exists());
+    s.close();
     let _ = std::fs::remove_dir_all(&home);
 }

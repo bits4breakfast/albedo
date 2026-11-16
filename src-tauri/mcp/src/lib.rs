@@ -1,6 +1,7 @@
-//! Albedo's MCP server (#157): the five things a session can ask Albedo for
-//! (the fourth, `set_task_summary`, from #262; the fifth, `show_preview`,
-//! from #348).
+//! Albedo's MCP server (#157): the things a session can ask Albedo for --
+//! five from the start (the fourth, `set_task_summary`, from #262; the fifth,
+//! `show_preview`, from #348), and four about a review task's GitHub
+//! comments (#427).
 //!
 //! Claude Code starts this binary for every session Albedo spawns
 //! (`--mcp-config`, with `ALBEDO_TASK_ID` in its environment) and talks
@@ -18,8 +19,25 @@
 //! the app retires the card, and the answer file's name is never read again.
 //! The stdio loop (`main.rs`) calls [`Server::poll`] while anything waits.
 //!
-//! No network. Nothing read back but the page named and its answer. The
-//! caller's identity is the task id Albedo put in the environment, never
+//! ## The GitHub tools: a widening, by the owner's decision (issue #427)
+//!
+//! On a review task the session may read the GitHub Drafts the user wrote
+//! (`list_github_drafts`), remove one (`delete_github_draft`), read the
+//! user's own comments already posted on the task's PR
+//! (`list_posted_comments`), and ask for one to be deleted
+//! (`delete_posted_comment`). This server never opens the database or the
+//! network for them: each writes its line and waits for the app's answer
+//! file, exactly as `show_preview` does. The app answers the first three on
+//! its own, at once; if it has not within [`APP_ANSWER_TIMEOUT_MS`] -- it is
+//! closed -- the call ends with an error, and the app never acts on a line
+//! older than its own, shorter window, so a late answer cannot have changed
+//! anything. `delete_posted_comment` waits for the user's click on the card,
+//! like a preview, and nothing is deleted on GitHub without it. That is the
+//! whole of the widening: no adding, editing or submitting drafts, and
+//! nobody else's comments.
+//!
+//! No network. Nothing read back but the page named and the app's answers.
+//! The caller's identity is the task id Albedo put in the environment, never
 //! anything in a request.
 //!
 //! ## Protocol versions
@@ -67,6 +85,12 @@ pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
 pub const UNSUPPORTED_VERSION: i64 = -32022;
 
+/// How long a call the app answers on its own (#427) waits for it. The app
+/// reads the inbox within seconds and acts only on a line younger than half
+/// of this (`src/capture/githubGate.ts`), so a call that timed out here was
+/// never acted on.
+pub const APP_ANSWER_TIMEOUT_MS: i64 = 30_000;
+
 /// At most this many tool calls in any [`RATE_WINDOW_MS`], per process (one
 /// process per session). Well above anything a session asks for honestly; a
 /// loop gets an error it can read instead of filling the user's queue.
@@ -77,7 +101,8 @@ const INSTRUCTIONS: &str = "This session runs inside Albedo, the user's desktop 
 These tools ask Albedo for things only it can do: a reminder on this task, a new session (only ever started with \
 the user's approval), telling the user you are blocked on them, a one-line summary of what this task is about, \
 shown beside its title, or an HTML mockup shown to the user for approval. Every call is delivered to Albedo and \
-answered at once, except `show_preview`: it waits until the user answers, and their answer is its result. \
+answered at once, except `show_preview` and `delete_posted_comment`: each waits until the user answers, and their \
+answer is its result. \
 Whenever you would show the user a UI mockup or HTML preview for their approval, write it as one self-contained \
 HTML file and call `show_preview` with its path, instead of linking to it or describing it; do not build what it \
 shows until it comes back approved. Its description is not shown until the tool is loaded, so this is the \
@@ -93,7 +118,12 @@ instead of offering, and say in your reply that you did. Investigating or answer
 here; making a change for it, or taking on a separate ticket, does not. It is only a proposal: nothing \
 starts unless they approve, and declining costs them one click. Write `prompt` as a brief that stands alone: what \
 was already found, links and identifiers, what was checked, what is left. Ask once per piece of work, and never \
-for the work this task was started for.";
+for the work this task was started for. \
+On a review task (a pull request opened in Albedo to review), the user may be writing GitHub Drafts for the same \
+review while you work: call `list_github_drafts` before reporting findings, so you do not repeat theirs, and \
+`delete_github_draft` to remove one that is a duplicate or wrong (they see it and can undo it). \
+`list_posted_comments` and `delete_posted_comment` do the same for their own comments already on GitHub; a \
+deletion there waits for their approval.";
 
 /// What the server needs from the outside world, so tests can supply it.
 pub struct Env {
@@ -145,7 +175,7 @@ pub fn parse_task_id(s: &str) -> Option<u64> {
     s.parse().ok().filter(|&n| n > 0)
 }
 
-/// A `show_preview` call waiting for the user's answer.
+/// A call waiting for the app's answer: `show_preview`, or a GitHub tool (#427).
 struct Wait {
     /// The JSON-RPC id the answer goes back under.
     rpc_id: Value,
@@ -154,6 +184,11 @@ struct Wait {
     task: u64,
     answer: PathBuf,
     modern: bool,
+    /// What the inbox calls its end without an answer.
+    cancel_tool: &'static str,
+    /// When it stops waiting (ms): set for a call the app answers on its
+    /// own, none for one that waits for the user.
+    deadline: Option<i64>,
 }
 
 /// What a `tools/call` came to: an answer now, or a wait (`show_preview`).
@@ -182,14 +217,15 @@ impl Server {
         }
     }
 
-    /// Whether a `show_preview` call is waiting, so the loop should poll.
+    /// Whether a call is waiting for an answer, so the loop should poll.
     pub fn waiting(&self) -> bool {
         !self.waits.is_empty()
     }
 
     /// The answers that arrived since the last poll, as JSON-RPC responses.
     /// Each wait ends with its answer; a malformed answer file is removed and
-    /// the call keeps waiting.
+    /// the call keeps waiting. A call past its deadline (#427) ends with an
+    /// error, and is recorded as cancelled.
     pub fn poll(&mut self) -> Vec<Value> {
         let mut out = Vec::new();
         let mut i = 0;
@@ -201,6 +237,15 @@ impl Server {
                         json!({"content": [{"type": "text", "text": text}], "isError": false});
                     out.push(respond(w.rpc_id, "tools/call", Ok(result), w.modern));
                 }
+                Some(preview::Answer::Error(text)) => {
+                    let w = self.waits.remove(i);
+                    out.push(respond(
+                        w.rpc_id,
+                        "tools/call",
+                        Ok(tool_error(&text)),
+                        w.modern,
+                    ));
+                }
                 Some(preview::Answer::Malformed) => {
                     eprintln!(
                         "albedo-mcp: ignored a malformed answer for {}",
@@ -208,7 +253,27 @@ impl Server {
                     );
                     i += 1;
                 }
-                None => i += 1,
+                None => {
+                    let late = self.waits[i]
+                        .deadline
+                        .is_some_and(|d| (self.env.now_ms)() >= d);
+                    if late {
+                        let w = self.waits.remove(i);
+                        self.record_cancel(&w, "Albedo did not answer");
+                        let text = format!(
+                            "Albedo did not answer within {} s (is the app open?). Nothing was changed.",
+                            APP_ANSWER_TIMEOUT_MS / 1000
+                        );
+                        out.push(respond(
+                            w.rpc_id,
+                            "tools/call",
+                            Ok(tool_error(&text)),
+                            w.modern,
+                        ));
+                    } else {
+                        i += 1;
+                    }
+                }
             }
         }
         out
@@ -245,13 +310,13 @@ impl Server {
         let mut args = Map::new();
         args.insert("request".into(), w.request.clone().into());
         args.insert("reason".into(), reason.into());
-        match inbox::line(w.task, inbox::PREVIEW_CANCELLED, args, now, &id) {
+        match inbox::line(w.task, w.cancel_tool, args, now, &id) {
             Ok(bytes) => {
                 if let Err(e) = inbox::append(&inbox::file_for(&dir, w.task), &bytes) {
-                    eprintln!("albedo-mcp: could not record a cancelled preview: {e}");
+                    eprintln!("albedo-mcp: could not record a cancelled call: {e}");
                 }
             }
-            Err(e) => eprintln!("albedo-mcp: could not record a cancelled preview: {e}"),
+            Err(e) => eprintln!("albedo-mcp: could not record a cancelled call: {e}"),
         }
     }
 
@@ -289,7 +354,7 @@ impl Server {
                 .filter(|_| !obj.contains_key("result") && !obj.contains_key("error"))
                 .map(|id| error(id, INVALID_REQUEST, "Invalid request: no method", None));
         };
-        // A cancel ends a `show_preview` wait (#348); other notifications
+        // A cancel ends a wait (#348, #427); other notifications
         // (`notifications/initialized`) need nothing.
         if id.is_none() && method == "notifications/cancelled" {
             self.cancel(obj.get("params"));
@@ -433,6 +498,33 @@ impl Server {
                 task,
                 answer: previews.join(preview::answer_name(task, &id)),
                 modern,
+                cancel_tool: inbox::PREVIEW_CANCELLED,
+                deadline: None,
+            });
+        } else if tools::answered(accepted.tool) != tools::Answered::Now {
+            // The GitHub tools (#427): the app answers, through the same
+            // folder and the same names as a preview's answer.
+            let Some(previews) = self.env.previews_dir.clone() else {
+                return now_result(tool_error(
+                    "HOME is not set, so Albedo's answers folder cannot be found.",
+                ));
+            };
+            // The folder the app answers in, made here as a preview's copy
+            // makes it: owner-only.
+            if let Err(e) = preview::ensure_dir(&previews) {
+                return now_result(tool_error(&format!(
+                    "Could not prepare Albedo's answers folder: {e}"
+                )));
+            }
+            wait = Some(Wait {
+                rpc_id: rpc_id.clone(),
+                request: id.clone(),
+                task,
+                answer: previews.join(preview::answer_name(task, &id)),
+                modern,
+                cancel_tool: inbox::GITHUB_CANCELLED,
+                deadline: (tools::answered(accepted.tool) == tools::Answered::ByApp)
+                    .then_some(now + APP_ANSWER_TIMEOUT_MS),
             });
         }
 
@@ -618,7 +710,7 @@ mod tests {
             said.contains("UI mockup or HTML preview for their approval"),
             "{said}"
         );
-        assert!(said.contains("it waits until the user answers"), "{said}");
+        assert!(said.contains("each waits until the user answers"), "{said}");
         assert!(!said.contains("none of them waits"), "{said}");
         assert!(
             r["result"].get("resultType").is_none(),
@@ -681,7 +773,7 @@ mod tests {
             .contains(&json!("2025-11-25")));
         let l = s.handle(&req(2, "tools/list", meta)).unwrap();
         assert_eq!(l["result"]["resultType"], "complete");
-        assert_eq!(l["result"]["tools"].as_array().unwrap().len(), 5);
+        assert_eq!(l["result"]["tools"].as_array().unwrap().len(), 9);
         for r in [&d, &l] {
             assert_eq!(r["result"]["ttlMs"], CACHE_TTL_MS);
             assert_eq!(r["result"]["cacheScope"], "public");
@@ -805,5 +897,160 @@ mod tests {
         ] {
             assert_eq!(parse_task_id(bad), None, "{bad}");
         }
+    }
+
+    fn github_server(task: u64, home: &std::path::Path, clock: Rc<Cell<i64>>) -> Server {
+        Server::new(Env {
+            task: Some(task),
+            inbox_dir: Some(inbox::dir_under(home)),
+            previews_dir: Some(preview::dir_under(home)),
+            cwd: None,
+            now_ms: Box::new(move || clock.get()),
+        })
+    }
+
+    fn inbox_lines(home: &std::path::Path, task: u64) -> Vec<Value> {
+        std::fs::read_to_string(inbox::file_for(&inbox::dir_under(home), task))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    fn answer(home: &std::path::Path, task: u64, line: &Value, body: &str) {
+        let dir = preview::dir_under(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = preview::answer_name(task, line["id"].as_str().unwrap());
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+
+    #[test]
+    fn the_instructions_name_the_github_tools_and_the_second_wait() {
+        let said = INSTRUCTIONS;
+        assert!(said.contains("`list_github_drafts`"), "{said}");
+        assert!(said.contains("so you do not repeat theirs"), "{said}");
+        assert!(said.contains("`delete_posted_comment`"), "{said}");
+        assert!(said.contains("waits for their approval"), "{said}");
+    }
+
+    #[test]
+    fn a_draft_list_waits_for_the_apps_answer_and_returns_it() {
+        let home = scratch("gh-list");
+        let clock = Rc::new(Cell::new(NOW));
+        let mut s = github_server(9, &home, clock.clone());
+        let call = json!({"name": "list_github_drafts", "arguments": {}});
+        assert!(s.handle(&req(1, "tools/call", call)).is_none(), "it waits");
+        assert!(s.waiting());
+        let lines = inbox_lines(&home, 9);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["tool"], "list_github_drafts");
+        assert_eq!(lines[0]["args"], json!({}));
+        assert!(s.poll().is_empty(), "no answer yet");
+        // The folder the app answers in is there, and only the owner's.
+        let dir = preview::dir_under(&home);
+        assert!(dir.is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        answer(&home, 9, &lines[0], r#"{"text":"{\"drafts\":[]}"}"#);
+        let out = s.poll();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["id"], 1);
+        assert_eq!(out[0]["result"]["isError"], false);
+        assert_eq!(out[0]["result"]["content"][0]["text"], "{\"drafts\":[]}");
+        assert!(!s.waiting());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_refusal_from_the_app_is_a_tool_error() {
+        let home = scratch("gh-refuse");
+        let mut s = github_server(9, &home, Rc::new(Cell::new(NOW)));
+        let call = json!({"name": "delete_github_draft", "arguments": {"id": 4, "reason": "Repeats line 42"}});
+        assert!(s.handle(&req(2, "tools/call", call)).is_none());
+        let lines = inbox_lines(&home, 9);
+        assert_eq!(
+            lines[0]["args"],
+            json!({"id": 4, "reason": "Repeats line 42"})
+        );
+        answer(
+            &home,
+            9,
+            &lines[0],
+            r#"{"text":"No draft 4 on this task.","isError":true}"#,
+        );
+        let out = s.poll();
+        assert_eq!(out[0]["result"]["isError"], true);
+        assert_eq!(
+            out[0]["result"]["content"][0]["text"],
+            "No draft 4 on this task."
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_app_answer_that_never_comes_ends_the_call_and_is_recorded() {
+        let home = scratch("gh-timeout");
+        let clock = Rc::new(Cell::new(NOW));
+        let mut s = github_server(9, &home, clock.clone());
+        let call = json!({"name": "list_posted_comments"});
+        assert!(s.handle(&req(3, "tools/call", call)).is_none());
+        clock.set(NOW + APP_ANSWER_TIMEOUT_MS - 1);
+        assert!(s.poll().is_empty());
+        clock.set(NOW + APP_ANSWER_TIMEOUT_MS);
+        let out = s.poll();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["result"]["isError"], true);
+        assert!(out[0]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing was changed"));
+        assert!(!s.waiting());
+        let lines = inbox_lines(&home, 9);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1]["tool"], "github_cancelled");
+        assert_eq!(lines[1]["args"]["request"], lines[0]["id"]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_posted_deletion_waits_for_the_user_and_a_cancel_is_recorded() {
+        let home = scratch("gh-posted");
+        let clock = Rc::new(Cell::new(NOW));
+        let mut s = github_server(9, &home, clock.clone());
+        let call = json!({"name": "delete_posted_comment", "arguments": {"id": 1834567890}});
+        assert!(s.handle(&req(4, "tools/call", call)).is_none());
+        // No deadline: the user answers when they answer.
+        clock.set(NOW + 3_600_000);
+        assert!(s.poll().is_empty());
+        assert!(s.waiting());
+        assert!(s
+            .handle(&json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 4, "reason": "user-cancel"}}))
+            .is_none());
+        assert!(!s.waiting());
+        let lines = inbox_lines(&home, 9);
+        assert_eq!(lines[0]["tool"], "delete_posted_comment");
+        assert_eq!(lines[1]["tool"], "github_cancelled");
+        assert_eq!(
+            lines[1]["args"],
+            json!({"request": lines[0]["id"], "reason": "user-cancel"})
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_github_call_without_home_is_refused_before_anything_is_written() {
+        let dir = scratch("gh-nohome");
+        let mut s = server(Some(9), Some(dir.clone()), Rc::new(Cell::new(NOW)));
+        let r = s
+            .handle(&req(5, "tools/call", json!({"name": "list_github_drafts"})))
+            .unwrap();
+        assert_eq!(r["result"]["isError"], true);
+        assert!(!dir.exists());
     }
 }

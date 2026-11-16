@@ -16,6 +16,12 @@
 //!
 //! The answer file: `{"text": "<the tool's result>"}`. The app composes the
 //! text ("approved", or "changes requested on vN:" and the comments).
+//!
+//! The GitHub tools (#427) are answered through the same folder and the same
+//! names: one answer file per request, which the app writes at once for a
+//! list or a draft's removal, and only from a click for a posted comment's
+//! deletion. Their answer may add `"isError": true`, for a refusal the
+//! session should read as one ("not a review task", "no such draft").
 
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
@@ -105,6 +111,8 @@ pub fn write_copy(dir: &Path, task: u64, request: &str, page: &str) -> io::Resul
 pub enum Answer {
     /// The text to return as the tool's result.
     Text(String),
+    /// The same, returned as a tool error (`"isError": true`, #427).
+    Error(String),
     /// A file that is not an answer. It is removed, and the call keeps waiting.
     Malformed,
 }
@@ -121,9 +129,18 @@ pub fn parse_answer(bytes: &[u8]) -> Answer {
     let Ok(v) = serde_json::from_slice::<Value>(bytes) else {
         return Answer::Malformed;
     };
+    let error = match v.get("isError") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Answer::Malformed,
+    };
     match v.get("text").and_then(Value::as_str) {
         Some(t) if !t.trim().is_empty() && t.chars().count() <= MAX_ANSWER_CHARS => {
-            Answer::Text(t.to_string())
+            if error {
+                Answer::Error(t.to_string())
+            } else {
+                Answer::Text(t.to_string())
+            }
         }
         _ => Answer::Malformed,
     }
@@ -171,6 +188,12 @@ pub fn clean_reason(reason: Option<&str>) -> String {
     } else {
         r.into()
     }
+}
+
+/// The folder, owner-only, for a GitHub tool's answer (#427): the app writes
+/// it there, and a session that never showed a preview has no folder yet.
+pub fn ensure_dir(dir: &Path) -> io::Result<()> {
+    create_private_dir(dir)
 }
 
 fn create_private_dir(dir: &Path) -> io::Result<()> {
@@ -267,6 +290,19 @@ mod tests {
         ] {
             assert_eq!(parse_answer(bad), Answer::Malformed);
         }
+        // A refusal the session reads as one (#427).
+        assert_eq!(
+            parse_answer(br#"{"text":"not a review task","isError":true}"#),
+            Answer::Error("not a review task".into())
+        );
+        assert_eq!(
+            parse_answer(br#"{"text":"ok","isError":false}"#),
+            Answer::Text("ok".into())
+        );
+        assert_eq!(
+            parse_answer(br#"{"text":"ok","isError":"yes"}"#),
+            Answer::Malformed
+        );
         let long = format!(r#"{{"text":"{}"}}"#, "a".repeat(MAX_ANSWER_CHARS + 1));
         assert_eq!(parse_answer(long.as_bytes()), Answer::Malformed);
         let _ = fs::remove_dir_all(&d);
