@@ -620,6 +620,35 @@
   .gd-diff-why[data-both] > .gd-diff-why-text { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Two lines, then Show All (#397; DiffNote in GuidePane.tsx). Alone, a note's
+   label and text are clipped together, so its text still flows on from the
+   label; with both notes, the text beside the label column is. The two cases
+   exclude each other (:not / [data-both]), so no rule here wins by order.
+   Show All is its own line under the text, where the text starts: --accent
+   on --panel, 4.5:1 in every theme (guideNoteContrast.test.ts). */
+.gd-diff-why-flow { display: block; }
+.gd-diff-why:not([data-both]) > .gd-diff-why-text[data-clamped] > .gd-diff-why-flow,
+.gd-diff-why[data-both] > .gd-diff-why-text[data-clamped] .gd-diff-why-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+/* Open, a long note scrolls past 40vh: the band is flex: none, so without
+   this a long note in a narrow column would push the diff out of the pane. */
+.gd-diff-why:not([data-both]) > .gd-diff-why-text:not([data-clamped]) > .gd-diff-why-flow,
+.gd-diff-why[data-both] > .gd-diff-why-text:not([data-clamped]) .gd-diff-why-body {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.gd-diff-why[data-both] > .gd-diff-why-text > .gd-diff-why-flow { display: contents; }
+/* Focused only when Show All goes away under the keyboard (DiffNote). */
+.gd-diff-why-text:focus { outline: none; }
+.gd-diff-why-text:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
+.gd-diff-why-more { display: block; margin-top: 1px; line-height: 1.5; }
+.gd-diff-why[data-both] > .gd-diff-why-text > .gd-diff-why-more { grid-column: -2 / -1; justify-self: start; }
+
 /* The rail: Set Aside last, after a gap, dotted (Unsorted stays dashed). */
 .gd-rail-mark[data-aside] { margin-top: 8px; }
 .gd-rail-mark[data-aside]::before { border-style: dotted; }
