@@ -24,7 +24,7 @@ import {
   takeableIntoBox,
   takeIntoBox,
 } from './outbox';
-import { heldAsDraft, putBackWhereNoDraft } from './heldInBox';
+import { __resetHeldInBox, heldAsDraft, noteBoxShown, putBackWhereNoDraft, putBackWhereNoDraftAtStartup } from './heldInBox';
 import { __resetDrafts, saveDraft } from './drafts';
 import { KEYS } from '../persisted';
 import { draftOf, markPastes, placeholderFor } from './pastedText';
@@ -49,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   __resetOutbox();
   __resetDrafts();
+  __resetHeldInBox();
 });
 
 const texts = (taskId = 1) => heldFor(taskId).map((h) => h.text);
@@ -272,5 +273,26 @@ describe('putBackWhereNoDraft: a box with no draft to show them', () => {
     expect(inBoxFor(1)).toEqual([]);
     expect(inBoxFor(2).map((h) => h.text)).toEqual(['a draft shows these']);
     expect(inBoxFor(3)).toEqual([]);
+  });
+
+  it('skips the task whose box is on screen: an emptied box there is being rewritten', () => {
+    holdMessage(1, 'being rewritten', T0);
+    takeIntoBox(1);
+    noteBoxShown(1);
+    putBackWhereNoDraft();
+    expect(inBoxFor(1)).toHaveLength(1);
+    noteBoxShown(null);
+    putBackWhereNoDraft();
+    expect(inBoxFor(1)).toEqual([]);
+  });
+
+  it('at startup runs once: later refreshes leave every box alone', () => {
+    holdMessage(1, 'first run', T0);
+    takeIntoBox(1);
+    putBackWhereNoDraftAtStartup();
+    expect(inBoxFor(1)).toEqual([]);
+    takeIntoBox(1);
+    putBackWhereNoDraftAtStartup();
+    expect(inBoxFor(1)).toHaveLength(1);
   });
 });

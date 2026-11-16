@@ -18,6 +18,7 @@ import { __resetTurns, noteTaskSessions } from './turn';
 import { recordQueueOperations, seedQueue } from '../../capture/queue';
 import { __resetConnectivity } from '../../lib/connectivity';
 import { markPastes, placeholderFor } from './pastedText';
+import { __resetHeldInBox, putBackWhereNoDraft, putBackWhereNoDraftAtStartup } from './heldInBox';
 import { composeWithComments, type TranscriptComment } from './transcriptQuotes';
 import { markCommentsSent } from '../../db/comments';
 
@@ -97,6 +98,7 @@ beforeEach(() => {
   __resetOutbox();
   __resetTurns();
   __resetDrafts();
+  __resetHeldInBox();
   seedQueue(['s1', 's2'], []);
   vi.mocked(submitPty).mockResolvedValue(true);
 });
@@ -202,6 +204,30 @@ describe('a quoted passage from the transcript (#187)', () => {
     fireEvent.keyDown(box(), { key: 'Enter' });
     await waitFor(() => expect(heldFor(1)).toHaveLength(1));
     expect(heldFor(1)[0]!.text).toBe(`${body}\n\nthen run the tests`);
+  });
+});
+
+describe('rewritten from scratch while a turn runs', () => {
+  it('a task-list refresh does not put them back under the box: one message goes, once', async () => {
+    const stop = startOutboxRelease();
+    turnRunning(1);
+    holdThree();
+    render(<Pane taskId={1} />);
+    up();
+    fireEvent.change(box(), { target: { value: '' } }); // ⌘A Delete
+    // The refreshes a running turn brings, the startup one among them.
+    act(() => {
+      putBackWhereNoDraftAtStartup();
+      putBackWhereNoDraft();
+    });
+    expect(inBoxFor(1)).toHaveLength(3);
+    fireEvent.change(box(), { target: { value: 'one new message instead' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual(['one new message instead']));
+    act(() => fact(1, 'turn-end'));
+    await waitFor(() => expect(heldFor(1)).toHaveLength(0));
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'one new message instead']]);
+    stop();
   });
 });
 

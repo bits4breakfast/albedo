@@ -26,7 +26,7 @@ import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useWaiti
 import { queuedCiOf, useQueuedCi, type QueuedCiFailure } from './ciFailure';
 import { useCommentsIntro } from '../commentsIntro';
 import { holdMessage, inBoxFor, putBackFromBox, replaceInBox, takeIntoBox, useHeld } from './outbox';
-import { heldAsDraft } from './heldInBox';
+import { heldAsDraft, noteBoxShown } from './heldInBox';
 import { markQuotes } from './transcriptQuotes';
 import { useTurnRunning } from './turn';
 import { promptOpen } from './outboxRelease';
@@ -367,10 +367,17 @@ export function Composer({
   }, [taskId]);
 
   // The pane is keyed by task (App.tsx), so a switch unmounts the box: held
-  // messages left in an emptied one go back to the queue then (#399).
+  // messages left in an emptied one go back to the queue then (#399). While
+  // it is shown, nothing else puts them back under it (`noteBoxShown`).
+  // Relies on main.tsx not using <StrictMode>: its rehearsal unmount would
+  // run this with the box still empty, before the draft is in it.
+  useEffect(() => {
+    noteBoxShown(taskId);
+  }, [taskId]);
   useEffect(
     () => () => {
       const owner = draftOwnerRef.current;
+      noteBoxShown(null);
       if (owner !== null && textRef.current.trim() === '') putBackFromBox(owner);
     },
     [],

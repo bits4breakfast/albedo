@@ -42,15 +42,43 @@ export function heldAsDraft(held: readonly Pick<HeldMessage, 'text'>[]): HeldAsD
   return { text: u.text, pastes: d.pastes, mentions: u.mentions, quotes: q.quotes };
 }
 
+/** The task whose message box is on screen; its own mount and unmount look after it. */
+let shownBox: number | null = null;
+
+/** The composer tells this which task's box it shows, and null when it goes. */
+export function noteBoxShown(taskId: number | null): void {
+  shownBox = taskId;
+}
+
 /**
- * Held messages in a box that has no draft to show them -- the draft lost,
- * expired, or emptied while its pane was gone -- go back to the queue:
- * nothing else would ever let them go, and a box that comes up empty cannot
- * replace them. Run with the task list's refresh, the first at startup.
+ * Held messages in a box that has no draft to show them -- the app stopped
+ * before the draft was written, or it expired -- go back to the queue:
+ * nothing else would ever let them go. The box on screen is skipped: an
+ * emptied box there is being rewritten, and putting them back under it would
+ * make its Send a second message beside them; its own unmount decides.
  */
 export function putBackWhereNoDraft(now = Date.now()): void {
   for (const taskId of tasksWithHeld()) {
-    if (inBoxFor(taskId).length === 0) continue;
+    if (taskId === shownBox || inBoxFor(taskId).length === 0) continue;
     if ((getDraft(taskId, now)?.text ?? '').trim() === '') putBackFromBox(taskId);
   }
+}
+
+let reconciled = false;
+
+/**
+ * `putBackWhereNoDraft`, once per run: the first task-list read after
+ * startup, the crash case it exists for. Later refreshes (every few seconds
+ * while a turn runs) leave the box alone.
+ */
+export function putBackWhereNoDraftAtStartup(now = Date.now()): void {
+  if (reconciled) return;
+  reconciled = true;
+  putBackWhereNoDraft(now);
+}
+
+/** Test seam: forget the startup run and the box on screen. */
+export function __resetHeldInBox(): void {
+  reconciled = false;
+  shownBox = null;
 }
