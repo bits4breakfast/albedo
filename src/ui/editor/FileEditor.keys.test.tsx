@@ -47,6 +47,7 @@ vi.mock('../../lib/clipboard', () => ({ copyText }));
 Object.assign(Range.prototype, { getClientRects: () => [], getBoundingClientRect: () => new DOMRect() });
 
 const { default: FileEditor } = await import('./FileEditor');
+const { setTouchedOrder } = await import('../touchedOrder');
 
 const task: Task = {
   id: 4, title: 't', projectId: 1, repoPath: '/repo', baseBranch: 'main', branch: 'b',
@@ -118,5 +119,54 @@ describe('FileEditor keys', () => {
     await screen.findByText('Full Path Copied');
     fireEvent.click(screen.getByRole('button', { name: 'File Actions' }));
     expect(document.querySelector('.row-menu-head')?.textContent).toBe('Full Path Copied');
+  });
+});
+
+describe('⌥⌘↑ / ⌥⌘↓, the changed files, beside the transcript’s ⌥⌘↓ (#398)', () => {
+  const DOWN = { key: 'ArrowDown', code: 'ArrowDown', metaKey: true, altKey: true };
+  const UP = { ...DOWN, key: 'ArrowUp', code: 'ArrowUp' };
+
+  /** The editor, hidden or not, and a transcript scroller as TranscriptPane draws it. */
+  async function setup(transcriptOnScreen: boolean) {
+    setTouchedOrder(task.id, ['src/0.ts', 'src/a.ts', 'src/b.ts']);
+    const onStep = vi.fn();
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    const transcript = document.createElement('div');
+    transcript.setAttribute('data-jump-latest', '');
+    transcript.innerHTML = '<button type="button">tool</button>';
+    if (transcriptOnScreen) Object.defineProperty(transcript, 'offsetParent', { get: () => document.body });
+    document.body.appendChild(transcript);
+    const field = document.body.appendChild(document.createElement('textarea'));
+    render(<FileEditor task={task} request={{ path: 'src/a.ts' }} onClose={() => {}} controlsSlot={slot} onStep={onStep} />);
+    await waitFor(() => {
+      if (!document.querySelector('.cm-content')) throw new Error('editor not mounted yet');
+    });
+    return { onStep, transcript, field };
+  }
+
+  it('steps through the changed files while no transcript is on screen', async () => {
+    const { onStep } = await setup(false);
+    fireEvent.keyDown(window, DOWN);
+    fireEvent.keyDown(window, UP);
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(['src/b.ts', 'src/0.ts']);
+  });
+
+  it('lets ⌥⌘↓ through to a transcript on screen with the keyboard free there; keeps ⌥⌘↑', async () => {
+    const { onStep, transcript } = await setup(true);
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(window, DOWN);
+    transcript.querySelector('button')!.focus();
+    fireEvent.keyDown(window, DOWN);
+    expect(onStep).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, UP);
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(['src/0.ts']);
+  });
+
+  it('keeps ⌥⌘↓ when focus is outside the transcript, in a field', async () => {
+    const { onStep, field } = await setup(true);
+    field.focus();
+    fireEvent.keyDown(field, DOWN);
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(['src/b.ts']);
   });
 });

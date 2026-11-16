@@ -18,6 +18,10 @@
  * Reviewed and go to the next. None of them is bound anywhere else in the app
  * (shortcuts.ts); CodeMirror's ⌥↑/⌥↓ (move line) never sees them, since the
  * guide has no editor in it.
+ *
+ * Search (#413, GuideSearch.tsx), anywhere in a written guide, its fields
+ * too: ⌘F this file, ⇧⌘F all the guide's files. ⇧⌘F is Find in Files
+ * everywhere else; here it is stopped before the window's binding hears it.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -66,6 +70,18 @@ import GuideMap from './GuideMap';
 import SinceReview from './SinceReview';
 import { updateRecordOf, useSinceChanges, useSinceReviewVersion, type ChangesLoad, type UpdateRecord } from './copyUpdate';
 import OverflowMenu from '../ui/OverflowMenu';
+import { NO_SEARCH, searchDiff } from '../ui/transcript/Diff';
+import {
+  AllGuideFiles,
+  CLOSED_SEARCH,
+  SEARCH_DEBOUNCE_MS,
+  SearchBar,
+  type FocusAsk,
+  type GuideSearchState,
+  type SearchBarProps,
+  type SearchScope,
+} from './GuideSearch';
+import { linesOf, type GuideHit } from './search';
 import './guide.css';
 
 /**
@@ -745,11 +761,89 @@ function GuideBody({
 
   const stepGroup = (delta: number) => goTo(at + delta);
 
+  // Search (#413). The field takes focus once per ⌘F / ⇧⌘F, a switch or an
+  // opened match, also when its bar mounts after the request (another file).
+  const [search, setSearch] = useState<GuideSearchState>(CLOSED_SEARCH);
+  const [focusTick, setFocusTick] = useState(0);
+  // ⌘F / ⇧⌘F select the text, as every Find does; the switch and an opened
+  // match leave it be, so the next key goes on typing.
+  const searchFocus = useRef<FocusAsk>(null);
+  const takeSearchFocus = useCallback(() => {
+    const asked = searchFocus.current;
+    searchFocus.current = null;
+    return asked;
+  }, []);
+  const openSearch = (scope: SearchScope, ask: FocusAsk = 'select') => {
+    if (shownView === 'map') showView('read');
+    searchFocus.current = ask;
+    setFocusTick((n) => n + 1);
+    setSearch((s) => ({ ...s, open: true, scope }));
+  };
+  // The text searched: what was typed, once typing pauses. Never a search
+  // per keystroke on a large guide; empty at once. The current match is the
+  // last search's until the new one lands: never one picked from stale matches.
+  const [searched, setSearched] = useState('');
+  const searchedRef = useRef('');
+  useEffect(() => {
+    const apply = () => {
+      if (search.query === searchedRef.current) return;
+      searchedRef.current = search.query;
+      setSearched(search.query);
+      setSearch((s) => (s.current === null ? s : { ...s, current: null }));
+    };
+    if (search.query === '') {
+      apply();
+      return;
+    }
+    const t = setTimeout(apply, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search.query]);
+  const closeSearch = () => {
+    setSearch((s) => ({ ...s, open: false, current: null }));
+    rootRef.current?.focus({ preventScroll: true });
+  };
+  // A match in All Guide Files: its file, in its group, on This File.
+  const openHit = (hit: GuideHit) => {
+    const i = groups.findIndex((g) => g.key === hit.groupKey);
+    setPlace((p) => ({ ...p, group: hit.groupKey, picked: { ...p.picked, [hit.groupKey]: hit.path } }));
+    if (i >= 0 && i !== at) setSaid(`Group ${i + 1} of ${groups.length}: ${groups[i]!.title}`);
+    searchFocus.current = 'caret';
+    setFocusTick((n) => n + 1);
+    setSearch((s) => ({ ...s, scope: 'file', current: { path: hit.path, key: hit.key } }));
+  };
+  const searchBar: SearchBarProps = {
+    scope: search.scope,
+    query: search.query,
+    onQuery: (query) => setSearch((s) => ({ ...s, query })),
+    onScope: (scope) => openSearch(scope, 'caret'),
+    onClose: closeSearch,
+    focusTick,
+    takeFocus: takeSearchFocus,
+  };
+
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    // ⌘F / ⇧⌘F (#413): search, from anywhere in the guide, its fields too.
+    // Stopped here, so the window's ⇧⌘F (Find in Files) never hears it.
+    if (e.code === 'KeyF' && e.metaKey && !e.ctrlKey && !e.altKey && group !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      openSearch(e.shiftKey ? 'all' : 'file');
+      return;
+    }
     const t = e.target as HTMLElement;
     if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
-    // ⌘⏎: Send N (#256, #404), not while a send already carries them. A comment box is a textarea, returned above,
-    // so there ⌘⏎ still saves the comment and never sends.
+    // Esc closes the search from anywhere in the guide but a field (a
+    // comment's Esc is its own); handled, so full screen stays (#267).
+    if (e.key === 'Escape' && search.open && !e.defaultPrevented) {
+      // Handled, and here only: the editor's Esc on the window closes its file.
+      e.preventDefault();
+      e.stopPropagation();
+      closeSearch();
+      return;
+    }
+    // ⌘⏎: Send N (#256, #404), not while a send already carries them. A
+    // comment box is a textarea, returned above, so there ⌘⏎ still saves
+    // the comment and never sends.
     if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
       if (waitingCount === 0 || sendFrozen) return;
       e.preventDefault();
@@ -1042,8 +1136,16 @@ function GuideBody({
           </nav>
 
           <section className="gd-right" aria-label="Diff">
+            {search.open && search.scope === 'all' ? (
+              <AllGuideFiles groups={groups} diff={diff} searched={searched} onOpen={openHit} {...searchBar} />
+            ) : null}
+            {/* Kept mounted and laid out under All Guide Files, only covered:
+                a comment being written in it, its layout, Whole File and
+                scroll all stay (display: none would measure it 0 wide and
+                turn a split diff unified, remounting every row). */}
             {file ? (
               <GuideFileDiff
+                covered={search.open && search.scope === 'all'}
                 key={`${group.key}:${file.path}`}
                 task={task}
                 diff={diff}
@@ -1054,6 +1156,10 @@ function GuideBody({
                 reviewed={isFileReviewed(file)}
                 commentCount={group ? fileComments(group, file) : 0}
                 onToggleReviewed={() => toggleFile(file)}
+                search={search.open ? search : null}
+                searched={searched}
+                searchBar={searchBar}
+                onCurrent={(key) => setSearch((s) => ({ ...s, current: { path: file.path, key } }))}
               />
             ) : null}
           </section>
@@ -1223,6 +1329,8 @@ export function restrictDiff(full: FileDiff, file: GuideFile, blocks: readonly s
   return { ...full, hunks: full.hunks.filter((_, i) => keep.has(file.blocks[i] ?? '')) };
 }
 
+const NO_MATCHES: never[] = [];
+
 function GuideFileDiff({
   task,
   diff,
@@ -1233,6 +1341,11 @@ function GuideFileDiff({
   reviewed,
   commentCount,
   onToggleReviewed,
+  search,
+  searchBar,
+  onCurrent,
+  covered,
+  searched,
 }: {
   task: Task;
   diff: BranchDiff;
@@ -1244,6 +1357,15 @@ function GuideFileDiff({
   reviewed: boolean;
   commentCount: number;
   onToggleReviewed: () => void;
+  /** The guide's search while it is open (#413); This File's is drawn here. */
+  search: GuideSearchState | null;
+  searchBar: SearchBarProps;
+  /** Another match of This File is the current one. */
+  onCurrent: (key: string) => void;
+  /** All Guide Files is over it. */
+  covered: boolean;
+  /** The text searched, once typing pauses. */
+  searched: string;
 }): ReactNode {
   const [whole, setWhole] = useState(false);
   const openFile = useOpenFile();
@@ -1270,8 +1392,47 @@ function GuideFileDiff({
   // on the whole file, so one group's slice of an edit is never mistaken for it.
   const oneSided = useMemo(() => (result?.kind === 'diff' ? isOneSided(result.diff) : false), [result]);
 
+  // This File (#413): what the diff shows, searched as it draws it.
+  const query = search?.scope === 'file' ? searched : '';
+  // Split only for a search, and once per read of the branch (search.ts).
+  const searching = query !== '';
+  const sources = useMemo(() => (searching && result?.kind === 'diff' ? linesOf(result) : null), [searching, result]);
+  // Made once here, and handed to the diff to draw.
+  const found = useMemo(() => (query !== '' && shown && sources ? searchDiff(shown, sources, query) : null), [query, shown, sources]);
+  const matches = found?.matches ?? NO_MATCHES;
+  const picked = search?.current?.path === file.path ? search.current.key : null;
+  const index = Math.max(0, matches.findIndex((m) => m.key === picked));
+  const currentKey = matches[index]?.key ?? null;
+  // The view follows the current match.
+  const scrollRef = layout.ref;
+  useEffect(() => {
+    if (currentKey === null) return;
+    scrollRef.current?.querySelector('.tx-d-hit-cur')?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+  }, [currentKey, query, scrollRef]);
+  const searchCount =
+    query === '' ? '' : matches.length === 0 ? 'No matches' : `${index + 1} of ${matches.length}${found?.capped ? '+' : ''}`;
+  // Closing the search keeps the line it was on (the diff keeps it drawn):
+  // the view stays on it, though the lines around other matches fold away.
+  const lastFound = useRef<{ side: string; line: number } | null>(null);
+  const open = search !== null;
+  useEffect(() => {
+    if (open) {
+      const m = matches[index];
+      lastFound.current = m ? { side: m.side, line: m.line } : null;
+      return;
+    }
+    const at = lastFound.current;
+    lastFound.current = null;
+    if (!at || typeof requestAnimationFrame === 'undefined') return;
+    requestAnimationFrame(() =>
+      scrollRef.current
+        ?.querySelector(`[data-${at.side}-line="${at.line}"]`)
+        ?.scrollIntoView?.({ block: 'center', inline: 'nearest' }),
+    );
+  }, [open, matches, index, scrollRef]);
+
   return (
-    <div className="gd-diff">
+    <div className="gd-diff" data-covered={covered || undefined} inert={covered} aria-hidden={covered || undefined}>
       <div className="gd-diff-head">
         <FileIcon path={file.path} />
         <span className="gd-diff-name">{name}</span>
@@ -1306,6 +1467,22 @@ function GuideFileDiff({
           Reviewed
         </label>
       </div>
+      {search?.scope === 'file' ? (
+        <SearchBar
+          {...searchBar}
+          count={searchCount}
+          hint="↩ next · ⇧↩ previous · Esc closes"
+          onKeys={(e) => {
+            if (e.key !== 'Enter' || e.metaKey || e.altKey || e.ctrlKey) return;
+            e.preventDefault();
+            // The matches are of the text before the last keys: wait for these.
+            if (searchBar.query !== searched) return;
+            const n = matches.length;
+            if (n === 0) return;
+            onCurrent(matches[(index + (e.shiftKey ? -1 : 1) + n) % n]!.key);
+          }}
+        />
+      ) : null}
       {/* Why the file changes in this group (#224), under its header (#264):
           outside the scroll, so it stays with the header as the diff scrolls. */}
       {file.note || file.careful ? (
@@ -1367,6 +1544,9 @@ function GuideFileDiff({
                 absoluteLines={result.change !== 'deleted'}
                 contextPath={null}
                 showPath={false}
+                // Not null while the bar is open, even empty or on All
+                // Guide Files: null is a close, which keeps the found line.
+                search={search ? { result: found ?? NO_SEARCH, current: currentKey } : null}
               />
             </DiffAnnotationsContext.Provider>
           )

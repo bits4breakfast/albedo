@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { comboOf, createDoubleShift, DOUBLE_SHIFT_MS, SHORTCUTS, taskTerminalTakesKey, terminalTakesKey } from './shortcuts';
 
 const ev = (init: Partial<KeyboardEvent> & { key: string }) =>
@@ -104,6 +104,8 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
+      comboOf(ev({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true }), 'macos')?.combo,
+      comboOf(ev({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true }), 'macos')?.combo,
     ]);
     // The one gesture is reachable through its own detector.
     const shift = createDoubleShift();
@@ -416,6 +418,60 @@ describe('createDoubleShift', () => {
   });
 });
 
+describe('⌘↑ / ⌘↓, previous and next task (#398)', () => {
+  const up = (mods: Partial<KeyboardEvent> = {}) => ev({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true, ...mods });
+  const down = (mods: Partial<KeyboardEvent> = {}) => ev({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true, ...mods });
+  // The webview's user agent decides the platform; these run as on a Mac.
+  beforeEach(() => vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('maps ⌘↑ and ⌘↓ on macOS', () => {
+    expect(comboOf(up(), 'macos')?.combo).toBe('mod+arrowup');
+    expect(comboOf(down(), 'macos')?.combo).toBe('mod+arrowdown');
+  });
+
+  it('is nothing off a Mac, where the Windows key is Meta and Ctrl+↑/↓ belong to others', () => {
+    expect(comboOf(up(), 'linux')).toBeNull();
+    expect(comboOf(down(), 'other')).toBeNull();
+    expect(comboOf(down({ metaKey: false, ctrlKey: true }), 'linux')).toBeNull();
+  });
+
+  it('is Command only, without Shift or Option', () => {
+    // Ctrl+↑/↓: Claude Code's own keys in the task terminal, CodeMirror's page up/down.
+    expect(comboOf(up({ metaKey: false, ctrlKey: true }))).toBeNull();
+    expect(comboOf(down({ metaKey: false, ctrlKey: true }))).toBeNull();
+    expect(comboOf(down({ ctrlKey: true }))).toBeNull();
+    // ⇧⌘↑/↓ select to the start or end of a field.
+    expect(comboOf(up({ shiftKey: true }))).toBeNull();
+    expect(comboOf(down({ shiftKey: true }))).toBeNull();
+    // ⌥⌘↓ is the transcript's Jump to the Latest Message and the editor's Next Changed File.
+    expect(comboOf(up({ altKey: true }))).toBeNull();
+    expect(comboOf(down({ altKey: true }))).toBeNull();
+    // A bare arrow is the lists' own.
+    expect(comboOf(down({ metaKey: false }))).toBeNull();
+  });
+
+  it('is taken from the task terminal (Claude Code binds neither), and left to the shell drawer', () => {
+    expect(taskTerminalTakesKey(up())).toBe(false);
+    expect(taskTerminalTakesKey(down())).toBe(false);
+    // Claude Code keeps Ctrl+↑/↓ and the arrows themselves.
+    expect(taskTerminalTakesKey(up({ metaKey: false, ctrlKey: true }))).toBe(true);
+    expect(taskTerminalTakesKey(down({ metaKey: false }))).toBe(true);
+    expect(taskTerminalTakesKey(down({ metaKey: false, altKey: true }))).toBe(true);
+    expect(terminalTakesKey(up())).toBe(true);
+    expect(terminalTakesKey(down())).toBe(true);
+  });
+
+  it('is in the shortcuts help beside ⌘[ / ⌘], and Jump to the Latest Message is ⌥⌘↓', () => {
+    const at = (combo: string) => SHORTCUTS.findIndex((s) => s.combo === combo);
+    expect(SHORTCUTS[at('mod+arrowup')]?.keys).toBe('⌘↑');
+    expect(SHORTCUTS[at('mod+arrowdown')]?.keys).toBe('⌘↓');
+    expect(at('mod+arrowup')).toBe(at('mod+]') + 1);
+    expect(SHORTCUTS.find((s) => s.description.startsWith('Transcript: Jump to the Latest'))?.keys).toBe('⌥⌘↓');
+    expect(SHORTCUTS.filter((s) => s.keys === '⌘↓')).toHaveLength(1);
+  });
+});
+
 describe('terminalTakesKey', () => {
   it('keeps the project jump from the terminal, and leaves everything else to it', () => {
     expect(terminalTakesKey(ev({ key: '¡', code: 'Digit1', altKey: true }))).toBe(false);
@@ -445,5 +501,14 @@ describe('editor keys', () => {
     expect(keys).toEqual(expect.arrayContaining(['⇧⌘D', '⇧⌘C', '⌥⇧⌘C', '⌥⌘M']));
     expect(new Set(keys).size).toBe(keys.length);
     expect(SHORTCUTS.some((s) => s.keys === '⌥⌘C')).toBe(false);
+  });
+});
+
+describe('⌘F and ⇧⌘F in the Review Guide (#413)', () => {
+  it('are documented, ⌘F is free app-wide, and ⇧⌘F stays Find in Files outside the guide', () => {
+    expect(SHORTCUTS.find((s) => s.combo === 'guide mod+f')?.keys).toBe('⌘F');
+    expect(SHORTCUTS.find((s) => s.combo === 'guide mod+shift+f')?.keys).toBe('⇧⌘F');
+    expect(comboOf(ev({ key: 'f', code: 'KeyF', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+f');
   });
 });

@@ -9,6 +9,7 @@
  */
 
 import { foldPastes } from './pastedText';
+import { isJumpToLatestKey, keyboardIsFree, onScreen } from './jumpKey';
 import { PassageRevealContext, revealPassageIn, type RevealPassage } from './passages';
 import { onRevealPassageRequest } from './composerBridge';
 import { PassageComments } from './PassageComments';
@@ -380,17 +381,18 @@ export function TranscriptPane({
     return () => ro.disconnect();
   }, [inactive]);
 
-  // ⌘↓: to the latest message, without having to click into the transcript
-  // first. It acts only when the keyboard is not busy elsewhere: nothing
-  // focused, or focus inside the transcript but not in a text field. In the
-  // composer, the editor, the terminal or any other field, ⌘↓ keeps its own
-  // meaning (end of text) and this stays out of the way.
+  // ⌥⌘↓: to the latest message, without having to click into the transcript
+  // first (#398: it was ⌘↓, which now steps to the next task). It acts only
+  // when the keyboard is not busy elsewhere: nothing focused, or focus inside
+  // the transcript but not in a text field. In the composer, the terminal or
+  // any other field it stays out of the way. The editor's own ⌥⌘↓ (Next
+  // Changed File) yields to it on the same test (jumpKey.ts).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.key !== 'ArrowDown') return;
+      if (!isJumpToLatestKey(e)) return;
       const el = scrollRef.current;
       // Not on screen: another tab, or the pane is hidden.
-      if (!el || el.offsetParent === null) return;
+      if (!el || !onScreen(el)) return;
       if (!keyboardIsFree(document.activeElement, el)) return;
       e.preventDefault();
       jumpToEnd();
@@ -559,7 +561,7 @@ export function TranscriptPane({
           it sits at the foot of the transcript and never over the composer. */}
       <div className="tx-scroll-wrap">
         <OverlayScrollbar target={scrollRef} />
-        <div className="tx-scroll" ref={scrollRef} onScroll={onScroll}>
+        <div className="tx-scroll" ref={scrollRef} onScroll={onScroll} data-jump-latest="">
           {hasMore ? (
             <div className="tx-page-top">
               <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
@@ -616,8 +618,8 @@ export function TranscriptPane({
         ) : null}
 
         {!following ? (
-          <button type="button" className="tx-jump" onClick={jumpToEnd} title="Jump to the latest message (⌘↓)">
-            ↓ Latest <kbd className="tx-jump-key">⌘↓</kbd>
+          <button type="button" className="tx-jump" onClick={jumpToEnd} title="Jump to the latest message (⌥⌘↓)">
+            ↓ Latest <kbd className="tx-jump-key">⌥⌘↓</kbd>
           </button>
         ) : null}
       </div>
@@ -732,20 +734,4 @@ export function WorkingLine({ state }: { state: Working }): ReactNode {
       </div>
     </div>
   );
-}
-
-/**
- * Whether a key can be taken without stealing it from something focused:
- * nothing has focus (the window itself), or focus is inside `scroller` on an
- * element that is not a text field.
- */
-export function keyboardIsFree(active: Element | null, scroller: Element): boolean {
-  if (active === null || active === document.body || active === document.documentElement) return true;
-  if (!scroller.contains(active)) return false;
-  const editable =
-    (active instanceof HTMLElement && active.isContentEditable) ||
-    active.tagName === 'INPUT' ||
-    active.tagName === 'TEXTAREA' ||
-    active.tagName === 'SELECT';
-  return !editable;
 }
