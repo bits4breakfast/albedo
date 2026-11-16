@@ -7,12 +7,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GitResult } from './worktree';
 
-const findTaskByWorktreePath = vi.fn(
-  async (_cwd: string): Promise<{ repoPath: string; baseBranch: string } | null> => ({
-    repoPath: '/w/shop',
-    baseBranch: 'main',
-  }),
-);
+interface FakeTask {
+  repoPath: string;
+  baseBranch: string;
+  ownsWorktree: boolean;
+  worktreePath: string;
+}
+const CWD = '/w/shop-worktree/412-use-max-availability';
+const ownTask = (o: Partial<FakeTask> = {}): FakeTask => ({
+  repoPath: '/w/shop',
+  baseBranch: 'main',
+  ownsWorktree: true,
+  worktreePath: CWD,
+  ...o,
+});
+const findTaskByWorktreePath = vi.fn(async (_cwd: string): Promise<FakeTask | null> => ownTask());
 const listProjects = vi.fn(async () => [
   { id: 1, repoPath: '/w/shop', worktreeRoot: '/w/shop-worktree', defaultBaseBranch: 'main' },
 ]);
@@ -23,7 +32,6 @@ vi.mock('@tauri-apps/api/path', () => ({ homeDir: async () => '/Users/m' }));
 const { probeResumePlace } = await import('./resumePlace');
 const { setGitRunner, setPathExistsProbe } = await import('./worktree');
 
-const CWD = '/w/shop-worktree/412-use-max-availability';
 const BRANCH = '412-use-max-availability';
 const ok = (stdout = ''): GitResult => ({ code: 0, stdout, stderr: '' });
 const code = (n: number): GitResult => ({ code: n, stdout: '', stderr: 'fatal' });
@@ -33,7 +41,7 @@ afterEach(() => {
   restore?.();
   restore = null;
   vi.clearAllMocks();
-  findTaskByWorktreePath.mockImplementation(async () => ({ repoPath: '/w/shop', baseBranch: 'main' }));
+  findTaskByWorktreePath.mockImplementation(async () => ownTask());
 });
 
 function fake(o: {
@@ -44,6 +52,10 @@ function fake(o: {
   occupied?: boolean;
   /** Hold every ls-remote until this resolves. */
   hold?: Promise<void>;
+  /** `git remote`; origin by default. */
+  remotes?: string[];
+  /** Local branches besides main. */
+  locals?: string[];
 }) {
   const calls: string[][] = [];
   const prevRunner = setGitRunner(async (args) => {
@@ -52,8 +64,10 @@ function fake(o: {
     if (a === `rev-parse --verify --quiet refs/heads/${BRANCH}`) return o.localBranch ? ok('abc') : code(1);
     if (a === `rev-parse --verify --quiet refs/remotes/origin/${BRANCH}`) return o.trackingRef ? ok('abc') : code(1);
     if (a === 'rev-parse --verify --quiet refs/heads/main') return ok('abc');
+    if (o.locals?.some((b) => a === `rev-parse --verify --quiet refs/heads/${b}`)) return ok('abc');
     if (a === 'worktree list --porcelain') return ok('worktree /w/shop\nHEAD abc\nbranch refs/heads/main\n\n');
-    if (a === 'remote') return ok('origin\n');
+    if (a.startsWith('rev-parse --verify --quiet ')) return code(1);
+    if (a === 'remote') return ok(`${(o.remotes ?? ['origin']).join('\n')}\n`);
     if (a.startsWith('ls-remote ')) {
       await o.hold;
       return o.lsRemote === 0 ? ok(`abc\trefs/heads/${BRANCH}\n`) : code(o.lsRemote);
@@ -109,7 +123,7 @@ describe('probeResumePlace, the branch gone too', () => {
   });
 
   it('cuts from the local name of a base recorded as origin/main', async () => {
-    findTaskByWorktreePath.mockImplementation(async () => ({ repoPath: '/w/shop', baseBranch: 'origin/main' }));
+    findTaskByWorktreePath.mockImplementation(async () => ownTask({ baseBranch: 'origin/main' }));
     const calls = fake({ lsRemote: 2 });
     const plan = await probeResumePlace(CWD, BRANCH);
     expect(plan?.startPoint).toBe('origin/main');
@@ -171,5 +185,37 @@ describe('probeResumePlace, the branch gone too', () => {
       expect(await probeResumePlace(`${CWD}/app`, BRANCH)).toBeNull();
       expect(remoteCalls(calls)).toEqual([]);
     });
+  });
+});
+
+describe('probeResumePlace, which bases and folders count (#396 review)', () => {
+  it('keeps a base that is a local branch, even when it starts with a remote’s name', async () => {
+    findTaskByWorktreePath.mockImplementation(async () => ownTask({ baseBranch: 'feature/x' }));
+    const calls = fake({ lsRemote: 2, remotes: ['origin', 'feature'], locals: ['feature/x'] });
+    const plan = await probeResumePlace(CWD, BRANCH);
+    expect(plan?.source).toBe('base');
+    // freshBase asked about `feature/x`, never `x`.
+    expect(calls).toContainEqual(['config', '--get', 'branch.feature/x.remote']);
+    expect(calls.some((a) => a.join(' ') === 'config --get branch.x.remote')).toBe(false);
+  });
+
+  it('a matched task that did not own its folder: a subfolder gets nothing', async () => {
+    findTaskByWorktreePath.mockImplementation(async (cwd) => ownTask({ ownsWorktree: false, worktreePath: cwd }));
+    const calls = fake({ lsRemote: 0 });
+    expect(await probeResumePlace(`${CWD}/app`, BRANCH)).toBeNull();
+    expect(remoteCalls(calls)).toEqual([]);
+  });
+
+  it('a matched task that did not own its folder: one level under the root still counts', async () => {
+    findTaskByWorktreePath.mockImplementation(async (cwd) => ownTask({ ownsWorktree: false, worktreePath: cwd }));
+    fake({ lsRemote: 0 });
+    expect((await probeResumePlace(CWD, BRANCH))?.source).toBe('remote');
+  });
+
+  it('a task that owned its worktree there counts, wherever that was', async () => {
+    const elsewhere = '/w/elsewhere/412-use-max-availability';
+    findTaskByWorktreePath.mockImplementation(async () => ownTask({ worktreePath: elsewhere }));
+    fake({ lsRemote: 0 });
+    expect((await probeResumePlace(elsewhere, BRANCH))?.source).toBe('remote');
   });
 });

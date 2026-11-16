@@ -251,6 +251,16 @@
   cursor: pointer;
 }
 
+/* Disabled while a resume runs: --faint (5.40 | 5.13 on --banner-bg), no
+   underline, so it stops reading as a link. A token, never opacity. Outranks
+   the :hover rule above by specificity. */
+.sb-warn .btn.sb-warn-action[disabled],
+.sb-warn .btn.sb-warn-action[disabled]:hover {
+  color: var(--faint);
+  text-decoration: none;
+  cursor: default;
+}
+
 .sb-actions { display: flex; align-items: center; gap: 8px; }
 
 .sb-note {

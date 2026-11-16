@@ -249,16 +249,18 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
     const task = await findTaskByWorktreePath(cwd).catch(() => null);
     let repoPath = task?.repoPath ?? null;
     let baseBranch = task?.baseBranch ?? null;
-    // A task's own folder is a worktree by definition; a project's, only one
-    // level under its root (a session may have started in a subfolder).
-    let ownedPath = repoPath !== null;
-    if (!repoPath) {
+    let projectRoot: { root: string; home: string } | null = null;
+    const findProject = async () => {
       const { homeDir } = await import('@tauri-apps/api/path');
       const home = await homeDir();
       const project = projectOwningPath(await listProjects(), cwd, home);
+      if (project) projectRoot = { root: project.worktreeRoot, home };
+      return project;
+    };
+    if (!repoPath) {
+      const project = await findProject();
       repoPath = project?.repoPath ?? null;
       baseBranch = project?.defaultBaseBranch ?? null;
-      ownedPath = project !== null && directlyUnder(project.worktreeRoot, cwd, home);
     }
     // A detached session records `HEAD`: nothing to check out, nothing to fetch.
     if (!repoPath || !branch || branch === 'HEAD' || !isValidRefName(branch)) return null;
@@ -266,14 +268,29 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
     const exists = await refExists(repoPath, `refs/heads/${branch}`);
     const worktrees = await listWorktreesDetailed(repoPath);
     if (!exists) {
-      if (!ownedPath) return null;
+      // A worktree goes back only where one was: the folder of a task that
+      // owned its worktree there, or one level under the project's worktree
+      // root. A matched task alone is not enough -- an earlier Past Sessions
+      // resume may have recorded a subfolder a session started in.
+      const taskOwned =
+        task !== null && task.ownsWorktree === true && normalizePath(task.worktreePath) === normalizePath(cwd);
+      if (!taskOwned) {
+        if (!projectRoot) await findProject().catch(() => null);
+        const at = projectRoot as { root: string; home: string } | null;
+        if (!at || !directlyUnder(at.root, cwd, at.home)) return null;
+      }
       const pathOccupied = await probePath(cwd).catch(() => false);
       if (pathOccupied) return null;
       const remotes = await git(['remote'], repoPath).then(
         (r) => (r.code === 0 ? r.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : []),
         () => [],
       );
-      const base = baseBranch ? stripRemote(baseBranch, remotes) : null;
+      // `origin/main` names main -- unless a local branch is really called
+      // that (a remote named `feature` must not turn `feature/x` into `x`).
+      const base =
+        baseBranch && !(await refExists(repoPath, `refs/heads/${baseBranch}`).catch(() => false))
+          ? stripRemote(baseBranch, remotes)
+          : baseBranch;
       const gone = await probeGoneBranch(repoPath, branch, base && base !== branch ? base : null);
       return planResumePlace({
         cwd,
@@ -284,7 +301,7 @@ export async function probeResumePlace(cwd: string, branch: string | null): Prom
         baseBranch,
         ...gone,
         pathOccupied,
-        ownedPath,
+        ownedPath: true,
       });
     }
     const first = worktrees[0];

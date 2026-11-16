@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const task = { repoPath: '', baseBranch: 'main' };
+const task = { repoPath: '', baseBranch: 'main', ownsWorktree: true, worktreePath: '' };
 vi.mock('../db', () => ({ findTaskByWorktreePath: async () => task }));
 vi.mock('../db/projects', () => ({ listProjects: async () => [] }));
 
@@ -51,6 +51,7 @@ beforeEach(() => {
   // main moves on upstream after the clone last fetched it.
   commit(up, 'c.txt', 'Main moves');
   task.repoPath = local;
+  task.worktreePath = cwd;
   restoreRunner = realGit();
   restoreProbe = setPathExistsProbe(async (p) => existsSync(p));
 }, 30_000);
