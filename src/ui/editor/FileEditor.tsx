@@ -1056,9 +1056,14 @@ export default function FileEditor({
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.altKey || e.ctrlKey) return;
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-      // This stays live while the editor's tab is hidden. ⌥⌘↓ on a transcript
-      // on screen, with the keyboard free there, is its Jump to the Latest
-      // Message (#398): let it through rather than step a file out of sight.
+      // Only while the editor is on screen (#428): `active` is the active
+      // editor tab, which stays true while the Editor reading tab is hidden
+      // behind Transcript, Files or Guide, and a step there happens out of
+      // sight. Hidden, the key is left alone for whoever else answers it.
+      const root = rootRef.current;
+      if (root === null || root.closest('[hidden]') !== null) return;
+      // ⌥⌘↓ on a transcript on screen, with the keyboard free there, is its
+      // Jump to the Latest Message (#398): let it through.
       if (transcriptTakesJumpKey(e)) return;
       e.preventDefault();
       e.stopPropagation();

@@ -127,7 +127,7 @@ describe('⌥⌘↑ / ⌥⌘↓, the changed files, beside the transcript’s �
   const UP = { ...DOWN, key: 'ArrowUp', code: 'ArrowUp' };
 
   /** The editor, hidden or not, and a transcript scroller as TranscriptPane draws it. */
-  async function setup(transcriptOnScreen: boolean) {
+  async function setup(transcriptOnScreen: boolean, editorHidden = false) {
     setTouchedOrder(task.id, ['src/0.ts', 'src/a.ts', 'src/b.ts']);
     const onStep = vi.fn();
     const slot = document.createElement('div');
@@ -138,7 +138,12 @@ describe('⌥⌘↑ / ⌥⌘↓, the changed files, beside the transcript’s �
     if (transcriptOnScreen) Object.defineProperty(transcript, 'offsetParent', { get: () => document.body });
     document.body.appendChild(transcript);
     const field = document.body.appendChild(document.createElement('textarea'));
-    render(<FileEditor task={task} request={{ path: 'src/a.ts' }} onClose={() => {}} controlsSlot={slot} onStep={onStep} />);
+    // As App hides the Editor reading tab behind Transcript, Files or Guide.
+    const panel = document.body.appendChild(document.createElement('div'));
+    panel.hidden = editorHidden;
+    render(<FileEditor task={task} request={{ path: 'src/a.ts' }} onClose={() => {}} controlsSlot={slot} onStep={onStep} />, {
+      container: panel.appendChild(document.createElement('div')),
+    });
     await waitFor(() => {
       if (!document.querySelector('.cm-content')) throw new Error('editor not mounted yet');
     });
@@ -150,6 +155,26 @@ describe('⌥⌘↑ / ⌥⌘↓, the changed files, beside the transcript’s �
     fireEvent.keyDown(window, DOWN);
     fireEvent.keyDown(window, UP);
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(['src/b.ts', 'src/0.ts']);
+  });
+
+  it('steps nothing while the editor itself is hidden (#428)', async () => {
+    const { onStep } = await setup(false, true);
+    const down = new KeyboardEvent('keydown', { ...DOWN, bubbles: true, cancelable: true });
+    const up = new KeyboardEvent('keydown', { ...UP, bubbles: true, cancelable: true });
+    window.dispatchEvent(down);
+    window.dispatchEvent(up);
+    expect(onStep).not.toHaveBeenCalled();
+    // Left alone, not swallowed: whoever else answers the key still hears it.
+    expect(down.defaultPrevented).toBe(false);
+    expect(up.defaultPrevented).toBe(false);
+  });
+
+  it('steps nothing while hidden, even with focus in a field outside a transcript on screen (#428)', async () => {
+    const { onStep, field } = await setup(true, true);
+    field.focus();
+    fireEvent.keyDown(field, DOWN);
+    fireEvent.keyDown(field, UP);
+    expect(onStep).not.toHaveBeenCalled();
   });
 
   it('lets ⌥⌘↓ through to a transcript on screen with the keyboard free there; keeps ⌥⌘↑', async () => {

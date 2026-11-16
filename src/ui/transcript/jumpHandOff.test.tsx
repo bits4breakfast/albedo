@@ -4,8 +4,8 @@
  * ⌥⌘↓ between the two that answer it (#398), both mounted as App mounts them:
  * the transcript on screen, and the editor's tab behind it with a file open.
  * The editor's Next Changed File listens on the window in the capture phase
- * and stays live while its tab is hidden; it must hand ⌥⌘↓ to the transcript
- * when the keyboard is free there, and keep it when focus is elsewhere.
+ * and once stayed live while its tab was hidden; it hands ⌥⌘↓ to the
+ * transcript, and since #428 it takes neither arrow while it is not on screen.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -144,12 +144,12 @@ describe('⌥⌘↓ with the transcript on screen and a file open behind it (#39
     expect(onStep).not.toHaveBeenCalled();
   });
 
-  it('with focus in a field outside the transcript, leaves it to the editor, as before', async () => {
+  it('with focus in a field outside the transcript, neither takes it: the editor is not on screen (#428)', async () => {
     const { onStep, scroller } = await mountBoth();
     const field = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="elsewhere"]')!;
     field.focus();
-    press(field);
-    expect(onStep.mock.calls.map((c) => c[0])).toEqual(['src/b.ts']);
+    expect(press(field).defaultPrevented).toBe(false);
+    expect(onStep).not.toHaveBeenCalled();
     expect(scroller.scrollTop).toBe(100);
   });
 });
