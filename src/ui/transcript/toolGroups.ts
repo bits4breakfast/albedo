@@ -143,24 +143,41 @@ export function runSummary(calls: readonly Message[]): string {
  * the same fact): a row that changes arrives as a new object, and a reload
  * keeps the objects of rows it already held (tail.ts, keepRowObjects). Weak,
  * so a count goes when its row does.
+ *
+ * A Write's count also depends on its result (#387): a replaced file counts
+ * the lines that changed, not the whole file. So the entry remembers the
+ * result it was counted with, and a result that arrives later -- a new
+ * object -- counts again, once.
  */
-const linesCache = new WeakMap<Message, { added: number; removed: number } | null>();
+const linesCache = new WeakMap<Message, { result: Message | null; counted: { added: number; removed: number } | null }>();
 
-/** Lines added and removed by one call, from its input; null for a call that changes no file. */
-export function linesChanged(m: Message): { added: number; removed: number } | null {
+/**
+ * Lines added and removed by one call, from its input (and, for a Write, its
+ * result); null for a call that changes no file.
+ */
+export function linesChanged(m: Message, result: Message | null = null): { added: number; removed: number } | null {
   if (!DIFF_TOOLS.has(m.toolName ?? '')) return null;
+  // Only a Write reads its result; any other call counts the same with or without it.
+  const r = m.toolName === 'Write' ? result : null;
   const hit = linesCache.get(m);
-  if (hit !== undefined) return hit;
-  const counted = countLines(m);
-  linesCache.set(m, counted);
+  if (hit !== undefined && hit.result === r) return hit.counted;
+  const counted = countLines(m, r);
+  linesCache.set(m, { result: r, counted });
   return counted;
 }
 
-function countLines(m: Message): { added: number; removed: number } | null {
-  const edit = editPairsOf(m);
+function countLines(m: Message, result: Message | null): { added: number; removed: number } | null {
+  const edit = editPairsOf(m, result);
   if (edit === null) return null;
   let added = 0;
   let removed = 0;
+  // A Write whose result keeps only hunks (#387): the lines the row draws.
+  for (const h of edit.patch ?? []) {
+    for (const l of h.lines) {
+      if (l.kind === 'add') added++;
+      else if (l.kind === 'del') removed++;
+    }
+  }
   for (const p of edit.pairs) {
     const c = lineChangeCounts(p.oldText, p.newText);
     added += c.added;
@@ -191,7 +208,7 @@ export function runFacts(calls: readonly Message[], results: ReadonlyMap<number,
     if (r === null) pending++;
     else if (toolResultIsError(r)) failed++;
     if (r !== null && toolResultIsError(r)) continue;
-    const c = linesChanged(m);
+    const c = linesChanged(m, r);
     if (c) {
       changed = true;
       added += c.added;

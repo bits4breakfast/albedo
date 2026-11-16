@@ -275,6 +275,11 @@ export interface DiffProps {
    * on it closes the diff again.
    */
   onCollapse?: () => void;
+  /**
+   * Drawn last, inside the diff's frame, while it is open: a Write that
+   * replaced a file puts "Show Whole File" here (#387). Nothing by default.
+   */
+  footer?: ReactNode;
 }
 
 export function Diff({
@@ -286,6 +291,7 @@ export function Diff({
   showPath = true,
   head = true,
   onCollapse,
+  footer = null,
 }: DiffProps): ReactNode {
   const auto = useDiffLayout();
   const ref = auto.ref;
@@ -411,6 +417,7 @@ export function Diff({
       <div className="tx-d" ref={ref}>
         {head ? <DiffHeader diff={diff} model={model} resolved={resolved} onToggle={null} showPath={showPath} /> : null}
         <div className="tx-d-empty">No content changes</div>
+        {footer}
       </div>
     );
   }
@@ -577,6 +584,7 @@ export function Diff({
           </button>
         </div>
       ) : null}
+      {footer}
       <SelectionComment rootRef={ref} />
     </div>
   );

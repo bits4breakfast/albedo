@@ -14,16 +14,17 @@
 import { memo, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { FileDiff, Message } from '../../types';
-import { diffStrings, parseUnifiedDiff } from '../../lib/diff';
+import { diffStrings, langForPath, parseUnifiedDiff, patchHunks } from '../../lib/diff';
 import { CollapsibleDiff } from './Diff';
+import { CodeLines } from './codeTokens';
 import { Disclosure } from '../Disclosure';
 import { LinkifiedText, useActivate } from './links';
 import { Markdown } from './Markdown';
 import { lineCount } from './pastedText';
 import { PassageRevealContext } from './passages';
 import { foldQuote } from './transcriptQuotes';
-import { DIFF_TOOLS, editPairsOf } from './editPairs';
-import ToolChip, { FieldList, str, toolInput, toolResultText } from './ToolChip';
+import { DIFF_TOOLS, editPairsOf, writeOutcomeOf } from './editPairs';
+import ToolChip, { FieldList, fileLineCount, str, toolInput, toolResultText } from './ToolChip';
 import { SHOW_PREVIEW_TOOL } from '../../capture/previewGate';
 import { PreviewChip } from '../preview/PreviewChip';
 import {
@@ -46,6 +47,7 @@ import {
   peerMessageIdOf,
   senderTaskOf,
   skillSourceToolUseIdOf,
+  toolErrorTextOf,
 } from '../../capture';
 import { useTaskOpener } from '../openTask';
 import { dateText } from '../../reminders/when';
@@ -766,8 +768,10 @@ function ToolUseRow({
   result: Message | null;
   extras: readonly Message[];
 }): ReactNode {
+  const write = useMemo(() => writeOutcomeOf(message, result), [message, result]);
   const rendered = useDiffsFor(message, result);
   const more = extras.length > 0 ? <SkillInstructions rows={extras} /> : null;
+  const tag = write?.kind === 'created' ? 'New File' : write?.kind === 'failed' ? 'Not Written' : null;
 
   // A mockup shown for approval (#348): a chip per version with how it
   // ended, which opens that version read only.
@@ -782,16 +786,42 @@ function ToolUseRow({
     );
   }
 
-  // `data-message-id`, as on every row: what the Background band scrolls to,
-  // and what a comment on a passage names as its source (#187).
-  if (rendered && rendered.diffs.length > 0) {
+  // A Write that failed (#387): nothing was written, so no diff and no
+  // counts. Its error leads; what it would have written is folded under it.
+  if (write?.kind === 'failed') {
     return (
       <div className="tx-row tx-row-tool" data-message-id={message.id}>
         <div className="tx-gutter" />
         <div className="tx-content">
-          <ToolChip message={message} result={result} more={more} />
+          <ToolChip message={message} result={result} more={more} tag={tag} resultShown />
+          <WriteNotWritten message={message} result={result} />
+        </div>
+      </div>
+    );
+  }
+
+  // `data-message-id`, as on every row: what the Background band scrolls to,
+  // and what a comment on a passage names as its source (#187).
+  if (rendered && rendered.diffs.length > 0) {
+    // A Write that replaced a file shows what changed (#387); the whole file
+    // is one click further, under the diff.
+    const footer =
+      write?.kind === 'replaced' || write?.kind === 'patched' ? (
+        <WholeFile path={rendered.diffs[0]?.path ?? ''} content={write.content} />
+      ) : null;
+    return (
+      <div className="tx-row tx-row-tool" data-message-id={message.id}>
+        <div className="tx-gutter" />
+        <div className="tx-content">
+          <ToolChip message={message} result={result} more={more} tag={tag} />
           {rendered.diffs.map((d, i) => (
-            <CollapsibleDiff key={i} diff={d} expand={rendered.expand[i] ?? null} absoluteLines={rendered.absoluteLines} />
+            <CollapsibleDiff
+              key={i}
+              diff={d}
+              expand={rendered.expand[i] ?? null}
+              absoluteLines={rendered.absoluteLines}
+              footer={footer}
+            />
           ))}
         </div>
       </div>
@@ -802,9 +832,66 @@ function ToolUseRow({
     <div className="tx-row tx-row-tool" data-message-id={message.id}>
       <div className="tx-gutter" />
       <div className="tx-content">
-        <ToolChip message={message} result={result} more={more} />
+        <ToolChip message={message} result={result} more={more} tag={tag} />
       </div>
     </div>
+  );
+}
+
+function linesLabel(n: number): string {
+  return `${n.toLocaleString()} ${n === 1 ? 'Line' : 'Lines'}`;
+}
+
+/**
+ * Under a replaced file's diff (#387): the whole file, in the listing the
+ * chip's input uses, behind one button. Highlighted only once it is opened.
+ * It is the result's `content` -- the file as it is on disk -- which can
+ * differ from the input the chip shows, what was sent: Claude Code stamps
+ * front matter on a memory file, say.
+ */
+function WholeFile({ path, content }: { path: string; content: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const lines = fileLineCount(content);
+  // An emptied file: the diff already shows every line going.
+  if (lines === 0) return null;
+  return (
+    <>
+      <div className="tx-d-more">
+        <button type="button" className="tx-btn" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? 'Hide Whole File' : `Show Whole File (${linesLabel(lines)})`}
+        </button>
+      </div>
+      {open ? <CodeLines code={content} lang={langForPath(path)} className="tx-d-whole" /> : null}
+    </>
+  );
+}
+
+/**
+ * A Write that failed (#387): the error, then what it would have written,
+ * folded as a collapsed line is ("Show Content (91 Lines)").
+ */
+function WriteNotWritten({ message, result }: { message: Message; result: Message | null }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const error = toolErrorTextOf(result);
+  const content = str(toolInput(message).content) ?? '';
+  const path = str(toolInput(message).file_path) ?? '';
+  const lines = fileLineCount(content);
+  return (
+    <>
+      {error.length > 0 ? (
+        <pre className="tx-pre tx-pre-error tx-write-error">
+          <LinkifiedText text={error} />
+        </pre>
+      ) : null}
+      {lines > 0 ? (
+        <div className="tx-collapsed">
+          <button type="button" className="tx-think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+            <Disclosure open={open} /> {open ? 'Hide Content' : `Show Content (${linesLabel(lines)})`}
+          </button>
+          {open ? <CodeLines code={content} lang={langForPath(path)} /> : null}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -819,6 +906,28 @@ interface RenderedDiffs {
   absoluteLines: boolean;
 }
 
+/**
+ * A file-changing call's diffs, from the same pairs the run's line counts
+ * (#362). For a Write, the result decides (#387): a replaced file diffs
+ * against the file as it was, or draws the hunks its result kept.
+ */
+function editDiffs(message: Message, result: Message | null): RenderedDiffs | null {
+  const edit = editPairsOf(message, result);
+  if (edit === null) return null;
+  if (edit.patch) {
+    const diff: FileDiff = { path: edit.path, lang: langForPath(edit.path), hunks: patchHunks(edit.patch) };
+    return { diffs: [diff], expand: [null], absoluteLines: true };
+  }
+  return {
+    diffs: edit.pairs.map((p) => diffStrings(p.oldText, p.newText, edit.path)),
+    expand: edit.pairs.map((p) => ({ oldText: p.oldText, newText: p.newText })),
+    absoluteLines: edit.absoluteLines,
+  };
+}
+
+/** A Write's built diffs, per result row object (never changed once captured); weak, so they go with it. */
+const writeDiffs = new WeakMap<Message, RenderedDiffs | null>();
+
 /** Decide whether this tool call is a diff, and build it if so. */
 function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | null {
   const resultText = result ? toolResultText(result) : '';
@@ -827,13 +936,17 @@ function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | 
     const input = toolInput(message);
 
     if (DIFF_TOOLS.has(tool)) {
-      const edit = editPairsOf(message);
-      if (edit === null) return null;
-      return {
-        diffs: edit.pairs.map((p) => diffStrings(p.oldText, p.newText, edit.path)),
-        expand: edit.pairs.map((p) => ({ oldText: p.oldText, newText: p.newText })),
-        absoluteLines: edit.absoluteLines,
-      };
+      // A Write with its result is built once per result row, not once per
+      // mount: a task switch or a scroll back remounts the row, and a
+      // replaced file's diff is the costly one (#387).
+      if (tool === 'Write' && result !== null) {
+        const hit = writeDiffs.get(result);
+        if (hit !== undefined) return hit;
+        const built = editDiffs(message, result);
+        writeDiffs.set(result, built);
+        return built;
+      }
+      return editDiffs(message, result);
     }
 
     if (tool === 'Bash') {
@@ -846,5 +959,5 @@ function useDiffsFor(message: Message, result: Message | null): RenderedDiffs | 
     }
 
     return null;
-  }, [message, resultText]);
+  }, [message, result, resultText]);
 }

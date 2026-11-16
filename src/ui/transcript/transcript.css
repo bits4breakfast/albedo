@@ -1205,6 +1205,21 @@ ol.tx-md-list { list-style-type: decimal; }
   white-space: nowrap;
 }
 
+/* What a Write did (#387): "New File", "Not Written". --muted on every ground
+   the head takes -- --panel 7.15 light / 7.74 dark, --panel-chrome (open)
+   6.50 / 7.31, --panel-hover (hovered, closed) 6.22 / 6.91 -- and 5.89 / 6.50
+   on --panel-raised. */
+.tx-chip-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
 .tx-chip-state {
   flex: none;
   margin-left: auto;
@@ -1734,6 +1749,21 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-more-label {
   color: var(--muted);
   font-size: var(--fs-xs);
+}
+
+/* A replaced file's whole text, under its diff (#387): the chip's listing,
+   on the diff's own well (--panel-inset). Compound selectors, so neither
+   depends on stylesheet order against .tx-pre / .tx-pre-code. */
+.tx-pre.tx-d-whole {
+  border-top: 1px solid var(--border);
+}
+
+/* A Write that failed (#387): its error first, under the chip, on the pane's
+   ground (--panel), with the failed chip's --del edge. --del on --panel: 6.98
+   light / 8.37 dark. */
+.tx-pre.tx-write-error {
+  margin: 3px 0 0;
+  border-left: 2px solid var(--del);
 }
 
 /* --- path links ----------------------------------------------------------- */
