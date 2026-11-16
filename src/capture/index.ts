@@ -40,6 +40,9 @@ export { endsLocalCommand, isLocalCommandLine, isLocalCommandStderr } from './ad
 export { harnessInputOf } from './adapter';
 export type { HarnessInput } from './adapter';
 
+/** A failed tool's error without Claude Code's `<tool_use_error>` wrapper (#387). */
+export { toolErrorTextOf } from './adapter';
+
 /** A skill's text, written after the Skill call that loaded it (#150). */
 export { skillSourceToolUseIdOf } from './adapter';
 
