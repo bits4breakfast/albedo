@@ -76,11 +76,15 @@ export function useLineTokens(text: string, lang: string, upTo: number): DualTok
     setTokens(known ?? []);
     if (known && known.length >= Math.min(upTo, countLines(text))) return;
     let live = true;
-    void highlightLines(text, lang, upTo).then((t) => {
+    // Aborted when this diff goes away or asks for something else, so a run
+    // nobody waits for any more stops (see `highlightLines`).
+    const stop = new AbortController();
+    void highlightLines(text, lang, upTo, stop.signal).then((t) => {
       if (live) setTokens(t);
     });
     return () => {
       live = false;
+      stop.abort();
     };
   }, [text, lang, upTo]);
 

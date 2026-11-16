@@ -6,6 +6,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  highlightBlocks,
   highlightLines,
   highlightToTokens,
   MAX_TOKENIZED_LINE,
@@ -78,5 +79,59 @@ describe('highlightLines', () => {
     expect(lines[1]).toHaveLength(1);
     expect(lines[1]?.[0]?.style['--shiki-light']).toBeUndefined();
     expect(lines[2]!.length).toBeGreaterThan(1);
+  });
+
+  it('leaves a line of 2,000 characters plain (a long TSX line costs seconds)', async () => {
+    const long = `const s = "${'v'.repeat(1_990)}";`;
+    expect(long.length).toBeGreaterThanOrEqual(2_000);
+    const lines = await highlightLines(`const a = 1;\n${long}`, 'typescript');
+    expect(lines[1]).toHaveLength(1);
+  });
+
+  it('gives even a text of one slice a task of its own', async () => {
+    await highlightToTokens('const warm = 2;', 'typescript');
+    let ticked = false;
+    setTimeout(() => {
+      ticked = true;
+    }, 0);
+    await highlightLines('const single = 1;\nconst slice = 2;', 'typescript');
+    expect(ticked).toBe(true);
+  });
+
+  it('stops once nobody is waiting, and carries on for a later ask', async () => {
+    setSliceForTests(2);
+    const code = Array.from({ length: 40 }, (_, i) => `const gone${i} = ${i};`).join('\n');
+    const stop = new AbortController();
+    const pending = highlightLines(code, 'typescript', Infinity, stop.signal);
+    stop.abort();
+    await pending;
+    expect(peekLineTokens(code, 'typescript')?.length ?? 0).toBeLessThan(40);
+    expect(await highlightLines(code, 'typescript')).toHaveLength(40);
+  });
+
+  it('keeps going while one of two callers still waits', async () => {
+    setSliceForTests(2);
+    const code = Array.from({ length: 20 }, (_, i) => `const kept${i} = ${i};`).join('\n');
+    const stop = new AbortController();
+    const left = highlightLines(code, 'typescript', Infinity, stop.signal);
+    const stays = highlightLines(code, 'typescript');
+    stop.abort();
+    await left;
+    expect(await stays).toHaveLength(20);
+  });
+});
+
+describe('highlightBlocks', () => {
+  it('yields to the browser between blocks once a slice of characters is done', async () => {
+    await highlightToTokens('const warm = 3;', 'typescript');
+    setSliceForTests(100, 30);
+    const blocks = Array.from({ length: 12 }, (_, i) => `const hunk${i} = ${i};`);
+    let ticked = false;
+    setTimeout(() => {
+      ticked = true;
+    }, 0);
+    const lines = await highlightBlocks(blocks, 'typescript');
+    expect(lines).toHaveLength(12);
+    expect(ticked).toBe(true);
   });
 });

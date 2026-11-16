@@ -338,14 +338,25 @@ const SLICE_CHARS = 6_000;
 /**
  * A line this long is left plain rather than tokenized: one minified line can
  * otherwise cost a second on its own, and a slice cannot split a line.
+ * Measured (TSX, both themes): a 4,900-character line took 1.5 s, and lines
+ * of 2,000 characters at most 284 ms. Shiki's `tokenizeTimeLimit` was not
+ * used instead: it cuts a line off mid-way and carries on from a guessed
+ * state, which colours what follows wrongly.
  */
-export const MAX_TOKENIZED_LINE = 5_000;
+export const MAX_TOKENIZED_LINE = 2_000;
 
 interface Progress {
   lines: readonly string[];
   tokens: DualToken[][];
   state: unknown;
   running: Promise<void> | null;
+  /**
+   * Callers still waiting for this text. A run stops at the next slice once
+   * there are none -- a diff that unmounted, a Guide file stepped past -- so
+   * it does not hold up the colours of the one now on screen. What it got
+   * through is kept, and the next ask carries on from there.
+   */
+  subscribers: number;
 }
 
 /** Texts tokenized part of the way. Finished ones move to the token cache. */
@@ -385,18 +396,24 @@ export function peekLineTokens(code: string, lang: string): DualToken[][] | unde
  * characters is plain. Never rejects: a language that does not load, or a
  * slice that throws, leaves the rest plain.
  */
-export async function highlightLines(code: string, lang: string, upTo = Infinity): Promise<DualToken[][]> {
+export async function highlightLines(
+  code: string,
+  lang: string,
+  upTo = Infinity,
+  signal?: AbortSignal,
+): Promise<DualToken[][]> {
   const key = cacheKey(code, lang);
   const hit = cache.get(key);
   if (hit) return hit;
 
   let p = progress.get(key);
   if (!p) {
-    p = { lines: code.split('\n'), tokens: [], state: undefined, running: null };
+    p = { lines: code.split('\n'), tokens: [], state: undefined, running: null, subscribers: 0 };
     progress.set(key, p);
-    for (const oldest of progress.keys()) {
+    // Never one somebody is still waiting for: it would be tokenized again.
+    for (const [oldest, entry] of [...progress]) {
       if (progress.size <= PROGRESS_MAX) break;
-      if (oldest !== key) progress.delete(oldest);
+      if (oldest !== key && entry.subscribers === 0) progress.delete(oldest);
     }
   } else {
     // Used again: to the back of the eviction queue.
@@ -406,14 +423,29 @@ export async function highlightLines(code: string, lang: string, upTo = Infinity
   const entry = p;
   const target = Math.min(upTo, entry.lines.length);
 
-  while (entry.running) await entry.running;
-  if (entry.tokens.length < target) {
-    entry.running = run(entry, lang, target);
-    try {
-      await entry.running;
-    } finally {
-      entry.running = null;
+  if (signal?.aborted) return entry.tokens.slice();
+  entry.subscribers++;
+  let subscribed = true;
+  const leave = () => {
+    if (!subscribed) return;
+    subscribed = false;
+    entry.subscribers--;
+  };
+  signal?.addEventListener('abort', leave, { once: true });
+  try {
+    while (entry.running) await entry.running;
+    if (subscribed && entry.tokens.length < target) {
+      const mine = run(entry, lang, target);
+      entry.running = mine;
+      try {
+        await mine;
+      } finally {
+        if (entry.running === mine) entry.running = null;
+      }
     }
+  } finally {
+    signal?.removeEventListener('abort', leave);
+    leave();
   }
   if (entry.tokens.length >= entry.lines.length) {
     progress.delete(key);
@@ -435,7 +467,11 @@ async function run(entry: Progress, lang: string, target: number): Promise<void>
   } catch {
     return plainRest();
   }
+  // Even the first slice waits for its own task: a diff starts both sides
+  // at once, and two first slices back to back are one long block.
+  await yieldToBrowser();
   while (entry.tokens.length < target) {
+    if (entry.subscribers <= 0) return;
     const start = entry.tokens.length;
     let end = start;
     let chars = 0;
@@ -480,7 +516,15 @@ export async function highlightBlocks(blocks: readonly string[], lang: string): 
   } catch {
     hl = null;
   }
+  // A slice's worth of characters, then the browser gets a turn (#412): a
+  // diff of hundreds of hunks must not block for longer than one blob did.
+  let chars = 0;
   for (const block of blocks) {
+    if (chars >= sliceChars) {
+      chars = 0;
+      await yieldToBrowser();
+    }
+    chars += block.length + 1;
     const n = blockLineCount(block);
     let lines: DualToken[][];
     try {
