@@ -25,7 +25,15 @@ import { anchorBlock, fileLines, type AnchorFailure } from '../../lib/anchor';
 import { useReadFile } from '../editor/openFile';
 import { Disclosure } from '../Disclosure';
 import { PathLink, useActivate } from './links';
-import { Code, composePieces, sourceLines, useCodeTokens } from './codeTokens';
+import {
+  Code,
+  composePieces,
+  MAX_HIGHLIGHT_LINES,
+  sourceLines,
+  useBlockTokens,
+  useCodeTokens,
+  useLineTokens,
+} from './codeTokens';
 import './transcript.css';
 
 /** Below this container width the side-by-side layout stops being readable. */
@@ -44,7 +52,7 @@ const CONTEXT_STEP = 20;
 
 interface Row {
   line: DiffLine;
-  /** Index into the old-side / new-side token blob, or -1. */
+  /** Index into the side's tokens, or -1: the hunk's own, or the whole text's (see `wholeRows`). */
   oldRow: number;
   newRow: number;
 }
@@ -52,27 +60,37 @@ interface Row {
 interface HunkModel {
   header: string;
   rows: Row[];
+  /**
+   * This hunk's shown lines on each side, highlighted on their own when the
+   * whole texts are not (#412): the grammar's state -- inside a comment, a
+   * string -- must not run across the lines hidden between two hunks.
+   */
+  oldBlob: string;
+  newBlob: string;
 }
 
 interface Model {
   hunks: HunkModel[];
-  oldBlob: string;
-  newBlob: string;
+  /** Lines shown on each side across all hunks, for the highlight size limit. */
+  oldCount: number;
+  newCount: number;
   added: number;
   removed: number;
   total: number;
 }
 
 function buildModel(hunks: readonly DiffHunk[]): Model {
-  const oldLines: string[] = [];
-  const newLines: string[] = [];
   const out: HunkModel[] = [];
+  let oldCount = 0;
+  let newCount = 0;
   let added = 0;
   let removed = 0;
   let total = 0;
 
   for (const h of hunks) {
     const rows: Row[] = [];
+    const oldLines: string[] = [];
+    const newLines: string[] = [];
     for (const line of h.lines) {
       let oldRow = -1;
       let newRow = -1;
@@ -89,10 +107,61 @@ function buildModel(hunks: readonly DiffHunk[]): Model {
       rows.push({ line, oldRow, newRow });
       total++;
     }
-    out.push({ header: h.header, rows });
+    oldCount += oldLines.length;
+    newCount += newLines.length;
+    out.push({ header: h.header, rows, oldBlob: oldLines.join('\n'), newBlob: newLines.join('\n') });
   }
 
-  return { hunks: out, oldBlob: oldLines.join('\n'), newBlob: newLines.join('\n'), added, removed, total };
+  return { hunks: out, oldCount, newCount, added, removed, total };
+}
+
+/**
+ * Past this many lines across both whole texts, or this many characters, a
+ * diff highlights its hunks instead (#412). The whole texts are tokenized a
+ * slice at a time with a yield between slices (`highlightLines`), so no task
+ * blocks the main thread for long whatever the size; what the cap bounds is
+ * how long the plain first paint waits for its colours. Measured at ~6 lines
+ * a millisecond (PHP, both themes), 6,000 lines is about a second at worst --
+ * a file of ~3,000 lines on each side -- and 300,000 characters is the
+ * editor's own limit (`MAX_HIGHLIGHT_CHARS`). Above either, the hunks are
+ * highlighted one by one, which costs what one blob of them did before.
+ */
+const WHOLE_TEXT_MAX_LINES = 6000;
+const WHOLE_TEXT_MAX_CHARS = 300_000;
+
+/**
+ * Whether every numbered row reads exactly the whole texts' line at its
+ * number. They are the same texts the diff was made from, so this holds; if
+ * it ever does not, colouring a row by another line's tokens would be wrong
+ * and the hunks are highlighted on their own instead.
+ */
+function rowsMatch(model: Model, oldSource: readonly string[], newSource: readonly string[]): boolean {
+  for (const h of model.hunks) {
+    for (const { line } of h.rows) {
+      if (line.oldNumber !== null && (line.kind === 'del' || line.kind === 'context')) {
+        if (oldSource[line.oldNumber - 1] !== line.content) return false;
+      }
+      if (line.newNumber !== null && (line.kind === 'add' || line.kind === 'context')) {
+        if (newSource[line.newNumber - 1] !== line.content) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Rows re-indexed into the whole texts' tokens: a line's number less one. */
+function wholeRows(rows: readonly Row[]): Row[] {
+  return rows.map((r) => ({
+    line: r.line,
+    oldRow: r.oldRow >= 0 && r.line.oldNumber !== null ? r.line.oldNumber - 1 : -1,
+    newRow: r.newRow >= 0 && r.line.newNumber !== null ? r.line.newNumber - 1 : -1,
+  }));
+}
+
+/** Tokens for each whole side, indexed by line number less one. */
+interface WholeTokens {
+  old: DualToken[][];
+  new: DualToken[][];
 }
 
 /** Pair a del-run with the following add-run so side-by-side lines up. */
@@ -299,8 +368,6 @@ export function Diff({
   const [openGaps, setOpenGaps] = useState<Record<number, boolean>>({});
 
   const model = useMemo(() => buildModel(diff.hunks), [diff]);
-  const oldTokens = useCodeTokens(model.oldBlob, diff.lang);
-  const newTokens = useCodeTokens(model.newBlob, diff.lang);
 
   // A forced layout is the caller's call: the Guide judges one-sidedness on
   // the whole file, not on the slice it hands over (#337).
@@ -313,8 +380,53 @@ export function Diff({
     ? (diff.path.includes(' → ') ? (diff.path.split(' → ').pop() ?? diff.path) : diff.path)
     : null;
 
-  const expandOld = useMemo(() => (expand ? sourceLines(expand.oldText) : null), [expand]);
-  const expandNew = useMemo(() => (expand ? sourceLines(expand.newText) : null), [expand]);
+  // Keyed on the texts: callers pass `expand` as a fresh object every render.
+  const expandOldText = expand?.oldText ?? null;
+  const expandNewText = expand?.newText ?? null;
+  const expandOld = useMemo(() => (expandOldText !== null ? sourceLines(expandOldText) : null), [expandOldText]);
+  const expandNew = useMemo(() => (expandNewText !== null ? sourceLines(expandNewText) : null), [expandNewText]);
+
+  /*
+   * Syntax colour (#412). With both whole texts, each side is tokenized
+   * from its first line, a slice at a time (`useLineTokens`), and every row
+   * -- hunk or opened gap -- takes the tokens of its own line: coloured as it
+   * is in the file, whatever the hidden lines open or close. Without them,
+   * or past the caps, each hunk is highlighted on its own
+   * (`useBlockTokens`), so no state crosses a gap.
+   */
+  const whole = useMemo(() => {
+    if (expandOldText === null || expandNewText === null || !expandOld || !expandNew) return null;
+    if (expandOld.length + expandNew.length > WHOLE_TEXT_MAX_LINES) return null;
+    if (expandOldText.length + expandNewText.length > WHOLE_TEXT_MAX_CHARS) return null;
+    if (!rowsMatch(model, expandOld, expandNew)) return null;
+    // Joined from `sourceLines`, so token line i is line i + 1 even with `\r\n`.
+    return { old: expandOld.join('\n'), new: expandNew.join('\n') };
+  }, [expandOldText, expandNewText, expandOld, expandNew, model]);
+  const wholeOn = whole !== null;
+  // Each side only as far as the last line a hunk shows, until the gap after
+  // the last hunk is opened: the lines below it are never seen otherwise.
+  const tailOpen = openGaps[model.hunks.length] === true;
+  const reach = useMemo(() => lastNumbers(model.hunks[model.hunks.length - 1]), [model]);
+  const wholeOldTokens = useLineTokens(whole?.old ?? '', diff.lang, tailOpen ? Infinity : reach.old);
+  const wholeNewTokens = useLineTokens(whole?.new ?? '', diff.lang, tailOpen ? Infinity : reach.new);
+  const wholeTokens = useMemo<WholeTokens | null>(
+    () => (wholeOn ? { old: wholeOldTokens, new: wholeNewTokens } : null),
+    [wholeOn, wholeOldTokens, wholeNewTokens],
+  );
+  // Today's limit, kept for the hunks: past it a side is not highlighted at all.
+  const plainOld = model.oldCount > MAX_HIGHLIGHT_LINES;
+  const plainNew = model.newCount > MAX_HIGHLIGHT_LINES;
+  // Otherwise each hunk on its own, one cache entry a side for the lot.
+  const oldBlocks = useMemo(
+    () => (wholeOn || plainOld ? [] : model.hunks.map((h) => h.oldBlob)),
+    [wholeOn, plainOld, model],
+  );
+  const newBlocks = useMemo(
+    () => (wholeOn || plainNew ? [] : model.hunks.map((h) => h.newBlob)),
+    [wholeOn, plainNew, model],
+  );
+  const hunkOldTokens = useBlockTokens(oldBlocks, diff.lang);
+  const hunkNewTokens = useBlockTokens(newBlocks, diff.lang);
 
   /*
    * ---------------------------------------------------------------------
@@ -453,6 +565,7 @@ export function Diff({
             lang={diff.lang}
             split={resolved === 'split'}
             linkPath={linkPath}
+            whole={wholeTokens}
           />,
         );
       }
@@ -465,11 +578,14 @@ export function Diff({
     body.push(
       <div className="tx-d-hunk" key={`h-${hi}`}>
         {hunk.header ? <div className="tx-d-hunk-head">{hunk.header}</div> : null}
-        {resolved === 'split' ? (
-          <SplitBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} linkPath={linkPath} />
-        ) : (
-          <UnifiedBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} linkPath={linkPath} />
-        )}
+        <HunkBody
+          rows={rows}
+          whole={wholeTokens}
+          oldTokens={hunkOldTokens[hi] ?? NO_TOKENS}
+          newTokens={hunkNewTokens[hi] ?? NO_TOKENS}
+          split={resolved === 'split'}
+          linkPath={linkPath}
+        />
       </div>,
     );
   }
@@ -506,6 +622,7 @@ export function Diff({
             lang={diff.lang}
             split={resolved === 'split'}
             linkPath={linkPath}
+            whole={wholeTokens}
           />,
         );
       }
@@ -1357,6 +1474,7 @@ function GapLines({
   lang,
   split,
   linkPath = null,
+  whole = null,
 }: {
   gap: Gap;
   oldSource: readonly string[];
@@ -1364,6 +1482,8 @@ function GapLines({
   lang: string;
   split: boolean;
   linkPath?: string | null;
+  /** The whole texts' tokens, when the diff has them: the gap reads its rows from there (#412). */
+  whole?: WholeTokens | null;
 }): ReactNode {
   const lines = useMemo(() => {
     const out: DiffLine[] = [];
@@ -1380,13 +1500,82 @@ function GapLines({
     return out;
   }, [gap, oldSource, newSource]);
 
-  const blob = useMemo(() => lines.map((l) => l.content).join('\n'), [lines]);
-  const tokens = useCodeTokens(blob, lang);
+  // Highlighted on its own only when the whole texts are not.
+  const blob = useMemo(() => (whole ? '' : lines.map((l) => l.content).join('\n')), [lines, whole]);
+  const own = useCodeTokens(blob, lang);
   const rows: Row[] = useMemo(() => lines.map((line, i) => ({ line, oldRow: i, newRow: i })), [lines]);
+  /*
+   * With the whole texts, each row takes the tokens of the line it shows.
+   * Its text is the new side's line, and the old side's line at its old
+   * number is usually the same text -- but not where hunks between are
+   * hidden (the Guide's `restrictDiff`): there the two numberings drift, and
+   * the old number points at another line. So a side's tokens are used only
+   * where that side's line IS the row's text, else the other side's.
+   */
+  const sideTokens = useMemo(() => {
+    if (!whole) return null;
+    const pick = (line: DiffLine, first: 'old' | 'new'): DualToken[] | undefined => {
+      const oldOk = line.oldNumber !== null && oldSource[line.oldNumber - 1] === line.content;
+      const newOk = line.newNumber !== null && newSource[line.newNumber - 1] === line.content;
+      const fromOld = oldOk ? whole.old[(line.oldNumber ?? 0) - 1] : undefined;
+      const fromNew = newOk ? whole.new[(line.newNumber ?? 0) - 1] : undefined;
+      return first === 'old' ? (oldOk ? fromOld : fromNew) : newOk ? fromNew : fromOld;
+    };
+    return {
+      old: lines.map((l) => pick(l, 'old') ?? []),
+      new: lines.map((l) => pick(l, 'new') ?? []),
+    };
+  }, [whole, lines, oldSource, newSource]);
+  const oldTokens = sideTokens ? sideTokens.old : own;
+  const newTokens = sideTokens ? sideTokens.new : own;
 
   return split ? (
-    <SplitBody rows={rows} oldTokens={tokens} newTokens={tokens} linkPath={linkPath} />
+    <SplitBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} linkPath={linkPath} />
   ) : (
-    <UnifiedBody rows={rows} oldTokens={tokens} newTokens={tokens} linkPath={linkPath} />
+    <UnifiedBody rows={rows} oldTokens={oldTokens} newTokens={newTokens} linkPath={linkPath} />
   );
+}
+
+/**
+ * One hunk's rows. Coloured by the whole texts' tokens when the diff has
+ * them, else by this hunk's own lines highlighted alone (#412).
+ */
+function HunkBody({
+  rows,
+  whole,
+  oldTokens,
+  newTokens,
+  split,
+  linkPath,
+}: {
+  /** The hunk's rows, or the first of them when the row budget runs out. */
+  rows: readonly Row[];
+  whole: WholeTokens | null;
+  /** This hunk's own tokens, by its rows' indexes; unused with `whole`. */
+  oldTokens: DualToken[][];
+  newTokens: DualToken[][];
+  split: boolean;
+  linkPath: string | null;
+}): ReactNode {
+  const shown = useMemo(() => (whole ? wholeRows(rows) : rows), [whole, rows]);
+  const o = whole ? whole.old : oldTokens;
+  const n = whole ? whole.new : newTokens;
+  return split ? (
+    <SplitBody rows={shown} oldTokens={o} newTokens={n} linkPath={linkPath} />
+  ) : (
+    <UnifiedBody rows={shown} oldTokens={o} newTokens={n} linkPath={linkPath} />
+  );
+}
+
+const NO_TOKENS: DualToken[][] = [];
+
+/** The last line number on each side of a hunk; 0 for none. */
+function lastNumbers(hunk: HunkModel | undefined): { old: number; new: number } {
+  let o = 0;
+  let n = 0;
+  for (const r of hunk?.rows ?? []) {
+    if (r.line.oldNumber !== null) o = Math.max(o, r.line.oldNumber);
+    if (r.line.newNumber !== null) n = Math.max(n, r.line.newNumber);
+  }
+  return { old: o, new: n };
 }

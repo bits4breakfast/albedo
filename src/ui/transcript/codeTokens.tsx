@@ -8,11 +8,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { DiffSegment } from '../../types';
-import { highlightToTokens, peekTokens, plainTokens } from '../../lib/highlight';
+import {
+  highlightBlocks,
+  highlightLines,
+  highlightToTokens,
+  peekBlocks,
+  peekLineTokens,
+  peekTokens,
+  plainTokens,
+} from '../../lib/highlight';
 import type { DualToken } from '../../lib/highlight';
 
 /** Past this many lines, highlighting a blob costs more than it gives. */
-const MAX_HIGHLIGHT_LINES = 6000;
+export const MAX_HIGHLIGHT_LINES = 6000;
 
 /**
  * Tokenize a blob, re-rendering when the async result lands. Starts from the
@@ -45,6 +53,84 @@ export function useCodeTokens(text: string, lang: string): DualToken[][] {
   }, [text, lang, tooBig]);
 
   return tokens;
+}
+
+/**
+ * Tokens for the first `upTo` lines of a whole text (`\n`-separated, no
+ * `\r`), tokenized a slice at a time so no task blocks the main thread
+ * (#412). Lines not tokenized yet are absent, and render plain. Raising
+ * `upTo` carries on from where the last call stopped. An empty `text` asks
+ * for nothing.
+ */
+export function useLineTokens(text: string, lang: string, upTo: number): DualToken[][] {
+  const [tokens, setTokens] = useState<DualToken[][]>(() => (text === '' ? [] : (peekLineTokens(text, lang) ?? [])));
+
+  useEffect(() => {
+    if (text === '') {
+      setTokens([]);
+      return;
+    }
+    // What is known already stays on screen while the rest is tokenized:
+    // asking for more lines must not wash out the ones already coloured.
+    const known = peekLineTokens(text, lang);
+    setTokens(known ?? []);
+    if (known && known.length >= Math.min(upTo, countLines(text))) return;
+    let live = true;
+    // Aborted when this diff goes away or asks for something else, so a run
+    // nobody waits for any more stops (see `highlightLines`).
+    const stop = new AbortController();
+    void highlightLines(text, lang, upTo, stop.signal).then((t) => {
+      if (live) setTokens(t);
+    });
+    return () => {
+      live = false;
+      stop.abort();
+    };
+  }, [text, lang, upTo]);
+
+  return tokens;
+}
+
+/**
+ * Tokens for blocks highlighted each on its own and cached as one entry
+ * (`highlightBlocks`), split back into one array of lines per block. An empty
+ * list asks for nothing.
+ */
+export function useBlockTokens(blocks: readonly string[], lang: string): DualToken[][][] {
+  const key = useMemo(() => blocks.join('\u0000'), [blocks]);
+  const [flat, setFlat] = useState<DualToken[][] | null>(() => (blocks.length === 0 ? null : (peekBlocks(blocks, lang) ?? null)));
+
+  useEffect(() => {
+    if (blocks.length === 0) {
+      setFlat(null);
+      return;
+    }
+    const cached = peekBlocks(blocks, lang);
+    if (cached) {
+      setFlat(cached);
+      return;
+    }
+    let live = true;
+    setFlat(null);
+    void highlightBlocks(blocks, lang).then((t) => {
+      if (live) setFlat(t);
+    });
+    return () => {
+      live = false;
+    };
+    // `key` stands for `blocks`: a caller's fresh array with the same blocks is the same ask.
+  }, [key, lang]);
+
+  return useMemo(() => {
+    const out: DualToken[][][] = [];
+    let at = 0;
+    for (const block of blocks) {
+      const n = countLines(block);
+      out.push(flat ? flat.slice(at, at + n) : []);
+      at += n;
+    }
+    return out;
+  }, [key, flat]);
 }
 
 /** Split a source text the same way `diffStrings` does, so line numbers agree. */

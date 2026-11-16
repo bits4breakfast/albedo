@@ -314,3 +314,245 @@ export async function highlightToTokens(code: string, lang: string): Promise<Dua
   cachePut(key, tokens);
   return tokens;
 }
+
+// ---------------------------------------------------------------------------
+// Whole texts, a slice at a time (#412)
+// ---------------------------------------------------------------------------
+
+/**
+ * A diff that has both whole files colours every row from its own line in
+ * them, so no grammar state runs across the lines it hides. Tokenizing a
+ * whole file in one call blocks the main thread for as long as it takes
+ * (measured: ~6 lines/ms for PHP, two themes), so it goes a slice at a time,
+ * carrying Shiki's grammar state from one slice to the next and yielding to
+ * the browser between them. A slice is at most this many lines...
+ */
+const SLICE_LINES = 100;
+/**
+ * ...or this many characters, whichever comes first. Measured on a 1,370-line
+ * PHP file, warm: 200 lines / 12,000 characters took up to 56 ms a slice,
+ * 80 / 4,000 up to 19 ms. This keeps a slice well under the 50 ms of a long
+ * task. (A grammar's very first use also compiles its patterns, once.)
+ */
+const SLICE_CHARS = 6_000;
+/**
+ * A line this long is left plain rather than tokenized: one minified line can
+ * otherwise cost a second on its own, and a slice cannot split a line.
+ * Measured (TSX, both themes): a 4,900-character line took 1.5 s, and lines
+ * of 2,000 characters at most 284 ms. Shiki's `tokenizeTimeLimit` was not
+ * used instead: it cuts a line off mid-way and carries on from a guessed
+ * state, which colours what follows wrongly.
+ */
+export const MAX_TOKENIZED_LINE = 2_000;
+
+interface Progress {
+  lines: readonly string[];
+  tokens: DualToken[][];
+  state: unknown;
+  running: Promise<void> | null;
+  /**
+   * Callers still waiting for this text. A run stops at the next slice once
+   * there are none -- a diff that unmounted, a Guide file stepped past -- so
+   * it does not hold up the colours of the one now on screen. What it got
+   * through is kept, and the next ask carries on from there.
+   */
+  subscribers: number;
+}
+
+/** Texts tokenized part of the way. Finished ones move to the token cache. */
+const progress = new Map<string, Progress>();
+const PROGRESS_MAX = 8;
+
+/** For tests: the slice limits. */
+let sliceLines = SLICE_LINES;
+let sliceChars = SLICE_CHARS;
+export function setSliceForTests(lines: number, chars = SLICE_CHARS): void {
+  sliceLines = lines;
+  sliceChars = chars;
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * The tokens already known for the leading lines of `code` (split on `\n`;
+ * pass text with no `\r`): all of them from the token cache, or as far as
+ * {@link highlightLines} has got. Undefined when none are.
+ */
+export function peekLineTokens(code: string, lang: string): DualToken[][] | undefined {
+  const key = cacheKey(code, lang);
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const p = progress.get(key);
+  return p && p.tokens.length > 0 ? p.tokens.slice() : undefined;
+}
+
+/**
+ * Tokenize `code` as `lang` up to line `upTo` (or all of it), a slice at a
+ * time, yielding between slices; a later call with a larger `upTo` carries on
+ * from where this one stopped. The same tokens as `highlightToTokens` for the
+ * lines it covers, except that a line of {@link MAX_TOKENIZED_LINE} or more
+ * characters is plain. Never rejects: a language that does not load, or a
+ * slice that throws, leaves the rest plain.
+ */
+export async function highlightLines(
+  code: string,
+  lang: string,
+  upTo = Infinity,
+  signal?: AbortSignal,
+): Promise<DualToken[][]> {
+  const key = cacheKey(code, lang);
+  const hit = cache.get(key);
+  if (hit) return hit;
+
+  let p = progress.get(key);
+  if (!p) {
+    p = { lines: code.split('\n'), tokens: [], state: undefined, running: null, subscribers: 0 };
+    progress.set(key, p);
+    // Never one somebody is still waiting for: it would be tokenized again.
+    for (const [oldest, entry] of [...progress]) {
+      if (progress.size <= PROGRESS_MAX) break;
+      if (oldest !== key && entry.subscribers === 0) progress.delete(oldest);
+    }
+  } else {
+    // Used again: to the back of the eviction queue.
+    progress.delete(key);
+    progress.set(key, p);
+  }
+  const entry = p;
+  const target = Math.min(upTo, entry.lines.length);
+
+  if (signal?.aborted) return entry.tokens.slice();
+  entry.subscribers++;
+  let subscribed = true;
+  const leave = () => {
+    if (!subscribed) return;
+    subscribed = false;
+    entry.subscribers--;
+  };
+  signal?.addEventListener('abort', leave, { once: true });
+  try {
+    while (entry.running) await entry.running;
+    if (subscribed && entry.tokens.length < target) {
+      const mine = run(entry, lang, target);
+      entry.running = mine;
+      try {
+        await mine;
+      } finally {
+        if (entry.running === mine) entry.running = null;
+      }
+    }
+  } finally {
+    signal?.removeEventListener('abort', leave);
+    leave();
+  }
+  if (entry.tokens.length >= entry.lines.length) {
+    progress.delete(key);
+    cachePut(key, entry.tokens);
+  }
+  return entry.tokens.slice();
+}
+
+async function run(entry: Progress, lang: string, target: number): Promise<void> {
+  const plainRest = () => {
+    for (let i = entry.tokens.length; i < target; i++) {
+      entry.tokens.push([{ content: entry.lines[i] ?? '', offset: 0, style: {} }]);
+    }
+  };
+  let hl: HighlighterCore;
+  try {
+    if (!(await ensureLang(lang))) return plainRest();
+    hl = await getHighlighter();
+  } catch {
+    return plainRest();
+  }
+  // Even the first slice waits for its own task: a diff starts both sides
+  // at once, and two first slices back to back are one long block.
+  await yieldToBrowser();
+  while (entry.tokens.length < target) {
+    if (entry.subscribers <= 0) return;
+    const start = entry.tokens.length;
+    let end = start;
+    let chars = 0;
+    while (end < target && end - start < sliceLines && (end === start || chars < sliceChars)) {
+      chars += (entry.lines[end]?.length ?? 0) + 1;
+      end++;
+    }
+    const slice = entry.lines.slice(start, end);
+    try {
+      const lines = hl.codeToTokensWithThemes(slice.join('\n'), {
+        lang,
+        themes: THEMES,
+        tokenizeMaxLineLength: MAX_TOKENIZED_LINE,
+        ...(entry.state ? { grammarState: entry.state as never } : {}),
+      });
+      entry.state = hl.getLastGrammarState(lines as never);
+      const dual = toDual(lines);
+      for (let i = 0; i < slice.length; i++) {
+        entry.tokens.push(dual[i] ?? [{ content: slice[i] ?? '', offset: 0, style: {} }]);
+      }
+    } catch {
+      return plainRest();
+    }
+    if (entry.tokens.length < target) await yieldToBrowser();
+  }
+}
+
+/**
+ * Tokenize each block on its own -- no grammar state crosses from one to the
+ * next -- and cache the lot as ONE entry, so a diff of many hunks does not
+ * push the editor's files out of the cache. Lines come back flat, block
+ * after block; `blockLineCount` says how many each block has.
+ */
+export async function highlightBlocks(blocks: readonly string[], lang: string): Promise<DualToken[][]> {
+  const key = blocksKey(blocks, lang);
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const out: DualToken[][] = [];
+  let hl: HighlighterCore | null = null;
+  try {
+    if (await ensureLang(lang)) hl = await getHighlighter();
+  } catch {
+    hl = null;
+  }
+  // A slice's worth of characters, then the browser gets a turn (#412): a
+  // diff of hundreds of hunks must not block for longer than one blob did.
+  let chars = 0;
+  for (const block of blocks) {
+    if (chars >= sliceChars) {
+      chars = 0;
+      await yieldToBrowser();
+    }
+    chars += block.length + 1;
+    const n = blockLineCount(block);
+    let lines: DualToken[][];
+    try {
+      lines = hl && block !== '' ? toDual(hl.codeToTokensWithThemes(block, { lang, themes: THEMES })) : plainTokens(block);
+    } catch {
+      lines = plainTokens(block);
+    }
+    const plain = block.split('\n');
+    for (let i = 0; i < n; i++) out.push(lines[i] ?? [{ content: plain[i] ?? '', offset: 0, style: {} }]);
+  }
+  cachePut(key, out);
+  return out;
+}
+
+/** {@link highlightBlocks}' tokens, when already cached. */
+export function peekBlocks(blocks: readonly string[], lang: string): DualToken[][] | undefined {
+  return cache.get(blocksKey(blocks, lang));
+}
+
+/** Lines in one block, as {@link highlightBlocks} lays them out. */
+export function blockLineCount(block: string): number {
+  let n = 1;
+  for (let i = 0; i < block.length; i++) if (block.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+function blocksKey(blocks: readonly string[], lang: string): string {
+  // \u0001 cannot start a plain text's key in practice, and \u0000 cannot
+  // appear in a block, so the two kinds of entry never collide.
+  return cacheKey(`\u0001${blocks.join('\u0000')}`, lang);
+}
