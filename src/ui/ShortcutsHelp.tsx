@@ -7,6 +7,7 @@
 
 import { useEffect } from 'react';
 import { SHORTCUTS } from './shortcuts';
+import { detectPlatform } from '../lib/platform';
 import './worktree.css';
 
 export interface ShortcutsHelpProps {
@@ -44,7 +45,7 @@ export default function ShortcutsHelp({ open, onClose }: ShortcutsHelpProps) {
         </div>
         <div className="wt-modal-body">
           <dl className="shortcuts-list">
-            {SHORTCUTS.map((s) => (
+            {SHORTCUTS.filter((s) => !s.macOnly || detectPlatform() === 'macos').map((s) => (
               <div className="shortcuts-row" key={s.combo}>
                 <dt>
                   <kbd>{s.keys}</kbd>

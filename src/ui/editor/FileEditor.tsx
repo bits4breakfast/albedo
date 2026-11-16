@@ -26,6 +26,7 @@ import { copyText } from '../../lib/clipboard';
 import OverflowMenu, { type OverflowItem } from '../OverflowMenu';
 import { editorKeyOf, isImplementationKey } from './editorKeys';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
+import { transcriptTakesJumpKey } from '../transcript/jumpKey';
 import { isReadOnlyRequest, useOpenFile } from './openFile';
 import { formatBytes, imageTypeForPath } from './preview';
 import { looksBinary } from '../../git/fileDiff';
@@ -1055,6 +1056,10 @@ export default function FileEditor({
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.altKey || e.ctrlKey) return;
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      // This stays live while the editor's tab is hidden. ⌥⌘↓ on a transcript
+      // on screen, with the keyboard free there, is its Jump to the Latest
+      // Message (#398): let it through rather than step a file out of sight.
+      if (transcriptTakesJumpKey(e)) return;
       e.preventDefault();
       e.stopPropagation();
       step(e.key === 'ArrowDown' ? 1 : -1);
