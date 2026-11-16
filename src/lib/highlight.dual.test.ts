@@ -10,7 +10,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { HighlighterCore, ThemedTokenWithVariants, TokenStyles } from 'shiki/core';
 import {
   THEMES,
@@ -20,6 +20,7 @@ import {
   highlightBlocks,
   highlightLines,
   highlightToTokens,
+  onePassForTests,
   setSliceForTests,
   type DualToken,
 } from './highlight';
@@ -42,6 +43,8 @@ const FILES: Array<[name: string, lang: string]> = [
   ['../../scripts/regression-reminder.sh', 'shellscript'],
   ['../../.github/workflows/ci.yml', 'yaml'],
   ['../../src-tauri/Cargo.toml', 'toml'],
+  ['./fixtures/highlight-sample.vue', 'vue'],
+  ['./fixtures/highlight-sample.svelte', 'svelte'],
 ];
 
 /** The style highlight.ts built from Shiki's two variants before #418. */
@@ -116,6 +119,8 @@ beforeAll(async () => {
     expect(await ensureLang(lang)).toBe(true);
   }
   hl = await getHighlighter();
+  // Otherwise every comparison below would be Shiki against itself.
+  expect(onePassForTests()).toBe(true);
 }, 60_000);
 
 afterEach(() => setSliceForTests(100, 6_000));
@@ -199,6 +204,27 @@ describe('Shiki is left as it was found', () => {
     twoPass(hl, code, 'typescript');
     const before = hl.codeToTokensBase(code, { lang: 'typescript', theme: THEMES.dark });
     await highlightToTokens(`${code}let b = 2;\n`, 'typescript');
+    expect(hl.codeToTokensBase(code, { lang: 'typescript', theme: THEMES.dark })).toEqual(before);
+  });
+
+  it('a pass that throws leaves Shiki as it found it, and the text plain', async () => {
+    const code = 'const a: string = "x"; // note\n';
+    twoPass(hl, code, 'typescript');
+    const before = hl.codeToTokensBase(code, { lang: 'typescript', theme: THEMES.dark });
+    const grammar = hl.getLanguage('typescript');
+    const registry = (grammar as unknown as { themeProvider: { _theme: unknown } }).themeProvider;
+    const own = registry._theme;
+    const thrown = vi.spyOn(grammar, 'tokenizeLine2').mockImplementation(() => {
+      throw new Error('grammar failed');
+    });
+    try {
+      const got = await highlightToTokens(`${code}let thrown = 1;\n`, 'typescript');
+      expect(thrown).toHaveBeenCalled();
+      expect(got.map((l) => l.map((t) => t.style))).toEqual([[{}], [{}], [{}]]);
+      expect(registry._theme).toBe(own);
+    } finally {
+      thrown.mockRestore();
+    }
     expect(hl.codeToTokensBase(code, { lang: 'typescript', theme: THEMES.dark })).toEqual(before);
   });
 });

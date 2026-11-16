@@ -131,6 +131,7 @@ export async function ensureLang(lang: string): Promise<boolean> {
       const hl = await getHighlighter();
       const mod = (await loader()) as { default?: unknown };
       await hl.loadLanguage(mod.default as never);
+      checkOnePass(hl, lang);
       loaded.add(lang);
       return true;
     } catch {
@@ -296,13 +297,16 @@ export function styleToCss(style: Record<string, string>): string {
  *   500 ms per-line limit are Shiki's `_tokenizeWithTheme`, as it does them.
  *
  * `highlight.dual.test.ts` compares this with `codeToTokensWithThemes` over
- * whole files in several languages. The seam is vscode-textmate's own: the
- * registry every grammar asks for its theme (`grammar.themeProvider`) takes
- * any object with `match` and `getDefaults`, and gets its own theme back the
- * moment the pass ends, so Shiki's own calls see nothing changed. That getter
- * and the registry's `_theme` are not Shiki's public API: they are what Shiki
- * 4.5.0 ships, and the comparison tests are what would catch an upgrade that
- * moves them (every token would differ, or be plain).
+ * whole files in several languages. The seam is in vscode-textmate (Shiki's
+ * fork, `@shikijs/vscode-textmate`), not in Shiki: the registry every grammar
+ * asks for its theme (`grammar.themeProvider`, a SyncRegistry) takes any
+ * object with `match` and `getDefaults`, and gets its own theme (`_theme`)
+ * back the moment the pass ends, so Shiki's own calls see nothing changed.
+ * None of that is public API, so package.json pins `shiki` and overrides
+ * `@shikijs/vscode-textmate` to exact versions, and `checkOnePass` looks for
+ * the seam once, at the first grammar load: if any part is missing, every
+ * call takes Shiki's two-pass `codeToTokensWithThemes` for good -- slower,
+ * the same colours -- and says so once in the console.
  */
 
 type ScopePath = NonNullable<Parameters<Theme['match']>[0]>;
@@ -449,7 +453,71 @@ function bothThemesFor(hl: HighlighterCore): BothThemes {
 /** The registry a grammar asks for its theme (vscode-textmate's SyncRegistry). */
 interface ThemeRegistry {
   setTheme(theme: unknown): void;
+  themeMatch(path: unknown): unknown;
+  getDefaults(): unknown;
   _theme: unknown;
+}
+
+/**
+ * Whether the one-pass seam is there: decided once, at the first grammar
+ * load, and kept, so a text's slices never mix the two kinds of grammar state.
+ */
+let onePass: boolean | undefined;
+
+/** Look for every part of vscode-textmate the one pass relies on. */
+function checkOnePass(hl: HighlighterCore, lang: string): boolean {
+  if (onePass !== undefined) return onePass;
+  let missing: string | null = null;
+  try {
+    const grammar = hl.getLanguage(lang) as unknown as { themeProvider?: Partial<ThemeRegistry>; tokenizeLine2?: unknown };
+    const registry = grammar.themeProvider;
+    if (!registry) missing = 'grammar.themeProvider';
+    else if (typeof registry.setTheme !== 'function') missing = 'themeProvider.setTheme';
+    else if (typeof registry.themeMatch !== 'function') missing = 'themeProvider.themeMatch';
+    else if (typeof registry.getDefaults !== 'function') missing = 'themeProvider.getDefaults';
+    else if (!('_theme' in registry) || !registry._theme) missing = 'themeProvider._theme';
+    else if (typeof grammar.tokenizeLine2 !== 'function') missing = 'grammar.tokenizeLine2';
+    else if (typeof Theme?.createFromRawTheme !== 'function') missing = 'Theme.createFromRawTheme';
+    else if (typeof EncodedTokenMetadata?.getForeground !== 'function') missing = 'EncodedTokenMetadata';
+  } catch (err) {
+    missing = String(err);
+  }
+  onePass = missing === null;
+  if (!onePass) {
+    console.warn(
+      `[highlight] vscode-textmate no longer has ${missing}; highlighting runs the grammar once per theme instead (#418)`,
+    );
+  }
+  return onePass;
+}
+
+/** For tests: whether the one pass is in use (undefined: not decided yet). */
+export function onePassForTests(): boolean | undefined {
+  return onePass;
+}
+
+/** Shiki's two-pass call, as highlight.ts made it before #418: the fallback. */
+function tokenizeTwoPass(
+  hl: HighlighterCore,
+  code: string,
+  lang: string,
+  maxLineLength: number,
+  state: unknown,
+): { lines: DualToken[][]; state: unknown } {
+  const lines = hl.codeToTokensWithThemes(code, {
+    lang,
+    themes: THEMES,
+    ...(maxLineLength > 0 ? { tokenizeMaxLineLength: maxLineLength } : {}),
+    ...(state ? { grammarState: state as never } : {}),
+  });
+  return {
+    // Variants are keyed by the names in the `themes` record ('light' /
+    // 'dark'), NOT by the theme ids.
+    lines: lines.map((line) =>
+      line.map((t) => ({ content: t.content, offset: t.offset, style: dualStyle(t.variants['light'], t.variants['dark']) })),
+    ),
+    state: hl.getLastGrammarState(lines as never),
+  };
 }
 
 /** Shiki's default per-line limit; a line that hits it carries on from where it stopped. */
@@ -459,6 +527,7 @@ const LINE_TIME_LIMIT_MS = 500;
  * Tokenize `code` as `lang` (a loaded grammar) for both themes in one grammar
  * pass, starting from `state` (undefined: the top of a file). Returns the
  * lines and the grammar state after the last of them, to carry on from.
+ * Without the seam (`checkOnePass`), Shiki's two passes give the same.
  * Throws when the grammar does; callers fall back to plain tokens.
  */
 function tokenizeBoth(
@@ -467,7 +536,8 @@ function tokenizeBoth(
   lang: string,
   maxLineLength = 0,
   state?: unknown,
-): { lines: DualToken[][]; state: StateStack } {
+): { lines: DualToken[][]; state: unknown } {
+  if (!checkOnePass(hl, lang)) return tokenizeTwoPass(hl, code, lang, maxLineLength, state);
   const grammar = hl.getLanguage(lang);
   const both = bothThemesFor(hl);
   const registry = (grammar as unknown as { themeProvider: ThemeRegistry }).themeProvider;
@@ -556,7 +626,8 @@ export async function highlightToTokens(code: string, lang: string): Promise<Dua
  * whole file in one call blocks the main thread for as long as it takes
  * (measured: ~6 lines/ms for PHP when each theme took its own grammar pass,
  * about twice that since #418), so it goes a slice at a time,
- * carrying Shiki's grammar state from one slice to the next and yielding to
+ * carrying the grammar state (vscode-textmate's StateStack) from one slice
+ * to the next and yielding to
  * the browser between them. A slice is at most this many lines...
  */
 const SLICE_LINES = 100;
