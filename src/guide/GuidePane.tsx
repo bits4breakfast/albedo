@@ -33,6 +33,7 @@ import { useQueuedCi } from '../ui/transcript/ciFailure';
 import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
 import { asFocus, firstMatch, projectFocus, type GuideFocus } from './focus';
 import { chosenFocus, draftOf, GuideOptions, useTaskProject } from './GuideOptions';
+import { GUIDE_AREA_ATTR } from '../ui/shortcuts';
 import { FlagIcon } from '../ui/icons';
 import '../ui/worktree.css';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
@@ -391,6 +392,13 @@ function GuideIntro({
 // The guide
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a key is the user's text, for ⌘R and ⇧⌘R: a text field, never a
+ * checkbox, radio or button, which take no letters.
+ */
+const TYPING_FIELD =
+  'textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"])';
+
 function writtenAgo(at: number): string {
   const age = relativeTime(at, Date.now());
   return age === 'now' ? 'just now' : `${age} ago`;
@@ -739,8 +747,29 @@ function GuideBody({
 
   const stepGroup = (delta: number) => goTo(at + delta);
 
+  // ⌘R and ⇧⌘R (#390, #391): the two Reviewed boxes, from the keyboard. Each
+  // toggles and moves on exactly as a click on its box does: on a file or
+  // group already reviewed it unmarks it and stays, so a mistake is ↑ or ⌥↑
+  // and the same key again. Read's, anywhere in it, as the other keys are; a
+  // checkbox or button with focus is not typing, so they work from there too,
+  // but not from a comment box or any other text field. ⇧⌘R is Remote
+  // Control everywhere else: that binding stands aside inside the guide
+  // (GUIDE_AREA, shortcuts.ts), so it never fires here, even on the Map.
+  // From `code`, as the app's ⇧⌘R is; Command only. A held key does not
+  // repeat: auto-repeat would toggle a run of files.
+  const reviewKey = (e: ReactKeyboardEvent<HTMLDivElement>): boolean => {
+    if (e.code !== 'KeyR' || !e.metaKey || e.ctrlKey || e.altKey) return false;
+    if ((e.target as HTMLElement).closest(TYPING_FIELD)) return false;
+    e.preventDefault();
+    if (e.repeat || shownView === 'map' || !group) return true;
+    if (e.shiftKey) toggleGroup(group);
+    else if (file) toggleFile(file);
+    return true;
+  };
+
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
+    if (reviewKey(e)) return;
     if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
     // ⌘⏎: Send Comments (#256). A comment box is a textarea, returned above,
     // so there ⌘⏎ still saves the comment and never sends.
@@ -772,7 +801,15 @@ function GuideBody({
 
   return (
     // A focus stop of its own, so its keys work from a click anywhere in it.
-    <div className="gd" ref={rootRef} tabIndex={-1} onKeyDown={onKeyDown} aria-label="Review Guide">
+    <div
+      className="gd"
+      ref={rootRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      aria-label="Review Guide"
+      // ⇧⌘R is the group's key here, not Remote Control (shortcuts.ts).
+      {...{ [GUIDE_AREA_ATTR]: '' }}
+    >
       {/* One row, one Rewrite (#197): a guide the branch has moved on from
           says so here, on the banner's ground, rather than in a second row
           with a second button. */}
@@ -903,8 +940,13 @@ function GuideBody({
                   {pad2(at + 1)} / {pad2(led.length)}
                 </span>
               )}
-              <label className="gd-check">
-                <input type="checkbox" checked={isGroupReviewed(group)} onChange={() => toggleGroup(group)} />
+              <label className="gd-check" title="Mark the group reviewed (⇧⌘R)">
+                <input
+                  type="checkbox"
+                  checked={isGroupReviewed(group)}
+                  onChange={() => toggleGroup(group)}
+                  aria-keyshortcuts="Meta+Shift+R"
+                />
                 Reviewed
               </label>
               {groupChanged(group) > 0 ? (
@@ -1295,8 +1337,8 @@ function GuideFileDiff({
         <button type="button" className="gd-link" onClick={() => openFile({ path: file.path })} title="Open the file in the editor">
           Open
         </button>
-        <label className="gd-check gd-diff-check">
-          <input type="checkbox" checked={reviewed} onChange={onToggleReviewed} />
+        <label className="gd-check gd-diff-check" title="Mark this file reviewed (⌘R)">
+          <input type="checkbox" checked={reviewed} onChange={onToggleReviewed} aria-keyshortcuts="Meta+R" />
           Reviewed
         </label>
       </div>

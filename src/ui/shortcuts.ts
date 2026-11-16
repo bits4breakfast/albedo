@@ -57,6 +57,15 @@
  * history or search keymaps, not the editor's own keys, not the native menu
  * (Tauri's default has no Reload), and WKWebView has no hard-reload key.
  *
+ * One place takes it back: the Review Guide, where ⇧⌘R marks the group
+ * reviewed (#391) beside ⌘R for the file (#390). Capture runs before the
+ * guide's own handler can say anything, so the binding is told where to stand
+ * aside instead (`standAsideIn`, {@link GUIDE_AREA}): with focus anywhere in
+ * the guide it neither runs nor prevents the key, and the guide's handler
+ * gets it as if nothing were bound. Everywhere else it is Remote Control, as
+ * before. Plain ⌘R binds nothing in the app, in CodeMirror's keymaps or in
+ * the native menu, so the guide takes it without a fight.
+ *
  * ## Project tabs: ⌥1–9 (⌥⌘1–9 too), and Alt+1–9 off a Mac
  *
  * The task jump is ⌘1–9; the project jump is the same digits on Option, the
@@ -207,7 +216,9 @@ export type Gesture =
   | 'guide mod+enter'
   | 'guide alt+arrows'
   | 'guide arrows'
-  | 'guide alt+enter';
+  | 'guide alt+enter'
+  | 'guide mod+r'
+  | 'guide mod+shift+r';
 
 export interface ShortcutDoc {
   combo: Combo | Gesture;
@@ -244,7 +255,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'shift shift', keys: '⇧⇧', description: 'Search Everywhere' },
   { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
-  { combo: 'mod+shift+r', keys: '⇧⌘R', description: 'Make the Selected Task Available Remotely (Asks First)' },
+  {
+    combo: 'mod+shift+r',
+    keys: '⇧⌘R',
+    description: 'Make the Selected Task Available Remotely (Asks First; in the Review Guide: Mark the Group Reviewed)',
+  },
   { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
   { combo: 'mod+shift+t', keys: '⇧⌘T', description: 'Transcript Tab' },
   { combo: 'mod+shift+e', keys: '⇧⌘E', description: 'Files Tab (or the Files column, when pinned)' },
@@ -276,6 +291,12 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
+  { combo: 'guide mod+r', keys: '⌘R', description: 'Review Guide: Mark the File Reviewed and Open the Next (on a Reviewed One: Unmark)' },
+  {
+    combo: 'guide mod+shift+r',
+    keys: '⇧⌘R',
+    description: 'Review Guide: Mark the Group Reviewed and Go to the Next (on a Reviewed One: Unmark)',
+  },
   { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
@@ -304,6 +325,12 @@ export interface Handler {
    * that stops the key's propagation. Defaults to the bubble phase.
    */
   phase?: 'capture';
+  /**
+   * A selector for where focus may be when this binding stands aside: it
+   * neither runs nor prevents the key there, so a pane can claim the combo
+   * for itself (the Review Guide's ⇧⌘R). Checked in both phases.
+   */
+  standAsideIn?: string;
 }
 
 export type Bindings = Partial<Record<Combo, Handler | ((e: KeyboardEvent, digit: number | null) => void)>>;
@@ -472,6 +499,13 @@ const TAKEN_FROM_TASK_TERMINAL: ReadonlySet<Combo> = new Set(['shift+f6', 'f2'])
  */
 export const GUIDE_KEY_EXCEPT = ':is(input, textarea, select):not(.cm-editor *)';
 
+/**
+ * Marks the Review Guide's pane (GuidePane.tsx), where ⌘R and ⇧⌘R are the
+ * guide's Reviewed keys (#390, #391) and ⇧⌘R is not Remote Control.
+ */
+export const GUIDE_AREA_ATTR = 'data-review-guide';
+export const GUIDE_AREA = `[${GUIDE_AREA_ATTR}]`;
+
 /** Marks the input of a task's Claude Code terminal (Terminal.tsx), not the shell drawer's. */
 export const TASK_TERMINAL_ATTR = 'data-task-terminal';
 export const TASK_TERMINAL_INPUT = `[${TASK_TERMINAL_ATTR}]`;
@@ -507,6 +541,7 @@ export function useShortcuts(bindings: Bindings): void {
       const handler: Handler = typeof entry === 'function' ? { run: entry } : entry;
       if ((handler.phase ?? 'bubble') !== phase) return;
       if (handler.whenTyping === 'ignore' && isTyping(e.target) && !matches(e.target, handler.typingExcept)) return;
+      if (matches(e.target, handler.standAsideIn)) return;
       e.preventDefault();
       handler.run(e, hit.digit);
     };
