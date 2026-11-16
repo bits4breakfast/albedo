@@ -1,11 +1,12 @@
 /**
- * Every comment waiting to go with the next message, above the message box
- * -- one queue (#222): comments on code (the editor, the guide, a transcript
- * diff) and comments on transcript passages (#187). "3 Comments" opens to the
- * list: each one's place (a file and line, or the passage's first line), the
- * comment, and Jump / Edit / Remove. Send sends them, with whatever the box
- * holds or nothing; they leave the list once that message is delivered or
- * held (drafts.ts `takeComments`, db/comments.ts `markCommentsSent`).
+ * To Send (#404), above the message box: everything that goes with the next
+ * message, as `useToSend` lists it for every view -- comments on code (the
+ * editor, the guide, a transcript diff, #222) and on transcript passages
+ * (#187). "To Send · 3" opens to the list: each one's place (a file and
+ * line, or the passage's first line), the comment, and Jump / Edit / Remove.
+ * Send sends them, with whatever the box holds or nothing; they leave the
+ * list once that message is delivered or held (drafts.ts `takeComments`,
+ * db/comments.ts `markCommentsSent`).
  *
  * The intro a message with code comments opens with is edited here too: it
  * moved from the Files pane with "Add to Message", which is gone.
@@ -25,19 +26,16 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Disclosure } from '../Disclosure';
-import { editComment, removeComment, useComments } from './drafts';
-import { foldQuote, inTranscriptOrder, type TranscriptComment } from './transcriptQuotes';
+import { removeComment } from './drafts';
+import { foldQuote, type TranscriptComment } from './transcriptQuotes';
+import type { ToSend } from './toSend';
 import type { RevealPassage } from './passages';
-import {
-  DEFAULT_COMMENTS_INTRO,
-  deleteComment as deleteCodeComment,
-  editComment as editCodeComment,
-  type ReviewComment,
-} from '../../db/comments';
+import { DEFAULT_COMMENTS_INTRO, deleteComment as deleteCodeComment, type ReviewComment } from '../../db/comments';
 import { useOpenFile } from '../editor/openFile';
-import { joinSuggestion, replacesLabel, splitSuggestion } from '../../lib/suggestion';
+import { replacesLabel, splitSuggestion } from '../../lib/suggestion';
+import { codeEditMayBeEmpty, codeEditText, saveCodeEdit, saveQuoteEdit, ToSendEditor } from './ToSendEditor';
 import { useCommentsIntro, writeIntro } from '../commentsIntro';
-import { ciFailureLabel, detailOf, removeQueuedCi, shortSha, useQueuedCi, type QueuedCiFailure } from './ciFailure';
+import { ciFailureLabel, detailOf, removeQueuedCi, shortSha, type QueuedCiFailure } from './ciFailure';
 import { failedDetailsLine, type CheckDetail } from '../../gh/ciDetails';
 import { openExternal } from '../../lib/openUrl';
 
@@ -45,23 +43,21 @@ export function WaitingComments({
   taskId,
   frozen,
   onJump,
-  code = [],
+  list,
 }: {
   taskId: number;
   frozen: boolean;
   /** Take the reader to a comment's passage; absent: no Jump. */
   onJump?: RevealPassage;
-  /** The task's waiting comments on code, by file then line. */
-  code?: readonly ReviewComment[];
+  /** The task's To Send list (`useToSend`), as every view reads it. */
+  list: ToSend;
 }): ReactNode {
-  const comments = useComments(taskId);
-  const ci = useQueuedCi(taskId);
+  const { ci, code, quotes, count } = list;
   const [open, setOpen] = useState(false);
   const [editingIntro, setEditingIntro] = useState(false);
-  const n = comments.length + code.length;
-  if (n === 0 && ci === null) return null;
+  if (count === 0) return null;
   return (
-    <div className="tx-waiting" role="group" aria-label="Waiting to be sent">
+    <div className="tx-waiting" role="group" aria-label={`To Send, ${count}`}>
       <div className="tx-waiting-bar">
         <button
           type="button"
@@ -71,10 +67,12 @@ export function WaitingComments({
           title={ci ? ciTooltip(ci) : undefined}
         >
           <Disclosure open={open} />{' '}
+          <span>
+            To Send · <span className="tx-waiting-count">{count}</span>
+          </span>
+          {/* Folded, a failing PR is still told apart from comments. */}
           {ci ? <span className="tx-waiting-ci-mark">{ciFailureLabel(ci)}</span> : null}
-          {ci && n > 0 ? ' + ' : null}
-          {n > 0 ? `${n} Comment${n === 1 ? '' : 's'}` : null}
-          <span className="tx-waiting-hint">{n + (ci ? 1 : 0) === 1 ? 'goes' : 'go'} with your next message</span>
+          <span className="tx-waiting-hint">goes with your next message</span>
         </button>
         {code.length > 0 ? (
           <button
@@ -96,7 +94,7 @@ export function WaitingComments({
           {code.map((c) => (
             <CodeItem key={`code-${c.id}`} taskId={taskId} comment={c} frozen={frozen} />
           ))}
-          {inTranscriptOrder(comments).map((c) => (
+          {quotes.map((c) => (
             <WaitingItem key={c.id} taskId={taskId} comment={c} frozen={frozen} onJump={onJump} />
           ))}
         </ul>
@@ -235,9 +233,9 @@ function IntroEditor({ taskId }: { taskId: number }): ReactNode {
   );
 }
 
-/** A comment on code, waiting: its file and lines, the comment, Jump / Edit / Remove. */
+/** A comment on code, To Send: its file and lines, the comment, Jump / Edit / Remove. */
 function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: ReviewComment; frozen: boolean }): ReactNode {
-  const [draft, setDraft] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const openFile = useOpenFile();
   const name = comment.path.split('/').pop() ?? comment.path;
@@ -246,13 +244,11 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
   const removed = comment.side === 'old';
   // A suggested edit (#411) stays as it is: the list edits the words.
   const { suggestion, text } = splitSuggestion(comment.body);
-  const save = () => {
-    if (draft === null || (draft.trim().length === 0 && suggestion === null)) return;
-    editCodeComment(taskId, comment.id, joinSuggestion(suggestion, draft)).then(
-      () => setDraft(null),
+  const save = (words: string) =>
+    saveCodeEdit(taskId, comment, words).then(
+      () => setEditing(false),
       (err: unknown) => setError(`Could not save it: ${String(err)}`),
     );
-  };
   return (
     <li className="tx-waiting-item">
       <div
@@ -262,40 +258,13 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
         <span className="tx-waiting-file">{name}</span>
         {removed ? ` removed ${lines}` : `:${lines}`}
       </div>
-      {draft !== null ? (
-        <div className="tx-waiting-edit" data-focus-keeps-tab="">
-          <textarea
-            className="tx-cmt-input"
-            aria-label="Edit comment"
-            value={draft}
-            rows={Math.min(6, Math.max(2, draft.split('\n').length))}
-            autoFocus
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                save();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                setDraft(null);
-              }
-            }}
-          />
-          <div className="tx-cmt-foot">
-            <button type="button" className="tx-btn tx-queued-act" onClick={() => setDraft(null)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="tx-btn tx-queued-act tx-cmt-add"
-              onClick={save}
-              disabled={draft.trim().length === 0 && suggestion === null}
-            >
-              Save <span className="tx-cmt-key">⌘↩</span>
-            </button>
-          </div>
-        </div>
+      {editing ? (
+        <ToSendEditor
+          initial={codeEditText(comment)}
+          mayBeEmpty={codeEditMayBeEmpty(comment)}
+          onSave={(words) => void save(words)}
+          onCancel={() => setEditing(false)}
+        />
       ) : (
         <div className="tx-waiting-row">
           <div className="tx-waiting-comment">
@@ -314,7 +283,7 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
           >
             Jump
           </button>
-          <button type="button" className="tx-btn tx-queued-act" onClick={() => setDraft(suggestion === null ? comment.body : text)} disabled={frozen}>
+          <button type="button" className="tx-btn tx-queued-act" onClick={() => setEditing(true)} disabled={frozen}>
             Edit
           </button>
           <button
@@ -343,49 +312,23 @@ function WaitingItem({
   frozen: boolean;
   onJump?: RevealPassage;
 }): ReactNode {
-  const [draft, setDraft] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const { first, more } = foldQuote(comment.quote);
-  const save = () => {
-    if (draft === null || draft.trim().length === 0) return;
-    editComment(taskId, comment.id, draft.trim());
-    setDraft(null);
-  };
   return (
     <li className="tx-waiting-item">
       <div className="tx-waiting-quote" title={comment.quote}>
         {first}
         {more > 0 ? <span className="tx-waiting-more"> +{more} line{more === 1 ? '' : 's'}</span> : null}
       </div>
-      {draft !== null ? (
-        /* A field and its Save / Cancel: Tab walks between them. */
-        <div className="tx-waiting-edit" data-focus-keeps-tab="">
-          <textarea
-            className="tx-cmt-input"
-            aria-label="Edit comment"
-            value={draft}
-            rows={Math.min(6, Math.max(2, draft.split('\n').length))}
-            autoFocus
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                save();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                setDraft(null);
-              }
-            }}
-          />
-          <div className="tx-cmt-foot">
-            <button type="button" className="tx-btn tx-queued-act" onClick={() => setDraft(null)}>
-              Cancel
-            </button>
-            <button type="button" className="tx-btn tx-queued-act tx-cmt-add" onClick={save} disabled={draft.trim().length === 0}>
-              Save <span className="tx-cmt-key">⌘↩</span>
-            </button>
-          </div>
-        </div>
+      {editing ? (
+        <ToSendEditor
+          initial={comment.comment}
+          onSave={(words) => {
+            saveQuoteEdit(taskId, comment, words);
+            setEditing(false);
+          }}
+          onCancel={() => setEditing(false)}
+        />
       ) : (
         <div className="tx-waiting-row">
           <div className="tx-waiting-comment">{comment.comment}</div>
@@ -399,7 +342,7 @@ function WaitingItem({
               Jump
             </button>
           ) : null}
-          <button type="button" className="tx-btn tx-queued-act" onClick={() => setDraft(comment.comment)} disabled={frozen}>
+          <button type="button" className="tx-btn tx-queued-act" onClick={() => setEditing(true)} disabled={frozen}>
             Edit
           </button>
           <button type="button" className="tx-btn tx-queued-act" onClick={() => removeComment(taskId, comment.id)} disabled={frozen}>

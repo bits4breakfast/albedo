@@ -1,7 +1,9 @@
 /**
- * Where the guide's open comments are (#252): a count per file in each group,
- * so a comment left on a file can be found again from the file list and the
- * rail, not only from the transcript. Pure, apart from the hook at the end.
+ * Where the guide's comments To Send are (#252, #404): a count per file in
+ * each group, so a comment left on a file can be found again from the file
+ * list and the rail, not only from the transcript. The guide passes To Send's
+ * code comments (`useToSend`): a sent one or a GitHub draft is not counted,
+ * so the bubbles add up to the code comments Send N sends. Pure.
  *
  * Each open comment counts once, in one group: the one showing its file, or
  * -- for a file split across groups -- the one whose hunks are nearest its
@@ -9,8 +11,7 @@
  * are gone (outdated) still counts: its card is in the bar above that file.
  */
 
-import { useEffect, useState } from 'react';
-import { listComments, onCommentsChanged, placeRemoved, relocate, sideOf, type ReviewComment } from '../db/comments';
+import { placeRemoved, relocate, sideOf, type ReviewComment } from '../db/comments';
 import type { BranchDiff } from './blocks';
 import type { GroupView } from './validate';
 
@@ -74,28 +75,4 @@ export function groupCommentCount(marks: CommentMarks, groupKey: string): number
   let n = 0;
   for (const v of marks.get(groupKey)?.values() ?? []) n += v;
   return n;
-}
-
-/** The task's open comments, kept current as they are added, sent or resolved. */
-export function useOpenComments(taskId: number): readonly ReviewComment[] {
-  const [comments, setComments] = useState<readonly ReviewComment[]>([]);
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      void listComments(taskId).then(
-        (all) => {
-          if (live) setComments(all);
-        },
-        (err: unknown) => console.warn('[guide] could not load comments', err),
-      );
-    load();
-    const off = onCommentsChanged((id) => {
-      if (id === taskId) load();
-    });
-    return () => {
-      live = false;
-      off();
-    };
-  }, [taskId]);
-  return comments;
 }

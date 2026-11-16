@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { WaitingComments } from './WaitingComments';
 import { __resetQueuedCi } from './ciFailure';
+import { toSendOf } from './toSend';
 import type { ReviewComment } from '../../db/comments';
 
 beforeEach(() => {
@@ -31,8 +32,8 @@ const base: ReviewComment = {
 };
 
 it('names removed lines as removed, and a comment on the file now as before', () => {
-  render(<WaitingComments taskId={7} frozen={false} code={[{ ...base, side: 'old' }, { ...base, id: 2, body: 'And here?' }]} />);
-  fireEvent.click(screen.getByRole('button', { name: /2 Comments/ }));
+  render(<WaitingComments taskId={7} frozen={false} list={toSendOf(null, [{ ...base, side: 'old' }, { ...base, id: 2, body: 'And here?' }], [])} />);
+  fireEvent.click(screen.getByRole('button', { name: /To Send · 2/ }));
   const places = [...document.querySelectorAll('.tx-waiting-where')];
   expect(places.map((p) => p.textContent)).toEqual(['queue.ts removed 12–13', 'queue.ts:12–13']);
   expect(places[0]!.getAttribute('title')).toBe('src/lib/queue.ts: removed 12–13 (in the base)\n\nif (full) {\n  return;');

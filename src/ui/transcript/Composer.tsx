@@ -19,11 +19,12 @@ import { useMentions } from './useMentions';
 import { SkillPopover, SkillStrip, skillOptionId } from './SkillPopover';
 import { useSkillMenu } from './useSkillMenu';
 import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type ComposerInsert } from './composerBridge';
-import { commentsOf, dropDraftText, flushDrafts, getDraft, keepUnsent, saveDraft, useComments } from './drafts';
+import { commentsOf, dropDraftText, flushDrafts, getDraft, keepUnsent, saveDraft } from './drafts';
 import { type RevealPassage } from './passages';
 import { WaitingComments } from './WaitingComments';
-import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useWaitingCodeComments, type Carried } from './codeComments';
-import { queuedCiOf, useQueuedCi, type QueuedCiFailure } from './ciFailure';
+import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, type Carried } from './codeComments';
+import { queuedCiOf, type QueuedCiFailure } from './ciFailure';
+import { sendLabel, setToSendFrozen, useToSend } from './toSend';
 import { useCommentsIntro } from '../commentsIntro';
 import { holdMessage, inBoxFor, putBackFromBox, replaceInBox, takeIntoBox, useHeld } from './outbox';
 import { heldAsDraft, noteBoxShown } from './heldInBox';
@@ -140,17 +141,17 @@ export function Composer({
   onJump?: RevealPassage;
 }): ReactNode {
   const [text, setText] = useState('');
-  /** Comments on transcript passages, waiting to go with the next message (#187). */
-  const waiting = useComments(taskId);
   /**
-   * And comments on code, from the editor, the guide or a transcript diff:
-   * one queue (#222). Read through refs at Send, which may run between renders.
+   * To Send (#404): what goes with the next message, the list every view
+   * reads -- a PR's failing checks (#280), comments on code from the editor,
+   * the guide or a transcript diff (#222), and comments on transcript
+   * passages (#187). Send reads the passages and the CI failure from their
+   * stores, and the code comments through a ref: it may run between renders.
    */
-  const waitingCode = useWaitingCodeComments(taskId);
+  const toSend = useToSend(taskId);
+  const waitingCode = toSend.code;
   const waitingCodeRef = useRef(waitingCode);
   waitingCodeRef.current = waitingCode;
-  /** A PR's failing checks, queued like a comment (#280); read from the store at Send. */
-  const waitingCi = useQueuedCi(taskId);
   const intro = useCommentsIntro();
   const introRef = useRef(intro);
   introRef.current = intro;
@@ -322,6 +323,17 @@ export function Composer({
     if (busy || awaiting || held) dropDraftText(taskId);
     else saveDraft(taskId, text, pastesRef.current, Date.now(), mentionsRef.current);
   }, [taskId, text, busy, awaiting, held]);
+
+  /*
+     While a send is under way the message already carries To Send (#404):
+     the other views that list it (Files ▸ Comments) freeze their Edit and
+     Remove as the list above the box does.
+  */
+  const sending = busy || awaiting || held;
+  useEffect(() => {
+    setToSendFrozen(taskId, sending);
+    return () => setToSendFrozen(taskId, false);
+  }, [taskId, sending]);
 
   /*
      A task switch puts that task's own draft in the box. A send the old task
@@ -852,7 +864,7 @@ export function Composer({
       pendingCommentsRef.current = carried;
       inFlightRef.current = true;
       setHeld(true);
-      setNotice('Waiting — Claude is asking you something. Answer it in the terminal and your message sends itself.');
+      setNotice('Held — Claude is asking you something. Answer it in the terminal and your message sends itself.');
       return;
     }
     inFlightRef.current = true;
@@ -948,18 +960,41 @@ export function Composer({
      over-promising a reopen.
   */
   const placeholder = held
-    ? 'Waiting for the permission prompt to be answered…'
+    ? 'Held until the permission prompt is answered…'
     : awaiting
     ? 'Starting the terminal…'
     : live
-      ? waiting.length + waitingCode.length > 0
+      ? toSend.quotes.length + waitingCode.length > 0
         ? 'Add a message, or send the comments as they are…'
-        : waitingCi
+        : toSend.ci
         ? 'Add a message, or send the CI failure as it is…'
         : 'Message this conversation…'
       : canResume(taskId)
         ? 'Terminal not running — send to pick this conversation back up.'
         : 'Terminal not running — your conversation is saved. Send to start a new session.';
+
+  /*
+     Send N (#404): N is To Send's count, what goes with this message; with
+     only text in the box it is just Send, the arrow. A command goes alone
+     and leaves the list waiting, so it is Send then too, and says so. With
+     the box empty, Send sends the list alone, as ⇧⌘S does from anywhere.
+  */
+  const typed = text.trim().length > 0;
+  const command = typed && isSlashCommand(text);
+  const goesWith = command ? 0 : toSend.count;
+  const sendKey = goesWith > 0 && !typed;
+  const sendsHint =
+    toSend.count === 0 || !typed || busy || awaiting || held
+      ? null
+      : command
+        ? `The command goes alone; the ${toSend.count} above wait`
+        : `Sends your text with the ${toSend.count} above`;
+  const sendTitle =
+    goesWith === 0
+      ? 'Send (Enter). Shift+Enter for a newline'
+      : typed
+        ? `Send your text with the ${goesWith} To Send above (Enter). Shift+Enter for a newline`
+        : `Send the ${goesWith} To Send above (Enter, or ⇧⌘S from anywhere)`;
 
   return (
     <>
@@ -994,7 +1029,7 @@ export function Composer({
           ) : null}
         </div>
       ) : null}
-      <WaitingComments taskId={taskId} frozen={busy || awaiting || held} onJump={onJump} code={waitingCode} />
+      <WaitingComments taskId={taskId} frozen={busy || awaiting || held} onJump={onJump} list={toSend} />
       {skill.strip ? <SkillStrip skill={skill.strip} onHide={skill.hideStrip} /> : null}
       {/* claude.ai's shape: one rounded box holding the text and, under it,
           the controls -- the model and Send at the bottom right. Beside a
@@ -1099,18 +1134,26 @@ export function Composer({
         </button>
         <PermissionModeLabel sessionId={sessionId} />
         <div className="tx-composer-accessory">{accessory}</div>
+        {sendsHint !== null ? <span className="tx-composer-sends">{sendsHint}</span> : null}
         <button
           type="button"
           className="tx-composer-send"
+          data-count={goesWith > 0 ? goesWith : undefined}
           onClick={() => void send()}
-          disabled={busy || awaiting || held || (text.trim().length === 0 && waiting.length === 0 && waitingCode.length === 0 && waitingCi === null)}
-          title="Send (Enter). Shift+Enter for a newline"
-          aria-label="Send"
+          disabled={busy || awaiting || held || (text.trim().length === 0 && toSend.count === 0)}
+          title={sendTitle}
+          aria-label={sendLabel(goesWith)}
+          aria-keyshortcuts={sendKey ? 'Meta+Shift+S' : undefined}
         >
           {awaiting || held ? (
             '…'
           ) : busy ? (
             <span className="tx-spinner" role="img" aria-label="Sending" />
+          ) : goesWith > 0 ? (
+            <>
+              {sendLabel(goesWith)}
+              {sendKey ? <span className="tx-composer-send-key">⇧⌘S</span> : null}
+            </>
           ) : (
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />

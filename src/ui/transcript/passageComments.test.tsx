@@ -138,7 +138,7 @@ describe('selecting text in the transcript', () => {
     expect(term.submitPty).not.toHaveBeenCalled();
     // The row says it has one waiting, and the message box lists it.
     await waitFor(() => expect(rowEl(1).dataset.comments).toBe('1'));
-    expect(screen.getByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /To Send · 1/ })).toBeTruthy();
   });
 
   it("⌘' opens the field from the keyboard; Esc drops it", async () => {
@@ -192,10 +192,25 @@ describe('a sent quote takes you to its passage', () => {
     Element.prototype.scrollIntoView = scrolled;
     await renderPane();
     await waitFor(() => expect(rowEl(2).dataset.comments).toBe('1'));
-    fireEvent.click(screen.getByRole('button', { name: /1 Comment/ }));
+    fireEvent.click(screen.getByRole('button', { name: /To Send · 1/ }));
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
     });
+    await waitFor(() => expect(rowEl(2).classList.contains('tx-row-flash')).toBe(true));
+  });
+
+  it('a jump from Files ▸ Comments (#404) reaches it too, through the task’s own transcript', async () => {
+    const { jumpToPassage } = await import('./composerBridge');
+    addComment(1, { id: 'w', messageId: 2, quote: 'base images', code: false, comment: 'why?', at: T0 + 2000, offset: 0, addedAt: 0 });
+    Element.prototype.scrollIntoView = vi.fn();
+    await renderPane();
+    await waitFor(() => expect(rowEl(2).dataset.comments).toBe('1'));
+    expect(jumpToPassage(2, { messageId: 2, quote: 'base images', offset: 0 })).toBe(false);
+    let taken = false;
+    act(() => {
+      taken = jumpToPassage(1, { messageId: 2, quote: 'base images', offset: 0 });
+    });
+    expect(taken).toBe(true);
     await waitFor(() => expect(rowEl(2).classList.contains('tx-row-flash')).toBe(true));
   });
 });

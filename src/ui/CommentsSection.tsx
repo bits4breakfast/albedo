@@ -1,12 +1,13 @@
 /**
  * The task's review comments, at the top of the Touched Files pane, grouped
- * by their life (#222): Waiting (they go with your next message, from the
- * queue above the message box), Sent, and Resolved folded away with why.
- * Sending is the composer's: there is no Add to Message here any more, and
- * the intro is edited from that queue.
+ * by their life (#222, #409): To Send, Sent, Resolved folded away with why,
+ * then a review task's GitHub Drafts and, folded, what was Posted.
  *
- * A PR's failing checks queued for Claude (#280, transcript/ciFailure.ts)
- * wait here too, first in Waiting, with ✕ to drop them.
+ * To Send is the list above the message box, item for item and in its order
+ * (#404, `useToSend`): a PR's failing checks (#280), the comments on code,
+ * and the comments on transcript passages, each with Edit and Remove (the CI
+ * failure with Remove), frozen while a send carries them. Sending is the
+ * composer's: Send N asks it, as ⇧⌘S does, and the intro is edited there.
  */
 
 import { useEffect, useState } from 'react';
@@ -28,8 +29,13 @@ import { useReadFile } from './editor/openFile';
 import { baseTextOf, useRemovedBase } from './editor/removedBase';
 import { Disclosure } from './Disclosure';
 import { commentHeadline, commentWords } from '../lib/suggestion';
-import { sendWaitingComments } from './transcript/composerBridge';
-import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
+import { jumpToPassage, sendWaitingComments } from './transcript/composerBridge';
+import { ciFailureLabel, removeQueuedCi, shortSha, type QueuedCiFailure } from './transcript/ciFailure';
+import { sendLabel, useToSend, useToSendFrozen } from './transcript/toSend';
+import { deleteComment as deleteCodeComment } from '../db/comments';
+import { removeComment as removeQuote } from './transcript/drafts';
+import { foldQuote, type TranscriptComment } from './transcript/transcriptQuotes';
+import { codeEditMayBeEmpty, codeEditText, saveCodeEdit, saveQuoteEdit, ToSendEditor } from './transcript/ToSendEditor';
 import { useGithubDrafts } from './reviewDrafts';
 import { requestSubmitReview } from './SubmitReview';
 
@@ -53,10 +59,15 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const [bases, setBases] = useState<ReadonlyMap<string, string | null>>(() => new Map());
   const [notice, setNotice] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+  const [showPosted, setShowPosted] = useState(false);
+  /** The To Send item open for editing: a code comment's id, or a quote's. */
+  const [editing, setEditing] = useState<number | string | null>(null);
   const read = useReadFile();
-  const ci = useQueuedCi(task.id);
+  const toSend = useToSend(task.id);
+  const frozen = useToSendFrozen(task.id);
+  const ci = toSend.ci;
   // A review task's drafts for GitHub (#287), replies included: their own
-  // group, never Waiting, whose Send goes to Claude.
+  // group, never To Send, whose Send goes to Claude.
   const drafts = useGithubDrafts(task);
 
   useEffect(() => {
@@ -132,13 +143,22 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   }, [task.id, sentPaths, removedPaths, removedBase.base, removedBase.settled, reloadKey, read]);
 
   const comments = all.filter((c) => c.resolvedAt === null);
-  const resolved = all.filter((c) => c.resolvedAt !== null);
-  if (all.length === 0 && ci === null && drafts.length === 0) return null;
+  // Posted to GitHub (#287): resolved by posting, their own folded group (#409).
+  const isPosted = (c: ReviewComment) => c.github === 'draft' && c.sentAt !== null;
+  const resolved = all.filter((c) => c.resolvedAt !== null && !isPosted(c));
+  const posted = all.filter((c) => c.resolvedAt !== null && isPosted(c));
+  if (all.length === 0 && toSend.count === 0 && drafts.length === 0) return null;
 
-  const unsent = comments.filter((c) => c.sentAt === null && c.github === null);
-  const waiting = unsent.length + (ci ? 1 : 0);
-  const sha = ci ? shortSha(ci.sha) : null;
   const sent = comments.filter((c) => c.sentAt !== null);
+
+  const place = (c: ReviewComment) => (
+    /* The name gives way, never the line (#258): a long one ellipsizes
+       inside its row instead of running under the ✓. */
+    <span className="tf-comment-where">
+      <span className="tf-name">{c.path.split('/').pop()}</span>
+      <span className="tf-comment-line">{lineLabel(c)}</span>
+    </span>
+  );
 
   const row = (c: ReviewComment, end: ReactNode) => (
     <div key={c.id} className="tf-comment">
@@ -148,101 +168,126 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         onClick={() => onOpen(c.path, c.lineStart)}
         title={`${commentLocation(c)}\n\n${commentWords(c.body)}`}
       >
-        {/* The name gives way, never the line (#258): a long one ellipsizes
-            inside its row instead of running under the ✓. */}
-        <span className="tf-comment-where">
-          <span className="tf-name">{c.path.split('/').pop()}</span>
-          <span className="tf-comment-line">{lineLabel(c)}</span>
-        </span>
+        {place(c)}
         <span className="tf-comment-body">{commentHeadline(c.body)}</span>
       </button>
       {end}
     </div>
   );
 
+  /** Edit and Remove, as the list above the message box has them; frozen while a send carries them. */
+  const acts = (what: string, onEdit: (() => void) | null, onRemove: () => void) => (
+    <span className="tf-comment-acts">
+      {onEdit ? (
+        <button type="button" className="tf-comment-act" onClick={onEdit} disabled={frozen} aria-label={`Edit ${what}`}>
+          Edit
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="tf-comment-act"
+        onClick={onRemove}
+        disabled={frozen}
+        aria-label={`Remove ${what}`}
+        title="Don’t send this to Claude"
+      >
+        Remove
+      </button>
+    </span>
+  );
+
+  const fail = (what: string) => (err: unknown) => setNotice(`Could not ${what}: ${String(err)}`);
+
+  const codeItem = (c: ReviewComment) =>
+    editing === c.id ? (
+      <div key={c.id} className="tf-comment-edit">
+        {place(c)}
+        <ToSendEditor
+          initial={codeEditText(c)}
+          mayBeEmpty={codeEditMayBeEmpty(c)}
+          onSave={(words) => void saveCodeEdit(task.id, c, words).then(() => setEditing(null), fail('save the comment'))}
+          onCancel={() => setEditing(null)}
+        />
+      </div>
+    ) : (
+      row(
+        c,
+        acts(
+          `the comment on ${commentLocation(c)}`,
+          () => setEditing(c.id),
+          () => void deleteCodeComment(task.id, c.id).catch(fail('remove the comment')),
+        ),
+      )
+    );
+
+  const quoteItem = (q: TranscriptComment) => {
+    const { first } = foldQuote(q.quote);
+    const where = (
+      <span className="tf-comment-where tf-comment-quote" title={q.quote}>
+        Transcript quote
+      </span>
+    );
+    return editing === q.id ? (
+      <div key={q.id} className="tf-comment-edit">
+        {where}
+        <ToSendEditor
+          initial={q.comment}
+          onSave={(words) => {
+            saveQuoteEdit(task.id, q, words);
+            setEditing(null);
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      </div>
+    ) : (
+      <div key={q.id} className="tf-comment">
+        {/* Jump: the transcript, at the passage, as the list above the box does. */}
+        <button
+          type="button"
+          className="tf-comment-open"
+          onClick={() => jumpToPassage(task.id, { messageId: q.messageId, quote: q.quote, offset: q.offset })}
+          title={`Show the passage in the transcript\n\n> ${first}\n\n${q.comment}`}
+        >
+          {where}
+          <span className="tf-comment-body">{q.comment}</span>
+        </button>
+        {acts(
+          `the comment on “${first}”`,
+          () => setEditing(q.id),
+          () => removeQuote(task.id, q.id),
+        )}
+      </div>
+    );
+  };
+
   return (
     <section className="tf-section tf-comments">
       <div className="tf-section-head tf-comments-head">
-        Comments<span className="tf-section-count">{comments.length + drafts.filter((d) => d.replyTo !== null).length + (ci ? 1 : 0)}</span>
+        Comments<span className="tf-section-count">{toSend.count + sent.length + drafts.length}</span>
       </div>
 
       {notice && <div className="tf-comments-notice">{notice}</div>}
 
       {/* Grouped by state (#222), so ✓ only ever means Resolve. */}
-      {waiting > 0 && (
-        <div className="tf-comments-group" role="group" aria-label={`Waiting, ${waiting}`}>
+      {toSend.count > 0 && (
+        <div className="tf-comments-group" role="group" aria-label={`To Send, ${toSend.count}`}>
           <div className="tf-comments-sub">
-            Waiting · {waiting}
+            To Send · {toSend.count}
             {/* Send them now (#258), as ⇧⌘S does: the transcript then shows. */}
             <button
               type="button"
               className="tf-btn tf-comments-send"
               onClick={() => sendWaitingComments(task.id)}
               aria-keyshortcuts="Meta+Shift+S"
-              title="Send what is waiting to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
+              title="Send these to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
             >
-              Send
+              {sendLabel(toSend.count)} <span className="tf-comments-send-key">⇧⌘S</span>
             </button>
           </div>
-          {/* First, as the message carries it. Not a link: the checks' links are in the message box's list. */}
-          {ci && (
-            <div className="tf-comment tf-comment-ci">
-              <div
-                className="tf-comment-open tf-comment-static"
-                title={[`CI failed on PR #${ci.prNumber}${sha ? ` (${sha})` : ''}`, ...ci.checks.map((c) => `${c.name}: ${c.conclusion}`)].join('\n')}
-              >
-                <span className="tf-comment-ci-label">{ciFailureLabel(ci)}</span>
-                <span className="tf-comment-body">{ci.checks.map((c) => c.name).join(', ')}</span>
-              </div>
-              <button
-                type="button"
-                className="tf-comment-resolve tf-comment-drop"
-                onClick={() => removeQueuedCi(task.id, ci.sha)}
-                title="Don’t send this failure to Claude"
-                aria-label="Remove the CI failure"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-          {unsent.map((c) => row(c, null))}
-        </div>
-      )}
-      {drafts.length > 0 && (
-        <div className="tf-comments-group" role="group" aria-label={`For GitHub, ${drafts.length}`}>
-          <div className="tf-comments-sub">
-            For GitHub · {drafts.length}
-            {/* The same dialog as the task bar's Submit Review, as Send above
-                is ⇧⌘S's: where the drafts are listed, they can go. */}
-            <button
-              type="button"
-              className="tf-btn tf-comments-send"
-              onClick={() => requestSubmitReview(task.id)}
-              title="Send these to the pull request as one review, with a summary and a verdict"
-            >
-              Submit…
-            </button>
-          </div>
-          {drafts.map((c) =>
-            c.replyTo === null ? (
-              row(c, null)
-            ) : (
-              <div key={c.id} className="tf-comment">
-                <button
-                  type="button"
-                  className="tf-comment-open"
-                  onClick={() => onOpen(c.path, c.lineStart)}
-                  title={`Reply on ${commentLocation(c)}\n\n${c.body}`}
-                >
-                  <span className="tf-comment-where">
-                    <span className="tf-name">{c.path.split('/').pop()}</span>
-                    <span className="tf-comment-line">:{c.lineStart}</span>
-                  </span>
-                  <span className="tf-comment-body">Reply: {c.body.split('\n')[0]}</span>
-                </button>
-              </div>
-            ),
-          )}
+          {/* In the order the message carries them: CI, code, then quotes. */}
+          {ci && <CiRow ci={ci} remove={acts('the CI failure', null, () => removeQueuedCi(task.id, ci.sha))} />}
+          {toSend.code.map(codeItem)}
+          {toSend.quotes.map(quoteItem)}
         </div>
       )}
       {sent.length > 0 && (
@@ -293,15 +338,10 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                     {commentHeadline(c.body)}
                     <span className="tf-comment-why">
                       {' '}
-                      ·{' '}
-                      {c.github === 'draft' && c.sentAt !== null
-                        ? 'posted to GitHub'
-                        : reasonText(resolvedReason(c, texts.get(c.path) ?? null, bases.get(c.path) ?? null))}
+                      · {reasonText(resolvedReason(c, texts.get(c.path) ?? null, bases.get(c.path) ?? null))}
                     </span>
                   </span>
                 </button>
-                {/* Posted to GitHub (#287): it is there now, not here to reopen. */}
-                {c.github === 'draft' && c.sentAt !== null ? null : (
                 <button
                   type="button"
                   className="tf-btn tf-comment-reopen"
@@ -312,12 +352,82 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                 >
                   Reopen
                 </button>
-                )}
               </div>
             ))}
         </div>
       )}
+      {drafts.length > 0 && (
+        <div className="tf-comments-group" role="group" aria-label={`GitHub Draft, ${drafts.length}`}>
+          <div className="tf-comments-sub">
+            GitHub Draft · {drafts.length}
+            {/* The same dialog as the task bar's Submit Review, as Send above
+                is ⇧⌘S's: where the drafts are listed, they can go. */}
+            <button
+              type="button"
+              className="tf-btn tf-comments-send"
+              onClick={() => requestSubmitReview(task.id)}
+              title="Send these to the pull request as one review, with a summary and a verdict"
+            >
+              Submit Review…
+            </button>
+          </div>
+          {drafts.map((c) =>
+            c.replyTo === null ? (
+              row(c, null)
+            ) : (
+              <div key={c.id} className="tf-comment">
+                <button
+                  type="button"
+                  className="tf-comment-open"
+                  onClick={() => onOpen(c.path, c.lineStart)}
+                  title={`Reply on ${commentLocation(c)}\n\n${c.body}`}
+                >
+                  <span className="tf-comment-where">
+                    <span className="tf-name">{c.path.split('/').pop()}</span>
+                    <span className="tf-comment-line">:{c.lineStart}</span>
+                  </span>
+                  <span className="tf-comment-body">Reply: {c.body.split('\n')[0]}</span>
+                </button>
+              </div>
+            ),
+          )}
+        </div>
+      )}
+      {/* On GitHub now (#287): there to read, not here to reopen. */}
+      {posted.length > 0 && (
+        <div className="tf-comments-group" role="group" aria-label={`Posted, ${posted.length}`}>
+          <button
+            type="button"
+            className="tf-comments-sub tf-comments-fold"
+            onClick={() => setShowPosted((v) => !v)}
+            aria-expanded={showPosted}
+          >
+            <Disclosure open={showPosted} /> Posted · {posted.length}
+          </button>
+          {showPosted && posted.map((c) => row(c, null))}
+        </div>
+      )}
     </section>
+  );
+}
+
+/**
+ * The queued CI failure, first in To Send as the message carries it. Not a
+ * link: the checks' links are in the list above the message box.
+ */
+function CiRow({ ci, remove }: { ci: QueuedCiFailure; remove: ReactNode }): ReactNode {
+  const sha = shortSha(ci.sha);
+  return (
+    <div className="tf-comment tf-comment-ci">
+      <div
+        className="tf-comment-open tf-comment-static"
+        title={[`CI failed on PR #${ci.prNumber}${sha ? ` (${sha})` : ''}`, ...ci.checks.map((c) => `${c.name}: ${c.conclusion}`)].join('\n')}
+      >
+        <span className="tf-comment-ci-label">{ciFailureLabel(ci)}</span>
+        <span className="tf-comment-body">{ci.checks.map((c) => c.name).join(', ')}</span>
+      </div>
+      {remove}
+    </div>
   );
 }
 

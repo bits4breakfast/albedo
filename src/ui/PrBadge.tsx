@@ -169,7 +169,7 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
         <button
           type="button"
           className="pr-badge"
-          title={`No pull request yet. Ask Claude to open one into ${task.baseBranch} (${own} commit${own === 1 ? '' : 's'}). Sent at once (queued if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
+          title={`No pull request yet. Ask Claude to open one into ${task.baseBranch} (${own} commit${own === 1 ? '' : 's'}). Sent at once (held until the turn ends if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
           onClick={onCreatePr}
         >
           Create PR
@@ -284,7 +284,7 @@ function PrActionControl({
         type="button"
         className="pr-action"
         data-tone="conflicts"
-        title={`GitHub reports conflicts with ${pr.baseRefName || 'the base'}. Ask Claude to rebase onto it, resolve them, run the tests and push. Sent at once (queued if Claude is working).`}
+        title={`GitHub reports conflicts with ${pr.baseRefName || 'the base'}. Ask Claude to rebase onto it, resolve them, run the tests and push. Sent at once (held until the turn ends if Claude is working).`}
         onClick={() => onResolveConflicts(pr)}
       >
         <span aria-hidden="true">⚠</span> Conflicts

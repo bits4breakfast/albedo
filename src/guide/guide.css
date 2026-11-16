@@ -99,6 +99,7 @@
 .gd-btn:disabled { color: var(--faint); cursor: default; }
 .gd-btn-primary { color: var(--on-accent); background: var(--accent-btn); border-color: var(--accent-btn); }
 .gd-btn-primary:hover:not(:disabled) { color: var(--on-accent); background: var(--accent-btn-hover); }
+.gd-btn-key { margin-left: 4px; }
 .gd-btn-primary:disabled { color: var(--faint); background: var(--panel-raised); border-color: var(--border-mid); }
 
 .gd-link {

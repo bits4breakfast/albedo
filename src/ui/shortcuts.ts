@@ -136,11 +136,11 @@
  * other keydown listener in src (none reads T), and the native menu (only
  * ⌘Q and ⌘W). Nothing else binds ⌥⌘T.
  *
- * ## ⇧⌘S: send the waiting comments
+ * ## ⇧⌘S: send To Send
  *
  * From anywhere (#258), as the Send beside them in Files and the guide: the
- * selected task's waiting comments go, and the transcript shows. Nothing
- * waiting, nothing happens. ⌘S is the editor's Save (exact match, so ⇧⌘S
+ * selected task's To Send list goes (#404), and the transcript shows.
+ * Nothing to send, nothing happens. ⌘S is the editor's Save (exact match, so ⇧⌘S
  * never saves); Ctrl+S stays the terminals'. No CodeMirror keymap binds it.
  *
  * Double-Shift (Search Everywhere) is a gesture, not a combo: see
@@ -248,7 +248,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
   { combo: 'mod+shift+t', keys: '⇧⌘T', description: 'Transcript Tab' },
   { combo: 'mod+shift+e', keys: '⇧⌘E', description: 'Files Tab (or the Files column, when pinned)' },
-  { combo: 'mod+shift+s', keys: '⇧⌘S', description: 'Send the Waiting Comments, then Show the Transcript' },
+  { combo: 'mod+shift+s', keys: '⇧⌘S', description: 'Send To Send, then Show the Transcript' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
   {
     combo: 'transcript arrowup',
@@ -276,7 +276,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
-  { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
+  { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send To Send, then Show the Transcript' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
   { combo: 'mod+t', keys: '⌘T', description: 'Shell in the Main Checkout (the same as ⌥F12)' },

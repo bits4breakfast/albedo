@@ -8,6 +8,8 @@
  * applies unchanged, and the person can read and edit the text first.
  */
 
+import type { RevealPassage } from './passages';
+
 export interface ComposerInsert {
   taskId: number;
   text: string;
@@ -110,6 +112,43 @@ export function onShowTranscriptRequest(cb: ShowTranscriptListener): () => void 
  */
 export function sendWaitingComments(taskId: number): boolean {
   if (!requestSendComments(taskId)) return false;
+  for (const cb of [...showTranscriptListeners]) {
+    try {
+      cb(taskId);
+    } catch {
+      /* as above */
+    }
+  }
+  return true;
+}
+
+/**
+ * "Show this passage", asked from outside the transcript (#404): Jump on a
+ * quote in Files ▸ Comments. The shell shows the transcript; the task's
+ * transcript pane, which stays mounted behind the tabs, takes the reader to
+ * the passage as its own Jump does.
+ */
+type RevealListener = (taskId: number, target: Parameters<RevealPassage>[0]) => boolean | void;
+const revealListeners = new Set<RevealListener>();
+
+export function onRevealPassageRequest(cb: RevealListener): () => void {
+  revealListeners.add(cb);
+  return () => {
+    revealListeners.delete(cb);
+  };
+}
+
+/** Show the task's transcript at a passage. False when no transcript of that task took it. */
+export function jumpToPassage(taskId: number, target: Parameters<RevealPassage>[0]): boolean {
+  let taken = false;
+  for (const cb of [...revealListeners]) {
+    try {
+      if (cb(taskId, target) === true) taken = true;
+    } catch {
+      /* as above */
+    }
+  }
+  if (!taken) return false;
   for (const cb of [...showTranscriptListeners]) {
     try {
       cb(taskId);

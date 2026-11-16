@@ -46,7 +46,7 @@ const noop = () => {};
 describe('the card', () => {
   it('a waiting comment: its chip says where it goes, Edit is the action, Resolve and Delete behind ⋯', () => {
     render(<CommentCardView comment={base} onEdit={noop} onResolve={noop} onDelete={noop} />);
-    expect(screen.getByText('Waiting · goes with your next message').getAttribute('data-state')).toBe('waiting');
+    expect(screen.getByText('To Send · goes with your next message').getAttribute('data-state')).toBe('waiting');
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '✓ Resolve' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));

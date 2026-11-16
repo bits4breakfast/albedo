@@ -34,6 +34,7 @@ const { CommentCardView, CommentDraftView } = await import('./CommentViews');
 const { commentsExtension, setDraft, setPlacedComments } = await import('./comments');
 const { useDiffComments } = await import('./diffComments');
 const { WaitingComments } = await import('../transcript/WaitingComments');
+const { toSendOf } = await import('../transcript/toSend');
 
 beforeEach(() => {
   const data = new Map<string, string>();
@@ -472,12 +473,12 @@ describe('the File mode widget', () => {
   });
 });
 
-describe('the waiting list above the message box', () => {
+describe('the To Send list above the message box', () => {
   it('shows what the suggestion replaces and the words, and Edit changes the words only', async () => {
     const c = { ...base, body: joinSuggestion(['  return sum(range);'], 'Use the helper.') };
-    render(<WaitingComments taskId={1} frozen={false} code={[c]} />);
-    fireEvent.click(screen.getByRole('button', { name: /1 Comment/ }));
-    const list = screen.getByRole('group', { name: 'Waiting to be sent' });
+    render(<WaitingComments taskId={1} frozen={false} list={toSendOf(null, [c], [])} />);
+    fireEvent.click(screen.getByRole('button', { name: /To Send · 1/ }));
+    const list = screen.getByRole('group', { name: 'To Send, 1' });
     expect(within(list).getByText(/Suggested change · replaces 3 lines with 1/)).toBeTruthy();
     expect(list.textContent).not.toContain('```');
     fireEvent.click(within(list).getByRole('button', { name: 'Edit' }));

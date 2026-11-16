@@ -22,8 +22,11 @@ import './promptCard.css';
 /** The question, then what it probably means: as the trust card splits them. */
 export const REMOTE_MENU_TEXT = 'Claude Code is showing Remote Control’s menu in the terminal.';
 export const REMOTE_MENU_NOTE = 'Remote Control is probably already on. Answer it there.';
-/** The Queued band's hint while the menu is up: nothing it holds goes before it is answered. */
-export const REMOTE_MENU_HINT = 'waiting on Remote Control\u2019s menu in the terminal';
+/**
+ * The band's hint while the menu is up, for In Claude Code and Held alike
+ * (#409): nothing either holds goes before it is answered.
+ */
+export const REMOTE_MENU_HINT = 'until Remote Control\u2019s menu in the terminal is answered';
 
 export function RemoteMenuNotice({
   taskId,
