@@ -310,3 +310,139 @@ describe('⇧⌘G, the Review Guide (#207): everywhere but the code editor', () 
     }
   });
 });
+
+describe('⌘↑ / ⌘↓, previous / next task (#398): the page, a row, the task terminal; not where typing', () => {
+  const DOWN = { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, metaKey: true, bubbles: true, cancelable: true };
+  const UP = { ...DOWN, key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 };
+
+  // As TaskList binds them.
+  function StepHarness({ onStep }: { onStep: (d: number) => void }) {
+    useShortcuts({
+      'mod+arrowup': { run: () => onStep(-1), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT, whenHandled: 'ignore' },
+      'mod+arrowdown': { run: () => onStep(1), whenTyping: 'ignore', typingExcept: TASK_TERMINAL_INPUT, whenHandled: 'ignore' },
+    });
+    return (
+      <div>
+        <input aria-label="title" defaultValue="a title" />
+        <textarea aria-label="message" defaultValue={'one\ntwo'} />
+        <div role="option" aria-selected="true" tabIndex={-1} aria-label="row">
+          row
+        </div>
+        {/* A menu that moves on any ↑/↓, as OverflowMenu and GitBar's do. */}
+        <div
+          role="menu"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') e.preventDefault();
+          }}
+        >
+          <button type="button" role="menuitem">
+            item
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function xterm(kind: 'task' | 'shell') {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const term = new XTerm();
+    const pty: string[] = [];
+    term.onData((d) => void pty.push(d));
+    term.attachCustomKeyEventHandler(kind === 'task' ? taskTerminalTakesKey : terminalTakesKey);
+    term.open(host);
+    if (kind === 'task') term.textarea?.setAttribute(TASK_TERMINAL_ATTR, '');
+    return {
+      input: term.textarea as HTMLTextAreaElement,
+      pty,
+      dispose: () => {
+        term.dispose();
+        host.remove();
+      },
+    };
+  }
+
+  if (typeof window.matchMedia !== 'function') {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }),
+    });
+  }
+
+  it('steps from the page and a task row, and takes the key', () => {
+    const steps: number[] = [];
+    const { getByLabelText } = render(<StepHarness onStep={(d) => steps.push(d)} />);
+    expect(press(document.body, DOWN).defaultPrevented).toBe(true);
+    const row = getByLabelText('row');
+    row.focus();
+    press(row, UP);
+    expect(steps).toEqual([1, -1]);
+  });
+
+  it('steps from the task terminal (focus right after selecting a task), and the pty gets nothing', () => {
+    const steps: number[] = [];
+    render(<StepHarness onStep={(d) => steps.push(d)} />);
+    const task = xterm('task');
+    try {
+      task.input.focus();
+      press(task.input, DOWN);
+      press(task.input, UP);
+      expect(steps).toEqual([1, -1]);
+      expect(task.pty).toEqual([]);
+      // Claude Code keeps the arrows and Ctrl+↑/↓.
+      press(task.input, { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true, cancelable: true });
+      press(task.input, { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38, ctrlKey: true, bubbles: true, cancelable: true });
+      expect(task.pty).toEqual(['\u001b[B', '\u001b[1;5A']);
+      expect(steps).toEqual([1, -1]);
+    } finally {
+      task.dispose();
+    }
+  });
+
+  it('leaves them to the shell drawer, a text field, the message box and the code editor', () => {
+    const steps: number[] = [];
+    const { getByLabelText } = render(<StepHarness onStep={(d) => steps.push(d)} />);
+    const shell = xterm('shell');
+    try {
+      shell.input.focus();
+      press(shell.input, DOWN);
+      expect(shell.pty).toEqual([]);
+    } finally {
+      shell.dispose();
+    }
+    for (const label of ['title', 'message']) {
+      const field = getByLabelText(label);
+      field.focus();
+      expect(press(field, DOWN).defaultPrevented).toBe(false);
+      expect(press(field, UP).defaultPrevented).toBe(false);
+    }
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: 'one\ntwo',
+        extensions: [history(), search({ top: true }), keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab])],
+      }),
+    });
+    try {
+      view.focus();
+      press(view.contentDOM, DOWN);
+      press(view.contentDOM, UP);
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+    expect(steps).toEqual([]);
+  });
+
+  it('leaves them to a focused menu that moved on the arrow', () => {
+    const steps: number[] = [];
+    const { getByRole } = render(<StepHarness onStep={(d) => steps.push(d)} />);
+    const item = getByRole('menuitem');
+    item.focus();
+    press(item, DOWN);
+    press(item, UP);
+    expect(steps).toEqual([]);
+  });
+});

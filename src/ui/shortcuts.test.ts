@@ -104,6 +104,8 @@ describe('SHORTCUTS', () => {
       comboOf(ev({ key: 'S', code: 'KeyS', metaKey: true, shiftKey: true }))?.combo,
       comboOf(ev({ key: 'F6', code: 'F6', shiftKey: true }))?.combo,
       comboOf(ev({ key: '¡', code: 'Digit1', metaKey: true, altKey: true }), 'macos')?.combo,
+      comboOf(ev({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true }))?.combo,
+      comboOf(ev({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true }))?.combo,
     ]);
     // The one gesture is reachable through its own detector.
     const shift = createDoubleShift();
@@ -413,6 +415,51 @@ describe('createDoubleShift', () => {
     d(sh(0));
     expect(d(sh(100))).toBe(true);
     expect(d(sh(200))).toBe(false);
+  });
+});
+
+describe('⌘↑ / ⌘↓, previous and next task (#398)', () => {
+  const up = (mods: Partial<KeyboardEvent> = {}) => ev({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true, ...mods });
+  const down = (mods: Partial<KeyboardEvent> = {}) => ev({ key: 'ArrowDown', code: 'ArrowDown', metaKey: true, ...mods });
+
+  it('maps ⌘↑ and ⌘↓', () => {
+    expect(comboOf(up())?.combo).toBe('mod+arrowup');
+    expect(comboOf(down())?.combo).toBe('mod+arrowdown');
+  });
+
+  it('is Command only, without Shift or Option', () => {
+    // Ctrl+↑/↓: Claude Code's own keys in the task terminal, CodeMirror's page up/down.
+    expect(comboOf(up({ metaKey: false, ctrlKey: true }))).toBeNull();
+    expect(comboOf(down({ metaKey: false, ctrlKey: true }))).toBeNull();
+    expect(comboOf(down({ ctrlKey: true }))).toBeNull();
+    // ⇧⌘↑/↓ select to the start or end of a field.
+    expect(comboOf(up({ shiftKey: true }))).toBeNull();
+    expect(comboOf(down({ shiftKey: true }))).toBeNull();
+    // ⌥⌘↓ is the transcript's Jump to the Latest Message and the editor's Next Changed File.
+    expect(comboOf(up({ altKey: true }))).toBeNull();
+    expect(comboOf(down({ altKey: true }))).toBeNull();
+    // A bare arrow is the lists' own.
+    expect(comboOf(down({ metaKey: false }))).toBeNull();
+  });
+
+  it('is taken from the task terminal (Claude Code binds neither), and left to the shell drawer', () => {
+    expect(taskTerminalTakesKey(up())).toBe(false);
+    expect(taskTerminalTakesKey(down())).toBe(false);
+    // Claude Code keeps Ctrl+↑/↓ and the arrows themselves.
+    expect(taskTerminalTakesKey(up({ metaKey: false, ctrlKey: true }))).toBe(true);
+    expect(taskTerminalTakesKey(down({ metaKey: false }))).toBe(true);
+    expect(taskTerminalTakesKey(down({ metaKey: false, altKey: true }))).toBe(true);
+    expect(terminalTakesKey(up())).toBe(true);
+    expect(terminalTakesKey(down())).toBe(true);
+  });
+
+  it('is in the shortcuts help beside ⌘[ / ⌘], and Jump to the Latest Message is ⌥⌘↓', () => {
+    const at = (combo: string) => SHORTCUTS.findIndex((s) => s.combo === combo);
+    expect(SHORTCUTS[at('mod+arrowup')]?.keys).toBe('⌘↑');
+    expect(SHORTCUTS[at('mod+arrowdown')]?.keys).toBe('⌘↓');
+    expect(at('mod+arrowup')).toBe(at('mod+]') + 1);
+    expect(SHORTCUTS.find((s) => s.description.startsWith('Transcript: Jump to the Latest'))?.keys).toBe('⌥⌘↓');
+    expect(SHORTCUTS.filter((s) => s.keys === '⌘↓')).toHaveLength(1);
   });
 });
 
