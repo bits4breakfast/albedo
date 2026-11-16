@@ -28,7 +28,7 @@ import type { ReactNode } from 'react';
 import { Disclosure } from '../Disclosure';
 import { removeComment } from './drafts';
 import { foldQuote, type TranscriptComment } from './transcriptQuotes';
-import type { ToSend } from './toSend';
+import { closeEdit, closeEditsFor, findEdit, openEdit, setEditWords, useOpenEdits, type ToSend } from './toSend';
 import type { RevealPassage } from './passages';
 import { DEFAULT_COMMENTS_INTRO, deleteComment as deleteCodeComment, type ReviewComment } from '../../db/comments';
 import { useOpenFile } from '../editor/openFile';
@@ -235,7 +235,9 @@ function IntroEditor({ taskId }: { taskId: number }): ReactNode {
 
 /** A comment on code, To Send: its file and lines, the comment, Jump / Edit / Remove. */
 function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: ReviewComment; frozen: boolean }): ReactNode {
-  const [editing, setEditing] = useState(false);
+  // Kept beside the list (#404): it outlives this row if a send takes the comment.
+  const which = { taskId, view: 'box', kind: 'code', id: comment.id } as const;
+  const edit = findEdit(useOpenEdits(taskId), 'box', 'code', comment.id);
   const [error, setError] = useState<string | null>(null);
   const openFile = useOpenFile();
   const name = comment.path.split('/').pop() ?? comment.path;
@@ -246,7 +248,7 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
   const { suggestion, text } = splitSuggestion(comment.body);
   const save = (words: string) =>
     saveCodeEdit(taskId, comment, words).then(
-      () => setEditing(false),
+      () => closeEdit(which),
       (err: unknown) => setError(`Could not save it: ${String(err)}`),
     );
   return (
@@ -258,13 +260,14 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
         <span className="tx-waiting-file">{name}</span>
         {removed ? ` removed ${lines}` : `:${lines}`}
       </div>
-      {editing ? (
+      {edit ? (
         <ToSendEditor
-          initial={codeEditText(comment)}
+          words={edit.words}
+          onWords={(w) => setEditWords(which, w)}
           mayBeEmpty={codeEditMayBeEmpty(comment)}
           frozen={frozen}
           onSave={(words) => void save(words)}
-          onCancel={() => setEditing(false)}
+          onCancel={() => closeEdit(which)}
         />
       ) : (
         <div className="tx-waiting-row">
@@ -284,7 +287,12 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
           >
             Jump
           </button>
-          <button type="button" className="tx-btn tx-queued-act" onClick={() => setEditing(true)} disabled={frozen}>
+          <button
+            type="button"
+            className="tx-btn tx-queued-act"
+            onClick={() => openEdit({ ...which, initial: codeEditText(comment) })}
+            disabled={frozen}
+          >
             Edit
           </button>
           <button
@@ -313,7 +321,8 @@ function WaitingItem({
   frozen: boolean;
   onJump?: RevealPassage;
 }): ReactNode {
-  const [editing, setEditing] = useState(false);
+  const which = { taskId, view: 'box', kind: 'quote', id: comment.id } as const;
+  const edit = findEdit(useOpenEdits(taskId), 'box', 'quote', comment.id);
   const { first, more } = foldQuote(comment.quote);
   return (
     <li className="tx-waiting-item">
@@ -321,15 +330,16 @@ function WaitingItem({
         {first}
         {more > 0 ? <span className="tx-waiting-more"> +{more} line{more === 1 ? '' : 's'}</span> : null}
       </div>
-      {editing ? (
+      {edit ? (
         <ToSendEditor
-          initial={comment.comment}
+          words={edit.words}
+          onWords={(w) => setEditWords(which, w)}
           frozen={frozen}
           onSave={(words) => {
             saveQuoteEdit(taskId, comment, words);
-            setEditing(false);
+            closeEdit(which);
           }}
-          onCancel={() => setEditing(false)}
+          onCancel={() => closeEdit(which)}
         />
       ) : (
         <div className="tx-waiting-row">
@@ -344,10 +354,23 @@ function WaitingItem({
               Jump
             </button>
           ) : null}
-          <button type="button" className="tx-btn tx-queued-act" onClick={() => setEditing(true)} disabled={frozen}>
+          <button
+            type="button"
+            className="tx-btn tx-queued-act"
+            onClick={() => openEdit({ ...which, initial: comment.comment })}
+            disabled={frozen}
+          >
             Edit
           </button>
-          <button type="button" className="tx-btn tx-queued-act" onClick={() => removeComment(taskId, comment.id)} disabled={frozen}>
+          <button
+            type="button"
+            className="tx-btn tx-queued-act"
+            onClick={() => {
+              closeEditsFor(taskId, 'quote', comment.id);
+              removeComment(taskId, comment.id);
+            }}
+            disabled={frozen}
+          >
             Remove
           </button>
         </div>

@@ -31,7 +31,7 @@ import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
 import { commentMarks, groupCommentCount } from './commentMarks';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
-import { sendLabel, useToSend, useToSendFrozen } from '../ui/transcript/toSend';
+import { ON_ITS_WAY, sendLabel, useToSend, useToSendFrozen } from '../ui/transcript/toSend';
 import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
 import { asFocus, firstMatch, projectFocus, type GuideFocus } from './focus';
 import { chosenFocus, draftOf, GuideOptions, useTaskProject } from './GuideOptions';
@@ -552,7 +552,7 @@ function GuideBody({
         aria-keyshortcuts="Meta+Shift+S Meta+Enter"
         title={
           sendFrozen
-            ? 'Your message is on its way with these'
+            ? ON_ITS_WAY
             : `Send the ${waitingCount} To Send to Claude now, and show the transcript (⇧⌘S, or ⌘↩ here). What you're typing in the message box stays there.`
         }
       >

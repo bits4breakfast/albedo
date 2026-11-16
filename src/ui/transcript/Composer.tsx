@@ -22,9 +22,11 @@ import { onComposerInsert, onAttachRequest, onSendCommentsRequest, type Composer
 import { commentsOf, dropDraftText, flushDrafts, getDraft, keepUnsent, saveDraft } from './drafts';
 import { type RevealPassage } from './passages';
 import { WaitingComments } from './WaitingComments';
-import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, type Carried } from './codeComments';
+import { composeMessage, NOTHING_CARRIED, takeCarried, takeHeldCarried, useCarriedCodeIds, type Carried } from './codeComments';
 import { queuedCiOf, type QueuedCiFailure } from './ciFailure';
-import { sendLabel, setToSendFrozen, useToSend } from './toSend';
+import { closeEdit, ON_ITS_WAY, sendLabel, setToSendFrozen, useOpenEdits, useToSend } from './toSend';
+import { codeEditText, saveCodeEdit } from './ToSendEditor';
+import { listComments } from '../../db/comments';
 import { useCommentsIntro } from '../commentsIntro';
 import { holdMessage, inBoxFor, putBackFromBox, replaceInBox, takeIntoBox, useHeld } from './outbox';
 import { heldAsDraft, noteBoxShown } from './heldInBox';
@@ -77,6 +79,9 @@ function storedComposerPx(): number | null {
 function storeComposerPx(px: number | null): void {
   writePersisted(KEYS.composerPx, composerPxCodec, px);
 }
+
+/** How long ⇧⌘S's "already on its way" stays up. */
+const ON_ITS_WAY_MS = 3_000;
 
 /** How long to wait for a session that `startPty` said was on its way. */
 const START_TIMEOUT_MS = 12_000;
@@ -330,10 +335,66 @@ export function Composer({
      Remove as the list above the box does.
   */
   const sending = busy || awaiting || held;
+  /** ⇧⌘S while a send carries To Send (#404): said briefly, as the buttons' tooltips say it. */
+  const [onItsWay, setOnItsWay] = useState(false);
+  const showOnItsWay = useCallback(() => setOnItsWay(true), []);
+  useEffect(() => {
+    if (!onItsWay) return;
+    const t = window.setTimeout(() => setOnItsWay(false), ON_ITS_WAY_MS);
+    return () => window.clearTimeout(t);
+  }, [onItsWay]);
   useEffect(() => {
     setToSendFrozen(taskId, sending);
     return () => setToSendFrozen(taskId, false);
   }, [taskId, sending]);
+
+  /*
+     Edits left open on To Send items whose items have since left the list
+     (#404 review): a send delivered them, or a held message took them. What
+     was typed is not thrown away. Settled only once no send of this box's is
+     under way (until then the item is still on its way):
+       - a quote is gone from the list for good: its words go into the box;
+       - a code comment is settled once it reads as sent: the words become an
+         edit of it, as a sent card's Edit makes one. Held, or being marked,
+         it waits; unsent and back in To Send, its row shows the edit again.
+     Unchanged words settle as nothing.
+  */
+  const openEdits = useOpenEdits(taskId);
+  const carriedCode = useCarriedCodeIds(taskId);
+  const settlingRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (sending) return;
+    const listed = new Set(waitingCode.map((c) => c.id));
+    for (const e of openEdits) {
+      const changed = e.words.trim().length > 0 && e.words.trim() !== e.initial.trim();
+      if (e.kind === 'quote') {
+        if (commentsOf(taskId).some((c) => c.id === e.id)) continue;
+        closeEdit(e);
+        if (changed) {
+          const words = e.words.trim();
+          setText((t) => (t.trim().length > 0 ? `${t.replace(/\s+$/, '')}\n\n${words}` : words));
+          requestAnimationFrame(() => grow());
+        }
+        continue;
+      }
+      const id = e.id as number;
+      if (listed.has(id) || carriedCode.has(id)) continue;
+      const key = `${e.view}:${id}`;
+      if (settlingRef.current.has(key)) continue;
+      settlingRef.current.add(key);
+      void listComments(taskId, { includeResolved: true })
+        .then(async (rows) => {
+          const row = rows.find((c) => c.id === id);
+          if (!row) return closeEdit(e);
+          // Still unsent and open: on its way back to the list, or not read yet.
+          if (row.sentAt === null && row.resolvedAt === null && row.github === null) return;
+          if (row.sentAt !== null && changed && e.words !== codeEditText(row)) await saveCodeEdit(taskId, row, e.words);
+          closeEdit(e);
+        })
+        .catch((err: unknown) => console.warn('[comments] could not keep an edit made while the comment was sent', err))
+        .finally(() => settlingRef.current.delete(key));
+    }
+  }, [taskId, sending, openEdits, waitingCode, carriedCode, grow]);
 
   /*
      A task switch puts that task's own draft in the box. A send the old task
@@ -784,13 +845,20 @@ export function Composer({
         // session, or held at a prompt -- and its body already carries To
         // Send (#404): sending them again would make Claude read them twice.
         // Not taken; Files and the guide disable their Send N meanwhile.
-        if (inFlightRef.current) return false;
+        if (inFlightRef.current) {
+          // Said where it can be read: the shell shows the transcript.
+          if (commentsOf(taskId).length > 0 || waitingCodeRef.current.length > 0 || queuedCiOf(taskId) !== null) {
+            showOnItsWay();
+            return 'busy';
+          }
+          return false;
+        }
         // Nothing waiting: not taken, so the caller leaves the tab alone.
         if (commentsOf(taskId).length === 0 && waitingCodeRef.current.length === 0 && queuedCiOf(taskId) === null) return false;
         void sendComments();
         return true;
       }),
-    [taskId, sendComments],
+    [taskId, sendComments, showOnItsWay],
   );
 
   /** Take the held message back, so a prompt nobody answers is not a trap. */
@@ -1022,6 +1090,11 @@ export function Composer({
       {offline ? (
         <div className="tx-composer-notice" role="status">
           You{'\u2019'}re offline. Messages wait here and go when the connection is back.
+        </div>
+      ) : null}
+      {onItsWay ? (
+        <div className="tx-composer-notice" role="status">
+          {ON_ITS_WAY}
         </div>
       ) : null}
       {notice ? (

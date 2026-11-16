@@ -15,7 +15,18 @@ import type { TranscriptComment } from './transcriptQuotes';
 import { __resetOutbox } from './outbox';
 import { __resetTurns } from './turn';
 import { __resetConnectivity } from '../../lib/connectivity';
-import { __resetToSendFrozen, sendLabel, setToSendFrozen, toSendOf, useToSendFrozen } from './toSend';
+import {
+  __resetOpenEdits,
+  __resetToSendFrozen,
+  closeEditsFor,
+  editsOf,
+  openEdit,
+  sendLabel,
+  setEditWords,
+  setToSendFrozen,
+  toSendOf,
+  useToSendFrozen,
+} from './toSend';
 import { jumpToPassage, onRevealPassageRequest, onShowTranscriptRequest } from './composerBridge';
 
 vi.mock('../Terminal', () => ({
@@ -145,5 +156,36 @@ describe('Jump from outside the transcript', () => {
     expect(shown).toEqual([1]);
     offShow();
     offReveal();
+  });
+});
+
+describe('open edits, kept beside the list (#404 review)', () => {
+  it('keep the words typed, per view, and a removal on purpose drops them in every view', () => {
+    __resetOpenEdits();
+    openEdit({ taskId: 1, view: 'box', kind: 'quote', id: 'q', initial: 'a' });
+    openEdit({ taskId: 1, view: 'files', kind: 'quote', id: 'q', initial: 'a' });
+    openEdit({ taskId: 2, view: 'box', kind: 'quote', id: 'q', initial: 'a' });
+    setEditWords({ taskId: 1, view: 'box', kind: 'quote', id: 'q' }, 'b');
+    expect(editsOf(1).map((e) => [e.view, e.words])).toEqual([
+      ['box', 'b'],
+      ['files', 'a'],
+    ]);
+    closeEditsFor(1, 'quote', 'q');
+    expect(editsOf(1)).toEqual([]);
+    expect(editsOf(2)).toHaveLength(1);
+    __resetOpenEdits();
+  });
+
+  it('Remove in the box drops an edit Files has open, so its words never land in the box', async () => {
+    __resetOpenEdits();
+    addComment(1, q('a', 1));
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    act(() => openEdit({ taskId: 1, view: 'files', kind: 'quote', id: 'a', initial: 'about a' }));
+    act(() => setEditWords({ taskId: 1, view: 'files', kind: 'quote', id: 'a' }, 'changed my mind'));
+    fireEvent.click(document.querySelector('.tx-waiting-head')!);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await act(async () => {});
+    expect(editsOf(1)).toEqual([]);
+    expect((document.querySelector('.tx-composer-input') as HTMLTextAreaElement).value).toBe('');
   });
 });

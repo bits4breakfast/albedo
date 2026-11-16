@@ -31,7 +31,18 @@ import { Disclosure } from './Disclosure';
 import { commentHeadline, commentWords } from '../lib/suggestion';
 import { jumpToPassage, sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, type QueuedCiFailure } from './transcript/ciFailure';
-import { sendLabel, useToSend, useToSendFrozen } from './transcript/toSend';
+import {
+  closeEdit,
+  closeEditsFor,
+  findEdit,
+  ON_ITS_WAY,
+  openEdit,
+  sendLabel,
+  setEditWords,
+  useOpenEdits,
+  useToSend,
+  useToSendFrozen,
+} from './transcript/toSend';
 import { useCarriedCodeIds } from './transcript/codeComments';
 import { deleteComment as deleteCodeComment } from '../db/comments';
 import { removeComment as removeQuote } from './transcript/drafts';
@@ -61,8 +72,8 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const [notice, setNotice] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [showPosted, setShowPosted] = useState(false);
-  /** The To Send item open for editing: a code comment's id, or a quote's. */
-  const [editing, setEditing] = useState<number | string | null>(null);
+  /** To Send items open for editing here (#404): kept beside the list, so a send that takes one keeps what was typed. */
+  const edits = useOpenEdits(task.id);
   const read = useReadFile();
   const toSend = useToSend(task.id);
   const frozen = useToSendFrozen(task.id);
@@ -209,16 +220,19 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
 
   const fail = (what: string) => (err: unknown) => setNotice(`Could not ${what}: ${String(err)}`);
 
-  const codeItem = (c: ReviewComment) =>
-    editing === c.id ? (
+  const codeItem = (c: ReviewComment) => {
+    const which = { taskId: task.id, view: 'files', kind: 'code', id: c.id } as const;
+    const edit = findEdit(edits, 'files', 'code', c.id);
+    return edit ? (
       <div key={c.id} className="tf-comment-edit">
         {place(c)}
         <ToSendEditor
-          initial={codeEditText(c)}
+          words={edit.words}
+          onWords={(w) => setEditWords(which, w)}
           mayBeEmpty={codeEditMayBeEmpty(c)}
           frozen={frozen}
-          onSave={(words) => void saveCodeEdit(task.id, c, words).then(() => setEditing(null), fail('save the comment'))}
-          onCancel={() => setEditing(null)}
+          onSave={(words) => void saveCodeEdit(task.id, c, words).then(() => closeEdit(which), fail('save the comment'))}
+          onCancel={() => closeEdit(which)}
         />
       </div>
     ) : (
@@ -226,11 +240,12 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         c,
         acts(
           `the comment on ${commentLocation(c)}`,
-          () => setEditing(c.id),
+          () => openEdit({ ...which, initial: codeEditText(c) }),
           () => void deleteCodeComment(task.id, c.id).catch(fail('remove the comment')),
         ),
       )
     );
+  };
 
   const quoteItem = (q: TranscriptComment) => {
     const { first } = foldQuote(q.quote);
@@ -239,17 +254,20 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         Transcript quote
       </span>
     );
-    return editing === q.id ? (
+    const which = { taskId: task.id, view: 'files', kind: 'quote', id: q.id } as const;
+    const edit = findEdit(edits, 'files', 'quote', q.id);
+    return edit ? (
       <div key={q.id} className="tf-comment-edit">
         {where}
         <ToSendEditor
-          initial={q.comment}
+          words={edit.words}
+          onWords={(w) => setEditWords(which, w)}
           frozen={frozen}
           onSave={(words) => {
             saveQuoteEdit(task.id, q, words);
-            setEditing(null);
+            closeEdit(which);
           }}
-          onCancel={() => setEditing(null)}
+          onCancel={() => closeEdit(which)}
         />
       </div>
     ) : (
@@ -266,8 +284,11 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         </button>
         {acts(
           `the comment on “${first}”`,
-          () => setEditing(q.id),
-          () => removeQuote(task.id, q.id),
+          () => openEdit({ ...which, initial: q.comment }),
+          () => {
+            closeEditsFor(task.id, 'quote', q.id);
+            removeQuote(task.id, q.id);
+          },
         )}
       </div>
     );
@@ -305,7 +326,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
               aria-keyshortcuts="Meta+Shift+S"
               title={
                 frozen
-                  ? 'Your message is on its way with these'
+                  ? ON_ITS_WAY
                   : "Send these to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
               }
             >

@@ -54,6 +54,9 @@ export function sendLabel(count: number): string {
   return count > 0 ? `Send ${count}` : 'Send';
 }
 
+/** Why Send N and ⇧⌘S do nothing while a send already carries To Send (#404): one wording everywhere. */
+export const ON_ITS_WAY = 'Your message is already on its way with To Send';
+
 // ---------------------------------------------------------------------------
 // Frozen while a send is under way
 // ---------------------------------------------------------------------------
@@ -92,4 +95,107 @@ export function useToSendFrozen(taskId: number | null): boolean {
 /** Test seam. */
 export function __resetToSendFrozen(): void {
   frozen.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Open edits: kept beside the list, not in its rows
+// ---------------------------------------------------------------------------
+
+/*
+   An edit of a To Send item is kept here, not in the row that shows it: the
+   row goes when its item leaves the list -- delivered, or held with a
+   message -- and what was typed must not go with it (#404 review). The
+   composer settles an edit whose item has left (`settleOpenEdits` there): a
+   code comment now sent takes the words as an edit, as a sent card's Edit
+   would; a quote's words go into the message box. One per view, as each
+   view opens its own.
+*/
+
+export type EditView = 'box' | 'files';
+
+export interface OpenEdit {
+  taskId: number;
+  view: EditView;
+  kind: 'code' | 'quote';
+  /** A code comment's row id, or a quote's id. */
+  id: number | string;
+  /** What the field opened with: unchanged words settle as nothing. */
+  initial: string;
+  words: string;
+}
+
+const edits = new Map<string, OpenEdit>();
+const editListeners = new Set<() => void>();
+let editsByTask = new Map<number, readonly OpenEdit[]>();
+
+const editKey = (taskId: number, view: EditView, kind: OpenEdit['kind'], id: number | string) => `${taskId}\u0000${view}\u0000${kind}\u0000${id}`;
+
+function editsChanged(): void {
+  editsByTask = new Map();
+  for (const cb of [...editListeners]) cb();
+}
+
+export function openEdit(e: Omit<OpenEdit, 'words'>): void {
+  edits.set(editKey(e.taskId, e.view, e.kind, e.id), { ...e, words: e.initial });
+  editsChanged();
+}
+
+export function setEditWords(e: Pick<OpenEdit, 'taskId' | 'view' | 'kind' | 'id'>, words: string): void {
+  const key = editKey(e.taskId, e.view, e.kind, e.id);
+  const prev = edits.get(key);
+  if (!prev || prev.words === words) return;
+  edits.set(key, { ...prev, words });
+  editsChanged();
+}
+
+export function closeEdit(e: Pick<OpenEdit, 'taskId' | 'view' | 'kind' | 'id'>): void {
+  if (edits.delete(editKey(e.taskId, e.view, e.kind, e.id))) editsChanged();
+}
+
+/** Removed on purpose: its open edits in every view go too, never into the box. */
+export function closeEditsFor(taskId: number, kind: OpenEdit['kind'], id: number | string): void {
+  let any = false;
+  for (const [k, e] of edits) {
+    if (e.taskId === taskId && e.kind === kind && e.id === id) {
+      edits.delete(k);
+      any = true;
+    }
+  }
+  if (any) editsChanged();
+}
+
+/** The task's open edits, every view's. */
+export function editsOf(taskId: number): readonly OpenEdit[] {
+  let list = editsByTask.get(taskId);
+  if (!list) {
+    list = [...edits.values()].filter((e) => e.taskId === taskId);
+    editsByTask.set(taskId, list);
+  }
+  return list;
+}
+
+function subscribeEdits(cb: () => void): () => void {
+  editListeners.add(cb);
+  return () => {
+    editListeners.delete(cb);
+  };
+}
+
+const NO_EDITS: readonly OpenEdit[] = [];
+
+/** The task's open edits, kept current. */
+export function useOpenEdits(taskId: number | null): readonly OpenEdit[] {
+  const read = () => (taskId === null ? NO_EDITS : editsOf(taskId));
+  return useSyncExternalStore(subscribeEdits, read, read);
+}
+
+/** One item's open edit in one view, or undefined. */
+export function findEdit(list: readonly OpenEdit[], view: EditView, kind: OpenEdit['kind'], id: number | string): OpenEdit | undefined {
+  return list.find((e) => e.view === view && e.kind === kind && e.id === id);
+}
+
+/** Test seam. */
+export function __resetOpenEdits(): void {
+  edits.clear();
+  editsChanged();
 }

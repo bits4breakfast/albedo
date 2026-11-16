@@ -24,7 +24,7 @@
 import { onPromptChange, pendingPrompt } from '../../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { onPreviewChange, pendingPreview } from '../../capture/previewGate';
-import { markCommentsSent } from '../../db/comments';
+import { markCarriedSent } from './codeComments';
 import { isOffline, onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import type { TaskStatus } from '../../types';
 import { hasLivePty, onPtyPresenceChange, startPty } from '../Terminal';
@@ -252,9 +252,8 @@ function start(): () => void {
     onTurnChange(tryRelease),
     onHeldReleased((id, held) => {
       if (!held.commentIds || held.commentIds.length === 0) return;
-      markCommentsSent(id, held.commentIds).catch((err: unknown) =>
-        console.warn('[outbox] the message went out, but its comments could not be marked as sent', err),
-      );
+      // On their way until the sent mark is read back: never To Send between (#404).
+      markCarriedSent(id, held.commentIds, '[outbox] the message went out, but its comments could not be marked as sent');
     }),
   ];
   watch();

@@ -39,20 +39,28 @@ vi.mock('../Terminal', () => {
   };
 });
 
-const codeRows = vi.hoisted(() => ({ rows: [] as import('../../db/comments').ReviewComment[] }));
+const codeRows = vi.hoisted(() => ({
+  rows: [] as import('../../db/comments').ReviewComment[],
+  listeners: new Set<(taskId: number) => void>(),
+}));
 vi.mock('../../db/comments', async () => {
   const actual = await vi.importActual<typeof import('../../db/comments')>('../../db/comments');
   return {
     ...actual,
     listComments: vi.fn(async () => codeRows.rows),
-    onCommentsChanged: vi.fn(() => () => {}),
+    onCommentsChanged: vi.fn((cb: (taskId: number) => void) => {
+      codeRows.listeners.add(cb);
+      return () => codeRows.listeners.delete(cb);
+    }),
     markCommentsSent: vi.fn(async () => {}),
+    editComment: vi.fn(async () => {}),
   };
 });
 vi.mock('@tauri-apps/api/path', () => ({ homeDir: vi.fn(async () => '/Users/me') }));
 vi.mock('@tauri-apps/plugin-fs', () => ({ mkdir: vi.fn(async () => {}), writeFile: vi.fn(async () => {}) }));
 
-const { listComments, markCommentsSent } = await import('../../db/comments');
+const { editComment, listComments, markCommentsSent } = await import('../../db/comments');
+const { __resetOpenEdits } = await import('./toSend');
 const term = (await import('../Terminal')) as unknown as { __emitPresence: (taskId: number, live: boolean) => void };
 
 /** The code comments are read once on mount; let that read land. */
@@ -173,6 +181,10 @@ describe('To Send leaves what is sent unchanged (#404)', () => {
     expect(vi.mocked(submitPty).mock.calls[0]).toEqual([1, `${CI}\n\n${CODE}\n\n${QUOTES}\n\nPlease fix these.`]);
     expect(markCommentsSent).toHaveBeenCalledWith(1, [9, 3]);
     expect(commentsOf(1)).toEqual([]);
+    // Delivered, and on their way until the sent mark is read back: never
+    // To Send again meanwhile (the store here never says sent).
+    await act(async () => {});
+    expect(document.querySelector('.tx-waiting')).toBeNull();
   });
 
   it('Send alone (⇧⌘S, the guide, Files): the same, with no text, and the draft stays', async () => {
@@ -249,7 +261,18 @@ describe('To Send goes once while a send carries it (#404)', () => {
     await codeLoaded();
     typeAndSend();
     await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
-    expect(sendWaitingComments(1)).toBe(false);
+    const { onShowTranscriptRequest } = await import('./composerBridge');
+    const shown: number[] = [];
+    const off = onShowTranscriptRequest((id) => shown.push(id));
+    let answer = true;
+    act(() => {
+      answer = sendWaitingComments(1);
+    });
+    off();
+    expect(answer).toBe(false);
+    // Not silent: the transcript shows, and the box says why (#404 review).
+    expect(shown).toEqual([1]);
+    expect(screen.getByText('Your message is already on its way with To Send')).toBeTruthy();
     expect(heldFor(1)).toEqual([]);
     expect(submitPty).not.toHaveBeenCalled();
     await act(async () => {
@@ -305,6 +328,95 @@ describe('To Send goes once while a send carries it (#404)', () => {
     await act(async () => {});
     expect(vi.mocked(submitPty).mock.calls).toEqual([[1, ALL]]);
     expect(vi.mocked(markCommentsSent).mock.calls).toEqual([[1, [9, 3]]]);
+    // Held, then Sent: never back To Send between the release and the mark (#404 review).
+    expect(document.querySelector('.tx-waiting')).toBeNull();
+    expect(sendWaitingComments(1)).toBe(false);
     stop();
+  });
+});
+
+/*
+   An edit left open while a send carries its item (#404 review): the row
+   goes once the item is delivered, the words do not. A code comment, now
+   sent, takes them as an edit; a quote's go into the message box.
+*/
+describe('an edit open while the send carries its item', () => {
+  beforeEach(async () => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    const { __setAttentionBackend } = await import('../attention');
+    __setAttentionBackend(() => {}, true, () => {});
+    __resetDrafts();
+    __resetConnectivity(async () => true);
+    __resetOutbox();
+    __resetTurns();
+    __resetOpenEdits();
+    seedQueue(['s1'], []);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+  });
+  afterEach(async () => {
+    const { __setAttentionBackend } = await import('../attention');
+    __setAttentionBackend(null);
+    cleanup();
+    vi.clearAllMocks();
+    __resetDrafts();
+    __resetOutbox();
+    __resetOpenEdits();
+    __resetConnectivity();
+    codeRows.rows = [];
+    vi.mocked(markCommentsSent).mockImplementation(async () => {});
+  });
+
+  /** Held at a prompt with the list open and one item being edited, then answered. */
+  async function editThenDeliver(open: () => void, words: string) {
+    const { rerender } = render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
+    await codeLoaded();
+    fireEvent.click(document.querySelector('.tx-waiting-head')!);
+    open();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Edit comment' }), { target: { value: words } });
+    // Send while Claude asks: held, the list frozen.
+    fireEvent.keyDown(document.querySelector('.tx-composer-input')!, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+    expect((screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      rerender(<Composer taskId={1} status="idle" onSent={vi.fn()} />);
+    });
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+  }
+
+  it('a code comment, now sent, takes the words as an edit', { timeout: 10_000 }, async () => {
+    codeRows.rows = [code(9, 'src/report/daily.ts', 42, 'use the local timezone')];
+    // The sent mark, as the store writes it: read back on its change event.
+    vi.mocked(markCommentsSent).mockImplementation(async (taskId: number) => {
+      codeRows.rows = codeRows.rows.map((c) => ({ ...c, sentAt: Date.now() }));
+      for (const cb of [...codeRows.listeners]) cb(taskId);
+    });
+    await editThenDeliver(() => fireEvent.click(screen.getByRole('button', { name: 'Edit' })), 'use the hotel’s timezone');
+    expect(vi.mocked(submitPty).mock.calls[0]![1]).toContain('use the local timezone');
+    // Settled once it reads as sent: after the release's settle (RELEASE_SETTLE_MS).
+    await waitFor(() => expect(editComment).toHaveBeenCalledWith(1, 9, 'use the hotel’s timezone'), { timeout: 5_000 });
+    expect(screen.queryByRole('textbox', { name: 'Edit comment' })).toBeNull();
+  });
+
+  it('a quote’s words go into the message box', async () => {
+    addComment(1, later);
+    await editThenDeliver(() => fireEvent.click(screen.getByRole('button', { name: 'Edit' })), 'two queries at most');
+    expect(vi.mocked(submitPty).mock.calls[0]![1]).toContain('one query for the whole range');
+    await waitFor(() => expect((document.querySelector('.tx-composer-input') as HTMLTextAreaElement).value).toBe('two queries at most'));
+  });
+
+  it('unchanged words settle as nothing', async () => {
+    addComment(1, later);
+    await editThenDeliver(() => fireEvent.click(screen.getByRole('button', { name: 'Edit' })), 'one query for the whole range');
+    await act(async () => {});
+    expect((document.querySelector('.tx-composer-input') as HTMLTextAreaElement).value).toBe('');
   });
 });

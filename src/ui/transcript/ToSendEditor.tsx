@@ -2,13 +2,18 @@
  * Editing a To Send comment in place (#404): the same field, keys and rules
  * in the list above the message box and in Files ▸ Comments.
  *
- * ⌘↩ saves -- not while a send carries the comment -- Esc cancels (and goes no further: it would close what holds the
+ * ⌘↩ saves, Esc cancels (and goes no further: it would close what holds the
  * list). A comment cannot be saved empty -- Remove is for that -- except a
  * suggested edit (#411), whose words are optional: the field edits only the
  * words, and the suggestion stays as it is.
+ *
+ * While a send carries the comment, Save waits. What is typed is kept in
+ * the open edit (toSend.ts `openEdit`), not in this field: when the send
+ * delivers the comment and its row goes, the composer settles it -- a code
+ * comment, now sent, takes the words as an edit; a quote's words go into
+ * the message box.
  */
 
-import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { editComment as editCodeComment, type ReviewComment } from '../../db/comments';
 import { joinSuggestion, splitSuggestion } from '../../lib/suggestion';
@@ -37,24 +42,27 @@ export function saveQuoteEdit(taskId: number, c: Pick<TranscriptComment, 'id'>, 
 }
 
 export function ToSendEditor({
-  initial,
+  words: draft,
+  onWords,
   mayBeEmpty = false,
   frozen = false,
   onSave,
   onCancel,
 }: {
-  initial: string;
+  /** What the field holds: kept outside it (`OpenEdit.words`). */
+  words: string;
+  onWords: (words: string) => void;
   mayBeEmpty?: boolean;
   /**
    * A send already carries the comment (`useToSendFrozen`): new words would
    * never reach Claude, yet be marked sent with it. The field stays open, so
-   * nothing typed is lost; Save waits until the send is done.
+   * nothing typed is lost; Save waits, and if the send takes the comment the
+   * words are settled for it.
    */
   frozen?: boolean;
   onSave: (text: string) => void;
   onCancel: () => void;
 }): ReactNode {
-  const [draft, setDraft] = useState(initial);
   const empty = draft.trim().length === 0 && !mayBeEmpty;
   const save = () => {
     if (!empty && !frozen) onSave(draft);
@@ -68,7 +76,7 @@ export function ToSendEditor({
         value={draft}
         rows={Math.min(6, Math.max(2, draft.split('\n').length))}
         autoFocus
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => onWords(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();

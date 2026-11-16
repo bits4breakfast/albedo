@@ -133,6 +133,17 @@ describe('To Send in Files ▸ Comments (#404)', () => {
     expect(drafts.commentsOf(task.id)).toEqual([]);
   });
 
+  it('Remove drops an edit the message box has open on the same quote (#404 review)', async () => {
+    const { openEdit, editsOf, __resetOpenEdits } = await import('./transcript/toSend');
+    __resetOpenEdits();
+    drafts.addComment(task.id, quote('q1'));
+    pane();
+    const group = await screen.findByRole('group', { name: 'To Send, 1' });
+    act(() => openEdit({ taskId: task.id, view: 'box', kind: 'quote', id: 'q1', initial: 'How do you know?' }));
+    fireEvent.click(within(group).getByRole('button', { name: 'Remove the comment on “It already runs.”' }));
+    expect(editsOf(task.id)).toEqual([]);
+  });
+
   it('the CI failure: Remove only', async () => {
     queueCi();
     pane();
@@ -206,6 +217,29 @@ describe('To Send in Files ▸ Comments (#404)', () => {
     act(() => outbox.removeHeld(task.id, outbox.heldFor(task.id)[0]!.id));
     expect(await screen.findByRole('group', { name: 'To Send, 2' })).toBeTruthy();
     expect(screen.queryByRole('group', { name: /^Held/ })).toBeNull();
+  });
+});
+
+describe('released: Held, then Sent, never To Send between (#404 review)', () => {
+  it('the comments a delivered held message carried stay Held until they read as Sent', async () => {
+    const { markCarriedSent } = await import('./transcript/codeComments');
+    const id = await add('src/a.ts', 3, 'On its way.');
+    outbox.holdMessage(task.id, 'the held body', Date.now(), [id]);
+    pane();
+    await screen.findByRole('group', { name: 'Held, 1' });
+    const seen: string[] = [];
+    const groups = () => [...document.querySelectorAll('.tf-comments-group')].map((g) => g.getAttribute('aria-label') ?? '');
+    const observer = new MutationObserver(() => seen.push(...groups()));
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true });
+    // The release: the held message leaves the outbox, its comments are marked.
+    act(() => {
+      outbox.removeHeld(task.id, outbox.heldFor(task.id)[0]!.id);
+      markCarriedSent(task.id, [id], 'test');
+    });
+    expect(groups()).toEqual(['Held, 1']);
+    await screen.findByRole('group', { name: 'Sent, 1' });
+    observer.disconnect();
+    expect(seen.filter((g) => g.startsWith('To Send'))).toEqual([]);
   });
 });
 

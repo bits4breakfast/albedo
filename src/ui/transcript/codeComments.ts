@@ -13,9 +13,44 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatForClaude, listComments, markCommentsSent, onCommentsChanged, type ReviewComment } from '../../db/comments';
 import { takeComments } from './drafts';
-import { useHeld } from './outbox';
+import { setMarking, useHeld, useMarking } from './outbox';
 import { composeWithComments, type TranscriptComment } from './transcriptQuotes';
 import { formatCiFailure, takeQueuedCi, type QueuedCiFailure } from './ciFailure';
+
+// ---------------------------------------------------------------------------
+// Releasing: delivered, being marked sent
+// ---------------------------------------------------------------------------
+
+/*
+   Between a message carrying code comments being delivered and the database
+   saying they are sent (and every view having read that back), they are no
+   longer held -- the held message left the outbox -- and not yet sent. Left
+   alone they would flash back into To Send, and a quick second Send would
+   carry them again (#404 review). They stay "on their way" -- shown as Held
+   -- from delivery until `RELEASE_SETTLE_MS` after the write settles, by
+   which time every view's re-read has landed. A write that fails returns
+   them to To Send at once, as before.
+*/
+
+/** How long after the sent mark is written a released comment still counts as on its way. */
+export const RELEASE_SETTLE_MS = 2_000;
+
+/**
+ * Mark delivered code comments sent, keeping them on their way meanwhile:
+ * the one way a delivered message's comments are marked (`takeCarried`, the
+ * outbox's release).
+ */
+export function markCarriedSent(taskId: number, ids: readonly number[], what: string): void {
+  if (ids.length === 0) return;
+  setMarking(taskId, ids, true);
+  markCommentsSent(taskId, ids).then(
+    () => window.setTimeout(() => setMarking(taskId, ids, false), RELEASE_SETTLE_MS),
+    (err: unknown) => {
+      setMarking(taskId, ids, false);
+      console.warn(what, err);
+    },
+  );
+}
 
 /** A task's open, unsent code comments, by file then line; kept current. */
 export function useWaitingCodeComments(taskId: number | null): readonly ReviewComment[] {
@@ -48,25 +83,31 @@ export function useWaitingCodeComments(taskId: number | null): readonly ReviewCo
   // marked sent when that message is delivered (outboxRelease.ts). Left in
   // the queue, the next message would carry it again and Claude would read
   // it twice. Removing the held message brings it back here.
-  const held = useHeld(taskId);
+  // Delivered and being marked sent (`markCarriedSent`): on their way too.
+  const carried = useCarriedCodeIds(taskId);
   const rows = waiting.taskId === taskId && taskId !== null ? waiting.rows : NONE;
   return useMemo(() => {
-    const carried = new Set(held.flatMap((h) => h.commentIds ?? []));
     if (carried.size === 0) return rows;
     const left = rows.filter((c) => !carried.has(c.id));
     return left.length === rows.length ? rows : left;
-  }, [rows, held]);
+  }, [rows, carried]);
 }
 
 const NONE: readonly ReviewComment[] = [];
 
 /**
- * The code comments a held message carries (#409): on their way, marked sent
- * when it is delivered. Shown as Held, not To Send, wherever they are listed.
+ * The code comments on their way (#409): carried by a held message, or
+ * delivered and being marked sent (`markCarriedSent`). Shown as Held, not To
+ * Send, wherever they are listed, until they read as Sent.
  */
 export function useCarriedCodeIds(taskId: number | null): ReadonlySet<number> {
   const held = useHeld(taskId);
-  return useMemo(() => new Set(held.flatMap((h) => h.commentIds ?? [])), [held]);
+  const marking = useMarking(taskId);
+  return useMemo(() => {
+    const ids = held.flatMap((h) => h.commentIds ?? []);
+    if (ids.length === 0) return marking;
+    return new Set([...ids, ...marking]);
+  }, [held, marking]);
 }
 
 /**
@@ -118,7 +159,5 @@ export function takeHeldCarried(taskId: number, carried: Carried): void {
 export function takeCarried(taskId: number, carried: Carried): void {
   takeHeldCarried(taskId, carried);
   if (carried.code.length === 0) return;
-  markCommentsSent(taskId, carried.code).catch((err: unknown) =>
-    console.warn('[comments] the message went out, but its code comments could not be marked as sent', err),
-  );
+  markCarriedSent(taskId, carried.code, '[comments] the message went out, but its code comments could not be marked as sent');
 }
