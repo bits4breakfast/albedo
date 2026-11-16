@@ -68,12 +68,15 @@ export function sameLines(a: readonly string[], b: readonly string[]): boolean {
  * null when it changes nothing, so an untouched box is no suggestion.
  */
 export function suggestionFrom(code: string, lines: readonly string[]): string[] | null {
+  // Compared as text first: one blank line and no lines are both '' in a box.
+  if (code === lines.join('\n')) return null;
   const after = linesOf(code);
   return sameLines(after, lines) ? null : after;
 }
 
 /** The box's header: what the code replaces, or "no change" while it is the lines themselves. */
 export function changeLabel(lines: readonly string[], code: string): string {
+  if (code === lines.join('\n')) return 'no change';
   const after = linesOf(code);
   return sameLines(after, lines) ? 'no change' : replacesLabel(lines.length, after.length);
 }

@@ -129,6 +129,26 @@ describe('the box in Diff mode (and the guide)', () => {
     expect((addComment.mock.calls[0]![0] as { body: string }).body).toBe('Just a note.');
   });
 
+  it('a single blank line left untouched is no change, not a deletion', async () => {
+    const onSave = vi.fn();
+    render(<CommentDraftView from={3} to={3} initial="" editing={false} onSave={onSave} onCancel={noop} lines={['']} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest Change' }));
+    expect(screen.getByText('no change')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText(/Leave a comment/), { target: { value: 'Why blank?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    expect(onSave).toHaveBeenCalledWith('Why blank?', null);
+  });
+
+  it('a CRLF file: the box gets its lines without the \\r', () => {
+    const { result } = renderHook(() => useDiffComments(1, 'src/total.ts', FILE.replace(/\n/g, '\r\n'), false));
+    act(() => result.current.annotations!.pick(2, 4, true));
+    render(<>{result.current.annotations!.after(4)}</>);
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest Change' }));
+    const code = screen.getByRole('textbox', { name: 'Suggested code' }) as HTMLTextAreaElement;
+    expect(code.value).toBe(base.anchorText);
+    expect(screen.getByText('no change')).toBeTruthy();
+  });
+
   it('Tab types through the browser, so ⌘Z undoes it', () => {
     const exec = vi.fn(() => false);
     Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
@@ -308,6 +328,70 @@ describe('the File mode widget', () => {
       view.destroy();
       host.remove();
     }
+  });
+
+  describe('a box for another comment is drawn afresh, never carried over', () => {
+    const A = { ...base, id: 10, lineStart: 2, lineEnd: 2, anchorText: '  let sum = 0;', body: joinSuggestion(['  let sum = 1;'], 'From A.') };
+    const B = { ...base, id: 11, lineStart: 4, lineEnd: 4, anchorText: '  return sum;', body: 'From B.' };
+    function open(at: (v: EditorView) => { from: number; to: number; editing: ReviewComment | null }) {
+      const save = vi.fn();
+      const ctx = editor(() => ({ save, edit: noop, resolve: noop, remove: noop }));
+      ctx.view.dispatch({ effects: setDraft.of(at(ctx.view)) });
+      return { ...ctx, save };
+    }
+    const line = (v: EditorView, n: number, editing: ReviewComment | null) => ({ from: v.state.doc.line(n).from, to: v.state.doc.line(n).to, editing });
+    const box = (host: HTMLElement) => ({
+      input: host.querySelector('.ed-cmt-draft .ed-cmt-input') as HTMLTextAreaElement,
+      code: host.querySelector('.ed-cmt-draft .ed-cmt-code') as HTMLTextAreaElement,
+      toggle: within(host.querySelector('.ed-cmt-draft') as HTMLElement).getByRole('button', { name: 'Suggest Change' }),
+    });
+
+    it('Edit A, then Edit B: B’s body is shown, and saved as B’s', () => {
+      const { host, view, save } = open((v) => line(v, 2, A));
+      try {
+        expect(box(host).input.value).toBe('From A.');
+        view.dispatch({ effects: setDraft.of(line(view, 4, B)) });
+        const b = box(host);
+        expect(b.input.value).toBe('From B.');
+        expect(b.toggle.getAttribute('aria-pressed')).toBe('false');
+        fireEvent.keyDown(b.input, { key: 'Enter', metaKey: true });
+        expect(save.mock.calls[0]![1]).toBe('From B.');
+        expect((save.mock.calls[0]![0] as { editing: ReviewComment }).editing.id).toBe(11);
+      } finally {
+        view.destroy();
+        host.remove();
+      }
+    });
+
+    it('a new box with typed text, then Edit B: B’s body, not the typed text', () => {
+      const { host, view, save } = open((v) => line(v, 2, null));
+      try {
+        box(host).input.value = 'Typed, not saved.';
+        view.dispatch({ effects: setDraft.of(line(view, 4, B)) });
+        const b = box(host);
+        expect(b.input.value).toBe('From B.');
+        fireEvent.keyDown(b.input, { key: 'Enter', metaKey: true });
+        expect(save.mock.calls[0]![1]).toBe('From B.');
+      } finally {
+        view.destroy();
+        host.remove();
+      }
+    });
+
+    it('Edit A, then a new range elsewhere: an empty new box, without A’s words or suggestion', () => {
+      const { host, view } = open((v) => line(v, 2, A));
+      try {
+        expect(box(host).toggle.getAttribute('aria-pressed')).toBe('true');
+        view.dispatch({ effects: setDraft.of({ from: view.state.doc.line(4).from, to: view.state.doc.line(5).to, editing: null }) });
+        const n = box(host);
+        expect(n.input.value).toBe('');
+        expect(n.toggle.getAttribute('aria-pressed')).toBe('false');
+        expect(host.querySelector('.ed-cmt-draft .ed-cmt-foot .ed-cmt-where')?.textContent).toBe('Lines 4–5');
+      } finally {
+        view.destroy();
+        host.remove();
+      }
+    });
   });
 
   it('asks CodeMirror to measure again when the box grows or shrinks', () => {

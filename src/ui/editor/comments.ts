@@ -194,7 +194,7 @@ class CommentCard extends WidgetType {
 }
 
 /** A draft box's refresh when it moves to other lines (DraftBox.updateDOM). */
-const moved = new WeakMap<HTMLElement, (view: EditorView) => void>();
+const moved = new WeakMap<HTMLElement, { id: number | null; refresh: (view: EditorView) => void }>();
 
 class DraftBox extends WidgetType {
   constructor(
@@ -211,9 +211,11 @@ class DraftBox extends WidgetType {
     return other.draft.editing?.id === this.draft.editing?.id && other.draft.from === this.draft.from && other.draft.to === this.draft.to;
   }
   updateDOM(dom: HTMLElement, view: EditorView): boolean {
-    const refresh = moved.get(dom);
-    if (!refresh) return false;
-    refresh(view);
+    // Only the same box, moved: a box for another comment (or a new one in
+    // place of an edit) is drawn afresh, or it would carry the old one's words.
+    const kept = moved.get(dom);
+    if (!kept || kept.id !== (this.draft.editing?.id ?? null)) return false;
+    kept.refresh(view);
     return true;
   }
   toDOM(view: EditorView): HTMLElement {
@@ -357,11 +359,11 @@ class DraftBox extends WidgetType {
     const where = el('span', 'ed-cmt-where', rangeLabel(view, this.draft.from, this.draft.to));
     foot.append(where, button('Cancel', cancel), primary);
     box.append(area, foot);
-    moved.set(box, (v) => {
+    moved.set(box, { id: this.draft.editing?.id ?? null, refresh: (v) => {
       const d = v.state.field(commentsField).draft;
       if (d) where.textContent = rangeLabel(v, d.from, d.to);
       if (!sug.hidden) fit();
-    });
+    } });
     setTimeout(() => area.focus(), 0);
     return box;
   }

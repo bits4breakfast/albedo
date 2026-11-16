@@ -263,7 +263,8 @@ export function useDiffComments(
               // A review task's comment goes to GitHub unless you say so (#287).
               destination={isReview ? (draft.editing ? draft.editing.github : 'draft') : undefined}
               // Suggest Change starts from the lines as they are now (#411).
-              lines={newText === null ? null : newText.split('\n').slice(draft.from - 1, draft.to)}
+              // Without a CRLF file's \r, which no box shows or should store.
+              lines={newText === null ? null : newText.split('\n').slice(draft.from - 1, draft.to).map((l) => l.replace(/\r$/, ''))}
             />
           ) : null}
         </>
