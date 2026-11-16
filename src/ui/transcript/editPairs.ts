@@ -5,11 +5,15 @@
  * with no `old_source` counted its new cell as added lines on the run's line,
  * and opened, the row showed no diff at all.
  *
- * A pair needs both sides, except Write, whose old side is the empty file.
+ * A pair needs both sides, except Write. A Write's old side is the file as it
+ * was when its result says it replaced one (#387), and the empty file when it
+ * made one or nothing says which. A Write that failed changed nothing: no
+ * pairs at all.
  */
 
 import type { Message } from '../../types';
-import { isObj, str, targetOf, toolInput } from './ToolChip';
+import { writeResultOf } from '../../capture/adapter';
+import { isObj, str, targetOf, toolInput, toolResultIsError } from './ToolChip';
 
 export const DIFF_TOOLS: ReadonlySet<string> = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -23,16 +27,84 @@ export interface EditPairs {
   absoluteLines: boolean;
 }
 
-/** The call's old/new pairs; null for a call that is not an edit or carries no complete pair. */
-export function editPairsOf(message: Message): EditPairs | null {
+/**
+ * A replaced file is diffed against the file as it was only up to this many
+ * characters, old and new together (#387); past it the row is today's whole
+ * listing. Writes seen in real transcripts are a few thousand characters. A
+ * megabyte is ~9,000 lines of code, where the worst case -- every line
+ * changed -- diffs in ~40 ms (measured on Node 22); the Myers search behind it
+ * is capped at an edit distance of 1,200, so the cost grows with size, not
+ * with size squared.
+ */
+export const WRITE_DIFF_MAX_CHARS = 1_000_000;
+
+/**
+ * What a Write did, as its result tells it (#387):
+ *  - `created`: a new file.
+ *  - `replaced`: an existing file, whose old text is `originalFile`.
+ *  - `failed`: its result is an error; nothing was written.
+ *  - `unknown`: no result yet, or one that does not say (an older
+ *    transcript): read as today, the whole content as added lines.
+ * Null for any call that is not a Write.
+ */
+export type WriteOutcome =
+  | { kind: 'created' }
+  | { kind: 'replaced'; originalFile: string; content: string }
+  | { kind: 'failed' }
+  | { kind: 'unknown' };
+
+export function writeOutcomeOf(message: Message, result: Message | null): WriteOutcome | null {
+  if (message.toolName !== 'Write') return null;
+  if (result === null) return UNKNOWN;
+  let outcome = outcomes.get(result);
+  if (outcome === undefined) {
+    outcome = readOutcome(result);
+    outcomes.set(result, outcome);
+  }
+  return outcome;
+}
+
+const UNKNOWN: WriteOutcome = Object.freeze({ kind: 'unknown' });
+
+/*
+ * Read once per result row: the row, the run's line and the chip all ask, and
+ * a result line past the adapter's parse-cache limit (256K characters, a
+ * large file written) would otherwise be parsed again for each. Rows are
+ * never changed once captured, so the row object is the key; weak, so an
+ * entry goes with its row.
+ */
+const outcomes = new WeakMap<Message, WriteOutcome>();
+
+function readOutcome(result: Message): WriteOutcome {
+  if (toolResultIsError(result)) return Object.freeze({ kind: 'failed' });
+  const written = writeResultOf(result.rawJson);
+  if (written === null) return UNKNOWN;
+  if (written.kind === 'create') return Object.freeze({ kind: 'created' });
+  const originalFile = written.originalFile ?? '';
+  // Too large to diff on a render: the whole listing, as before.
+  if (originalFile.length + written.content.length > WRITE_DIFF_MAX_CHARS) return UNKNOWN;
+  return Object.freeze({ kind: 'replaced', originalFile, content: written.content });
+}
+
+/**
+ * The call's old/new pairs; null for a call that is not an edit, carries no
+ * complete pair, or is a Write that failed. `result` is the call's paired
+ * result, when it has arrived: only a Write reads it.
+ */
+export function editPairsOf(message: Message, result: Message | null = null): EditPairs | null {
   const tool = message.toolName ?? '';
   if (!DIFF_TOOLS.has(tool)) return null;
   const input = toolInput(message);
   const path = targetOf(message) ?? 'file';
   const pairs: EditPairs['pairs'] = [];
   if (tool === 'Write') {
-    const content = str(input.content);
-    if (content !== null) pairs.push({ oldText: '', newText: content });
+    const write = writeOutcomeOf(message, result);
+    if (write?.kind === 'failed') return null;
+    if (write?.kind === 'replaced') pairs.push({ oldText: write.originalFile, newText: write.content });
+    else {
+      const content = str(input.content);
+      if (content !== null) pairs.push({ oldText: '', newText: content });
+    }
   } else if (tool === 'MultiEdit') {
     for (const edit of Array.isArray(input.edits) ? input.edits : []) {
       if (!isObj(edit)) continue;

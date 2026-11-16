@@ -1801,6 +1801,17 @@ export function toolResultTextOf(message: (ToolRow & Pick<Message, 'body'>) | nu
   return message.body ?? '';
 }
 
+/**
+ * A failed result's text without the `<tool_use_error>…</tool_use_error>`
+ * Claude Code wraps a tool's own error in (#387): "File has not been read
+ * yet. …". Any other text is returned as it is.
+ */
+export function toolErrorTextOf(message: (ToolRow & Pick<Message, 'body'>) | null | undefined): string {
+  const text = toolResultTextOf(message).trim();
+  const wrapped = /^<tool_use_error>([\s\S]*)<\/tool_use_error>$/.exec(text);
+  return wrapped ? (wrapped[1] ?? '').trim() : text;
+}
+
 /** True when the result reported failure: an error, a denial, or an interrupt. */
 export function toolResultIsErrorOf(message: ToolRow | null | undefined): boolean {
   if (!message) return false;
@@ -1826,6 +1837,40 @@ export function toolUseIdOf(message: ToolRow & Pick<Message, 'role'>): string | 
   }
   const block = blockFor(message, 'tool_result');
   return textOf(block?.['tool_use_id']) ?? textOf(raw['tool_use_id']);
+}
+
+/**
+ * What a Write's result says it did (#387), from the result line's
+ * `toolUseResult`: `{type: "create" | "update", filePath, content,
+ * originalFile, structuredPatch, userModified}`. A new file is `create` with
+ * `originalFile: null`; a replaced one is `update` with the file as it was.
+ *
+ * `structuredPatch` is not read: the renderer diffs `originalFile` against
+ * `content` with the same code an Edit row uses, so the row and the run's
+ * counts come from one diff. Null for any other shape -- an error result
+ * (whose `toolUseResult` is the error string), an older transcript, a row
+ * stored as a bare block -- which the caller reads as "not known".
+ */
+export interface WriteResult {
+  kind: 'create' | 'update';
+  /** What was written. */
+  content: string;
+  /** The file before the write; null for `create`. */
+  originalFile: string | null;
+}
+
+export function writeResultOf(rawJson: string): WriteResult | null {
+  if (!rawJson.includes('"toolUseResult"')) return null;
+  const line = rowLine(rawJson);
+  const r = line !== null && isRecord(line['toolUseResult']) ? line['toolUseResult'] : null;
+  if (r === null) return null;
+  const content = r['content'];
+  if (typeof content !== 'string') return null;
+  if (r['type'] === 'create') return { kind: 'create', content, originalFile: null };
+  if (r['type'] === 'update' && typeof r['originalFile'] === 'string') {
+    return { kind: 'update', content, originalFile: r['originalFile'] };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

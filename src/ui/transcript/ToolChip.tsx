@@ -182,9 +182,14 @@ export interface ToolChipProps {
    * Claude Code writes on a line of its own after the call (#150).
    */
   more?: ReactNode;
+  /**
+   * A word on what the call did, beside its outcome: "New File" or "Not
+   * Written" on a Write (#387). Nothing by default.
+   */
+  tag?: string | null;
 }
 
-export function ToolChip({ message, result = null, defaultOpen = false, more = null }: ToolChipProps): ReactNode {
+export function ToolChip({ message, result = null, defaultOpen = false, more = null, tag = null }: ToolChipProps): ReactNode {
   const [open, setOpen] = useState(defaultOpen);
   const [raw, setRaw] = useState(false);
 
@@ -240,6 +245,7 @@ export function ToolChip({ message, result = null, defaultOpen = false, more = n
           </span>
         ) : null}
         {message.toolName === REQUEST_SESSION_TOOL ? <SpinOutNote input={input} /> : null}
+        {tag ? <span className="tx-chip-tag">{tag}</span> : null}
         <span className="tx-chip-state" title={state}>
           {pending ? '…' : error ? '✕' : '✓'}
         </span>
