@@ -1662,3 +1662,58 @@ export async function baseFreshness(
   const ab = counts.code === 0 ? parseAheadBehind(counts.stdout) : null;
   return ab ? { upstream, ...ab, fetched } : null;
 }
+
+/** `p`, or `fallback` once {@link FETCH_TIMEOUT_MS} passes first. */
+async function withFetchTimeout<T>(p: Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), FETCH_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch one branch from `remote` into `refs/remotes/<remote>/<branch>`. The
+ * refspec names its destination, so the tracking ref is updated whatever the
+ * remote's fetch config says. False on every failure -- offline, no such
+ * remote, no such branch, a timeout. Never prompts.
+ */
+export async function fetchRemoteBranch(repoPath: string, remote: string, branch: string): Promise<boolean> {
+  assertValidRefName(branch, 'branch');
+  assertValidRefName(remote, 'remote');
+  const fetch = git(
+    ['fetch', '--quiet', '--no-tags', '--', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+    repoPath,
+    { GIT_TERMINAL_PROMPT: '0' },
+  ).then((r) => r.code === 0, () => false);
+  return withFetchTimeout(fetch, false);
+}
+
+/** Whether a remote has a branch: it does, it does not, or it could not be asked. */
+export type RemoteBranchState = 'present' | 'absent' | 'unknown';
+
+/**
+ * Ask `remote` whether it has `branch`, and fetch it when it does.
+ *
+ * `git ls-remote --exit-code` exits 2 when the remote answered and has no such
+ * ref: only that is `absent`. Anything else -- offline, refused credentials,
+ * no such remote, a timeout -- is `unknown`, never "gone": a branch nobody
+ * could check for may well be there. `present` also needs the fetch to land,
+ * so `refs/remotes/<remote>/<branch>` is current; a failed fetch is `unknown`.
+ * Never prompts.
+ */
+export async function remoteBranchState(repoPath: string, remote: string, branch: string): Promise<RemoteBranchState> {
+  assertValidRefName(branch, 'branch');
+  assertValidRefName(remote, 'remote');
+  const ask = git(['ls-remote', '--exit-code', '--heads', '--', remote, `refs/heads/${branch}`], repoPath, {
+    GIT_TERMINAL_PROMPT: '0',
+  }).then((r) => r.code, () => null);
+  const code = await withFetchTimeout<number | null>(ask, null);
+  if (code === 2) return 'absent';
+  if (code !== 0) return 'unknown';
+  return (await fetchRemoteBranch(repoPath, remote, branch)) ? 'present' : 'unknown';
+}
