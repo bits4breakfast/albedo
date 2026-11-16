@@ -1078,6 +1078,7 @@ function CarefulWords({ mark }: { mark: CarefulMark }): ReactNode {
  * Whether it runs longer is measured, at the note's real width and again
  * whenever that changes; a note that fits has no button. A note starts closed:
  * the diff is keyed by group and file, so another file mounts a fresh one.
+ * Open, it is held to 40vh and scrolls (guide.css), so the diff stays in reach.
  *
  * What is clipped depends on the band (guide.css): alone, the label and text
  * flow as one (`.gd-diff-why-flow`); with both notes, the text beside its
@@ -1098,17 +1099,28 @@ function DiffNote({
   children: ReactNode;
 }): ReactNode {
   const ref = useRef<HTMLParagraphElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [longer, setLonger] = useState(false);
+  // The button had focus when it was found no longer needed (Show Less on a
+  // note that now fits, or a wider pane): focus goes to the note, not the page.
+  const refocus = useRef(false);
   // Open, nothing is clipped to measure: it ran longer when it was opened.
   const measure = useCallback(() => {
     const p = ref.current;
     if (!p || open) return;
     const clipped = [p.querySelector('.gd-diff-why-flow'), p.querySelector('.gd-diff-why-body')];
-    setLonger(clipped.some((el) => el !== null && el.scrollHeight > el.clientHeight + 1));
+    const next = clipped.some((el) => el !== null && el.scrollHeight > el.clientHeight + 1);
+    if (!next && button.current !== null && document.activeElement === button.current) refocus.current = true;
+    setLonger(next);
   }, [open]);
   // Every render: the text, the band's layout or the theme may have changed.
   useLayoutEffect(measure);
+  useLayoutEffect(() => {
+    if (longer || !refocus.current) return;
+    refocus.current = false;
+    ref.current?.focus({ preventScroll: true });
+  }, [longer]);
   useEffect(() => {
     const p = ref.current;
     if (!p || typeof ResizeObserver === 'undefined') return;
@@ -1118,13 +1130,14 @@ function DiffNote({
   }, [measure]);
   const action = open ? 'Show Less' : 'Show All';
   return (
-    <p className="gd-diff-why-text" data-careful={careful ? 'true' : undefined} data-clamped={open ? undefined : 'true'} title={title} ref={ref}>
-      <span className="gd-diff-why-flow">
+    <p className="gd-diff-why-text" data-careful={careful ? 'true' : undefined} data-clamped={open ? undefined : 'true'} tabIndex={-1} ref={ref}>
+      {/* The tooltip on the text only: not on Show All. */}
+      <span className="gd-diff-why-flow" title={title}>
         <span className="gd-diff-why-label">{label}</span>
         <span className="gd-diff-why-body">{children}</span>
       </span>
       {longer ? (
-        <button type="button" className="gd-link gd-diff-why-more" aria-expanded={open} aria-label={`${action} of ${name}`} onClick={() => setOpen((o) => !o)}>
+        <button ref={button} type="button" className="gd-link gd-diff-why-more" aria-expanded={open} aria-label={`${action} of ${name}`} onClick={() => setOpen((o) => !o)}>
           {action}
         </button>
       ) : null}

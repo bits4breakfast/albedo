@@ -772,8 +772,38 @@ describe('a long note under the diff header: two lines, then Show All (#397)', (
     fireEvent.click(careful);
     expect(note(0).hasAttribute('data-clamped')).toBe(false);
     expect(note(1).hasAttribute('data-clamped')).toBe(true);
-    // The careful line keeps its tooltip with the full reason.
-    expect(note(0).getAttribute('title')).toBe('Review carefully: changes the order retries are written in, and what reads them');
+    // The careful line keeps its tooltip with the full reason, on the text:
+    // hovering Show All shows none.
+    const flow = note(0).querySelector('.gd-diff-why-flow')!;
+    expect(flow.getAttribute('title')).toBe('Review carefully: changes the order retries are written in, and what reads them');
+    expect(note(0).hasAttribute('title')).toBe(false);
+    expect(right().getByRole('button', { name: 'Show Less of Careful' }).closest('[title]')).toBeNull();
+  });
+
+  it('Show Less on a note that now fits: the button goes, and focus goes to the note, not the page', async () => {
+    save({ 'src/a.ts': LONG });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    fireEvent.click(await right().findByRole('button', { name: 'Show All of Why' }));
+    const less = right().getByRole('button', { name: 'Show Less of Why' });
+    less.focus();
+    perLine = 200; // the pane grew while it was open: closed, it fits
+    fireEvent.click(less);
+    expect(right().queryByRole('button', { name: /^Show (All|Less)/ })).toBeNull();
+    expect(document.activeElement).toBe(note(0));
+    expect(note(0).getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('a button that goes without focus moves no focus', async () => {
+    save({ 'src/a.ts': LONG });
+    pane();
+    await screen.findByRole('heading', { name: 'Both' });
+    await right().findByRole('button', { name: 'Show All of Why' });
+    const before = document.activeElement;
+    resize(200);
+    expect(right().queryByRole('button', { name: 'Show All of Why' })).toBeNull();
+    expect(document.activeElement).toBe(before);
+    expect(document.activeElement).not.toBe(note(0));
   });
 });
 

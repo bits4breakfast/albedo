@@ -635,7 +635,17 @@
   line-clamp: 2;
   overflow: hidden;
 }
+/* Open, a long note scrolls past 40vh: the band is flex: none, so without
+   this a long note in a narrow column would push the diff out of the pane. */
+.gd-diff-why:not([data-both]) > .gd-diff-why-text:not([data-clamped]) > .gd-diff-why-flow,
+.gd-diff-why[data-both] > .gd-diff-why-text:not([data-clamped]) .gd-diff-why-body {
+  max-height: 40vh;
+  overflow-y: auto;
+}
 .gd-diff-why[data-both] > .gd-diff-why-text > .gd-diff-why-flow { display: contents; }
+/* Focused only when Show All goes away under the keyboard (DiffNote). */
+.gd-diff-why-text:focus { outline: none; }
+.gd-diff-why-text:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
 .gd-diff-why-more { display: block; margin-top: 1px; line-height: 1.5; }
 .gd-diff-why[data-both] > .gd-diff-why-text > .gd-diff-why-more { grid-column: -2 / -1; justify-self: start; }
 

@@ -68,3 +68,35 @@ describe('the why under the file’s header (#264)', () => {
     });
   }
 });
+
+describe('Show All’s clamp and its open note (#397)', () => {
+  // jsdom applies no CSS: the pane's tests model the clamp, so these hold
+  // the rules that make it real. Both bands: one note alone, and both.
+  const rule = (selector: string) => {
+    const at = guide.indexOf(selector);
+    expect(at, selector).toBeGreaterThanOrEqual(0);
+    return guide.slice(guide.indexOf('{', at), guide.indexOf('}', at));
+  };
+  it('clamped, the clipped text is two lines with the rest hidden', () => {
+    for (const selector of [
+      '.gd-diff-why:not([data-both]) > .gd-diff-why-text[data-clamped] > .gd-diff-why-flow',
+      '.gd-diff-why[data-both] > .gd-diff-why-text[data-clamped] .gd-diff-why-body',
+    ]) {
+      const body = rule(selector);
+      expect(body).toMatch(/display: -webkit-box;/);
+      expect(body).toMatch(/-webkit-box-orient: vertical;/);
+      expect(body).toMatch(/-webkit-line-clamp: 2;/);
+      expect(body).toMatch(/overflow: hidden;/);
+    }
+  });
+  it('open, a long note scrolls past 40vh, so the diff below stays in reach', () => {
+    for (const selector of [
+      '.gd-diff-why:not([data-both]) > .gd-diff-why-text:not([data-clamped]) > .gd-diff-why-flow',
+      '.gd-diff-why[data-both] > .gd-diff-why-text:not([data-clamped]) .gd-diff-why-body',
+    ]) {
+      const body = rule(selector);
+      expect(body).toMatch(/max-height: 40vh;/);
+      expect(body).toMatch(/overflow-y: auto;/);
+    }
+  });
+});
