@@ -247,6 +247,16 @@ describe('cleanNotes', () => {
     // The default cap is still the note's.
     expect(cleanNotes([{ path: 'a', note: 'x'.repeat(NOTE_MAX_CHARS + 1) }], allowed).a).toHaveLength(NOTE_MAX_CHARS);
   });
+
+  it('keeps a long note whole: the cap is a safety net, far past what the model is asked for (#397)', () => {
+    // Three sentences, about 600 characters: cut at 240 before #397.
+    const note = 'Moves the retry rule into the queue so every sender backs off alike. '.repeat(9).trim();
+    expect(note.length).toBeGreaterThan(600);
+    expect(cleanNotes([{ path: 'a', note }], new Set(['a']))).toEqual({ a: note });
+    expect(NOTE_MAX_CHARS).toBe(2000);
+    // The file list's short line keeps its own cap.
+    expect(NOTE_LINE_MAX_CHARS).toBe(80);
+  });
 });
 
 describe('Set Aside and careful marks (#295)', () => {
