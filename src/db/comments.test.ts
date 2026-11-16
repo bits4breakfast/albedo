@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 }));
 
 import { archiveTask, createTask, deleteTask, resetDb } from './index';
+import { joinSuggestion } from '../lib/suggestion';
 import {
   addComment,
   commentFacts,
@@ -152,6 +153,36 @@ describe('formatForClaude', () => {
   it('fences code that itself contains backticks with a longer fence', () => {
     const text = formatForClaude([{ ...base, anchorText: 'echo ```' }]);
     expect(text).toContain('````\necho ```\n````');
+  });
+
+  it('a suggested edit (#411): the lines it replaces, then the replacement, then the text', () => {
+    const body = joinSuggestion(['    return countForRange(range.start, range.end);'], 'One query for the whole range.');
+    const anchor = '    let sum = 0;\n    for (const day of range.days()) sum += countFor(day);\n    return sum;';
+    const text = formatForClaude([{ ...base, path: 'src/report/totals.ts', lineStart: 41, lineEnd: 43, anchorText: anchor, body }], '');
+    expect(text).toBe(
+      [
+        '1. src/report/totals.ts:41-43',
+        'Suggested change: replace these lines',
+        '```',
+        anchor,
+        '```',
+        'with',
+        '```',
+        '    return countForRange(range.start, range.end);',
+        '```',
+        'One query for the whole range.',
+      ].join('\n'),
+    );
+  });
+
+  it('a suggestion of nothing deletes; one with no text ends at its code; one line is "this line"', () => {
+    const text = formatForClaude([{ ...base, lineStart: 3, lineEnd: 3, anchorText: 'dead();', body: joinSuggestion([], '') }], '');
+    expect(text).toBe(['1. src/A.php:3', 'Suggested change: delete this line', '```', 'dead();', '```'].join('\n'));
+  });
+
+  it('fences both blocks past the backticks in either', () => {
+    const text = formatForClaude([{ ...base, anchorText: 'x', body: joinSuggestion(['s = "````"'], 'Quote it.') }], '');
+    expect(text).toContain('`````\nx\n`````\nwith\n`````\ns = "````"\n`````\nQuote it.');
   });
 });
 

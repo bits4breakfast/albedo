@@ -25,6 +25,7 @@ import {
 } from '../db/comments';
 import { useReadFile } from './editor/openFile';
 import { Disclosure } from './Disclosure';
+import { commentHeadline, commentWords } from '../lib/suggestion';
 import { sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, useQueuedCi } from './transcript/ciFailure';
 import { useGithubDrafts } from './reviewDrafts';
@@ -121,7 +122,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         type="button"
         className="tf-comment-open"
         onClick={() => onOpen(c.path, c.lineStart)}
-        title={`${commentLocation(c)}\n\n${c.body}`}
+        title={`${commentLocation(c)}\n\n${commentWords(c.body)}`}
       >
         {/* The name gives way, never the line (#258): a long one ellipsizes
             inside its row instead of running under the ✓. */}
@@ -131,7 +132,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
             :{c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
           </span>
         </span>
-        <span className="tf-comment-body">{c.body.split('\n')[0]}</span>
+        <span className="tf-comment-body">{commentHeadline(c.body)}</span>
       </button>
       {end}
     </div>
@@ -260,14 +261,14 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
                   type="button"
                   className="tf-comment-open"
                   onClick={() => onOpen(c.path, c.lineStart)}
-                  title={`${commentLocation(c)}\n\n${c.body}`}
+                  title={`${commentLocation(c)}\n\n${commentWords(c.body)}`}
                 >
                   <span className="tf-comment-where">
                     <span className="tf-name">{c.path.split('/').pop()}</span>:
                     {c.lineStart === c.lineEnd ? c.lineStart : `${c.lineStart}-${c.lineEnd}`}
                   </span>
                   <span className="tf-comment-body">
-                    {c.body.split('\n')[0]}
+                    {commentHeadline(c.body)}
                     <span className="tf-comment-why">
                       {' '}
                       ·{' '}
