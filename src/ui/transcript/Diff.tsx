@@ -33,6 +33,7 @@ import {
   useBlockTokens,
   useCodeTokens,
   useLineTokens,
+  type HitRange,
 } from './codeTokens';
 import './transcript.css';
 
@@ -225,6 +226,119 @@ function gapBefore(hunk: HunkModel | undefined, prev: HunkModel | undefined): Ga
 }
 
 // ---------------------------------------------------------------------------
+// Search (#413)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a query is found in a line: plain text, case-insensitive unless the
+ * query has a capital in it. `[start, end)` pairs, not overlapping. Pure.
+ */
+export function findInLine(text: string, query: string): Array<[number, number]> {
+  if (query === '') return [];
+  const sensitive = query !== query.toLowerCase();
+  const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), sensitive ? 'g' : 'gi');
+  const out: Array<[number, number]> = [];
+  for (const m of text.matchAll(re)) out.push([m.index, m.index + m[0].length]);
+  return out;
+}
+
+/** One match of a search in a diff, in the order the diff shows its rows. */
+export interface DiffMatch {
+  /** Stable while the diff is: the side, the line and where in it. */
+  key: string;
+  /** A removed line is the base's (`old`); every other line is the file's now. */
+  side: 'old' | 'new';
+  line: number;
+  start: number;
+  end: number;
+  /** The whole line the match is in. */
+  text: string;
+  /** The hunk it is in, by index; null in a folded run of unchanged lines. */
+  hunk: number | null;
+  /** The folded run it is in, by the key the diff opens it with; null in a hunk. */
+  gap: number | null;
+  /** The fewest rows the diff must draw for this match to be drawn. */
+  need: number;
+}
+
+/**
+ * Every match of `query` in what the diff can show: each hunk's rows -- a
+ * removed line by its base number, the rest by their number now -- and,
+ * with both whole texts, the unchanged lines folded between and after them.
+ * The same walk as {@link Diff}'s, so a match is always somewhere it draws. Pure.
+ */
+export function diffSearchMatches(
+  diff: FileDiff,
+  expand: { oldText: string; newText: string } | null,
+  query: string,
+): DiffMatch[] {
+  if (query === '') return [];
+  const oldSource = expand ? sourceLines(expand.oldText) : null;
+  const newSource = expand ? sourceLines(expand.newText) : null;
+  return matchesIn(buildModel(diff.hunks), oldSource, newSource, query);
+}
+
+function matchesIn(
+  model: Model,
+  oldSource: readonly string[] | null,
+  newSource: readonly string[] | null,
+  query: string,
+): DiffMatch[] {
+  const out: DiffMatch[] = [];
+  if (query === '') return out;
+  const push = (side: 'old' | 'new', line: number, text: string, hunk: number | null, gap: number | null, need: number) => {
+    for (const [start, end] of findInLine(text, query)) {
+      out.push({ key: `${side === 'old' ? 'o' : 'n'}:${line}:${start}`, side, line, start, end, text, hunk, gap, need });
+    }
+  };
+  const gapLines = (gap: Gap, key: number, need: number) => {
+    if (!oldSource || !newSource) return;
+    for (let i = 0; i < gap.count; i++) {
+      const n = gap.newStart + i;
+      push('new', n, newSource[n - 1] ?? oldSource[gap.oldStart + i - 1] ?? '', null, key, need);
+    }
+  };
+  let before = 0;
+  for (let hi = 0; hi < model.hunks.length; hi++) {
+    const hunk = model.hunks[hi]!;
+    const gap = gapBefore(hunk, model.hunks[hi - 1]);
+    if (gap) gapLines(gap, hi, before + 1);
+    hunk.rows.forEach((r, i) => {
+      if (r.line.kind === 'del' && r.line.oldNumber !== null) push('old', r.line.oldNumber, r.line.content, hi, null, before + i + 1);
+      else if ((r.line.kind === 'add' || r.line.kind === 'context') && r.line.newNumber !== null) {
+        push('new', r.line.newNumber, r.line.content, hi, null, before + i + 1);
+      }
+    });
+    before += hunk.rows.length;
+  }
+  if (oldSource && newSource) {
+    const tail = tailGap(model, newSource);
+    if (tail) gapLines(tail, model.hunks.length, before + 1);
+  }
+  return out;
+}
+
+/** The unchanged lines after the last hunk, when the whole new text says how many. */
+function tailGap(model: Model, newSource: readonly string[]): Gap | null {
+  const last = lastNumbers(model.hunks[model.hunks.length - 1]);
+  const count = newSource.length - last.new;
+  return count > 0 ? { oldStart: last.old + 1, newStart: last.new + 1, count } : null;
+}
+
+/** A search's matches by row, for the bodies to mark: `side` and line in, ranges out. */
+type HitLookup = (side: 'old' | 'new', line: number | null) => HitRange[] | undefined;
+
+const DiffHitsContext = createContext<HitLookup | null>(null);
+
+/** The ranges to mark on a row; a removed row is looked up by its base line. */
+function rowHits(hits: HitLookup | null, line: DiffLine, column?: 'left' | 'right'): HitRange[] | undefined {
+  if (!hits) return undefined;
+  if (line.kind === 'del') return hits('old', line.oldNumber);
+  if (line.kind === 'meta' || (column === 'left' && line.kind !== 'context')) return undefined;
+  return hits('new', line.newNumber);
+}
+
+// ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
 
@@ -349,6 +463,18 @@ export interface DiffProps {
    * replaced a file puts "Show Whole File" here (#387). Nothing by default.
    */
   footer?: ReactNode;
+  /**
+   * A search to mark (#413, the Review Guide): every match highlighted, the
+   * `current` one (a {@link DiffMatch} key) stronger. A folded run with a
+   * match opens by itself, and the rows drawn reach the current one. None
+   * by default.
+   */
+  search?: DiffSearch | null;
+}
+
+export interface DiffSearch {
+  query: string;
+  current: string | null;
 }
 
 export function Diff({
@@ -361,6 +487,7 @@ export function Diff({
   head = true,
   onCollapse,
   footer = null,
+  search = null,
 }: DiffProps): ReactNode {
   const auto = useDiffLayout();
   const ref = auto.ref;
@@ -403,9 +530,37 @@ export function Diff({
     return { old: expandOld.join('\n'), new: expandNew.join('\n') };
   }, [expandOldText, expandNewText, expandOld, expandNew, model]);
   const wholeOn = whole !== null;
+
+  // A search (#413): its matches, which runs they open, and the rows each
+  // line marks. The current match's run is always open, and the rows drawn
+  // always reach it.
+  const query = search?.query ?? '';
+  const currentKey = search?.current ?? null;
+  const matches = useMemo(() => matchesIn(model, expandOld, expandNew, query), [model, expandOld, expandNew, query]);
+  const current = useMemo(() => matches.find((m) => m.key === currentKey) ?? null, [matches, currentKey]);
+  const gapFound = useMemo(() => {
+    const out = new Map<number, number>();
+    for (const m of matches) if (m.gap !== null) out.set(m.gap, (out.get(m.gap) ?? 0) + 1);
+    return out;
+  }, [matches]);
+  const hitLookup = useMemo<HitLookup | null>(() => {
+    if (matches.length === 0) return null;
+    const byRow = new Map<string, HitRange[]>();
+    for (const m of matches) {
+      const at = `${m.side}:${m.line}`;
+      const list = byRow.get(at) ?? [];
+      list.push({ start: m.start, end: m.end, current: m.key === currentKey });
+      byRow.set(at, list);
+    }
+    return (side, line) => (line === null ? undefined : byRow.get(`${side}:${line}`));
+  }, [matches, currentKey]);
+  /** A run is open when the reader opened it, else when it holds a match; its current match's always. */
+  const gapOpen = (i: number) => current?.gap === i || (openGaps[i] ?? gapFound.has(i));
+  const drawn = Math.max(budget, current?.need ?? 0);
+
   // Each side only as far as the last line a hunk shows, until the gap after
   // the last hunk is opened: the lines below it are never seen otherwise.
-  const tailOpen = openGaps[model.hunks.length] === true;
+  const tailOpen = gapOpen(model.hunks.length);
   const reach = useMemo(() => lastNumbers(model.hunks[model.hunks.length - 1]), [model]);
   const wholeOldTokens = useLineTokens(whole?.old ?? '', diff.lang, tailOpen ? Infinity : reach.old);
   const wholeNewTokens = useLineTokens(whole?.new ?? '', diff.lang, tailOpen ? Infinity : reach.new);
@@ -520,8 +675,9 @@ export function Diff({
     [file, loading, readFile, readPath],
   );
 
-  const toggleGap = useCallback((i: number) => {
-    setOpenGaps((prev) => ({ ...prev, [i]: !prev[i] }));
+  // From the run's state as shown: a search may have opened it (#413).
+  const toggleGap = useCallback((i: number, open: boolean) => {
+    setOpenGaps((prev) => ({ ...prev, [i]: !open }));
   }, []);
 
   if (diff.hunks.length === 0) {
@@ -541,18 +697,19 @@ export function Diff({
   for (let hi = 0; hi < model.hunks.length; hi++) {
     const hunk = model.hunks[hi];
     if (!hunk) continue;
-    if (spent >= budget) break;
+    if (spent >= drawn) break;
 
     const gap = gapBefore(hunk, model.hunks[hi - 1]);
     if (gap) {
-      const open = openGaps[hi] === true;
+      const open = gapOpen(hi);
       body.push(
         <GapBar
           key={`gap-${hi}`}
           gap={gap}
           open={open}
           expandable={expandNew !== null}
-          onClick={() => toggleGap(hi)}
+          found={expandNew !== null ? (gapFound.get(hi) ?? 0) : 0}
+          onClick={() => toggleGap(hi, open)}
         />,
       );
       if (open && expandOld && expandNew) {
@@ -571,7 +728,7 @@ export function Diff({
       }
     }
 
-    const remaining = budget - spent;
+    const remaining = drawn - spent;
     const rows = hunk.rows.length > remaining ? hunk.rows.slice(0, remaining) : hunk.rows;
     spent += rows.length;
 
@@ -591,32 +748,26 @@ export function Diff({
   }
 
   // Trailing unchanged region, when we know how long the file actually is.
-  if (spent < budget && expandNew && expandOld) {
-    const last = model.hunks[model.hunks.length - 1];
-    let lastOld = 0;
-    let lastNew = 0;
-    for (const r of last?.rows ?? []) {
-      if (r.line.oldNumber !== null) lastOld = Math.max(lastOld, r.line.oldNumber);
-      if (r.line.newNumber !== null) lastNew = Math.max(lastNew, r.line.newNumber);
-    }
-    const count = expandNew.length - lastNew;
-    if (count > 0) {
+  if (spent < drawn && expandNew && expandOld) {
+    const tail = tailGap(model, expandNew);
+    if (tail) {
       const key = model.hunks.length;
-      const open = openGaps[key] === true;
+      const open = gapOpen(key);
       body.push(
         <GapBar
           key="gap-tail"
-          gap={{ oldStart: lastOld + 1, newStart: lastNew + 1, count }}
+          gap={tail}
           open={open}
           expandable
-          onClick={() => toggleGap(key)}
+          found={gapFound.get(key) ?? 0}
+          onClick={() => toggleGap(key, open)}
         />,
       );
       if (open) {
         body.push(
           <GapLines
             key="gaplines-tail"
-            gap={{ oldStart: lastOld + 1, newStart: lastNew + 1, count }}
+            gap={tail}
             oldSource={expandOld}
             newSource={expandNew}
             lang={diff.lang}
@@ -672,7 +823,7 @@ export function Diff({
             onExpand={() => void revealContext('lead')}
           />
         ) : null}
-        {body}
+        <DiffHitsContext.Provider value={hitLookup}>{body}</DiffHitsContext.Provider>
         {offerContext ? (
           <ContextRegion
             side="trail"
@@ -1180,6 +1331,7 @@ function UnifiedBody({
   linkPath?: string | null;
 }): ReactNode {
   const annotate = useContext(DiffAnnotationsContext);
+  const hits = useContext(DiffHitsContext);
   return (
     <div className="tx-d-rows tx-d-unified">
       {rows.map((r, i) => {
@@ -1197,7 +1349,7 @@ function UnifiedBody({
               <LineNo n={r.line.oldNumber} linkPath={null} />
               <LineNo n={line} linkPath={linkPath} />
               <span className="tx-d-mark">{r.line.kind === 'add' ? '+' : r.line.kind === 'del' ? '-' : ' '}</span>
-              <Code pieces={composePieces(r.line.content, tokens, r.line.segments)} />
+              <Code pieces={composePieces(r.line.content, tokens, r.line.segments, rowHits(hits, r.line))} />
               {line !== null ? <CommentHandle line={line} /> : null}
               {removed !== null ? <CommentHandle line={removed} side="old" /> : null}
             </div>
@@ -1223,6 +1375,7 @@ function SplitBody({
 }): ReactNode {
   const pairs = useMemo(() => pairRows(rows), [rows]);
   const annotate = useContext(DiffAnnotationsContext);
+  const hits = useContext(DiffHitsContext);
   // A drag that starts on one side selects only that side: the other column
   // is taken out of selection until the next press. Without this a copy
   // interleaves old and new lines, which is never what anyone wanted.
@@ -1252,7 +1405,9 @@ function SplitBody({
               {p.left ? (
                 <>
                   <LineNo n={p.left.line.oldNumber} linkPath={null} />
-                  <Code pieces={composePieces(p.left.line.content, oldTokens[p.left.oldRow], p.left.line.segments)} />
+                  <Code
+                    pieces={composePieces(p.left.line.content, oldTokens[p.left.oldRow], p.left.line.segments, rowHits(hits, p.left.line, 'left'))}
+                  />
                   {removed !== null ? <CommentHandle line={removed} side="old" /> : null}
                 </>
               ) : (
@@ -1266,7 +1421,9 @@ function SplitBody({
               {p.right ? (
                 <>
                   <LineNo n={p.right.line.newNumber} linkPath={linkPath} />
-                  <Code pieces={composePieces(p.right.line.content, newTokens[p.right.newRow], p.right.line.segments)} />
+                  <Code
+                    pieces={composePieces(p.right.line.content, newTokens[p.right.newRow], p.right.line.segments, rowHits(hits, p.right.line))}
+                  />
                   {p.right.line.newNumber !== null ? <CommentHandle line={p.right.line.newNumber} /> : null}
                 </>
               ) : (
@@ -1291,14 +1448,19 @@ function GapBar({
   gap,
   open,
   expandable,
+  found = 0,
   onClick,
 }: {
   gap: Gap;
   open: boolean;
   expandable: boolean;
+  /** Search matches inside (#413): said on the bar, which they opened. */
+  found?: number;
   onClick: () => void;
 }): ReactNode {
-  const label = `${gap.count.toLocaleString()} Unchanged Line${gap.count === 1 ? '' : 's'}`;
+  const label = `${gap.count.toLocaleString()} Unchanged Line${gap.count === 1 ? '' : 's'}${
+    found > 0 ? ` · ${open ? 'opened: ' : ''}${found.toLocaleString()} match${found === 1 ? '' : 'es'} inside` : ''
+  }`;
   /*
      Two different glyphs, on purpose. A caret means "you can open this", so the
      expandable bar uses the pane's one disclosure vocabulary. The static bar is

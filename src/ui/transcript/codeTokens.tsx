@@ -151,6 +151,15 @@ interface Piece {
   text: string;
   style: Record<string, string>;
   changed: boolean;
+  /** A search match (#413): 1 a match, 2 the current one. Absent outside one. */
+  hit?: 1 | 2;
+}
+
+/** A search match within a line (#413): `[start, end)` in the line's characters. */
+export interface HitRange {
+  start: number;
+  end: number;
+  current: boolean;
 }
 
 /** Normalise a token line so its text covers exactly `content`. */
@@ -181,19 +190,27 @@ export function composePieces(
   content: string,
   tokens: DualToken[] | undefined,
   segments: DiffSegment[] | undefined,
+  hits?: readonly HitRange[],
 ): Piece[] {
   const toks = normaliseTokens(content, tokens);
-  if (!segments || segments.length === 0) {
+  const hasHits = hits !== undefined && hits.length > 0;
+  if ((!segments || segments.length === 0) && !hasHits) {
     return toks.map((t) => ({ text: t.text, style: t.style, changed: false }));
   }
 
+  // One flag per character: bit 0 the word-level change, bits 1-2 a search
+  // match (#413), so a piece ends wherever either layer does and keeps both.
   const flags = new Uint8Array(content.length);
   let off = 0;
-  for (const s of segments) {
+  for (const s of segments ?? []) {
     const end = Math.min(content.length, off + s.text.length);
     if (s.changed && end > off) flags.fill(1, off, end);
     off = end;
     if (off >= content.length) break;
+  }
+  for (const h of hits ?? []) {
+    const bits = h.current ? 4 : 2;
+    for (let i = Math.max(0, h.start); i < Math.min(content.length, h.end); i++) flags[i] = (flags[i]! & 1) | bits;
   }
 
   const out: Piece[] = [];
@@ -204,7 +221,9 @@ export function composePieces(
       const flag = flags[pos + start] ?? 0;
       let end = start + 1;
       while (end < t.text.length && (flags[pos + end] ?? 0) === flag) end++;
-      out.push({ text: t.text.slice(start, end), style: t.style, changed: flag === 1 });
+      const piece: Piece = { text: t.text.slice(start, end), style: t.style, changed: (flag & 1) === 1 };
+      if (flag & 6) piece.hit = flag & 4 ? 2 : 1;
+      out.push(piece);
       start = end;
     }
     pos += t.text.length;
@@ -212,12 +231,18 @@ export function composePieces(
   return out;
 }
 
+function pieceClass(p: Piece): string {
+  let c = p.changed ? 'tx-tok tx-d-word' : 'tx-tok';
+  if (p.hit) c += p.hit === 2 ? ' tx-d-hit tx-d-hit-cur' : ' tx-d-hit';
+  return c;
+}
+
 export function Code({ pieces }: { pieces: Piece[] }): ReactNode {
   if (pieces.length === 0) return <span className="tx-d-code" />;
   return (
     <span className="tx-d-code">
       {pieces.map((p, i) => (
-        <span key={i} className={p.changed ? 'tx-tok tx-d-word' : 'tx-tok'} style={p.style as CSSProperties}>
+        <span key={i} className={pieceClass(p)} style={p.style as CSSProperties}>
           {p.text}
         </span>
       ))}

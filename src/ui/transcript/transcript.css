@@ -1729,6 +1729,17 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) var(--tx-word-tint), var(--add-soft)); }
 .tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) var(--tx-word-tint), var(--del-soft)); }
 
+/*
+   Search matches (#413, the Review Guide). A ground of their own, opaque,
+   over the row's tint and over a word change alike, and the text on it in
+   --on-hit, not the token's colour: a syntax colour is cleared against the
+   code's grounds, never against a match's. The current match is the
+   stronger fill. Selectors carry the diff's root, so they outrank the word
+   tint and the theme's token colour by specificity, never by load order.
+*/
+.tx-d .tx-d-code .tx-tok.tx-d-hit { background: var(--hit); color: var(--on-hit); border-radius: 2px; }
+.tx-d .tx-d-code .tx-tok.tx-d-hit-cur { background: var(--hit-cur); }
+
 /* --- collapsed regions ---------------------------------------------------- */
 
 .tx-d-gap {

@@ -106,6 +106,21 @@
  * focusAreas.ts, the native menu (only ⌘Q and ⌘W) and GuidePane's own keys:
  * nothing else binds G.
  *
+ * ## ⌘F, ⇧⌘F in the Review Guide: search it
+ *
+ * While focus is in a written guide -- its fields too -- ⌘F searches the
+ * file being read and ⇧⌘F every file in the guide (#413). GuidePane hears
+ * both in its own keydown, from `code` (`KeyF`), Command only, and stops
+ * them there, so the window's ⇧⌘F (Find in Files, bubble phase) never hears
+ * the key. Everywhere else -- a guide not yet written, the transcript, the
+ * terminals, the editor -- ⇧⌘F is Find in Files, unchanged. ⌘F is bound
+ * nowhere app-wide; CodeMirror's search keymap takes it in the editor, where
+ * the guide never is. Checked against CodeMirror's default, history and
+ * search keymaps, editorKeys.ts, focusAreas.ts, every other keydown
+ * listener in src (none reads F) and the native menu (Tauri's default has
+ * no Find; its Enter Full Screen is ⌃⌘F, which GuidePane leaves alone, as
+ * it refuses Control).
+ *
  * ## ⌘T: the shell
  *
  * The same as ⌥F12 (#232): opens or hides the shell drawer, from anywhere,
@@ -207,7 +222,9 @@ export type Gesture =
   | 'guide mod+enter'
   | 'guide alt+arrows'
   | 'guide arrows'
-  | 'guide alt+enter';
+  | 'guide alt+enter'
+  | 'guide mod+f'
+  | 'guide mod+shift+f';
 
 export interface ShortcutDoc {
   combo: Combo | Gesture;
@@ -242,7 +259,7 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+o', keys: '⌘O', description: 'Go to Class' },
   { combo: 'mod+alt+o', keys: '⌥⌘O', description: 'Go to Symbol' },
   { combo: 'shift shift', keys: '⇧⇧', description: 'Search Everywhere' },
-  { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files' },
+  { combo: 'mod+shift+f', keys: '⇧⌘F', description: 'Find in Files (in the Review Guide: Search All Its Files)' },
   { combo: 'mod+shift+p', keys: '⇧⌘P', description: 'Push the Selected Task (Commits First)' },
   { combo: 'mod+shift+r', keys: '⇧⌘R', description: 'Make the Selected Task Available Remotely (Asks First)' },
   { combo: 'mod+shift+g', keys: '⇧⌘G', description: 'Review Guide for the Selected Task (in the Editor: Find Previous)' },
@@ -277,6 +294,8 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
   { combo: 'guide mod+enter', keys: '⌘↩', description: 'Review Guide: Send the Waiting Comments, then Show the Transcript' },
+  { combo: 'guide mod+f', keys: '⌘F', description: 'Review Guide: Search This File (↩ / ⇧↩ Next / Previous, Esc Closes)' },
+  { combo: 'guide mod+shift+f', keys: '⇧⌘F', description: 'Review Guide: Search All the Guide’s Files' },
   { combo: 'new-task mod+enter', keys: '⌘↩', description: 'In New Task: Create, from any field' },
   { combo: 'alt+f12', keys: '⌥F12', description: 'Shell in the Main Checkout' },
   { combo: 'mod+t', keys: '⌘T', description: 'Shell in the Main Checkout (the same as ⌥F12)' },

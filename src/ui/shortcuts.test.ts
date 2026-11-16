@@ -447,3 +447,12 @@ describe('editor keys', () => {
     expect(SHORTCUTS.some((s) => s.keys === '⌥⌘C')).toBe(false);
   });
 });
+
+describe('⌘F and ⇧⌘F in the Review Guide (#413)', () => {
+  it('are documented, ⌘F is free app-wide, and ⇧⌘F stays Find in Files outside the guide', () => {
+    expect(SHORTCUTS.find((s) => s.combo === 'guide mod+f')?.keys).toBe('⌘F');
+    expect(SHORTCUTS.find((s) => s.combo === 'guide mod+shift+f')?.keys).toBe('⇧⌘F');
+    expect(comboOf(ev({ key: 'f', code: 'KeyF', metaKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'F', code: 'KeyF', metaKey: true, shiftKey: true }))?.combo).toBe('mod+shift+f');
+  });
+});
