@@ -27,7 +27,7 @@ import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
 import { commentMarks, groupCommentCount } from './commentMarks';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
-import { sendLabel, useToSend } from '../ui/transcript/toSend';
+import { sendLabel, useToSend, useToSendFrozen } from '../ui/transcript/toSend';
 import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
 import { asFocus, firstMatch, projectFocus, type GuideFocus } from './focus';
 import { chosenFocus, draftOf, GuideOptions, useTaskProject } from './GuideOptions';
@@ -522,6 +522,8 @@ function GuideBody({
   // passages (#254). Send N shows the same N as the list above the box.
   const toSend = useToSend(task.id);
   const waitingCount = toSend.count;
+  // A send already carries them (#404): a second would carry them again.
+  const sendFrozen = useToSendFrozen(task.id);
   // The transcript is shown after (#254): where it lands, sent or held.
   const sendComments = () => void sendWaitingComments(task.id);
   const sendButton =
@@ -530,10 +532,18 @@ function GuideBody({
         type="button"
         className={view.stale ? 'gd-btn' : 'gd-btn gd-btn-primary'}
         onClick={sendComments}
+        disabled={sendFrozen}
         aria-keyshortcuts="Meta+Shift+S Meta+Enter"
-        title={`Send the ${waitingCount} To Send to Claude now, and show the transcript (⇧⌘S, or ⌘↩ here). What you're typing in the message box stays there.`}
+        title={
+          sendFrozen
+            ? 'Your message is on its way with these'
+            : `Send the ${waitingCount} To Send to Claude now, and show the transcript (⇧⌘S, or ⌘↩ here). What you're typing in the message box stays there.`
+        }
       >
-        {sendLabel(waitingCount)} <span className="gd-btn-key">⇧⌘S</span>
+        {sendLabel(waitingCount)}{' '}
+        <span className="gd-btn-key" aria-hidden="true">
+          ⇧⌘S
+        </span>
       </button>
     ) : null;
 
@@ -738,10 +748,10 @@ function GuideBody({
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
     if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
-    // ⌘⏎: Send Comments (#256). A comment box is a textarea, returned above,
+    // ⌘⏎: Send N (#256, #404), not while a send already carries them. A comment box is a textarea, returned above,
     // so there ⌘⏎ still saves the comment and never sends.
     if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
-      if (waitingCount === 0) return;
+      if (waitingCount === 0 || sendFrozen) return;
       e.preventDefault();
       sendComments();
       return;
@@ -817,8 +827,8 @@ function GuideBody({
             </label>
           </>
         )}
-        {/* Out of date, Rewrite leads and Send Comments waits beside it;
-            otherwise comments waiting make Send the row's action (#254). */}
+        {/* Out of date, Rewrite leads and Send N sits beside it; otherwise
+            anything To Send makes Send N the row's action (#254, #404). */}
         {view.stale ? sendButton : null}
         <button
           type="button"

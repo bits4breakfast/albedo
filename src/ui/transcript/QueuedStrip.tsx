@@ -119,7 +119,16 @@ export function QueuedStrip({
       {mine.length > 0 ? (
         <>
           {/* Albedo never types into the terminal, so these are changed there (#399). */}
-          <div className="tx-queued-head" title="Claude Code sends these when it finishes its current step">
+          <div
+            className="tx-queued-head"
+            // While Remote Control's menu is up (#343) its hint takes the line;
+            // where they are changed is still said, here.
+            title={
+              menu
+                ? 'Claude Code sends these once Remote Control\u2019s menu is answered. Change them in the terminal (\u2191).'
+                : 'Claude Code sends these when it finishes its current step'
+            }
+          >
             <span>
               In Claude Code · <span className="tx-queued-count">{mine.length}</span>
             </span>
@@ -157,8 +166,9 @@ export function QueuedStrip({
  * The outbox's part of the band, headed by what its messages wait for.
  *
  * With two or more that could each be sent now, the head offers Send All Now
- * on the right (#290), in place of the hint, which moves to its tooltip: they
- * go into the running turn as one message, as the turn's end would send them.
+ * on the right (#290), after why they are held (#409); how they would go
+ * when left alone is in its tooltip: they go into the running turn as one
+ * message, as the turn's end would send them.
  * One open for editing is left out and stays held. If they could not go
  * after all -- a release had the task's lock -- the head says so briefly.
  */
@@ -206,6 +216,8 @@ function HeldGroup({
         <span>
           {behindBox ? 'Held' : heldLabel(conditions)} · <span className="tx-queued-count">{held.length}</span>
         </span>
+        {/* Why, read with the count (#409), before Send All Now as well. */}
+        {hint !== null ? <span className="tx-queued-why">{hint}</span> : null}
         {allOffered ? (
           <>
             {notNow ? <span className="tx-queued-note">Couldn{'\u2019'}t send now — try again</span> : null}
@@ -225,8 +237,6 @@ function HeldGroup({
               Send All Now
             </button>
           </>
-        ) : hint !== null ? (
-          <span className="tx-queued-why">{hint}</span>
         ) : null}
         {editAll >= 2 ? (
           <span

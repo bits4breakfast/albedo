@@ -780,6 +780,11 @@ export function Composer({
     () =>
       onSendCommentsRequest((id) => {
         if (id !== taskId) return false;
+        // A send of this box's is under way -- being written, waiting for a
+        // session, or held at a prompt -- and its body already carries To
+        // Send (#404): sending them again would make Claude read them twice.
+        // Not taken; Files and the guide disable their Send N meanwhile.
+        if (inFlightRef.current) return false;
         // Nothing waiting: not taken, so the caller leaves the tab alone.
         if (commentsOf(taskId).length === 0 && waitingCodeRef.current.length === 0 && queuedCiOf(taskId) === null) return false;
         void sendComments();

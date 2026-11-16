@@ -15,10 +15,11 @@ import type { TranscriptComment } from './transcript/transcriptQuotes';
 
 const harness = vi.hoisted(() => ({ db: null as unknown }));
 const jumps = vi.hoisted(() => [] as Array<[number, unknown]>);
+const jumpTaken = vi.hoisted(() => ({ value: true }));
 vi.mock('./transcript/composerBridge', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./transcript/composerBridge')>()),
   sendWaitingComments: () => true,
-  jumpToPassage: (id: number, target: unknown) => (jumps.push([id, target]), true),
+  jumpToPassage: (id: number, target: unknown) => (jumps.push([id, target]), jumpTaken.value),
 }));
 vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => harness.db } }));
 
@@ -29,6 +30,7 @@ const { default: CommentsSection } = await import('./CommentsSection');
 const drafts = await import('./transcript/drafts');
 const ci = await import('./transcript/ciFailure');
 const { setToSendFrozen, __resetToSendFrozen, toSendOf } = await import('./transcript/toSend');
+const outbox = await import('./transcript/outbox');
 const { WaitingComments } = await import('./transcript/WaitingComments');
 
 let task: Task;
@@ -49,8 +51,10 @@ beforeEach(async () => {
   });
   ci.__resetQueuedCi();
   drafts.__resetDrafts();
+  outbox.__resetOutbox();
   __resetToSendFrozen();
   jumps.length = 0;
+  jumpTaken.value = true;
   resetDb();
   harness.db = createTestDb();
   task = await createTask({
@@ -90,7 +94,7 @@ describe('To Send in Files ▸ Comments (#404)', () => {
     await waitFor(() => expect(group.querySelectorAll('.tf-comment')).toHaveLength(5));
     const rows = [...group.querySelectorAll('.tf-comment')].map((r) => r.querySelector('.tf-comment-body')?.textContent);
     expect(rows).toEqual(['build', 'use the local timezone', 'Name this rowsForRange', 'Why count here?', 'one query for the whole range']);
-    expect(within(group).getByRole('button', { name: 'Send 5 ⇧⌘S' })).toBeTruthy();
+    expect(within(group).getByRole('button', { name: 'Send 5' })).toBeTruthy();
     // The message box's list says the same number.
     const code = await listComments(task.id);
     render(<WaitingComments taskId={task.id} frozen={false} list={toSendOf(ci.queuedCiOf(task.id), code, drafts.commentsOf(task.id))} />);
@@ -146,12 +150,62 @@ describe('To Send in Files ▸ Comments (#404)', () => {
     await within(group).findByRole('button', { name: 'Edit the comment on src/a.ts:3' });
     const acts = () => within(group).getAllByRole('button', { name: /^(Edit|Remove) / }) as HTMLButtonElement[];
     expect(acts()).toHaveLength(4);
+    const send = within(group).getByRole('button', { name: 'Send 2' }) as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
     act(() => setToSendFrozen(task.id, true));
     expect(acts().every((b) => b.disabled)).toBe(true);
+    // A send already carries them: a second would carry them again (#404 review).
+    expect(send.disabled).toBe(true);
     act(() => setToSendFrozen(task.id + 1, false));
     expect(acts().every((b) => b.disabled)).toBe(true);
     act(() => setToSendFrozen(task.id, false));
     expect(acts().every((b) => !b.disabled)).toBe(true);
+    expect(send.disabled).toBe(false);
+  });
+
+  it('an edit left open while a send carries the comment cannot be saved until it is done', async () => {
+    await add('src/a.ts', 3, 'Name it.');
+    pane();
+    const group = await screen.findByRole('group', { name: 'To Send, 1' });
+    fireEvent.click(await within(group).findByRole('button', { name: 'Edit the comment on src/a.ts:3' }));
+    const field = within(group).getByRole('textbox', { name: 'Edit comment' });
+    fireEvent.change(field, { target: { value: 'Too late.' } });
+    act(() => setToSendFrozen(task.id, true));
+    expect((within(group).getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    await act(async () => {});
+    expect((await listComments(task.id))[0]?.body).toBe('Name it.');
+    // The words are kept; once the send is done they save.
+    act(() => setToSendFrozen(task.id, false));
+    fireEvent.keyDown(within(group).getByRole('textbox', { name: 'Edit comment' }), { key: 'Enter', metaKey: true });
+    await waitFor(async () => expect((await listComments(task.id))[0]?.body).toBe('Too late.'));
+  });
+
+  it('Jump with no transcript to take it says so', async () => {
+    jumpTaken.value = false;
+    drafts.addComment(task.id, quote('q1'));
+    pane();
+    const group = await screen.findByRole('group', { name: 'To Send, 1' });
+    fireEvent.click(within(group).getByRole('button', { name: /Transcript quote/ }));
+    expect(screen.getByText('Open the task’s transcript to jump to the passage.')).toBeTruthy();
+  });
+
+  it('code comments a held message carries are Held, first, with nothing to change, and counted (#409)', async () => {
+    const carriedId = await add('src/a.ts', 3, 'On its way.');
+    await add('src/b.ts', 4, 'Still to send.');
+    outbox.holdMessage(task.id, 'the held body', Date.now(), [carriedId]);
+    pane();
+    const held = await screen.findByRole('group', { name: 'Held, 1' });
+    expect(within(held).getByText('On its way.')).toBeTruthy();
+    expect(within(held).queryByRole('button', { name: /^(Edit|Remove) / })).toBeNull();
+    const toSend = await screen.findByRole('group', { name: 'To Send, 1' });
+    expect(within(toSend).queryByText('On its way.')).toBeNull();
+    expect([...document.querySelectorAll('.tf-comments-group')].map((g) => g.getAttribute('aria-label'))).toEqual(['Held, 1', 'To Send, 1']);
+    expect(document.querySelector('.tf-section-count')?.textContent).toBe('2');
+    // The held message removed: back To Send.
+    act(() => outbox.removeHeld(task.id, outbox.heldFor(task.id)[0]!.id));
+    expect(await screen.findByRole('group', { name: 'To Send, 2' })).toBeTruthy();
+    expect(screen.queryByRole('group', { name: /^Held/ })).toBeNull();
   });
 });
 

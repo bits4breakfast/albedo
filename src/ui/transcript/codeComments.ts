@@ -61,6 +61,15 @@ export function useWaitingCodeComments(taskId: number | null): readonly ReviewCo
 const NONE: readonly ReviewComment[] = [];
 
 /**
+ * The code comments a held message carries (#409): on their way, marked sent
+ * when it is delivered. Shown as Held, not To Send, wherever they are listed.
+ */
+export function useCarriedCodeIds(taskId: number | null): ReadonlySet<number> {
+  const held = useHeld(taskId);
+  return useMemo(() => new Set(held.flatMap((h) => h.commentIds ?? [])), [held]);
+}
+
+/**
  * What Send hands Claude Code: a queued CI failure (#280, `formatCiFailure`),
  * the code comments under the intro (as `formatForClaude` writes them), then
  * the transcript comments as quotes, then the box's own text. Any part may be

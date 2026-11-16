@@ -11,23 +11,33 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { hasLivePty, submitPty } from '../Terminal';
+import { hasLivePty, ptyLiveSince, startPty, submitPty } from '../Terminal';
 import { Composer } from './Composer';
 import { __resetDrafts, addComment, commentsOf } from './drafts';
 import type { TranscriptComment } from './transcriptQuotes';
-import { __resetOutbox } from './outbox';
-import { __resetTurns } from './turn';
-import { seedQueue } from '../../capture/queue';
+import { __resetOutbox, heldFor } from './outbox';
+import { startOutboxRelease } from './outboxRelease';
+import { __resetTurns, noteTaskSessions } from './turn';
+import { recordQueueOperations, seedQueue } from '../../capture/queue';
 import { __resetConnectivity } from '../../lib/connectivity';
 
-vi.mock('../Terminal', () => ({
-  submitPty: vi.fn(async () => true),
-  startPty: vi.fn(() => false),
-  hasLivePty: vi.fn(() => true),
-  ptyLiveSince: vi.fn(() => null),
-  canResume: vi.fn(() => false),
-  onPtyPresenceChange: vi.fn(() => () => {}),
-}));
+vi.mock('../Terminal', () => {
+  const listeners = new Set<(taskId: number, live: boolean) => void>();
+  return {
+    submitPty: vi.fn(async () => true),
+    startPty: vi.fn(() => false),
+    hasLivePty: vi.fn(() => true),
+    ptyLiveSince: vi.fn(() => null),
+    canResume: vi.fn(() => false),
+    onPtyPresenceChange: vi.fn((cb: (taskId: number, live: boolean) => void) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    }),
+    __emitPresence: (taskId: number, live: boolean) => {
+      for (const cb of [...listeners]) cb(taskId, live);
+    },
+  };
+});
 
 const codeRows = vi.hoisted(() => ({ rows: [] as import('../../db/comments').ReviewComment[] }));
 vi.mock('../../db/comments', async () => {
@@ -43,6 +53,7 @@ vi.mock('@tauri-apps/api/path', () => ({ homeDir: vi.fn(async () => '/Users/me')
 vi.mock('@tauri-apps/plugin-fs', () => ({ mkdir: vi.fn(async () => {}), writeFile: vi.fn(async () => {}) }));
 
 const { listComments, markCommentsSent } = await import('../../db/comments');
+const term = (await import('../Terminal')) as unknown as { __emitPresence: (taskId: number, live: boolean) => void };
 
 /** The code comments are read once on mount; let that read land. */
 async function codeLoaded() {
@@ -175,5 +186,125 @@ describe('To Send leaves what is sent unchanged (#404)', () => {
     expect(vi.mocked(submitPty).mock.calls[0]).toEqual([1, `${CI}\n\n${CODE}\n\n${QUOTES}`]);
     expect(markCommentsSent).toHaveBeenCalledWith(1, [9, 3]);
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('half a thought');
+  });
+});
+
+/*
+   While a send of the box is under way it already carries To Send. Send N
+   (Files, the guide) and ⇧⌘S must not make a second message with the same
+   comments (#404 review): Claude would read them twice. Each path: the body
+   that goes is the one recorded above, once, and the comments are marked
+   sent once.
+*/
+describe('To Send goes once while a send carries it (#404)', () => {
+  const ALL = `${CI}\n\n${CODE}\n\n${QUOTES}\n\nPlease fix these.`;
+  beforeEach(async () => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    const { __resetQueuedCi } = await import('./ciFailure');
+    const { __setAttentionBackend } = await import('../attention');
+    __setAttentionBackend(() => {}, true, () => {});
+    __resetQueuedCi();
+    __resetDrafts();
+    __resetConnectivity(async () => true);
+    __resetOutbox();
+    __resetTurns();
+    seedQueue(['s1'], []);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    codeRows.rows = [code(9, 'src/report/daily.ts', 42, 'use the local timezone'), code(3, 'src/report/export.ts', 12, 'Name this rowsForRange')];
+    addComment(1, later);
+    addComment(1, earlier);
+  });
+  afterEach(async () => {
+    const { __setAttentionBackend } = await import('../attention');
+    __setAttentionBackend(null);
+    cleanup();
+    vi.clearAllMocks();
+    __resetDrafts();
+    __resetOutbox();
+    __resetTurns();
+    __resetConnectivity();
+    seedQueue(['s1'], []);
+    vi.mocked(ptyLiveSince).mockReturnValue(null);
+    codeRows.rows = [];
+  });
+
+  const typeAndSend = () => {
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Please fix these.' } });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+  };
+
+  it('held at a permission prompt: Send N / ⇧⌘S is refused; on the answer the one message goes, its comments marked once', async () => {
+    const { sendWaitingComments } = await import('./composerBridge');
+    const { rerender } = render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
+    await queueFailure();
+    await codeLoaded();
+    typeAndSend();
+    await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
+    expect(sendWaitingComments(1)).toBe(false);
+    expect(heldFor(1)).toEqual([]);
+    expect(submitPty).not.toHaveBeenCalled();
+    await act(async () => {
+      rerender(<Composer taskId={1} status="idle" onSent={vi.fn()} />);
+    });
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, ALL]]);
+    expect(heldFor(1)).toEqual([]);
+    expect(vi.mocked(markCommentsSent).mock.calls).toEqual([[1, [9, 3]]]);
+  });
+
+  it('waiting for the session to start: refused too; when it is up, the one message goes', async () => {
+    const { sendWaitingComments } = await import('./composerBridge');
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    vi.mocked(submitPty).mockResolvedValueOnce(false);
+    vi.mocked(startPty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await queueFailure();
+    await codeLoaded();
+    typeAndSend();
+    await waitFor(() => expect(screen.getByText(/Starting the session/)).toBeTruthy());
+    expect(sendWaitingComments(1)).toBe(false);
+    expect(heldFor(1)).toEqual([]);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    await act(async () => term.__emitPresence(1, true));
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    // The failed first write, then the one that went: the same body.
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, ALL], [1, ALL]]);
+    expect(heldFor(1)).toEqual([]);
+    expect(vi.mocked(markCommentsSent).mock.calls).toEqual([[1, [9, 3]]]);
+  });
+
+  it('held for a running turn: the outbox holds the one body; nothing is left To Send; the release sends it once', async () => {
+    const { sendWaitingComments } = await import('./composerBridge');
+    const stop = startOutboxRelease();
+    vi.mocked(ptyLiveSince).mockReturnValue(Date.now() - 60_000);
+    noteTaskSessions([{ id: 1, sessionId: 's1' }]);
+    recordQueueOperations([{ op: 'prompt', sessionId: 's1', text: 'p', ts: Date.now() - 1_000 }]);
+    render(<Composer taskId={1} status="running" onSent={vi.fn()} />);
+    await queueFailure();
+    await codeLoaded();
+    typeAndSend();
+    await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([ALL]));
+    expect(heldFor(1)[0]!.commentIds).toEqual([9, 3]);
+    // What the held message carries is not To Send any more.
+    expect(sendWaitingComments(1)).toBe(false);
+    expect(heldFor(1)).toHaveLength(1);
+    expect(submitPty).not.toHaveBeenCalled();
+    act(() => recordQueueOperations([{ op: 'turn-end', sessionId: 's1', ts: Date.now() }]));
+    await waitFor(() => expect(heldFor(1)).toEqual([]));
+    await act(async () => {});
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, ALL]]);
+    expect(vi.mocked(markCommentsSent).mock.calls).toEqual([[1, [9, 3]]]);
+    stop();
   });
 });

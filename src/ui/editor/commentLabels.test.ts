@@ -22,6 +22,11 @@ describe('a draft for GitHub (#287)', () => {
     expect(cardState({ sentAt: null, github: null }, 0, true).chip).toBe('To Send · goes with your next message');
   });
 
+  it('one a held message carries says Held (#409); sent, it says Sent', () => {
+    expect(cardState({ sentAt: null, github: null }, 0, false, true).chip).toBe('Held · goes when the held message goes');
+    expect(cardState({ sentAt: 5, github: null }, 10_000, false, true).state).toBe('sent');
+  });
+
   it('names the box and its button by where it goes', () => {
     expect(draftSaveLabel('draft', false)).toBe('Add Draft');
     expect(draftSaveLabel(null, false)).toBe('Comment');

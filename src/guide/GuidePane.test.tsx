@@ -311,7 +311,7 @@ describe('GuidePane', () => {
       waitingCode = [{ id: 1 }, { id: 2 }];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      const send = screen.getByRole('button', { name: 'Send 2 ⇧⌘S' });
+      const send = screen.getByRole('button', { name: 'Send 2' });
       expect(send.className).toContain('gd-btn-primary');
       expect(screen.getByRole('button', { name: 'Rewrite' }).className).not.toContain('gd-btn-primary');
       // sendWaitingComments sends, then has the shell show the transcript.
@@ -330,7 +330,7 @@ describe('GuidePane', () => {
       expect(sendAsked).toEqual([]);
       fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
       expect(sendAsked).toEqual([task.id]);
-      expect(screen.getByRole('button', { name: 'Send 1 ⇧⌘S' }).getAttribute('aria-keyshortcuts')).toBe('Meta+Shift+S Meta+Enter');
+      expect(screen.getByRole('button', { name: 'Send 1' }).getAttribute('aria-keyshortcuts')).toBe('Meta+Shift+S Meta+Enter');
     });
 
     it('a queued CI failure (#280) counts as one, as in the list above the box (#404)', async () => {
@@ -344,15 +344,33 @@ describe('GuidePane', () => {
       waitingCode = [{ id: 1 }, { id: 2 }];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      expect(screen.getByRole('button', { name: 'Send 3 ⇧⌘S' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Send 3' })).toBeTruthy();
       cleanup();
       waitingCode = [];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      fireEvent.click(screen.getByRole('button', { name: 'Send 1 ⇧⌘S' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Send 1' }));
       expect(sendAsked).toEqual([task.id]);
       removeQueuedCi(task.id, 'abc');
       await waitFor(() => expect(screen.queryByRole('button', { name: /^Send \d/ })).toBeNull());
+    });
+
+    it('while a send already carries them, Send N is disabled and ⌘⏎ does nothing (#404)', async () => {
+      const { setToSendFrozen, __resetToSendFrozen } = await import('../ui/transcript/toSend');
+      save();
+      waitingCode = [{ id: 1 }];
+      pane();
+      await screen.findByRole('heading', { name: 'Everything' });
+      const send = screen.getByRole('button', { name: 'Send 1' }) as HTMLButtonElement;
+      act(() => setToSendFrozen(task.id, true));
+      expect(send.disabled).toBe(true);
+      fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
+      expect(sendAsked).toEqual([]);
+      act(() => setToSendFrozen(task.id, false));
+      expect(send.disabled).toBe(false);
+      fireEvent.keyDown(root(), { code: 'Enter', key: 'Enter', metaKey: true });
+      expect(sendAsked).toEqual([task.id]);
+      __resetToSendFrozen();
     });
 
     it('⌘⏎ with nothing waiting does nothing', async () => {
@@ -368,7 +386,7 @@ describe('GuidePane', () => {
       waitingCode = [{ id: 1 }];
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
-      expect(screen.getByRole('button', { name: 'Send 1 ⇧⌘S' }).className).not.toContain('gd-btn-primary');
+      expect(screen.getByRole('button', { name: 'Send 1' }).className).not.toContain('gd-btn-primary');
       expect(screen.getByRole('button', { name: 'Rewrite' }).className).toContain('gd-btn-primary');
     });
   });

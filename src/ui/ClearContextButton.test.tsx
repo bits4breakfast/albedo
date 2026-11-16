@@ -44,11 +44,11 @@ describe('ContextClear', () => {
     expect(html).toContain('Context ~900k');
   });
 
-  it('is not offered while messages are waiting to send: a command would be held', async () => {
+  it('is not offered while messages are held: a command would be held too', async () => {
     const { holdMessage, __resetOutbox } = await import('./transcript/outbox');
     holdMessage(1, 'waiting for the connection');
     const html = renderToStaticMarkup(<ContextClear task={task} usage={usage(CLEAR_OFFER_AT + 0.02)} />);
-    expect(html).toContain('Not available while messages are waiting to send');
+    expect(html).toContain('Not available while messages are held');
     expect(html).toMatch(/<button[^>]*disabled=""/);
     __resetOutbox();
   });
@@ -78,6 +78,6 @@ describe('commandBlocker', () => {
     expect(commandBlocker(false, 'idle', false)).toBe('No session is running for this task.');
     expect(commandBlocker(true, 'running', false)).toBe('Available once the session is idle.');
     expect(commandBlocker(true, 'blocked', false)).toBe('Available once the session is idle.');
-    expect(commandBlocker(true, 'idle', true)).toBe('Not available while messages are waiting to send');
+    expect(commandBlocker(true, 'idle', true)).toBe('Not available while messages are held');
   });
 });

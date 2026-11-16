@@ -547,7 +547,8 @@ button.tf-section-head:hover .disc { color: var(--text); }
   white-space: nowrap;
   color: var(--text);
 }
-/* Grouped by state (#222): Waiting, ↗ Sent, and Resolved folded away. The
+/* Grouped by state (#222, #409): Held, To Send, ↗ Sent, Resolved folded
+   away, GitHub Draft, and Posted folded away. The
    labels are text in --muted, cleared on --panel and --panel-hover
    (commentsContrast.test.ts). No ✓ here: in this list ✓ is Resolve only. */
 .tf-comments-sub {
@@ -566,7 +567,7 @@ button.tf-section-head:hover .disc { color: var(--text); }
 /* A resolved comment and its reason, in the tier below an open one. */
 .tf-comment-resolved .tf-comment-body,
 .tf-comment-why { color: var(--muted); }
-/* Send, at the Waiting label's end (#258). */
+/* Send N, at the To Send label's end (#258, #404); Submit Review… at GitHub Draft's. */
 .tf-comments-send { margin-left: auto; }
 .tf-comment-reopen { flex: none; align-self: center; margin-right: 6px; }
 .tf-comment-resolve {
@@ -585,7 +586,7 @@ button.tf-section-head:hover .disc { color: var(--text); }
 .tf-comment-static:hover { background: transparent; }
 .tf-comment-ci-label { flex: none; color: var(--danger); font-weight: 600; white-space: nowrap; }
 /* To Send's Edit and Remove (#404), as the list above the message box has
-   them: quiet text at the row's end, --muted on the pane's --panel and
+   them: quiet text at the row's end, --muted on the section's --subcard and
    --text on --panel-hover when hovered; disabled while a send carries them,
    --faint, a lower tier, never `opacity` (toSendContrast.test.ts). */
 .tf-comment-acts { flex: none; display: flex; align-items: center; gap: 2px; padding-right: 4px; }

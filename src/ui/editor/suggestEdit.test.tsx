@@ -488,4 +488,21 @@ describe('the To Send list above the message box', () => {
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(editComment).toHaveBeenCalledWith(1, 1, joinSuggestion(['  return sum(range);'], 'Use sum().')));
   });
+
+  it('while a send carries the list, an open edit cannot be saved (#404)', async () => {
+    const c = { ...base, body: 'Use the helper.' };
+    const { rerender } = render(<WaitingComments taskId={1} frozen={false} list={toSendOf(null, [c], [])} />);
+    fireEvent.click(screen.getByRole('button', { name: /To Send · 1/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const box = screen.getByRole('textbox', { name: 'Edit comment' });
+    fireEvent.change(box, { target: { value: 'Too late.' } });
+    vi.mocked(editComment).mockClear();
+    rerender(<WaitingComments taskId={1} frozen list={toSendOf(null, [c], [])} />);
+    expect((screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect(editComment).not.toHaveBeenCalled();
+    rerender(<WaitingComments taskId={1} frozen={false} list={toSendOf(null, [c], [])} />);
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Edit comment' }), { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(editComment).toHaveBeenCalledWith(1, 1, 'Too late.'));
+  });
 });

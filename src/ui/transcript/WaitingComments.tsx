@@ -262,6 +262,7 @@ function CodeItem({ taskId, comment, frozen }: { taskId: number; comment: Review
         <ToSendEditor
           initial={codeEditText(comment)}
           mayBeEmpty={codeEditMayBeEmpty(comment)}
+          frozen={frozen}
           onSave={(words) => void save(words)}
           onCancel={() => setEditing(false)}
         />
@@ -323,6 +324,7 @@ function WaitingItem({
       {editing ? (
         <ToSendEditor
           initial={comment.comment}
+          frozen={frozen}
           onSave={(words) => {
             saveQuoteEdit(taskId, comment, words);
             setEditing(false);

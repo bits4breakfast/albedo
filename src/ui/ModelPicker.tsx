@@ -183,7 +183,7 @@ export default function ModelPicker({ task }: { task: Task }) {
       : !idle
       ? 'Switching models is only offered while the task is idle'
       : waiting
-        ? 'Not available while messages are waiting to send'
+        ? 'Not available while messages are held'
         : 'Sends /model to this session');
   const nameOf = (id: string) => choices.find((c) => c.id === id)?.name ?? id;
 

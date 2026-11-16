@@ -115,6 +115,8 @@ describe("while Remote Control's menu is up (#343)", () => {
     expect(hint()).toBe('change them in the terminal (↑)');
     act(() => __setRemoteWait(1, { phase: 'menu', at: T }));
     expect(hint()).toBe(MENU_HINT);
+    // Where they are changed is still said, in the head's tooltip.
+    expect(document.querySelector('.tx-queued-head')?.getAttribute('title')).toMatch(/Change them in the terminal \(↑\)/);
     act(() => __setRemoteWait(1, null));
     expect(hint()).toBe('change them in the terminal (↑)');
   });
@@ -158,7 +160,8 @@ describe('held messages', () => {
     const band = screen.getByRole('status');
     // Two go as one when the turn ends (#240), and the band says so: in Send
     // All Now's tooltip, which takes the hint's place in the head (#290).
-    expect(band.textContent).toMatch(/^Held · 2Send All Now/);
+    // Why, then Send All Now, as the mockup reads (#409).
+    expect(band.textContent).toMatch(/^Held · 2until this turn endsSend All Now/);
     expect(screen.getByRole('button', { name: 'Send All Now' }).title).toMatch(/sent together, as one message, when Claude finishes this turn/);
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]!);
     expect(heldFor(1).map((h) => h.text)).toEqual(['and update the docs']);
@@ -228,7 +231,7 @@ describe('held messages', () => {
     });
   });
 
-  it('offer Send All Now in the head, with the hint in its tooltip, and send them as one (#290)', async () => {
+  it('offer Send All Now in the head, after why they are held, with how they go in its tooltip, and send them as one (#290, #409)', async () => {
     vi.mocked(submitPty).mockClear();
     turnRunning();
     holdMessage(1, 'in the pane tab');
@@ -236,9 +239,10 @@ describe('held messages', () => {
     holdMessage(1, 'on the review');
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     const all = screen.getByRole('button', { name: 'Send All Now' }) as HTMLButtonElement;
-    // The head stays one row: the hint is in the button's tooltip, not beside it.
+    // One row: why they are held, then the button; how they go is its tooltip.
     expect(all.closest('.tx-queued-head')).not.toBeNull();
-    expect(screen.queryByText('until this turn ends')).toBeNull();
+    expect(screen.getByText('until this turn ends').closest('.tx-queued-head')).toBe(all.closest('.tx-queued-head'));
+    expect(screen.getByText('until this turn ends').compareDocumentPosition(all) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(all.title).toMatch(/as one message.*Left alone: sent together, as one message, when Claude finishes this turn/);
     expect(all.disabled).toBe(false);
     await act(async () => {

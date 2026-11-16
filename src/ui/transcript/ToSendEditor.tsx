@@ -2,7 +2,7 @@
  * Editing a To Send comment in place (#404): the same field, keys and rules
  * in the list above the message box and in Files ▸ Comments.
  *
- * ⌘↩ saves, Esc cancels (and goes no further: it would close what holds the
+ * ⌘↩ saves -- not while a send carries the comment -- Esc cancels (and goes no further: it would close what holds the
  * list). A comment cannot be saved empty -- Remove is for that -- except a
  * suggested edit (#411), whose words are optional: the field edits only the
  * words, and the suggestion stays as it is.
@@ -39,18 +39,25 @@ export function saveQuoteEdit(taskId: number, c: Pick<TranscriptComment, 'id'>, 
 export function ToSendEditor({
   initial,
   mayBeEmpty = false,
+  frozen = false,
   onSave,
   onCancel,
 }: {
   initial: string;
   mayBeEmpty?: boolean;
+  /**
+   * A send already carries the comment (`useToSendFrozen`): new words would
+   * never reach Claude, yet be marked sent with it. The field stays open, so
+   * nothing typed is lost; Save waits until the send is done.
+   */
+  frozen?: boolean;
   onSave: (text: string) => void;
   onCancel: () => void;
 }): ReactNode {
   const [draft, setDraft] = useState(initial);
   const empty = draft.trim().length === 0 && !mayBeEmpty;
   const save = () => {
-    if (!empty) onSave(draft);
+    if (!empty && !frozen) onSave(draft);
   };
   return (
     /* A field and its Save / Cancel: Tab walks between them. */
@@ -77,7 +84,7 @@ export function ToSendEditor({
         <button type="button" className="tx-btn tx-queued-act" onClick={onCancel}>
           Cancel
         </button>
-        <button type="button" className="tx-btn tx-queued-act tx-cmt-add" onClick={save} disabled={empty}>
+        <button type="button" className="tx-btn tx-queued-act tx-cmt-add" onClick={save} disabled={empty || frozen}>
           Save <span className="tx-cmt-key">⌘↩</span>
         </button>
       </div>

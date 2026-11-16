@@ -34,6 +34,8 @@ export function cardState(
   now = Date.now(),
   /** #287: a draft for GitHub whose lines are not in the PR's diff. */
   outside = false,
+  /** #409: carried by a held message, so on its way rather than To Send. */
+  held = false,
 ): CardState {
   // A draft for GitHub (#287) waits for Submit Review, and says so. Nothing
   // to resolve before it is sent: it goes, or you delete it. Once GitHub has
@@ -47,6 +49,9 @@ export function cardState(
       main: 'edit',
       more: ['delete'],
     };
+  }
+  if (c.sentAt === null && held) {
+    return { state: 'waiting', chip: 'Held · goes when the held message goes', main: 'edit', more: ['resolve', 'delete'] };
   }
   if (c.sentAt === null) {
     return { state: 'waiting', chip: 'To Send · goes with your next message', main: 'edit', more: ['resolve', 'delete'] };

@@ -24,6 +24,8 @@ export interface PlacedComment {
   to: number;
   /** #287: a draft for GitHub on lines outside the PR's diff. */
   outside?: boolean;
+  /** #409: carried by a held message: its chip says Held. */
+  held?: boolean;
   /**
    * #402: a comment on removed lines, which are not in this file. `from`/`to`
    * are then the line its card goes under, and the removal sat just above
@@ -157,6 +159,7 @@ class CommentCard extends WidgetType {
       a.body === b.body &&
       a.github === b.github &&
       this.placed.outside === other.placed.outside &&
+      this.placed.held === other.placed.held &&
       a.lineStart === b.lineStart &&
       a.lineEnd === b.lineEnd &&
       this.placed.removed?.below === other.placed.removed?.below
@@ -166,7 +169,7 @@ class CommentCard extends WidgetType {
     const c = this.placed.comment;
     // The same card as the Diff mode's CommentCardView (#222): a state chip,
     // one main action, and the rest behind ⋯.
-    const state = cardState(c, Date.now(), this.placed.outside === true);
+    const state = cardState(c, Date.now(), this.placed.outside === true, this.placed.held === true);
     const card = el('div', 'ed-cmt');
     card.dataset.state = state.state;
     const removed = this.placed.removed;

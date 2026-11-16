@@ -3,8 +3,9 @@
  * blocks on the grounds it is drawn on, and checked to still use those
  * tokens: Send N on the composer's accent button (and its hover), the line
  * beside it on the message box's --panel-inset, To Send's Edit and Remove in
- * Files ▸ Comments on --panel and --panel-hover (and disabled, --faint on
- * --panel), and the Guide's Send N key, which takes the button's own colour.
+ * Files ▸ Comments on its section's --subcard and on --panel-hover (and
+ * disabled, --faint on --subcard), and the Guide's Send N key, which takes
+ * the button's own colour.
  */
 
 import { readFileSync } from 'node:fs';
@@ -68,6 +69,8 @@ describe('To Send and Send N (#404, #409)', () => {
     // The held group's why sits in the head, in its --muted.
     expect(rule(transcript, '.tx-queued-why')).not.toMatch(/color|opacity/);
     expect(rule(transcript, '.tx-queued-head')).toMatch(/color: var\(--muted\);/);
+    // Files ▸ Comments sits on a --subcard.
+    expect(list).toMatch(/background: var\(--subcard\);/);
   });
 
   for (const [name, t] of Object.entries(themes)) {
@@ -76,10 +79,14 @@ describe('To Send and Send N (#404, #409)', () => {
       const text: Array<[string, string]> = [
         ['--on-accent', '--accent-btn'],
         ['--on-accent', '--accent-btn-hover'],
+        // The line beside Send N, on the message box's ground.
         ['--muted', '--panel-inset'],
-        ['--muted', '--panel'],
+        // Files ▸ Comments: a section is a --subcard (touched.css), a hovered
+        // control --panel-hover; disabled Edit and Remove are --faint.
+        ['--muted', '--subcard'],
+        ['--muted', '--panel-hover'],
         ['--text', '--panel-hover'],
-        ['--faint', '--panel'],
+        ['--faint', '--subcard'],
       ];
       for (const [fg, bg] of text) expect(ratio(g(fg), g(bg)), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
     });

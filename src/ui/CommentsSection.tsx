@@ -32,6 +32,7 @@ import { commentHeadline, commentWords } from '../lib/suggestion';
 import { jumpToPassage, sendWaitingComments } from './transcript/composerBridge';
 import { ciFailureLabel, removeQueuedCi, shortSha, type QueuedCiFailure } from './transcript/ciFailure';
 import { sendLabel, useToSend, useToSendFrozen } from './transcript/toSend';
+import { useCarriedCodeIds } from './transcript/codeComments';
 import { deleteComment as deleteCodeComment } from '../db/comments';
 import { removeComment as removeQuote } from './transcript/drafts';
 import { foldQuote, type TranscriptComment } from './transcript/transcriptQuotes';
@@ -65,6 +66,8 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const read = useReadFile();
   const toSend = useToSend(task.id);
   const frozen = useToSendFrozen(task.id);
+  /** Code comments a held message carries (#409): on their way, listed as Held. */
+  const carried = useCarriedCodeIds(task.id);
   const ci = toSend.ci;
   // A review task's drafts for GitHub (#287), replies included: their own
   // group, never To Send, whose Send goes to Claude.
@@ -148,8 +151,16 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const resolved = all.filter((c) => c.resolvedAt !== null && !isPosted(c));
   const posted = all.filter((c) => c.resolvedAt !== null && isPosted(c));
   if (all.length === 0 && toSend.count === 0 && drafts.length === 0) return null;
+  const jump = (q: TranscriptComment) => {
+    // No transcript of this task to take it (#404): say where it can be done.
+    if (!jumpToPassage(task.id, { messageId: q.messageId, quote: q.quote, offset: q.offset })) {
+      setNotice('Open the task’s transcript to jump to the passage.');
+    }
+  };
 
   const sent = comments.filter((c) => c.sentAt !== null);
+  // Already in a held message's body: nothing to edit or remove here, it goes with that message.
+  const held = comments.filter((c) => c.sentAt === null && c.github === null && carried.has(c.id));
 
   const place = (c: ReviewComment) => (
     /* The name gives way, never the line (#258): a long one ellipsizes
@@ -205,6 +216,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         <ToSendEditor
           initial={codeEditText(c)}
           mayBeEmpty={codeEditMayBeEmpty(c)}
+          frozen={frozen}
           onSave={(words) => void saveCodeEdit(task.id, c, words).then(() => setEditing(null), fail('save the comment'))}
           onCancel={() => setEditing(null)}
         />
@@ -232,6 +244,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         {where}
         <ToSendEditor
           initial={q.comment}
+          frozen={frozen}
           onSave={(words) => {
             saveQuoteEdit(task.id, q, words);
             setEditing(null);
@@ -245,7 +258,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
         <button
           type="button"
           className="tf-comment-open"
-          onClick={() => jumpToPassage(task.id, { messageId: q.messageId, quote: q.quote, offset: q.offset })}
+          onClick={() => jump(q)}
           title={`Show the passage in the transcript\n\n> ${first}\n\n${q.comment}`}
         >
           {where}
@@ -263,12 +276,21 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   return (
     <section className="tf-section tf-comments">
       <div className="tf-section-head tf-comments-head">
-        Comments<span className="tf-section-count">{toSend.count + sent.length + drafts.length}</span>
+        Comments<span className="tf-section-count">{held.length + toSend.count + sent.length + drafts.length}</span>
       </div>
 
       {notice && <div className="tf-comments-notice">{notice}</div>}
 
-      {/* Grouped by state (#222), so ✓ only ever means Resolve. */}
+      {/* Grouped by state (#222), so ✓ only ever means Resolve. Held first:
+          it goes first, as in the band above the message box (#409). */}
+      {held.length > 0 && (
+        <div className="tf-comments-group" role="group" aria-label={`Held, ${held.length}`}>
+          <div className="tf-comments-sub" title="In a held message: they go when it goes, and are changed with it in the message box">
+            Held · {held.length}
+          </div>
+          {held.map((c) => row(c, null))}
+        </div>
+      )}
       {toSend.count > 0 && (
         <div className="tf-comments-group" role="group" aria-label={`To Send, ${toSend.count}`}>
           <div className="tf-comments-sub">
@@ -278,10 +300,19 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
               type="button"
               className="tf-btn tf-comments-send"
               onClick={() => sendWaitingComments(task.id)}
+              // A send already carries them (#404): a second would carry them again.
+              disabled={frozen}
               aria-keyshortcuts="Meta+Shift+S"
-              title="Send these to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
+              title={
+                frozen
+                  ? 'Your message is on its way with these'
+                  : "Send these to Claude now, and show the transcript (⇧⌘S). What you're typing in the message box stays there."
+              }
             >
-              {sendLabel(toSend.count)} <span className="tf-comments-send-key">⇧⌘S</span>
+              {sendLabel(toSend.count)}{' '}
+              <span className="tf-comments-send-key" aria-hidden="true">
+                ⇧⌘S
+              </span>
             </button>
           </div>
           {/* In the order the message carries them: CI, code, then quotes. */}
