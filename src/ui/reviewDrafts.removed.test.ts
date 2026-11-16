@@ -49,7 +49,7 @@ vi.mock('../git/stackBase', () => ({ detectStackBase: vi.fn(async () => null) })
 const { prepareSubmit } = await import('./reviewDrafts');
 const { planReview } = await import('../gh/reviewSubmit');
 
-const task = { id: 3, reviewUrl: 'https://github.com/example/relay/pull/34', worktreePath: '/wt', baseBranch: 'main', kind: 'review' as const, branch: 'pr-34' };
+const task = { id: 3, reviewUrl: 'https://github.com/example/relay/pull/34', worktreePath: '/wt', baseBranch: 'main', kind: 'work' as const, branch: 'pr-34' };
 
 function draft(over: Partial<ReviewComment>): ReviewComment {
   return {
