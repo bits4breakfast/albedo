@@ -1,0 +1,15 @@
+-- v20: a comment on removed lines (#402).
+--
+-- Decided by the owner (schema.sql and migrations are a shared contract;
+-- 2026-11-16). A comment points at the file as it is now, by its new-side
+-- lines and their text (v7). A removed line is not in the file, so a comment
+-- on one points at the diff's base instead:
+--
+-- side  'new': line_start/line_end and anchor_text are lines of the file as
+--              it is now. Every row before v20, and the default.
+--       'old': they are lines of the diff's base that the change removed
+--              (GitHub's side LEFT). The comment is found again by that text
+--              in the base, never resolves because its lines are missing from
+--              the file -- that is what it is about -- and resolves itself,
+--              once sent, when they are back.
+ALTER TABLE comments ADD COLUMN side TEXT NOT NULL DEFAULT 'new';

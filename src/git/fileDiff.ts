@@ -218,6 +218,31 @@ export async function renameSource(worktreePath: string, base: string, relPath: 
   return parseRenames(r.stdout).get(relPath) ?? null;
 }
 
+/**
+ * The file's text at `rev` -- under the name it had there, when it was
+ * renamed since -- or null when `rev` has no text for it (absent, binary,
+ * too large). The old side as {@link loadTaskFileDiff} reads it, for
+ * comments on removed lines (#402) where no diff is drawn.
+ */
+export async function readTextAtRev(worktreePath: string, rev: string, relPath: string): Promise<string | null> {
+  let side = await readAtRev(worktreePath, rev, relPath);
+  if (side.kind === 'absent') {
+    const from = await renameSource(worktreePath, rev, relPath);
+    if (from !== null) side = await readAtRev(worktreePath, rev, from);
+  }
+  return side.kind === 'text' ? side.text : null;
+}
+
+/**
+ * {@link readTextAtRev} at the task's merge base, where its Diff mode's old
+ * side is read. Null without a merge base: the Diff mode then stands in HEAD,
+ * which a comment on removed lines must never be placed or resolved against.
+ */
+export async function readTaskBaseText(worktreePath: string, baseBranch: string, relPath: string): Promise<string | null> {
+  const merge = await taskBase(worktreePath, baseBranch);
+  return merge === null ? null : readTextAtRev(worktreePath, merge, relPath);
+}
+
 /** Reads the working-tree file; null when it does not exist. */
 export type WorkingReader = (relPath: string) => Promise<string | null>;
 

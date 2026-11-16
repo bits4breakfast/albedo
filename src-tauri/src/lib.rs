@@ -156,6 +156,8 @@ const M0018_PREVIEWS: &str = include_str!("../../src/db/migrations/0018_previews
 /// v19: messages_au re-indexes search only when id or body is written (#361).
 const M0019_FTS_BODY_UPDATES: &str =
     include_str!("../../src/db/migrations/0019_fts_body_updates.sql");
+/// v20: comments.side -- a comment on removed lines, by the base's lines (#402).
+const M0020_COMMENT_SIDE: &str = include_str!("../../src/db/migrations/0020_comment_side.sql");
 
 pub fn run() {
     let migrations = vec![
@@ -271,6 +273,12 @@ pub fn run() {
             version: 19,
             description: "messages_au on id and body only",
             sql: M0019_FTS_BODY_UPDATES,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 20,
+            description: "comments.side",
+            sql: M0020_COMMENT_SIDE,
             kind: MigrationKind::Up,
         },
     ];
