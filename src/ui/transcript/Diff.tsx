@@ -268,6 +268,8 @@ export interface DiffMatch {
   gap: number | null;
   /** The fewest rows the diff must draw for this match to be drawn. */
   need: number;
+  /** In a folded run: the lines shown around it, and how long the run is. */
+  run: { window: GapWindow; count: number } | null;
 }
 
 /** Lines of a folded run shown around each match in it, either side. */
@@ -291,7 +293,7 @@ export interface DiffSearchResult {
   capped: boolean;
 }
 
-const NO_SEARCH: DiffSearchResult = { matches: [], windows: new Map(), capped: false };
+export const NO_SEARCH: DiffSearchResult = { matches: [], windows: new Map(), capped: false };
 
 /** One model per diff: a search of the same diff on every keystroke builds it once. */
 const models = new WeakMap<FileDiff, Model>();
@@ -373,7 +375,7 @@ function matchesIn(
         capped = true;
         return;
       }
-      out.push({ key: `${side === 'old' ? 'o' : 'n'}:${line}:${start}`, side, line, start, end, text, hunk, gap, need });
+      out.push({ key: `${side === 'old' ? 'o' : 'n'}:${line}:${start}`, side, line, start, end, text, hunk, gap, need, run: null });
     }
   };
   /** A run's matches, and the rows its windows add. */
@@ -389,7 +391,12 @@ function matchesIn(
     const w = windowsAround(offsets, gap.count);
     windows.set(key, w);
     // A match deep in a run needs the run's rows above it drawn too.
-    for (const m of out.slice(first)) m.need = need + rowsAbove(w, m.line - gap.newStart);
+    for (const m of out.slice(first)) {
+      const at = m.line - gap.newStart;
+      m.need = need + rowsAbove(w, at);
+      const own = w.find((x) => at >= x.from && at < x.from + x.count)!;
+      m.run = { window: own, count: gap.count };
+    }
     return w.reduce((n, x) => n + x.count, 0);
   };
   // Rows drawn before each match: hunk rows, and the windows above it.
@@ -590,6 +597,8 @@ export function Diff({
   const ref = auto.ref;
   const [budget, setBudget] = useState(INITIAL_BUDGET);
   const [openGaps, setOpenGaps] = useState<Record<number, boolean>>({});
+  /** Lines of a run kept shown after a search closed on a match in it (#413). */
+  const [kept, setKept] = useState<Record<number, GapWindow>>({});
 
   const model = useMemo(() => modelOf(diff), [diff]);
 
@@ -656,16 +665,20 @@ export function Diff({
    * lines around the matches show -- the current match's always, even when
    * the reader folded the run; else it is folded.
    */
+  const windowsOf = (i: number): readonly GapWindow[] | undefined => searched.windows.get(i) ?? (kept[i] ? [kept[i]!] : undefined);
   const gapMode = (i: number): 'full' | 'windows' | 'closed' => {
     if (openGaps[i] === true) return 'full';
-    if (searched.windows.has(i) && (current?.gap === i || openGaps[i] === undefined)) return 'windows';
+    if (windowsOf(i) && (current?.gap === i || openGaps[i] === undefined)) return 'windows';
     return 'closed';
   };
-  const windowRows = (i: number) => (searched.windows.get(i) ?? []).reduce((n, w) => n + w.count, 0);
+  const windowRows = (i: number) => (windowsOf(i) ?? []).reduce((n, w) => n + w.count, 0);
   const drawn = Math.max(budget, current?.need ?? 0);
 
-  // Closing a search keeps the line it was on (#413): its run stays open and
-  // its rows drawn, so the text the reader found does not vanish under them.
+  // Closing a search keeps the line it was on (#413), so the text the reader
+  // found does not vanish under them: its rows stay drawn, and in a folded
+  // run its lines stay shown -- the run whole when it is short, else only the
+  // lines around it, counted like any rows. Only on a close (`search` null),
+  // never on an empty field: the caller passes an empty result for that.
   const lastCurrent = useRef<DiffMatch | null>(null);
   const searching = search !== null;
   useLayoutEffect(() => {
@@ -676,7 +689,11 @@ export function Diff({
     const m = lastCurrent.current;
     lastCurrent.current = null;
     if (!m) return;
-    if (m.gap !== null) setOpenGaps((prev) => ({ ...prev, [m.gap!]: true }));
+    const gap = m.gap;
+    if (gap !== null && m.run) {
+      if (m.run.count <= BUDGET_STEP) setOpenGaps((prev) => ({ ...prev, [gap]: true }));
+      else setKept((prev) => ({ ...prev, [gap]: m.run!.window }));
+    }
     setBudget((b) => Math.max(b, m.need));
   }, [searching, current]);
 
@@ -684,7 +701,7 @@ export function Diff({
   // the last hunk is opened (or a search shows lines in it): the lines below
   // are never seen otherwise.
   const tailMode = gapMode(model.hunks.length);
-  const tailWindows = tailMode === 'windows' ? searched.windows.get(model.hunks.length) : undefined;
+  const tailWindows = tailMode === 'windows' ? windowsOf(model.hunks.length) : undefined;
   const reach = useMemo(() => lastNumbers(model.hunks[model.hunks.length - 1]), [model]);
   const tailEnd = tailWindows ? tailWindows[tailWindows.length - 1]! : null;
   const reachOld = tailMode === 'full' ? Infinity : tailEnd ? reach.old + tailEnd.from + tailEnd.count : reach.old;
@@ -802,9 +819,10 @@ export function Diff({
     [file, loading, readFile, readPath],
   );
 
-  // From the run's state as shown: a search may have opened it (#413).
-  const toggleGap = useCallback((i: number, open: boolean) => {
-    setOpenGaps((prev) => ({ ...prev, [i]: !open }));
+  // From the run's state as shown (#413): a run showing only the lines
+  // around a match opens whole; an open one folds.
+  const toggleGap = useCallback((i: number, mode: 'full' | 'windows' | 'closed') => {
+    setOpenGaps((prev) => ({ ...prev, [i]: mode !== 'full' }));
   }, []);
 
   if (diff.hunks.length === 0) {
@@ -835,7 +853,7 @@ export function Diff({
         found={expandable ? (gapFound.get(key) ?? 0) : 0}
         // The run holding the current match stays open while it is current.
         locked={current?.gap === key}
-        onClick={() => toggleGap(key, open)}
+        onClick={() => toggleGap(key, mode)}
       />,
     );
     if (!open || !expandOld || !expandNew) return;
@@ -857,7 +875,7 @@ export function Diff({
     }
     // As far as the rows drawn reach; "More Lines" below offers the rest.
     let at = 0;
-    for (const w of searched.windows.get(key) ?? []) {
+    for (const w of windowsOf(key) ?? []) {
       const room = drawn - spent;
       if (room <= 0) return;
       if (w.from > at) body.push(<GapSkip key={`gapskip-${key}-${w.from}`} count={w.from - at} />);
@@ -905,7 +923,8 @@ export function Diff({
 
   // Every row there is to draw: the hunks', and a search's lines in the runs.
   let rowsInAll = model.total;
-  for (const key of searched.windows.keys()) if (gapMode(key) === 'windows') rowsInAll += windowRows(key);
+  const windowed = new Set([...searched.windows.keys(), ...Object.keys(kept).map(Number)]);
+  for (const key of windowed) if (gapMode(key) === 'windows') rowsInAll += windowRows(key);
   const shown = spent;
   const hidden = Math.max(0, rowsInAll - shown);
 

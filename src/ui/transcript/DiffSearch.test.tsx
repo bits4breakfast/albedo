@@ -135,9 +135,13 @@ describe('Diff with a search', () => {
     expect(hits()).toEqual([]);
   });
 
-  it('lets the reader fold a run the search opened, but keeps the current match’s open', () => {
+  it('opens a run the search showed in part whole on a first click, folds it on the next, but keeps the current match’s open', () => {
     const v = view(q('marker', 'n:3:12'));
     const bar = screen.getByRole('button', { name: /20 Unchanged Lines/ });
+    expect(shownLine('line 7')).toBe(false);
+    fireEvent.click(bar);
+    expect(shownLine('line 7')).toBe(true);
+    expect(shownLine('line 15 marker')).toBe(true);
     fireEvent.click(bar);
     expect(shownLine('line 15 marker')).toBe(false);
     expect(bar.textContent).toContain('1 match inside');
@@ -239,5 +243,29 @@ describe('Diff with a search', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Show \d+ More$/ }));
     expect(screen.queryByText(/More Lines$/)).toBeNull();
     expect(shownLine('row 700!')).toBe(true);
+  });
+
+  it('keeps only the lines around the found line of a long run when the search closes, counted like any rows', () => {
+    // One unchanged run of 1,996 lines after a change on line 2: the tail.
+    const old = lines(2000, (i) => (i === 1500 ? `row ${i} needle` : `row ${i}`)).join('\n');
+    const now = old.replace('row 2\n', 'row 2 changed\n');
+    const diff = diffStrings(old, now, 'long.txt');
+    const result = searchDiff(diff, { old: sourceLines(old), new: sourceLines(now) }, 'needle');
+    const el = (s: DiffSearch | null) => <Diff diff={diff} expand={{ oldText: old, newText: now }} layout="unified" head={false} contextPath={null} search={s} />;
+    const r = render(el({ result, current: result.matches[0]!.key }));
+    r.rerender(el(null));
+    expect(shownLine('row 1500 needle')).toBe(true);
+    expect(shownLine('row 1497')).toBe(true);
+    expect(shownLine('row 1496')).toBe(false);
+    expect(shownLine('row 1000')).toBe(false);
+    expect(document.querySelectorAll('.tx-d-code').length).toBeLessThan(40);
+  });
+
+  it('keeps nothing on an empty search: only a close keeps the found line', () => {
+    const v = view(q('marker', 'n:15:8'));
+    v.rerender({ result: searchDiff(DIFF, SOURCES, ''), current: null });
+    expect(shownLine('line 15 marker')).toBe(false);
+    v.rerender(null);
+    expect(shownLine('line 15 marker')).toBe(false);
   });
 });

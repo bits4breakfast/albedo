@@ -72,8 +72,7 @@ import GuideMap from './GuideMap';
 import SinceReview from './SinceReview';
 import { updateRecordOf, useSinceChanges, useSinceReviewVersion, type ChangesLoad, type UpdateRecord } from './copyUpdate';
 import OverflowMenu from '../ui/OverflowMenu';
-import { searchDiff } from '../ui/transcript/Diff';
-import { sourceLines } from '../ui/transcript/codeTokens';
+import { NO_SEARCH, searchDiff } from '../ui/transcript/Diff';
 import {
   AllGuideFiles,
   CLOSED_SEARCH,
@@ -84,7 +83,7 @@ import {
   type SearchBarProps,
   type SearchScope,
 } from './GuideSearch';
-import type { GuideHit } from './search';
+import { linesOf, type GuideHit } from './search';
 import './guide.css';
 
 /**
@@ -775,14 +774,22 @@ function GuideBody({
     setSearch((s) => ({ ...s, open: true, scope }));
   };
   // The text searched: what was typed, once typing pauses. Never a search
-  // per keystroke on a large guide; empty at once.
+  // per keystroke on a large guide; empty at once. The current match is the
+  // last search's until the new one lands: never one picked from stale matches.
   const [searched, setSearched] = useState('');
+  const searchedRef = useRef('');
   useEffect(() => {
+    const apply = () => {
+      if (search.query === searchedRef.current) return;
+      searchedRef.current = search.query;
+      setSearched(search.query);
+      setSearch((s) => (s.current === null ? s : { ...s, current: null }));
+    };
     if (search.query === '') {
-      setSearched('');
+      apply();
       return;
     }
-    const t = setTimeout(() => setSearched(search.query), SEARCH_DEBOUNCE_MS);
+    const t = setTimeout(apply, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [search.query]);
   const closeSearch = () => {
@@ -801,7 +808,7 @@ function GuideBody({
   const searchBar: SearchBarProps = {
     scope: search.scope,
     query: search.query,
-    onQuery: (query) => setSearch((s) => ({ ...s, query, current: null })),
+    onQuery: (query) => setSearch((s) => ({ ...s, query })),
     onScope: (scope) => openSearch(scope, 'caret'),
     onClose: closeSearch,
     focusTick,
@@ -1380,10 +1387,9 @@ function GuideFileDiff({
 
   // This File (#413): what the diff shows, searched as it draws it.
   const query = search?.scope === 'file' ? searched : '';
-  const sources = useMemo(
-    () => (result?.kind === 'diff' ? { old: sourceLines(result.oldText), new: sourceLines(result.newText) } : null),
-    [result],
-  );
+  // Split only for a search, and once per read of the branch (search.ts).
+  const searching = query !== '';
+  const sources = useMemo(() => (searching && result?.kind === 'diff' ? linesOf(result) : null), [searching, result]);
   // Made once here, and handed to the diff to draw.
   const found = useMemo(() => (query !== '' && shown && sources ? searchDiff(shown, sources, query) : null), [query, shown, sources]);
   const matches = found?.matches ?? NO_MATCHES;
@@ -1462,6 +1468,8 @@ function GuideFileDiff({
           onKeys={(e) => {
             if (e.key !== 'Enter' || e.metaKey || e.altKey || e.ctrlKey) return;
             e.preventDefault();
+            // The matches are of the text before the last keys: wait for these.
+            if (searchBar.query !== searched) return;
             const n = matches.length;
             if (n === 0) return;
             onCurrent(matches[(index + (e.shiftKey ? -1 : 1) + n) % n]!.key);
@@ -1529,7 +1537,9 @@ function GuideFileDiff({
                 absoluteLines={result.change !== 'deleted'}
                 contextPath={null}
                 showPath={false}
-                search={found ? { result: found, current: currentKey } : null}
+                // Not null while the bar is open, even empty or on All
+                // Guide Files: null is a close, which keeps the found line.
+                search={search ? { result: found ?? NO_SEARCH, current: currentKey } : null}
               />
             </DiffAnnotationsContext.Provider>
           )

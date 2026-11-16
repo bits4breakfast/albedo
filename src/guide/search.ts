@@ -112,7 +112,7 @@ export function searchGuide(
 /** Each file's lines, split once per read of the branch, not per keystroke. */
 const lines = new WeakMap<object, { old: string[]; new: string[] }>();
 
-function linesOf(r: { oldText: string; newText: string }): { old: string[]; new: string[] } {
+export function linesOf(r: { oldText: string; newText: string }): { old: string[]; new: string[] } {
   let l = lines.get(r);
   if (!l) {
     l = { old: sourceLines(r.oldText), new: sourceLines(r.newText) };

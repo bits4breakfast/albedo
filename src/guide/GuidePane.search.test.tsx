@@ -258,6 +258,41 @@ describe('Search in a Review Guide (#413)', () => {
     expect([field().selectionStart, field().selectionEnd]).toEqual([0, 5]);
   });
 
+  it('keeps the found line only on a real close, not on an emptied field or a switch to all files', async () => {
+    await opened();
+    const line30 = () => [...document.querySelectorAll('.tx-d-code')].some((e) => e.textContent === 'line 30 alpha');
+    find(root());
+    await type('alpha');
+    fireEvent.keyDown(field(), { key: 'Enter', code: 'Enter' });
+    expect(currentLine()).toBe('line 30 alpha');
+    await type('');
+    expect(line30()).toBe(false);
+    await type('alpha');
+    fireEvent.keyDown(field(), { key: 'Enter', code: 'Enter' });
+    expect(currentLine()).toBe('line 30 alpha');
+    find(field(), true);
+    fireEvent.keyDown(field(), { key: 'Escape', code: 'Escape' });
+    expect(line30()).toBe(false);
+    // A real close on it keeps it.
+    find(root());
+    await type('line 30');
+    fireEvent.keyDown(field(), { key: 'Escape', code: 'Escape' });
+    expect(line30()).toBe(true);
+  });
+
+  it('keeps the current match, and ↩ waits, until the new text is searched', async () => {
+    await opened();
+    find(root());
+    await type('alpha');
+    fireEvent.keyDown(field(), { key: 'Enter', code: 'Enter' });
+    expect(count()).toBe('2 of 2');
+    fireEvent.change(field(), { target: { value: 'alph' } });
+    expect(count()).toBe('2 of 2');
+    fireEvent.keyDown(field(), { key: 'Enter', code: 'Enter' });
+    expect(count()).toBe('2 of 2');
+    await waitFor(() => expect(count()).toBe('1 of 2'));
+  });
+
   it('opens Read from the map', async () => {
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Map' }));
