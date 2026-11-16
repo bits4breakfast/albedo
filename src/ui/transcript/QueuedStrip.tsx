@@ -19,6 +19,7 @@ import {
   removeHeld,
   sendAnyway,
   setEditing,
+  takeableIntoBox,
   useHeld,
   type HeldMessage,
 } from './outbox';
@@ -99,6 +100,10 @@ export function QueuedStrip({
   }, [sessionId]);
 
   const held = useHeld(taskId);
+  // Taken into the message box with ↑ (#399): one line says where they are,
+  // and the rest keep their rows.
+  const inBox = held.filter((h) => h.inBox);
+  const rest = inBox.length > 0 ? held.filter((h) => !h.inBox) : held;
   const mine = shownQueue(entries, liveSince);
   // Claude Code takes nothing from its queue while Remote Control's menu is up (#343).
   const menu = useRemoteWait(taskId)?.phase === 'menu';
@@ -120,9 +125,19 @@ export function QueuedStrip({
               {queuedLabel(e.text)}
             </div>
           ))}
+          {/* Albedo never types into the terminal, so these are changed there (#399). */}
+          <div className="tx-queued-aside">
+            To change these, press <kbd>{'\u2191'}</kbd> in the terminal.
+          </div>
         </>
       ) : null}
-      {held.length > 0 && taskId !== null ? <HeldGroup taskId={taskId} held={held} /> : null}
+      {inBox.length > 0 ? (
+        <div className="tx-queued-head">
+          Queued <span className="tx-queued-count">{inBox.length}</span>
+          <span>being edited in the message box</span>
+        </div>
+      ) : null}
+      {rest.length > 0 && taskId !== null ? <HeldGroup taskId={taskId} held={rest} inBox={inBox.length} /> : null}
     </div>
   );
 }
@@ -136,14 +151,31 @@ export function QueuedStrip({
  * One open for editing is left out and stays held. If they could not go
  * after all -- a release had the task's lock -- the head says so briefly.
  */
-function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessage[] }): ReactNode {
+function HeldGroup({
+  taskId,
+  held,
+  inBox,
+}: {
+  taskId: number;
+  /** The held messages not in the message box. */
+  held: readonly HeldMessage[];
+  /** How many are in the message box (#399). */
+  inBox: number;
+}): ReactNode {
   const conditions = useReleaseConditions(taskId);
   const [notNow, showNotNow] = useBriefNote();
   // Held messages go together, as one (#240): the hint says so when they will.
   // While Remote Control's menu is up (#343), what they wait on is that menu.
   const menu = useRemoteWait(taskId)?.phase === 'menu';
-  const turnHint = heldHint(conditions, nextRunSize(taskId));
-  const hint = menu && turnHint !== null && !conditions.offline ? REMOTE_MENU_HINT : turnHint;
+  const together = nextRunSize(taskId);
+  // Behind messages being edited in the box (#399), nothing goes until those
+  // are sent or put back, whatever else would let them.
+  const behindBox = inBox > 0 && together === 0 && !conditions.headMaybeSent;
+  const turnHint = behindBox ? 'sent after the message being edited' : heldHint(conditions, together);
+  const hint = menu && turnHint !== null && !conditions.offline && !behindBox ? REMOTE_MENU_HINT : turnHint;
+  // ↑ in the empty message box takes them all into it (#399): said here once
+  // there are two or more it would take.
+  const editAll = inBox === 0 && takeableIntoBox(taskId).length >= 2;
   const allSize = allNowSize(taskId);
   const allOffered = sendAllNowOffered(conditions, allSize);
   const allowed = sendNowAllowed(conditions);
@@ -156,7 +188,7 @@ function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessag
   return (
     <>
       <div className="tx-queued-head">
-        {heldLabel(conditions)} <span className="tx-queued-count">{held.length}</span>
+        {behindBox ? 'Queued' : heldLabel(conditions)} <span className="tx-queued-count">{held.length}</span>
         {allOffered ? (
           <>
             {notNow ? <span className="tx-queued-note">Couldn{'\u2019'}t send now — try again</span> : null}
@@ -178,6 +210,14 @@ function HeldGroup({ taskId, held }: { taskId: number; held: readonly HeldMessag
           </>
         ) : hint !== null ? (
           <span className="tx-queued-hint">{hint}</span>
+        ) : null}
+        {editAll ? (
+          <span
+            className="tx-queued-key"
+            title="In the empty message box, press ↑ to edit every held message there as one; Esc puts them back"
+          >
+            <kbd>{'\u2191'}</kbd> Edit All
+          </span>
         ) : null}
       </div>
       {held.map((h) => (

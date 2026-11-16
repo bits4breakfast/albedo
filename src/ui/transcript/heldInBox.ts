@@ -1,0 +1,42 @@
+/**
+ * Held messages taken into the message box to be edited as one (#399): ↑ in
+ * an empty box. What the box shows for them, and what goes back on send.
+ *
+ * They are joined oldest first with a blank line (`RUN_JOINER`, as a release
+ * joins messages that go together), then shown the way the band's own Edit
+ * shows one: each paste as its token, each quoted passage as its token, each
+ * reference as `@Title`. Images and attached files are paths in the text, so
+ * they come along where they were.
+ *
+ * Pure: the outbox (outbox.ts) keeps the messages, the composer the box.
+ */
+
+import { draftOf } from './pastedText';
+import { unmarkMentions, type Mention } from './mentions';
+import { unmarkQuotes } from './transcriptQuotes';
+import { RUN_JOINER, type HeldMessage } from './outbox';
+
+export interface HeldAsDraft {
+  /** What the box shows. */
+  text: string;
+  /** Paste tokens' texts, by number (pastedText.ts). */
+  pastes: Map<number, string>;
+  /** References, by token (mentions.ts). */
+  mentions: Map<string, Mention>;
+  /**
+   * Quoted passages' markers, by number (transcriptQuotes.ts). Not kept with
+   * the draft: worked out again from the same messages, which do not change
+   * while they are in the box, so the numbers are the same.
+   */
+  quotes: Map<number, string>;
+}
+
+/** The held messages, oldest first, as one draft for the box. */
+export function heldAsDraft(held: readonly Pick<HeldMessage, 'text'>[]): HeldAsDraft {
+  // Pastes first, as the band's Edit does: a paste's own text is never read
+  // for quotes or references.
+  const d = draftOf(held.map((h) => h.text).join(RUN_JOINER));
+  const q = unmarkQuotes(d.text);
+  const u = unmarkMentions(q.text);
+  return { text: u.text, pastes: d.pastes, mentions: u.mentions, quotes: q.quotes };
+}

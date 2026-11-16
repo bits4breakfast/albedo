@@ -201,6 +201,7 @@ export type Gesture =
   | 'editor mod+alt+shift+c'
   | 'editor mod+alt+m'
   | 'transcript mod+arrowdown'
+  | 'transcript arrowup'
   | "transcript mod+'"
   | 'new-task mod+enter'
   | 'guide mod+enter'
@@ -249,6 +250,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
   { combo: 'mod+shift+e', keys: '⇧⌘E', description: 'Files Tab (or the Files column, when pinned)' },
   { combo: 'mod+shift+s', keys: '⇧⌘S', description: 'Send the Waiting Comments, then Show the Transcript' },
   { combo: 'mod+u', keys: '⌘U', description: 'Attach Files to the Message' },
+  {
+    combo: 'transcript arrowup',
+    keys: '↑',
+    description: 'Message Box, While Empty: Edit Every Held Message There as One (Esc Puts Them Back)',
+  },
   {
     combo: 'shift+f6',
     keys: '⇧F6 / F2',

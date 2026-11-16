@@ -48,6 +48,14 @@ export interface HeldMessage {
    * with the message, so a task switch or a restart in between still marks them.
    */
   commentIds?: readonly number[];
+  /**
+   * Taken into the message box to be edited there with the others (#399, ↑
+   * in an empty box). Stored, so a task switch or a restart keeps it out of
+   * the queue: no release passes it, as none passes a row open for editing.
+   * It leaves only when the box's message replaces it (`replaceInBox`) or Esc
+   * puts it back as it was (`putBackFromBox`).
+   */
+  inBox?: boolean;
 }
 
 export type Outbox = ReadonlyMap<number, readonly HeldMessage[]>;
@@ -67,6 +75,7 @@ function isHeld(value: unknown): value is HeldMessage {
     typeof h.heldAt === 'number' &&
     (h.sending === undefined || typeof h.sending === 'boolean') &&
     (h.maybeSent === undefined || typeof h.maybeSent === 'boolean') &&
+    (h.inBox === undefined || typeof h.inBox === 'boolean') &&
     (h.commentIds === undefined || (Array.isArray(h.commentIds) && h.commentIds.every((c) => typeof c === 'number')))
   );
 }
@@ -279,7 +288,7 @@ export async function releaseHeld(
  */
 export async function sendHeldNow(taskId: number, id: string, send: (text: string) => Promise<boolean>): Promise<boolean> {
   const entry = heldFor(taskId).find((h) => h.id === id);
-  if (!entry || entry.maybeSent || editing.has(id) || releasing.has(taskId)) return false;
+  if (!entry || entry.maybeSent || entry.inBox || editing.has(id) || releasing.has(taskId)) return false;
   releasing.add(taskId);
   try {
     return await deliver(taskId, entry, send);
@@ -316,7 +325,7 @@ export async function sendAllHeldNow(taskId: number, send: (text: string) => Pro
  * for tests.
  */
 export function allNowRun(held: readonly HeldMessage[], editingIds: ReadonlySet<string> = new Set()): HeldMessage[] {
-  const run = held.filter((h) => !editingIds.has(h.id));
+  const run = held.filter((h) => !h.inBox && !editingIds.has(h.id));
   if (run.length < 2) return [];
   if (run.some((h) => h.maybeSent || isSlashCommand(h.text))) return [];
   return run;
@@ -352,10 +361,10 @@ async function deliver(taskId: number, entry: HeldMessage, send: (text: string) 
  * slash command goes alone -- it must reach an idle session by itself -- so
  * it is a run of one, and ends the run before it. An entry being edited or
  * `maybeSent` stops the run where it is, as it stops a release. Exported for
- * tests.
+ * tests. One taken into the message box (#399) stops it the same way.
  */
 export function nextRun(held: readonly HeldMessage[], editingIds: ReadonlySet<string> = new Set()): HeldMessage[] {
-  const free = (h: HeldMessage) => !h.maybeSent && !editingIds.has(h.id);
+  const free = (h: HeldMessage) => !h.maybeSent && !h.inBox && !editingIds.has(h.id);
   const head = held[0];
   if (!head || !free(head)) return [];
   if (isSlashCommand(head.text)) return [head];
@@ -412,6 +421,107 @@ function patch(taskId: number, id: string, fields: Partial<Pick<HeldMessage, 'se
       return next;
     }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Edit all in the message box (#399)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether ↑ in an empty message box may take this held message into it: not
+ * one being written now (it is Claude Code's in a moment), not one that may
+ * already have been sent (the person decides that one, in the band), not a
+ * command (joined to text it would no longer be one; it stays held and goes
+ * alone, in its place), and not one open in the band's own editor or already
+ * in the box.
+ */
+export function canTakeIntoBox(h: HeldMessage, editingIds: ReadonlySet<string> = new Set()): boolean {
+  return !h.sending && !h.maybeSent && !h.inBox && !editingIds.has(h.id) && !isSlashCommand(h.text);
+}
+
+/** The held messages ↑ would take into the box, oldest first. */
+export function takeableIntoBox(taskId: number): HeldMessage[] {
+  return heldFor(taskId).filter((h) => canTakeIntoBox(h, editing));
+}
+
+/** The task's held messages now in the message box, oldest first. */
+export function inBoxFor(taskId: number): HeldMessage[] {
+  return heldFor(taskId).filter((h) => h.inBox === true);
+}
+
+/**
+ * ↑ in an empty box: mark every held message that can be (`canTakeIntoBox`)
+ * as in the box, in one write, and return them oldest first. They stay in the
+ * outbox, in their places and unchanged, so nothing about them is lost if
+ * the app stops; only no release passes them. Does nothing while some are
+ * already in the box.
+ */
+export function takeIntoBox(taskId: number): HeldMessage[] {
+  const held = heldFor(taskId);
+  if (held.some((h) => h.inBox)) return [];
+  const taken = held.filter((h) => canTakeIntoBox(h, editing));
+  if (taken.length === 0) return [];
+  const ids = new Set(taken.map((h) => h.id));
+  commit(
+    taskId,
+    held.map((h) => (ids.has(h.id) ? { ...h, inBox: true } : h)),
+  );
+  return inBoxFor(taskId);
+}
+
+/**
+ * Esc in the box: the messages taken into it go back to the queue exactly as
+ * they were -- the same ids, places, texts and comments -- and a release may
+ * go on.
+ */
+export function putBackFromBox(taskId: number): void {
+  const held = heldFor(taskId);
+  if (!held.some((h) => h.inBox)) return;
+  commit(
+    taskId,
+    held.map((h) => {
+      if (!h.inBox) return h;
+      const back: HeldMessage = { ...h };
+      delete back.inBox;
+      return back;
+    }),
+  );
+}
+
+/**
+ * Send from the box while held messages are in it: one message takes the
+ * place of the first of them, and they all leave, in one write. It carries
+ * every review comment they carried, and `commentIds`. It is an ordinary
+ * held message from then on: the release sends it when nothing holds it.
+ * Whitespace alone is not a message: then they only go back (`putBackFromBox`).
+ */
+export function replaceInBox(
+  taskId: number,
+  text: string,
+  now = Date.now(),
+  commentIds: readonly number[] = [],
+): HeldMessage | null {
+  const held = heldFor(taskId);
+  const at = held.findIndex((h) => h.inBox);
+  if (at === -1) return null;
+  if (text.trim().length === 0) {
+    putBackFromBox(taskId);
+    return null;
+  }
+  const ids = [...new Set([...held.filter((h) => h.inBox).flatMap((h) => h.commentIds ?? []), ...commentIds])];
+  const entry: HeldMessage = {
+    id: `${now.toString(36)}-${(seq++).toString(36)}`,
+    text,
+    heldAt: held[at]!.heldAt,
+    ...(ids.length > 0 ? { commentIds: ids } : {}),
+  };
+  const next: HeldMessage[] = [];
+  held.forEach((h, i) => {
+    if (i === at) next.push(entry);
+    if (!h.inBox) next.push(h);
+  });
+  commit(taskId, next);
+  return entry;
 }
 
 /**

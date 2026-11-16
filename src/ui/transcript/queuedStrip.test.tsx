@@ -392,6 +392,33 @@ describe('held messages', () => {
   });
 });
 
+describe('edit all in the message box (#399)', () => {
+  it("Claude Code's queue says it is changed in the terminal", () => {
+    queue.entries = [{ text: 'already typed', ts: T, injected: false }];
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    expect(screen.getByRole('status').textContent).toContain('To change these, press \u2191 in the terminal.');
+  });
+
+  it('the held head says ↑ Edit All after Send All Now, with two or more it would take', () => {
+    turnRunning();
+    holdMessage(1, 'in the pane tab');
+    holdMessage(1, 'in the mockup');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
+    const key = screen.getByText('Edit All', { exact: false });
+    expect(key.textContent).toBe('\u2191 Edit All');
+    expect(key.closest('.tx-queued-head')).not.toBeNull();
+    expect(key.previousElementSibling?.textContent).toBe('Send All Now');
+    expect(key.title).toMatch(/empty message box.*Esc puts them back/);
+  });
+
+  it('not for a command or a single message: ↑ would take one or none', () => {
+    holdMessage(1, '/compact');
+    holdMessage(1, 'only this');
+    render(<QueuedStrip sessionId="s" taskId={1} liveSince={null} />);
+    expect(screen.queryByText('Edit All', { exact: false })).toBeNull();
+  });
+});
+
 describe('a paste from the message box (#155)', () => {
   const log = Array.from({ length: 42 }, (_, i) => `step ${i + 1}: ok`).join('\n');
   const body = markPastes(`why does this fail?\n${placeholderFor(1, log)}`, new Map([[1, log]]));
