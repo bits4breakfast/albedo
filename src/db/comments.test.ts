@@ -17,6 +17,7 @@ import {
   listComments,
   listGithubDrafts,
   markCommentsSent,
+  unmarkCommentsSent,
   markDraftsPosted,
   setCommentGithub,
   moveComment,
@@ -297,5 +298,25 @@ describe('what a review task has written, for Review Started (#315)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('unmarkCommentsSent (#433)', () => {
+  it('puts back as unsent exactly the ones named, of that task, in one statement', async () => {
+    const t = await task();
+    const other = await task();
+    const a = await comment(t);
+    const b = await comment(t);
+    const c = await comment(t);
+    const o = await comment(other);
+    await markCommentsSent(t, [a, b, c]);
+    await markCommentsSent(other, [o]);
+    const execute = vi.spyOn(db, 'execute');
+    await unmarkCommentsSent(t, [a, c, o]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    execute.mockRestore();
+    const sent = Object.fromEntries((await listComments(t)).map((r) => [r.id, r.sentAt !== null]));
+    expect(sent).toEqual({ [a]: false, [b]: true, [c]: false });
+    expect((await listComments(other))[0]!.sentAt).not.toBeNull();
   });
 });

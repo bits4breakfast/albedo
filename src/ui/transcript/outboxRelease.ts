@@ -42,6 +42,7 @@ import {
 } from './outbox';
 import { isSlashCommand, submitLocked } from './send';
 import { isTurnRunning, onTurnChange } from './turn';
+import { awaitingDelivery, onAwaitingDeliveryChange } from './deliveryGate';
 
 /** How long after a failed write the release tries again. */
 export const RETRY_MS = 10_000;
@@ -66,11 +67,16 @@ export interface ReleaseConditions {
   headMaybeSent: boolean;
   /** The last attempt to write a held message failed. */
   failed: boolean;
+  /**
+   * The last message written is not in the transcript yet (deliveryGate.ts,
+   * #433): if Claude Code did not take it, the next would be glued onto it.
+   */
+  awaitingDelivery?: boolean;
 }
 
 /** Whether held messages may go now. */
-export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' | 'turnRunning'>): boolean {
-  return !c.offline && !c.promptOpen && !c.turnRunning;
+export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' | 'turnRunning' | 'awaitingDelivery'>): boolean {
+  return !c.offline && !c.promptOpen && !c.turnRunning && c.awaitingDelivery !== true;
 }
 
 /**
@@ -78,7 +84,7 @@ export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' |
  * the hint says why -- and Sending once nothing does.
  */
 export function heldLabel(c: ReleaseConditions): 'Held' | 'Sending' {
-  if (c.headMaybeSent || c.offline || c.promptOpen || c.turnRunning || !c.live || c.failed) return 'Held';
+  if (c.headMaybeSent || c.offline || c.promptOpen || c.turnRunning || !c.live || c.failed || c.awaitingDelivery === true) return 'Held';
   return 'Sending';
 }
 
@@ -92,6 +98,7 @@ export function heldHint(c: ReleaseConditions): string | null {
   if (c.offline) return 'until you\u2019re online';
   if (c.promptOpen) return 'until you answer';
   if (c.turnRunning) return 'until this turn ends';
+  if (c.awaitingDelivery === true) return 'until the last message reaches Claude Code';
   if (!c.live) return 'until the session starts';
   if (c.failed) return 'couldn\u2019t send \u2014 retrying';
   return null;
@@ -119,7 +126,7 @@ export function sendNowOffered(c: ReleaseConditions): boolean {
   return c.turnRunning && !c.offline && !c.headMaybeSent;
 }
 export function sendNowAllowed(c: ReleaseConditions): boolean {
-  return sendNowOffered(c) && !c.promptOpen && c.live;
+  return sendNowOffered(c) && !c.promptOpen && c.live && c.awaitingDelivery !== true;
 }
 
 /**
@@ -142,7 +149,7 @@ export function sendNow(taskId: number, id: string): Promise<boolean> {
   if (!held || !sendNowOfferedFor(conditionsFor(taskId), held.text) || !sendNowAllowed(conditionsFor(taskId))) {
     return Promise.resolve(false);
   }
-  return sendHeldNow(taskId, id, (text) => submitLocked(taskId, text));
+  return sendHeldNow(taskId, id, (text, ids) => submitLocked(taskId, text, undefined, ids));
 }
 
 /**
@@ -162,7 +169,7 @@ export function sendAllNowOffered(c: ReleaseConditions, size: number): boolean {
 export function sendAllNow(taskId: number): Promise<boolean> {
   const c = conditionsFor(taskId);
   if (!sendAllNowOffered(c, allNowSize(taskId)) || !sendNowAllowed(c)) return Promise.resolve(false);
-  return sendAllHeldNow(taskId, (text) => submitLocked(taskId, text));
+  return sendAllHeldNow(taskId, (text, ids) => submitLocked(taskId, text, undefined, ids));
 }
 
 /** The status of the task on screen, the only one Albedo derives a status for here. */
@@ -199,6 +206,7 @@ export function conditionsFor(taskId: number, status?: TaskStatus | null): Relea
     live: hasLivePty(taskId),
     headMaybeSent: heldFor(taskId)[0]?.maybeSent === true,
     failed: lastReleaseFailed(taskId),
+    awaitingDelivery: awaitingDelivery(taskId),
   };
 }
 
@@ -211,7 +219,7 @@ function tryRelease(taskId: number): void {
     return;
   }
   const mayGo = () => canRelease(conditionsFor(taskId)) && hasLivePty(taskId);
-  void releaseHeld(taskId, (text) => submitLocked(taskId, text), mayGo).then(() => {
+  void releaseHeld(taskId, (text, ids) => submitLocked(taskId, text, undefined, ids), mayGo).then(() => {
     if (!lastReleaseFailed(taskId) || retries.has(taskId)) return;
     retries.set(
       taskId,
@@ -261,6 +269,10 @@ function start(): () => void {
       if (pendingDeletion(id) === null) tryRelease(id);
     }),
     onTurnChange(tryRelease),
+    // The last message reached the transcript: the next may go.
+    onAwaitingDeliveryChange((id) => {
+      if (!awaitingDelivery(id)) tryRelease(id);
+    }),
     onHeldReleased((id, held) => {
       if (!held.commentIds || held.commentIds.length === 0) return;
       // On their way until the sent mark is read back: never To Send between (#404).

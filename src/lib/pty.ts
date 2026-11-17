@@ -21,6 +21,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 
 import type { PtySpawnOptions } from '../types';
+import { logPtyWrite, type PtyWriteOrigin } from './ptyWriteLog';
 
 /** One message on a spawn's channel. Mirrors `PtyEvent` in pty.rs. */
 type PtyEvent = { kind: 'output'; data: string } | { kind: 'exit'; code: number | null };
@@ -179,8 +180,12 @@ export async function spawnPty(opts: PtySpawnOptions, handlers: PtyHandlers): Pr
 /**
  * Sends input to the pty. Keystrokes, pastes, control sequences -- all opaque.
  * Resolves once queued, in call order; the Rust side never blocks on a write.
+ * Noted in the debug log when it is switched on (ptyWriteLog.ts); `origin`
+ * says whether Albedo wrote it or the terminal did, which decides what of it
+ * the log may keep.
  */
-export function writePty(ptyId: string, data: string): Promise<void> {
+export function writePty(ptyId: string, data: string, origin: PtyWriteOrigin = 'terminal'): Promise<void> {
+  logPtyWrite(ptyId, data, origin);
   return invoke<void>('pty_write', { ptyId, data });
 }
 

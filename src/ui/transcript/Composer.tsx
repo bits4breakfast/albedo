@@ -34,6 +34,7 @@ import { markQuotes } from './transcriptQuotes';
 import { useTurnRunning } from './turn';
 import { promptOpen } from './outboxRelease';
 import { isSlashCommand, mustHold, submitLocked } from './send';
+import { NOT_DELIVERED, onDeliveredLate, onNotDelivered } from './delivery';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
@@ -85,6 +86,9 @@ const ON_ITS_WAY_MS = 3_000;
 
 /** How long to wait for a session that `startPty` said was on its way. */
 const START_TIMEOUT_MS = 12_000;
+
+/** What the box says when a message it or anything else sent never reached the transcript (#433). */
+export const NOT_DELIVERED_NOTICE = `${NOT_DELIVERED}. Your message is still here, held above \u2014 press Send on it to retry.`;
 
 /**
  * Send a message without switching panes.
@@ -295,6 +299,23 @@ export function Composer({
     },
     [grow, onSent],
   );
+
+  // A message of this task's that never reached the transcript (#433,
+  // delivery.ts) is back in the outbox, held above the box: said here too,
+  // in the words a failed send uses, whichever path sent it.
+  useEffect(() => {
+    const offs = [
+      onNotDelivered((e) => {
+        // A send of the box's own under way keeps its notice (held at a prompt, starting).
+        if (e.taskId === draftOwnerRef.current && !inFlightRef.current) setNotice(NOT_DELIVERED_NOTICE);
+      }),
+      // It turned up after all and left the band: the notice has nothing left to point at.
+      onDeliveredLate((e) => {
+        if (e.taskId === draftOwnerRef.current) setNotice((n) => (n === NOT_DELIVERED_NOTICE ? null : n));
+      }),
+    ];
+    return () => offs.forEach((off) => off());
+  }, []);
 
   // Text handed in from elsewhere (review comments) joins the draft.
   useEffect(
@@ -547,7 +568,7 @@ export function Composer({
       return;
     }
     try {
-      ok = await submitLocked(owner, body);
+      ok = await submitLocked(owner, body, undefined, carried.code);
     } catch {
       threw = true;
     }
@@ -828,7 +849,7 @@ export function Composer({
       return;
     }
     try {
-      if (await submitLocked(owner, body)) {
+      if (await submitLocked(owner, body, undefined, carried.code)) {
         takeCarried(owner, carried);
         onSent(body);
       } else hold();
@@ -950,7 +971,7 @@ export function Composer({
       // submitPty owns the bracketed-paste wrapper and the submitting \r (see
       // Terminal.tsx, which says callers must NOT wrap again). Wrapping here
       // too would nest the escape sequences and send the markers as text.
-      const ok = await submitLocked(owner, body);
+      const ok = await submitLocked(owner, body, undefined, carried.code);
       if (ok) takeCarried(owner, carried);
       if (leftDuringSend(owner, ok, text, pastes, mentions)) return;
       if (ok) {

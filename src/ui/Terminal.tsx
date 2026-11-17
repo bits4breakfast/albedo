@@ -4,6 +4,7 @@ import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
+import { notePtyTask } from '../lib/ptyWriteLog';
 import { openExternal } from '../lib/openUrl';
 import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
@@ -87,6 +88,7 @@ function notifyPresence(taskId: number, live: boolean): void {
 }
 
 function registerPty(taskId: number, ptyId: string): void {
+  notePtyTask(ptyId, taskId);
   livePtys.set(taskId, ptyId);
   liveSince.set(taskId, Date.now());
   notifyPresence(taskId, true);
@@ -120,7 +122,7 @@ export async function notePty(taskId: number, text: string): Promise<boolean> {
   const payload = text.replace(/[\r\n]+/g, ' ').trim();
   if (!payload) return false;
   try {
-    await writePty(ptyId, payload);
+    await writePty(ptyId, payload, 'albedo');
     return true;
   } catch {
     return false;
@@ -173,14 +175,14 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
     const segments = pasteSegments(body, markerSpans(body));
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i] as PasteSegment;
-      await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`);
+      await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`, 'albedo');
       // It reads the file before it takes the next keystroke.
       if (seg.image && i < segments.length - 1) await sleep(SUBMIT_DELAY_IMAGE_MS);
       if (livePtys.get(taskId) !== ptyId) return false;
     }
     await sleep(submitDelayFor(body));
     if (livePtys.get(taskId) !== ptyId) return false; // exited in the pause
-    await writePty(ptyId, '\r');
+    await writePty(ptyId, '\r', 'albedo');
     return true;
   } catch {
     return false;
@@ -576,7 +578,7 @@ export default function Terminal({
         return;
       }
       if (deadRef.current) return;
-      void writePty(id, data).catch((err) => {
+      void writePty(id, data, 'terminal').catch((err) => {
         setFailure(message(err));
       });
     });
@@ -745,7 +747,7 @@ export default function Terminal({
 
         const queued = pendingRef.current;
         pendingRef.current = [];
-        for (const chunk of queued) void writePty(id, chunk).catch(() => {});
+        for (const chunk of queued) void writePty(id, chunk, 'terminal').catch(() => {});
 
         applyFit();
         // The dialog is answered here and nowhere else: give it the keyboard,
