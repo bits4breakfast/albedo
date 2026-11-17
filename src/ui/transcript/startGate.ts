@@ -8,10 +8,14 @@
  * event of that process (CLAUDE.md, the hook channel; the same signal the
  * workspace-trust check waits for).
  *
- * Set by the terminal (Terminal.tsx), which alone knows a process: from the
- * spawn of a pty that has the hooks until a `SessionStart` stamped no
- * earlier than that spawn, or until the pty ends. A pty spawned without the
- * hooks never waits here: no event would ever come.
+ * Two writers. The terminal (Terminal.tsx), which alone knows a process,
+ * shuts it from the spawn of a pty that has the hooks until a `SessionStart`
+ * of that process (`noteSessionStarted`), or until the pty ends. A pty
+ * spawned without the hooks never waits here: no event would ever come.
+ * And Send Anyway on the warning (StartWait.tsx) opens it by hand, for a
+ * Claude Code whose hooks never run (`sendAnyway`): only the wait it was
+ * shown for, and the task is remembered for the rest of the run, so the
+ * next wait warns at once.
  *
  * While a task waits, every send is held (`mustHold`, send.ts) and the
  * outbox's release waits (outboxRelease.ts); once it is up the held
@@ -44,6 +48,42 @@ export function setAwaitingStart(taskId: number, since: number | null): void {
       console.warn('[startGate] a listener failed', err);
     }
   }
+}
+
+/**
+ * Tasks where Send Anyway opened a wait no SessionStart had ended, this run:
+ * their hooks may never fire, so the next wait warns at once. Forgotten when
+ * a later process of the task does report its start.
+ */
+const startedByHand = new Set<number>();
+
+/** This process of the task reported its start: the wait ends, and its hooks are known to fire. */
+export function noteSessionStarted(taskId: number): void {
+  startedByHand.delete(taskId);
+  setAwaitingStart(taskId, null);
+}
+
+/**
+ * Send Anyway: end the wait that began at `since` -- only that one: a
+ * respawn since the warning was drawn has its own wait, not shown yet --
+ * and remember the task. False when that wait is no longer the task's.
+ */
+export function sendAnyway(taskId: number, since: number): boolean {
+  if (!clearAwaitingStartIf(taskId, since)) return false;
+  startedByHand.add(taskId);
+  return true;
+}
+
+/** End the task's wait only if it is still the one that began at `since`. True when it did. */
+export function clearAwaitingStartIf(taskId: number, since: number): boolean {
+  if (waitingSince.get(taskId) !== since) return false;
+  setAwaitingStart(taskId, null);
+  return true;
+}
+
+/** Send Anyway was needed for this task this run, and no start has been reported since. */
+export function startNeededByHand(taskId: number): boolean {
+  return startedByHand.has(taskId);
 }
 
 /** The task's pty is up and `claude` has not reported its start yet: nothing is typed into it. */
@@ -91,4 +131,5 @@ export function startIsThisProcess(at: number, spawnedAt: number): boolean {
 /** Test seam. */
 export function __resetStartGate(): void {
   waitingSince.clear();
+  startedByHand.clear();
 }

@@ -18,7 +18,7 @@ import { mcpServerPath } from '../capture/inbox';
 import { displayName } from './text';
 import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment } from '../lib/ptyInput';
 import { markerSpans } from './transcript/albedoMarkers';
-import { setAwaitingStart, startIsThisProcess } from './transcript/startGate';
+import { noteSessionStarted, setAwaitingStart, startIsThisProcess } from './transcript/startGate';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { TASK_TERMINAL_ATTR, taskTerminalTakesKey } from './shortcuts';
@@ -837,7 +837,7 @@ export default function Terminal({
         const spawned = spawnAtRef.current;
         if (taskId === task.id && spawned !== null && startIsThisProcess(at, spawned)) {
           startSeenRef.current = at;
-          setAwaitingStart(task.id, null);
+          noteSessionStarted(task.id);
         }
         if (taskId !== task.id || sessionId === taskRef.current.sessionId) return;
         void linkTaskSession(task.id, sessionId, `hook:${source}`).catch((err) =>

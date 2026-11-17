@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
   spawns: [] as { onExit: (code: number | null) => void }[],
   sessionListeners: new Set<SessionListener>(),
   hooks: true,
+  /** Run inside spawnPty, before it resolves: before the pty is announced. */
+  onSpawn: null as (() => void) | null,
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -42,6 +44,7 @@ vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 vi.mock('../lib/pty', () => ({
   spawnPty: async (_opts: unknown, handlers: { onExit: (code: number | null) => void }) => {
     h.spawns.push({ onExit: handlers.onExit });
+    h.onSpawn?.();
     return { id: `pty-${h.spawns.length}`, detach: () => {} };
   },
   writePty: async () => {},
@@ -146,6 +149,7 @@ function sessionStart(at: number, source = 'resume') {
 beforeEach(() => {
   h.spawns = [];
   h.hooks = true;
+  h.onSpawn = null;
 });
 afterEach(() => {
   cleanup();
@@ -168,6 +172,20 @@ describe('the start gate, per pty process (#439)', () => {
     expect(awaitingStart(1)).toBe(true);
 
     sessionStart(Date.now());
+    expect(awaitingStart(1)).toBe(false);
+  });
+
+  it('a SessionStart of this process read before the pty is announced: never shut', async () => {
+    const atAnnounce: boolean[] = [];
+    const off = onPtyPresenceChange((id, live) => {
+      if (id === 1 && live) atAnnounce.push(awaitingStart(1));
+    });
+    h.onSpawn = () => sessionStart(Date.now(), 'startup');
+    render(stack());
+    await flush();
+    off();
+    expect(hasLivePty(1)).toBe(true);
+    expect(atAnnounce).toEqual([false]);
     expect(awaitingStart(1)).toBe(false);
   });
 

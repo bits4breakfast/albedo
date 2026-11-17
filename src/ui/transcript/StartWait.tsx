@@ -25,7 +25,7 @@ import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { formatDuration } from '../../lib/duration';
 import { useHeld, type HeldMessage } from './outbox';
 import { foldPastes } from './pastedText';
-import { setAwaitingStart, useAwaitingStartSince } from './startGate';
+import { sendAnyway, startNeededByHand, useAwaitingStartSince } from './startGate';
 
 /** How long Claude Code may take to start before the warning says something may be in its way. */
 export const START_WARN_MS = 15_000;
@@ -80,6 +80,8 @@ export function StartWaitRows({ taskId }: { taskId: number | null }): ReactNode 
   const now = useClock(waiting.length > 0);
   if (since === null || waiting.length === 0) return null;
   return waiting.map((h) => (
+    // Announced when it appears and when its words change, never each second:
+    // the clock is hidden from assistive tech.
     <div key={h.id} className="tx-row tx-row-user tx-row-echo tx-row-start-wait" aria-live="polite">
       <div className="tx-gutter">You</div>
       <div className="tx-content tx-start-wait">
@@ -87,7 +89,13 @@ export function StartWaitRows({ taskId }: { taskId: number | null }): ReactNode 
         <div className="tx-echo-text">{foldPastes(h.text)}</div>
         <span className="tx-echo-meta tx-start-wait-meta">
           <span className="tx-spinner" aria-hidden="true" />
-          {START_WAIT_TEXT} · <span className="tx-start-wait-time">{formatDuration(now - waitStartedAt(h, since))}</span>
+          <span>
+            {START_WAIT_TEXT}
+            <span className="tx-start-wait-time" aria-hidden="true">
+              {' · '}
+              {formatDuration(now - waitStartedAt(h, since))}
+            </span>
+          </span>
         </span>
       </div>
     </div>
@@ -110,7 +118,10 @@ export function StartWaitNotice({
     () => isTrustWaiting(taskId),
     () => false,
   );
-  if (since === null || waiting.length === 0 || trust || now - since < START_WARN_MS) return null;
+  // Send Anyway was needed for this task already this run: its hooks may
+  // never fire, so say it at once rather than after another 15 s.
+  const after = startNeededByHand(taskId) ? 0 : START_WARN_MS;
+  if (since === null || waiting.length === 0 || trust || now - since < after) return null;
   return (
     <div className="tx-start-warn" role="status">
       <span className="tx-start-warn-text">
@@ -122,9 +133,10 @@ export function StartWaitNotice({
         </button>
       ) : null}
       {/* The way out when no SessionStart will ever come (hooks switched off
-          in the user's settings): opens this process's gate by hand, the
-          held messages go in order, and delivery.ts watches them as any. */}
-      <button type="button" className="btn" title={SEND_ANYWAY_TITLE} onClick={() => setAwaitingStart(taskId, null)}>
+          in the user's settings): opens the gate by hand -- only the wait
+          this was drawn for -- the held messages go in order, and
+          delivery.ts watches them as any. */}
+      <button type="button" className="btn" title={SEND_ANYWAY_TITLE} onClick={() => sendAnyway(taskId, since)}>
         Send Anyway
       </button>
     </div>

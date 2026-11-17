@@ -16,7 +16,7 @@ vi.mock('../Terminal', () => ({
 }));
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { __resetOutbox, holdMessage, holdNotDelivered } from './outbox';
-import { __resetStartGate, awaitingStart, setAwaitingStart } from './startGate';
+import { __resetStartGate, awaitingStart, noteSessionStarted, setAwaitingStart } from './startGate';
 import { startOutboxRelease } from './outboxRelease';
 import { submitPty } from '../Terminal';
 import { setTrustWaiting } from '../../capture/workspaceTrust';
@@ -109,6 +109,42 @@ describe('waiting for Claude Code to start (#439)', () => {
     } finally {
       stop();
     }
+  });
+
+  it('after Send Anyway, the task\u2019s next wait warns at once; a reported start forgets that', async () => {
+    setAwaitingStart(1, Date.now());
+    holdMessage(1, 'one');
+    view();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(START_WARN_MS);
+    });
+    act(() => fireEvent.click(screen.getByRole('button', { name: 'Send Anyway' })));
+    expect(awaitingStart(1)).toBe(false);
+
+    // A respawn: its hooks may never fire either.
+    act(() => {
+      setAwaitingStart(1, Date.now());
+      holdMessage(1, 'two');
+    });
+    expect(screen.getByText(START_WARN_TITLE)).toBeTruthy();
+
+    // This process did report its start: the hooks work, so the next wait waits 15 s again.
+    act(() => noteSessionStarted(1));
+    act(() => {
+      setAwaitingStart(1, Date.now());
+      holdMessage(1, 'three');
+    });
+    expect(screen.queryByText(START_WARN_TITLE)).toBeNull();
+  });
+
+  it('the clock is hidden from assistive tech; the words are not', () => {
+    setAwaitingStart(1, Date.now());
+    holdMessage(1, 'quiet');
+    view();
+    const time = document.querySelector('.tx-start-wait-time');
+    expect(time?.getAttribute('aria-hidden')).toBe('true');
+    expect(time?.closest('[aria-live]')).not.toBeNull();
+    expect(screen.getByText(START_WAIT_TEXT, { exact: false })).toBeTruthy();
   });
 
   it('shows nothing once Claude Code is up, or with nothing held', async () => {

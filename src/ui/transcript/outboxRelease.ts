@@ -210,7 +210,7 @@ export function noteShownStatus(taskId: number | null, status: TaskStatus | null
   const was = shown;
   shown = taskId === null ? null : { taskId, status };
   // Leaving `blocked` opens the gate: nothing else announces it.
-  if (was?.status === 'blocked' && (shown?.taskId !== was.taskId || shown.status !== 'blocked')) tryRelease(was.taskId);
+  if (was?.status === 'blocked' && (shown?.taskId !== was.taskId || shown.status !== 'blocked')) reopened(was.taskId);
 }
 
 /** Whether typed text would land in a dialog. `status` defaults to what `noteShownStatus` said. */
@@ -242,6 +242,19 @@ export function conditionsFor(taskId: number, status?: TaskStatus | null): Relea
 }
 
 const retries = new Map<number, ReturnType<typeof setTimeout>>();
+
+/**
+ * A gate cleared -- a prompt answered, the trust dialog gone, a preview or a
+ * deletion settled, `blocked` left, a turn ended, a message confirmed, the
+ * start reported. That is a reason to send into the session that is there,
+ * never to start one: the gate also clears when the process ends (the trust
+ * dialog declined with "No, exit"), and starting it again would open the same
+ * dialog, over and over. Only a new reason to send -- the outbox changing,
+ * the connection coming back -- may start a session (#439 review).
+ */
+function reopened(taskId: number): void {
+  if (hasLivePty(taskId)) tryRelease(taskId);
+}
 
 function tryRelease(taskId: number): void {
   if (heldFor(taskId).length === 0 || !canRelease(conditionsFor(taskId))) return;
@@ -288,27 +301,26 @@ function start(): () => void {
       if (live) tryRelease(id);
     }),
     onPromptChange((id, prompt) => {
-      if (prompt === null) tryRelease(id);
+      if (prompt === null) reopened(id);
     }),
     onTrustWaiting((id, waiting) => {
-      if (!waiting) tryRelease(id);
+      if (!waiting) reopened(id);
     }),
     onPreviewChange((id) => {
-      if (pendingPreview(id) === null) tryRelease(id);
+      if (pendingPreview(id) === null) reopened(id);
     }),
     onDeletionChange((id) => {
-      if (pendingDeletion(id) === null) tryRelease(id);
+      if (pendingDeletion(id) === null) reopened(id);
     }),
-    onTurnChange(tryRelease),
+    onTurnChange(reopened),
     // The last message reached the transcript: the next may go.
     onAwaitingDeliveryChange((id) => {
-      if (!awaitingDelivery(id)) tryRelease(id);
+      if (!awaitingDelivery(id)) reopened(id);
     }),
-    // Claude Code reported its start (#439). Only with the pty still there:
-    // the wait also ends when the pty does, and that is no reason to start
-    // another one.
+    // Claude Code reported its start (#439), or Send Anyway. The wait also
+    // ends when the pty does: `reopened` starts nothing then.
     onAwaitingStartChange((id) => {
-      if (!awaitingStart(id) && hasLivePty(id)) tryRelease(id);
+      if (!awaitingStart(id)) reopened(id);
     }),
     onHeldReleased((id, held) => {
       if (!held.commentIds || held.commentIds.length === 0) return;

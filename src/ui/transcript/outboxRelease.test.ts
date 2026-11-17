@@ -249,6 +249,51 @@ describe('the release', () => {
     noteShownStatus(null, null);
   });
 
+  it('a gate cleared by the session ending starts nothing: trust declined with "No, exit" (#439 review)', async () => {
+    setTrustWaiting(1, true);
+    stop = startOutboxRelease();
+    holdMessage(1, 'held at the trust dialog');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(startPty).mockClear();
+    // Declined: the pty exits, and the terminal clears the trust wait.
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    term.__emitPresence(1, false);
+    setTrustWaiting(1, false);
+    await vi.advanceTimersByTimeAsync(RETRY_MS * 3);
+    expect(startPty).not.toHaveBeenCalled();
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(heldFor(1).map((h) => h.text)).toEqual(['held at the trust dialog']);
+  });
+
+  it('nor does a prompt ending with no pty', async () => {
+    hooks.__setPrompt(1, { kind: 'question' });
+    stop = startOutboxRelease();
+    holdMessage(1, 'waiting on a question');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(startPty).mockClear();
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    hooks.__setPrompt(1, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startPty).not.toHaveBeenCalled();
+  });
+
+  it('nor does leaving blocked with no pty; a new message does start one', async () => {
+    noteShownStatus(1, 'blocked');
+    stop = startOutboxRelease();
+    holdMessage(1, 'waiting');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(startPty).mockClear();
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    noteShownStatus(1, 'idle');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startPty).not.toHaveBeenCalled();
+    // A new reason to send may start the session.
+    holdMessage(1, 'and another');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startPty).toHaveBeenCalledWith(1);
+    noteShownStatus(null, null);
+  });
+
   it('tries a failed write again after a pause', async () => {
     vi.mocked(submitPty).mockResolvedValueOnce(false);
     stop = startOutboxRelease();
