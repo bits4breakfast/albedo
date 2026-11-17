@@ -170,6 +170,47 @@
 /* A running /compact's clock, under the command. */
 .tx-echo-running { margin-top: 4px; }
 
+/* A message held until Claude Code has started (#439): the message box's
+   echo, with where it stands on the right, as the mockup has it, wrapping
+   under the text when the line is full. --muted on --user-row 6.46 | 7.13
+   (light | dark); the spinner is drawn in it and carries no text. */
+.tx-start-wait {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+  row-gap: 2px;
+}
+.tx-start-wait > .tx-echo-text { flex: 1 1 16ch; min-width: 0; }
+.tx-start-wait-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.tx-start-wait-meta .tx-spinner { width: 10px; height: 10px; }
+.tx-start-wait-time { font-variant-numeric: tabular-nums; }
+
+/* Claude Code not started 15 s on (#439), above the Held band: the app's
+   warning tint, opaque. --banner-text on --banner-bg 7.65 | 11.27 (light |
+   dark), title and body alike. Show Terminal is a plain .btn on its own
+   --panel: --text 16.60 | 14.63. */
+.tx-start-warn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: var(--fs-sm);
+  color: var(--banner-text);
+  background: var(--banner-bg);
+  border-top: 1px solid var(--banner-border);
+}
+.tx-start-warn-text { min-width: 0; }
+.tx-start-warn > .btn { flex: none; }
+
 .tx-row-working { margin: 6px 0 14px; }
 .tx-working {
   display: flex;

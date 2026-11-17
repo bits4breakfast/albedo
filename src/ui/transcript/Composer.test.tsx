@@ -34,6 +34,7 @@ import { startOutboxRelease } from './outboxRelease';
 import { __resetTurns, noteTaskSessions } from './turn';
 import { recordQueueOperations, seedQueue } from '../../capture/queue';
 import { __resetConnectivity } from '../../lib/connectivity';
+import { __resetStartGate, setAwaitingStart } from './startGate';
 
 // Replaces the real module, so xterm and the Tauri pty bridge never load.
 // The signatures are checked against the real exports by tsc: a mock that
@@ -416,6 +417,74 @@ describe('(d) blocked: the message is held instead of typed into the prompt', ()
     type('follow-up mid-turn');
     pressEnter();
     await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('(e) before Claude Code has started (#439)', () => {
+  /** A fresh store: the outbox persists, and what these tests hold must not reach later ones. */
+  const freshStorage = () => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+  };
+  beforeEach(() => {
+    freshStorage();
+    __resetOutbox();
+  });
+  afterEach(() => {
+    __resetStartGate();
+    freshStorage();
+    __resetOutbox();
+    // The send that went counts as a turn starting (turn.ts).
+    __resetTurns();
+    // Back to the module's defaults: clearAllMocks keeps implementations.
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    vi.mocked(submitPty).mockResolvedValue(false);
+    vi.mocked(startPty).mockReturnValue(false);
+  });
+
+  it('a message from the box is held, not typed, and the box empties', async () => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    setAwaitingStart(5, Date.now());
+    const onSent = vi.fn();
+    render(<Composer taskId={5} onSent={onSent} />);
+    type('rename the settings tab');
+    pressEnter();
+    await waitFor(() => expect(heldFor(5).map((h) => h.text)).toEqual(['rename the settings tab']));
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(box().value).toBe('');
+    expect(onSent).not.toHaveBeenCalled();
+  });
+
+  it('a send that brought the session up is held when it arrives still starting', async () => {
+    deadPty();
+    render(<Composer taskId={6} onSent={vi.fn()} />);
+    type('after the restart');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1)); // no pty yet
+    // The terminal shuts the gate before it announces the pty.
+    setAwaitingStart(6, Date.now());
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    act(() => term.__emitPresence(6, true));
+    await waitFor(() => expect(heldFor(6).map((h) => h.text)).toEqual(['after the restart']));
+    expect(submitPty).toHaveBeenCalledTimes(1);
+  });
+
+  it('a running session, its start seen, sends at once', async () => {
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    vi.mocked(submitPty).mockResolvedValue(true);
+    render(<Composer taskId={7} onSent={vi.fn()} />);
+    type('straight in');
+    pressEnter();
+    await waitFor(() => expect(submitPty).toHaveBeenCalledWith(7, 'straight in'));
+    expect(heldFor(7)).toEqual([]);
   });
 });
 

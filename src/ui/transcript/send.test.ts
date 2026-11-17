@@ -29,6 +29,9 @@ import { __resetOutbox, heldFor, holdMessage, releaseHeld } from './outbox';
 import { isSlashCommand, sendToSession, submitLocked } from './send';
 import { __resetTurns, isTurnRunning, noteTaskSessions } from './turn';
 import { recordQueueOperations, seedQueue } from '../../capture/queue';
+import { __resetStartGate, setAwaitingStart } from './startGate';
+import { sendReminderText } from '../reminders/send';
+import { TRY_AGAIN_TEXT } from '../TryAgain';
 
 let online = true;
 
@@ -56,6 +59,7 @@ beforeEach(() => {
 afterEach(() => {
   __resetConnectivity();
   __resetOutbox();
+  __resetStartGate();
   __resetTurns();
   vi.mocked(ptyLiveSince).mockReturnValue(null);
   vi.clearAllMocks();
@@ -161,6 +165,44 @@ describe('one write at a time', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(writes).toEqual(['paste:one', 'paste:two']);
     await vi.advanceTimersByTimeAsync(100);
+  });
+});
+
+describe('before Claude Code has started (#439)', () => {
+  it('holds every sender while the new pty waits for its first SessionStart, in the order they came', async () => {
+    setAwaitingStart(1, Date.now());
+    expect(await sendToSession(1, 'from the message box')).toBe('held');
+    expect(await sendToSession(1, TRY_AGAIN_TEXT)).toBe('held');
+    expect(await sendPrompt({ id: 1, status: 'idle' }, 'Push the branch', 'Push')).toBe('held');
+    expect(await sendToSession(1, '/model opus', 'the model picker')).toBe('held');
+    expect(await sendReminderText({ id: 1, status: 'idle' }, 'a reminder came back')).toBe('held');
+    expect(heldFor(1).map((h) => h.text)).toEqual([
+      'from the message box',
+      TRY_AGAIN_TEXT,
+      'Push the branch',
+      '/model opus',
+      'a reminder came back',
+    ]);
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+  });
+
+  it('a running session, its start already seen, sends at once', async () => {
+    setAwaitingStart(1, Date.now());
+    setAwaitingStart(1, null);
+    const sent = sendToSession(1, 'straight through');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await sent).toBe('sent');
+    expect(heldFor(1)).toEqual([]);
+    expect(writes).toEqual(['paste:straight through', 'enter:straight through']);
+  });
+
+  it('only the task whose pty waits is held', async () => {
+    setAwaitingStart(2, Date.now());
+    const sent = sendToSession(1, 'to the running one');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await sent).toBe('sent');
+    expect(await sendToSession(2, 'to the starting one')).toBe('held');
   });
 });
 

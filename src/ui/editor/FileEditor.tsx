@@ -120,6 +120,7 @@ import './comments.css';
 import { inDiff } from '../../gh/reviewSubmit';
 import { usePrRanges } from '../reviewDrafts';
 import { useCarriedCodeIds } from '../transcript/codeComments';
+import { awaitingStart } from '../transcript/startGate';
 
 /** Files past this size are edited without colour. Tokenising them janks. */
 const MAX_HIGHLIGHT_CHARS = 300_000;
@@ -411,7 +412,7 @@ type Phase =
 type SaveState =
   | { kind: 'idle' }
   | { kind: 'saving' }
-  | { kind: 'saved'; at: number; noted: boolean }
+  | { kind: 'saved'; at: number; noted: boolean; starting?: boolean }
   | { kind: 'failed'; message: string }
   | { kind: 'conflict'; message: string };
 
@@ -745,12 +746,17 @@ export default function FileEditor({
 
     // One line, no newline. `notePty` places it in the input unsent, because
     // the agent may be mid-turn and sending has to stay a human decision.
-    const noted = await notePty(
-      task.id,
-      `Heads up: I hand-edited ${target.relative} in the editor — re-read it before you continue.`,
-    ).catch(() => false);
+    // Not into a `claude` that has not started (#439): whatever the shell
+    // runs first would read it.
+    const starting = awaitingStart(task.id);
+    const noted = starting
+      ? false
+      : await notePty(
+          task.id,
+          `Heads up: I hand-edited ${target.relative} in the editor — re-read it before you continue.`,
+        ).catch(() => false);
 
-    setSaveState({ kind: 'saved', at: Date.now(), noted });
+    setSaveState({ kind: 'saved', at: Date.now(), noted, starting });
   }, [task.id]);
 
   saveRef.current = () => {
@@ -1524,7 +1530,11 @@ export default function FileEditor({
 
       {saveState.kind === 'saved' && !saveState.noted && (
         <div className="ed-notice" data-tone="muted">
-          <span>Saved. No live session for this task, so no note was placed in the terminal.</span>
+          <span>
+            {saveState.starting
+              ? 'Saved. Claude Code hasn\u2019t started yet, so no note was placed in the terminal.'
+              : 'Saved. No live session for this task, so no note was placed in the terminal.'}
+          </span>
         </div>
       )}
 

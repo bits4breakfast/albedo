@@ -6,7 +6,9 @@
  * Rules no caller can skip:
  *  - **Hold when the composer would** (`mustHold`): offline, behind messages
  *    already held or being released, while the last message sent is not yet
- *    in the transcript (deliveryGate.ts, #433), or while a turn is running (turn.ts:
+ *    in the transcript (deliveryGate.ts, #433), while the session's `claude`
+ *    has not reported its start (startGate.ts, #439: whatever the shell runs
+ *    first would read it), or while a turn is running (turn.ts:
  *    typed during one, it would go with any dialog the turn opens). The text
  *    joins the outbox (outbox.ts) at the end, so the order is the order
  *    things were sent. A command is held like a message: the release sends
@@ -24,13 +26,21 @@ import { submitPty } from '../Terminal';
 import { heldFor, holdMessage, isReleasing, useHeld } from './outbox';
 import { isTurnRunning, noteSubmitted, useTurnRunning } from './turn';
 import { awaitingDelivery, useAwaitingDelivery } from './deliveryGate';
+import { awaitingStart, useAwaitingStart } from './startGate';
 
 /** What happened to it: sent to the session, held in the outbox, or neither. */
 export type SessionSendOutcome = 'sent' | 'held' | 'failed';
 
 /** Whether a send now would join the outbox rather than go to the pty. */
 export function mustHold(taskId: number): boolean {
-  return isOffline() || heldFor(taskId).length > 0 || isReleasing(taskId) || isTurnRunning(taskId) || awaitingDelivery(taskId);
+  return (
+    isOffline() ||
+    heldFor(taskId).length > 0 ||
+    isReleasing(taskId) ||
+    isTurnRunning(taskId) ||
+    awaitingDelivery(taskId) ||
+    awaitingStart(taskId)
+  );
 }
 
 export { isSlashCommand } from './slash';
@@ -45,7 +55,8 @@ export function useSendsWait(taskId: number | null): boolean {
   const held = useHeld(taskId);
   const turn = useTurnRunning(taskId);
   const awaiting = useAwaitingDelivery(taskId);
-  return offline || held.length > 0 || turn || awaiting;
+  const starting = useAwaitingStart(taskId);
+  return offline || held.length > 0 || turn || awaiting || starting;
 }
 
 const chains = new Map<number, Promise<void>>();

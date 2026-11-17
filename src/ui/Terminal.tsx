@@ -18,6 +18,7 @@ import { mcpServerPath } from '../capture/inbox';
 import { displayName } from './text';
 import { submitDelayFor, pasteSegments, SUBMIT_DELAY_IMAGE_MS, type PasteSegment } from '../lib/ptyInput';
 import { markerSpans } from './transcript/albedoMarkers';
+import { setAwaitingStart, startIsThisProcess } from './transcript/startGate';
 import type { Task } from '../types';
 import { onThemeChange, resolvedTheme } from './theme';
 import { TASK_TERMINAL_ATTR, taskTerminalTakesKey } from './shortcuts';
@@ -456,6 +457,16 @@ export default function Terminal({
   const resumeRejectedRef = useRef(false);
   const onFreshStartRef = useRef(onFreshStart);
   onFreshStartRef.current = onFreshStart;
+  /**
+   * The SessionStart this pty's process may report (#439, startGate.ts):
+   * `spawnAtRef` is set once the task's events were reset for this spawn,
+   * so whatever an earlier process wrote is gone, and null until then, so
+   * a SessionStart read meanwhile counts for nothing; `startSeenRef` is when
+   * one of this process's was stamped. A stamp from before the spawn is
+   * another process's too.
+   */
+  const spawnAtRef = useRef<number | null>(null);
+  const startSeenRef = useRef<number | null>(null);
   /** Live task, for decisions that must use current state, not mount state. */
   const taskRef = useRef(task);
   taskRef.current = task;
@@ -601,6 +612,8 @@ export default function Terminal({
 
       deadRef.current = false;
       sawOutputRef.current = false;
+      spawnAtRef.current = null;
+      startSeenRef.current = null;
       setExitCode(null);
       setFailure(null);
       setPhase('starting');
@@ -660,10 +673,15 @@ export default function Terminal({
       // Hooks tell Albedo when the session is waiting on the user, which the
       // transcript cannot (see capture/hookEvents.ts). Never allowed to stop a
       // session starting: without them the task simply reads as it did before.
+      // With them, nothing is typed into the pty until the session's first
+      // SessionStart (#439): whatever the shell runs before `claude` would read it.
+      let hooked = false;
       try {
         const script = await startHookEvents();
         await resetTaskEvents(task.id);
         spawnArgs = ['--settings', hookSettingsArg(task.id, script), ...spawnArgs];
+        hooked = true;
+        spawnAtRef.current = Date.now();
       } catch (err) {
         console.warn('[terminal] hooks unavailable, starting without them', err);
       }
@@ -709,6 +727,9 @@ export default function Terminal({
         // stale `canResume` on the very render that reports the exit.
         if (resumeRejectedRef.current) resumable.delete(task.id);
         unregisterPty(task.id, id);
+        // After the pty is gone, so the outbox does not take the gate opening
+        // as a session that started (outboxRelease.ts).
+        setAwaitingStart(task.id, null);
         // Whatever it was waiting on died with it (no SessionEnd on a crash).
         void endTaskEvents(task.id);
         setTrustWaiting(task.id, false);
@@ -742,6 +763,9 @@ export default function Terminal({
         ptyUnsubs.push(handle.detach);
         ptyIdRef.current = id;
         spawningRef.current = false;
+        // Before the pty is announced: a send waiting on it (the composer, the
+        // outbox) goes on that announcement, and must find it held.
+        if (hooked && startSeenRef.current === null) setAwaitingStart(task.id, Date.now());
         registerPty(task.id, id);
         setPhase('live');
 
@@ -805,9 +829,16 @@ export default function Terminal({
     // `/clear` and `/resume` inside Claude Code move this terminal to another
     // session; the SessionStart hook says which, and the task follows it.
     unsubs.push(
-      onSessionStart((taskId, sessionId, source) => {
+      onSessionStart((taskId, sessionId, source, at) => {
         // Hooks run only in a trusted folder: a session starting is the answer.
         if (taskId === task.id) setTrustWaiting(task.id, false);
+        // This process is up (#439): what was held for it may go. One from an
+        // earlier process says nothing about this one.
+        const spawned = spawnAtRef.current;
+        if (taskId === task.id && spawned !== null && startIsThisProcess(at, spawned)) {
+          startSeenRef.current = at;
+          setAwaitingStart(task.id, null);
+        }
         if (taskId !== task.id || sessionId === taskRef.current.sessionId) return;
         void linkTaskSession(task.id, sessionId, `hook:${source}`).catch((err) =>
           console.warn('[terminal] could not follow the session', err),
@@ -841,6 +872,8 @@ export default function Terminal({
         unregisterPty(task.id, id);
         void killPty(id).catch(() => {});
       }
+      // After the pty is gone, as on its exit.
+      setAwaitingStart(task.id, null);
       termRef.current = null;
       try {
         term.dispose();
