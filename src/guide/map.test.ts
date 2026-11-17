@@ -68,10 +68,11 @@ describe('buildChangeMap (#288)', () => {
   it('counts open comments per file across its groups', () => {
     const groups = [group('g1', [file('src/a.ts')]), group('g2', [file('src/a.ts')])];
     const marks = new Map([
-      ['g1', new Map([['src/a.ts', 1]])],
-      ['g2', new Map([['src/a.ts', 2]])],
+      ['g1', new Map([['src/a.ts', { toSend: 1, drafts: 0 }]])],
+      ['g2', new Map([['src/a.ts', { toSend: 1, drafts: 1 }]])],
     ]);
-    expect(buildChangeMap(groups, diff, graph([]), marks).nodes[0]!.comments).toBe(3);
+    // To Send and GitHub Drafts kept apart (#440), for the bubble's words.
+    expect(buildChangeMap(groups, diff, graph([]), marks).nodes[0]!.comments).toEqual({ toSend: 2, drafts: 1 });
   });
 
   it('says why there are no arrows', () => {
@@ -143,10 +144,28 @@ describe('buildChangeMap (#288)', () => {
     expect(map.edges).toEqual([{ from: 'src/a/', to: 'src/b/' }]);
     expect(map.notes[0]).toMatch(/^5 files is more than the map draws one by one \(3\)/);
   });
+
+  it('past the cap, a folder adds up its files’ comments, each kind apart (#440)', () => {
+    const files = ['src/a/1.ts', 'src/a/2.ts', 'lib/x.ts'].map((p) => file(p));
+    const marks = new Map([
+      [
+        'g1',
+        new Map([
+          ['src/a/1.ts', { toSend: 1, drafts: 0 }],
+          ['src/a/2.ts', { toSend: 0, drafts: 2 }],
+        ]),
+      ],
+    ]);
+    const map = buildChangeMap([group('g1', files)], diff, graph([]), marks, 2);
+    expect(map.nodes.map((n) => [n.id, n.comments])).toEqual([
+      ['src/a/', { toSend: 1, drafts: 2 }],
+      ['lib/', { toSend: 0, drafts: 0 }],
+    ]);
+  });
 });
 
 function node(id: string): MapNode {
-  return { id, kind: 'file', label: id, groups: [], colours: [], added: 1, removed: 0, change: 'modified', stat: null, comments: 0, files: 1, size: 1, importers: 0, careful: null };
+  return { id, kind: 'file', label: id, groups: [], colours: [], added: 1, removed: 0, change: 'modified', stat: null, comments: { toSend: 0, drafts: 0 }, files: 1, size: 1, importers: 0, careful: null };
 }
 
 describe('layoutMap (#288)', () => {

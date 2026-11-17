@@ -273,19 +273,19 @@ describe('GuidePane', () => {
     const rail = within(screen.getByRole('navigation', { name: 'Groups' }));
     // The counts arrive once the comments load, after the heading: wait for
     // them everywhere they show, not only in the diff header (#305 did that one).
-    await waitFor(() => expect(rail.getAllByRole('button')[0]!.getAttribute('aria-label')).toBe('01 Foundations, 2 comments'));
+    await waitFor(() => expect(rail.getAllByRole('button')[0]!.getAttribute('aria-label')).toBe('01 Foundations, 2 comments: 2 To Send'));
     const [one, two] = rail.getAllByRole('button');
-    expect(one!.getAttribute('aria-label')).toBe('01 Foundations, 2 comments');
+    expect(one!.getAttribute('aria-label')).toBe('01 Foundations, 2 comments: 2 To Send');
     expect(one!.hasAttribute('data-comments')).toBe(true);
-    expect(two!.getAttribute('aria-label')).toBe('02 Wiring, 1 comment');
+    expect(two!.getAttribute('aria-label')).toBe('02 Wiring, 1 comment: 1 To Send');
     // The file row says it; the one without comments says nothing.
-    expect(await within(left().getByRole('button', { name: /b\.ts/ })).findByRole('img', { name: '2 comments' })).toBeTruthy();
+    expect(await within(left().getByRole('button', { name: /b\.ts/ })).findByRole('img', { name: '2 comments: 2 To Send' })).toBeTruthy();
     expect(within(left().getByRole('button', { name: /a\.ts/ })).queryByRole('img', { name: /comment/ })).toBeNull();
     // Open src/b.ts: its diff header says it too.
     fireEvent.click(left().getByRole('button', { name: /b\.ts/ }));
     // The diff header's count arrives after the file's comments load, which
     // is a tick later under a busy full-suite run: wait for it, don't assume.
-    expect(await right().findByRole('img', { name: '2 comments' })).toBeTruthy();
+    expect(await right().findByRole('img', { name: '2 comments: 2 To Send' })).toBeTruthy();
   });
 
   describe('Send Comments (#254)', () => {

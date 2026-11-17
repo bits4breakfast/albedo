@@ -7,8 +7,10 @@
  *
  * Every view reads this one list, so they show the same items and the same
  * count: the list above the message box, Files ▸ Comments, the Review
- * Guide's Send and its file bubbles, Send N, and a marked passage's
- * popover in the transcript (#434), which shows that passage's quotes. What is sent is still made
+ * Guide's Send, Send N, and a marked passage's popover in the transcript
+ * (#434), which shows that passage's quotes. The guide's file bubbles count
+ * these code comments with a review task's GitHub Drafts (#440), and say
+ * which is which. What is sent is still made
  * by the composer from the same stores (`composeMessage`), so the count is
  * what goes.
  *

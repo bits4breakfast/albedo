@@ -1,9 +1,12 @@
 /**
- * Where the guide's comments To Send are (#252, #404): a count per file in
- * each group, so a comment left on a file can be found again from the file
- * list and the rail, not only from the transcript. The guide passes To Send's
- * code comments (`useToSend`): a sent one or a GitHub draft is not counted,
- * so the bubbles add up to the code comments Send N sends. Pure.
+ * Where the guide's open comments are (#252, #440): a count per file in each
+ * group, so a comment left on a file can be found again from the file list,
+ * the rail and the Map, not only from the transcript. Open means still
+ * waiting to go: To Send's code comments (`useToSend`, for Claude) and, on a
+ * review task, its GitHub Drafts (`useGithubDrafts`, for the PR), counted
+ * apart so a bubble can say what it is made of. A sent, resolved or posted
+ * comment is in neither list, and a draft the session removed is a deleted
+ * row, so none of them counts. Pure.
  *
  * Each open comment counts once, in one group: the one showing its file, or
  * -- for a file split across groups -- the one whose hunks are nearest its
@@ -15,16 +18,35 @@ import { placeRemoved, relocate, sideOf, type ReviewComment } from '../db/commen
 import type { BranchDiff } from './blocks';
 import type { GroupView } from './validate';
 
+/** Open comments in one place, by where they go (#440). */
+export interface CommentTally {
+  /** To Send: for Claude, with the next message. */
+  toSend: number;
+  /** GitHub Drafts: for the PR, with Submit Review. */
+  drafts: number;
+}
+
+export const NO_COMMENTS: CommentTally = Object.freeze({ toSend: 0, drafts: 0 });
+
+/** Every open comment a tally counts: the number its bubble shows. */
+export function tallyTotal(t: CommentTally): number {
+  return t.toSend + t.drafts;
+}
+
 /** group key -> path -> open comments there. */
-export type CommentMarks = ReadonlyMap<string, ReadonlyMap<string, number>>;
+export type CommentMarks = ReadonlyMap<string, ReadonlyMap<string, CommentTally>>;
+
+type Placed = Pick<ReviewComment, 'path' | 'lineStart' | 'anchorText' | 'resolvedAt'> & Partial<Pick<ReviewComment, 'side'>>;
 
 export function commentMarks(
   groups: readonly GroupView[],
   diff: BranchDiff,
-  comments: readonly (Pick<ReviewComment, 'path' | 'lineStart' | 'anchorText' | 'resolvedAt'> & Partial<Pick<ReviewComment, 'side'>>)[],
+  toSend: readonly Placed[],
+  drafts: readonly Placed[] = [],
 ): CommentMarks {
-  const out = new Map<string, Map<string, number>>();
-  for (const c of comments) {
+  const out = new Map<string, Map<string, CommentTally>>();
+  const all = [...toSend.map((c) => ({ c, kind: 'toSend' as const })), ...drafts.map((c) => ({ c, kind: 'drafts' as const }))];
+  for (const { c, kind } of all) {
     if (c.resolvedAt !== null) continue;
     const holders = groups.flatMap((g) => g.files.filter((f) => f.path === c.path).map((f) => ({ g, f })));
     if (holders.length === 0) continue;
@@ -63,16 +85,22 @@ export function commentMarks(
         }
       }
     }
-    const byPath = out.get(pick.g.key) ?? new Map<string, number>();
-    byPath.set(c.path, (byPath.get(c.path) ?? 0) + 1);
+    const byPath = out.get(pick.g.key) ?? new Map<string, CommentTally>();
+    const had = byPath.get(c.path) ?? NO_COMMENTS;
+    byPath.set(c.path, { ...had, [kind]: had[kind] + 1 });
     out.set(pick.g.key, byPath);
   }
   return out;
 }
 
+/** Two tallies together: a file in two groups, a folder on the Map, a group. */
+export function addTally(a: CommentTally, b: CommentTally): CommentTally {
+  return { toSend: a.toSend + b.toSend, drafts: a.drafts + b.drafts };
+}
+
 /** Open comments in one group: what its mark in the rail says. */
-export function groupCommentCount(marks: CommentMarks, groupKey: string): number {
-  let n = 0;
-  for (const v of marks.get(groupKey)?.values() ?? []) n += v;
-  return n;
+export function groupComments(marks: CommentMarks, groupKey: string): CommentTally {
+  let t = NO_COMMENTS;
+  for (const v of marks.get(groupKey)?.values() ?? []) t = addTally(t, v);
+  return t;
 }

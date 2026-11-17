@@ -29,7 +29,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
-import { commentMarks, groupCommentCount } from './commentMarks';
+import { commentMarks, groupComments, NO_COMMENTS, tallyTotal, type CommentTally } from './commentMarks';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
 import { ON_ITS_WAY, sendLabel, useToSend, useToSendFrozen } from '../ui/transcript/toSend';
 import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
@@ -39,6 +39,7 @@ import { GUIDE_AREA_ATTR } from '../ui/shortcuts';
 import { FlagIcon } from '../ui/icons';
 import '../ui/worktree.css';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
+import { useGithubDrafts } from '../ui/reviewDrafts';
 import {
   clearWriteError,
   ensureNotes,
@@ -466,18 +467,18 @@ function splitPath(path: string): { name: string; dir: string } {
  * A file row's figures in three fixed columns -- comments, +, − -- each
  * right-aligned, so they line up from row to row whatever a row lacks.
  */
-function RowCounts({ file, comments }: { file: GroupFile; comments: number }): ReactNode {
+function RowCounts({ file, comments }: { file: GroupFile; comments: CommentTally }): ReactNode {
   if (file.stat === 'binary' || file.stat === 'too-large') {
     return (
       <span className="gd-file-counts">
-        <CommentCount n={comments} />
+        <CommentCount tally={comments} />
         <span className="gd-counts gd-counts-wide">{file.stat === 'binary' ? 'Binary' : 'Too large'}</span>
       </span>
     );
   }
   return (
     <span className="gd-file-counts">
-      {comments > 0 ? <CommentCount n={comments} /> : <span />}
+      {tallyTotal(comments) > 0 ? <CommentCount tally={comments} /> : <span />}
       <span className="gd-counts">{file.added > 0 ? <span className="gd-add">+{file.added}</span> : null}</span>
       <span className="gd-counts">{file.removed > 0 ? <span className="gd-del">−{file.removed}</span> : null}</span>
     </span>
@@ -606,10 +607,13 @@ function GuideBody({
       </button>
     ) : null;
 
-  // Where the comments To Send are (#252, #404), so one left on a file is
-  // found again here: sent ones and GitHub drafts are not counted.
-  const marks = useMemo(() => commentMarks(groups, diff, toSend.code), [groups, diff, toSend.code]);
-  const fileComments = (g: GroupView, f: GroupFile) => marks.get(g.key)?.get(f.path) ?? 0;
+  // Where the open comments are (#252, #440), so one left on a file is found
+  // again here: To Send's and, on a review task, the GitHub Drafts, in one
+  // bubble. Sent, resolved and posted ones are in neither list. Send N above
+  // still counts To Send alone: it is what Send sends.
+  const drafts = useGithubDrafts(task);
+  const marks = useMemo(() => commentMarks(groups, diff, toSend.code, drafts), [groups, diff, toSend.code, drafts]);
+  const fileComments = (g: GroupView, f: GroupFile) => marks.get(g.key)?.get(f.path) ?? NO_COMMENTS;
 
   const reviewed = loadReviewed(task.id);
   const isFileReviewed = (f: GroupFile) => reviewed.has(reviewedKey(f.path, f.blocks));
@@ -1308,11 +1312,11 @@ function GuideBody({
                   data-reviewed={isGroupReviewed(g) || undefined}
                   data-unsorted={g.unsorted || undefined}
                   data-aside={g.setAside || undefined}
-                  data-comments={groupCommentCount(marks, g.key) > 0 || undefined}
+                  data-comments={tallyTotal(groupComments(marks, g.key)) > 0 || undefined}
                   data-changed={groupChanged(g) > 0 || undefined}
                   onClick={() => goTo(i, false)}
-                  aria-label={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}${groupChanged(g) > 0 ? ', changed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ', ')}`}
-                  title={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}${groupChanged(g) > 0 ? ' · changed' : ''}${commentsSaid(groupCommentCount(marks, g.key), ' · ')}`}
+                  aria-label={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ', reviewed' : ''}${groupChanged(g) > 0 ? ', changed' : ''}${commentsSaid(groupComments(marks, g.key), ', ')}`}
+                  title={`${g.setAside ? '' : `${pad2(i + 1)} `}${g.title}${isGroupReviewed(g) ? ' · Reviewed' : ''}${groupChanged(g) > 0 ? ' · changed' : ''}${commentsSaid(groupComments(marks, g.key), ' · ')}`}
                 />
               ))}
             </div>
@@ -1337,7 +1341,7 @@ function GuideBody({
                 baseSettled={baseSettled}
                 file={file}
                 reviewed={isFileReviewed(file)}
-                commentCount={group ? fileComments(group, file) : 0}
+                commentCount={group ? fileComments(group, file) : NO_COMMENTS}
                 onToggleReviewed={() => toggleFile(file)}
                 search={search.open ? search : null}
                 searched={searched}
@@ -1538,7 +1542,7 @@ function GuideFileDiff({
   baseSettled: boolean;
   file: GroupFile;
   reviewed: boolean;
-  commentCount: number;
+  commentCount: CommentTally;
   onToggleReviewed: () => void;
   /** The guide's search while it is open (#413); This File's is drawn here. */
   search: GuideSearchState | null;
@@ -1621,7 +1625,7 @@ function GuideFileDiff({
         <span className="gd-diff-name">{name}</span>
         <span className="gd-diff-dir">{dir}</span>
         <Counts file={file} />
-        <CommentCount n={commentCount} />
+        <CommentCount tally={commentCount} />
         {/* Everything that acts on the file together at the end (#320): the
             layout toggle sat by the size, so a short path left a gap between
             it and Open that read as two unrelated groups. */}
