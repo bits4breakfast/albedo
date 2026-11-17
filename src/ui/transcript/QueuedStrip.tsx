@@ -1,6 +1,7 @@
 /**
- * The Queued band: Claude Code's queue and Albedo's outbox, between the
- * transcript and the composer.
+ * The band between the transcript and the composer (#409): In Claude Code
+ * (Claude Code's queue) and Held (Albedo's outbox). To Send, under it, is the
+ * composer's.
  */
 
 import {
@@ -25,6 +26,7 @@ import {
 } from './outbox';
 import {
   conditionsFor,
+  heldGoes,
   heldHint,
   heldLabel,
   sendAllNow,
@@ -46,21 +48,24 @@ import {
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
 import { onPreviewChange } from '../../capture/previewGate';
+import { onDeletionChange } from '../../capture/githubGate';
 import { onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import { REMOTE_MENU_HINT } from './RemoteMenuNotice';
+import { notDeliveredNote } from './delivery';
+import { onAwaitingDeliveryChange } from './deliveryGate';
 import { useRemoteWait } from '../remoteWait';
 
 /**
  * What you sent and Claude Code has not taken yet, in one band between the
  * transcript and the composer. Two kinds, in the order they will go:
  *
- *  - Claude Code's queue, read from the transcript's queue records
+ *  - In Claude Code: Claude Code's queue, read from the transcript's queue records
  *    (src/capture/queue.ts). Each entry leaves the moment Claude Code takes
  *    it, as the next turn or folded into the one running -- and then appears
  *    in the transcript as your message. Shown while the session is alive,
  *    and only what this process queued (`shownQueue`). Entries Claude Code queued itself (a background task
  *    finishing, a subagent's message) are not shown.
- *  - Albedo's outbox (outbox.ts): sent while offline, or while a turn was
+ *  - Held: Albedo's outbox (outbox.ts), sent while offline, or while a turn was
  *    running (turn.ts), still here, so they can be edited or removed until
  *    they go.
  */
@@ -113,28 +118,46 @@ export function QueuedStrip({
 
   if (mine.length === 0 && held.length === 0) return null;
   return (
-    <div className="tx-queued" role="status" aria-label="Queued messages">
+    <div className="tx-queued" role="status" aria-label="In Claude Code and Held messages">
       {mine.length > 0 ? (
         <>
-          <div className="tx-queued-head">
-            Queued <span className="tx-queued-count">{mine.length}</span>
-            <span className="tx-queued-hint">{menu ? REMOTE_MENU_HINT : 'sent when Claude Code finishes its current step'}</span>
+          {/* Albedo never types into the terminal, so these are changed there (#399). */}
+          <div
+            className="tx-queued-head"
+            // While Remote Control's menu is up (#343) its hint takes the line;
+            // where they are changed is still said, here.
+            title={
+              menu
+                ? 'Claude Code sends these once Remote Control\u2019s menu is answered. Change them in the terminal (\u2191).'
+                : 'Claude Code sends these when it finishes its current step'
+            }
+          >
+            <span>
+              In Claude Code · <span className="tx-queued-count">{mine.length}</span>
+            </span>
+            <span className="tx-queued-hint">
+              {menu ? (
+                REMOTE_MENU_HINT
+              ) : (
+                <>
+                  change them in the terminal (<kbd>{'\u2191'}</kbd>)
+                </>
+              )}
+            </span>
           </div>
           {mine.map((e, i) => (
             <div key={`${e.ts}-${i}`} className="tx-queued-item" title={foldPastes(e.text)}>
               {queuedLabel(e.text)}
             </div>
           ))}
-          {/* Albedo never types into the terminal, so these are changed there (#399). */}
-          <div className="tx-queued-aside">
-            To change these, press <kbd>{'\u2191'}</kbd> in the terminal.
-          </div>
         </>
       ) : null}
       {inBox.length > 0 ? (
         <div className="tx-queued-head">
-          Queued <span className="tx-queued-count">{inBox.length}</span>
-          <span>being edited in the message box</span>
+          <span>
+            Held · <span className="tx-queued-count">{inBox.length}</span>
+          </span>
+          <span className="tx-queued-why">being edited in the message box</span>
         </div>
       ) : null}
       {rest.length > 0 && taskId !== null ? <HeldGroup taskId={taskId} held={rest} inBox={inBox.length} /> : null}
@@ -146,8 +169,9 @@ export function QueuedStrip({
  * The outbox's part of the band, headed by what its messages wait for.
  *
  * With two or more that could each be sent now, the head offers Send All Now
- * on the right (#290), in place of the hint, which moves to its tooltip: they
- * go into the running turn as one message, as the turn's end would send them.
+ * on the right (#290), after why they are held (#409); how they would go
+ * when left alone is in its tooltip: they go into the running turn as one
+ * message, as the turn's end would send them.
  * One open for editing is left out and stays held. If they could not go
  * after all -- a release had the task's lock -- the head says so briefly.
  */
@@ -171,8 +195,11 @@ function HeldGroup({
   // Behind messages being edited in the box (#399), nothing goes until those
   // are sent or put back, whatever else would let them.
   const behindBox = inBox > 0 && together === 0 && !conditions.headMaybeSent;
-  const turnHint = behindBox ? 'sent after the message being edited' : heldHint(conditions, together);
-  const hint = menu && turnHint !== null && !conditions.offline && !behindBox ? REMOTE_MENU_HINT : turnHint;
+  const turnHint = behindBox ? 'until the message being edited is sent' : heldHint(conditions);
+  // Remote Control's menu (#343) is what holds them only where the turn alone would.
+  const menuHolds = menu && !behindBox && !conditions.headMaybeSent && !conditions.offline && !conditions.promptOpen && conditions.turnRunning;
+  const hint = menuHolds ? REMOTE_MENU_HINT : turnHint;
+  const goes = behindBox ? null : heldGoes(conditions, together);
   // ↑ in the empty message box takes them all into it (#399): said here once
   // there are two or more it would take.
   const editAll = inBox === 0 ? takeableIntoBox(taskId).length : 0;
@@ -182,14 +209,18 @@ function HeldGroup({
   const left = held.length - allSize;
   const allTitle = allowed
     ? `Send these ${allSize} into the running turn now, as one message: Claude takes it at its next step.` +
-      (hint !== null ? ` Left alone: ${hint}.` : '') +
-      (left === 1 ? ' The one you\u2019re editing stays queued.' : left > 1 ? ' The ones you\u2019re editing stay queued.' : '') +
+      (goes !== null ? ` Left alone: ${goes.charAt(0).toLowerCase()}${goes.slice(1)}.` : '') +
+      (left === 1 ? ' The one you\u2019re editing stays held.' : left > 1 ? ' The ones you\u2019re editing stay held.' : '') +
       (inBox > 0 ? ' The ones being edited in the message box stay there.' : '')
     : 'Not while Claude is asking you something, or the session is not running';
   return (
     <>
-      <div className="tx-queued-head">
-        {behindBox ? 'Queued' : heldLabel(conditions)} <span className="tx-queued-count">{held.length}</span>
+      <div className="tx-queued-head" title={goes ?? undefined}>
+        <span>
+          {behindBox ? 'Held' : heldLabel(conditions)} · <span className="tx-queued-count">{held.length}</span>
+        </span>
+        {/* Why, read with the count (#409), before Send All Now as well. */}
+        {hint !== null ? <span className="tx-queued-why">{hint}</span> : null}
         {allOffered ? (
           <>
             {notNow ? <span className="tx-queued-note">Couldn{'\u2019'}t send now — try again</span> : null}
@@ -209,8 +240,6 @@ function HeldGroup({
               Send All Now
             </button>
           </>
-        ) : hint !== null ? (
-          <span className="tx-queued-hint">{hint}</span>
         ) : null}
         {editAll >= 2 ? (
           <span
@@ -261,8 +290,10 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
       onPromptChange(mine),
       onTrustWaiting(mine),
       onPreviewChange(mine),
+      onDeletionChange(mine),
       onTurnChange(mine),
       onEditingChange(mine),
+      onAwaitingDeliveryChange(mine),
     ];
     return () => offs.forEach((off) => off());
   }, [taskId]);
@@ -374,7 +405,8 @@ function HeldRow({
       </div>
       {held.maybeSent ? (
         <>
-          <span className="tx-queued-note">May already have been sent</span>
+          {/* Not delivered (#433): what Claude Code did with it is in the terminal. */}
+          <span className="tx-queued-note">{held.notDelivered ? notDeliveredNote(held) : 'May already have been sent'}</span>
           <button type="button" className="tx-btn tx-queued-act" onClick={() => sendAnyway(taskId, held.id)}>
             Send
           </button>

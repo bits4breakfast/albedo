@@ -24,6 +24,9 @@ const h = vi.hoisted(() => ({
   promptListeners: new Set<(taskId: number, prompt: unknown) => void>(),
   trustListeners: new Set<(taskId: number, waiting: boolean) => void>(),
   previewListeners: new Set<(taskId: number) => void>(),
+  deletion: new Map<number, unknown>(),
+  deletionListeners: new Set<(taskId: number) => void>(),
+  retireDeletions: vi.fn(),
 }));
 
 vi.mock('../db', () => ({
@@ -72,6 +75,15 @@ vi.mock('../capture/previewGate', async () => ({
     return () => h.previewListeners.delete(cb);
   },
 }));
+vi.mock('../capture/githubGate', async () => ({
+  ...(await vi.importActual<typeof import('../capture/githubGate')>('../capture/githubGate')),
+  pendingDeletion: (taskId: number) => h.deletion.get(taskId) ?? null,
+  retireFinishedDeletions: h.retireDeletions,
+  onDeletionChange: (cb: (taskId: number) => void) => {
+    h.deletionListeners.add(cb);
+    return () => h.deletionListeners.delete(cb);
+  },
+}));
 vi.mock('./attention', () => ({ noteStatusChange: vi.fn(), noteQuestion: vi.fn() }));
 
 const db = await import('../db');
@@ -118,6 +130,7 @@ beforeEach(() => {
   h.prompt.clear();
   h.trust.clear();
   h.preview.clear();
+  h.deletion.clear();
   // A fresh copy per read, as the real driver returns.
   h.listTasks = async () => h.rows.map((r) => ({ ...r }));
   h.updateTask = async (id, patch) => {
@@ -508,6 +521,12 @@ describe('waiting on you outside the transcript: a prompt, the trust dialog, a p
       else h.preview.delete(id);
       for (const cb of [...h.previewListeners]) cb(id);
     },
+    // A posted comment's deletion asked for (#427): the session's call waits.
+    deletion: (id: number, on: boolean) => {
+      if (on) h.deletion.set(id, { requestId: 'x' });
+      else h.deletion.delete(id);
+      for (const cb of [...h.deletionListeners]) cb(id);
+    },
   };
 
   for (const [name, signal] of Object.entries(sources)) {
@@ -534,6 +553,15 @@ describe('waiting on you outside the transcript: a prompt, the trust dialog, a p
     });
   }
 
+  it('a status read also retires deletion cards whose call the transcript ended (#427)', async () => {
+    h.rows = [task()];
+    h.messages.set('s1', [prompt('s1', T0 - 90_000), finished('s1', T0 - 60_000)]);
+    h.retireDeletions.mockClear();
+    renderHook(() => useTasks());
+    await tick();
+    expect(h.retireDeletions).toHaveBeenCalledWith(1, expect.any(Set));
+  });
+
   it('leaves an archived task alone, and stops listening on unmount', async () => {
     h.rows = [task({ status: 'archived' })];
     const { result, unmount } = renderHook(() => useTasks());
@@ -541,10 +569,11 @@ describe('waiting on you outside the transcript: a prompt, the trust dialog, a p
     act(() => sources.prompt(1, true));
     act(() => sources.trust(1, true));
     act(() => sources.preview(1, true));
+    act(() => sources.deletion(1, true));
     expect(result.current.tasks[0]?.status).toBe('archived');
     expect(noteStatusChange).not.toHaveBeenCalled();
     unmount();
-    expect(h.promptListeners.size + h.trustListeners.size + h.previewListeners.size).toBe(0);
+    expect(h.promptListeners.size + h.trustListeners.size + h.previewListeners.size + h.deletionListeners.size).toBe(0);
   });
 });
 

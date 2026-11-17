@@ -44,6 +44,13 @@ export interface HeldMessage {
    */
   maybeSent?: boolean;
   /**
+   * Written to the pty, and the transcript never showed it (#433,
+   * delivery.ts): Claude Code did not take it, and it may still sit in its
+   * input box. Always with `maybeSent`, so nothing sends it, or anything
+   * behind it, until the person chooses Send, Edit or Remove.
+   */
+  notDelivered?: boolean;
+  /**
    * Review comments the text carries, marked sent once it is delivered. Kept
    * with the message, so a task switch or a restart in between still marks them.
    */
@@ -60,6 +67,12 @@ export interface HeldMessage {
 
 export type Outbox = ReadonlyMap<number, readonly HeldMessage[]>;
 
+/**
+ * How the outbox hands a text to the session: with the code comments it
+ * carries, so a send that never arrives can give them back (delivery.ts).
+ */
+export type SendHeld = (text: string, commentIds?: readonly number[]) => Promise<boolean>;
+
 const NONE: readonly HeldMessage[] = [];
 
 // ---------------------------------------------------------------------------
@@ -75,6 +88,7 @@ function isHeld(value: unknown): value is HeldMessage {
     typeof h.heldAt === 'number' &&
     (h.sending === undefined || typeof h.sending === 'boolean') &&
     (h.maybeSent === undefined || typeof h.maybeSent === 'boolean') &&
+    (h.notDelivered === undefined || typeof h.notDelivered === 'boolean') &&
     (h.inBox === undefined || typeof h.inBox === 'boolean') &&
     (h.commentIds === undefined || (Array.isArray(h.commentIds) && h.commentIds.every((c) => typeof c === 'number')))
   );
@@ -184,6 +198,33 @@ export function holdMessage(
   return entry;
 }
 
+/**
+ * A message written to the pty that the transcript never showed (#433,
+ * delivery.ts) comes back here, at the head: it was sent before anything
+ * held since. Marked `maybeSent` and `notDelivered`, so no release passes it
+ * and every later send is held behind it (`mustHold`) until the person
+ * chooses Send, Edit or Remove -- typed now, it would be glued onto what may
+ * still sit in Claude Code's input box.
+ */
+export function holdNotDelivered(
+  taskId: number,
+  text: string,
+  now = Date.now(),
+  commentIds: readonly number[] = [],
+): HeldMessage | null {
+  if (text.trim().length === 0) return null;
+  const entry: HeldMessage = {
+    id: `${now.toString(36)}-${(seq++).toString(36)}`,
+    text,
+    heldAt: now,
+    maybeSent: true,
+    notDelivered: true,
+    ...(commentIds.length > 0 ? { commentIds: [...commentIds] } : {}),
+  };
+  commit(taskId, [entry, ...heldFor(taskId)]);
+  return entry;
+}
+
 /** Change a held message's text, in place. Empty text removes it. */
 export function editHeld(taskId: number, id: string, text: string): void {
   if (text.trim().length === 0) {
@@ -224,6 +265,11 @@ export function setEditing(taskId: number, id: string, on: boolean): void {
   for (const cb of [...listeners]) cb(taskId);
 }
 
+/** The held message is open for editing in the band. */
+export function isEditingHeld(id: string): boolean {
+  return editing.has(id);
+}
+
 /**
  * Called with the task whose held message was opened or closed for editing:
  * what Send All Now covers changes with it (#290). Opening one is not an
@@ -257,7 +303,7 @@ export function onEditingChange(cb: (taskId: number) => void): () => void {
  */
 export async function releaseHeld(
   taskId: number,
-  send: (text: string) => Promise<boolean>,
+  send: SendHeld,
   mayGo: () => boolean = () => true,
 ): Promise<number> {
   if (releasing.has(taskId)) return 0;
@@ -286,7 +332,7 @@ export async function releaseHeld(
  * overlaps one. Does nothing while a release is under way, or for an entry
  * open for editing or `maybeSent`. Resolves with whether it went.
  */
-export async function sendHeldNow(taskId: number, id: string, send: (text: string) => Promise<boolean>): Promise<boolean> {
+export async function sendHeldNow(taskId: number, id: string, send: SendHeld): Promise<boolean> {
   const entry = heldFor(taskId).find((h) => h.id === id);
   if (!entry || entry.maybeSent || entry.inBox || editing.has(id) || releasing.has(taskId)) return false;
   releasing.add(taskId);
@@ -304,7 +350,7 @@ export async function sendHeldNow(taskId: number, id: string, send: (text: strin
  * lock and discipline as `sendHeldNow`; does nothing while a release is under
  * way, or when `allNowRun` offers nothing. Resolves with whether it went.
  */
-export async function sendAllHeldNow(taskId: number, send: (text: string) => Promise<boolean>): Promise<boolean> {
+export async function sendAllHeldNow(taskId: number, send: SendHeld): Promise<boolean> {
   const run = allNowRun(heldFor(taskId), editing);
   if (run.length === 0 || releasing.has(taskId)) return false;
   releasing.add(taskId);
@@ -337,11 +383,11 @@ export function allNowSize(taskId: number): number {
 }
 
 /** Mark `entry` sending, send it, and take it out once delivered; a failure clears the mark. */
-async function deliver(taskId: number, entry: HeldMessage, send: (text: string) => Promise<boolean>): Promise<boolean> {
+async function deliver(taskId: number, entry: HeldMessage, send: SendHeld): Promise<boolean> {
   patch(taskId, entry.id, { sending: true });
   let ok = false;
   try {
-    ok = await send(entry.text);
+    ok = await send(entry.text, entry.commentIds ?? []);
   } catch {
     ok = false;
   }
@@ -384,13 +430,16 @@ export const RUN_JOINER = '\n\n';
  * mid-write brings them all back `maybeSent`), one write, then all leave the
  * outbox together and each is announced, so each one's comments are marked.
  */
-async function deliverRun(taskId: number, run: readonly HeldMessage[], send: (text: string) => Promise<boolean>): Promise<boolean> {
+async function deliverRun(taskId: number, run: readonly HeldMessage[], send: SendHeld): Promise<boolean> {
   if (run.length === 1) return deliver(taskId, run[0]!, send);
   const ids = new Set(run.map((h) => h.id));
   for (const h of run) patch(taskId, h.id, { sending: true });
   let ok = false;
   try {
-    ok = await send(run.map((h) => h.text).join(RUN_JOINER));
+    ok = await send(
+      run.map((h) => h.text).join(RUN_JOINER),
+      run.flatMap((h) => h.commentIds ?? []),
+    );
   } catch {
     ok = false;
   }
@@ -409,7 +458,7 @@ export function nextRunSize(taskId: number): number {
 }
 
 /** Change fields of one entry, if it is still there. Undefined removes a field. */
-function patch(taskId: number, id: string, fields: Partial<Pick<HeldMessage, 'sending' | 'maybeSent'>>): void {
+function patch(taskId: number, id: string, fields: Partial<Pick<HeldMessage, 'sending' | 'maybeSent' | 'notDelivered'>>): void {
   const held = heldFor(taskId);
   if (!held.some((h) => h.id === id)) return;
   commit(
@@ -547,7 +596,7 @@ export function replaceInBox(
  * an ordinary held message, which the next release sends in its turn.
  */
 export function sendAnyway(taskId: number, id: string): void {
-  patch(taskId, id, { maybeSent: undefined });
+  patch(taskId, id, { maybeSent: undefined, notDelivered: undefined });
 }
 
 /** The task's last release ended on a failed write, and nothing has gone since. */
@@ -606,7 +655,45 @@ export function useHeld(taskId: number | null): readonly HeldMessage[] {
 }
 
 /** Test seam: forget everything in memory, so the next read comes from storage. */
+// ---------------------------------------------------------------------------
+// Marking: delivered code comments being marked sent (#404)
+// ---------------------------------------------------------------------------
+
+/*
+   A delivered message's code comments are no longer held, and not yet sent
+   until the database says so (codeComments.ts `markCarriedSent`). Kept here,
+   with what is held, as the other half of "on their way".
+*/
+const marking = new Map<number, ReadonlySet<number>>();
+const markingListeners = new Set<() => void>();
+const NO_IDS: ReadonlySet<number> = new Set();
+
+export function setMarking(taskId: number, ids: readonly number[], on: boolean): void {
+  const next = new Set(marking.get(taskId) ?? NO_IDS);
+  for (const id of ids) {
+    if (on) next.add(id);
+    else next.delete(id);
+  }
+  if (next.size === 0) marking.delete(taskId);
+  else marking.set(taskId, next);
+  for (const cb of [...markingListeners]) cb();
+}
+
+function subscribeMarking(cb: () => void): () => void {
+  markingListeners.add(cb);
+  return () => {
+    markingListeners.delete(cb);
+  };
+}
+
+/** The task's code comments being marked sent, kept current. */
+export function useMarking(taskId: number | null): ReadonlySet<number> {
+  const read = () => (taskId === null ? NO_IDS : (marking.get(taskId) ?? NO_IDS));
+  return useSyncExternalStore(subscribeMarking, read, read);
+}
+
 export function __resetOutbox(): void {
+  marking.clear();
   outbox = null;
   editing.clear();
   releasing.clear();

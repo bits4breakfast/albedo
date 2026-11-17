@@ -33,6 +33,8 @@ import { refreshThreads } from '../gh/reviewThreads';
 import { refreshReviews, reviewListState, useReviewsVersion } from '../gh/reviewStore';
 import { prepareSubmit, reviewPr, submitIo, useGithubDrafts, type SubmitInput } from './reviewDrafts';
 import { wrapForTooltip } from './text';
+import { clearDraftRemovals, holdSubmitReview } from '../capture/draftRemovals';
+import { listGithubDrafts } from '../db/comments';
 import './worktree.css';
 
 // ---------------------------------------------------------------------------
@@ -130,7 +132,7 @@ export function ReviewBadge({ task }: { task: Task }): ReactNode {
         onClick={() => requestSubmitReview(task.id)}
         title={
           drafts.length > 0
-            ? `${drafts.length === 1 ? '1 draft' : `${drafts.length} drafts`} for GitHub. Send them as one review, with a summary and a verdict`
+            ? `${drafts.length === 1 ? '1 GitHub Draft' : `${drafts.length} GitHub Drafts`}. Send them as one review, with a summary and a verdict`
             : 'Send a review: a summary and a verdict, with any drafts you write on the code'
         }
       >
@@ -160,6 +162,8 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
   useSubmitState();
   const busy = sending.has(task.id);
   const [outcome, setOutcome] = useState<Extract<SubmitOutcome, { ok: false }> | null>(null);
+  /** The drafts changed between opening and Submit (#427): nothing went, they were read again. */
+  const [stale, setStale] = useState(false);
   // Once the review itself is on GitHub, only replies are left to send.
   const reviewDone = reviewPosted.has(task.id);
   const pr = reviewPr(task);
@@ -180,6 +184,8 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [task.id]);
+  // While open, the session removes none of these drafts (#427): what it read is what it posts.
+  useEffect(() => holdSubmitReview(task.id), [task.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -235,7 +241,19 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
     sending.add(id);
     notify();
     setOutcome(null);
+    // Held for the whole send too, even if the dialog goes meanwhile (#427).
+    const release = holdSubmitReview(id);
     try {
+      // Read the drafts again right before sending: one gone since the dialog
+      // read them (removed in the diff, or by the session) must not be posted.
+      const now = new Set((await listGithubDrafts(id)).map((d) => d.id));
+      const planned = [...plan.inReview, ...plan.replies.map((d) => d.id)];
+      if (planned.some((d) => !now.has(d))) {
+        setStale(true);
+        load();
+        return;
+      }
+      setStale(false);
       const out = await submitReview(pr, plan, submitIo(task));
       // What was posted shows as threads, whatever happened after it.
       if (out.ok || out.reviewSent || out.repliesSent > 0) {
@@ -248,6 +266,8 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
         summaries.delete(id);
         reviewPosted.delete(id);
         clearRequest(id);
+        // Drafts the session removed (#427) were for this review: it is sent.
+        clearDraftRemovals(id);
         return;
       }
       if (out.reviewSent && plan.review !== null) {
@@ -257,6 +277,7 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
       setOutcome(out);
       load();
     } finally {
+      release();
       sending.delete(id);
       notify();
     }
@@ -386,6 +407,12 @@ export function SubmitReviewDialog({ task, onClose }: { task: Task; onClose: () 
             </div>
           ) : null}
 
+          {stale ? (
+            <div className="wt-error" role="alert">
+              <div className="wt-error-head">Your drafts changed</div>
+              <div className="wt-hint">A draft was removed since this opened, so nothing was sent. They are read again: check them, then submit.</div>
+            </div>
+          ) : null}
           {outcome ? (
             <div className="wt-error" role="alert">
               <div className="wt-error-head">

@@ -4,7 +4,7 @@
  * (CommentViews.tsx), so the two read the same. Pure.
  *
  * The state is a chip, never a ✓: the ✓ is Resolve, and "✓ Sent" read as
- * done. Waiting says where it goes; Sent says when it went.
+ * done. To Send says where it goes (#409); Sent says when it went.
  */
 
 import type { ReviewComment } from '../../db/comments';
@@ -34,6 +34,8 @@ export function cardState(
   now = Date.now(),
   /** #287: a draft for GitHub whose lines are not in the PR's diff. */
   outside = false,
+  /** #409: carried by a held message, so on its way rather than To Send. */
+  held = false,
 ): CardState {
   // A draft for GitHub (#287) waits for Submit Review, and says so. Nothing
   // to resolve before it is sent: it goes, or you delete it. Once GitHub has
@@ -43,13 +45,16 @@ export function cardState(
       state: 'waiting',
       // ↑, as Push's count: it goes out to the remote. Where it goes is not
       // carried by the words alone.
-      chip: outside ? '↑ Draft · not in the diff: in the summary' : '↑ Draft · goes with Submit Review',
+      chip: outside ? '↑ GitHub Draft · not in the diff: in the summary' : '↑ GitHub Draft · goes with Submit Review',
       main: 'edit',
       more: ['delete'],
     };
   }
+  if (c.sentAt === null && held) {
+    return { state: 'waiting', chip: 'Held · goes when the held message goes', main: 'edit', more: ['resolve', 'delete'] };
+  }
   if (c.sentAt === null) {
-    return { state: 'waiting', chip: 'Waiting · goes with your next message', main: 'edit', more: ['resolve', 'delete'] };
+    return { state: 'waiting', chip: 'To Send · goes with your next message', main: 'edit', more: ['resolve', 'delete'] };
   }
   return { state: 'sent', chip: `↗ Sent ${ago(c.sentAt, now)}`, main: 'resolve', more: ['edit', 'delete'] };
 }
@@ -81,7 +86,7 @@ export function resolvedTrace(c: Pick<ReviewComment, 'lineStart' | 'lineEnd'> & 
  */
 export const DESTINATIONS: ReadonlyArray<{ github: 'draft' | null; label: string }> = [
   { github: null, label: 'Ask Claude' },
-  { github: 'draft', label: 'Draft for GitHub' },
+  { github: 'draft', label: 'GitHub Draft' },
 ];
 
 export function draftPlaceholder(github: 'draft' | null): string {

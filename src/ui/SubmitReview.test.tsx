@@ -18,7 +18,17 @@ const state = vi.hoisted(() => ({
   drafts: 0,
   /** While set, gh waits for it. */
   hold: null as Promise<void> | null,
+  /** The draft ids in the database when Submit is clicked; null: the input's. */
+  present: null as number[] | null,
 }));
+
+vi.mock('../db/comments', async () => {
+  const actual = await vi.importActual<typeof import('../db/comments')>('../db/comments');
+  return {
+    ...actual,
+    listGithubDrafts: vi.fn(async () => (state.present ?? state.input?.drafts.map((d) => d.id) ?? []).map((id) => ({ id }))),
+  };
+});
 
 vi.mock('./reviewDrafts', async () => {
   const actual = await vi.importActual<typeof import('./reviewDrafts')>('./reviewDrafts');
@@ -70,6 +80,7 @@ afterEach(() => {
   cleanup();
   resetSubmitRequestForTests();
   state.input = null;
+  state.present = null;
   state.results = [];
   state.calls = [];
   state.sent = [];
@@ -83,6 +94,8 @@ describe('the action', () => {
     state.input = INPUT;
     render(<ReviewBadge task={TASK} />);
     expect(screen.getByRole('button', { name: '#34 on GitHub' })).toBeTruthy();
+    // One name for them (#409).
+    expect(screen.getByRole('button', { name: 'Submit Review · 2' }).title).toMatch(/^2 GitHub Drafts\. /);
     fireEvent.click(screen.getByRole('button', { name: 'Submit Review · 2' }));
     expect(await screen.findByRole('dialog', { name: 'Submit Review' })).toBeTruthy();
     expect(await screen.findByText('1 comment')).toBeTruthy();
@@ -113,6 +126,32 @@ describe('the dialog', () => {
     expect(state.calls[0]).toContain('repos/example/recipe-app/pulls/34/reviews');
     expect(state.calls[1]).toContain('repos/example/recipe-app/pulls/34/comments/9001/replies');
     expect(state.sent).toEqual([[1], [2]]);
+  });
+
+  it('reads the drafts again on Submit, and sends nothing when one is gone (#427)', async () => {
+    const d = await open();
+    const { prepareSubmit } = await import('./reviewDrafts');
+    const reads = vi.mocked(prepareSubmit).mock.calls.length;
+    state.present = [2];
+    fireEvent.click(d.getByRole('button', { name: 'Submit Review' }));
+    expect(await screen.findByText('Your drafts changed')).toBeTruthy();
+    expect(state.calls).toEqual([]);
+    expect(state.sent).toEqual([]);
+    expect(vi.mocked(prepareSubmit).mock.calls.length).toBe(reads + 1);
+  });
+
+  it('holds the drafts against the session while open and while sending (#427)', async () => {
+    const { isSubmitReviewBusy } = await import('../capture/draftRemovals');
+    let release!: () => void;
+    state.hold = new Promise<void>((r) => (release = r));
+    const d = await open();
+    expect(isSubmitReviewBusy(1)).toBe(true);
+    fireEvent.click(d.getByRole('button', { name: 'Submit Review' }));
+    await waitFor(() => expect(state.calls.length).toBe(1));
+    expect(isSubmitReviewBusy(1)).toBe(true);
+    release();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(isSubmitReviewBusy(1)).toBe(false);
   });
 
   it('Request Changes needs a summary before it can go', async () => {
@@ -165,6 +204,9 @@ describe('across a task switch', () => {
     // Another task selected: the badge and its dialog go.
     first.unmount();
     expect(screen.queryByRole('dialog')).toBeNull();
+    // The send still holds its drafts against the session (#427).
+    const { isSubmitReviewBusy } = await import('../capture/draftRemovals');
+    expect(isSubmitReviewBusy(1)).toBe(true);
     // Back: the dialog does not open on its own.
     render(<ReviewBadge task={TASK} />);
     expect(screen.queryByRole('dialog')).toBeNull();

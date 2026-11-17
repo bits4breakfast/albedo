@@ -145,7 +145,7 @@ export function isResumePlan(plan: SpawnPlan): boolean {
 export const MCP_SERVER_NAME = 'albedo';
 
 /**
- * Its five tools, allowed without a permission prompt. Each only hands
+ * Its tools, allowed without a permission prompt. Each only hands
  * Albedo a request -- a new session still waits for the user's Approve, a
  * summary (#262) is one line beside the task's title, and a preview (#348)
  * is itself the question the user answers -- so a prompt in the terminal
@@ -154,7 +154,20 @@ export const MCP_SERVER_NAME = 'albedo';
  * No `timeout` is set for the server: `show_preview` waits for the user, and
  * Claude Code's own default for a tool call (about 28 h, #348) applies.
  */
-export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked', 'set_task_summary', 'show_preview'].map(
+export const MCP_TOOLS = [
+  'create_reminder',
+  'request_session',
+  'notify_blocked',
+  'set_task_summary',
+  'show_preview',
+  // #427: a list reads, a draft's removal shows in the task with Undo, and a
+  // posted comment's deletion is itself a card the user answers -- by the
+  // owner's decision, no prompt for any of them.
+  'list_github_drafts',
+  'delete_github_draft',
+  'list_posted_comments',
+  'delete_posted_comment',
+].map(
   (t) => `mcp__${MCP_SERVER_NAME}__${t}`,
 );
 
@@ -162,10 +175,12 @@ export const MCP_TOOLS = ['create_reminder', 'request_session', 'notify_blocked'
  * The `--mcp-config` value: Albedo's server, told which task it speaks for.
  * The task id is the caller's whole identity, and it is Albedo's to set.
  */
-export function mcpConfigArg(taskId: number, serverPath: string): string {
+export function mcpConfigArg(taskId: number, serverPath: string, token?: string): string {
+  // The session's token (#427, capture/mcpToken.ts): which lines are this spawn's.
+  const env = token ? { ALBEDO_TASK_ID: String(taskId), ALBEDO_TASK_TOKEN: token } : { ALBEDO_TASK_ID: String(taskId) };
   return JSON.stringify({
     mcpServers: {
-      [MCP_SERVER_NAME]: { type: 'stdio', command: serverPath, args: [], env: { ALBEDO_TASK_ID: String(taskId) } },
+      [MCP_SERVER_NAME]: { type: 'stdio', command: serverPath, args: [], env },
     },
   });
 }
@@ -179,8 +194,8 @@ export function mcpConfigArg(taskId: number, serverPath: string): string {
  * would read the next word -- the opening prompt -- as one more config. The
  * plan's own flags always come next; with none, `--` ends the options.
  */
-export function withMcpConfig(args: readonly string[], taskId: number, serverPath: string): string[] {
-  const mcp = ['--mcp-config', mcpConfigArg(taskId, serverPath), '--allowedTools', MCP_TOOLS.join(',')];
+export function withMcpConfig(args: readonly string[], taskId: number, serverPath: string, token?: string): string[] {
+  const mcp = ['--mcp-config', mcpConfigArg(taskId, serverPath, token), '--allowedTools', MCP_TOOLS.join(',')];
   const next = args[0];
   return next !== undefined && next.startsWith('-') ? [...mcp, ...args] : [...mcp, '--', ...args];
 }

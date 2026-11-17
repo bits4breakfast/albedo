@@ -24,7 +24,8 @@
 import { onPromptChange, pendingPrompt } from '../../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { onPreviewChange, pendingPreview } from '../../capture/previewGate';
-import { markCommentsSent } from '../../db/comments';
+import { onDeletionChange, pendingDeletion } from '../../capture/githubGate';
+import { markCarriedSent } from './codeComments';
 import { isOffline, onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import type { TaskStatus } from '../../types';
 import { hasLivePty, onPtyPresenceChange, startPty } from '../Terminal';
@@ -41,6 +42,7 @@ import {
 } from './outbox';
 import { isSlashCommand, submitLocked } from './send';
 import { isTurnRunning, onTurnChange } from './turn';
+import { awaitingDelivery, onAwaitingDeliveryChange } from './deliveryGate';
 
 /** How long after a failed write the release tries again. */
 export const RETRY_MS = 10_000;
@@ -65,34 +67,52 @@ export interface ReleaseConditions {
   headMaybeSent: boolean;
   /** The last attempt to write a held message failed. */
   failed: boolean;
+  /**
+   * The last message written is not in the transcript yet (deliveryGate.ts,
+   * #433): if Claude Code did not take it, the next would be glued onto it.
+   */
+  awaitingDelivery?: boolean;
 }
 
 /** Whether held messages may go now. */
-export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' | 'turnRunning'>): boolean {
-  return !c.offline && !c.promptOpen && !c.turnRunning;
+export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' | 'turnRunning' | 'awaitingDelivery'>): boolean {
+  return !c.offline && !c.promptOpen && !c.turnRunning && c.awaitingDelivery !== true;
 }
 
-/** What the Queued band says held messages are waiting for: what actually stops them. */
-export function heldLabel(c: ReleaseConditions): string {
-  if (c.headMaybeSent) return 'Waiting for you to resend or remove the first message';
-  if (c.offline) return 'Waiting for connection';
-  if (c.promptOpen) return 'Waiting for your answer';
-  if (c.turnRunning) return 'Queued';
-  if (!c.live) return 'Waiting for the session to start';
-  if (c.failed) return 'Couldn’t send — retrying';
+/**
+ * The head of the band's outbox group (#409): Held, whatever holds them --
+ * the hint says why -- and Sending once nothing does.
+ */
+export function heldLabel(c: ReleaseConditions): 'Held' | 'Sending' {
+  if (c.headMaybeSent || c.offline || c.promptOpen || c.turnRunning || !c.live || c.failed || c.awaitingDelivery === true) return 'Held';
   return 'Sending';
 }
 
 /**
- * The line beside `heldLabel` saying when they will go; null when it has
- * none. `together` is how many go as one message next (#240). When the head
+ * Beside `heldLabel`, why they are held, in plain words (#409): what
+ * actually stops them, first. Null while they are being sent. When the head
  * offers Send All Now, it is that button's tooltip instead (#290).
  */
-export function heldHint(c: ReleaseConditions, together = 1): string | null {
+export function heldHint(c: ReleaseConditions): string | null {
+  if (c.headMaybeSent) return 'until you resend or remove the first one';
+  if (c.offline) return 'until you\u2019re online';
+  if (c.promptOpen) return 'until you answer';
+  if (c.turnRunning) return 'until this turn ends';
+  if (c.awaitingDelivery === true) return 'until the last message reaches Claude Code';
+  if (!c.live) return 'until the session starts';
+  if (c.failed) return 'couldn\u2019t send \u2014 retrying';
+  return null;
+}
+
+/**
+ * The head's tooltip: how they go once nothing holds them. `together` is how
+ * many go as one message next (#240). Null when that is nothing to say.
+ */
+export function heldGoes(c: ReleaseConditions, together = 1): string | null {
   if (c.headMaybeSent) return null;
-  if (c.offline) return together > 1 ? 'sent together once it is back' : 'sent in order once it is back';
+  if (c.offline) return together > 1 ? 'Sent together, as one message, once you\u2019re online' : 'Sent in order once you\u2019re online';
   if (!c.promptOpen && c.turnRunning) {
-    return together > 1 ? 'sent together when Claude finishes this turn' : 'sent when Claude finishes this turn';
+    return together > 1 ? 'Sent together, as one message, when Claude finishes this turn' : 'Sent when Claude finishes this turn';
   }
   return null;
 }
@@ -106,7 +126,7 @@ export function sendNowOffered(c: ReleaseConditions): boolean {
   return c.turnRunning && !c.offline && !c.headMaybeSent;
 }
 export function sendNowAllowed(c: ReleaseConditions): boolean {
-  return sendNowOffered(c) && !c.promptOpen && c.live;
+  return sendNowOffered(c) && !c.promptOpen && c.live && c.awaitingDelivery !== true;
 }
 
 /**
@@ -129,7 +149,7 @@ export function sendNow(taskId: number, id: string): Promise<boolean> {
   if (!held || !sendNowOfferedFor(conditionsFor(taskId), held.text) || !sendNowAllowed(conditionsFor(taskId))) {
     return Promise.resolve(false);
   }
-  return sendHeldNow(taskId, id, (text) => submitLocked(taskId, text));
+  return sendHeldNow(taskId, id, (text, ids) => submitLocked(taskId, text, undefined, ids));
 }
 
 /**
@@ -149,7 +169,7 @@ export function sendAllNowOffered(c: ReleaseConditions, size: number): boolean {
 export function sendAllNow(taskId: number): Promise<boolean> {
   const c = conditionsFor(taskId);
   if (!sendAllNowOffered(c, allNowSize(taskId)) || !sendNowAllowed(c)) return Promise.resolve(false);
-  return sendAllHeldNow(taskId, (text) => submitLocked(taskId, text));
+  return sendAllHeldNow(taskId, (text, ids) => submitLocked(taskId, text, undefined, ids));
 }
 
 /** The status of the task on screen, the only one Albedo derives a status for here. */
@@ -168,7 +188,14 @@ export function promptOpen(taskId: number, status?: TaskStatus | null): boolean 
   const s = status !== undefined ? status : shown?.taskId === taskId ? shown.status : null;
   // A waiting preview (#348) too: the session is inside a tool call that
   // waits, and typed text would only queue behind it.
-  return pendingPrompt(taskId) !== null || isTrustWaiting(taskId) || pendingPreview(taskId) !== null || s === 'blocked';
+  // A comment's deletion on GitHub (#427) the same: the session's call waits.
+  return (
+    pendingPrompt(taskId) !== null ||
+    isTrustWaiting(taskId) ||
+    pendingPreview(taskId) !== null ||
+    pendingDeletion(taskId) !== null ||
+    s === 'blocked'
+  );
 }
 
 export function conditionsFor(taskId: number, status?: TaskStatus | null): ReleaseConditions {
@@ -179,6 +206,7 @@ export function conditionsFor(taskId: number, status?: TaskStatus | null): Relea
     live: hasLivePty(taskId),
     headMaybeSent: heldFor(taskId)[0]?.maybeSent === true,
     failed: lastReleaseFailed(taskId),
+    awaitingDelivery: awaitingDelivery(taskId),
   };
 }
 
@@ -191,7 +219,7 @@ function tryRelease(taskId: number): void {
     return;
   }
   const mayGo = () => canRelease(conditionsFor(taskId)) && hasLivePty(taskId);
-  void releaseHeld(taskId, (text) => submitLocked(taskId, text), mayGo).then(() => {
+  void releaseHeld(taskId, (text, ids) => submitLocked(taskId, text, undefined, ids), mayGo).then(() => {
     if (!lastReleaseFailed(taskId) || retries.has(taskId)) return;
     retries.set(
       taskId,
@@ -237,12 +265,18 @@ function start(): () => void {
     onPreviewChange((id) => {
       if (pendingPreview(id) === null) tryRelease(id);
     }),
+    onDeletionChange((id) => {
+      if (pendingDeletion(id) === null) tryRelease(id);
+    }),
     onTurnChange(tryRelease),
+    // The last message reached the transcript: the next may go.
+    onAwaitingDeliveryChange((id) => {
+      if (!awaitingDelivery(id)) tryRelease(id);
+    }),
     onHeldReleased((id, held) => {
       if (!held.commentIds || held.commentIds.length === 0) return;
-      markCommentsSent(id, held.commentIds).catch((err: unknown) =>
-        console.warn('[outbox] the message went out, but its comments could not be marked as sent', err),
-      );
+      // On their way until the sent mark is read back: never To Send between (#404).
+      markCarriedSent(id, held.commentIds, '[outbox] the message went out, but its comments could not be marked as sent');
     }),
   ];
   watch();

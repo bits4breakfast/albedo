@@ -18,6 +18,10 @@
  * Reviewed and go to the next. None of them is bound anywhere else in the app
  * (shortcuts.ts); CodeMirror's ⌥↑/⌥↓ (move line) never sees them, since the
  * guide has no editor in it.
+ *
+ * Search (#413, GuideSearch.tsx), anywhere in a written guide, its fields
+ * too: ⌘F this file, ⇧⌘F all the guide's files. ⇧⌘F is Find in Files
+ * everywhere else; here it is stopped before the window's binding hears it.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -25,14 +29,13 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
 import type { BranchDiff, GuideFile } from './blocks';
-import { commentMarks, groupCommentCount, useOpenComments } from './commentMarks';
-import { useWaitingCodeComments } from '../ui/transcript/codeComments';
-import { useComments } from '../ui/transcript/drafts';
+import { commentMarks, groupCommentCount } from './commentMarks';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
-import { useQueuedCi } from '../ui/transcript/ciFailure';
+import { ON_ITS_WAY, sendLabel, useToSend, useToSendFrozen } from '../ui/transcript/toSend';
 import { carefulWhy, viewGuide, type CarefulMark, type GroupFile, type GroupView, type Guide } from './validate';
 import { asFocus, firstMatch, projectFocus, type GuideFocus } from './focus';
 import { chosenFocus, draftOf, GuideOptions, useTaskProject } from './GuideOptions';
+import { GUIDE_AREA_ATTR } from '../ui/shortcuts';
 import { FlagIcon } from '../ui/icons';
 import '../ui/worktree.css';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
@@ -68,6 +71,18 @@ import GuideMap from './GuideMap';
 import SinceReview from './SinceReview';
 import { updateRecordOf, useSinceChanges, useSinceReviewVersion, type ChangesLoad, type UpdateRecord } from './copyUpdate';
 import OverflowMenu from '../ui/OverflowMenu';
+import { NO_SEARCH, searchDiff } from '../ui/transcript/Diff';
+import {
+  AllGuideFiles,
+  CLOSED_SEARCH,
+  SEARCH_DEBOUNCE_MS,
+  SearchBar,
+  type FocusAsk,
+  type GuideSearchState,
+  type SearchBarProps,
+  type SearchScope,
+} from './GuideSearch';
+import { linesOf, type GuideHit } from './search';
 import './guide.css';
 
 /**
@@ -391,6 +406,48 @@ function GuideIntro({
 // The guide
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a key is the user's text, for ⌘R and ⇧⌘R: a text field, never a
+ * checkbox, radio or button, which take no letters.
+ */
+const TYPING_FIELD =
+  'textarea, select, [contenteditable="true"], input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"])';
+
+/** The last mark ⌘R or ⇧⌘R made, which the same key undoes. */
+interface LastMark {
+  kind: 'file' | 'group';
+  /** What it marked: only what was not marked already. */
+  keys: string[];
+  /** Where it was made, to go back to, and what to say there. */
+  group: string;
+  path: string;
+  said: string;
+  /** When it was made: past {@link UNDO_MS}, the key marks again. */
+  at: number;
+  /** The groups and their files then: if they change, the mark is forgotten. */
+  shape: string;
+}
+
+/**
+ * How long the same key undoes its mark. A reader who moves on without a key
+ * or a click -- scrolling the next file with the trackpad -- and then marks
+ * it must not unmark the previous one.
+ */
+export const UNDO_MS = 2000;
+
+/** The groups as the Reviewed keys see them: an undo is only safe on the same. */
+function shapeOf(groups: readonly GroupView[]): string {
+  return groups.map((g) => `${g.key}:${g.files.map((f) => reviewedKey(f.path, f.blocks)).join(',')}`).join('|');
+}
+
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Meta', 'Shift', 'Control', 'Alt', 'CapsLock', 'Fn']);
+
+/** ⌘R is the file's key, ⇧⌘R the group's; null for any other key. */
+function markKind(e: KeyboardEvent): 'file' | 'group' | null {
+  if (e.code !== 'KeyR' || !e.metaKey || e.ctrlKey || e.altKey) return null;
+  return e.shiftKey ? 'group' : 'file';
+}
+
 function writtenAgo(at: number): string {
   const age = relativeTime(at, Date.now());
   return age === 'now' ? 'just now' : `${age} ago`;
@@ -519,31 +576,39 @@ function GuideBody({
     setShownView(v);
   };
 
-  // Every comment waiting to go with the next message, the composer's queue:
-  // on code (this guide, the editor, diffs) and on transcript passages (#254).
-  const commentCount = useWaitingCodeComments(task.id).length + useComments(task.id).length;
-  // And a PR's failing checks, queued for Claude like a comment (#280).
-  const ciWaiting = useQueuedCi(task.id) !== null;
-  const waitingCount = commentCount + (ciWaiting ? 1 : 0);
+  // To Send (#404), the list every view reads: a PR's failing checks (#280),
+  // comments on code (this guide, the editor, diffs) and on transcript
+  // passages (#254). Send N shows the same N as the list above the box.
+  const toSend = useToSend(task.id);
+  const waitingCount = toSend.count;
+  // A send already carries them (#404): a second would carry them again.
+  const sendFrozen = useToSendFrozen(task.id);
   // The transcript is shown after (#254): where it lands, sent or held.
   const sendComments = () => void sendWaitingComments(task.id);
-  const commentsWord = `${commentCount} ${commentCount === 1 ? 'Comment' : 'Comments'}`;
   const sendButton =
     waitingCount > 0 ? (
       <button
         type="button"
         className={view.stale ? 'gd-btn' : 'gd-btn gd-btn-primary'}
         onClick={sendComments}
-        aria-keyshortcuts="Meta+Enter"
-        title="Send everything waiting to Claude now, and show the transcript (⌘↩). What you're typing in the message box stays there."
+        disabled={sendFrozen}
+        aria-keyshortcuts="Meta+Shift+S Meta+Enter"
+        title={
+          sendFrozen
+            ? ON_ITS_WAY
+            : `Send the ${waitingCount} To Send to Claude now, and show the transcript (⇧⌘S, or ⌘↩ here). What you're typing in the message box stays there.`
+        }
       >
-        Send {ciWaiting ? (commentCount > 0 ? `CI Failure + ${commentsWord}` : 'CI Failure') : commentsWord}
+        {sendLabel(waitingCount)}{' '}
+        <span className="gd-btn-key" aria-hidden="true">
+          ⇧⌘S
+        </span>
       </button>
     ) : null;
 
-  // Where the open comments are (#252), so one left on a file is found again here.
-  const openComments = useOpenComments(task.id);
-  const marks = useMemo(() => commentMarks(groups, diff, openComments), [groups, diff, openComments]);
+  // Where the comments To Send are (#252, #404), so one left on a file is
+  // found again here: sent ones and GitHub drafts are not counted.
+  const marks = useMemo(() => commentMarks(groups, diff, toSend.code), [groups, diff, toSend.code]);
   const fileComments = (g: GroupView, f: GroupFile) => marks.get(g.key)?.get(f.path) ?? 0;
 
   const reviewed = loadReviewed(task.id);
@@ -739,13 +804,217 @@ function GuideBody({
 
   const stepGroup = (delta: number) => goTo(at + delta);
 
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+  // ⌘R and ⇧⌘R (#390, #391): the two Reviewed boxes, from the keyboard. Each
+  // toggles and moves on exactly as a click on its box does. Pressed again
+  // within UNDO_MS, with no other key, click, wheel or move between and the
+  // groups as they were, it undoes the mark it just made and goes back to
+  // where it was made: the owner's "pressing again undoes". Read's,
+  // anywhere in it, as the other keys are; a checkbox or button with focus
+  // is not typing, so they work from there too, but not from a comment box,
+  // the search field or any other text field, nor from an open menu. ⇧⌘R is Remote Control everywhere else: that binding stands aside
+  // inside a guide on screen (GUIDE_AREA, shortcuts.ts), so it never fires
+  // here, even on the Map. From `code`, as the app's ⇧⌘R is; Command only. A
+  // held key does not repeat: auto-repeat would toggle a run of files.
+  const lastMark = useRef<LastMark | null>(null);
+  // Anything else -- a key, a click, the window losing focus, a wheel or
+  // trackpad scroll in the guide -- forgets it. A wheel, not `scroll`: the
+  // guide scrolls itself as a file opens, and that is not the reader moving.
+  useEffect(() => {
+    const forget = (e: Event) => {
+      const m = lastMark.current;
+      if (m === null) return;
+      if (e instanceof KeyboardEvent && (MODIFIER_KEYS.has(e.key) || markKind(e) === m.kind)) return;
+      if (e.type === 'wheel' && !(e.target instanceof Node && rootRef.current?.contains(e.target))) return;
+      lastMark.current = null;
+    };
+    window.addEventListener('keydown', forget, true);
+    window.addEventListener('pointerdown', forget, true);
+    window.addEventListener('wheel', forget, { capture: true, passive: true });
+    window.addEventListener('blur', forget);
+    return () => {
+      window.removeEventListener('keydown', forget, true);
+      window.removeEventListener('pointerdown', forget, true);
+      window.removeEventListener('wheel', forget, { capture: true });
+      window.removeEventListener('blur', forget);
+    };
+  }, []);
+
+  const undoMark = (m: LastMark) => {
+    lastMark.current = null;
+    setReviewed(task.id, m.keys, false);
+    setPlace((p) => ({ ...p, group: m.group, picked: { ...p.picked, [m.group]: m.path } }));
+    setSaid(m.said);
+  };
+
+  const reviewKey = (e: ReactKeyboardEvent<HTMLDivElement>): boolean => {
+    const kind = markKind(e.nativeEvent);
+    if (kind === null || !active) return false;
     const t = e.target as HTMLElement;
+    if (t.closest(TYPING_FIELD) || t.closest('[role="menu"]')) return false;
+    e.preventDefault();
+    if (e.repeat || shownView === 'map' || !group || !file) return true;
+    // The box with focus may go with the file it belongs to: keep focus in
+    // the guide, so the next press is heard here too.
+    if (document.activeElement !== rootRef.current) rootRef.current?.focus({ preventScroll: true });
+    const m = lastMark.current;
+    lastMark.current = null;
+    if (m !== null && m.kind === kind && Date.now() - m.at < UNDO_MS && m.shape === shapeOf(groups)) {
+      undoMark(m);
+      return true;
+    }
+    const files = kind === 'group' ? group.files : [file];
+    const keys = files.filter((f) => !isFileReviewed(f)).map((f) => reviewedKey(f.path, f.blocks));
+    if (kind === 'group') toggleGroup(group);
+    else toggleFile(file);
+    // Only a mark is remembered: an unmark stays where it is, and the key
+    // again simply marks it once more.
+    if (keys.length > 0) {
+      const said = kind === 'group' ? `Unmarked ${group.title}` : `Unmarked ${splitPath(file.path).name}`;
+      lastMark.current = { kind, keys, group: group.key, path: file.path, said, at: Date.now(), shape: shapeOf(groups) };
+    }
+    return true;
+  };
+
+  // Focus never falls out of the guide on its own: a box that unmounts with
+  // focus in it (a file's header as the next opens, a comment box saved or
+  // cancelled) leaves it on the page's body, where the guide's keys are not
+  // heard and ⇧⌘R would be Remote Control. Watched on the DOM, not on this
+  // component's renders: a comment box goes in a render of its own. Focus
+  // put elsewhere on purpose -- a click outside, the terminal, another tab --
+  // is never taken back.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let inside = el.contains(document.activeElement);
+    // Left for nothing, and not known yet whether by a click (it stays in
+    // the page) or by being removed (it goes): an engine may say so before
+    // the removal or not at all.
+    let lost: Node | null = null;
+    const regain = () => {
+      if (lost?.isConnected) return;
+      const now = document.activeElement;
+      if (inside && activeRef.current && (now === null || now === document.body)) el.focus({ preventScroll: true });
+    };
+    const onIn = () => {
+      inside = true;
+      lost = null;
+    };
+    const onOut = (e: FocusEvent) => {
+      const to = e.relatedTarget;
+      if (to instanceof Node) {
+        inside = el.contains(to);
+        return;
+      }
+      const from = e.target as Node;
+      lost = from;
+      window.setTimeout(() => {
+        if (lost !== from) return;
+        lost = null;
+        // Still in the page: a click on something that takes no focus, the
+        // user's choice. Gone: a removal, not a choice.
+        if (from.isConnected) inside = false;
+        else regain();
+      }, 0);
+    };
+    const watch = new MutationObserver(regain);
+    watch.observe(el, { childList: true, subtree: true });
+    el.addEventListener('focusin', onIn);
+    el.addEventListener('focusout', onOut);
+    return () => {
+      watch.disconnect();
+      el.removeEventListener('focusin', onIn);
+      el.removeEventListener('focusout', onOut);
+    };
+  }, []);
+
+  // Search (#413). The field takes focus once per ⌘F / ⇧⌘F, a switch or an
+  // opened match, also when its bar mounts after the request (another file).
+  const [search, setSearch] = useState<GuideSearchState>(CLOSED_SEARCH);
+  const [focusTick, setFocusTick] = useState(0);
+  // ⌘F / ⇧⌘F select the text, as every Find does; the switch and an opened
+  // match leave it be, so the next key goes on typing.
+  const searchFocus = useRef<FocusAsk>(null);
+  const takeSearchFocus = useCallback(() => {
+    const asked = searchFocus.current;
+    searchFocus.current = null;
+    return asked;
+  }, []);
+  const openSearch = (scope: SearchScope, ask: FocusAsk = 'select') => {
+    if (shownView === 'map') showView('read');
+    searchFocus.current = ask;
+    setFocusTick((n) => n + 1);
+    setSearch((s) => ({ ...s, open: true, scope }));
+  };
+  // The text searched: what was typed, once typing pauses. Never a search
+  // per keystroke on a large guide; empty at once. The current match is the
+  // last search's until the new one lands: never one picked from stale matches.
+  const [searched, setSearched] = useState('');
+  const searchedRef = useRef('');
+  useEffect(() => {
+    const apply = () => {
+      if (search.query === searchedRef.current) return;
+      searchedRef.current = search.query;
+      setSearched(search.query);
+      setSearch((s) => (s.current === null ? s : { ...s, current: null }));
+    };
+    if (search.query === '') {
+      apply();
+      return;
+    }
+    const t = setTimeout(apply, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search.query]);
+  const closeSearch = () => {
+    setSearch((s) => ({ ...s, open: false, current: null }));
+    rootRef.current?.focus({ preventScroll: true });
+  };
+  // A match in All Guide Files: its file, in its group, on This File.
+  const openHit = (hit: GuideHit) => {
+    const i = groups.findIndex((g) => g.key === hit.groupKey);
+    setPlace((p) => ({ ...p, group: hit.groupKey, picked: { ...p.picked, [hit.groupKey]: hit.path } }));
+    if (i >= 0 && i !== at) setSaid(`Group ${i + 1} of ${groups.length}: ${groups[i]!.title}`);
+    searchFocus.current = 'caret';
+    setFocusTick((n) => n + 1);
+    setSearch((s) => ({ ...s, scope: 'file', current: { path: hit.path, key: hit.key } }));
+  };
+  const searchBar: SearchBarProps = {
+    scope: search.scope,
+    query: search.query,
+    onQuery: (query) => setSearch((s) => ({ ...s, query })),
+    onScope: (scope) => openSearch(scope, 'caret'),
+    onClose: closeSearch,
+    focusTick,
+    takeFocus: takeSearchFocus,
+  };
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    // ⌘F / ⇧⌘F (#413): search, from anywhere in the guide, its fields too.
+    // Stopped here, so the window's ⇧⌘F (Find in Files) never hears it.
+    if (e.code === 'KeyF' && e.metaKey && !e.ctrlKey && !e.altKey && group !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      openSearch(e.shiftKey ? 'all' : 'file');
+      return;
+    }
+    const t = e.target as HTMLElement;
+    if (reviewKey(e)) return;
     if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
-    // ⌘⏎: Send Comments (#256). A comment box is a textarea, returned above,
-    // so there ⌘⏎ still saves the comment and never sends.
+    // Esc closes the search from anywhere in the guide but a field (a
+    // comment's Esc is its own); handled, so full screen stays (#267).
+    if (e.key === 'Escape' && search.open && !e.defaultPrevented) {
+      // Handled, and here only: the editor's Esc on the window closes its file.
+      e.preventDefault();
+      e.stopPropagation();
+      closeSearch();
+      return;
+    }
+    // ⌘⏎: Send N (#256, #404), not while a send already carries them. A
+    // comment box is a textarea, returned above, so there ⌘⏎ still saves
+    // the comment and never sends.
     if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
-      if (waitingCount === 0) return;
+      if (waitingCount === 0 || sendFrozen) return;
       e.preventDefault();
       sendComments();
       return;
@@ -772,7 +1041,16 @@ function GuideBody({
 
   return (
     // A focus stop of its own, so its keys work from a click anywhere in it.
-    <div className="gd" ref={rootRef} tabIndex={-1} onKeyDown={onKeyDown} aria-label="Review Guide">
+    <div
+      className="gd"
+      ref={rootRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      aria-label="Review Guide"
+      // On screen, ⇧⌘R is the group's key here, not Remote Control
+      // (shortcuts.ts). A hidden guide stays mounted and claims nothing.
+      {...(active ? { [GUIDE_AREA_ATTR]: '' } : {})}
+    >
       {/* One row, one Rewrite (#197): a guide the branch has moved on from
           says so here, on the banner's ground, rather than in a second row
           with a second button. */}
@@ -821,8 +1099,8 @@ function GuideBody({
             </label>
           </>
         )}
-        {/* Out of date, Rewrite leads and Send Comments waits beside it;
-            otherwise comments waiting make Send the row's action (#254). */}
+        {/* Out of date, Rewrite leads and Send N sits beside it; otherwise
+            anything To Send makes Send N the row's action (#254, #404). */}
         {view.stale ? sendButton : null}
         <button
           type="button"
@@ -903,8 +1181,13 @@ function GuideBody({
                   {pad2(at + 1)} / {pad2(led.length)}
                 </span>
               )}
-              <label className="gd-check">
-                <input type="checkbox" checked={isGroupReviewed(group)} onChange={() => toggleGroup(group)} />
+              <label className="gd-check" title="Mark the group reviewed (⇧⌘R)">
+                <input
+                  type="checkbox"
+                  checked={isGroupReviewed(group)}
+                  onChange={() => toggleGroup(group)}
+                  aria-keyshortcuts="Meta+Shift+R"
+                />
                 Reviewed
               </label>
               {groupChanged(group) > 0 ? (
@@ -1036,8 +1319,16 @@ function GuideBody({
           </nav>
 
           <section className="gd-right" aria-label="Diff">
+            {search.open && search.scope === 'all' ? (
+              <AllGuideFiles groups={groups} diff={diff} searched={searched} onOpen={openHit} {...searchBar} />
+            ) : null}
+            {/* Kept mounted and laid out under All Guide Files, only covered:
+                a comment being written in it, its layout, Whole File and
+                scroll all stay (display: none would measure it 0 wide and
+                turn a split diff unified, remounting every row). */}
             {file ? (
               <GuideFileDiff
+                covered={search.open && search.scope === 'all'}
                 key={`${group.key}:${file.path}`}
                 task={task}
                 diff={diff}
@@ -1048,6 +1339,10 @@ function GuideBody({
                 reviewed={isFileReviewed(file)}
                 commentCount={group ? fileComments(group, file) : 0}
                 onToggleReviewed={() => toggleFile(file)}
+                search={search.open ? search : null}
+                searched={searched}
+                searchBar={searchBar}
+                onCurrent={(key) => setSearch((s) => ({ ...s, current: { path: file.path, key } }))}
               />
             ) : null}
           </section>
@@ -1217,6 +1512,8 @@ export function restrictDiff(full: FileDiff, file: GuideFile, blocks: readonly s
   return { ...full, hunks: full.hunks.filter((_, i) => keep.has(file.blocks[i] ?? '')) };
 }
 
+const NO_MATCHES: never[] = [];
+
 function GuideFileDiff({
   task,
   diff,
@@ -1227,6 +1524,11 @@ function GuideFileDiff({
   reviewed,
   commentCount,
   onToggleReviewed,
+  search,
+  searchBar,
+  onCurrent,
+  covered,
+  searched,
 }: {
   task: Task;
   diff: BranchDiff;
@@ -1238,6 +1540,15 @@ function GuideFileDiff({
   reviewed: boolean;
   commentCount: number;
   onToggleReviewed: () => void;
+  /** The guide's search while it is open (#413); This File's is drawn here. */
+  search: GuideSearchState | null;
+  searchBar: SearchBarProps;
+  /** Another match of This File is the current one. */
+  onCurrent: (key: string) => void;
+  /** All Guide Files is over it. */
+  covered: boolean;
+  /** The text searched, once typing pauses. */
+  searched: string;
 }): ReactNode {
   const [whole, setWhole] = useState(false);
   const openFile = useOpenFile();
@@ -1264,8 +1575,47 @@ function GuideFileDiff({
   // on the whole file, so one group's slice of an edit is never mistaken for it.
   const oneSided = useMemo(() => (result?.kind === 'diff' ? isOneSided(result.diff) : false), [result]);
 
+  // This File (#413): what the diff shows, searched as it draws it.
+  const query = search?.scope === 'file' ? searched : '';
+  // Split only for a search, and once per read of the branch (search.ts).
+  const searching = query !== '';
+  const sources = useMemo(() => (searching && result?.kind === 'diff' ? linesOf(result) : null), [searching, result]);
+  // Made once here, and handed to the diff to draw.
+  const found = useMemo(() => (query !== '' && shown && sources ? searchDiff(shown, sources, query) : null), [query, shown, sources]);
+  const matches = found?.matches ?? NO_MATCHES;
+  const picked = search?.current?.path === file.path ? search.current.key : null;
+  const index = Math.max(0, matches.findIndex((m) => m.key === picked));
+  const currentKey = matches[index]?.key ?? null;
+  // The view follows the current match.
+  const scrollRef = layout.ref;
+  useEffect(() => {
+    if (currentKey === null) return;
+    scrollRef.current?.querySelector('.tx-d-hit-cur')?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+  }, [currentKey, query, scrollRef]);
+  const searchCount =
+    query === '' ? '' : matches.length === 0 ? 'No matches' : `${index + 1} of ${matches.length}${found?.capped ? '+' : ''}`;
+  // Closing the search keeps the line it was on (the diff keeps it drawn):
+  // the view stays on it, though the lines around other matches fold away.
+  const lastFound = useRef<{ side: string; line: number } | null>(null);
+  const open = search !== null;
+  useEffect(() => {
+    if (open) {
+      const m = matches[index];
+      lastFound.current = m ? { side: m.side, line: m.line } : null;
+      return;
+    }
+    const at = lastFound.current;
+    lastFound.current = null;
+    if (!at || typeof requestAnimationFrame === 'undefined') return;
+    requestAnimationFrame(() =>
+      scrollRef.current
+        ?.querySelector(`[data-${at.side}-line="${at.line}"]`)
+        ?.scrollIntoView?.({ block: 'center', inline: 'nearest' }),
+    );
+  }, [open, matches, index, scrollRef]);
+
   return (
-    <div className="gd-diff">
+    <div className="gd-diff" data-covered={covered || undefined} inert={covered} aria-hidden={covered || undefined}>
       <div className="gd-diff-head">
         <FileIcon path={file.path} />
         <span className="gd-diff-name">{name}</span>
@@ -1295,11 +1645,27 @@ function GuideFileDiff({
         <button type="button" className="gd-link" onClick={() => openFile({ path: file.path })} title="Open the file in the editor">
           Open
         </button>
-        <label className="gd-check gd-diff-check">
-          <input type="checkbox" checked={reviewed} onChange={onToggleReviewed} />
+        <label className="gd-check gd-diff-check" title="Mark this file reviewed (⌘R)">
+          <input type="checkbox" checked={reviewed} onChange={onToggleReviewed} aria-keyshortcuts="Meta+R" />
           Reviewed
         </label>
       </div>
+      {search?.scope === 'file' ? (
+        <SearchBar
+          {...searchBar}
+          count={searchCount}
+          hint="↩ next · ⇧↩ previous · Esc closes"
+          onKeys={(e) => {
+            if (e.key !== 'Enter' || e.metaKey || e.altKey || e.ctrlKey) return;
+            e.preventDefault();
+            // The matches are of the text before the last keys: wait for these.
+            if (searchBar.query !== searched) return;
+            const n = matches.length;
+            if (n === 0) return;
+            onCurrent(matches[(index + (e.shiftKey ? -1 : 1) + n) % n]!.key);
+          }}
+        />
+      ) : null}
       {/* Why the file changes in this group (#224), under its header (#264):
           outside the scroll, so it stays with the header as the diff scrolls. */}
       {file.note || file.careful ? (
@@ -1361,6 +1727,9 @@ function GuideFileDiff({
                 absoluteLines={result.change !== 'deleted'}
                 contextPath={null}
                 showPath={false}
+                // Not null while the bar is open, even empty or on All
+                // Guide Files: null is a close, which keeps the found line.
+                search={search ? { result: found ?? NO_SEARCH, current: currentKey } : null}
               />
             </DiffAnnotationsContext.Provider>
           )

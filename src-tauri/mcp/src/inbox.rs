@@ -5,7 +5,10 @@
 //! inside a line. The app (`src/capture/inbox.ts`) reads the file, renames it
 //! aside once read, and checks every line again.
 //!
-//! The line: `{"v":1,"task":<id>,"tool":"…","args":{…},"at":<ms>,"id":"…"}`.
+//! The line: `{"v":1,"task":<id>,"tool":"…","args":{…},"at":<ms>,"id":"…"}`,
+//! and `"token":"…"` when Albedo gave the session one (`ALBEDO_TASK_TOKEN`,
+//! #427): the app's GitHub tools act only on lines carrying the task's
+//! current token.
 
 use serde_json::{json, Map, Value};
 use std::fs::{self, OpenOptions};
@@ -20,6 +23,12 @@ pub const LINE_VERSION: u64 = 1;
 /// timeout, or the session closing. Its args: `request` (the call's line id)
 /// and `reason`. The app retires that preview's card on it.
 pub const PREVIEW_CANCELLED: &str = "preview_cancelled";
+
+/// The same record for a GitHub tool's call (#427) that ended without an
+/// answer: cancelled, timed out waiting for the app, or the session closing.
+/// Its args are `request` and `reason`, as above. The app retires that
+/// call's card on it, and never acts on that request afterwards.
+pub const GITHUB_CANCELLED: &str = "github_cancelled";
 
 /// The longest line written, newline included. Matches the app's cap, and a
 /// write this size to a local file is not split.
@@ -42,8 +51,23 @@ pub fn line(
     at_ms: i64,
     id: &str,
 ) -> Result<Vec<u8>, String> {
-    let v =
+    line_with_token(task, tool, args, at_ms, id, None)
+}
+
+/// The same, carrying the session's token when it has one (#427).
+pub fn line_with_token(
+    task: u64,
+    tool: &str,
+    args: Map<String, Value>,
+    at_ms: i64,
+    id: &str,
+    token: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let mut v =
         json!({"v": LINE_VERSION, "task": task, "tool": tool, "args": args, "at": at_ms, "id": id});
+    if let Some(t) = token {
+        v["token"] = t.into();
+    }
     let mut out = serde_json::to_vec(&v).map_err(|e| e.to_string())?;
     out.push(b'\n');
     if out.len() > MAX_LINE_BYTES {
@@ -115,6 +139,26 @@ mod tests {
             v,
             json!({"v": 1, "task": 42, "tool": "notify_blocked", "args": {"message": "need\nthe key"}, "at": 1000, "id": "abc"})
         );
+    }
+
+    #[test]
+    fn a_token_rides_beside_the_task_only_when_there_is_one() {
+        let l = line_with_token(
+            4,
+            "list_github_drafts",
+            Map::new(),
+            1,
+            "a",
+            Some("0123456789abcdef01"),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_slice(&l).unwrap();
+        assert_eq!(v["token"], "0123456789abcdef01");
+        assert_eq!(v["args"], json!({}));
+        let none: Value =
+            serde_json::from_slice(&line(4, "list_github_drafts", Map::new(), 1, "a").unwrap())
+                .unwrap();
+        assert!(none.get("token").is_none());
     }
 
     #[test]

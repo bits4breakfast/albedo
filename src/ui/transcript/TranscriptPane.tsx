@@ -9,16 +9,18 @@
  */
 
 import { foldPastes } from './pastedText';
+import { isJumpToLatestKey, keyboardIsFree, onScreen } from './jumpKey';
 import { PassageRevealContext, revealPassageIn, type RevealPassage } from './passages';
+import { onRevealPassageRequest } from './composerBridge';
 import { PassageComments } from './PassageComments';
 import { onHeldReleased } from './outbox';
 import {
   noteShownStatus,
   startOutboxRelease,
 } from './outboxRelease';
-import { shownQueue } from './turn';
-import { commandEchoLanded, commandLanded, echoLanded, isCompactCommand, useCommandEcho } from './commandEcho';
+import { commandEchoLanded, commandLanded, echoIsQueued, echoLanded, isCompactCommand, useCommandEcho } from './commandEcho';
 import { CommandEchoRow } from './CommandEchoRow';
+import { onNotDelivered, startDeliveryWatch } from './delivery';
 import OverlayScrollbar from './OverlayScrollbar';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -29,7 +31,6 @@ import {
   onCaptureUpdate,
   onQueueChange,
   queuedFor,
-  type QueuedEntry,
 } from '../../capture';
 import { watchConnectivity } from '../../lib/connectivity';
 import { usePtyLiveSince } from '../Terminal';
@@ -40,6 +41,7 @@ import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } f
 import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
 import { PreviewCard } from '../preview/PreviewCard';
+import { DeletionCard } from './DeletionCard';
 import { PreviewViewerHost } from '../preview/previewViewer';
 import { RemoteMenuNotice } from './RemoteMenuNotice';
 import ReminderCards from '../reminders/ReminderCard';
@@ -170,6 +172,8 @@ export function TranscriptPane({
 
   // Held messages go for every task, whichever one is on screen (outboxRelease.ts).
   useEffect(() => startOutboxRelease(), []);
+  // Every message sent is looked for in the transcript (delivery.ts, #433).
+  useEffect(() => startDeliveryWatch(), []);
   // The release's prompt gate counts this task's `blocked`, as the composer does.
   useEffect(() => {
     noteShownStatus(taskId, status);
@@ -379,17 +383,18 @@ export function TranscriptPane({
     return () => ro.disconnect();
   }, [inactive]);
 
-  // ⌘↓: to the latest message, without having to click into the transcript
-  // first. It acts only when the keyboard is not busy elsewhere: nothing
-  // focused, or focus inside the transcript but not in a text field. In the
-  // composer, the editor, the terminal or any other field, ⌘↓ keeps its own
-  // meaning (end of text) and this stays out of the way.
+  // ⌥⌘↓: to the latest message, without having to click into the transcript
+  // first (#398: it was ⌘↓, which now steps to the next task). It acts only
+  // when the keyboard is not busy elsewhere: nothing focused, or focus inside
+  // the transcript but not in a text field. In the composer, the terminal or
+  // any other field it stays out of the way. The editor's own ⌥⌘↓ (Next
+  // Changed File) yields to it on the same test (jumpKey.ts).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.key !== 'ArrowDown') return;
+      if (!isJumpToLatestKey(e)) return;
       const el = scrollRef.current;
       // Not on screen: another tab, or the pane is hidden.
-      if (!el || el.offsetParent === null) return;
+      if (!el || !onScreen(el)) return;
       if (!keyboardIsFree(document.activeElement, el)) return;
       e.preventDefault();
       jumpToEnd();
@@ -455,6 +460,17 @@ export function TranscriptPane({
     setRevealNote(null);
     setReveal(target.messageId);
   }, []);
+  // Jump on a quote in Files ▸ Comments (#404): this task's transcript is
+  // the one that takes the reader there.
+  useEffect(
+    () =>
+      onRevealPassageRequest((id, target) => {
+        if (taskId === null || id !== taskId) return false;
+        revealPassage(target);
+        return true;
+      }),
+    [taskId, revealPassage],
+  );
 
   /*
      Between Send and anything on screen there is a gap: Claude Code writes
@@ -473,6 +489,17 @@ export function TranscriptPane({
     () =>
       onHeldReleased((id, held) => {
         if (id === taskId && !isCompactCommand(held.text)) setEcho({ text: held.text, at: Date.now() });
+      }),
+    [taskId],
+  );
+  // Not delivered (delivery.ts): the band shows it as held from now, so its
+  // echo goes -- one place, not two. The echo is set once the write is done,
+  // so it falls between the write's start and its end.
+  useEffect(
+    () =>
+      onNotDelivered((e) => {
+        if (e.taskId !== taskId) return;
+        setEcho((cur) => (cur !== null && cur.at >= e.at - 1000 && cur.at <= e.sentAt + 1000 ? null : cur));
       }),
     [taskId],
   );
@@ -547,7 +574,7 @@ export function TranscriptPane({
           it sits at the foot of the transcript and never over the composer. */}
       <div className="tx-scroll-wrap">
         <OverlayScrollbar target={scrollRef} />
-        <div className="tx-scroll" ref={scrollRef} onScroll={onScroll}>
+        <div className="tx-scroll" ref={scrollRef} onScroll={onScroll} data-jump-latest="">
           {hasMore ? (
             <div className="tx-page-top">
               <button type="button" className="tx-btn" onClick={loadOlder} disabled={loading}>
@@ -604,8 +631,8 @@ export function TranscriptPane({
         ) : null}
 
         {!following ? (
-          <button type="button" className="tx-jump" onClick={jumpToEnd} title="Jump to the latest message (⌘↓)">
-            ↓ Latest <kbd className="tx-jump-key">⌘↓</kbd>
+          <button type="button" className="tx-jump" onClick={jumpToEnd} title="Jump to the latest message (⌥⌘↓)">
+            ↓ Latest <kbd className="tx-jump-key">⌥⌘↓</kbd>
           </button>
         ) : null}
       </div>
@@ -616,6 +643,8 @@ export function TranscriptPane({
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {/* A mockup waiting for approval (#348): the session's call waits on it. */}
       {taskId !== null ? <PreviewCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
+      {/* A comment on GitHub the session asks to delete (#427): its call waits on it. */}
+      {taskId !== null ? <DeletionCard taskId={taskId} /> : null}
       {/* A kept version, opened from its chip: read only, over the pane. */}
       <PreviewViewerHost taskId={taskId} />
       {/* Remote Control's menu, up in the terminal with nothing written (#343). */}
@@ -655,19 +684,8 @@ const ECHO_MAX_MS = 30_000;
 /** The message box's echo lands as commandEcho.ts says (`echoLanded`), shared with the buttons' echo. */
 export { echoLanded };
 
-/**
- * Whether the Queued band now shows the message just sent: one of its
- * entries (`shownQueue`) was queued no earlier than the send, with the same
- * second of slack as the user-row check. While the band would not show it
- * the echo stays, or the message would be nowhere.
- *
- * Time, not text: the queue records what Claude Code made of the input -- a
- * pasted image becomes `[Image #1]` where Albedo sent a file path -- and
- * while the echo is up only Albedo is typing into the session.
- */
-export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry[], liveSince: number | null): boolean {
-  return shownQueue(entries, liveSince).some((e) => e.ts >= echo.at - 1000);
-}
+/** Whether the Queued band shows the message just sent: commandEcho.ts, shared with delivery.ts. */
+export { echoIsQueued };
 
 /**
  * "Running Bash git status · 9s", ticking, with the turn's "7m 48s · ↓ 37.6k
@@ -720,20 +738,4 @@ export function WorkingLine({ state }: { state: Working }): ReactNode {
       </div>
     </div>
   );
-}
-
-/**
- * Whether a key can be taken without stealing it from something focused:
- * nothing has focus (the window itself), or focus is inside `scroller` on an
- * element that is not a text field.
- */
-export function keyboardIsFree(active: Element | null, scroller: Element): boolean {
-  if (active === null || active === document.body || active === document.documentElement) return true;
-  if (!scroller.contains(active)) return false;
-  const editable =
-    (active instanceof HTMLElement && active.isContentEditable) ||
-    active.tagName === 'INPUT' ||
-    active.tagName === 'TEXTAREA' ||
-    active.tagName === 'SELECT';
-  return !editable;
 }

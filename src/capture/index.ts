@@ -11,7 +11,10 @@
  * format stops here (CLAUDE.md hard rule #1).
  */
 
-export { startCapture, onCaptureUpdate, listDiskSessions, importTranscripts } from './watcher';
+export { startCapture, onCaptureUpdate, listDiskSessions, importTranscripts, ingestBehind } from './watcher';
+
+/** Queue text Claude Code put there itself: a notification, another session's message. */
+export { isInjectedQueueText } from './adapter';
 export type { CaptureHandle, CaptureUpdate, DiskSession } from './watcher';
 
 export { deriveStatus } from './status';

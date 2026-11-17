@@ -51,7 +51,8 @@ describe('the queued CI failure (#280)', () => {
     expect(transcript).toMatch(/\.tx-waiting-ci-glyph \{ color: var\(--danger\); \}/);
     expect(transcript).toMatch(/\.tx-waiting-ci-conclusion \{ color: var\(--muted\); \}/);
     expect(list).toMatch(/\.tf-comment-ci-label \{[^}]*color: var\(--danger\)/);
-    expect(list).toMatch(/\.tf-comment-drop:hover \{ color: var\(--text\); background: var\(--panel-hover\); \}/);
+    // Its Remove is To Send's (#404): --muted, --text on --panel-hover when hovered.
+    expect(list).toMatch(/\.tf-comment-act:hover:not\(:disabled\) \{ color: var\(--text\); background: var\(--panel-hover\); \}/);
   });
 
   it('draws its details (step 2) with the tokens measured here', () => {

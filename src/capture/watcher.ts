@@ -47,6 +47,7 @@ import {
   findTaskBySessionId,
   findTaskByWorktreePath,
   getTranscriptFile,
+  transcriptFilesOfSession,
   listTranscriptFiles,
   insertMessages,
   listTranscriptFilesNeedingTitle,
@@ -326,6 +327,11 @@ class Capture implements CaptureHandle {
   private readonly adopted = new Set<string>();
 
   constructor(private readonly root: string) {}
+
+  /** The startup backfill is done and capture is running: new lines are read as they come. */
+  caughtUp(): boolean {
+    return this.backfilled && !this.stopped;
+  }
 
   /**
    * Should a transcript with no `transcript_files` row be captured?
@@ -968,6 +974,65 @@ export async function listDiskSessions(): Promise<DiskSession[]> {
  * Resolves once the rows are written. Throws if capture is not running.
  */
 /** See {@link Capture.reconsider}. A no-op while capture is not running. */
+/** More unread than this after a session's last ingested line is behind, without looking. */
+export const BEHIND_PEEK_BYTES = 1024 * 1024;
+
+/** What `sessionFileBehind` reads the disk with: a seam for tests. */
+export interface BehindIo {
+  size: (path: string) => Promise<number>;
+  read: (path: string, offset: number, length: number) => Promise<Uint8Array>;
+}
+
+const diskIo: BehindIo = { size: async (path) => (await stat(path)).size, read: readRange };
+
+/**
+ * Whether ingest is behind on a session's own transcript (#433): the file on
+ * disk holds a complete line past `bytesIngested`, the offset after the last
+ * complete line ingest read. A partial last line -- being written -- is not
+ * behind: ingest waits for its end too. Subagents' files do not count. With
+ * no file recorded for the session, it is behind only while the startup
+ * backfill runs (it may not have reached the file yet); after that the
+ * watcher takes a new file the moment it appears.
+ */
+export async function sessionFileBehind(
+  sessionId: string,
+  files: readonly { path: string; bytesIngested: number }[],
+  backfilling: boolean,
+  io: BehindIo = diskIo,
+): Promise<boolean> {
+  const own = files.filter((f) => f.path.endsWith(`/${sessionId}.jsonl`));
+  if (own.length === 0) return backfilling;
+  for (const f of own) {
+    let size: number;
+    try {
+      size = await io.size(f.path);
+    } catch {
+      continue; // gone: nothing left to read
+    }
+    const unread = size - f.bytesIngested;
+    if (unread <= 0) continue;
+    if (unread > BEHIND_PEEK_BYTES) return true;
+    let tail: Uint8Array;
+    try {
+      tail = await io.read(f.path, f.bytesIngested, unread);
+    } catch {
+      return true; // cannot tell: unknown counts as behind
+    }
+    if (lastNewlineIndex(tail) !== -1) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether ingest may not have read a session's latest lines yet (#433), so a
+ * row missing from the database says nothing about whether it was written:
+ * capture is not running, or `sessionFileBehind`.
+ */
+export async function ingestBehind(sessionId: string): Promise<boolean> {
+  if (active === null) return true;
+  return sessionFileBehind(sessionId, await transcriptFilesOfSession(sessionId), !active.caughtUp());
+}
+
 export async function reconsiderSession(sessionId: string): Promise<void> {
   await active?.reconsider(sessionId);
 }

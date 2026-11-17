@@ -48,6 +48,7 @@ vi.mock('../../db/comments', async () => ({
 
 const { TranscriptPane } = await import('./TranscriptPane');
 const { __resetDrafts } = await import('./drafts');
+const { __resetDelivery } = await import('./delivery');
 
 const T0 = new Date('2026-10-30T10:00:00Z').getTime();
 const rows: Message[] = Array.from({ length: 20 }, (_, i) => ({
@@ -210,6 +211,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   window.localStorage.clear();
   __resetDrafts();
+  // The pane starts the delivery watch (#433): each test's sends are its own.
+  __resetDelivery();
 });
 
 describe('sending a message (#142)', () => {

@@ -86,6 +86,7 @@ import { useGroupToolCalls } from './ui/transcript/groupToolCalls';
 import { useReviewNotices } from './ui/reviewNotice';
 import { fetchPrStatus } from './gh/gh';
 import type { PrStatus } from './gh/prStatus';
+import { noteShownTask } from './capture/draftRemovals';
 
 /**
  * The frame.
@@ -249,6 +250,8 @@ export default function App() {
   );
   /** What the selected task merges into, for its Create PR (#237): the header's base. */
   const selectedBase = useMeasuredBase(selected);
+  // Drafts the session removed (#427) are shown until their task is left.
+  useEffect(() => noteShownTask(selectedId), [selectedId]);
   /**
    * What's New after an update (#147). It waits while another dialog or the
    * "waiting on you" card is on screen (checked in the DOM), and while the
@@ -1130,7 +1133,7 @@ export default function App() {
                       role="tab"
                       aria-selected={activeTab === 'transcript'}
                       onClick={() => setRightTab('transcript')}
-                      title={selected?.sessionId ? `Session ${selected.sessionId}` : 'No session yet'}
+                      title={`Transcript (⇧⌘T) · ${selected?.sessionId ? `Session ${selected.sessionId}` : 'No session yet'} · ⌘← / ⌘→ move between tabs`}
                     >
                       Transcript
                     </button>
@@ -1140,6 +1143,7 @@ export default function App() {
                       role="tab"
                       aria-selected={activeTab === 'files'}
                       onClick={() => setRightTab('files')}
+                      title="Files (⇧⌘E) · ⌘← / ⌘→ move between tabs"
                     >
                       Files
                       {/* Pinned but not fitting: say so rather than letting the
@@ -1152,7 +1156,7 @@ export default function App() {
                       role="tab"
                       aria-selected={activeTab === 'guide'}
                       onClick={() => setRightTab('guide')}
-                      title="This branch’s changes, grouped by what they do (⇧⌘G)"
+                      title="Guide (⇧⌘G): this branch’s changes, grouped by what they do · ⌘← / ⌘→ move between tabs"
                     >
                       Guide
                     </button>
@@ -1162,6 +1166,7 @@ export default function App() {
                       role="tab"
                       aria-selected={activeTab === 'editor'}
                       onClick={() => setRightTab('editor')}
+                      title="Editor · ⌘← / ⌘→ move between tabs"
                     >
                       Editor
                     </button>

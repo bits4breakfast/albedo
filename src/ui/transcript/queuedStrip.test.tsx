@@ -83,7 +83,8 @@ describe("Claude Code's queue", () => {
     ];
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     expect(screen.getByText('still waiting')).toBeTruthy();
-    expect(screen.getByText('sent when Claude Code finishes its current step')).toBeTruthy();
+    // In Claude Code (#409), and where to change them.
+    expect(screen.getByRole('status').textContent).toMatch(/^In Claude Code · 1change them in the terminal \(↑\)/);
     expect(screen.queryByText(/task-notification/)).toBeNull();
   });
 
@@ -105,17 +106,19 @@ describe("Claude Code's queue", () => {
 });
 
 describe("while Remote Control's menu is up (#343)", () => {
-  const MENU_HINT = 'waiting on Remote Control\u2019s menu in the terminal';
+  const MENU_HINT = 'until Remote Control\u2019s menu in the terminal is answered';
 
   it("Claude Code's queue says it waits on the menu, not on the current step", () => {
     queue.entries = [{ text: 'sent meanwhile', ts: T, injected: false }];
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
-    expect(screen.getByText('sent when Claude Code finishes its current step')).toBeTruthy();
+    const hint = () => document.querySelector('.tx-queued-hint')?.textContent;
+    expect(hint()).toBe('change them in the terminal (↑)');
     act(() => __setRemoteWait(1, { phase: 'menu', at: T }));
-    expect(screen.getByText(MENU_HINT)).toBeTruthy();
-    expect(screen.queryByText('sent when Claude Code finishes its current step')).toBeNull();
+    expect(hint()).toBe(MENU_HINT);
+    // Where they are changed is still said, in the head's tooltip.
+    expect(document.querySelector('.tx-queued-head')?.getAttribute('title')).toMatch(/Change them in the terminal \(↑\)/);
     act(() => __setRemoteWait(1, null));
-    expect(screen.getByText('sent when Claude Code finishes its current step')).toBeTruthy();
+    expect(hint()).toBe('change them in the terminal (↑)');
   });
 
   it('held messages say the same, in place of the turn', () => {
@@ -124,7 +127,7 @@ describe("while Remote Control's menu is up (#343)", () => {
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     act(() => __setRemoteWait(1, { phase: 'menu', at: T }));
     expect(screen.getByText(MENU_HINT)).toBeTruthy();
-    expect(screen.queryByText('sent when Claude finishes this turn')).toBeNull();
+    expect(screen.queryByText('until this turn ends')).toBeNull();
   });
 
   it('only once it is taken to be the menu, and only for its own task', () => {
@@ -144,11 +147,12 @@ describe('held messages', () => {
     window.dispatchEvent(new Event('offline'));
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     const band = screen.getByRole('status');
-    expect(band.textContent).toMatch(/in Claude Code.*Waiting for connection.*in Albedo/);
-    expect(screen.getByText('sent in order once it is back')).toBeTruthy();
+    // One name, Held (#409); the hint says why, the tooltip how they go.
+    expect(band.textContent).toMatch(/^In Claude Code · 1.*in Claude Code.*Held · 1until you’re online.*in Albedo/);
+    expect(screen.getByText('until you’re online').closest('.tx-queued-head')?.getAttribute('title')).toBe('Sent in order once you’re online');
   });
 
-  it('held for a running turn: Queued, sent when the turn ends, and still editable and removable', () => {
+  it('held for a running turn: Held, sent when the turn ends, and still editable and removable', () => {
     turnRunning();
     holdMessage(1, 'also check the lint output');
     holdMessage(1, 'and update the docs');
@@ -156,8 +160,9 @@ describe('held messages', () => {
     const band = screen.getByRole('status');
     // Two go as one when the turn ends (#240), and the band says so: in Send
     // All Now's tooltip, which takes the hint's place in the head (#290).
-    expect(band.textContent).toMatch(/^Queued 2Send All Now/);
-    expect(screen.getByRole('button', { name: 'Send All Now' }).title).toMatch(/sent together when Claude finishes this turn/);
+    // Why, then Send All Now, as the mockup reads (#409).
+    expect(band.textContent).toMatch(/^Held · 2until this turn endsSend All Now/);
+    expect(screen.getByRole('button', { name: 'Send All Now' }).title).toMatch(/sent together, as one message, when Claude finishes this turn/);
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]!);
     expect(heldFor(1).map((h) => h.text)).toEqual(['and update the docs']);
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
@@ -171,10 +176,10 @@ describe('held messages', () => {
     turnRunning();
     holdMessage(1, 'next');
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
-    expect(screen.getByText('sent when Claude finishes this turn')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toMatch(/^Held · 1until this turn ends/);
     act(() => recordQueueOperations([{ op: 'turn-end', sessionId: 's', ts: T + 1 }]));
-    expect(screen.queryByText('sent when Claude finishes this turn')).toBeNull();
-    expect(screen.getByRole('status').textContent).toMatch(/^Sending 1/);
+    expect(screen.queryByText('until this turn ends')).toBeNull();
+    expect(screen.getByRole('status').textContent).toMatch(/^Sending · 1/);
   });
 
   it('offer Send Now while only the turn holds them, usable with a live session', async () => {
@@ -226,7 +231,7 @@ describe('held messages', () => {
     });
   });
 
-  it('offer Send All Now in the head, with the hint in its tooltip, and send them as one (#290)', async () => {
+  it('offer Send All Now in the head, after why they are held, with how they go in its tooltip, and send them as one (#290, #409)', async () => {
     vi.mocked(submitPty).mockClear();
     turnRunning();
     holdMessage(1, 'in the pane tab');
@@ -234,10 +239,11 @@ describe('held messages', () => {
     holdMessage(1, 'on the review');
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     const all = screen.getByRole('button', { name: 'Send All Now' }) as HTMLButtonElement;
-    // The head stays one row: the hint is in the button's tooltip, not beside it.
+    // One row: why they are held, then the button; how they go is its tooltip.
     expect(all.closest('.tx-queued-head')).not.toBeNull();
-    expect(screen.queryByText('sent together when Claude finishes this turn')).toBeNull();
-    expect(all.title).toMatch(/as one message.*sent together when Claude finishes this turn/);
+    expect(screen.getByText('until this turn ends').closest('.tx-queued-head')).toBe(all.closest('.tx-queued-head'));
+    expect(screen.getByText('until this turn ends').compareDocumentPosition(all) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(all.title).toMatch(/as one message.*Left alone: sent together, as one message, when Claude finishes this turn/);
     expect(all.disabled).toBe(false);
     await act(async () => {
       fireEvent.click(all);
@@ -255,7 +261,7 @@ describe('held messages', () => {
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[1]!);
     const all = screen.getByRole('button', { name: 'Send All Now' }) as HTMLButtonElement;
-    expect(all.title).toMatch(/Send these 2 .*editing stays queued/);
+    expect(all.title).toMatch(/Send these 2 .*editing stays held/);
     await act(async () => {
       fireEvent.click(all);
     });
@@ -270,7 +276,7 @@ describe('held messages', () => {
     holdMessage(1, 'alone');
     const { rerender } = render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
     expect(screen.queryByRole('button', { name: 'Send All Now' })).toBeNull();
-    expect(screen.getByText('sent when Claude finishes this turn')).toBeTruthy();
+    expect(screen.getByText('until this turn ends')).toBeTruthy();
     holdMessage(1, '/compact');
     holdMessage(1, 'after it');
     rerender(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
@@ -366,7 +372,7 @@ describe('held messages', () => {
     await act(async () => {
       await releaseHeld(1, send);
     });
-    expect(send).toHaveBeenCalledWith('being edited');
+    expect(send).toHaveBeenCalledWith('being edited', []);
   });
 
   it('say when one may already have been sent, and offer Send, Edit and Remove', async () => {
@@ -396,7 +402,8 @@ describe('edit all in the message box (#399)', () => {
   it("Claude Code's queue says it is changed in the terminal", () => {
     queue.entries = [{ text: 'already typed', ts: T, injected: false }];
     render(<QueuedStrip sessionId="s" taskId={1} liveSince={SPAWNED} />);
-    expect(screen.getByRole('status').textContent).toContain('To change these, press \u2191 in the terminal.');
+    expect(document.querySelector('.tx-queued-hint')?.textContent).toBe('change them in the terminal (\u2191)');
+    expect(document.querySelector('.tx-queued-hint kbd')?.textContent).toBe('\u2191');
   });
 
   it('the held head says ↑ Edit All after Send All Now, with two or more it would take', () => {

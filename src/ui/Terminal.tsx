@@ -4,10 +4,13 @@ import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
+import { notePtyTask } from '../lib/ptyWriteLog';
 import { openExternal } from '../lib/openUrl';
 import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
 import { endTaskPreviews } from '../capture/previewGate';
+import { endTaskDeletions } from '../capture/githubGate';
+import { newTaskToken } from '../capture/mcpToken';
 import { lastModelOf, linkTaskSession, newSessionId, sessionTranscriptExists } from '../capture/sessionLink';
 import { getTaskModel } from './taskModel';
 import { isResumePlan, planSpawn, withMcpConfig } from './sessionSpawn';
@@ -85,6 +88,7 @@ function notifyPresence(taskId: number, live: boolean): void {
 }
 
 function registerPty(taskId: number, ptyId: string): void {
+  notePtyTask(ptyId, taskId);
   livePtys.set(taskId, ptyId);
   liveSince.set(taskId, Date.now());
   notifyPresence(taskId, true);
@@ -118,7 +122,7 @@ export async function notePty(taskId: number, text: string): Promise<boolean> {
   const payload = text.replace(/[\r\n]+/g, ' ').trim();
   if (!payload) return false;
   try {
-    await writePty(ptyId, payload);
+    await writePty(ptyId, payload, 'albedo');
     return true;
   } catch {
     return false;
@@ -171,14 +175,14 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
     const segments = pasteSegments(body, markerSpans(body));
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i] as PasteSegment;
-      await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`);
+      await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`, 'albedo');
       // It reads the file before it takes the next keystroke.
       if (seg.image && i < segments.length - 1) await sleep(SUBMIT_DELAY_IMAGE_MS);
       if (livePtys.get(taskId) !== ptyId) return false;
     }
     await sleep(submitDelayFor(body));
     if (livePtys.get(taskId) !== ptyId) return false; // exited in the pause
-    await writePty(ptyId, '\r');
+    await writePty(ptyId, '\r', 'albedo');
     return true;
   } catch {
     return false;
@@ -574,7 +578,7 @@ export default function Terminal({
         return;
       }
       if (deadRef.current) return;
-      void writePty(id, data).catch((err) => {
+      void writePty(id, data, 'terminal').catch((err) => {
         setFailure(message(err));
       });
     });
@@ -669,7 +673,7 @@ export default function Terminal({
       // binary (a dev build before `npm run build:mcp`) it starts as before.
       const server = await mcpServerPath();
       if (disposed) return;
-      if (server) spawnArgs = withMcpConfig(spawnArgs, task.id, server);
+      if (server) spawnArgs = withMcpConfig(spawnArgs, task.id, server, newTaskToken(task.id));
 
       // A folder Claude Code has never trusted opens on its trust dialog, before
       // any hook runs and before there is a transcript, so neither channel can
@@ -710,6 +714,8 @@ export default function Terminal({
         setTrustWaiting(task.id, false);
         // A preview it was waiting on (#348): the call died with the session.
         void endTaskPreviews(task.id);
+        // A comment's deletion it asked for (#427): the call died with it too.
+        endTaskDeletions(task.id);
         setExitCode(code);
         setPhase('exited');
         // Leave the scrollback intact and readable.
@@ -741,7 +747,7 @@ export default function Terminal({
 
         const queued = pendingRef.current;
         pendingRef.current = [];
-        for (const chunk of queued) void writePty(id, chunk).catch(() => {});
+        for (const chunk of queued) void writePty(id, chunk, 'terminal').catch(() => {});
 
         applyFit();
         // The dialog is answered here and nowhere else: give it the keyboard,

@@ -286,7 +286,7 @@ mode shows the same way, with **Approve** and **Keep Planning**.
 
 Tool calls are compact rows, thinking folds away, and edits open into diffs
 with word-level highlighting. Click any file path to open the file. Code
-blocks and inline code have a copy icon. **⌘↓** jumps to the latest
+blocks and inline code have a copy icon. **⌥⌘↓** jumps to the latest
 message.
 
 When Claude answers with a diagram (a ` ```mermaid ` block: a sequence, flow
@@ -604,6 +604,20 @@ is queued, and adds what it prints to the queued item:
 Albedo captures only the conversations that belong to its tasks, plus the ones
 you resume or import from History.
 
+**Debug log of what Albedo types into a terminal.** Off by default. To catch
+a message Claude Code did not take (#433), Albedo can note the writes it
+makes to a session's terminal in `~/.albedo/logs/pty-writes.jsonl`: the
+time, the task, the length, and the first 40 characters with control
+characters made visible (`\e[200~…`). It logs what Albedo writes itself (the
+message box's pastes and Enters) and, from the terminal, only escape
+sequences (xterm's replies, special keys): a paste into the terminal is
+logged as its marker alone, and plain typed keys not at all. It never logs
+more of the text than that, and never anything the terminal printed. Past
+4 MB the file moves to `pty-writes.1.jsonl` and a new one starts. Switch it
+on with `touch ~/.albedo/debug-pty-writes` and off with
+`rm ~/.albedo/debug-pty-writes`; Albedo looks for that file at most every 30
+seconds, so no restart is needed.
+
 ## Keyboard shortcuts
 
 **⌘/** shows this list inside the app. On Windows and Linux, ⌘ is Ctrl.
@@ -615,6 +629,7 @@ you resume or import from History.
 | ⌘1…9 | Jump to the Nth task |
 | ⌥1…9 | Jump to the Nth project |
 | ⌘[ / ⌘] | Previous / next task |
+| ⌘↑ / ⌘↓ | Previous / next task (not in a text field; macOS only) |
 | ⇧⌘[ / ⇧⌘] | Previous / next project |
 | ⌥⌘T | Collapse / expand the task list |
 | ⌘← / ⌘→ | Previous / next reading tab |
@@ -631,7 +646,7 @@ you resume or import from History.
 | ⇧⌘S | Send the waiting comments, then show the transcript |
 | ⇧F6 or F2 | Rename the selected task |
 | ⌘U | Attach files to the message |
-| ⌘↓ | Jump to the latest message |
+| ⌥⌘↓ | Jump to the latest message (in the transcript) |
 | ⌘B or ⌘-click | Go to Declaration; on a declaration, its usages (in the editor) |
 | ⌥F7 | Find Usages (in the editor) |
 | ⌥⌘B | Go to Implementation: implementers, subclasses or trait users (in the editor, PHP) |

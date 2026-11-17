@@ -1110,7 +1110,7 @@ describe('(o) offline, a send waits in the outbox', () => {
     codeRows.rows = [codeComment(7)];
     const stop = startOutboxRelease();
     const { rerender } = render(<Composer taskId={5} onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /1 Comment/ });
+    await screen.findByRole('button', { name: /To Send · 1/ });
     setOnline(false);
     pressEnter();
     await waitFor(() => expect(heldFor(5)).toEqual([expect.objectContaining({ commentIds: [7] })]));
@@ -1127,7 +1127,7 @@ describe('(o) offline, a send waits in the outbox', () => {
   it('never carries a draft for GitHub to Claude (#287): it waits for Submit Review', async () => {
     codeRows.rows = [codeComment(7), codeComment(8, { github: 'draft', body: 'For the PR.' })];
     render(<Composer taskId={5} onSent={vi.fn()} />);
-    expect(await screen.findByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /To Send · 1/ })).toBeTruthy();
     type('go');
     pressEnter();
     await waitFor(() => expect(submitPty).toHaveBeenCalled());
@@ -1140,12 +1140,12 @@ describe('(o) offline, a send waits in the outbox', () => {
   it('a code comment a held message carries is not carried again by the next one; removing the held one brings it back (#222)', async () => {
     codeRows.rows = [codeComment(7)];
     render(<Composer taskId={5} onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /1 Comment/ });
+    await screen.findByRole('button', { name: /To Send · 1/ });
     setOnline(false);
     pressEnter();
     await waitFor(() => expect(heldFor(5)).toEqual([expect.objectContaining({ commentIds: [7] })]));
     // Still unsent in the store until delivery, but on its way: not waiting.
-    await waitFor(() => expect(screen.queryByRole('button', { name: /1 Comment/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: /To Send · 1/ })).toBeNull());
     type('and one more thing');
     pressEnter();
     await waitFor(() => expect(heldFor(5)).toHaveLength(2));
@@ -1153,7 +1153,7 @@ describe('(o) offline, a send waits in the outbox', () => {
     expect(heldFor(5)[1]!.commentIds).toBeUndefined();
     // Taking the first message back out returns its comment to the queue.
     act(() => removeHeld(5, heldFor(5)[0]!.id));
-    expect(await screen.findByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /To Send · 1/ })).toBeTruthy();
     codeRows.rows = [];
   });
 
@@ -1396,7 +1396,7 @@ describe('(q) waiting comments on transcript passages', () => {
     addComment(1, c('a'));
     addComment(1, c('b', { quote: 'line one\nline two\nline three', comment: 'and this', at: 200 }));
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /2 Comments/ }));
+    fireEvent.click(screen.getByRole('button', { name: /To Send · 2/ }));
     const items = document.querySelectorAll('.tx-waiting-item');
     expect(items[0]?.textContent).toContain('Production already runs 8.2.35.');
     expect(items[1]?.querySelector('.tx-waiting-quote')?.textContent).toBe('line one +2 lines');
@@ -1410,7 +1410,10 @@ describe('(q) waiting comments on transcript passages', () => {
     addComment(1, c('a'));
     const onSent = vi.fn();
     render(<Composer taskId={1} onSent={onSent} />);
-    const send = screen.getByRole('button', { name: 'Send' });
+    // Send N (#404): the count of To Send, and with the box empty, ⇧⌘S's key.
+    const send = screen.getByRole('button', { name: 'Send 2' });
+    expect(send.textContent).toBe('Send 2⇧⌘S');
+    expect(send.getAttribute('aria-keyshortcuts')).toBe('Meta+Shift+S');
     expect(send.hasAttribute('disabled')).toBe(false);
     expect(box().placeholder).toBe('Add a message, or send the comments as they are…');
     fireEvent.click(send);
@@ -1472,14 +1475,14 @@ describe('(q) waiting comments on transcript passages', () => {
   it('survive a restart and a task switch: they belong to their task', () => {
     addComment(1, c('a'));
     const { rerender, unmount } = render(<Composer taskId={1} onSent={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /To Send · 1/ })).toBeTruthy();
     rerender(<Composer taskId={2} onSent={vi.fn()} />);
-    expect(screen.queryByRole('button', { name: /1 Comment/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /To Send · 1/ })).toBeNull();
     unmount();
     flushDrafts();
     __resetDrafts(); // the restart: memory gone, storage kept
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /1 Comment/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /To Send · 1/ })).toBeTruthy();
   });
 
   it('a send that fails once the session is up, after a switch: the box text comes back alone, the comments still wait', async () => {
@@ -1516,7 +1519,7 @@ describe('(q) waiting comments on transcript passages', () => {
   it('edit and remove from the list', () => {
     addComment(1, c('a'));
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /1 Comment/ }));
+    fireEvent.click(screen.getByRole('button', { name: /To Send · 1/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     const field = screen.getByRole('textbox', { name: 'Edit comment' });
     fireEvent.change(field, { target: { value: 'Which tag, exactly?' } });
@@ -1568,7 +1571,7 @@ describe('(r) one queue: comments on code wait above the box with the transcript
   it('lists both kinds in one place, code first, with the intro beside the count', async () => {
     addComment(1, passage);
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: /2 Comments/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /To Send · 2/ }));
     const items = [...document.querySelectorAll('.tx-waiting-item')];
     expect(items[0]?.querySelector('.tx-waiting-where')?.textContent).toBe('a.ts:3');
     expect(items[0]?.textContent).toContain('Name it.');
@@ -1582,7 +1585,7 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     vi.mocked(hasLivePty).mockReturnValue(true);
     addComment(1, passage);
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /2 Comments/ });
+    await screen.findByRole('button', { name: /To Send · 2/ });
     type('Then deploy.');
     pressEnter();
     await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
@@ -1593,11 +1596,25 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     expect(commentsOf(1)).toEqual([]);
   });
 
+  it('tells the send which code comments it carries, so one never delivered can give them back (#433)', async () => {
+    const { onSessionSubmit } = await import('./send');
+    const heard: (readonly number[] | undefined)[] = [];
+    const off = onSessionSubmit((_t, _text, _from, _at, ids) => void heard.push(ids));
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /To Send · 1/ });
+    type('Then deploy.');
+    pressEnter();
+    await waitFor(() => expect(heard).toEqual([[7]]));
+    off();
+  });
+
   it('with only code comments and an empty box, Send sends just them', async () => {
     vi.mocked(submitPty).mockResolvedValue(true);
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /1 Comment/ });
-    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(false);
+    await screen.findByRole('button', { name: /To Send · 1/ });
+    expect(screen.getByRole('button', { name: 'Send 1' }).hasAttribute('disabled')).toBe(false);
     pressEnter();
     await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, CODE]]));
   });
@@ -1610,7 +1627,7 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     addComment(1, passage);
     const onSent = vi.fn();
     render(<Composer taskId={1} onSent={onSent} />);
-    await screen.findByRole('button', { name: /2 Comments/ });
+    await screen.findByRole('button', { name: /To Send · 2/ });
     type('half a thought');
     expect(requestSendComments(2)).toBe(false);
     expect(requestSendComments(1)).toBe(true);
@@ -1639,7 +1656,7 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     const { requestSendComments } = await import('./composerBridge');
     vi.mocked(hasLivePty).mockReturnValue(false);
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /1 Comment/ });
+    await screen.findByRole('button', { name: /To Send · 1/ });
     type('keep me');
     requestSendComments(1);
     await waitFor(() => expect(heldFor(1).map((h) => h.text)).toEqual([CODE]));
@@ -1654,7 +1671,7 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     __resetIntro();
     writeIntro('Please fix:');
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /1 Comment/ });
+    await screen.findByRole('button', { name: /To Send · 1/ });
     pressEnter();
     await waitFor(() => expect(vi.mocked(submitPty).mock.calls[0]![1].startsWith('Please fix:\n\n1. src/a.ts:3')).toBe(true));
     writeIntro('I left some review comments on your changes. Please address each one:');
@@ -1682,7 +1699,7 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     const { markCommentsSent } = await import('../../db/comments');
     vi.mocked(submitPty).mockResolvedValue(true);
     render(<Composer taskId={1} onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /1 Comment/ });
+    await screen.findByRole('button', { name: /To Send · 1/ });
     type('/compact');
     pressEnter();
     await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, '/compact']]));
@@ -1694,7 +1711,7 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     vi.mocked(submitPty).mockResolvedValue(true);
     vi.mocked(hasLivePty).mockReturnValue(true);
     const { rerender } = render(<Composer taskId={1} status="blocked" onSent={vi.fn()} />);
-    await screen.findByRole('button', { name: /1 Comment/ });
+    await screen.findByRole('button', { name: /To Send · 1/ });
     pressEnter();
     await waitFor(() => expect(screen.getByText(/asking you something/)).toBeTruthy());
     expect(markCommentsSent).not.toHaveBeenCalled();
@@ -1776,7 +1793,7 @@ describe('(ci) a PR’s failing checks wait with the comments (#280)', () => {
     addComment(1, passage);
     render(<Composer taskId={1} onSent={vi.fn()} />);
     await queueFailure();
-    const head = await screen.findByRole('button', { name: /✗ CI failed · 2 checks \+ 1 Comment/ });
+    const head = await screen.findByRole('button', { name: /To Send · 2.*✗ CI failed · 2 checks/ });
     expect(head.getAttribute('title')).toBe('CI failed on PR #6102 (abc1234)\nbuild: failed\ntest (2): timed out');
     expect(head.querySelector('.tx-waiting-ci-mark')?.textContent).toBe('✗ CI failed · 2 checks');
     expect(submitPty).not.toHaveBeenCalled();
@@ -1800,7 +1817,7 @@ describe('(ci) a PR’s failing checks wait with the comments (#280)', () => {
     addComment(1, passage);
     render(<Composer taskId={1} onSent={vi.fn()} />);
     await queueFailure();
-    await screen.findByRole('button', { name: /✗ CI failed · 2 checks \+ 2 Comments/ });
+    await screen.findByRole('button', { name: /To Send · 3.*✗ CI failed · 2 checks/ });
     type('Please fix.');
     pressEnter();
     await waitFor(() => expect(submitPty).toHaveBeenCalledTimes(1));
@@ -1820,7 +1837,7 @@ describe('(ci) a PR’s failing checks wait with the comments (#280)', () => {
     await queueFailure();
     await screen.findByRole('button', { name: /✗ CI failed · 2 checks/ });
     expect(box().placeholder).toBe('Add a message, or send the CI failure as it is…');
-    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Send 1' }).hasAttribute('disabled')).toBe(false);
     pressEnter();
     await waitFor(() => expect(vi.mocked(submitPty).mock.calls).toEqual([[1, CI]]));
   });

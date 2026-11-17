@@ -26,6 +26,7 @@ import { copyText } from '../../lib/clipboard';
 import OverflowMenu, { type OverflowItem } from '../OverflowMenu';
 import { editorKeyOf, isImplementationKey } from './editorKeys';
 import { neighbour, onTouchedOrderChange, touchedOrder } from '../touchedOrder';
+import { transcriptTakesJumpKey } from '../transcript/jumpKey';
 import { isReadOnlyRequest, useOpenFile } from './openFile';
 import { formatBytes, imageTypeForPath } from './preview';
 import { looksBinary } from '../../git/fileDiff';
@@ -118,6 +119,7 @@ import './editor.css';
 import './comments.css';
 import { inDiff } from '../../gh/reviewSubmit';
 import { usePrRanges } from '../reviewDrafts';
+import { useCarriedCodeIds } from '../transcript/codeComments';
 
 /** Files past this size are edited without colour. Tokenising them janks. */
 const MAX_HIGHLIGHT_CHARS = 300_000;
@@ -1055,6 +1057,15 @@ export default function FileEditor({
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || !e.altKey || e.ctrlKey) return;
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      // Only while the editor is on screen (#428): `active` is the active
+      // editor tab, which stays true while the Editor reading tab is hidden
+      // behind Transcript, Files or Guide, and a step there happens out of
+      // sight. Hidden, the key is left alone for whoever else answers it.
+      const root = rootRef.current;
+      if (root === null || root.closest('[hidden]') !== null) return;
+      // ⌥⌘↓ on a transcript on screen, with the keyboard free there, is its
+      // Jump to the Latest Message (#398): let it through.
+      if (transcriptTakesJumpKey(e)) return;
       e.preventDefault();
       e.stopPropagation();
       step(e.key === 'ArrowDown' ? 1 : -1);
@@ -1142,6 +1153,8 @@ export default function FileEditor({
   const [fileComments, setFileComments] = useState<ReviewComment[]>([]);
   const prRanges = usePrRanges(task);
   const [outdated, setOutdated] = useState<ReviewComment[]>([]);
+  /** The task's code comments a held message carries (#409): their cards say Held. */
+  const carried = useCarriedCodeIds(task.id);
   /** Comments that resolved themselves while this file was open (#222): their trace, until it closes. */
   const [traces, setTraces] = useState<ReviewComment[]>([]);
   useEffect(() => setTraces([]), [task.id, current]);
@@ -1203,6 +1216,7 @@ export default function FileEditor({
             from: view.state.doc.line(line).from,
             to: view.state.doc.line(line).to,
             removed: { below: gone.before === null },
+            held: carried.has(c.id),
             outside: c.github === 'draft' && prRanges !== null && !inDiff(prRanges, c.path, gone.lineStart, gone.lineEnd, 'old'),
           });
           // Only from a base that is final: one read before the PR's base is
@@ -1237,6 +1251,8 @@ export default function FileEditor({
         to: view.state.doc.line(at.lineEnd).to,
         // #287: a draft for GitHub on lines outside the PR's diff says it goes in the summary.
         outside: c.github === 'draft' && prRanges !== null && !inDiff(prRanges, c.path, at.lineStart, at.lineEnd),
+        // #409: carried by a held message, its chip says Held.
+        held: carried.has(c.id),
       });
       // Moved in the file on disk: remember where. Not while the buffer holds
       // unsaved typing, which is not the file the comment refers to.
@@ -1255,7 +1271,7 @@ export default function FileEditor({
       reportFailure(resolveComments(task.id, resolving.map((c) => c.id)), 'resolve the comments whose lines changed');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileComments, phase.kind, doc?.key, prRanges, baseRead]);
+  }, [fileComments, phase.kind, doc?.key, prRanges, baseRead, carried]);
 
   /** A comment write that failed says so, rather than leaving the list quietly wrong. */
   const reportFailure = (write: Promise<unknown>, what: string) => {

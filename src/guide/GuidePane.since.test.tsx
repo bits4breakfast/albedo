@@ -16,10 +16,6 @@ import type { LoadedBranchDiff } from './branchDiff';
 
 let loaded: LoadedBranchDiff;
 vi.mock('./branchDiff', () => ({ loadBranchDiff: async () => loaded }));
-vi.mock('./commentMarks', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./commentMarks')>()),
-  useOpenComments: () => [],
-}));
 vi.mock('../ui/transcript/codeComments', () => ({ useWaitingCodeComments: () => [] }));
 vi.mock('../ui/transcript/drafts', () => ({ useComments: () => [] }));
 vi.mock('../ui/transcript/composerBridge', () => ({ sendWaitingComments: () => true }));

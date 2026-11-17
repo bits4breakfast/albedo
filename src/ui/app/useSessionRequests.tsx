@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Project, Task } from '../../types';
 import { startInbox, stopInbox } from '../../capture/inbox';
 import { startPreviewGate } from '../../capture/previewGate';
+import { startGithubGate } from '../../capture/githubGate';
 import type { NewTaskPrefill } from '../followUp';
 import Requests from '../Requests';
 import { denyRequest, dismissRequest, receiveRequest, useRequests, type QueuedRequest, type SessionRequest } from '../requestQueue';
@@ -69,7 +70,9 @@ export default function useSessionRequests(opts: {
 
   useEffect(() => {
     if (loading) return;
-    // Previews (#348) listen first: a line read at launch must reach them.
+    // Previews (#348) and the GitHub tools (#427) listen first: a line read
+    // at launch must reach them.
+    startGithubGate((id) => tasksRef.current.find((t) => t.id === id) ?? null);
     startPreviewGate()
       .then(() =>
         startInbox((req) => {

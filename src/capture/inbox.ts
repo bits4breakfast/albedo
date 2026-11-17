@@ -5,10 +5,11 @@
  *
  * CLAUDE.md, "Two channels": every session Albedo starts gets Albedo's MCP
  * server (`src-tauri/mcp`, a Rust binary bundled beside the app) through
- * `--mcp-config`, with `ALBEDO_TASK_ID` in its environment. It offers five
+ * `--mcp-config`, with `ALBEDO_TASK_ID` in its environment. It offers nine
  * tools and nothing else -- `create_reminder`, `request_session`,
  * `notify_blocked`, `set_task_summary` (#262: one line shown under the
- * task's title, never acted on), and `show_preview` (#348, below) -- and a
+ * task's title, never acted on), `show_preview` (#348, below), and four
+ * about a review task's GitHub comments (#427, below) -- and a
  * call that passes its checks is
  * appended as one JSON line to `~/.albedo/inbox/task-<id>.jsonl`. This module reads those
  * files. It is the only file in the app that knows the line's shape, as
@@ -33,6 +34,17 @@
  * `preview_cancelled`, is the server's record that such a call ended without
  * an answer. Both go to {@link onPreviewLine}, not to the request queue: the
  * answer goes back through a file only `previewGate.ts` writes.
+ *
+ * ## The GitHub tools (#427), by the owner's decision
+ *
+ * Four more tools let a review task's session read the GitHub Drafts the
+ * user wrote and remove one, and read the user's own comments posted on the
+ * task's PR and ask for one to be deleted. Each waits for the app's answer,
+ * written as a preview's is; `github_cancelled` is the server's record that
+ * one ended without it. They go to {@link onGithubLine}, and only
+ * `githubGate.ts` answers them. The line carries what the session asked
+ * (`id`, `reason`), never which task: that is the file's. It also carries the
+ * spawn's `token` (mcpToken.ts), read here for its shape only.
  *
  * ## Nothing in a line is trusted
  *
@@ -84,7 +96,12 @@ export const CAPS = {
   previewQuestion: 1_000,
   previewNote: 200,
   cancelReason: 200,
+  // The GitHub tools (#427): `tools::MAX_DELETE_REASON`.
+  deleteReason: 200,
 } as const;
+
+/** The largest id a GitHub tool takes (`tools::MAX_ID`): read exactly as a JS number. */
+export const MAX_TOOL_ID = Number.MAX_SAFE_INTEGER;
 
 /** `request_session`'s `start` (`tools::START_BRIEF` / `START_FORK`). */
 export type SessionStart = 'brief' | 'fork';
@@ -181,7 +198,7 @@ export type PreviewLine =
     });
 
 /** The checks every line shares: version, the task's own file, id, time, args. */
-function lineHead(line: string, fileTaskId: number): { base: Base; tool: unknown; a: Args } | null {
+function lineHead(line: string, fileTaskId: number): { base: Base; tool: unknown; a: Args; token: string | null } | null {
   if (line.length === 0 || new TextEncoder().encode(line).length >= MAX_LINE_BYTES) return null;
   let raw: unknown;
   try {
@@ -198,10 +215,14 @@ function lineHead(line: string, fileTaskId: number): { base: Base; tool: unknown
   if (typeof o.at !== 'number' || !Number.isFinite(o.at) || o.at <= 0) return null;
   const args = o.args;
   if (typeof args !== 'object' || args === null || Array.isArray(args)) return null;
-  return { base: { id: o.id, taskId: fileTaskId, at: o.at }, tool: o.tool, a: args as Args };
+  // The session's token (#427), when the server had one: checked by whoever acts on the line.
+  const token = typeof o.token === 'string' && TOKEN.test(o.token) ? o.token : null;
+  return { base: { id: o.id, taskId: fileTaskId, at: o.at }, tool: o.tool, a: args as Args, token };
 }
 
 const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,100}$/;
+/** A session's token (#427, mcpToken.ts): its shape only; whose it is, the gate decides. */
+const TOKEN = /^[A-Za-z0-9-]{16,100}$/;
 
 /**
  * One preview line of `task-<fileTaskId>.jsonl`, or null when it is anything
@@ -286,10 +307,78 @@ export function parseInboxLine(line: string, fileTaskId: number): InboxRequest |
   }
 }
 
-/** Every well-formed line in `text`, in order: requests, and preview lines. */
-export function parseAllLines(text: string, fileTaskId: number): { reqs: InboxRequest[]; previews: PreviewLine[] } {
+/**
+ * A GitHub tool's call (#427), or the server's record that one ended without
+ * an answer. Not a queued request: see the module header. `commentId` is
+ * the session's `id`: a draft's row id, or a GitHub comment's REST id.
+ */
+export type GithubLine = Base & {
+  /** The writing session's token (mcpToken.ts), or null when the line had none. */
+  token: string | null;
+} & (
+    | { tool: 'list_github_drafts' | 'list_posted_comments' }
+    | { tool: 'delete_github_draft'; commentId: number; reason: string | null }
+    | {
+        tool: 'delete_posted_comment';
+        commentId: number;
+        reason: string | null;
+        /** Claude Code's id for the call in the transcript, when it gave one. */
+        toolUseId: string | null;
+      }
+    | {
+        tool: 'github_cancelled';
+        /** The call's line id. */
+        request: string;
+        reason: string;
+      }
+  );
+
+/**
+ * One GitHub line of `task-<fileTaskId>.jsonl`, or null when it is anything
+ * but a well-formed GitHub tool's call or cancel from that task.
+ */
+export function parseGithubLine(line: string, fileTaskId: number): GithubLine | null {
+  const head = lineHead(line, fileTaskId);
+  if (!head) return null;
+  const { tool, a } = head;
+  const base = { ...head.base, token: head.token };
+  switch (tool) {
+    case 'list_github_drafts':
+    case 'list_posted_comments':
+      return onlyKeys(a, []) ? { ...base, tool } : null;
+    case 'delete_github_draft':
+    case 'delete_posted_comment': {
+      const posted = tool === 'delete_posted_comment';
+      if (!onlyKeys(a, posted ? ['id', 'reason', 'toolUseId'] : ['id', 'reason'])) return null;
+      const id = a.id;
+      if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0 || id > MAX_TOOL_ID) return null;
+      const reason = optionalText(a, 'reason', CAPS.deleteReason);
+      if (reason === undefined) return null;
+      if (!posted) return { ...base, tool, commentId: id, reason };
+      const t = a.toolUseId;
+      if (t !== undefined && (typeof t !== 'string' || !TOOL_USE_ID.test(t))) return null;
+      return { ...base, tool, commentId: id, reason, toolUseId: typeof t === 'string' ? t : null };
+    }
+    case 'github_cancelled': {
+      if (!onlyKeys(a, ['request', 'reason'])) return null;
+      const request = a.request;
+      const reason = text(a, 'reason', CAPS.cancelReason, false);
+      if (typeof request !== 'string' || !ID.test(request) || reason === null) return null;
+      return { ...base, tool, request, reason };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Every well-formed line in `text`, in order: requests, preview lines, and GitHub lines (#427). */
+export function parseAllLines(
+  text: string,
+  fileTaskId: number,
+): { reqs: InboxRequest[]; previews: PreviewLine[]; github: GithubLine[] } {
   const reqs: InboxRequest[] = [];
   const previews: PreviewLine[] = [];
+  const github: GithubLine[] = [];
   for (const line of text.split('\n')) {
     const req = parseInboxLine(line, fileTaskId);
     if (req) {
@@ -297,10 +386,15 @@ export function parseAllLines(text: string, fileTaskId: number): { reqs: InboxRe
       continue;
     }
     const p = parsePreviewLine(line, fileTaskId);
-    if (p) previews.push(p);
+    if (p) {
+      previews.push(p);
+      continue;
+    }
+    const g = parseGithubLine(line, fileTaskId);
+    if (g) github.push(g);
     else if (line.trim().length > 0) console.warn(`[inbox] dropped a malformed line from task ${fileTaskId}`);
   }
-  return { reqs, previews };
+  return { reqs, previews, github };
 }
 
 /** Every well-formed request in `text`, in order. */
@@ -384,9 +478,22 @@ export function mcpServerPath(): Promise<string | null> {
 
 export type InboxListener = (req: InboxRequest) => void;
 export type PreviewListener = (line: PreviewLine) => void;
+export type GithubListener = (line: GithubLine) => void;
 
 let listener: InboxListener | null = null;
 const previewListeners = new Set<PreviewListener>();
+const githubListeners = new Set<GithubListener>();
+
+/**
+ * GitHub tool lines (#427), each once, in the order they were written.
+ * Subscribe before {@link startInbox}, as for previews.
+ */
+export function onGithubLine(cb: GithubListener): () => void {
+  githubListeners.add(cb);
+  return () => {
+    githubListeners.delete(cb);
+  };
+}
 
 /**
  * Preview lines (#348), each once, in the order they were written. Subscribe
@@ -421,7 +528,7 @@ function firstTime(id: string): boolean {
   return true;
 }
 
-function deliver(read: { reqs: readonly InboxRequest[]; previews: readonly PreviewLine[] }): void {
+function deliver(read: { reqs: readonly InboxRequest[]; previews: readonly PreviewLine[]; github: readonly GithubLine[] }): void {
   for (const r of read.reqs) {
     if (!firstTime(r.id)) continue;
     try {
@@ -440,6 +547,16 @@ function deliver(read: { reqs: readonly InboxRequest[]; previews: readonly Previ
       }
     }
   }
+  for (const g of read.github) {
+    if (!firstTime(g.id)) continue;
+    for (const cb of [...githubListeners]) {
+      try {
+        cb(g);
+      } catch (err) {
+        console.warn('[inbox] a GitHub tool line could not be handled', err);
+      }
+    }
+  }
 }
 
 /** The complete lines of `path` past `offset`: what they hold, and the new offset. */
@@ -447,7 +564,7 @@ async function readPast(
   path: string,
   offset: number,
   taskId: number,
-): Promise<{ reqs: InboxRequest[]; previews: PreviewLine[]; offset: number }> {
+): Promise<{ reqs: InboxRequest[]; previews: PreviewLine[]; github: GithubLine[]; offset: number }> {
   const bytes = await readFile(path);
   const from = bytes.length < offset ? 0 : offset; // emptied under us: from the top
   const { text, consumed } = completeLines(bytes.subarray(from));
@@ -497,7 +614,7 @@ async function readLeftover(path: string, taskId: number): Promise<void> {
   try {
     const read = await readPast(path, 0, taskId);
     deliver(read);
-    if (read.reqs.length + read.previews.length > 0) await writeTextFile(path, '');
+    if (read.reqs.length + read.previews.length + read.github.length > 0) await writeTextFile(path, '');
   } catch {
     /* nothing to recover */
   }

@@ -263,6 +263,8 @@
   color: var(--text);
 }
 .tx-queued-hint { margin-left: auto; }
+/* Why Held messages wait (#409), read with the head: right after the count. */
+.tx-queued-why { min-width: 0; }
 .tx-queued-item {
   margin: 0 0 4px;
   padding-left: 8px;
@@ -312,19 +314,13 @@
 .tx-queued-edit:focus { outline: none; border-color: var(--border-strong); }
 
 /* Edit all in the message box (#399). "↑ Edit All" ends the held group's
-   head, after its hint or Send All Now; Claude Code's group says under its
-   entries that they are changed in the terminal. Both in the head's --muted
+   head, after its hint or Send All Now; In Claude Code's head says on its
+   right that they are changed in the terminal (#409). Both in the head's --muted
    on --panel, the key cap in --text on the same ground, its edge
    --border-strong: no new ground, no new text tier. */
 .tx-queued-key { flex: none; margin-left: auto; white-space: nowrap; }
 .tx-queued-hint + .tx-queued-key,
 .tx-queued-all + .tx-queued-key { margin-left: 10px; }
-.tx-queued-aside {
-  margin: 0 0 4px;
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
-.tx-queued-aside + .tx-queued-head { margin-top: 6px; }
 .tx-queued kbd,
 .tx-composer-inbox kbd {
   display: inline-block;
@@ -549,6 +545,28 @@
   cursor: pointer;
 }
 .tx-composer-send:hover:not(:disabled) { background: var(--accent-btn-hover); }
+/* Send N (#404): the count of To Send going with it, in words on the same
+   pair (white on --accent-btn 6.63 / 5.29, on its hover 7.93), as a pill. */
+.tx-composer-send[data-count] {
+  width: auto;
+  padding: 0 12px;
+  border-radius: 15px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.tx-composer-send-key { margin-left: 6px; font-size: var(--fs-xs); }
+/* Beside it, what it sends: --muted on the box's --panel-inset (7.33 / 8.17,
+   as the permission mode). Gives way first in a narrow pane. */
+.tx-composer-sends {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
 /* A lower tier, never `opacity` (CLAUDE.md, Contrast rule 2). */
 .tx-composer-send:disabled { color: var(--faint); background: var(--panel-raised); cursor: default; }
 
@@ -1729,6 +1747,17 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-add .tx-d-word { background: color-mix(in srgb, var(--add) var(--tx-word-tint), var(--add-soft)); }
 .tx-d-del .tx-d-word { background: color-mix(in srgb, var(--del) var(--tx-word-tint), var(--del-soft)); }
 
+/*
+   Search matches (#413, the Review Guide). A ground of their own, opaque,
+   over the row's tint and over a word change alike, and the text on it in
+   --on-hit, not the token's colour: a syntax colour is cleared against the
+   code's grounds, never against a match's. The current match is the
+   stronger fill. Selectors carry the diff's root, so they outrank the word
+   tint and the theme's token colour by specificity, never by load order.
+*/
+.tx-d .tx-d-code .tx-tok.tx-d-hit { background: var(--hit); color: var(--on-hit); border-radius: 2px; }
+.tx-d .tx-d-code .tx-tok.tx-d-hit-cur { background: var(--hit-cur); }
+
 /* --- collapsed regions ---------------------------------------------------- */
 
 .tx-d-gap {
@@ -1755,6 +1784,10 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-d-gap:hover { background: var(--panel-raised); color: var(--muted); }
 .tx-d-gap-static { cursor: default; }
 .tx-d-gap-static:hover { background: var(--panel); color: var(--faint); }
+/* Holding the current search match (#413): it stays open, so it does not
+   offer a click; the bar's title says why. */
+.tx-d-gap[aria-disabled='true'] { cursor: default; }
+.tx-d-gap[aria-disabled='true']:hover { background: var(--panel); color: var(--faint); }
 
 /*
  * The context expanders, above and below the diff.
@@ -2162,6 +2195,66 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-cmt-add { color: var(--text); }
 .tx-cmt-key { margin-left: 4px; color: var(--faint); }
 
+/* The comments on a marked passage, under the line clicked (#434). On
+   --panel, as the field is; measured in all three theme blocks in
+   passagePopoverContrast.test.ts (light / dark):
+   - its comment --text-strong 19.43 / 17.20, "Your comment" --muted
+     7.15 / 7.74;
+   - the chip --warn on --banner-bg, the tint the app's warnings use,
+     6.90 / 8.51;
+   - Edit and Remove --accent on --panel 6.46 / 7.88 and, hovered, on
+     --panel-hover 5.62 / 7.04; waiting on a send, --faint on --panel
+     5.94 / 6.02. No opacity. */
+.tx-scroll[data-on-mark] { cursor: pointer; }
+.tx-cmt-pop {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  gap: 6px;
+  width: min(400px, calc(100% - 72px));
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+  font-size: var(--fs-sm);
+  cursor: auto;
+}
+.tx-cmt-pop:focus { outline: none; }
+.tx-cmt-pop:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.tx-cmt-pop-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 8px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.tx-cmt-pop-chip {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--banner-bg);
+  color: var(--warn);
+}
+.tx-cmt-pop-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.tx-cmt-pop-item { display: grid; gap: 2px; }
+.tx-cmt-pop-text { color: var(--text-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tx-cmt-pop-acts { display: flex; gap: 4px; margin-left: -6px; }
+.tx-cmt-pop-act {
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.tx-cmt-pop-act:hover:not(:disabled) { background: var(--panel-hover); }
+.tx-cmt-pop-act:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.tx-cmt-pop-act:disabled { color: var(--faint); cursor: default; }
+
 /* A quote in a message you sent: compact, above your comment. */
 .tx-quote {
   display: flex;
@@ -2241,6 +2334,7 @@ button.tx-quote-text:focus-visible { outline: 2px solid var(--focus); outline-of
 }
 .tx-waiting-head:hover { background: var(--panel-hover); }
 .tx-waiting-hint { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); font-weight: 400; }
+.tx-waiting-count { font-variant-numeric: tabular-nums; }
 .tx-waiting-list { list-style: none; margin: 4px 0 0; padding: 0; max-height: 30vh; overflow-y: auto; }
 .tx-waiting-item {
   margin: 0 0 6px;

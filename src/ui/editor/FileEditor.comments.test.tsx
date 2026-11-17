@@ -5,7 +5,7 @@
  * comment shows as a card under its code.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Task } from '../../types';
 import type { ReviewComment } from '../../db/comments';
 
@@ -191,5 +191,29 @@ describe('FileEditor review comments', { timeout: 15_000 }, () => {
     await editorContent();
     expect(await screen.findByText('Why beta?')).toBeTruthy();
     expect(screen.getByText('Line 2')).toBeTruthy(); // moved from 1 to where "beta" is
+  });
+
+  it('a stored comment a held message carries says Held, and To Send again once that message is gone (#409)', async () => {
+    const data = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      },
+    });
+    const { __resetOutbox, holdMessage, heldFor, removeHeld } = await import('../transcript/outbox');
+    __resetOutbox();
+    stored.push({
+      id: 9, taskId: 4, path: 'src/a.ts', lineStart: 2, lineEnd: 2, anchorText: 'beta',
+      body: 'Why beta?', createdAt: 0, updatedAt: 0, sentAt: null, resolvedAt: null, github: null, replyTo: null,
+    });
+    holdMessage(4, 'carrying it', Date.now(), [9]);
+    await editorContent();
+    expect(await screen.findByText('Held · goes when the held message goes')).toBeTruthy();
+    act(() => removeHeld(4, heldFor(4)[0]!.id));
+    expect(await screen.findByText('To Send · goes with your next message')).toBeTruthy();
+    __resetOutbox();
   });
 });

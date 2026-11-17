@@ -19,6 +19,7 @@ const {
   parseInboxLine,
   parseInboxLines,
   parsePreviewLine,
+  parseGithubLine,
 } = await import('./inbox');
 
 const fixture = readFileSync(join(__dirname, 'fixtures/mcp-inbox.jsonl'), 'utf8');
@@ -254,5 +255,66 @@ describe('preview lines', () => {
     expect(all.reqs.map((r) => r.tool)).toEqual(['notify_blocked']);
     expect(all.previews.map((p) => p.tool)).toEqual(['show_preview']);
     expect(parseInboxLine(show({ title: 'T' }), 4)).toBeNull();
+  });
+});
+
+describe('GitHub tool lines (#427)', () => {
+  it('reads the lines the server writes, field for field (src-tauri/mcp/tests/contract.rs)', () => {
+    const text = readFileSync(join(__dirname, 'fixtures/mcp-github.jsonl'), 'utf8');
+    const { reqs, previews, github } = parseAllLines(text, 12);
+    expect(reqs).toEqual([]);
+    expect(previews).toEqual([]);
+    const base = { taskId: 12, at: NOW, token: '0f1e2d3c4b5a69788796a5b4' };
+    expect(github).toEqual([
+      { ...base, id: 'fixture-g1', tool: 'list_github_drafts' },
+      { ...base, id: 'fixture-g2', tool: 'delete_github_draft', commentId: 41, reason: 'Same point as the draft on line 58' },
+      { ...base, id: 'fixture-g3', tool: 'delete_github_draft', commentId: 42, reason: null },
+      { ...base, id: 'fixture-g4', tool: 'list_posted_comments' },
+      {
+        ...base,
+        id: 'fixture-g5',
+        tool: 'delete_posted_comment',
+        commentId: 1834567890,
+        reason: 'Already fixed in the latest commit',
+        toolUseId: 'toolu_01DEL',
+      },
+      { taskId: 12, at: NOW + 1, token: '0f1e2d3c4b5a69788796a5b4', id: 'fixture-g6', tool: 'github_cancelled', request: 'fixture-g5', reason: 'AbortError: user-cancel' },
+    ]);
+  });
+
+  const gl = (tool: string, args: Record<string, unknown>, task = 12) =>
+    JSON.stringify({ v: 1, task, tool, args, at: NOW, id: 'g-1' });
+
+  it('refuses another task, a task named in the request, and ids that are not whole positive numbers', () => {
+    expect(parseGithubLine(gl('list_github_drafts', {}), 13)).toBeNull();
+    expect(parseGithubLine(gl('list_github_drafts', { task: 4 }), 12)).toBeNull();
+    expect(parseGithubLine(gl('delete_github_draft', { id: 4, taskId: 9 }), 12)).toBeNull();
+    for (const id of [0, -1, 1.5, '4', null, Number.MAX_SAFE_INTEGER + 2]) {
+      expect(parseGithubLine(gl('delete_posted_comment', { id }), 12)).toBeNull();
+    }
+    expect(parseGithubLine(gl('delete_github_draft', {}), 12)).toBeNull();
+    // A transcript id only on a posted comment's deletion, and of the plain shape.
+    expect(parseGithubLine(gl('delete_github_draft', { id: 3, toolUseId: 'toolu_1' }), 12)).toBeNull();
+    expect(parseGithubLine(gl('delete_posted_comment', { id: 3, toolUseId: 'a b' }), 12)).toBeNull();
+    // A token not of the token's shape is no token.
+    const odd = JSON.stringify({ v: 1, task: 12, tool: 'list_github_drafts', args: {}, at: NOW, id: 'g-1', token: 'x y' });
+    expect(parseGithubLine(odd, 12)).toMatchObject({ token: null });
+  });
+
+  it('refuses a reason on two lines or over the cap', () => {
+    expect(parseGithubLine(gl('delete_github_draft', { id: 3, reason: 'a\nb' }), 12)).toBeNull();
+    expect(parseGithubLine(gl('delete_github_draft', { id: 3, reason: 'r'.repeat(CAPS.deleteReason + 1) }), 12)).toBeNull();
+    expect(parseGithubLine(gl('delete_github_draft', { id: 3, reason: 'r'.repeat(CAPS.deleteReason) }), 12)).toMatchObject({
+      commentId: 3,
+    });
+  });
+
+  it('keeps GitHub lines out of the request queue and the previews', () => {
+    const all = parseAllLines(`${gl('list_posted_comments', {})}\n${line()}\n`, 12);
+    expect(all.reqs.map((r) => r.tool)).toEqual(['notify_blocked']);
+    expect(all.previews).toEqual([]);
+    expect(all.github.map((g) => g.tool)).toEqual(['list_posted_comments']);
+    expect(parseInboxLine(gl('list_posted_comments', {}), 12)).toBeNull();
+    expect(parsePreviewLine(gl('github_cancelled', { request: 'x-1', reason: 'r' }), 12)).toBeNull();
   });
 });
