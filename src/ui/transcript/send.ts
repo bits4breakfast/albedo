@@ -5,7 +5,8 @@
  *
  * Rules no caller can skip:
  *  - **Hold when the composer would** (`mustHold`): offline, behind messages
- *    already held or being released, or while a turn is running (turn.ts:
+ *    already held or being released, while the last message sent is not yet
+ *    in the transcript (deliveryGate.ts, #433), or while a turn is running (turn.ts:
  *    typed during one, it would go with any dialog the turn opens). The text
  *    joins the outbox (outbox.ts) at the end, so the order is the order
  *    things were sent. A command is held like a message: the release sends
@@ -22,13 +23,14 @@ import { isOffline, useOffline } from '../../lib/connectivity';
 import { submitPty } from '../Terminal';
 import { heldFor, holdMessage, isReleasing, useHeld } from './outbox';
 import { isTurnRunning, noteSubmitted, useTurnRunning } from './turn';
+import { awaitingDelivery, useAwaitingDelivery } from './deliveryGate';
 
 /** What happened to it: sent to the session, held in the outbox, or neither. */
 export type SessionSendOutcome = 'sent' | 'held' | 'failed';
 
 /** Whether a send now would join the outbox rather than go to the pty. */
 export function mustHold(taskId: number): boolean {
-  return isOffline() || heldFor(taskId).length > 0 || isReleasing(taskId) || isTurnRunning(taskId);
+  return isOffline() || heldFor(taskId).length > 0 || isReleasing(taskId) || isTurnRunning(taskId) || awaitingDelivery(taskId);
 }
 
 export { isSlashCommand } from './slash';
@@ -42,7 +44,8 @@ export function useSendsWait(taskId: number | null): boolean {
   const offline = useOffline();
   const held = useHeld(taskId);
   const turn = useTurnRunning(taskId);
-  return offline || held.length > 0 || turn;
+  const awaiting = useAwaitingDelivery(taskId);
+  return offline || held.length > 0 || turn || awaiting;
 }
 
 const chains = new Map<number, Promise<void>>();
@@ -85,7 +88,13 @@ export type SendSource = string;
  * what it records of the text no earlier than that, so a row stamped after
  * it is the text's and a row from before is not.
  */
-type SubmitListener = (taskId: number, text: string, from?: SendSource, startedAt?: number) => void;
+type SubmitListener = (
+  taskId: number,
+  text: string,
+  from?: SendSource,
+  startedAt?: number,
+  commentIds?: readonly number[],
+) => void;
 
 const submitted = new Set<SubmitListener>();
 
@@ -106,7 +115,13 @@ export function onSessionSubmit(cb: SubmitListener): () => void {
  * delivered submit starts a turn as far as turn.ts knows, until the
  * transcript says otherwise.
  */
-export function submitLocked(taskId: number, text: string, from?: SendSource): Promise<boolean> {
+export function submitLocked(
+  taskId: number,
+  text: string,
+  from?: SendSource,
+  /** The code comments the text carries: delivery.ts unmarks them if it never arrives. */
+  commentIds?: readonly number[],
+): Promise<boolean> {
   return withPtyLock(taskId, async () => {
     const startedAt = Date.now();
     const ok = await submitPty(taskId, text);
@@ -114,7 +129,7 @@ export function submitLocked(taskId: number, text: string, from?: SendSource): P
       noteSubmitted(taskId);
       for (const cb of [...submitted]) {
         try {
-          cb(taskId, text, from, startedAt);
+          cb(taskId, text, from, startedAt, commentIds);
         } catch (err) {
           console.warn('[send] a submit listener failed', err);
         }

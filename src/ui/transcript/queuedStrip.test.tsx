@@ -372,7 +372,7 @@ describe('held messages', () => {
     await act(async () => {
       await releaseHeld(1, send);
     });
-    expect(send).toHaveBeenCalledWith('being edited');
+    expect(send).toHaveBeenCalledWith('being edited', []);
   });
 
   it('say when one may already have been sent, and offer Send, Edit and Remove', async () => {

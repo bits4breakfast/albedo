@@ -34,6 +34,7 @@ vi.mock('../../db/comments', async () => ({
 }));
 
 const { TranscriptPane } = await import('./TranscriptPane');
+const { __resetDelivery } = await import('./delivery');
 const { __resetDrafts, addComment, commentsOf, removeComment, takeComments } = await import('./drafts');
 const { __resetOpenEdits, __resetToSendFrozen, editsOf, openEdit, setEditWords, setToSendFrozen } = await import('./toSend');
 const { clickIsElsewhere, OPEN_AFTER_MS } = await import('./PassageComments');
@@ -82,6 +83,8 @@ afterEach(() => {
   __resetDrafts();
   __resetOpenEdits();
   __resetToSendFrozen();
+  // The pane starts the delivery watch (#433): each test's sends are its own.
+  __resetDelivery();
 });
 
 const rowEl = (id: number) => document.querySelector(`[data-message-id="${id}"]`) as HTMLElement;

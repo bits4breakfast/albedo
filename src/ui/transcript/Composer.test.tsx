@@ -1596,6 +1596,20 @@ describe('(r) one queue: comments on code wait above the box with the transcript
     expect(commentsOf(1)).toEqual([]);
   });
 
+  it('tells the send which code comments it carries, so one never delivered can give them back (#433)', async () => {
+    const { onSessionSubmit } = await import('./send');
+    const heard: (readonly number[] | undefined)[] = [];
+    const off = onSessionSubmit((_t, _text, _from, _at, ids) => void heard.push(ids));
+    vi.mocked(submitPty).mockResolvedValue(true);
+    vi.mocked(hasLivePty).mockReturnValue(true);
+    render(<Composer taskId={1} onSent={vi.fn()} />);
+    await screen.findByRole('button', { name: /To Send · 1/ });
+    type('Then deploy.');
+    pressEnter();
+    await waitFor(() => expect(heard).toEqual([[7]]));
+    off();
+  });
+
   it('with only code comments and an empty box, Send sends just them', async () => {
     vi.mocked(submitPty).mockResolvedValue(true);
     render(<Composer taskId={1} onSent={vi.fn()} />);

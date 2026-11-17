@@ -280,6 +280,19 @@ export async function markCommentsSent(taskId: number, ids: readonly number[]): 
   changed(taskId);
 }
 
+/**
+ * The message carrying these was written to the session and never reached
+ * its transcript (#433, delivery.ts): they are not sent after all. The
+ * message, held again in the outbox with their ids, marks them on delivery.
+ */
+export async function unmarkCommentsSent(taskId: number, ids: readonly number[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  const params = ids.map((_, i) => `$${i + 2}`).join(', ');
+  await db.execute(`UPDATE comments SET sent_at = NULL WHERE task_id = $1 AND id IN (${params})`, [taskId, ...ids]);
+  changed(taskId);
+}
+
 export async function resolveComment(taskId: number, id: number): Promise<void> {
   await resolveComments(taskId, [id]);
 }

@@ -55,6 +55,7 @@ vi.mock('../../db/comments', async () => ({
 
 const { parseTranscript } = await import('../../capture/adapter');
 const echo = await import('./commandEcho');
+const { __resetDelivery } = await import('./delivery');
 const { sendToSession, submitLocked } = await import('./send');
 const { CommandEchoRow, commandEchoMeta } = await import('./CommandEchoRow');
 const { TranscriptPane } = await import('./TranscriptPane');
@@ -117,6 +118,8 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   __resetCommandEchoes();
+  // The pane starts the delivery watch (#433): each test's sends are its own.
+  __resetDelivery();
 });
 
 describe('what echoes', () => {

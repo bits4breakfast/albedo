@@ -18,9 +18,9 @@ import {
   noteShownStatus,
   startOutboxRelease,
 } from './outboxRelease';
-import { shownQueue } from './turn';
-import { commandEchoLanded, commandLanded, echoLanded, isCompactCommand, useCommandEcho } from './commandEcho';
+import { commandEchoLanded, commandLanded, echoIsQueued, echoLanded, isCompactCommand, useCommandEcho } from './commandEcho';
 import { CommandEchoRow } from './CommandEchoRow';
+import { onNotDelivered, startDeliveryWatch } from './delivery';
 import OverlayScrollbar from './OverlayScrollbar';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -31,7 +31,6 @@ import {
   onCaptureUpdate,
   onQueueChange,
   queuedFor,
-  type QueuedEntry,
 } from '../../capture';
 import { watchConnectivity } from '../../lib/connectivity';
 import { usePtyLiveSince } from '../Terminal';
@@ -173,6 +172,8 @@ export function TranscriptPane({
 
   // Held messages go for every task, whichever one is on screen (outboxRelease.ts).
   useEffect(() => startOutboxRelease(), []);
+  // Every message sent is looked for in the transcript (delivery.ts, #433).
+  useEffect(() => startDeliveryWatch(), []);
   // The release's prompt gate counts this task's `blocked`, as the composer does.
   useEffect(() => {
     noteShownStatus(taskId, status);
@@ -491,6 +492,17 @@ export function TranscriptPane({
       }),
     [taskId],
   );
+  // Not delivered (delivery.ts): the band shows it as held from now, so its
+  // echo goes -- one place, not two. The echo is set once the write is done,
+  // so it falls between the write's start and its end.
+  useEffect(
+    () =>
+      onNotDelivered((e) => {
+        if (e.taskId !== taskId) return;
+        setEcho((cur) => (cur !== null && cur.at >= e.at - 1000 && cur.at <= e.sentAt + 1000 ? null : cur));
+      }),
+    [taskId],
+  );
   useEffect(() => {
     if (!echo) return;
     // Clock skew between this machine's two clocks is nil, but a second of
@@ -672,19 +684,8 @@ const ECHO_MAX_MS = 30_000;
 /** The message box's echo lands as commandEcho.ts says (`echoLanded`), shared with the buttons' echo. */
 export { echoLanded };
 
-/**
- * Whether the Queued band now shows the message just sent: one of its
- * entries (`shownQueue`) was queued no earlier than the send, with the same
- * second of slack as the user-row check. While the band would not show it
- * the echo stays, or the message would be nowhere.
- *
- * Time, not text: the queue records what Claude Code made of the input -- a
- * pasted image becomes `[Image #1]` where Albedo sent a file path -- and
- * while the echo is up only Albedo is typing into the session.
- */
-export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry[], liveSince: number | null): boolean {
-  return shownQueue(entries, liveSince).some((e) => e.ts >= echo.at - 1000);
-}
+/** Whether the Queued band shows the message just sent: commandEcho.ts, shared with delivery.ts. */
+export { echoIsQueued };
 
 /**
  * "Running Bash git status · 9s", ticking, with the turn's "7m 48s · ↓ 37.6k
