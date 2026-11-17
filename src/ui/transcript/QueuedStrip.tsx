@@ -51,7 +51,8 @@ import { onPreviewChange } from '../../capture/previewGate';
 import { onDeletionChange } from '../../capture/githubGate';
 import { onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import { REMOTE_MENU_HINT } from './RemoteMenuNotice';
-import { NOT_DELIVERED } from './delivery';
+import { notDeliveredNote } from './delivery';
+import { onAwaitingDeliveryChange } from './deliveryGate';
 import { useRemoteWait } from '../remoteWait';
 
 /**
@@ -292,6 +293,7 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
       onDeletionChange(mine),
       onTurnChange(mine),
       onEditingChange(mine),
+      onAwaitingDeliveryChange(mine),
     ];
     return () => offs.forEach((off) => off());
   }, [taskId]);
@@ -404,7 +406,7 @@ function HeldRow({
       {held.maybeSent ? (
         <>
           {/* Not delivered (#433): what Claude Code did with it is in the terminal. */}
-          <span className="tx-queued-note">{held.notDelivered ? NOT_DELIVERED : 'May already have been sent'}</span>
+          <span className="tx-queued-note">{held.notDelivered ? notDeliveredNote(held) : 'May already have been sent'}</span>
           <button type="button" className="tx-btn tx-queued-act" onClick={() => sendAnyway(taskId, held.id)}>
             Send
           </button>

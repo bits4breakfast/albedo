@@ -47,6 +47,7 @@ import {
   findTaskBySessionId,
   findTaskByWorktreePath,
   getTranscriptFile,
+  transcriptFilesOfSession,
   listTranscriptFiles,
   insertMessages,
   listTranscriptFilesNeedingTitle,
@@ -326,6 +327,11 @@ class Capture implements CaptureHandle {
   private readonly adopted = new Set<string>();
 
   constructor(private readonly root: string) {}
+
+  /** The startup backfill is done and capture is running: new lines are read as they come. */
+  caughtUp(): boolean {
+    return this.backfilled && !this.stopped;
+  }
 
   /**
    * Should a transcript with no `transcript_files` row be captured?
@@ -968,6 +974,29 @@ export async function listDiskSessions(): Promise<DiskSession[]> {
  * Resolves once the rows are written. Throws if capture is not running.
  */
 /** See {@link Capture.reconsider}. A no-op while capture is not running. */
+/**
+ * Whether ingest may not have read a session's latest lines yet (#433): the
+ * capture is not running, the startup backfill is still under way, or the
+ * session's own transcript on disk is longer than what was ingested. A row
+ * missing from the database then says nothing about whether it was written.
+ * Subagents' files do not count. Without a recorded file it is not behind:
+ * the watcher takes a new file the moment it appears.
+ */
+export async function ingestBehind(sessionId: string): Promise<boolean> {
+  if (active === null || !active.caughtUp()) return true;
+  const own = (await transcriptFilesOfSession(sessionId)).filter((f) => f.path.endsWith(`/${sessionId}.jsonl`));
+  for (const f of own) {
+    let size: number;
+    try {
+      size = (await stat(f.path)).size;
+    } catch {
+      continue; // gone: nothing left to read
+    }
+    if (size > f.bytesIngested) return true;
+  }
+  return false;
+}
+
 export async function reconsiderSession(sessionId: string): Promise<void> {
   await active?.reconsider(sessionId);
 }

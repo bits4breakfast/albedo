@@ -122,7 +122,7 @@ export async function notePty(taskId: number, text: string): Promise<boolean> {
   const payload = text.replace(/[\r\n]+/g, ' ').trim();
   if (!payload) return false;
   try {
-    await writePty(ptyId, payload);
+    await writePty(ptyId, payload, 'albedo');
     return true;
   } catch {
     return false;
@@ -175,14 +175,14 @@ export async function submitPty(taskId: number, text: string): Promise<boolean> 
     const segments = pasteSegments(body, markerSpans(body));
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i] as PasteSegment;
-      await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`);
+      await writePty(ptyId, `\x1b[200~${seg.text}\x1b[201~`, 'albedo');
       // It reads the file before it takes the next keystroke.
       if (seg.image && i < segments.length - 1) await sleep(SUBMIT_DELAY_IMAGE_MS);
       if (livePtys.get(taskId) !== ptyId) return false;
     }
     await sleep(submitDelayFor(body));
     if (livePtys.get(taskId) !== ptyId) return false; // exited in the pause
-    await writePty(ptyId, '\r');
+    await writePty(ptyId, '\r', 'albedo');
     return true;
   } catch {
     return false;
@@ -578,7 +578,7 @@ export default function Terminal({
         return;
       }
       if (deadRef.current) return;
-      void writePty(id, data).catch((err) => {
+      void writePty(id, data, 'terminal').catch((err) => {
         setFailure(message(err));
       });
     });
@@ -747,7 +747,7 @@ export default function Terminal({
 
         const queued = pendingRef.current;
         pendingRef.current = [];
-        for (const chunk of queued) void writePty(id, chunk).catch(() => {});
+        for (const chunk of queued) void writePty(id, chunk, 'terminal').catch(() => {});
 
         applyFit();
         // The dialog is answered here and nowhere else: give it the keyboard,

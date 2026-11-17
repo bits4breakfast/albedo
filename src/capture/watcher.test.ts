@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   firstCwdIn,
   findUnreportedGrowth,
+  ingestBehind,
   isTranscriptPath,
   lineIndexAfter,
   owningSessionOfPath,
@@ -198,5 +199,11 @@ describe('firstCwdIn', () => {
   it('is null when no line has one, and never throws on junk', () => {
     expect(firstCwdIn('')).toBeNull();
     expect(firstCwdIn('not json\n{"type":"mode"}\n')).toBeNull();
+  });
+});
+
+describe('ingestBehind', () => {
+  it('is behind while capture is not running: a missing row then says nothing', async () => {
+    await expect(ingestBehind('s-1')).resolves.toBe(true);
   });
 });

@@ -605,16 +605,18 @@ Albedo captures only the conversations that belong to its tasks, plus the ones
 you resume or import from History.
 
 **Debug log of what Albedo types into a terminal.** Off by default. To catch
-a message Claude Code did not take (#433), Albedo can note every write it
-makes to a session's terminal -- the message box's pastes and Enters, your
-keystrokes, xterm's replies to the terminal -- in
-`~/.albedo/logs/pty-writes.jsonl`: the time, the task, the length, and the
-first 40 characters with control characters made visible (`\e[200~…`). It
-never logs more of the text than that, and never anything the terminal
-printed. Switch it on with `touch ~/.albedo/debug-pty-writes` and off with
-`rm ~/.albedo/debug-pty-writes`; Albedo looks for that file every 30 seconds,
-so no restart is needed. Leave it off while typing anything secret in a
-terminal.
+a message Claude Code did not take (#433), Albedo can note the writes it
+makes to a session's terminal in `~/.albedo/logs/pty-writes.jsonl`: the
+time, the task, the length, and the first 40 characters with control
+characters made visible (`\e[200~…`). It logs what Albedo writes itself (the
+message box's pastes and Enters) and, from the terminal, only escape
+sequences (xterm's replies, special keys): a paste into the terminal is
+logged as its marker alone, and plain typed keys not at all. It never logs
+more of the text than that, and never anything the terminal printed. Past
+4 MB the file moves to `pty-writes.1.jsonl` and a new one starts. Switch it
+on with `touch ~/.albedo/debug-pty-writes` and off with
+`rm ~/.albedo/debug-pty-writes`; Albedo looks for that file at most every 30
+seconds, so no restart is needed.
 
 ## Keyboard shortcuts
 

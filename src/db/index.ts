@@ -1085,6 +1085,16 @@ export async function getTranscriptFile(path: string): Promise<TranscriptFileRec
   return row ? toTranscriptFile(row) : null;
 }
 
+/** The files recorded for a session, its subagents' included, as ingest last left them. */
+export async function transcriptFilesOfSession(sessionId: string): Promise<TranscriptFileRecord[]> {
+  const db = await getDb();
+  const rows = await db.select<TranscriptFileRow[]>(
+    `SELECT ${TRANSCRIPT_SELECT} FROM transcript_files WHERE session_id = $1`,
+    [sessionId],
+  );
+  return rows.map(toTranscriptFile);
+}
+
 export async function listTranscriptFiles(): Promise<TranscriptFileRecord[]> {
   const db = await getDb();
   const rows = await db.select<TranscriptFileRow[]>(
