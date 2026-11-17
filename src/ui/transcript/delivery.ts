@@ -106,7 +106,9 @@ export interface Expected {
  * the bracketed-paste markers, with or without their ESC.
  */
 export function bareText(text: string): string {
+  // Line endings as submitPty sends them; trailing whitespace goes with the trim.
   return text
+    .replace(/\r\n?/g, '\n')
     .trim()
     .replace(/^(?:\x1b)?\[200~/, '')
     .replace(/(?:\x1b)?\[201~$/, '')
@@ -294,55 +296,78 @@ function deliveredLate(e: Expected): void {
 /** The deadline: one last look, then -- with ingest caught up -- it was not delivered. */
 async function decide(e: Expected): Promise<void> {
   timers.delete(e);
-  if (!watched(e) || e.heldId !== null) return;
-  if (queuedSince(e)) {
-    drop(e);
-    return;
+  try {
+    if (!watched(e) || e.heldId !== null) return;
+    if (queuedSince(e)) {
+      drop(e);
+      return;
+    }
+    const rows = await rowsSince(e);
+    if (!watched(e) || e.heldId !== null) return;
+    // Unreadable is unknown, and unknown says nothing.
+    if (rows === null || queuedSince(e) || landedRows(e, rows)) {
+      drop(e);
+      return;
+    }
+    const late = await behind(e);
+    if (!watched(e) || e.heldId !== null) return;
+    if (late) {
+      if (Date.now() - e.at < BEHIND_MAX_MS) timers.set(e, setTimeout(() => decideLogged(e), BEHIND_RETRY_MS));
+      else drop(e);
+      return;
+    }
+    notDelivered(e);
+  } finally {
+    // Whatever threw on the way, a message left undecided with nothing to
+    // decide it again would hold the task's sends for good.
+    if (watched(e) && e.heldId === null && !timers.has(e)) drop(e);
   }
-  const rows = await rowsSince(e);
-  if (!watched(e) || e.heldId !== null) return;
-  // Unreadable is unknown, and unknown says nothing.
-  if (rows === null || queuedSince(e) || landedRows(e, rows)) {
-    drop(e);
-    return;
-  }
-  const late = await behind(e);
-  if (!watched(e) || e.heldId !== null) return;
-  if (late) {
-    if (Date.now() - e.at < BEHIND_MAX_MS) timers.set(e, setTimeout(() => void decide(e), BEHIND_RETRY_MS));
-    else drop(e);
-    return;
-  }
-  notDelivered(e);
+}
+
+/** `decide`, from a timer: what throws is said, never left unhandled. */
+function decideLogged(e: Expected): void {
+  decide(e).catch((err: unknown) => console.warn('[send] could not decide whether a message was delivered', err));
 }
 
 function notDelivered(e: Expected): void {
-  const held = holdNotDelivered(e.taskId, e.text, Date.now(), e.commentIds);
-  if (held === null) {
-    drop(e);
-    return;
+  const now = Date.now();
+  let held: HeldMessage | null = null;
+  try {
+    held = holdNotDelivered(e.taskId, e.text, now, e.commentIds);
+  } catch (err) {
+    // An outbox listener threw after the entry was stored: it is there all the same.
+    console.warn('[send] an outbox listener failed while a message was held as not delivered', err);
+    held = heldFor(e.taskId).find((h) => h.notDelivered === true && h.heldAt === now && h.text === e.text) ?? null;
   }
-  e.heldId = held.id;
-  syncGate(e.taskId);
-  console.warn(`[send] task ${e.taskId}: a message written to the session never reached its transcript; held as not delivered`);
-  // Its comments go with it, unsent, until it is delivered (outboxRelease.ts marks them then).
-  if (e.commentIds.length > 0) {
-    unmarkCommentsSent(e.taskId, e.commentIds).catch((err: unknown) =>
-      console.warn('[send] a message was not delivered, and its code comments could not be unmarked', err),
-    );
-  }
-  // A button's prompt echoes as a command (commandEcho.ts); the band has it now.
-  commandEchoLanded(e.taskId, e.at);
-  timers.set(
-    e,
-    setTimeout(() => drop(e), Math.max(0, e.at + LATE_LANDING_MS - Date.now())),
-  );
-  for (const cb of [...listeners]) {
-    try {
-      cb(e);
-    } catch (err) {
-      console.warn('[send] a not-delivered listener failed', err);
+  try {
+    if (held === null) {
+      drop(e);
+      return;
     }
+    e.heldId = held.id;
+    timers.set(
+      e,
+      setTimeout(() => drop(e), Math.max(0, e.at + LATE_LANDING_MS - Date.now())),
+    );
+    console.warn(`[send] task ${e.taskId}: a message written to the session never reached its transcript; held as not delivered`);
+    // Its comments go with it, unsent, until it is delivered (outboxRelease.ts marks them then).
+    if (e.commentIds.length > 0) {
+      unmarkCommentsSent(e.taskId, e.commentIds).catch((err: unknown) =>
+        console.warn('[send] a message was not delivered, and its code comments could not be unmarked', err),
+      );
+    }
+    // A button's prompt echoes as a command (commandEcho.ts); the band has it now.
+    commandEchoLanded(e.taskId, e.at);
+    for (const cb of [...listeners]) {
+      try {
+        cb(e);
+      } catch (err) {
+        console.warn('[send] a not-delivered listener failed', err);
+      }
+    }
+  } finally {
+    // Decided, whatever threw above: the gate is the held entry's now.
+    syncGate(e.taskId);
   }
 }
 
@@ -364,7 +389,7 @@ function submitted(
   syncGate(taskId);
   timers.set(
     e,
-    setTimeout(() => void decide(e), first ? FIRST_SEND_TIMEOUT_MS : DELIVERY_TIMEOUT_MS),
+    setTimeout(() => decideLogged(e), first ? FIRST_SEND_TIMEOUT_MS : DELIVERY_TIMEOUT_MS),
   );
 }
 

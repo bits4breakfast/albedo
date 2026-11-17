@@ -288,7 +288,8 @@ export async function markCommentsSent(taskId: number, ids: readonly number[]): 
 export async function unmarkCommentsSent(taskId: number, ids: readonly number[]): Promise<void> {
   if (ids.length === 0) return;
   const db = await getDb();
-  for (const id of ids) await db.execute(`UPDATE comments SET sent_at = NULL WHERE id = $1 AND task_id = $2`, [id, taskId]);
+  const params = ids.map((_, i) => `$${i + 2}`).join(', ');
+  await db.execute(`UPDATE comments SET sent_at = NULL WHERE task_id = $1 AND id IN (${params})`, [taskId, ...ids]);
   changed(taskId);
 }
 

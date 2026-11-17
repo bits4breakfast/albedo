@@ -246,6 +246,43 @@ describe('a message that never reaches the transcript', () => {
 });
 
 describe('until it shows, nothing else goes', () => {
+  it('a check that throws at the deadline frees the task: unknown, said in the console', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await submitLocked(1, 'please rerun the linter');
+      vi.mocked(ptyLiveSince).mockImplementation(() => {
+        throw new Error('gone');
+      });
+      await vi.advanceTimersByTimeAsync(DELIVERY_TIMEOUT_MS);
+      expect(awaitingDelivery(1)).toBe(false);
+      expect(expectedFor(1)).toHaveLength(0);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      vi.mocked(ptyLiveSince).mockReset();
+      warn.mockRestore();
+    }
+  });
+
+  it('a throwing outbox listener leaves neither the gate up nor the late watch without its row', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const off = outbox.onOutboxChange(() => {
+      throw new Error('a broken listener');
+    });
+    try {
+      await submitLocked(1, 'please rerun the linter');
+      await vi.advanceTimersByTimeAsync(DELIVERY_TIMEOUT_MS);
+    } finally {
+      off();
+      warn.mockRestore();
+    }
+    expect(heldFor(1)).toMatchObject([{ text: 'please rerun the linter', notDelivered: true }]);
+    expect(awaitingDelivery(1)).toBe(false);
+    expect(expectedFor(1)[0]?.heldId).toBe(heldFor(1)[0]!.id);
+    // And the late watch still works.
+    await arrive(userRow('please rerun the linter', Date.now()));
+    expect(heldFor(1)).toHaveLength(0);
+  });
+
   it('a turn ending on its own within the 20 s does not let the next send through', async () => {
     await submitLocked(1, 'please rerun the linter');
     recordQueueOperations([{ op: 'turn-end', sessionId: 's1', ts: T + 2_000 }]);
@@ -506,6 +543,9 @@ describe('sameText', () => {
     expect(sameText('look', 'ok')).toBe(false);
     expect(sameText('ok then', 'ok')).toBe(false);
     expect(sameText('', '')).toBe(false);
+    // Line endings and trailing whitespace as submitPty sends them.
+    expect(sameText('line one\nline two', 'line one\r\nline two  \n')).toBe(true);
+    expect(sameText('line one\r\nline two', 'line one\nline two')).toBe(true);
   });
 
   it('a long message by its start, a short one never', () => {

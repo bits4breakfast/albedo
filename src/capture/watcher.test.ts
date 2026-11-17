@@ -10,6 +10,8 @@ import {
   firstCwdIn,
   findUnreportedGrowth,
   ingestBehind,
+  sessionFileBehind,
+  BEHIND_PEEK_BYTES,
   isTranscriptPath,
   lineIndexAfter,
   owningSessionOfPath,
@@ -205,5 +207,57 @@ describe('firstCwdIn', () => {
 describe('ingestBehind', () => {
   it('is behind while capture is not running: a missing row then says nothing', async () => {
     await expect(ingestBehind('s-1')).resolves.toBe(true);
+  });
+});
+
+describe('sessionFileBehind', () => {
+  const enc = new TextEncoder();
+  /** A disk holding these files, by path. */
+  const disk = (files: Record<string, string>) => ({
+    size: async (p: string) => {
+      const f = files[p];
+      if (f === undefined) throw new Error('gone');
+      return enc.encode(f).length;
+    },
+    read: async (p: string, offset: number, length: number) => enc.encode(files[p]!).subarray(offset, offset + length),
+  });
+  const own = '/p/proj/s-1.jsonl';
+  const line = '{"type":"user"}\n';
+
+  it('caught up: nothing past what was ingested', async () => {
+    const io = disk({ [own]: line });
+    expect(await sessionFileBehind('s-1', [{ path: own, bytesIngested: line.length }], false, io)).toBe(false);
+  });
+
+  it('a complete line past what was ingested is behind', async () => {
+    const io = disk({ [own]: line + line });
+    expect(await sessionFileBehind('s-1', [{ path: own, bytesIngested: line.length }], false, io)).toBe(true);
+  });
+
+  it('only a partial last line past it is not behind: ingest waits for its end too', async () => {
+    const io = disk({ [own]: `${line}{"type":"assi` });
+    expect(await sessionFileBehind('s-1', [{ path: own, bytesIngested: line.length }], false, io)).toBe(false);
+  });
+
+  it('more unread than it peeks at is behind', async () => {
+    const io = { size: async () => BEHIND_PEEK_BYTES + 100, read: async () => new Uint8Array(0) };
+    expect(await sessionFileBehind('s-1', [{ path: own, bytesIngested: 0 }], false, io)).toBe(true);
+  });
+
+  it('the backfill running does not make a caught-up file behind', async () => {
+    const io = disk({ [own]: line });
+    expect(await sessionFileBehind('s-1', [{ path: own, bytesIngested: line.length }], true, io)).toBe(false);
+  });
+
+  it('no file recorded: behind only while the backfill runs', async () => {
+    const io = disk({});
+    expect(await sessionFileBehind('s-1', [], true, io)).toBe(true);
+    expect(await sessionFileBehind('s-1', [], false, io)).toBe(false);
+  });
+
+  it('a subagent’s file does not count', async () => {
+    const sub = '/p/proj/s-1/subagents/agent-a.jsonl';
+    const io = disk({ [sub]: line + line });
+    expect(await sessionFileBehind('s-1', [{ path: sub, bytesIngested: 0 }], false, io)).toBe(false);
   });
 });
