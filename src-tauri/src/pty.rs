@@ -140,6 +140,15 @@ const STRIPPED_ENV: [&str; 3] = [
     "ANTHROPIC_BASE_URL",
 ];
 
+/// Set for a command spawned through the interactive login shell, so that
+/// nothing in the user's rc files stops to ask a question before the command
+/// starts and takes Albedo's first write as its answer (#433). See
+/// [`build_command`].
+const NO_RC_PROMPT_ENV: [(&str, &str); 2] = [
+    ("DISABLE_AUTO_UPDATE", "true"),
+    ("DISABLE_UPDATE_PROMPT", "true"),
+];
+
 /// Used when `$SHELL` is unset or empty.
 #[cfg(target_os = "macos")]
 const FALLBACK_SHELL: &str = "/bin/zsh";
@@ -581,6 +590,27 @@ fn build_command(shell: &str, opts: &SpawnOptions) -> CommandBuilder {
     // renders without colour.
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+
+    // Nothing may prompt between the spawn and the command (#433). The shell
+    // is interactive (`-i`, see above), so it runs ~/.zshrc before it `exec`s
+    // `claude`, and oh-my-zsh's update check, once due, stops there at
+    // "[oh-my-zsh] Would you like to update? [Y/n]" (`read -r -k 1`) until a
+    // key arrives. Albedo's first paste is that key: the ESC of `ESC[200~`
+    // answers the question, `claude` starts and reads the rest -- `[200~` and
+    // the text -- as typed characters, and the Enter is lost during its
+    // startup, so the message sits unsent until the next one is glued onto it.
+    // These two are oh-my-zsh's documented switches; with both set its
+    // `update_mode` ends up `disabled` (DISABLE_UPDATE_PROMPT alone would mean
+    // "update without asking", which prints into the pane instead). A
+    // `zstyle ':omz:update' mode …` in the user's rc file takes precedence
+    // over both. Set after the caller's env, so it cannot be turned back on
+    // from the frontend. Only for a command: the drawer's plain login shell is
+    // the user's own terminal, where oh-my-zsh may ask whatever it likes.
+    if !opts.command.is_empty() {
+        for (key, value) in NO_RC_PROMPT_ENV {
+            cmd.env(key, value);
+        }
+    }
 
     // Layer 1 of the strip: removes what Albedo itself inherited, before the
     // shell starts. Applied after the caller's env so a stray key cannot be
@@ -1471,6 +1501,70 @@ mod tests {
         let (out, code) = until_exit(&rx, Duration::from_secs(10));
         assert!(out.contains("key:none"), "{out:?}");
         assert!(!out.contains("sk-from-the-caller"), "{out:?}");
+        assert_eq!(code, Some(0));
+    }
+
+    #[test]
+    fn a_command_spawn_switches_off_the_oh_my_zsh_update_prompt() {
+        // #433: the update question ate the first paste. The caller's env must
+        // not be able to turn it back on.
+        let mut o = opts("claude", &["--resume", "abc"], "/tmp");
+        o.env = Some(HashMap::from([(
+            "DISABLE_AUTO_UPDATE".to_string(),
+            "false".to_string(),
+        )]));
+        let cmd = build_command("/bin/zsh", &o);
+        for key in ["DISABLE_AUTO_UPDATE", "DISABLE_UPDATE_PROMPT"] {
+            assert_eq!(
+                cmd.get_env(key),
+                Some(std::ffi::OsStr::new("true")),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_drawer_shell_keeps_the_users_oh_my_zsh_settings() {
+        let cmd = build_command("/bin/zsh", &opts("", &[], "/tmp"));
+        for key in ["DISABLE_AUTO_UPDATE", "DISABLE_UPDATE_PROMPT"] {
+            // Whatever Albedo inherited, untouched: nothing added.
+            assert_eq!(
+                cmd.get_env(key).map(|v| v.to_os_string()),
+                std::env::var_os(key),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_update_switches_reach_the_spawned_command() {
+        let o = opts(
+            "/bin/sh",
+            &[
+                "-c",
+                "echo \"omz:${DISABLE_AUTO_UPDATE-unset}/${DISABLE_UPDATE_PROMPT-unset}\"",
+            ],
+            "/tmp",
+        );
+        let sessions = Sessions::default();
+        let (tx, rx) = mpsc::channel();
+        let owner = Owner {
+            webview: "main".into(),
+            page: "p".into(),
+        };
+        launch(
+            &sessions,
+            "a".into(),
+            owner,
+            build_command("/bin/sh", &o),
+            pty_size(80, 24),
+            FLOW_LIMITS,
+            "sh",
+            TestSink(tx),
+        )
+        .expect("launch");
+        let (out, code) = until_exit(&rx, Duration::from_secs(10));
+        assert!(out.contains("omz:true/true"), "{out:?}");
         assert_eq!(code, Some(0));
     }
 
