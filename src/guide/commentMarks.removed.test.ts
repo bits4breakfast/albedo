@@ -28,7 +28,7 @@ describe('commentMarks, comments on removed lines (#402)', () => {
       { path: 'src/a.ts', lineStart: 12, anchorText: 'line 12', resolvedAt: null, side: 'old' },
       { path: 'src/a.ts', lineStart: 30, anchorText: 'line 30', resolvedAt: null, side: 'old' },
     ]);
-    expect(marks.get(top)?.get('src/a.ts')).toBe(1);
-    expect(marks.get(bottom)?.get('src/a.ts')).toBe(1);
+    expect(marks.get(top)?.get('src/a.ts')).toEqual({ toSend: 1, drafts: 0 });
+    expect(marks.get(bottom)?.get('src/a.ts')).toEqual({ toSend: 1, drafts: 0 });
   });
 });

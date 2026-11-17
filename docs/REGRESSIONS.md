@@ -100,6 +100,7 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - A `git diff` that compares with the working tree goes through `DIFF_NO_REFRESH` (`src/git/worktree.ts`, `diff.autoRefreshIndex=false`). Not `git diff-index`: the plumbing ignores the user's `diff.algorithm`, so the counts change.
   - Without the refresh, `--name-only` and `--name-status` also list files whose stat alone is stale. Take paths from `--numstat`, which skips them, or filter through `keepChanged`.
   - Check a new git read by comparing `.git/index` before and after it on a repo with stale stats (`src/git/changeSet.git.test.ts`).
+- **One count made to mean another, and a view went blank.** Owner-reported (#440): on a review task the guide's comment bubbles (file rows, rail, Map) mostly disappeared. #423 pointed them at To Send so they would add up to Send N; before, they read every open comment (`listComments`). On a review task most comments are GitHub Drafts, which are never To Send, so the bubbles lost them. **Rule:** before pointing a view at a narrower list so two counts agree, list what the old source fed that view and name in the PR what stops being shown; a view that shows where comments are counts every one still waiting to go (To Send and GitHub Drafts), and only what acts on a list (Send N) counts that list.
 - **Stale comments after a behaviour change.** A comment still said "wrap" after the behaviour became "stop at the ends". **Rule:** when behaviour changes, grep the comments and the PR text for the old words.
 
 ## Tests and verification

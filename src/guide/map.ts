@@ -22,7 +22,7 @@
 
 import type { ChangeKind } from '../git/fileDiff';
 import type { BranchDiff, StatReason } from './blocks';
-import type { CommentMarks } from './commentMarks';
+import { addTally, NO_COMMENTS, type CommentMarks, type CommentTally } from './commentMarks';
 import { MAX_SCAN_FILES, type ImportGraph } from './imports';
 import { carefulWhy, type GroupView } from './validate';
 
@@ -60,7 +60,8 @@ export interface MapNode {
   removed: number;
   change: ChangeKind | null;
   stat: StatReason | null;
-  comments: number;
+  /** Open comments, To Send and GitHub Drafts apart (#440); a folder's add up its files'. */
+  comments: CommentTally;
   /** A folder's changed files; 1 for a file. */
   files: number;
   /** Lines changed against the largest box, 0..1 on a log scale: the size bar. */
@@ -131,7 +132,7 @@ export function buildChangeMap(
   for (const g of groups) {
     const colour = groupColour(groups, g.key);
     for (const f of g.files) {
-      const comments = marks.get(g.key)?.get(f.path) ?? 0;
+      const comments = marks.get(g.key)?.get(f.path) ?? NO_COMMENTS;
       const had = byPath.get(f.path);
       if (had) {
         had.careful ??= f.careful ? carefulWhy(f.careful) : null;
@@ -139,7 +140,7 @@ export function buildChangeMap(
         had.colours.push(colour);
         had.added += f.added;
         had.removed += f.removed;
-        had.comments += comments;
+        had.comments = addTally(had.comments, comments);
         continue;
       }
       const file = inDiff.get(f.path);
@@ -197,7 +198,7 @@ export function buildChangeMap(
       removed: 0,
       change: 'unchanged',
       stat: null,
-      comments: 0,
+      comments: NO_COMMENTS,
       files: 1,
       size: 0,
       importers: by.size,
@@ -271,7 +272,7 @@ function foldToFolders(
       removed: 0,
       change: null,
       stat: null,
-      comments: 0,
+      comments: NO_COMMENTS,
       files: 0,
       size: 0,
       importers: 0,
@@ -285,7 +286,7 @@ function foldToFolders(
     });
     n.added += f.added;
     n.removed += f.removed;
-    n.comments += f.comments;
+    n.comments = addTally(n.comments, f.comments);
     n.files += 1;
     folders.set(id, n);
   }

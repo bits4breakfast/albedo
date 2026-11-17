@@ -289,7 +289,7 @@ export default function GuideMap({ worktreePath, diff, groups, marks, current, o
                   </span>
                   <span className="gd-map-facts">
                     <NodeFacts n={n} />
-                    <CommentCount n={n.comments} />
+                    <CommentCount tally={n.comments} />
                   </span>
                   {n.kind === 'unchanged' ? null : (
                     <span className="gd-map-size" aria-hidden="true" style={{ width: `calc((100% - 24px) * ${Math.max(0.04, n.size).toFixed(3)})` }} />
