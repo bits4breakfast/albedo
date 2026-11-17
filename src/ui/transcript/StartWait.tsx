@@ -12,7 +12,8 @@
  *  - `StartWaitNotice`: past `START_WARN_MS` without a start, a warning above
  *    the band says why that may be (something in the terminal asking a
  *    question) and offers Show Terminal. Albedo never reads the terminal, so
- *    it cannot say what is there, only where to look. Not while the trust
+ *    it cannot say what is there, only where to look. Send Anyway opens the
+ *    gate by hand, for a Claude Code whose hooks never run. Not while the trust
  *    dialog is known to be up: its own card says that, and more.
  *
  * Once Claude Code is up the outbox's release sends them, in order, and each
@@ -24,7 +25,7 @@ import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { formatDuration } from '../../lib/duration';
 import { useHeld, type HeldMessage } from './outbox';
 import { foldPastes } from './pastedText';
-import { useAwaitingStartSince } from './startGate';
+import { setAwaitingStart, useAwaitingStartSince } from './startGate';
 
 /** How long Claude Code may take to start before the warning says something may be in its way. */
 export const START_WARN_MS = 15_000;
@@ -36,6 +37,10 @@ export const START_WAIT_TEXT = 'waiting for Claude Code to start';
 export const START_WARN_TITLE = 'Claude Code hasn’t started yet.';
 export const START_WARN_TEXT =
   'Something in the terminal may be asking a question (a shell prompt, a login). Your message is kept and goes as soon as it starts.';
+
+/** Send Anyway's tooltip: what it does, and what it risks. */
+export const SEND_ANYWAY_TITLE =
+  'Send the held messages now, without waiting for Claude Code to report that it started. If something in the terminal is still asking, it may read them.';
 
 /**
  * The held messages that wait for the start alone: not one that may already
@@ -116,6 +121,12 @@ export function StartWaitNotice({
           Show Terminal
         </button>
       ) : null}
+      {/* The way out when no SessionStart will ever come (hooks switched off
+          in the user's settings): opens this process's gate by hand, the
+          held messages go in order, and delivery.ts watches them as any. */}
+      <button type="button" className="btn" title={SEND_ANYWAY_TITLE} onClick={() => setAwaitingStart(taskId, null)}>
+        Send Anyway
+      </button>
     </div>
   );
 }

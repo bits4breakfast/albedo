@@ -6,9 +6,19 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../Terminal', () => ({
+  submitPty: vi.fn(async () => true),
+  startPty: vi.fn(() => true),
+  hasLivePty: vi.fn(() => true),
+  ptyLiveSince: vi.fn(() => null),
+  onPtyPresenceChange: vi.fn(() => () => {}),
+}));
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { __resetOutbox, holdMessage, holdNotDelivered } from './outbox';
-import { __resetStartGate, setAwaitingStart } from './startGate';
+import { __resetStartGate, awaitingStart, setAwaitingStart } from './startGate';
+import { startOutboxRelease } from './outboxRelease';
+import { submitPty } from '../Terminal';
 import { setTrustWaiting } from '../../capture/workspaceTrust';
 import { START_WAIT_TEXT, START_WARN_MS, START_WARN_TITLE, StartWaitNotice, StartWaitRows } from './StartWait';
 
@@ -74,6 +84,31 @@ describe('waiting for Claude Code to start (#439)', () => {
     expect(screen.getByText(START_WARN_TITLE)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show Terminal' }));
     expect(show).toHaveBeenCalledWith(1);
+  });
+
+  it('Send Anyway opens the gate by hand: the release then sends them in order', async () => {
+    vi.mocked(submitPty).mockResolvedValue(true);
+    const stop = startOutboxRelease();
+    try {
+      setAwaitingStart(1, Date.now());
+      holdMessage(1, 'first');
+      holdMessage(1, 'second');
+      view();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(START_WARN_MS);
+      });
+      expect(submitPty).not.toHaveBeenCalled();
+      expect(awaitingStart(1)).toBe(true);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send Anyway' }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(awaitingStart(1)).toBe(false);
+      expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'first\n\nsecond']]);
+      expect(screen.queryByText(START_WARN_TITLE)).toBeNull();
+    } finally {
+      stop();
+    }
   });
 
   it('shows nothing once Claude Code is up, or with nothing held', async () => {

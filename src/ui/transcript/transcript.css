@@ -194,8 +194,8 @@
 
 /* Claude Code not started 15 s on (#439), above the Held band: the app's
    warning tint, opaque. --banner-text on --banner-bg 7.65 | 11.27 (light |
-   dark), title and body alike. Show Terminal is a plain .btn on its own
-   --panel: --text 16.60 | 14.63. */
+   dark), title and body alike. Show Terminal and Send Anyway are plain .btn
+   on their own --panel: --text 16.60 | 14.63. */
 .tx-start-warn {
   flex: none;
   display: flex;
