@@ -1,8 +1,10 @@
-//! The five tools: what Claude is told about them, and what a call must hold.
+//! The nine tools: what Claude is told about them, and what a call must hold.
 //! The fourth, `set_task_summary`, is by the owner's decision (issue #262):
 //! its one line is shown beside the task's title, never acted on. The fifth,
-//! `show_preview` (#348), is the one that waits: the user's answer to a
-//! mockup is its result (see `lib.rs`).
+//! `show_preview` (#348), waits: the user's answer to a mockup is its result
+//! (see `lib.rs`). The last four, by the owner's decision (issue #427), are a
+//! review task's GitHub Drafts and its user's own posted comments: the app
+//! answers them, at once or -- `delete_posted_comment` -- from a click.
 //!
 //! Every limit here is repeated in `src/capture/inbox.ts`, which checks each
 //! line again: this process runs inside the session, so the app never takes
@@ -29,6 +31,12 @@ pub const MAX_PREVIEW_PATH: usize = 4_096;
 pub const MAX_PREVIEW_TITLE: usize = 120;
 pub const MAX_PREVIEW_QUESTION: usize = 1_000;
 pub const MAX_PREVIEW_NOTE: usize = 200;
+/// `delete_github_draft` / `delete_posted_comment` (#427): why, one line,
+/// shown to the user beside the removal or on the card that asks.
+pub const MAX_DELETE_REASON: usize = 200;
+/// The largest id taken: JavaScript's largest safe integer, so the app reads
+/// it exactly. GitHub's comment ids and Albedo's row ids are far below it.
+pub const MAX_ID: u64 = 9_007_199_254_740_991;
 
 /// A reminder further out than this is a typo more often than a plan.
 pub const MAX_DUE_AHEAD_MS: i64 = 366 * 24 * 60 * 60 * 1000;
@@ -40,6 +48,10 @@ pub const REQUEST_SESSION: &str = "request_session";
 pub const NOTIFY_BLOCKED: &str = "notify_blocked";
 pub const SET_TASK_SUMMARY: &str = "set_task_summary";
 pub const SHOW_PREVIEW: &str = "show_preview";
+pub const LIST_GITHUB_DRAFTS: &str = "list_github_drafts";
+pub const DELETE_GITHUB_DRAFT: &str = "delete_github_draft";
+pub const LIST_POSTED_COMMENTS: &str = "list_posted_comments";
+pub const DELETE_POSTED_COMMENT: &str = "delete_posted_comment";
 
 /// `request_session`'s `start` (#332): a fresh session from the brief, or a
 /// copy of the asking conversation. Only a suggestion; the user picks.
@@ -47,13 +59,35 @@ pub const START_BRIEF: &str = "brief";
 pub const START_FORK: &str = "fork";
 
 /// Every tool, in the order `tools/list` gives them.
-pub const NAMES: [&str; 5] = [
+pub const NAMES: [&str; 9] = [
     CREATE_REMINDER,
     REQUEST_SESSION,
     NOTIFY_BLOCKED,
     SET_TASK_SUMMARY,
     SHOW_PREVIEW,
+    LIST_GITHUB_DRAFTS,
+    DELETE_GITHUB_DRAFT,
+    LIST_POSTED_COMMENTS,
+    DELETE_POSTED_COMMENT,
 ];
+
+/// How a call is answered: by this server at once, or by the app through an
+/// answer file (`lib.rs`) -- within a deadline when the app answers on its
+/// own, or whenever the user clicks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Answered {
+    Now,
+    ByApp,
+    ByUser,
+}
+
+pub fn answered(tool: &str) -> Answered {
+    match tool {
+        SHOW_PREVIEW | DELETE_POSTED_COMMENT => Answered::ByUser,
+        LIST_GITHUB_DRAFTS | DELETE_GITHUB_DRAFT | LIST_POSTED_COMMENTS => Answered::ByApp,
+        _ => Answered::Now,
+    }
+}
 
 /// The `tools/list` result's `tools`, in a fixed order.
 pub fn definitions() -> Value {
@@ -160,6 +194,70 @@ pub fn definitions() -> Value {
                     "note": {"type": "string", "description": "From the second version on: what changed since the last one, one line.", "maxLength": MAX_PREVIEW_NOTE}
                 },
                 "required": ["path", "title"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": LIST_GITHUB_DRAFTS,
+            "title": "List this review's GitHub Drafts",
+            "description": "On a review task (a pull request opened in Albedo for review), list the GitHub Drafts \
+                the user has written and not yet submitted: comments on the PR's lines, and replies to other \
+                reviewers' threads. Read them before writing your own findings, so you do not repeat what the \
+                user already said. Each has an `id` (for `delete_github_draft`), the file `path`, the `lines` \
+                (on `side` \"new\", the PR's version of the file; on \"old\", lines the PR removes, numbered in \
+                its base), the `code` commented on, the `body`, and `replyTo` (the thread's first comment id on \
+                GitHub) for a reply. Only this task's drafts; a task that is not a review has none.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": DELETE_GITHUB_DRAFT,
+            "title": "Remove one of this review's GitHub Drafts",
+            "description": "Remove one GitHub Draft of this review task, by its `id` from `list_github_drafts` -- \
+                for one that repeats another, or that is no longer right. It has not been sent to GitHub, so \
+                nothing on GitHub changes. Albedo removes it at once and shows the user what was removed, with \
+                `reason` if you give one, and Undo. Only this task's drafts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "minimum": 1, "description": "The draft's id, from list_github_drafts."},
+                    "reason": {"type": "string", "description": "Why, one line, shown to the user, e.g. \"Same point as the draft on line 42\".", "maxLength": MAX_DELETE_REASON}
+                },
+                "required": ["id"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": LIST_POSTED_COMMENTS,
+            "title": "List the user's comments on this review's PR",
+            "description": "On a review task, list the review comments the user has already posted on GitHub on \
+                this task's pull request: their own only, line comments and replies. Each has an `id` (for \
+                `delete_posted_comment`), `path`, `line`, `side`, `body`, `createdAt`, `url`, and `inReplyTo` \
+                for a reply. Read from GitHub when you call.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": DELETE_POSTED_COMMENT,
+            "title": "Ask the user to delete one of their comments on GitHub",
+            "description": "Ask the user to delete one of their own review comments already posted on this review \
+                task's pull request, by its `id` from `list_posted_comments`. Deleting on GitHub cannot be \
+                undone, so Albedo asks the user first, with `reason`. THE CALL WAITS until the user answers in \
+                Albedo: the result says whether it was deleted or kept. Only the user's own comments on this \
+                task's PR. If the user presses Esc in the terminal the call is cancelled and nothing is deleted.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "minimum": 1, "description": "The comment's id, from list_posted_comments."},
+                    "reason": {"type": "string", "description": "Why it should go, one line, shown to the user deciding.", "maxLength": MAX_DELETE_REASON}
+                },
+                "required": ["id"],
                 "additionalProperties": false
             }
         }
@@ -310,7 +408,54 @@ pub fn validate(name: &str, args: Option<&Value>, now_ms: i64) -> Result<Accepte
                 reply: String::new(),
             })
         }
+        LIST_GITHUB_DRAFTS | LIST_POSTED_COMMENTS => {
+            only(args, &[])?;
+            Ok(Accepted {
+                tool: if name == LIST_GITHUB_DRAFTS {
+                    LIST_GITHUB_DRAFTS
+                } else {
+                    LIST_POSTED_COMMENTS
+                },
+                args: Map::new(),
+                // Never sent: the app's answer is the result (lib.rs).
+                reply: String::new(),
+            })
+        }
+        DELETE_GITHUB_DRAFT | DELETE_POSTED_COMMENT => {
+            only(args, &["id", "reason"])?;
+            let mut out = Map::new();
+            out.insert("id".into(), id_field(args)?.into());
+            if let Some(r) = optional_text(args, "reason", MAX_DELETE_REASON, Lines::One)? {
+                out.insert("reason".into(), r.into());
+            }
+            Ok(Accepted {
+                tool: if name == DELETE_GITHUB_DRAFT {
+                    DELETE_GITHUB_DRAFT
+                } else {
+                    DELETE_POSTED_COMMENT
+                },
+                args: out,
+                reply: String::new(),
+            })
+        }
         _ => Err(format!("Unknown tool: {name}")),
+    }
+}
+
+/// `id`: a positive integer within [`MAX_ID`]. Digits in a string are taken
+/// too -- a model often quotes a number -- and written as the number.
+fn id_field(args: &Map<String, Value>) -> Result<u64, String> {
+    let n = match args.get("id") {
+        None | Some(Value::Null) => return Err("`id` is required.".into()),
+        Some(Value::Number(n)) => n.as_u64(),
+        Some(Value::String(s)) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => {
+            s.parse::<u64>().ok()
+        }
+        Some(_) => None,
+    };
+    match n {
+        Some(n) if (1..=MAX_ID).contains(&n) => Ok(n),
+        _ => Err("`id` must be a positive whole number, as listed.".into()),
     }
 }
 
@@ -322,6 +467,9 @@ enum Lines {
 
 fn only(args: &Map<String, Value>, known: &[&str]) -> Result<(), String> {
     match args.keys().find(|k| !known.contains(&k.as_str())) {
+        Some(k) if known.is_empty() => Err(format!(
+            "Unknown argument `{k}`. This tool takes no arguments."
+        )),
         Some(k) => Err(format!(
             "Unknown argument `{k}`. Accepted: {}.",
             known.join(", ")
@@ -407,7 +555,7 @@ mod tests {
     const NOW: i64 = 1_793_692_800_000; // 2026-11-03T08:00:00Z
 
     #[test]
-    fn definitions_list_the_five_tools_in_order_with_strict_schemas() {
+    fn definitions_list_the_nine_tools_in_order_with_strict_schemas() {
         let defs = definitions();
         let names: Vec<_> = defs
             .as_array()
@@ -422,7 +570,11 @@ mod tests {
                 REQUEST_SESSION,
                 NOTIFY_BLOCKED,
                 SET_TASK_SUMMARY,
-                SHOW_PREVIEW
+                SHOW_PREVIEW,
+                LIST_GITHUB_DRAFTS,
+                DELETE_GITHUB_DRAFT,
+                LIST_POSTED_COMMENTS,
+                DELETE_POSTED_COMMENT
             ]
         );
         assert_eq!(names, NAMES);
@@ -706,5 +858,104 @@ mod tests {
         let d = p["description"].as_str().unwrap();
         assert!(d.contains("THE CALL WAITS"), "{d}");
         assert!(d.contains("self-contained"), "{d}");
+    }
+
+    #[test]
+    fn the_lists_take_no_arguments_and_no_task() {
+        for tool in [LIST_GITHUB_DRAFTS, LIST_POSTED_COMMENTS] {
+            let a = validate(tool, None, NOW).unwrap();
+            assert_eq!(a.tool, tool);
+            assert!(a.args.is_empty());
+            assert!(validate(tool, Some(&json!({})), NOW).is_ok());
+            let err = validate(tool, Some(&json!({"task": 4})), NOW).unwrap_err();
+            assert_eq!(
+                err,
+                "Unknown argument `task`. This tool takes no arguments."
+            );
+        }
+    }
+
+    #[test]
+    fn a_delete_takes_an_id_and_an_optional_one_line_reason() {
+        for tool in [DELETE_GITHUB_DRAFT, DELETE_POSTED_COMMENT] {
+            let a = validate(
+                tool,
+                Some(&json!({"id": 1834567890, "reason": " Same as line 42 "})),
+                NOW,
+            )
+            .unwrap();
+            assert_eq!(a.tool, tool);
+            assert_eq!(
+                a.args,
+                json!({"id": 1834567890u64, "reason": "Same as line 42"})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            );
+            // A quoted number is the number; a blank reason is none.
+            let b = validate(tool, Some(&json!({"id": "17", "reason": "  "})), NOW).unwrap();
+            assert_eq!(b.args, json!({"id": 17}).as_object().unwrap().clone());
+            for bad in [
+                json!(0),
+                json!(-3),
+                json!(1.5),
+                json!("4a"),
+                json!(""),
+                json!(true),
+                json!(MAX_ID + 1),
+            ] {
+                let err = validate(tool, Some(&json!({"id": bad})), NOW).unwrap_err();
+                assert!(err.starts_with("`id` must be"), "{bad}: {err}");
+            }
+            assert_eq!(
+                validate(tool, Some(&json!({})), NOW).unwrap_err(),
+                "`id` is required."
+            );
+            assert!(
+                validate(tool, Some(&json!({"id": 3, "reason": "a\nb"})), NOW)
+                    .unwrap_err()
+                    .contains("control")
+            );
+            let long = "r".repeat(MAX_DELETE_REASON + 1);
+            assert!(validate(tool, Some(&json!({"id": 3, "reason": long})), NOW)
+                .unwrap_err()
+                .contains("at most 200"));
+            assert!(validate(tool, Some(&json!({"id": 3, "task": 9})), NOW)
+                .unwrap_err()
+                .starts_with("Unknown argument `task`"));
+        }
+    }
+
+    #[test]
+    fn who_answers_each_tool() {
+        assert_eq!(answered(NOTIFY_BLOCKED), Answered::Now);
+        assert_eq!(answered(SET_TASK_SUMMARY), Answered::Now);
+        assert_eq!(answered(LIST_GITHUB_DRAFTS), Answered::ByApp);
+        assert_eq!(answered(DELETE_GITHUB_DRAFT), Answered::ByApp);
+        assert_eq!(answered(LIST_POSTED_COMMENTS), Answered::ByApp);
+        assert_eq!(answered(SHOW_PREVIEW), Answered::ByUser);
+        assert_eq!(answered(DELETE_POSTED_COMMENT), Answered::ByUser);
+    }
+
+    #[test]
+    fn the_posted_delete_says_it_waits_and_the_draft_delete_says_undo() {
+        let defs = definitions();
+        let find = |n: &str| {
+            defs.as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == n)
+                .unwrap()
+                .clone()
+        };
+        let posted = find(DELETE_POSTED_COMMENT);
+        assert!(posted["description"]
+            .as_str()
+            .unwrap()
+            .contains("THE CALL WAITS"));
+        assert_eq!(posted["inputSchema"]["required"], json!(["id"]));
+        let draft = find(DELETE_GITHUB_DRAFT);
+        assert!(draft["description"].as_str().unwrap().contains("Undo"));
+        assert_eq!(draft["inputSchema"]["required"], json!(["id"]));
     }
 }

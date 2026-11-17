@@ -7,7 +7,7 @@
  * threads are reviewThreads.ts, the storage is db/comments.ts.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
 import { listGithubDrafts, markDraftsPosted, moveComment, onCommentsChanged, placeRemoved, relocate, sideOf, type ReviewComment } from '../db/comments';
 import { readTextAtRev } from '../git/fileDiff';
@@ -18,6 +18,7 @@ import { getPrStatus } from '../gh/prStore';
 import { detectStackBase } from '../git/stackBase';
 import { measuredBase } from './mergeTarget';
 import { parseDiffRanges, type DiffRanges, type GithubDraft, type SubmitIo } from '../gh/reviewSubmit';
+import { draftRemovalsOf, onDraftRemovals, type DraftRemoval } from '../capture/draftRemovals';
 
 export type ReviewTask = Pick<Task, 'id' | 'reviewUrl' | 'worktreePath' | 'baseBranch' | 'kind' | 'branch'>;
 
@@ -130,6 +131,19 @@ export function useGithubDrafts(task: Pick<Task, 'id' | 'reviewUrl'> | null | un
 }
 
 const NONE: readonly ReviewComment[] = [];
+
+/**
+ * The GitHub Drafts the session removed from this task (#427), each shown
+ * where the draft was with Undo, until the task is left or submitted
+ * (capture/draftRemovals.ts). Empty for other tasks.
+ */
+export function useDraftRemovals(task: Pick<Task, 'id' | 'reviewUrl'> | null | undefined): readonly DraftRemoval[] {
+  const id = task?.reviewUrl ? task.id : null;
+  const read = () => (id === null ? NO_REMOVALS : draftRemovalsOf(id));
+  return useSyncExternalStore(onDraftRemovals, read, read);
+}
+
+const NO_REMOVALS: readonly DraftRemoval[] = [];
 
 async function localCommitCount(task: ReviewTask): Promise<number | null> {
   const base = await taskBase(task.worktreePath, await reviewBase(task)).catch(() => null);

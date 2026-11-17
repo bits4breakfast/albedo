@@ -48,6 +48,7 @@ import {
 import { onPromptChange } from '../../capture/hookEvents';
 import { onTrustWaiting } from '../../capture/workspaceTrust';
 import { onPreviewChange } from '../../capture/previewGate';
+import { onDeletionChange } from '../../capture/githubGate';
 import { onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import { REMOTE_MENU_HINT } from './RemoteMenuNotice';
 import { useRemoteWait } from '../remoteWait';
@@ -287,6 +288,7 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
       onPromptChange(mine),
       onTrustWaiting(mine),
       onPreviewChange(mine),
+      onDeletionChange(mine),
       onTurnChange(mine),
       onEditingChange(mine),
     ];

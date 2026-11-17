@@ -24,6 +24,7 @@
 import { onPromptChange, pendingPrompt } from '../../capture/hookEvents';
 import { isTrustWaiting, onTrustWaiting } from '../../capture/workspaceTrust';
 import { onPreviewChange, pendingPreview } from '../../capture/previewGate';
+import { onDeletionChange, pendingDeletion } from '../../capture/githubGate';
 import { markCarriedSent } from './codeComments';
 import { isOffline, onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import type { TaskStatus } from '../../types';
@@ -180,7 +181,14 @@ export function promptOpen(taskId: number, status?: TaskStatus | null): boolean 
   const s = status !== undefined ? status : shown?.taskId === taskId ? shown.status : null;
   // A waiting preview (#348) too: the session is inside a tool call that
   // waits, and typed text would only queue behind it.
-  return pendingPrompt(taskId) !== null || isTrustWaiting(taskId) || pendingPreview(taskId) !== null || s === 'blocked';
+  // A comment's deletion on GitHub (#427) the same: the session's call waits.
+  return (
+    pendingPrompt(taskId) !== null ||
+    isTrustWaiting(taskId) ||
+    pendingPreview(taskId) !== null ||
+    pendingDeletion(taskId) !== null ||
+    s === 'blocked'
+  );
 }
 
 export function conditionsFor(taskId: number, status?: TaskStatus | null): ReleaseConditions {
@@ -248,6 +256,9 @@ function start(): () => void {
     }),
     onPreviewChange((id) => {
       if (pendingPreview(id) === null) tryRelease(id);
+    }),
+    onDeletionChange((id) => {
+      if (pendingDeletion(id) === null) tryRelease(id);
     }),
     onTurnChange(tryRelease),
     onHeldReleased((id, held) => {

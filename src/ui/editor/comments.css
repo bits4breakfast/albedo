@@ -100,6 +100,12 @@
   border-radius: 2px;
   background: var(--del);
 }
+/* A GitHub Draft the session removed (#427): the sent card's grey edge and
+   outlined chip, its words in --muted -- all on the card's --panel, as
+   measured for Sent (commentsContrast.test.ts). */
+.ed-cmt[data-state='removed'] { border-left-color: var(--border-strong); }
+.ed-cmt-chip[data-state='removed'] { color: var(--muted); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.ed-cmt-removed-text { color: var(--muted); overflow-wrap: anywhere; }
 .ed-cmt-actions { margin-left: auto; display: inline-flex; gap: 2px; }
 .ed-cmt-more { padding: 0 6px; letter-spacing: 1px; }
 

@@ -1,0 +1,47 @@
+/* The card asking to delete one of your comments on GitHub (#427,
+   DeletionCard.tsx). The frame is the "waiting on you" card's (.tx-prompt,
+   on --prompt-bg); only the quoted comment and the delete button are new.
+
+   Measured, light / dark (WCAG 2.x):
+     quote   --panel-inset ground:  --text-strong 19.92 / 18.16, --muted 7.33 / 8.17
+             (the same ground and tokens as .pc-option, promptCard.css)
+     delete  --danger on --danger-soft 6.11 / 7.73; hovered, --on-del-soft on
+             it 7.90 / 9.98. Not a solid red fill: --on-accent (white) on the
+             dark theme's --danger (#ff8f8a) is about 2.2, so a filled button
+             cannot carry its label there.
+   Disabled, both buttons take the global .btn[disabled] (--faint), which
+   clears on --prompt-bg (5.67 / 5.56). No tint, alpha or opacity. */
+
+.gd-quote {
+  margin-top: 4px;
+  padding: 6px 9px;
+  background: var(--panel-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.gd-where {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.gd-text {
+  margin-top: 3px;
+  max-height: 9.5em;
+  overflow: auto;
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gd-actions { justify-content: flex-end; }
+
+/* :not([disabled]), so the global .btn[disabled] still reads disabled. */
+.btn.gd-delete:not([disabled]) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn.gd-delete:not([disabled]):hover,
+.btn.gd-delete:not([disabled]):active { color: var(--on-del-soft); }

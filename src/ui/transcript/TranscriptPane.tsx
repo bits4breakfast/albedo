@@ -42,6 +42,7 @@ import { formatTurnTotals, stepDetail, stepLabel, workingState, type Working } f
 import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
 import { PreviewCard } from '../preview/PreviewCard';
+import { DeletionCard } from './DeletionCard';
 import { PreviewViewerHost } from '../preview/previewViewer';
 import { RemoteMenuNotice } from './RemoteMenuNotice';
 import ReminderCards from '../reminders/ReminderCard';
@@ -630,6 +631,8 @@ export function TranscriptPane({
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {/* A mockup waiting for approval (#348): the session's call waits on it. */}
       {taskId !== null ? <PreviewCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
+      {/* A comment on GitHub the session asks to delete (#427): its call waits on it. */}
+      {taskId !== null ? <DeletionCard taskId={taskId} /> : null}
       {/* A kept version, opened from its chip: read only, over the pane. */}
       <PreviewViewerHost taskId={taskId} />
       {/* Remote Control's menu, up in the terminal with nothing written (#343). */}

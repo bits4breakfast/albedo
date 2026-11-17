@@ -607,6 +607,19 @@ button.tf-section-head:hover .disc { color: var(--text); }
 .tf-comment-edit > .tf-comment-where { margin-bottom: 4px; }
 /* Send N's key, in the button's own colour. */
 .tf-comments-send-key { margin-left: 4px; }
+/* A GitHub Draft the session removed (#427): on the section's own --subcard,
+   no ground of its own; the words in --muted, its reason in a --border-mid
+   edged chip, and Undo the same .tf-btn as Reopen. --text and --muted on
+   --subcard are measured in draftToolsContrast.test.ts. */
+.tf-comment-removed .tf-comment-body { color: var(--muted); }
+.tf-comment-reason {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
 
 /* --- view switch and commit groups ---------------------------------------- */
 

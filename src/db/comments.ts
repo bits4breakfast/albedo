@@ -304,6 +304,54 @@ export async function reopenComment(taskId: number, id: number): Promise<void> {
   changed(taskId);
 }
 
+/**
+ * A removed row back exactly as it was (#427: Undo for a GitHub Draft the
+ * session removed): the same id, lines, code, text, side, thread, times and
+ * destination, so it is the same draft again, not a copy. The id is free:
+ * `comments.id` is AUTOINCREMENT, which never hands a deleted id out again.
+ */
+export async function restoreComment(c: ReviewComment): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO comments (id, task_id, path, line_start, line_end, anchor_text, body, created_at, updated_at, sent_at, resolved_at, github, reply_to, side)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [
+      c.id,
+      c.taskId,
+      c.path,
+      c.lineStart,
+      c.lineEnd,
+      c.anchorText,
+      c.body,
+      c.createdAt,
+      c.updatedAt,
+      c.sentAt,
+      c.resolvedAt,
+      c.github,
+      c.replyTo,
+      sideOf(c),
+    ],
+  );
+  changed(c.taskId);
+}
+
+/**
+ * Remove one GitHub Draft the session asked to remove (#427): only while it
+ * is still a draft of this task waiting for Submit Review, checked in the
+ * same statement. True when it was removed. Not `deleteComment`, which
+ * removes whatever the person points at, and stays that way.
+ */
+export async function deleteUnsentDraft(taskId: number, id: number): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.execute(
+    `DELETE FROM comments WHERE id = $1 AND task_id = $2 AND github = 'draft' AND sent_at IS NULL AND resolved_at IS NULL`,
+    [id, taskId],
+  );
+  const removed = Number(res.rowsAffected ?? 0) > 0;
+  if (removed) changed(taskId);
+  return removed;
+}
+
 export async function deleteComment(taskId: number, id: number): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM comments WHERE id = $1`, [id]);

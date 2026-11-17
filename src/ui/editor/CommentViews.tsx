@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { removedLines, sideOf, type ReviewComment } from '../../db/comments';
 import type { ReviewThread } from '../../gh/reviewThreads';
 import { openExternal } from '../../lib/openUrl';
+import { holdDraftEdit } from '../../capture/draftRemovals';
 import {
   changeLabel,
   commentHeadline,
@@ -98,6 +99,42 @@ export function CommentCardView({
         </span>
       </div>
       <CommentContent comment={comment} />
+    </div>
+  );
+}
+
+/**
+ * Where a GitHub Draft was before the session removed it (#427): what it
+ * said, the session's reason, and Undo, which puts back the same draft.
+ */
+export function RemovedDraftCardView({
+  comment,
+  reason,
+  onUndo,
+}: {
+  comment: ReviewComment;
+  reason: string | null;
+  onUndo: () => void;
+}): ReactNode {
+  const what = comment.replyTo === null ? commentHeadline(comment.body) : `Reply: ${comment.body.split('\n')[0]}`;
+  return (
+    // No data-side: a removed draft's edge is grey whichever side it was on;
+    // its place still says "On removed line N".
+    <div className="ed-cmt" data-state="removed">
+      <div className="ed-cmt-head">
+        {comment.replyTo === null ? <span className="ed-cmt-where">{placeOf(comment)}</span> : null}
+        <span className="ed-cmt-chip" data-state="removed">
+          Removed by the session
+        </span>
+        <span className="ed-cmt-actions">
+          <button type="button" className="ed-cmt-btn ed-cmt-primary" onClick={onUndo} title="Put the draft back as it was">
+            Undo
+          </button>
+        </span>
+      </div>
+      <div className="ed-cmt-removed-text" title={commentWords(comment.body)}>
+        “{what}”{reason ? ` · ${reason}` : ''}
+      </div>
     </div>
   );
 }
@@ -504,6 +541,9 @@ export function ThreadCardView({
 }): ReactNode {
   const [open, setOpen] = useState(!thread.isResolved);
   const [writing, setWriting] = useState<ReviewComment | 'new' | null>(null);
+  // A reply open for editing is not the session's to remove (#427).
+  const editingReply = writing !== null && writing !== 'new' ? writing.id : null;
+  useEffect(() => (editingReply === null ? undefined : holdDraftEdit(editingReply)), [editingReply]);
   const [moreOf, setMoreOf] = useState<number | null>(null);
   const first = thread.comments[0];
   // Its state, when it has one, leads the GitHub button's words.

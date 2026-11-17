@@ -48,7 +48,8 @@ import { deleteComment as deleteCodeComment } from '../db/comments';
 import { removeComment as removeQuote } from './transcript/drafts';
 import { foldQuote, type TranscriptComment } from './transcript/transcriptQuotes';
 import { codeEditMayBeEmpty, codeEditText, saveCodeEdit, saveQuoteEdit, ToSendEditor } from './transcript/ToSendEditor';
-import { useGithubDrafts } from './reviewDrafts';
+import { useDraftRemovals, useGithubDrafts } from './reviewDrafts';
+import { undoDraftRemoval, type DraftRemoval } from '../capture/draftRemovals';
 import { requestSubmitReview } from './SubmitReview';
 
 export interface CommentsSectionProps {
@@ -83,6 +84,9 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   // A review task's drafts for GitHub (#287), replies included: their own
   // group, never To Send, whose Send goes to Claude.
   const drafts = useGithubDrafts(task);
+  // Drafts the session removed (#427): a line each in GitHub Draft, with
+  // Undo. Never To Send's: they were for GitHub, and are not sent anywhere.
+  const removals = useDraftRemovals(task);
 
   useEffect(() => {
     let live = true;
@@ -161,7 +165,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
   const isPosted = (c: ReviewComment) => c.github === 'draft' && c.sentAt !== null;
   const resolved = all.filter((c) => c.resolvedAt !== null && !isPosted(c));
   const posted = all.filter((c) => c.resolvedAt !== null && isPosted(c));
-  if (all.length === 0 && toSend.count === 0 && drafts.length === 0) return null;
+  if (all.length === 0 && toSend.count === 0 && drafts.length === 0 && removals.length === 0) return null;
   const jump = (q: TranscriptComment) => {
     // No transcript of this task to take it (#404): say where it can be done.
     if (!jumpToPassage(task.id, { messageId: q.messageId, quote: q.quote, offset: q.offset })) {
@@ -408,12 +412,14 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
             ))}
         </div>
       )}
-      {drafts.length > 0 && (
+      {(drafts.length > 0 || removals.length > 0) && (
         <div className="tf-comments-group" role="group" aria-label={`GitHub Draft, ${drafts.length}`}>
           <div className="tf-comments-sub">
             GitHub Draft · {drafts.length}
             {/* The same dialog as the task bar's Submit Review, as Send above
-                is ⇧⌘S's: where the drafts are listed, they can go. */}
+                is ⇧⌘S's: where the drafts are listed, they can go. Not on a
+                group left with only removals (#427): nothing here to send. */}
+            {drafts.length > 0 ? (
             <button
               type="button"
               className="tf-btn tf-comments-send"
@@ -422,6 +428,7 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
             >
               Submit Review…
             </button>
+            ) : null}
           </div>
           {drafts.map((c) =>
             c.replyTo === null ? (
@@ -443,6 +450,13 @@ export default function CommentsSection({ task, onOpen, reloadKey = 0 }: Comment
               </div>
             ),
           )}
+          {removals.map((r) => (
+            <RemovedDraftRow
+              key={`removed-${r.row.id}`}
+              removal={r}
+              onUndo={() => void undoDraftRemoval(task.id, r.row.id).catch(fail('put the draft back'))}
+            />
+          ))}
         </div>
       )}
       {/* On GitHub now (#287): there to read, not here to reopen. */}
@@ -479,6 +493,40 @@ function CiRow({ ci, remove }: { ci: QueuedCiFailure; remove: ReactNode }): Reac
         <span className="tf-comment-body">{ci.checks.map((c) => c.name).join(', ')}</span>
       </div>
       {remove}
+    </div>
+  );
+}
+
+/**
+ * A GitHub Draft the session removed (#427): where it was, what it said, the
+ * session's reason, and Undo, which puts back the same draft.
+ */
+function RemovedDraftRow({ removal, onUndo }: { removal: DraftRemoval; onUndo: () => void }): ReactNode {
+  const c = removal.row;
+  const what = c.replyTo === null ? commentHeadline(c.body) : `Reply: ${c.body.split('\n')[0]}`;
+  return (
+    <div className="tf-comment tf-comment-removed">
+      <div
+        className="tf-comment-open tf-comment-static"
+        title={`Removed by the session: ${commentLocation(c)}${removal.reason ? `\nWhy: ${removal.reason}` : ''}\n\n${commentWords(c.body)}`}
+      >
+        <span className="tf-comment-where">
+          <span className="tf-name">{c.path.split('/').pop()}</span>
+          <span className="tf-comment-line">{c.replyTo === null ? lineLabel(c) : `:${c.lineStart}`}</span>
+        </span>
+        <span className="tf-comment-body">
+          Removed by the session · “{what}”
+          {removal.reason ? <span className="tf-comment-reason">{removal.reason}</span> : null}
+        </span>
+      </div>
+      <button
+        type="button"
+        className="tf-btn tf-comment-reopen"
+        onClick={onUndo}
+        aria-label={`Undo: put back the draft on ${commentLocation(c)}`}
+      >
+        Undo
+      </button>
     </div>
   );
 }

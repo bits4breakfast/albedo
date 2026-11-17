@@ -12,6 +12,7 @@
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from '@codemirror/view';
 import { removedLines, type ReviewComment } from '../../db/comments';
+import { holdDraftEdit } from '../../capture/draftRemovals';
 import { changeLabel, indentOf, insertIndent, joinSuggestion, replacesLabel, splitSuggestion, suggestionFrom } from '../../lib/suggestion';
 import { ACTION_LABEL, DESTINATIONS, SUGGEST_HINT, SUGGEST_LABEL, cardState, draftPlaceholder, draftSaveLabel } from './commentLabels';
 
@@ -392,12 +393,22 @@ class DraftBox extends WidgetType {
       if (!sug.hidden) fit();
     } });
     setTimeout(() => area.focus(), 0);
+    // An existing comment open here is not the session's to remove (#427);
+    // released when the box goes (an updated box keeps the same comment).
+    if (this.draft.editing) editHolds.set(box, holdDraftEdit(this.draft.editing.id));
     return box;
+  }
+  destroy(dom: HTMLElement): void {
+    editHolds.get(dom)?.();
+    editHolds.delete(dom);
   }
   ignoreEvent(): boolean {
     return true;
   }
 }
+
+/** The edit hold each File mode box took (#427), by its element. */
+const editHolds = new WeakMap<HTMLElement, () => void>();
 
 const commentedLine = Decoration.line({ class: 'ed-cmt-line' });
 

@@ -149,14 +149,24 @@ describe('Albedo MCP server (#157)', () => {
     expect(withMcpConfig([], 7, server).slice(4)).toEqual(['--']);
   });
 
-  it('allows exactly the five tools', () => {
+  it('allows exactly its nine tools', () => {
     expect(MCP_TOOLS).toEqual([
       'mcp__albedo__create_reminder',
       'mcp__albedo__request_session',
       'mcp__albedo__notify_blocked',
       'mcp__albedo__set_task_summary',
       'mcp__albedo__show_preview',
+      'mcp__albedo__list_github_drafts',
+      'mcp__albedo__delete_github_draft',
+      'mcp__albedo__list_posted_comments',
+      'mcp__albedo__delete_posted_comment',
     ]);
+  });
+
+  it('hands the server the spawn’s token beside the task id (#427)', () => {
+    const env = JSON.parse(mcpConfigArg(7, server, 'f00df00df00df00df00d')).mcpServers.albedo.env;
+    expect(env).toEqual({ ALBEDO_TASK_ID: '7', ALBEDO_TASK_TOKEN: 'f00df00df00df00df00d' });
+    expect(withMcpConfig([], 7, server, 'f00df00df00df00df00d')[1]).toContain('ALBEDO_TASK_TOKEN');
   });
 
   it('sets no timeout of its own: a preview waits as long as Claude Code allows (#348)', () => {
