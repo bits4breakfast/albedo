@@ -7,7 +7,8 @@
  *
  * Every view reads this one list, so they show the same items and the same
  * count: the list above the message box, Files ▸ Comments, the Review
- * Guide's Send and its file bubbles, and Send N. What is sent is still made
+ * Guide's Send and its file bubbles, Send N, and a marked passage's
+ * popover in the transcript (#434), which shows that passage's quotes. What is sent is still made
  * by the composer from the same stores (`composeMessage`), so the count is
  * what goes.
  *
@@ -108,10 +109,11 @@ export function __resetToSendFrozen(): void {
    composer settles an edit whose item has left (`settleOpenEdits` there): a
    code comment now sent takes the words as an edit, as a sent card's Edit
    would; a quote's words go into the message box. One per view, as each
-   view opens its own.
+   view opens its own: the list above the box, Files ▸ Comments, and the
+   popover on a marked passage (#434).
 */
 
-export type EditView = 'box' | 'files';
+export type EditView = 'box' | 'files' | 'passage';
 
 export interface OpenEdit {
   taskId: number;
