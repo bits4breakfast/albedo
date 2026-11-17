@@ -2195,6 +2195,66 @@ ol.tx-md-list { list-style-type: decimal; }
 .tx-cmt-add { color: var(--text); }
 .tx-cmt-key { margin-left: 4px; color: var(--faint); }
 
+/* The comments on a marked passage, under the line clicked (#434). On
+   --panel, as the field is; measured in all three theme blocks in
+   passagePopoverContrast.test.ts (light / dark):
+   - its comment --text-strong 19.43 / 17.20, "Your comment" --muted
+     7.15 / 7.74;
+   - the chip --warn on --banner-bg, the tint the app's warnings use,
+     6.90 / 8.51;
+   - Edit and Remove --accent on --panel 6.46 / 7.88 and, hovered, on
+     --panel-hover 5.62 / 7.04; waiting on a send, --faint on --panel
+     5.94 / 6.02. No opacity. */
+.tx-scroll[data-on-mark] { cursor: pointer; }
+.tx-cmt-pop {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  gap: 6px;
+  width: min(400px, calc(100% - 72px));
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+  font-size: var(--fs-sm);
+  cursor: auto;
+}
+.tx-cmt-pop:focus { outline: none; }
+.tx-cmt-pop:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.tx-cmt-pop-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 8px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.tx-cmt-pop-chip {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--banner-bg);
+  color: var(--warn);
+}
+.tx-cmt-pop-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.tx-cmt-pop-item { display: grid; gap: 2px; }
+.tx-cmt-pop-text { color: var(--text-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tx-cmt-pop-acts { display: flex; gap: 4px; margin-left: -6px; }
+.tx-cmt-pop-act {
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.tx-cmt-pop-act:hover:not(:disabled) { background: var(--panel-hover); }
+.tx-cmt-pop-act:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.tx-cmt-pop-act:disabled { color: var(--faint); cursor: default; }
+
 /* A quote in a message you sent: compact, above your comment. */
 .tx-quote {
   display: flex;

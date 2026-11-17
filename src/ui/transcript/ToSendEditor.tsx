@@ -18,6 +18,7 @@ import type { ReactNode } from 'react';
 import { editComment as editCodeComment, type ReviewComment } from '../../db/comments';
 import { joinSuggestion, splitSuggestion } from '../../lib/suggestion';
 import { editComment as editQuoteComment } from './drafts';
+import { closeEditsFor } from './toSend';
 import type { TranscriptComment } from './transcriptQuotes';
 
 /** What the field opens with for a code comment: its words, without a suggestion's code. */
@@ -36,9 +37,14 @@ export function saveCodeEdit(taskId: number, c: Pick<ReviewComment, 'id' | 'body
   return editCodeComment(taskId, c.id, joinSuggestion(splitSuggestion(c.body).suggestion, words));
 }
 
-/** Save a quote's comment, trimmed; empty is not a comment. */
+/**
+ * Save a quote's comment, trimmed; empty is not a comment. Its edits in the
+ * other views close too (#434 review): opened on the old words, each would
+ * otherwise later settle its own words into the message box.
+ */
 export function saveQuoteEdit(taskId: number, c: Pick<TranscriptComment, 'id'>, words: string): void {
   editQuoteComment(taskId, c.id, words.trim());
+  closeEditsFor(taskId, 'quote', c.id);
 }
 
 export function ToSendEditor({
