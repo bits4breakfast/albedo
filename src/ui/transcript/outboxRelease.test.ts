@@ -73,6 +73,8 @@ import {
 import { START_GRACE_MS, __resetTurns, noteTaskSessions } from './turn';
 import { recordQueueOperations, seedQueue } from '../../capture/queue';
 import { setTrustWaiting } from '../../capture/workspaceTrust';
+import { __resetStartGate, setAwaitingStart } from './startGate';
+import { onSessionSubmit } from './send';
 
 const term = (await import('../Terminal')) as unknown as { __emitPresence: (taskId: number, live: boolean) => void };
 const hooks = (await import('../../capture/hookEvents')) as unknown as {
@@ -122,6 +124,7 @@ afterEach(() => {
   hooks.__setPrompt(1, null);
   __resetConnectivity();
   __resetOutbox();
+  __resetStartGate();
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -158,7 +161,7 @@ describe('the gate', () => {
     // A prompt is the turn's, and says more than the turn does.
     expect(heldHint({ ...ok, turnRunning: true, promptOpen: true })).toBe('until you answer');
     expect(heldHint({ ...ok, turnRunning: true })).toBe('until this turn ends');
-    expect(heldHint({ ...ok, live: false })).toBe('until the session starts');
+    expect(heldHint({ ...ok, live: false })).toBe('until Claude Code has started');
     expect(heldHint({ ...ok, failed: true })).toBe('couldn\u2019t send \u2014 retrying');
   });
 
@@ -246,6 +249,51 @@ describe('the release', () => {
     noteShownStatus(null, null);
   });
 
+  it('a gate cleared by the session ending starts nothing: trust declined with "No, exit" (#439 review)', async () => {
+    setTrustWaiting(1, true);
+    stop = startOutboxRelease();
+    holdMessage(1, 'held at the trust dialog');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(startPty).mockClear();
+    // Declined: the pty exits, and the terminal clears the trust wait.
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    term.__emitPresence(1, false);
+    setTrustWaiting(1, false);
+    await vi.advanceTimersByTimeAsync(RETRY_MS * 3);
+    expect(startPty).not.toHaveBeenCalled();
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(heldFor(1).map((h) => h.text)).toEqual(['held at the trust dialog']);
+  });
+
+  it('nor does a prompt ending with no pty', async () => {
+    hooks.__setPrompt(1, { kind: 'question' });
+    stop = startOutboxRelease();
+    holdMessage(1, 'waiting on a question');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(startPty).mockClear();
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    hooks.__setPrompt(1, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startPty).not.toHaveBeenCalled();
+  });
+
+  it('nor does leaving blocked with no pty; a new message does start one', async () => {
+    noteShownStatus(1, 'blocked');
+    stop = startOutboxRelease();
+    holdMessage(1, 'waiting');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(startPty).mockClear();
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    noteShownStatus(1, 'idle');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startPty).not.toHaveBeenCalled();
+    // A new reason to send may start the session.
+    holdMessage(1, 'and another');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startPty).toHaveBeenCalledWith(1);
+    noteShownStatus(null, null);
+  });
+
   it('tries a failed write again after a pause', async () => {
     vi.mocked(submitPty).mockResolvedValueOnce(false);
     stop = startOutboxRelease();
@@ -318,6 +366,82 @@ describe('the release', () => {
     stop = startOutboxRelease();
     await vi.advanceTimersByTimeAsync(PROBE_EVERY_MS * 3);
     expect(probe).not.toHaveBeenCalled();
+  });
+});
+
+describe('before Claude Code has started (#439)', () => {
+  it('the gate stays shut, and the band says what it waits for and how they go', () => {
+    const ok = { offline: false, promptOpen: false, turnRunning: false, live: true, headMaybeSent: false, failed: false };
+    const starting = { ...ok, starting: true };
+    expect(canRelease(starting)).toBe(false);
+    expect(heldLabel(starting)).toBe('Held');
+    expect(heldHint(starting)).toBe('until Claude Code has started');
+    expect(heldGoes(starting)).toBe('Sent the moment Claude Code is up');
+    expect(heldGoes(starting, 2)).toBe('Sent together, as one message, the moment Claude Code is up');
+    // A question in the terminal says more than the start does.
+    expect(heldHint({ ...starting, promptOpen: true })).toBe('until you answer');
+    expect(sendNowAllowed({ ...starting, turnRunning: true })).toBe(false);
+  });
+
+  it('nothing is written until the start, then they go in order, as one', async () => {
+    setAwaitingStart(1, Date.now());
+    stop = startOutboxRelease();
+    holdMessage(1, 'first');
+    holdMessage(1, 'second');
+    // The pty is up: presence alone does not open it.
+    term.__emitPresence(1, true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(conditionsFor(1).starting).toBe(true);
+
+    setAwaitingStart(1, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[1, 'first\n\nsecond']]);
+    expect(heldFor(1)).toEqual([]);
+  });
+
+  it('the delivery clock starts at the write, not when the message was held', async () => {
+    const writes: number[] = [];
+    const off = onSessionSubmit((_taskId, _text, _from, startedAt) => {
+      if (startedAt !== undefined) writes.push(startedAt);
+    });
+    try {
+      setAwaitingStart(1, Date.now());
+      stop = startOutboxRelease();
+      const heldAt = Date.now();
+      holdMessage(1, 'held for the start', heldAt);
+      await vi.advanceTimersByTimeAsync(30_000);
+      setAwaitingStart(1, null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toBeGreaterThanOrEqual(heldAt + 30_000);
+    } finally {
+      off();
+    }
+  });
+
+  it('a wait ended by the pty ending is no reason to start another', async () => {
+    setAwaitingStart(1, Date.now());
+    stop = startOutboxRelease();
+    holdMessage(1, 'kept');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(startPty).mockClear();
+    // The terminal clears the wait after the pty is gone.
+    vi.mocked(hasLivePty).mockReturnValue(false);
+    setAwaitingStart(1, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startPty).not.toHaveBeenCalled();
+    expect(submitPty).not.toHaveBeenCalled();
+    expect(heldFor(1).map((h) => h.text)).toEqual(['kept']);
+  });
+
+  it('Send Now is not usable while it starts', async () => {
+    setAwaitingStart(1, Date.now());
+    stop = startOutboxRelease();
+    holdMessage(1, 'not yet');
+    expect(sendNowAllowed({ ...conditionsFor(1), turnRunning: true })).toBe(false);
+    expect(await sendNow(1, heldFor(1)[0]!.id)).toBe(false);
+    expect(submitPty).not.toHaveBeenCalled();
   });
 });
 

@@ -51,6 +51,7 @@ import { useGroupToolCalls } from './groupToolCalls';
 import { foldToolRuns, groupRows } from './grouping';
 import { MemoToolRunGroup, SidechainGroup } from './ToolRunGroup';
 import { QueuedStrip } from './QueuedStrip';
+import { StartWaitNotice, StartWaitRows } from './StartWait';
 import { Composer } from './Composer';
 import './transcript.css';
 
@@ -620,6 +621,8 @@ export function TranscriptPane({
             </div>
           ) : null}
           {commandEcho && echo && commandEcho.at > echo.at ? <CommandEchoRow taskId={taskId!} echo={commandEcho} /> : null}
+          {/* Held until Claude Code has started (#439): shown as yours at once, after anything already on its way. */}
+          <StartWaitRows taskId={taskId} />
           {workingNow ? <WorkingLine state={workingNow} /> : null}
           {/* Comment on a selected passage (#187): drawn in the scroller, so it scrolls with the text. */}
           <PassageComments taskId={taskId} scrollRef={scrollRef} messages={messages} />
@@ -639,6 +642,8 @@ export function TranscriptPane({
 
       {/* Above Queued: what is queued goes next, so it sits by the composer. */}
       <BackgroundStrip items={background} onReveal={setReveal} />
+      {/* Claude Code slow to start with a message waiting (#439): above the band that holds it. */}
+      {taskId !== null ? <StartWaitNotice taskId={taskId} onShowTerminal={onAnswerInTerminal} /> : null}
       <QueuedStrip sessionId={sessionId} taskId={taskId} liveSince={liveSince} />
       {taskId !== null ? <PromptCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {/* A mockup waiting for approval (#348): the session's call waits on it. */}

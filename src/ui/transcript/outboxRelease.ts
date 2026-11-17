@@ -12,9 +12,13 @@
  * (`startPty`, as a send would), and its presence event brings the release
  * back. A failed write is tried again after `RETRY_MS`.
  *
+ * A live session whose `claude` has not reported its start yet (startGate.ts,
+ * #439) is not typed into: the release waits for that, and the held messages
+ * go, in order, once it is up.
+ *
  * Checked on every event that can open the gate: the connection coming back,
- * a session going live, a prompt being answered, a turn ending, the outbox
- * changing. While anything is held the connection is watched
+ * a session going live or reporting its start, a prompt being answered, a
+ * turn ending, the outbox changing. While anything is held the connection is watched
  * (connectivity.ts), which is what notices it coming back.
  *
  * A delivered message's review comments are marked sent here, from the ids
@@ -43,6 +47,7 @@ import {
 import { isSlashCommand, submitLocked } from './send';
 import { isTurnRunning, onTurnChange } from './turn';
 import { awaitingDelivery, onAwaitingDeliveryChange } from './deliveryGate';
+import { awaitingStart, onAwaitingStartChange } from './startGate';
 
 /** How long after a failed write the release tries again. */
 export const RETRY_MS = 10_000;
@@ -72,11 +77,22 @@ export interface ReleaseConditions {
    * #433): if Claude Code did not take it, the next would be glued onto it.
    */
   awaitingDelivery?: boolean;
+  /**
+   * The session's pty is up and `claude` has not reported its start
+   * (startGate.ts, #439): typed now, a message could be read by whatever
+   * the shell runs first.
+   */
+  starting?: boolean;
 }
 
+/** What the band says holds them while Claude Code is not up: not running, or not started yet (#439). */
+export const START_HINT = 'until Claude Code has started';
+
 /** Whether held messages may go now. */
-export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' | 'turnRunning' | 'awaitingDelivery'>): boolean {
-  return !c.offline && !c.promptOpen && !c.turnRunning && c.awaitingDelivery !== true;
+export function canRelease(
+  c: Pick<ReleaseConditions, 'offline' | 'promptOpen' | 'turnRunning' | 'awaitingDelivery' | 'starting'>,
+): boolean {
+  return !c.offline && !c.promptOpen && !c.turnRunning && c.awaitingDelivery !== true && c.starting !== true;
 }
 
 /**
@@ -84,7 +100,18 @@ export function canRelease(c: Pick<ReleaseConditions, 'offline' | 'promptOpen' |
  * the hint says why -- and Sending once nothing does.
  */
 export function heldLabel(c: ReleaseConditions): 'Held' | 'Sending' {
-  if (c.headMaybeSent || c.offline || c.promptOpen || c.turnRunning || !c.live || c.failed || c.awaitingDelivery === true) return 'Held';
+  if (
+    c.headMaybeSent ||
+    c.offline ||
+    c.promptOpen ||
+    c.turnRunning ||
+    !c.live ||
+    c.failed ||
+    c.awaitingDelivery === true ||
+    c.starting === true
+  ) {
+    return 'Held';
+  }
   return 'Sending';
 }
 
@@ -99,7 +126,7 @@ export function heldHint(c: ReleaseConditions): string | null {
   if (c.promptOpen) return 'until you answer';
   if (c.turnRunning) return 'until this turn ends';
   if (c.awaitingDelivery === true) return 'until the last message reaches Claude Code';
-  if (!c.live) return 'until the session starts';
+  if (!c.live || c.starting === true) return START_HINT;
   if (c.failed) return 'couldn\u2019t send \u2014 retrying';
   return null;
 }
@@ -111,6 +138,9 @@ export function heldHint(c: ReleaseConditions): string | null {
 export function heldGoes(c: ReleaseConditions, together = 1): string | null {
   if (c.headMaybeSent) return null;
   if (c.offline) return together > 1 ? 'Sent together, as one message, once you\u2019re online' : 'Sent in order once you\u2019re online';
+  if (!c.promptOpen && c.starting === true) {
+    return together > 1 ? 'Sent together, as one message, the moment Claude Code is up' : 'Sent the moment Claude Code is up';
+  }
   if (!c.promptOpen && c.turnRunning) {
     return together > 1 ? 'Sent together, as one message, when Claude finishes this turn' : 'Sent when Claude finishes this turn';
   }
@@ -126,7 +156,7 @@ export function sendNowOffered(c: ReleaseConditions): boolean {
   return c.turnRunning && !c.offline && !c.headMaybeSent;
 }
 export function sendNowAllowed(c: ReleaseConditions): boolean {
-  return sendNowOffered(c) && !c.promptOpen && c.live && c.awaitingDelivery !== true;
+  return sendNowOffered(c) && !c.promptOpen && c.live && c.awaitingDelivery !== true && c.starting !== true;
 }
 
 /**
@@ -180,7 +210,7 @@ export function noteShownStatus(taskId: number | null, status: TaskStatus | null
   const was = shown;
   shown = taskId === null ? null : { taskId, status };
   // Leaving `blocked` opens the gate: nothing else announces it.
-  if (was?.status === 'blocked' && (shown?.taskId !== was.taskId || shown.status !== 'blocked')) tryRelease(was.taskId);
+  if (was?.status === 'blocked' && (shown?.taskId !== was.taskId || shown.status !== 'blocked')) reopened(was.taskId);
 }
 
 /** Whether typed text would land in a dialog. `status` defaults to what `noteShownStatus` said. */
@@ -207,10 +237,24 @@ export function conditionsFor(taskId: number, status?: TaskStatus | null): Relea
     headMaybeSent: heldFor(taskId)[0]?.maybeSent === true,
     failed: lastReleaseFailed(taskId),
     awaitingDelivery: awaitingDelivery(taskId),
+    starting: awaitingStart(taskId),
   };
 }
 
 const retries = new Map<number, ReturnType<typeof setTimeout>>();
+
+/**
+ * A gate cleared -- a prompt answered, the trust dialog gone, a preview or a
+ * deletion settled, `blocked` left, a turn ended, a message confirmed, the
+ * start reported. That is a reason to send into the session that is there,
+ * never to start one: the gate also clears when the process ends (the trust
+ * dialog declined with "No, exit"), and starting it again would open the same
+ * dialog, over and over. Only a new reason to send -- the outbox changing,
+ * the connection coming back -- may start a session (#439 review).
+ */
+function reopened(taskId: number): void {
+  if (hasLivePty(taskId)) tryRelease(taskId);
+}
 
 function tryRelease(taskId: number): void {
   if (heldFor(taskId).length === 0 || !canRelease(conditionsFor(taskId))) return;
@@ -257,21 +301,26 @@ function start(): () => void {
       if (live) tryRelease(id);
     }),
     onPromptChange((id, prompt) => {
-      if (prompt === null) tryRelease(id);
+      if (prompt === null) reopened(id);
     }),
     onTrustWaiting((id, waiting) => {
-      if (!waiting) tryRelease(id);
+      if (!waiting) reopened(id);
     }),
     onPreviewChange((id) => {
-      if (pendingPreview(id) === null) tryRelease(id);
+      if (pendingPreview(id) === null) reopened(id);
     }),
     onDeletionChange((id) => {
-      if (pendingDeletion(id) === null) tryRelease(id);
+      if (pendingDeletion(id) === null) reopened(id);
     }),
-    onTurnChange(tryRelease),
+    onTurnChange(reopened),
     // The last message reached the transcript: the next may go.
     onAwaitingDeliveryChange((id) => {
-      if (!awaitingDelivery(id)) tryRelease(id);
+      if (!awaitingDelivery(id)) reopened(id);
+    }),
+    // Claude Code reported its start (#439), or Send Anyway. The wait also
+    // ends when the pty does: `reopened` starts nothing then.
+    onAwaitingStartChange((id) => {
+      if (!awaitingStart(id)) reopened(id);
     }),
     onHeldReleased((id, held) => {
       if (!held.commentIds || held.commentIds.length === 0) return;

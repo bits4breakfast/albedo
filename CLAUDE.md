@@ -35,7 +35,10 @@ keystrokes are not used: the pty stays input-only and unread.
 A second, equally narrow widening, by the owner's decision (2026-10-20): the
 `SessionStart` line keeps `session_id` and `source`, and nothing else from that
 payload. It exists so a task follows `/clear` and `/resume` typed inside Claude
-Code. That is the whole of it.
+Code. By the owner's decision (issue #439), its arrival also gates the first
+write to a new process: nothing is typed into a pty spawned with the hooks
+until that process's first `SessionStart` (`src/ui/transcript/startGate.ts`),
+since whatever the shell runs before `claude` would read it.
 
 A third, by the owner's decision (2026-10-20): the `--settings` block also sets
 Claude Code's `statusLine` to the same script in `status` mode. It keeps the

@@ -664,10 +664,10 @@ describe('latestSessionStart', () => {
       latestSessionStart([
         ev('SessionStart', { sessionId: a, source: 'startup' }),
         ev('Stop'),
-        ev('SessionStart', { sessionId: b, source: 'clear' }),
-        ev('SessionStart', { sessionId: null, source: 'clear' }),
+        ev('SessionStart', { sessionId: b, source: 'clear' }, 1_700_000_005_000),
+        ev('SessionStart', { sessionId: null, source: 'clear' }, 1_700_000_006_000),
       ]),
-    ).toEqual({ sessionId: b, source: 'clear' });
+    ).toEqual({ sessionId: b, source: 'clear', at: 1_700_000_005_000 });
   });
   it('is null without one', () => {
     expect(latestSessionStart([ev('Stop'), ev('PostToolUse')])).toBeNull();

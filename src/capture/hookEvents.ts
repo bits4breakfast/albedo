@@ -1004,7 +1004,7 @@ function refreshTask(taskId: number): Promise<void> {
     if (!live.has(taskId)) return;
     publish(taskId, currentPrompt(tail.state, answered));
     const start = latestSessionStart(events);
-    if (start) publishSession(taskId, start.sessionId, start.source ?? 'unknown');
+    if (start) publishSession(taskId, start.sessionId, start.source ?? 'unknown', start.at);
   });
 }
 
@@ -1012,14 +1012,20 @@ function refreshTask(taskId: number): Promise<void> {
 // Which session the terminal is on
 // ---------------------------------------------------------------------------
 
-type SessionListener = (taskId: number, sessionId: string, source: string) => void;
+/**
+ * `at`: when the hook ran (whole seconds, HOOK_SCRIPT's stamp). The terminal
+ * tells its own process's start from an earlier one's by it (#439, startGate.ts).
+ */
+type SessionListener = (taskId: number, sessionId: string, source: string, at: number) => void;
 const sessionListeners = new Set<SessionListener>();
 
 /** The last SessionStart in `events` that names a session, or null. */
-export function latestSessionStart(events: readonly HookEvent[]): { sessionId: string; source: string | null } | null {
+export function latestSessionStart(
+  events: readonly HookEvent[],
+): { sessionId: string; source: string | null; at: number } | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
-    if (e.event === 'SessionStart' && e.sessionId) return { sessionId: e.sessionId, source: e.source };
+    if (e.event === 'SessionStart' && e.sessionId) return { sessionId: e.sessionId, source: e.source, at: e.at };
   }
   return null;
 }
@@ -1037,10 +1043,10 @@ export function onSessionStart(cb: SessionListener): () => void {
   };
 }
 
-function publishSession(taskId: number, sessionId: string, source: string): void {
+function publishSession(taskId: number, sessionId: string, source: string, at: number): void {
   for (const cb of [...sessionListeners]) {
     try {
-      cb(taskId, sessionId, source);
+      cb(taskId, sessionId, source, at);
     } catch {
       /* a broken subscriber must not stall the others */
     }

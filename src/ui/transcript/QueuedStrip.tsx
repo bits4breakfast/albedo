@@ -53,6 +53,7 @@ import { onConnectivityChange, watchConnectivity } from '../../lib/connectivity'
 import { REMOTE_MENU_HINT } from './RemoteMenuNotice';
 import { notDeliveredNote } from './delivery';
 import { onAwaitingDeliveryChange } from './deliveryGate';
+import { onAwaitingStartChange } from './startGate';
 import { useRemoteWait } from '../remoteWait';
 
 /**
@@ -294,6 +295,7 @@ function useReleaseConditions(taskId: number): ReleaseConditions {
       onTurnChange(mine),
       onEditingChange(mine),
       onAwaitingDeliveryChange(mine),
+      onAwaitingStartChange(mine),
     ];
     return () => offs.forEach((off) => off());
   }, [taskId]);
