@@ -34,8 +34,9 @@ vi.mock('../../db/comments', async () => ({
 }));
 
 const { TranscriptPane } = await import('./TranscriptPane');
-const { __resetDrafts, addComment, commentsOf, takeComments } = await import('./drafts');
-const { __resetOpenEdits, __resetToSendFrozen, editsOf, openEdit, setToSendFrozen } = await import('./toSend');
+const { __resetDrafts, addComment, commentsOf, removeComment, takeComments } = await import('./drafts');
+const { __resetOpenEdits, __resetToSendFrozen, editsOf, openEdit, setEditWords, setToSendFrozen } = await import('./toSend');
+const { clickIsElsewhere, OPEN_AFTER_MS } = await import('./PassageComments');
 const { charAt, marksAt } = await import('./markHit');
 type TranscriptComment = import('./transcriptQuotes').TranscriptComment;
 
@@ -99,6 +100,15 @@ function clickOn(id: number, word: string, init: MouseEventInit = {}): void {
   fireEvent.click(node.parentElement!, { button: 0, detail: 1, clientX: 10, clientY: 10, ...init });
 }
 
+/** Past the double-click interval: whatever a click was going to open is open. */
+const settle = () => act(() => new Promise<void>((r) => setTimeout(r, OPEN_AFTER_MS + 50)));
+
+/** Click on the mark and wait for the popover. */
+async function openOn(id: number, word: string): Promise<HTMLElement> {
+  clickOn(id, word);
+  return screen.findByRole('dialog', { name: /Your comment/ });
+}
+
 async function renderPane(): Promise<void> {
   render(<TranscriptPane taskId={1} sessionId="s1" />);
   await waitFor(() => expect(rowEl(2)).toBeTruthy());
@@ -111,12 +121,12 @@ async function withMark(...cs: TranscriptComment[]): Promise<void> {
 }
 
 const popover = () => screen.queryByRole('dialog', { name: /Your comment/ });
+const box = () => document.querySelector('.tx-composer-input') as HTMLTextAreaElement;
 
 describe('a click on a marked passage', () => {
   it('shows its comment under it, To Send, with Edit and Remove', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
-    clickOn(1, 'line');
-    const pop = await screen.findByRole('dialog', { name: 'Your comment' });
+    const pop = await openOn(1, 'line');
     expect(pop.textContent).toContain('Is twice on purpose?');
     expect(pop.textContent).toContain('To Send · goes with your next message');
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
@@ -129,6 +139,7 @@ describe('a click on a marked passage', () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
     clickOn(1, 'parser');
     clickOn(2, 'queue');
+    await settle();
     expect(popover()).toBeNull();
   });
 
@@ -140,15 +151,29 @@ describe('a click on a marked passage', () => {
     range.setEnd(node, node.data.indexOf('gives'));
     document.getSelection()!.addRange(range);
     clickOn(1, 'line');
+    await settle();
     expect(popover()).toBeNull();
     expect(document.getSelection()!.toString()).toBe('every line twice before it ');
   });
 
-  it('a double click picks a word: the popover the first click opened closes', async () => {
+  it('text selected elsewhere does not stop a click on the mark', async () => {
+    await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
+    const node = textNode(rowEl(2), 'queue');
+    const range = document.createRange();
+    range.setStart(node, node.data.indexOf('queue'));
+    range.setEnd(node, node.data.indexOf('queue') + 5);
+    document.getSelection()!.addRange(range);
+    expect(await openOn(1, 'line')).toBeTruthy();
+  });
+
+  it('a double click picks a word: the popover never comes up', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
     clickOn(1, 'line');
-    expect(popover()).toBeTruthy();
+    // The second click of a double click comes well within the interval.
+    await act(() => new Promise<void>((r) => setTimeout(r, 60)));
+    expect(popover()).toBeNull();
     clickOn(1, 'line', { detail: 2 });
+    await settle();
     expect(popover()).toBeNull();
   });
 
@@ -156,6 +181,7 @@ describe('a click on a marked passage', () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
     clickOn(1, 'line', { metaKey: true });
     clickOn(1, 'line', { shiftKey: true });
+    await settle();
     expect(popover()).toBeNull();
   });
 
@@ -165,8 +191,8 @@ describe('a click on a marked passage', () => {
       comment('early', 'every line', 'First thought.', 10),
       comment('other', 'gives up', 'Not here.', 5),
     );
-    clickOn(1, 'line');
-    const pop = await screen.findByRole('dialog', { name: 'Your comments' });
+    const pop = await openOn(1, 'line');
+    expect(pop.getAttribute('aria-label')).toBe('Your comments');
     expect(pop.textContent).toContain('Your 2 comments');
     const items = [...pop.querySelectorAll('.tx-cmt-pop-text')].map((e) => e.textContent);
     expect(items).toEqual(['First thought.', 'Second thought.']);
@@ -177,8 +203,7 @@ describe('a click on a marked passage', () => {
     const seen = vi.fn();
     window.addEventListener('keydown', seen);
     try {
-      clickOn(1, 'line');
-      const pop = await screen.findByRole('dialog', { name: 'Your comment' });
+      const pop = await openOn(1, 'line');
       const notCancelled = fireEvent.keyDown(pop, { key: 'Escape' });
       expect(notCancelled).toBe(false);
       expect(popover()).toBeNull();
@@ -188,12 +213,36 @@ describe('a click on a marked passage', () => {
     }
   });
 
-  it('a press anywhere else closes it; a press inside does not', async () => {
+  it('a click elsewhere closes it, on the click and not the press; a click inside does not', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
-    clickOn(1, 'line');
-    fireEvent.mouseDown(screen.getByRole('button', { name: 'Edit' }));
+    const pop = await openOn(1, 'line');
+    fireEvent.click(pop.querySelector('.tx-cmt-pop-text')!);
     expect(popover()).toBeTruthy();
     fireEvent.mouseDown(rowEl(2));
+    expect(popover()).toBeTruthy();
+    fireEvent.click(rowEl(2));
+    expect(popover()).toBeNull();
+  });
+
+  it('does not take focus from somewhere else that has it', async () => {
+    await withMark(comment('b', 'line twice', 'Second.', 20), comment('a', 'every line', 'First.', 10));
+    await openOn(1, 'line');
+    act(() => box().focus());
+    act(() => removeComment(1, 'a'));
+    expect(popover()!.textContent).not.toContain('First.');
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('on a row whose click folds it, neither the pointer nor the click promises the popover', async () => {
+    await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
+    const node = textNode(rowEl(1), 'line');
+    node.parentElement!.classList.add('tx-chip-head');
+    caret = { offsetNode: node, offset: node.data.indexOf('line') };
+    fireEvent.mouseMove(node.parentElement!, { clientX: 10, clientY: 10 });
+    await act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+    expect(scroller().hasAttribute('data-on-mark')).toBe(false);
+    clickOn(1, 'line');
+    await settle();
     expect(popover()).toBeNull();
   });
 
@@ -211,11 +260,27 @@ describe('a click on a marked passage', () => {
   });
 });
 
+describe('whose click it is', () => {
+  it('a tool chip’s or a diff’s folding head, a control, or Albedo’s own: not the mark’s', () => {
+    const el = (html: string) => {
+      const d = document.createElement('div');
+      d.innerHTML = html;
+      return d.querySelector('i')!;
+    };
+    expect(clickIsElsewhere(el('<div class="tx-chip-head"><span><i>x</i></span></div>'))).toBe(true);
+    expect(clickIsElsewhere(el('<div class="tx-d-head tx-d-head-toggle"><i>x</i></div>'))).toBe(true);
+    expect(clickIsElsewhere(el('<a href="#"><i>x</i></a>'))).toBe(true);
+    expect(clickIsElsewhere(el('<div class="tx-cmt-pop"><i>x</i></div>'))).toBe(true);
+    expect(clickIsElsewhere(el('<div class="tx-d-head"><i>x</i></div>'))).toBe(false);
+    expect(clickIsElsewhere(el('<p><i>x</i></p>'))).toBe(false);
+  });
+});
+
 describe('editing from the popover: the To Send list’s editor and rules', () => {
   it('Edit opens the field with the words; ⌘↩ saves them', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
-    clickOn(1, 'line');
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await openOn(1, 'line');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     const field = screen.getByRole('textbox', { name: 'Edit comment' }) as HTMLTextAreaElement;
     expect(field.value).toBe('Is twice on purpose?');
     fireEvent.change(field, { target: { value: 'Is reading twice on purpose?' } });
@@ -226,10 +291,23 @@ describe('editing from the popover: the To Send list’s editor and rules', () =
     expect(editsOf(1)).toEqual([]);
   });
 
+  it('a save in one view closes the quote’s edits in the others', async () => {
+    await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
+    act(() => openEdit({ taskId: 1, view: 'box', kind: 'quote', id: 'a', initial: 'Is twice on purpose?' }));
+    act(() => setEditWords({ taskId: 1, view: 'box', kind: 'quote', id: 'a' }, 'box words'));
+    await openOn(1, 'line');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByRole('textbox', { name: 'Edit comment' });
+    fireEvent.change(field, { target: { value: 'popover words' } });
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    expect(commentsOf(1).map((c) => c.comment)).toEqual(['popover words']);
+    expect(editsOf(1)).toEqual([]);
+  });
+
   it('Esc in the field cancels the edit only; the popover stays, and takes focus back', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
-    clickOn(1, 'line');
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await openOn(1, 'line');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     const field = screen.getByRole('textbox', { name: 'Edit comment' });
     fireEvent.change(field, { target: { value: 'never mind' } });
     fireEvent.keyDown(field, { key: 'Escape' });
@@ -240,22 +318,39 @@ describe('editing from the popover: the To Send list’s editor and rules', () =
     expect(document.activeElement).toBe(pop);
   });
 
-  it('closing the popover mid-edit keeps what was typed, and opening it again brings it back', async () => {
+  it('with an edit open, a click elsewhere leaves it in view; a send puts the words in the box once', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
-    clickOn(1, 'line');
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await openOn(1, 'line');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Edit comment' }), { target: { value: 'half typed' } });
-    fireEvent.mouseDown(rowEl(2));
-    expect(popover()).toBeNull();
-    clickOn(1, 'line');
+    fireEvent.mouseDown(box());
+    fireEvent.click(box());
+    expect(popover()).toBeTruthy();
     expect((screen.getByRole('textbox', { name: 'Edit comment' }) as HTMLTextAreaElement).value).toBe('half typed');
+    fireEvent.change(box(), { target: { value: 'go ahead' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(commentsOf(1)).toEqual([]));
+    await waitFor(() => expect(box().value).toBe('half typed'));
+    expect(popover()).toBeNull();
+    expect(editsOf(1)).toEqual([]);
+  });
+
+  it('with an edit open, a click on another mark does not replace it', async () => {
+    await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1), comment('q', 'the queue', 'Which queue?', 2, 2));
+    await openOn(1, 'line');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Edit comment' }), { target: { value: 'half typed' } });
+    clickOn(2, 'queue');
+    await settle();
+    expect((screen.getByRole('textbox', { name: 'Edit comment' }) as HTMLTextAreaElement).value).toBe('half typed');
+    expect(popover()!.textContent).not.toContain('Which queue?');
   });
 
   it('Remove takes it out of To Send, closes its edits in every view, and closes the popover', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
     act(() => openEdit({ taskId: 1, view: 'box', kind: 'quote', id: 'a', initial: 'Is twice on purpose?' }));
-    clickOn(1, 'line');
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    await openOn(1, 'line');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     expect(commentsOf(1)).toEqual([]);
     expect(editsOf(1)).toEqual([]);
     expect(popover()).toBeNull();
@@ -264,8 +359,8 @@ describe('editing from the popover: the To Send list’s editor and rules', () =
 
   it('Remove of one of two keeps the popover open on the other', async () => {
     await withMark(comment('b', 'line twice', 'Second.', 20), comment('a', 'every line', 'First.', 10));
-    clickOn(1, 'line');
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Remove' }))[0]!);
+    await openOn(1, 'line');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]!);
     expect(commentsOf(1).map((c) => c.id)).toEqual(['b']);
     const pop = popover()!;
     expect(pop.textContent).toContain('Second.');
@@ -276,7 +371,7 @@ describe('editing from the popover: the To Send list’s editor and rules', () =
   it('while a send carries the list, Edit and Remove wait', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
     act(() => setToSendFrozen(1, true));
-    clickOn(1, 'line');
+    await openOn(1, 'line');
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('button', { name: 'Remove' }).hasAttribute('disabled')).toBe(true);
     act(() => setToSendFrozen(1, false));
@@ -285,8 +380,7 @@ describe('editing from the popover: the To Send list’s editor and rules', () =
 
   it('once the comment is sent, the popover goes with it', async () => {
     await withMark(comment('a', 'every line twice', 'Is twice on purpose?', 1));
-    clickOn(1, 'line');
-    expect(popover()).toBeTruthy();
+    await openOn(1, 'line');
     act(() => takeComments(1, ['a']));
     await waitFor(() => expect(popover()).toBeNull());
     // Given back (a send that did not go): marked again, but nothing pops up unasked.

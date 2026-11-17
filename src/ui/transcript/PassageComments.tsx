@@ -32,6 +32,7 @@ import { copyText } from '../../lib/clipboard';
 import { addComment, useComments } from './drafts';
 import { marksAt } from './markHit';
 import { PassagePopover } from './PassagePopover';
+import { findEdit, useOpenEdits } from './toSend';
 import { HIGHLIGHT, findPassage, offsetOf, rowContent, setHighlight, squeeze } from './passages';
 import type { TranscriptComment } from './transcriptQuotes';
 import { selectedDiffRows } from './Diff';
@@ -99,6 +100,40 @@ const BAR_MIN_LEFT = 150;
 const OWN = '.tx-sel-bar, .tx-cmt-field, .tx-cmt-pop';
 /** What a click on a mark leaves alone: it is that control's click. */
 const CONTROL = 'a, button, input, textarea, select, summary, label, [role="button"], [role="link"], [contenteditable]';
+/** Rows whose own click does something else: a tool chip's head folds it, a diff's head folds the diff. */
+const OTHERS = '.tx-chip-head, .tx-d-head-toggle';
+
+/**
+ * Whether a click on `target` is someone else's: Albedo's own bar, field or
+ * popover, a control, or a row whose click folds it. The hover's pointer and
+ * tooltip and the click itself ask this one test, so the pointer never
+ * promises a popover where the click does something else.
+ */
+export function clickIsElsewhere(target: Element): boolean {
+  return target.closest(OWN) !== null || target.closest(CONTROL) !== null || target.closest(OTHERS) !== null;
+}
+
+/**
+ * How long a click on a mark waits before it opens the popover: a second
+ * click within it is a double click, which picks a word, so the popover
+ * never flashes up under it.
+ */
+export const OPEN_AFTER_MS = 350;
+
+/** Whether the document's selection holds text inside any of `ranges`. */
+function selectionTouches(ranges: readonly Range[]): boolean {
+  const sel = document.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0 || sel.toString().length === 0) return false;
+  const s = sel.getRangeAt(0);
+  return ranges.some((r) => {
+    try {
+      // Overlap: the selection starts before the mark ends and ends after it starts.
+      return r.comparePoint(s.startContainer, s.startOffset) < 1 && r.comparePoint(s.endContainer, s.endOffset) > -1 && !s.collapsed;
+    } catch {
+      return false;
+    }
+  });
+}
 /** How the mark under the pointer tells it is one (ranges take no cursor and no title). */
 const MARK_TITLE = 'Your comment — click to see it';
 /** The popover's widest: a few lines to read, where the field takes 640. */
@@ -178,6 +213,11 @@ export function PassageComments({
   const relativeOf = useWorktreePath();
   const [error, setError] = useState<string | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
+  const openEdits = useOpenEdits(taskId);
+  // An edit open in the popover holds it where it is: nothing else replaces it.
+  const popEditing = pop !== null && pop.ids.some((id) => findEdit(openEdits, 'passage', 'quote', id) !== undefined);
+  const popEditingRef = useRef(false);
+  popEditingRef.current = popEditing;
   const marksRef = useRef<Mark[]>([]);
   const fieldOpenRef = useRef(false);
   fieldOpenRef.current = field !== null;
@@ -362,34 +402,49 @@ export function PassageComments({
      On the document, in the bubble phase: a control inside the passage that
      took the click (a file link's useActivate stops it) has had it, and
      never reaches here. Only a plain click: a drag that started on a mark
-     ends with text selected and is a selection; a double click picks a word
-     and closes the popover the first click opened.
+     ends with text selected in it and is a selection. It opens once the
+     double-click interval has passed; a second click cancels it, so a double
+     click picks a word with nothing flashing up.
   */
   useEffect(() => {
     if (taskId === null) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const cancel = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    };
     const onClick = (e: MouseEvent) => {
       const scroller = scrollRef.current;
       if (!scroller || e.button !== 0 || e.defaultPrevented) return;
       if (!(e.target instanceof Element) || !scroller.contains(e.target)) return;
-      if (e.target.closest(OWN) || e.target.closest(CONTROL)) return;
+      if (clickIsElsewhere(e.target)) return;
       if (e.detail > 1) {
-        setPop(null);
+        cancel();
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || fieldOpenRef.current) return;
-      const sel = document.getSelection();
-      if (sel && !sel.isCollapsed && sel.toString().length > 0) return;
       const { hits, box } = marksAt(marksRef.current, e.clientX, e.clientY);
       if (hits.length === 0) return;
+      const ranges = hits.map((m) => m.range);
+      if (selectionTouches(ranges)) return;
       const ids = [...hits].sort((a, b) => a.comment.addedAt - b.comment.addedAt).map((m) => m.comment.id);
       const row = e.target.closest<HTMLElement>(ROW);
       const col = (row ? rowContent(row) : scroller).getBoundingClientRect();
       const below = inContent(scroller, col.left, box ? box.bottom : e.clientY);
-      setPicked(null);
-      setPop({ ids, top: below.top + 6, left: below.left, width: col.width > 0 ? Math.min(col.width, POP_MAX_WIDTH) : 0 });
+      const next: Pop = { ids, top: below.top + 6, left: below.left, width: col.width > 0 ? Math.min(col.width, POP_MAX_WIDTH) : 0 };
+      cancel();
+      timer = setTimeout(() => {
+        timer = null;
+        if (fieldOpenRef.current || popEditingRef.current || selectionTouches(ranges)) return;
+        setPicked(null);
+        setPop(next);
+      }, OPEN_AFTER_MS);
     };
     document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
+    return () => {
+      cancel();
+      document.removeEventListener('click', onClick);
+    };
   }, [taskId, scrollRef]);
 
   // Over a mark: a pointer, and a tooltip saying what a click does. On the
@@ -414,7 +469,7 @@ export function PassageComments({
       const at = last;
       if (!at) return;
       const t = at.target instanceof Element ? at.target : null;
-      const over = t !== null && !t.closest(OWN) && !t.closest(CONTROL) && marksAt(marksRef.current, at.x, at.y).hits.length > 0;
+      const over = t !== null && !clickIsElsewhere(t) && marksAt(marksRef.current, at.x, at.y).hits.length > 0;
       set(over);
     };
     const onMove = (e: MouseEvent) => {
@@ -451,7 +506,15 @@ export function PassageComments({
   return (
     <>
       {pop && taskId !== null && popComments.length > 0 && !field ? (
-        <PassagePopover taskId={taskId} comments={popComments} top={pop.top} left={pop.left} width={pop.width} onClose={closePop} />
+        <PassagePopover
+          taskId={taskId}
+          comments={popComments}
+          editing={popEditing}
+          top={pop.top}
+          left={pop.left}
+          width={pop.width}
+          onClose={closePop}
+        />
       ) : null}
       {picked && !field ? (
         <div

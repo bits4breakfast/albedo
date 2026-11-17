@@ -11,7 +11,10 @@
  * send carries the list, Edit and Remove wait.
  *
  * Esc closes it and goes no further: not to the editor's window listener,
- * and the popover marks it handled, so it never leaves full screen.
+ * and the popover marks it handled, so it never leaves full screen. A click
+ * elsewhere closes it too -- on the click, not the press, so nothing moves
+ * under a press -- except while one of its comments is being edited: then
+ * the edit is in view until it is saved or cancelled, or Esc closes it.
  */
 
 import { useEffect, useLayoutEffect, useRef } from 'react';
@@ -24,6 +27,7 @@ import type { TranscriptComment } from './transcriptQuotes';
 export function PassagePopover({
   taskId,
   comments,
+  editing,
   top,
   left,
   width,
@@ -32,6 +36,8 @@ export function PassagePopover({
   taskId: number;
   /** The passage's comments still To Send, oldest first. */
   comments: readonly TranscriptComment[];
+  /** One of them has an edit open here (view 'passage'). */
+  editing: boolean;
   top: number;
   left: number;
   width: number;
@@ -39,30 +45,32 @@ export function PassagePopover({
 }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const frozen = useToSendFrozen(taskId);
-  const edits = useOpenEdits(taskId);
-  const editing = comments.some((c) => findEdit(edits, 'passage', 'quote', c.id) !== undefined);
+  // Whether focus was last inside: then a control that had it and went (an
+  // edit closed, a comment removed) hands it back here.
+  const hadFocus = useRef(false);
 
-  // Opened by a click on text, which leaves focus where it was: take it, so
-  // Esc and Tab reach the popover. Again when an edit closes or a comment is
-  // removed and the control that had focus goes with it.
+  // Opened by a click on text, which leaves focus on the body: take it, so
+  // Esc and Tab reach the popover. Never from somewhere else that has it.
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || editing) return;
     const active = document.activeElement;
-    if (active === null || active === document.body || !el.contains(active)) {
-      if (!editing) el.focus({ preventScroll: true });
-    }
+    if (active !== null && el.contains(active)) return;
+    if (active === null || active === document.body || hadFocus.current) el.focus({ preventScroll: true });
   }, [editing, comments.length]);
 
-  // A press anywhere else closes it.
+  // A click anywhere else closes it, unless an edit is open in it.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
   useEffect(() => {
-    const onDown = (e: MouseEvent) => {
+    const onOutside = (e: MouseEvent) => {
       const el = ref.current;
       if (el && e.target instanceof Node && el.contains(e.target)) return;
+      if (editingRef.current) return;
       onClose();
     };
-    document.addEventListener('mousedown', onDown, true);
-    return () => document.removeEventListener('mousedown', onDown, true);
+    document.addEventListener('click', onOutside, true);
+    return () => document.removeEventListener('click', onOutside, true);
   }, [onClose]);
 
   return (
@@ -74,6 +82,14 @@ export function PassagePopover({
       tabIndex={-1}
       data-focus-keeps-tab=""
       style={{ top, left, ...(width > 0 ? { width } : {}) }}
+      onFocus={() => {
+        hadFocus.current = true;
+      }}
+      onBlur={(e) => {
+        // Focus leaving for somewhere else; a control unmounted fires no blur here.
+        const to = e.relatedTarget;
+        if (to instanceof Node && !e.currentTarget.contains(to)) hadFocus.current = false;
+      }}
       onKeyDown={(e) => {
         if (e.key !== 'Escape' || e.nativeEvent.isComposing) return;
         e.preventDefault();
