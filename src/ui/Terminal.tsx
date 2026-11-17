@@ -4,6 +4,7 @@ import type { ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { spawnPty, writePty, resizePty, killPty } from '../lib/pty';
+import { notePtyTask } from '../lib/ptyWriteLog';
 import { openExternal } from '../lib/openUrl';
 import { endTaskEvents, hookSettingsArg, onSessionStart, resetTaskEvents, startHookEvents } from '../capture/hookEvents';
 import { folderTrusted, isTrustWaiting, onTrustWaiting, setTrustWaiting } from '../capture/workspaceTrust';
@@ -87,6 +88,7 @@ function notifyPresence(taskId: number, live: boolean): void {
 }
 
 function registerPty(taskId: number, ptyId: string): void {
+  notePtyTask(ptyId, taskId);
   livePtys.set(taskId, ptyId);
   liveSince.set(taskId, Date.now());
   notifyPresence(taskId, true);

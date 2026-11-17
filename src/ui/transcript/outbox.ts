@@ -44,6 +44,13 @@ export interface HeldMessage {
    */
   maybeSent?: boolean;
   /**
+   * Written to the pty, and the transcript never showed it (#433,
+   * delivery.ts): Claude Code did not take it, and it may still sit in its
+   * input box. Always with `maybeSent`, so nothing sends it, or anything
+   * behind it, until the person chooses Send, Edit or Remove.
+   */
+  notDelivered?: boolean;
+  /**
    * Review comments the text carries, marked sent once it is delivered. Kept
    * with the message, so a task switch or a restart in between still marks them.
    */
@@ -75,6 +82,7 @@ function isHeld(value: unknown): value is HeldMessage {
     typeof h.heldAt === 'number' &&
     (h.sending === undefined || typeof h.sending === 'boolean') &&
     (h.maybeSent === undefined || typeof h.maybeSent === 'boolean') &&
+    (h.notDelivered === undefined || typeof h.notDelivered === 'boolean') &&
     (h.inBox === undefined || typeof h.inBox === 'boolean') &&
     (h.commentIds === undefined || (Array.isArray(h.commentIds) && h.commentIds.every((c) => typeof c === 'number')))
   );
@@ -181,6 +189,27 @@ export function holdMessage(
     ...(commentIds.length > 0 ? { commentIds: [...commentIds] } : {}),
   };
   commit(taskId, [...heldFor(taskId), entry]);
+  return entry;
+}
+
+/**
+ * A message written to the pty that the transcript never showed (#433,
+ * delivery.ts) comes back here, at the head: it was sent before anything
+ * held since. Marked `maybeSent` and `notDelivered`, so no release passes it
+ * and every later send is held behind it (`mustHold`) until the person
+ * chooses Send, Edit or Remove -- typed now, it would be glued onto what may
+ * still sit in Claude Code's input box.
+ */
+export function holdNotDelivered(taskId: number, text: string, now = Date.now()): HeldMessage | null {
+  if (text.trim().length === 0) return null;
+  const entry: HeldMessage = {
+    id: `${now.toString(36)}-${(seq++).toString(36)}`,
+    text,
+    heldAt: now,
+    maybeSent: true,
+    notDelivered: true,
+  };
+  commit(taskId, [entry, ...heldFor(taskId)]);
   return entry;
 }
 
@@ -409,7 +438,7 @@ export function nextRunSize(taskId: number): number {
 }
 
 /** Change fields of one entry, if it is still there. Undefined removes a field. */
-function patch(taskId: number, id: string, fields: Partial<Pick<HeldMessage, 'sending' | 'maybeSent'>>): void {
+function patch(taskId: number, id: string, fields: Partial<Pick<HeldMessage, 'sending' | 'maybeSent' | 'notDelivered'>>): void {
   const held = heldFor(taskId);
   if (!held.some((h) => h.id === id)) return;
   commit(
@@ -547,7 +576,7 @@ export function replaceInBox(
  * an ordinary held message, which the next release sends in its turn.
  */
 export function sendAnyway(taskId: number, id: string): void {
-  patch(taskId, id, { maybeSent: undefined });
+  patch(taskId, id, { maybeSent: undefined, notDelivered: undefined });
 }
 
 /** The task's last release ended on a failed write, and nothing has gone since. */

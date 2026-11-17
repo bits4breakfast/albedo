@@ -67,6 +67,11 @@ Mistakes that were made here once, so nobody makes them twice. Each entry says w
   - When a fact is missing, enumerate every line type that mentions the thing (`grep -rh 'remote' ~/.claude/projects` by `type`, `subtype`, `attachment.type`) before deciding nothing records it; attachments count.
   - A command Albedo sends that can open a terminal-only dialog gets a deadline: if neither its result nor any sign of the session moving on arrives, say so where the session looks stuck (the transcript pane and the Queued band), and do not offer the command again while it is unsettled.
 
+- **A send the pty took and Claude Code did not.** Owner-reported (#433, Claude Code 2.1.325-2.1.326): the first message into a freshly started `claude` -- a resume after an Albedo restart, or a new session; from the message box or Try Again; 2 s to 25 min after the start -- arrived as a literal `[200~` plus the text and was not submitted. Albedo cleared the box as sent, and the next message was glued on: `[200~try againwhat's the issue with …?` arrived as one. Later sends to the same process were fine. Cause unconfirmed: the paste is one write, every submit is serialized (`withPtyLock`), and a bare `claude` in a plain pty parsed it every time; the leading guess is that Claude Code, still waiting on a reply to one of its startup terminal queries, takes the paste's first ESC as that reply. **Rule:**
+  - A send is not delivered until the transcript shows it: a prompt row, or an entry in Claude Code's queue, after the write. A write that succeeded only says the bytes left (`delivery.ts`).
+  - When it does not show, keep the text where the person can act on it and send nothing else to that task until they do: anything typed next is glued onto what sits in the input box.
+  - Writes to the pty can be logged for diagnosis (`~/.albedo/debug-pty-writes`, README): what Albedo wrote, never what the terminal printed.
+
 ## Shared helpers and scope
 
 - **Changing a shared helper for one feature.** Chat tasks made `taskBase('')` return null. That also changed the main-checkout browse diff, from "against upstream" to "against HEAD", which nobody asked for. **Rule:**

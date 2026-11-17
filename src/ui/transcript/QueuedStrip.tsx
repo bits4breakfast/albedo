@@ -51,6 +51,7 @@ import { onPreviewChange } from '../../capture/previewGate';
 import { onDeletionChange } from '../../capture/githubGate';
 import { onConnectivityChange, watchConnectivity } from '../../lib/connectivity';
 import { REMOTE_MENU_HINT } from './RemoteMenuNotice';
+import { NOT_DELIVERED } from './delivery';
 import { useRemoteWait } from '../remoteWait';
 
 /**
@@ -402,7 +403,8 @@ function HeldRow({
       </div>
       {held.maybeSent ? (
         <>
-          <span className="tx-queued-note">May already have been sent</span>
+          {/* Not delivered (#433): what Claude Code did with it is in the terminal. */}
+          <span className="tx-queued-note">{held.notDelivered ? NOT_DELIVERED : 'May already have been sent'}</span>
           <button type="button" className="tx-btn tx-queued-act" onClick={() => sendAnyway(taskId, held.id)}>
             Send
           </button>

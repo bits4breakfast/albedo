@@ -45,7 +45,8 @@ import { isRemoteControlCommand, onRemoteWaitChange, remoteWaitFor } from '../re
 import { onPtyPresenceChange } from '../Terminal';
 import { isPromptRow } from './compaction';
 import { onSessionSubmit, type SendSource } from './send';
-import { onTurnChange, sessionOfTask } from './turn';
+import { onTurnChange, sessionOfTask, shownQueue } from './turn';
+import type { QueuedEntry } from '../../capture/queue';
 
 /** How long a command waits to land before its echo says there was no reply. */
 export const COMMAND_ECHO_MAX_MS = 30_000;
@@ -94,6 +95,20 @@ export function echoLanded(echo: { at: number }, messages: readonly Message[]): 
       m.ts >= echo.at - SLACK_MS &&
       (isPromptRow(m) || (m.role === 'system' && isLocalCommandLine(m.rawJson))),
   );
+}
+
+/**
+ * Whether the Queued band now shows the message just sent: one of its
+ * entries (`shownQueue`) was queued no earlier than the send, with the same
+ * second of slack as the user-row check. While the band would not show it
+ * the echo stays, or the message would be nowhere.
+ *
+ * Time, not text: the queue records what Claude Code made of the input -- a
+ * pasted image becomes `[Image #1]` where Albedo sent a file path -- and
+ * while the echo is up only Albedo is typing into the session.
+ */
+export function echoIsQueued(echo: { at: number }, entries: readonly QueuedEntry[], liveSince: number | null): boolean {
+  return shownQueue(entries, liveSince).some((e) => e.ts >= echo.at - 1000);
 }
 
 /**
