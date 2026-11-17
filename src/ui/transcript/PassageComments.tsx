@@ -8,7 +8,10 @@
  *    while it is open. Add (⌘↩) keeps the comment with the task's draft
  *    (drafts.ts); nothing is sent. Cancel or Esc drops it.
  *  - Every passage with a comment waiting stays marked, and its row shows how
- *    many it has.
+ *    many it has. A click on a mark shows its comments under the line, to
+ *    read, edit or remove (#434, PassagePopover.tsx); the marks are ranges,
+ *    so the click is hit-tested against them (markHit.ts). A drag that
+ *    starts on a mark still selects, and a double click still picks a word.
  *
  *  - A selection inside a diff's rows is a comment on CODE (#222): on the
  *    file's lines `a–b`, when the new-side lines it covers are found
@@ -27,6 +30,8 @@ import type { ReactNode, RefObject } from 'react';
 import type { Message } from '../../types';
 import { copyText } from '../../lib/clipboard';
 import { addComment, useComments } from './drafts';
+import { marksAt } from './markHit';
+import { PassagePopover } from './PassagePopover';
 import { HIGHLIGHT, findPassage, offsetOf, rowContent, setHighlight, squeeze } from './passages';
 import type { TranscriptComment } from './transcriptQuotes';
 import { selectedDiffRows } from './Diff';
@@ -91,7 +96,28 @@ export function codeTarget(
 const ROW = '[data-message-id]';
 /** About the bar's width: it is drawn to the left of its anchor. */
 const BAR_MIN_LEFT = 150;
-const OWN = '.tx-sel-bar, .tx-cmt-field';
+const OWN = '.tx-sel-bar, .tx-cmt-field, .tx-cmt-pop';
+/** What a click on a mark leaves alone: it is that control's click. */
+const CONTROL = 'a, button, input, textarea, select, summary, label, [role="button"], [role="link"], [contenteditable]';
+/** How the mark under the pointer tells it is one (ranges take no cursor and no title). */
+const MARK_TITLE = 'Your comment — click to see it';
+/** The popover's widest: a few lines to read, where the field takes 640. */
+const POP_MAX_WIDTH = 400;
+
+/** A waiting comment's passage, as drawn. */
+interface Mark {
+  comment: TranscriptComment;
+  range: Range;
+}
+
+/** The popover, open on a marked passage (#434). */
+interface Pop {
+  /** Its comments' ids, oldest first. */
+  ids: string[];
+  top: number;
+  left: number;
+  width: number;
+}
 
 function elementOf(node: Node): Element | null {
   return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
@@ -151,6 +177,10 @@ export function PassageComments({
   const readFile = useReadFile();
   const relativeOf = useWorktreePath();
   const [error, setError] = useState<string | null>(null);
+  const [pop, setPop] = useState<Pop | null>(null);
+  const marksRef = useRef<Mark[]>([]);
+  const fieldOpenRef = useRef(false);
+  fieldOpenRef.current = field !== null;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
@@ -197,6 +227,7 @@ export function PassageComments({
   useEffect(() => {
     close();
     setPicked(null);
+    setPop(null);
   }, [taskId, close]);
   useEffect(() => () => setHighlight(HIGHLIGHT.pending, []), []);
 
@@ -244,6 +275,7 @@ export function PassageComments({
     });
     setText('');
     setPicked(null);
+    setPop(null);
     setHighlight(HIGHLIGHT.pending, [range]);
     return true;
   }, [scrollRef, taskId, readFile, relativeOf]);
@@ -296,15 +328,16 @@ export function PassageComments({
     const scroller = scrollRef.current;
     if (!scroller) return;
     const counts = new Map<number, number>();
-    const ranges: Range[] = [];
+    const marks: Mark[] = [];
     for (const c of comments) {
       const row = scroller.querySelector<HTMLElement>(`[data-message-id="${c.messageId}"]`);
       if (!row) continue;
       counts.set(c.messageId, (counts.get(c.messageId) ?? 0) + 1);
       const r = findPassage(rowContent(row), c.quote, c.offset);
-      if (r) ranges.push(r);
+      if (r) marks.push({ comment: c, range: r });
     }
-    setHighlight(HIGHLIGHT.waiting, ranges);
+    marksRef.current = marks;
+    setHighlight(HIGHLIGHT.waiting, marks.map((m) => m.range));
     for (const row of scroller.querySelectorAll<HTMLElement>('[data-comments]')) {
       if (!counts.has(Number(row.dataset.messageId))) unmark(row);
     }
@@ -317,14 +350,109 @@ export function PassageComments({
   }, [comments, messages, scrollRef]);
   useEffect(
     () => () => {
+      marksRef.current = [];
       setHighlight(HIGHLIGHT.waiting, []);
       for (const row of scrollRef.current?.querySelectorAll<HTMLElement>('[data-comments]') ?? []) unmark(row);
     },
     [scrollRef],
   );
 
+  // --- a click on a mark shows its comments (#434) --------------------------
+  /*
+     On the document, in the bubble phase: a control inside the passage that
+     took the click (a file link's useActivate stops it) has had it, and
+     never reaches here. Only a plain click: a drag that started on a mark
+     ends with text selected and is a selection; a double click picks a word
+     and closes the popover the first click opened.
+  */
+  useEffect(() => {
+    if (taskId === null) return;
+    const onClick = (e: MouseEvent) => {
+      const scroller = scrollRef.current;
+      if (!scroller || e.button !== 0 || e.defaultPrevented) return;
+      if (!(e.target instanceof Element) || !scroller.contains(e.target)) return;
+      if (e.target.closest(OWN) || e.target.closest(CONTROL)) return;
+      if (e.detail > 1) {
+        setPop(null);
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || fieldOpenRef.current) return;
+      const sel = document.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().length > 0) return;
+      const { hits, box } = marksAt(marksRef.current, e.clientX, e.clientY);
+      if (hits.length === 0) return;
+      const ids = [...hits].sort((a, b) => a.comment.addedAt - b.comment.addedAt).map((m) => m.comment.id);
+      const row = e.target.closest<HTMLElement>(ROW);
+      const col = (row ? rowContent(row) : scroller).getBoundingClientRect();
+      const below = inContent(scroller, col.left, box ? box.bottom : e.clientY);
+      setPicked(null);
+      setPop({ ids, top: below.top + 6, left: below.left, width: col.width > 0 ? Math.min(col.width, POP_MAX_WIDTH) : 0 });
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, [taskId, scrollRef]);
+
+  // Over a mark: a pointer, and a tooltip saying what a click does. On the
+  // scroller, which React gives neither a title nor this attribute.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || taskId === null) return;
+    let frame = 0;
+    let last: { x: number; y: number; target: EventTarget | null } | null = null;
+    const set = (on: boolean) => {
+      if (on === scroller.hasAttribute('data-on-mark')) return;
+      if (on) {
+        scroller.setAttribute('data-on-mark', '');
+        scroller.setAttribute('title', MARK_TITLE);
+      } else {
+        scroller.removeAttribute('data-on-mark');
+        scroller.removeAttribute('title');
+      }
+    };
+    const look = () => {
+      frame = 0;
+      const at = last;
+      if (!at) return;
+      const t = at.target instanceof Element ? at.target : null;
+      const over = t !== null && !t.closest(OWN) && !t.closest(CONTROL) && marksAt(marksRef.current, at.x, at.y).hits.length > 0;
+      set(over);
+    };
+    const onMove = (e: MouseEvent) => {
+      last = { x: e.clientX, y: e.clientY, target: e.target };
+      if (marksRef.current.length === 0) {
+        set(false);
+        return;
+      }
+      if (frame === 0) frame = requestAnimationFrame(look);
+    };
+    const onLeave = () => {
+      last = null;
+      set(false);
+    };
+    scroller.addEventListener('mousemove', onMove);
+    scroller.addEventListener('mouseleave', onLeave);
+    return () => {
+      cancelAnimationFrame(frame);
+      scroller.removeEventListener('mousemove', onMove);
+      scroller.removeEventListener('mouseleave', onLeave);
+      set(false);
+    };
+  }, [taskId, scrollRef]);
+
+  const closePop = useCallback(() => setPop(null), []);
+  // Only comments still To Send: one sent or removed leaves the popover, and
+  // with the last one it closes.
+  const popComments = pop ? pop.ids.map((id) => comments.find((c) => c.id === id)).filter((c): c is TranscriptComment => c !== undefined) : [];
+  const popEmpty = pop !== null && popComments.length === 0;
+  useEffect(() => {
+    if (popEmpty) setPop(null);
+  }, [popEmpty]);
+
   return (
     <>
+      {pop && taskId !== null && popComments.length > 0 && !field ? (
+        <PassagePopover taskId={taskId} comments={popComments} top={pop.top} left={pop.left} width={pop.width} onClose={closePop} />
+      ) : null}
       {picked && !field ? (
         <div
           className="tx-sel-bar"
