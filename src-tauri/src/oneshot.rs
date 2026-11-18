@@ -60,9 +60,15 @@
 //! 3. Only those tools go in `--allowedTools`, with `--permission-mode
 //!    dontAsk`; every other tool and every server none of them belong to goes
 //!    in `--disallowedTools` (`deny_list`).
-//! 4. The run's own first line (`init`) must name no tool beyond those and
-//!    `StructuredOutput` (`unexpected_tools`), or it is stopped there and its
-//!    answer is never used; an answer before that line is not used either.
+//! 4. The run's own first line (`init`) must be in the shape measured
+//!    (`tools` a list of names, `mcp_servers` a list with a name and status
+//!    each: `parse_init` rejects anything else rather than filtering it),
+//!    name no tool beyond those and `StructuredOutput` (`unexpected_tools`),
+//!    and name no server that is neither one those tools belong to nor shut
+//!    out by name (`unexpected_servers`: one that turned up after the
+//!    listing). Any JSON line before that check has passed -- a turn, a
+//!    tool's result, an answer -- stops the run too. Stopped, its answer is
+//!    never used.
 //!
 //! A server name still allows every tool it had when listed, writing ones
 //! included: the sheet says so. The listing and a run stopped early are asked
@@ -324,33 +330,42 @@ pub(crate) struct Listing {
     pub servers: Vec<(String, String)>,
 }
 
-/// The `system`/`init` line, if this is it.
-pub(crate) fn parse_init(line: &str) -> Option<Listing> {
+/// The `system`/`init` line, if this is it: `None` for any other line,
+/// `Some(Err)` for an init line not in the shape measured -- `tools` missing
+/// or holding anything but strings, `mcp_servers` missing or an entry
+/// without a string name and status. Nothing is filtered out: what cannot be
+/// read is not trusted.
+pub(crate) fn parse_init(line: &str) -> Option<Result<Listing, String>> {
     let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     if v.get("type")?.as_str()? != "system" || v.get("subtype")?.as_str()? != "init" {
         return None;
     }
+    Some(init_listing(&v))
+}
+
+fn init_listing(v: &serde_json::Value) -> Result<Listing, String> {
     let tools = v
-        .get("tools")?
-        .as_array()?
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .ok_or("its init line has no tools list")?
         .iter()
-        .filter_map(|t| t.as_str().map(str::to_string))
-        .collect();
+        .map(|t| t.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()
+        .ok_or("its init line lists a tool that is not a name")?;
     let servers = v
         .get("mcp_servers")
         .and_then(|s| s.as_array())
-        .map(|list| {
-            list.iter()
-                .filter_map(|s| {
-                    Some((
-                        s.get("name")?.as_str()?.to_string(),
-                        s.get("status")?.as_str()?.to_string(),
-                    ))
-                })
-                .collect()
+        .ok_or("its init line has no server list")?
+        .iter()
+        .map(|s| {
+            Some((
+                s.get("name")?.as_str()?.to_string(),
+                s.get("status")?.as_str()?.to_string(),
+            ))
         })
-        .unwrap_or_default();
-    Some(Listing { tools, servers })
+        .collect::<Option<Vec<_>>>()
+        .ok_or("its init line lists a server without a name and status")?;
+    Ok(Listing { tools, servers })
 }
 
 /// A server's tool prefix, as Claude Code names them: `claude.ai Tracker`
@@ -467,6 +482,21 @@ pub(crate) fn unexpected_tools(init: &Listing, allowed: &[String]) -> Vec<String
         .collect()
 }
 
+/// The servers a run's own `init` line names that are neither one the
+/// allowed tools belong to nor shut out by name: a server that turned up after
+/// the listing. Anything here makes the run stop before its first turn.
+pub(crate) fn unexpected_servers(
+    init: &Listing,
+    allowed: &[String],
+    denied: &[String],
+) -> Vec<String> {
+    init.servers
+        .iter()
+        .map(|(name, _)| server_prefix(name))
+        .filter(|prefix| !allowed.iter().any(|a| under(a, prefix)) && !denied.contains(prefix))
+        .collect()
+}
+
 /// Run the Context step once (#444): list what the user's MCP servers offer,
 /// then run with only the listed tools, checking what the run itself loaded.
 /// Never a pty, never a session.
@@ -524,6 +554,7 @@ pub async fn claude_context_oneshot(
             prompt,
             deadline,
             &allowed,
+            &denied,
         )?;
         out.allowed = Some(allowed);
         Ok(out)
@@ -675,7 +706,11 @@ fn list_tools(mut cmd: Command, deadline: Instant) -> Result<Listed, String> {
     let found = loop {
         match lines.next(&mut child, deadline) {
             Next::Line(line) => match parse_init(&line) {
-                Some(l) => break Ok(l),
+                Some(Ok(l)) => break Ok(l),
+                Some(Err(why)) => {
+                    stop_group(&mut child, STOP_GRACE);
+                    return Err(format!("the listing could not be read: {why}"));
+                }
                 None => {
                     seen.push_str(&line);
                     seen.push('\n');
@@ -718,6 +753,7 @@ fn run_context(
     prompt: String,
     deadline: Instant,
     allowed: &[String],
+    denied: &[String],
 ) -> Result<OneshotResult, String> {
     let mut child = cmd
         .spawn()
@@ -748,31 +784,44 @@ fn run_context(
             }
             Next::Ended => break,
         };
-        if let Some(init) = parse_init(&line) {
-            let extra = unexpected_tools(&init, allowed);
-            if !extra.is_empty() {
-                let shown: Vec<_> = extra.iter().take(5).cloned().collect();
-                refused = Some(format!(
-                    "the run loaded tools it was not given ({}{}), so it was stopped",
-                    shown.join(", "),
-                    if extra.len() > 5 { ", …" } else { "" }
-                ));
+        match parse_init(&line) {
+            Some(Err(why)) => {
+                refused = Some(format!("{why}, so the run was stopped"));
                 break;
             }
-            checked = true;
-            continue;
+            Some(Ok(init)) => {
+                let extra = unexpected_tools(&init, allowed);
+                let servers = unexpected_servers(&init, allowed, denied);
+                if !extra.is_empty() || !servers.is_empty() {
+                    let all: Vec<String> = extra.into_iter().chain(servers).collect();
+                    let shown: Vec<_> = all.iter().take(5).cloned().collect();
+                    refused = Some(format!(
+                        "the run loaded tools it was not given ({}{}), so it was stopped",
+                        shown.join(", "),
+                        if all.len() > 5 { ", …" } else { "" }
+                    ));
+                    break;
+                }
+                checked = true;
+                continue;
+            }
+            None => {}
         }
-        let is_result = serde_json::from_str::<serde_json::Value>(line.trim())
-            .ok()
-            .is_some_and(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"));
+        let json = line.trim_start().starts_with('{')
+            && serde_json::from_str::<serde_json::Value>(line.trim()).is_ok();
+        if json && !checked {
+            // Anything the run says before its tools are checked -- an
+            // answer, a turn, a tool's result -- stops it there.
+            refused = Some(
+                "the run went on before saying which tools it had loaded, so it was stopped".into(),
+            );
+            break;
+        }
+        let is_result = json
+            && serde_json::from_str::<serde_json::Value>(line.trim())
+                .ok()
+                .is_some_and(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"));
         if is_result {
-            if !checked {
-                refused = Some(
-                    "the run answered before saying which tools it had loaded, so its answer was not used"
-                        .into(),
-                );
-                break;
-            }
             result = Some(line);
         } else if !line.trim_start().starts_with('{') && other.len() < 64 * 1024 {
             other.push_str(&line);
@@ -1099,7 +1148,7 @@ mod tests {
     #[test]
     fn the_init_line_is_read_and_nothing_else() {
         let line = r#"{"type":"system","subtype":"init","tools":["mcp__tracker__get_issue","StructuredOutput"],"mcp_servers":[{"name":"claude.ai Tracker","status":"connected"},{"name":"mail","status":"needs-auth"}]}"#;
-        let got = parse_init(line).expect("init");
+        let got = parse_init(line).expect("init").expect("well formed");
         assert_eq!(
             got.tools,
             names(&["mcp__tracker__get_issue", "StructuredOutput"])
@@ -1336,6 +1385,7 @@ mod tests {
             "prompt".into(),
             Instant::now() + Duration::from_secs(20),
             &names(&["mcp__tracker__get_issue"]),
+            &[],
         )
         .unwrap();
         assert_eq!(out.code, Some(0));
@@ -1362,6 +1412,7 @@ mod tests {
             "p".into(),
             Instant::now() + Duration::from_secs(20),
             &names(&["mcp__tracker__get_issue"]),
+            &[],
         )
         .unwrap_err();
         assert!(err.contains("mcp__wiki__read"), "{err}");
@@ -1378,6 +1429,7 @@ mod tests {
             "p".into(),
             Instant::now() + Duration::from_secs(20),
             &names(&["mcp__tracker__get_issue"]),
+            &[],
         )
         .unwrap_err();
         assert!(err.contains("before saying which tools"), "{err}");
@@ -1393,10 +1445,99 @@ mod tests {
             "p".into(),
             Instant::now() + Duration::from_millis(500),
             &names(&["mcp__tracker__get_issue"]),
+            &[],
         )
         .unwrap();
         assert!(out.timed_out);
         assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    fn refused(script: &str, denied: &[String]) -> String {
+        run_context(
+            fake(script),
+            "p".into(),
+            Instant::now() + Duration::from_secs(20),
+            &names(&["mcp__tracker__get_issue"]),
+            denied,
+        )
+        .unwrap_err()
+    }
+
+    #[test]
+    fn an_init_line_not_in_the_measured_shape_is_not_trusted() {
+        let no_tools = r#"{"type":"system","subtype":"init","mcp_servers":[]}"#;
+        assert_eq!(
+            parse_init(no_tools),
+            Some(Err("its init line has no tools list".into()))
+        );
+        let objects = r#"{"type":"system","subtype":"init","tools":[{"name":"mcp__wiki__read"}],"mcp_servers":[]}"#;
+        assert_eq!(
+            parse_init(objects),
+            Some(Err("its init line lists a tool that is not a name".into()))
+        );
+        let mixed = r#"{"type":"system","subtype":"init","tools":["mcp__tracker__get_issue",7],"mcp_servers":[]}"#;
+        assert!(matches!(parse_init(mixed), Some(Err(_))));
+        let no_servers = r#"{"type":"system","subtype":"init","tools":[]}"#;
+        assert!(matches!(parse_init(no_servers), Some(Err(_))));
+        let bad_server =
+            r#"{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"x"}]}"#;
+        assert!(matches!(parse_init(bad_server), Some(Err(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_run_stops_on_an_init_it_cannot_read() {
+        let no_tools = r#"{"type":"system","subtype":"init","mcp_servers":[]}"#;
+        let err = refused(&format!("echo '{no_tools}'; sleep 30"), &[]);
+        assert!(err.contains("no tools list"), "{err}");
+        let objects = r#"{"type":"system","subtype":"init","tools":[{"name":"mcp__wiki__read"}],"mcp_servers":[]}"#;
+        let err = refused(&format!("echo '{objects}'; sleep 30"), &[]);
+        assert!(err.contains("not a name"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_run_stops_on_anything_said_before_its_init() {
+        let started = Instant::now();
+        let err = refused(
+            &format!(
+                r#"echo '{{"type":"assistant","message":{{"content":[]}}}}'; echo '{INIT}'; sleep 30"#
+            ),
+            &[],
+        );
+        assert!(err.contains("before saying which tools"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // No init at all, only an answer: not used.
+        let err = refused(r#"echo '{"type":"user","message":{}}'"#, &[]);
+        assert!(err.contains("before saying which tools"), "{err}");
+    }
+
+    #[test]
+    fn a_server_that_turned_up_after_the_listing_is_found() {
+        let init = Listing {
+            tools: names(&["mcp__tracker__get_issue"]),
+            servers: vec![
+                ("tracker".into(), "connected".into()),
+                ("mail".into(), "connected".into()),
+                ("wiki".into(), "pending".into()),
+            ],
+        };
+        let allowed = names(&["mcp__tracker__get_issue"]);
+        assert_eq!(
+            unexpected_servers(&init, &allowed, &names(&["mcp__mail"])),
+            names(&["mcp__wiki"])
+        );
+        assert!(
+            unexpected_servers(&init, &allowed, &names(&["mcp__mail", "mcp__wiki"])).is_empty()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_run_stops_when_its_init_names_a_server_neither_wanted_nor_shut_out() {
+        let init = r#"{"type":"system","subtype":"init","tools":["mcp__tracker__get_issue"],"mcp_servers":[{"name":"tracker","status":"connected"},{"name":"wiki","status":"pending"}]}"#;
+        let err = refused(&format!("echo '{init}'; sleep 30"), &names(&["mcp__mail"]));
+        assert!(err.contains("mcp__wiki"), "{err}");
     }
 
     /// The measurement in the module doc, against the real `claude`:
@@ -1477,6 +1618,7 @@ mod tests {
             prompt,
             deadline,
             &allowed,
+            &denied,
         ) {
             Err(e) => println!("-> refused: {e}"),
             Ok(out) => {

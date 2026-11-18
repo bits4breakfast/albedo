@@ -94,6 +94,14 @@ export function asContextSettings(v: unknown): ContextSettings | null {
   return { instructions, tools, model, timeoutMs };
 }
 
+/** Whether a project has a settings file could not even be told. */
+export class UncheckedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UncheckedError';
+  }
+}
+
 /** Where the settings live, and how they are read and written. A seam for tests. */
 export interface ContextFiles {
   read: (projectId: number) => Promise<string | null>;
@@ -116,8 +124,7 @@ let files: ContextFiles = {
       path = `${await settingsDir()}/project-${projectId}.json`;
       if (!(await fs.exists(path))) return null;
     } catch (err) {
-      console.warn('[guide] could not look for the Context settings', projectId, err);
-      return null;
+      throw new UncheckedError(err instanceof Error ? err.message : String(err));
     }
     // There is one: from here a failure is the file's, and is said.
     return fs.readTextFile(path);
@@ -154,14 +161,23 @@ export function setContextFiles(next: ContextFiles): ContextFiles {
 export type ContextLoad =
   | { kind: 'none' }
   | { kind: 'saved'; settings: ContextSettings }
-  | { kind: 'unreadable'; message: string };
+  | { kind: 'unreadable'; message: string }
+  /**
+   * Whether there is a file could not be told. A write goes ahead without
+   * a Context (a project never configured stays as it was), but nothing is
+   * cached: the next read tries again, and the sheet saves nothing until one
+   * succeeds, so it can never overwrite a file it did not see.
+   */
+  | { kind: 'unchecked'; message: string };
 
 export function settingsOf(load: ContextLoad | null | undefined): ContextSettings | null {
   return load?.kind === 'saved' ? load.settings : null;
 }
 
-/** project id -> what was read or saved; absent until read. */
+/** project id -> what was read or saved; absent until read. Never 'unchecked'. */
 const cache = new Map<number, ContextLoad>();
+/** project id -> the last read that could not tell, for the views; never reused by a read. */
+const unchecked = new Map<number, ContextLoad>();
 const reading = new Map<number, Promise<ContextLoad>>();
 /** project id -> saves so far: a read started before a save never overwrites it. */
 const saves = new Map<number, number>();
@@ -195,10 +211,17 @@ export function loadContext(projectId: number): Promise<ContextLoad> {
     .then((raw): ContextLoad => (raw === null ? { kind: 'none' } : parseSettings(raw)))
     .catch((err: unknown): ContextLoad => {
       console.warn('[guide] could not read the Context settings', projectId, err);
-      return { kind: 'unreadable', message: err instanceof Error ? err.message : String(err) };
+      const message = err instanceof Error ? err.message : String(err);
+      return err instanceof UncheckedError ? { kind: 'unchecked', message } : { kind: 'unreadable', message };
     })
     .then((load) => {
       reading.delete(projectId);
+      if (load.kind === 'unchecked') {
+        unchecked.set(projectId, load);
+        changed();
+        return load;
+      }
+      unchecked.delete(projectId);
       // Saved while this read was on its way: the save is newer.
       if ((saves.get(projectId) ?? 0) !== savesBefore) return cache.get(projectId) ?? load;
       cache.set(projectId, load);
@@ -232,13 +255,19 @@ export function useContextLoad(projectId: number | null): ContextLoad | undefine
   );
   if (projectId === null) return undefined;
   const hit = cache.get(projectId);
-  if (!hit) void loadContext(projectId);
-  return hit;
+  if (hit) return hit;
+  // One that could not tell is shown as such, and read again only when asked
+  // (the sheet's Try Again, the next write): never a read per render.
+  const failed = unchecked.get(projectId);
+  if (failed) return failed;
+  void loadContext(projectId);
+  return undefined;
 }
 
 /** Tests only. */
 export function resetContextSettingsForTests(): void {
   cache.clear();
+  unchecked.clear();
   reading.clear();
   saves.clear();
   changed();

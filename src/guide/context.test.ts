@@ -17,6 +17,7 @@ import {
   contextSystem,
   DEFAULT_CONTEXT,
   loadContext,
+  UncheckedError,
   gatherContextInput,
   resetContextSettingsForTests,
   saveContextSettings,
@@ -141,6 +142,22 @@ describe('the settings', () => {
       expect(await loadContext(3)).toEqual({ kind: 'unreadable', message: 'The file is not valid JSON.' });
       disk.set(4, '"a string"');
       expect(await loadContext(4)).toEqual({ kind: 'unreadable', message: 'The file does not hold Context settings.' });
+    });
+
+    it('a check that could not tell is said, not cached: the next read tries again', async () => {
+      let fail = true;
+      setContextFiles({
+        read: async (id) => {
+          if (fail) throw new UncheckedError('no access');
+          return disk.get(id) ?? null;
+        },
+        write: async (id, json) => void disk.set(id, json),
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(await loadContext(6)).toEqual({ kind: 'unchecked', message: 'no access' });
+      fail = false;
+      disk.set(6, JSON.stringify(settings));
+      expect(await loadContext(6)).toEqual({ kind: 'saved', settings });
     });
 
     it('a read still on its way when the project is saved never overwrites the save', async () => {

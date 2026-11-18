@@ -25,6 +25,7 @@ import {
   contextKey,
   gatherContextInput,
   saveContextSettings,
+  loadContext,
   settingsOf,
   useContextLoad,
   validToolName,
@@ -167,7 +168,9 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
   useEffect(() => {
     // A file that cannot be read starts from the defaults, with the error
     // shown above them: never an empty sheet that looks like nothing saved.
-    if (draft === null && saved !== undefined) setDraft(settingsOf(saved) ?? DEFAULT_CONTEXT);
+    // One that could not even tell whether there is a file starts nothing:
+    // no fields, no Save, until a read succeeds.
+    if (draft === null && saved !== undefined && saved.kind !== 'unchecked') setDraft(settingsOf(saved) ?? DEFAULT_CONTEXT);
   }, [draft, saved]);
   const [typed, setTyped] = useState('');
   const [toolError, setToolError] = useState<string | null>(null);
@@ -274,7 +277,16 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
             Before writing a guide for this project, Albedo runs one extra step with your instructions and the tools you allow. Its answer
             goes at the top of the guide and into the notes.
           </p>
-          {draft === null ? (
+          {draft === null && saved?.kind === 'unchecked' ? (
+            <div className="wt-error" role="alert">
+              <div className="wt-error-head">Couldn’t check the saved settings: {saved.message}</div>
+              <div className="wt-error-actions">
+                <button type="button" className="btn" onClick={() => void loadContext(projectId)}>
+                  Try Again
+                </button>
+              </div>
+            </div>
+          ) : draft === null ? (
             <div className="wt-hint">Reading the settings…</div>
           ) : (
             <>
@@ -474,6 +486,8 @@ export function GuideContextField({ projectId, projectName, busy }: { projectId:
         ? 'Reading…'
         : load.kind === 'unreadable'
           ? 'Its settings couldn’t be read.'
+          : load.kind === 'unchecked'
+            ? 'Couldn’t check its settings.'
           : contextActive(settings)
             ? `On · ${settings.tools.length} ${settings.tools.length === 1 ? 'tool' : 'tools'} · Claude ${
                 CONTEXT_MODELS.find((m) => m.id === settings.model)?.label ?? settings.model

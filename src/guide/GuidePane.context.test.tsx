@@ -37,7 +37,7 @@ vi.mock('../db/projects', () => ({
 const { default: GuidePane, resetGuideViewsForTests } = await import('./GuidePane');
 const { resetGuideStoreForTests, loadGuide, saveGuide } = await import('./store');
 const { setOneshotRunner, setContextRunner } = await import('./writer');
-const { setContextFiles, resetContextSettingsForTests } = await import('./context');
+const { setContextFiles, resetContextSettingsForTests, UncheckedError } = await import('./context');
 
 const task = {
   id: 7, title: 'Send the confirmation once', projectId: 1, repoPath: '/r', baseBranch: 'main', branch: 'shop-128', worktreePath: '/wt',
@@ -203,6 +203,38 @@ describe('the sheet (#444)', () => {
     expect(
       await within(dialog).findByText('mcp__support allows all 3 tools of this server, including any that can write; list single tools to be safe.'),
     ).toBeTruthy();
+  });
+
+  it('when whether a file exists cannot be told: no fields and no Save, the guide written as before, and read again later', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let fail = true;
+    setContextFiles({
+      read: async (id) => {
+        if (fail) throw new UncheckedError('permission denied');
+        return disk.get(id) ?? null;
+      },
+      write: async (id, json) => void disk.set(id, json),
+    });
+    saveGuide(7, {
+      diffHash: diff.hash, writtenAt: 1, base: 'main', groups: [{ title: 'G', summary: '', blocks: diff.order, notes: {} }],
+      files: { 'src/OrderMailer.php': diff.order }, fallback: null,
+    });
+    pane();
+    fireEvent.click(await screen.findByRole('button', { name: 'More guide actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Review Guide Context…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Couldn’t check the saved settings: permission denied');
+    expect(within(dialog).queryByLabelText('Also look up')).toBeNull();
+    expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    // A write meanwhile: no Context, no banner -- as a project never configured.
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await waitFor(() => expect(groupCalls()).toHaveLength(1));
+    expect(contextCalls).toHaveLength(0);
+    expect(screen.queryByText(/Context wasn’t added/)).toBeNull();
+    // Read again when asked, and then the saved settings show.
+    fail = false;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try Again' }));
+    expect(((await within(dialog).findByLabelText('Also look up')) as HTMLTextAreaElement).value).toBe('Find the ticket.');
   });
 
   it('says when the saved settings cannot be read, rather than showing an empty sheet; the guide says so too', async () => {

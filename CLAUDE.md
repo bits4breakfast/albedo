@@ -143,9 +143,10 @@ line) turns each name into the tools present at that moment -- a server's
 name into its tools then, a name matching nothing or a server not connected
 is an error, never dropped; only those tools go in `--allowedTools`, with
 `--permission-mode dontAsk`, and every other listed tool and server goes in
-`--disallowedTools`; and the run's own first line must name no tool beyond
-those (and Claude Code's `StructuredOutput`), or it is stopped before its
-answer is used. A server name still allows every tool it had when listed,
+`--disallowedTools`; and the run's own first line must be well formed and
+name no tool beyond those (and Claude Code's `StructuredOutput`) and no
+server neither wanted nor shut out, with nothing said before it, or it is
+stopped before its answer is used. A server name still allows every tool it had when listed,
 writing ones included; the sheet says so. It is given the task's title,
 branch, PR title and description and commit subjects -- no code -- and
 answers a summary and its sources, which the guide shows at the top and
