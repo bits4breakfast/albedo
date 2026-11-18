@@ -389,16 +389,16 @@ describe("a timer's next run (#443)", () => {
     for (const { said, came } of seen) expect(Math.abs(said! - came)).toBeLessThan(1);
   });
 
-  it('a capped first run says only how long the wait is at least: each slot gets the earliest it can run, until a run under the cap shows it', () => {
+  it('a capped first run leaves the wait unknown: each slot gets the latest it can run, until a run under the cap shows it', () => {
     // k = 0.083: about 5 min after an hourly slot, but capped after 17:00
     // (16 h gap). Created Fri 20 Nov 16:51, so the first run is the capped one.
     const c = local(11, 20, 16, 51);
     const seen = predictions('0 9-17 * * *', c, 0.083, 10);
     expect(seen[0]!.came).toBe(local(11, 20, 17, 30));
     // Sat 09:00 runs at 09:04:58.8; all that 17:30 says is k >= 30 min / 16 h,
-    // so the earliest it can be: 09:01:52.5 -- never later than it comes.
+    // so it is given the latest it can be, 09:30 -- never before it comes.
     expect(seen[1]!.came).toBeCloseTo(local(11, 21, 9, 4, 58, 800), 0);
-    expect(seen[1]!.said).toBeCloseTo(local(11, 21, 9, 1, 52, 500), 0);
+    expect(seen[1]!.said).toBe(local(11, 21, 9, 30));
     // From the run under the cap on, every run exactly.
     for (const { said, came } of seen.slice(2)) expect(Math.abs(said! - came)).toBeLessThan(LINE_LAG + 1);
     // Including the capped 17:00 one, and the morning after it.
@@ -412,6 +412,21 @@ describe("a timer's next run (#443)", () => {
     for (const { said, came } of seen) expect(Math.abs(said! - came)).toBeLessThan(1);
   });
 
+  it('a capped first run, then a short gap and a large k: late until that run, never past it while it is pending', () => {
+    // k = 0.45: capped after 17:00 (16 h gap), 27 min after each hourly slot.
+    const c = local(11, 20, 16, 51);
+    const runs = claudeRuns('0 9-17 * * *', c, 0.45, 3);
+    expect(runs.slice(0, 3)).toEqual([local(11, 20, 17, 30), local(11, 21, 9, 27), local(11, 21, 10, 27)]);
+    const at = (fired: number, now: number) => runningInBackground(jobRows('0 9-17 * * *', c, runs, fired), c - MIN, now)[0]?.nextRunAt;
+    // After the capped run: Sat 09:30, the latest it can be.
+    expect(at(1, runs[0]! + 1_000)).toBe(local(11, 21, 9, 30));
+    // At 09:05 and 09:29, nothing has run yet: still today's 09:30, not 10:30.
+    expect(at(1, local(11, 21, 9, 5))).toBe(local(11, 21, 9, 30));
+    expect(at(1, local(11, 21, 9, 29))).toBe(local(11, 21, 9, 30));
+    // Its line at 09:27 shows k: from then on, within the line's lag.
+    expect(Math.abs(at(2, runs[1]! + 1_000)! - runs[2]!)).toBeLessThanOrEqual(LINE_LAG);
+  });
+
   it('a first run the model cannot explain gives no wait, and the next run line sets it', () => {
     const c = local(11, 18, 10, 10);
     // Reported 45 min after its slot (past the cap): not this model's run.
@@ -422,7 +437,8 @@ describe("a timer's next run (#443)", () => {
         c - MIN,
         now,
       )[0]?.nextRunAt;
-    expect(after([odd], odd + 1_000)).toBe(local(11, 18, 12, 0));
+    // Unknown: the latest the 12:00 run can be.
+    expect(after([odd], odd + 1_000)).toBe(local(11, 18, 12, 30));
     // 12:06 came (k = 0.1): 13:06 next.
     expect(after([odd, local(11, 18, 12, 6)], local(11, 18, 12, 6, 1))).toBe(local(11, 18, 13, 6));
   });

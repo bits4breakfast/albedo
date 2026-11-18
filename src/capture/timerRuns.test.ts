@@ -41,8 +41,8 @@ describe('timerRunAfter and timerFinalRun', () => {
     expect(timerRunAfter({ ...facts, firedAt: [local(11, 18, 12, 50)] }, local(11, 18, 12, 51))).toBeCloseTo(local(11, 18, 13, 17, 35, 389), 0);
   });
 
-  it('counts from creation with no first run reported, waiting nothing after the slot', () => {
-    expect(timerRunAfter({ ...facts, firstRunAt: null }, created)).toBe(local(11, 18, 11, 13));
+  it('counts from creation with no first run reported, with the longest wait: just under the 30-minute gap', () => {
+    expect(timerRunAfter({ ...facts, firstRunAt: null }, created)).toBe(local(11, 18, 11, 42, 59));
   });
 
   it('is null past the first run for a cron it cannot read', () => {

@@ -20,10 +20,14 @@
  * from the first run the result reports (its wait after its slot, over that
  * slot's gap; up to just under the gap, so a different multiplier than
  * today's 0.5 still reads). A first run 30 minutes after its slot hit the
- * cap, which only says `k` is at least 30 minutes over that gap: until a
- * run under the cap shows `k`, each slot is given the earliest it can run,
- * that least `k` times its gap. A first run the model cannot explain gives
- * no `k` either, and the next run sets it.
+ * cap, which only says `k` is at least 30 minutes over that gap. A first
+ * run the model cannot explain, or none reported, gives no `k` at all.
+ * Until a run under the cap shows `k`, each slot is given the LATEST it can
+ * run: 30 minutes after it, or just under its gap when that is shorter --
+ * the same range of waits the first run is read with. Never the earliest: a
+ * guess early runs out before the run comes, and the next slot would be
+ * shown while this one is still pending; a guess late is only corrected by
+ * the run's line when it comes.
  *
  * Each run is counted from the LAST run the transcript shows
  * (`scheduled_task_fire`), not from the first, so a run
@@ -118,8 +122,7 @@ export function waitFractionOf(cron: string, firstRunAt: number): number | null 
  * that holds).
  */
 function waitOf(c: Cron, f: TimerRunFacts): Wait {
-  if (f.firstRunAt === null) return { known: true, k: 0 };
-  const first = waitShownBy(c, f.firstRunAt);
+  const first: Wait = f.firstRunAt === null ? { known: false, atLeast: 0 } : waitShownBy(c, f.firstRunAt);
   if (first.known) return first;
   const shown = f.firedAt.map((t) => waitShownBy(c, t));
   let atLeast = first.atLeast;
@@ -138,12 +141,17 @@ function modelOf(f: TimerRunFacts): Model | null {
   return { cron, loop, wait: waitOf(cron, f) };
 }
 
-/** The wait after a slot: `k` of its gap up to the cap; while `k` is not known, the least it can be. */
+/**
+ * The wait after a slot: `k` of its gap, up to the cap. While `k` is not
+ * known, the longest it can be -- the cap, or just under the gap (`gap -
+ * 1 s`, not `gap / 2`: a run is read with any wait under its gap, so this
+ * stays late whatever multiplier Claude Code uses).
+ */
 function waitAfter(m: Model, slot: number): number {
   const gap = gapAt(m.cron, slot);
   if (gap === null) return 0;
-  const k = m.wait.known ? m.wait.k : m.wait.atLeast;
-  return Math.min(k * gap, WAIT_CAP_MS);
+  if (!m.wait.known) return Math.min(WAIT_CAP_MS, gap - CAP_SLACK_MS);
+  return Math.min(m.wait.k * gap, WAIT_CAP_MS);
 }
 
 /** The loop rule's period from `from`, or null when the slot rule applies. */
@@ -169,7 +177,9 @@ function runAfter(m: Model, from: number, t: number): number | null {
   if (first === null) return null;
   // Each run comes before the slot after its own (the wait is under the
   // gap), so the run after `t` belongs to the last slot at or before `t` or
-  // to the one after it.
+  // to the one after it. A slot is rolled past only once its run's time,
+  // as given (the latest it can be, while `k` is not known), is behind `t`:
+  // by then the run has come, or has come late and its line will say so.
   const back = cronPrev(m.cron, t);
   let slot: number | null = back !== null && back > first ? back : first;
   for (let i = 0; slot !== null && i < 4; i++) {
