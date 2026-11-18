@@ -352,6 +352,7 @@ pub fn run() {
             quit_app,
             mcp::mcp_server_path,
             oneshot::claude_oneshot,
+            oneshot::claude_context_oneshot,
         ])
         .build(tauri::generate_context!())
         .expect("error while building albedo")

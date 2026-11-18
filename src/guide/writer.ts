@@ -27,6 +27,14 @@
  * One more use, by the owner's decision on #352 (2026-11-11): the short
  * explanation in "Since your review", from the commit messages and the diff
  * between two heads of a review copy (writeChangesExplanation).
+ *
+ * And the Context step (#444, owner decision 2026-11-18): a second run, fixed
+ * separately in oneshot.rs (`claude_context_oneshot`), with the project's
+ * own instructions and only the MCP tools they list (context.ts). Its reply is
+ * the same one JSON result, read here (writeContext) and held to the rule by
+ * validate.ts (cleanContext). Its summary reaches the grouping and notes
+ * calls as a labelled block ahead of their input (backgroundBlock); their
+ * system prompts are unchanged, and without it so are their prompts.
  */
 
 import type { BranchDiff } from './blocks';
@@ -44,6 +52,8 @@ import {
   type Proposal,
 } from './validate';
 import { isSetAside, type GuideFocus } from './focus';
+import { cleanContext, type GuideContext } from './validate';
+import { CONTEXT_SCHEMA, contextKey, contextPrompt, contextSystem, type ContextInput, type ContextSettings } from './context';
 import { fileBlockIndex } from './blocks';
 
 /**
@@ -64,6 +74,8 @@ export interface OneshotOutput {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** The Context step only (#444): the single tools it was given, a server's expanded. */
+  allowed?: string[];
 }
 
 /** Runs one `claude -p`. Throws only when it could not be started at all. */
@@ -83,6 +95,33 @@ let runner: OneshotRunner = async (req) => {
 export function setOneshotRunner(next: OneshotRunner): OneshotRunner {
   const prev = runner;
   runner = next;
+  return prev;
+}
+
+/** The Context step's run (#444): the guide's own request plus the model and the tools. */
+export interface ContextRequest extends OneshotRequest {
+  model: string;
+  tools: string[];
+}
+
+export type ContextRunner = (req: ContextRequest) => Promise<OneshotOutput>;
+
+let contextRunner: ContextRunner = async (req) => {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<OneshotOutput>('claude_context_oneshot', {
+    model: req.model,
+    tools: req.tools,
+    systemPrompt: req.systemPrompt,
+    jsonSchema: req.jsonSchema,
+    prompt: req.prompt,
+    timeoutMs: req.timeoutMs,
+  });
+};
+
+/** Test seam. Returns the previous runner so a test can restore it. */
+export function setContextRunner(next: ContextRunner): ContextRunner {
+  const prev = contextRunner;
+  contextRunner = next;
   return prev;
 }
 
@@ -150,8 +189,13 @@ async function call(systemPrompt: string, schema: object, prompt: string): Promi
   } catch (err) {
     throw new GuideError('failed', `Could not start Claude Code: ${err instanceof Error ? err.message : String(err)}`);
   }
+  return replyOf(out, CALL_TIMEOUT_MS);
+}
+
+/** What a finished run answered: its reply's JSON, or a GuideError. */
+function replyOf(out: OneshotOutput, timeoutMs: number): unknown {
   if (out.timedOut) {
-    throw new GuideError('timeout', `Claude Code did not answer within ${Math.round(CALL_TIMEOUT_MS / 60_000)} minutes.`);
+    throw new GuideError('timeout', `Claude Code did not answer within ${Math.round(timeoutMs / 60_000)} minutes.`);
   }
   if (out.code === 127 || /command not found: claude|claude: (command )?not found/.test(out.stderr)) {
     throw new GuideError('missing', 'Claude Code was not found. Install it, or check that `claude` runs in a terminal.');
@@ -373,6 +417,18 @@ export interface WriteOptions {
   budget?: number;
   /** What to set aside and mark (#295); none when absent. Kept with the guide. */
   focus?: GuideFocus;
+  /** The Context step's summary (#444), given to the grouping call; none when absent. */
+  context?: string;
+}
+
+/**
+ * The Context summary as the grouping and notes calls are given it (#444):
+ * labelled, ahead of their own input, their system prompts unchanged. Empty
+ * without one, so those prompts are exactly what they were before #444.
+ */
+export function backgroundBlock(summary: string | undefined): string {
+  const text = summary?.trim() ?? '';
+  return text ? `Background from the user's tools (may be incomplete):\n${text}\n\n` : '';
 }
 
 function intro(files: number, blocks: number): string {
@@ -434,15 +490,19 @@ export async function writeGuide(diff: BranchDiff, o: WriteOptions): Promise<Gui
   }
   const sentFiles = new Set(sent.map((id) => diff.blocks.get(id)!.path)).size;
   const texts = new Map(sent.map((id) => [id, renderBlock(diff.blocks.get(id)!, diff)] as const));
+  // The Context step's summary (#444) goes ahead of the grouping input, and
+  // counts against the same budget (the line batches of two passes are not
+  // sent it, and plan a little small for it: safe, never over).
+  const background = backgroundBlock(o.context);
   // Groups only: the notes come after, a call per group (writeNotes, #224).
-  const overhead = CALL_OVERHEAD_TOKENS;
+  const overhead = CALL_OVERHEAD_TOKENS + estimateTokens(background);
   const plan = planInput(sent, texts, budget, overhead);
 
   if (plan.kind === 'folders') return folderGuide(diff, sent, o, plan.reason);
 
   if (plan.kind === 'single') {
     o.onProgress?.({ step: 1, of: 1, label: 'Grouping the changes' });
-    const prompt = intro(sentFiles, sent.length) + plan.ids.map((id) => texts.get(id)).join('\n\n');
+    const prompt = background + intro(sentFiles, sent.length) + plan.ids.map((id) => texts.get(id)).join('\n\n');
     const got = accept(diff, sent, asProposal(await call(GROUP_SYSTEM, GROUPS_SCHEMA, prompt)));
     return guideFrom(diff, got.groups, o, null, got.flags);
   }
@@ -467,8 +527,9 @@ export async function writeGuide(diff: BranchDiff, o: WriteOptions): Promise<Gui
     const b = diff.blocks.get(id)!;
     return `[${id}] ${b.path} +${b.added} -${b.removed}: ${lines.get(id) ?? '(no summary)'}`;
   });
-  const prompt = intro(sentFiles, sent.length) + summary.join('\n');
-  if (estimateTokens(prompt) + overhead > budget) {
+  const prompt = background + intro(sentFiles, sent.length) + summary.join('\n');
+  // The prompt carries the background itself here: counted once.
+  if (estimateTokens(prompt) + CALL_OVERHEAD_TOKENS > budget) {
     return folderGuide(diff, sent, o, `${sent.length} changed blocks are too many to group in one call, even as one line each.`);
   }
   o.onProgress?.({ step: of, of, label: 'Grouping the changes' });
@@ -500,7 +561,7 @@ function folderGuide(diff: BranchDiff, sent: readonly string[], o: WriteOptions,
 export async function writeNotes(
   diff: BranchDiff,
   group: Pick<GuideGroup, 'title' | 'summary' | 'blocks'>,
-  o: { budget?: number; groupTitles?: readonly string[] } = {},
+  o: { budget?: number; groupTitles?: readonly string[]; context?: string } = {},
 ): Promise<GroupNotes | null> {
   const blocks = group.blocks.filter((id) => diff.blocks.has(id));
   const paths = notableFiles(blocks, diff);
@@ -515,7 +576,7 @@ export async function writeNotes(
   ]
     .filter((x) => x !== null)
     .join('\n');
-  const prompt = `${head}\n\nThe group's blocks:\n\n${blocks.map((id) => renderBlock(diff.blocks.get(id)!, diff)).join('\n\n')}`;
+  const prompt = `${backgroundBlock(o.context)}${head}\n\nThe group's blocks:\n\n${blocks.map((id) => renderBlock(diff.blocks.get(id)!, diff)).join('\n\n')}`;
   if (estimateTokens(prompt) + NOTES_OVERHEAD_TOKENS > (o.budget ?? INPUT_BUDGET_TOKENS)) return null;
   const reply = asNotes(await call(NOTES_SYSTEM, NOTES_SCHEMA, prompt));
   if (reply === null) throw new GuideError('invalid', 'The notes were not in the shape asked for.');
@@ -605,4 +666,38 @@ export async function writeChangesExplanation(input: ChangesInput): Promise<{ te
   const text = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
   if (!text) throw new GuideError('invalid', 'The reply had no explanation in it.');
   return { text: text.length > CHANGES_MAX_CHARS ? `${text.slice(0, CHANGES_MAX_CHARS - 1)}…` : text, cut };
+}
+
+// ---------------------------------------------------------------------------
+// The Context step (#444)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the Context step once: the project's instructions inside the fixed
+ * frame (context.ts), the task's facts as input, only the listed tools
+ * (oneshot.rs `claude_context_oneshot`). Its reply is held to the rule by
+ * cleanContext. Throws a {@link GuideError}; the caller writes the guide
+ * without it.
+ */
+export async function writeContext(
+  settings: ContextSettings,
+  input: ContextInput,
+  now: () => number = Date.now,
+): Promise<{ context: GuideContext; allowed: string[] | null }> {
+  let out: OneshotOutput;
+  try {
+    out = await contextRunner({
+      model: settings.model,
+      tools: settings.tools,
+      systemPrompt: contextSystem(settings.instructions),
+      jsonSchema: JSON.stringify(CONTEXT_SCHEMA),
+      prompt: contextPrompt(input),
+      timeoutMs: settings.timeoutMs,
+    });
+  } catch (err) {
+    throw new GuideError('failed', err instanceof Error ? err.message : String(err));
+  }
+  const clean = cleanContext(replyOf(out, settings.timeoutMs));
+  if (clean === null) throw new GuideError('invalid', 'The answer had no summary in it.');
+  return { context: { ...clean, key: contextKey(settings), at: now() }, allowed: Array.isArray(out.allowed) ? out.allowed : null };
 }

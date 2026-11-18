@@ -128,6 +128,33 @@ the diff between those two heads, cut to `CHANGES_DIFF_MAX_CHARS` (the model
 and the reader are told when it was cut), never the whole PR. The result is
 kept with the two heads (`src/guide/copyUpdate.ts`).
 
+A widening of the sixth, by the owner's decision (2026-11-18, issue #444): a
+**Context** step, a second one-shot run before a guide is written, with the
+user's own instructions for that project (stored in
+`~/.albedo/guide-context/project-<id>.json`, off when empty). It is fixed
+separately in `oneshot.rs` (`claude_context_oneshot`): it loads the user's
+MCP servers (user settings only, no project or local settings); built-in
+tools are off; the model is one of haiku, sonnet, opus; the time limit is 5
+minutes at most; it runs in `~/.albedo/guide`, persists no session, has hooks
+disabled, and never touches a task's session. The user's names must match
+`^mcp__[A-Za-z0-9_-]+(__[A-Za-z0-9_-]+)?$` (checked in Rust). What is
+enforced about tools, and nothing more: a listing run (stopped at its first
+line) turns each name into the tools present at that moment -- a server's
+name into its tools then, a name matching nothing or a server not connected
+is an error, never dropped; only those tools go in `--allowedTools`, with
+`--permission-mode dontAsk`, and every other listed tool and server goes in
+`--disallowedTools`; and the run's own first line must be well formed and
+name no tool beyond those (and Claude Code's `StructuredOutput`) and no
+server neither wanted nor shut out, with nothing said before it, or it is
+stopped before its answer is used. A server name still allows every tool it had when listed,
+writing ones included; the sheet says so. It is given the task's title,
+branch, PR title and description and commit subjects -- no code -- and
+answers a summary and its sources, which the guide shows at the top and
+passes, as labelled text, to the grouping and notes calls; their prompts are
+otherwise unchanged. A failure never blocks the guide. `src/guide/writer.ts`
+still alone knows the output's shape. Nothing else may be built on this run
+without the same decision.
+
 A seventh, by the owner's decision (2026-11-06, issue #272): for Claude
 Code's plan mode only, the waiting prompt derived from a `PermissionRequest`
 for `ExitPlanMode` keeps its `plan` -- that one field of the tool's input, for
