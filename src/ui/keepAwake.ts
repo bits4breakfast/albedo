@@ -16,9 +16,9 @@
  *    #122), which counts only for a live terminal: a shell, an agent or a
  *    monitor until it ends (a monitor at its timeout), a wake-up until it is
  *    due, so it can fire.
- *  - A recurring timer (CronCreate) does not. It can last 7 days and the Mac
- *    would never sleep; the session wakes for it only while something else
- *    keeps the Mac awake.
+ *  - A timer (CronCreate) does not, recurring or one-shot (shown since #443).
+ *    A recurring one can last 7 days and the Mac would never sleep; the
+ *    session wakes for it only while something else keeps the Mac awake.
  *
  * Re-read when the tasks change, when a live session's rows land, and at the
  * next deadline (`nextAt`) -- never on a tick, and never while switched off.
@@ -57,7 +57,7 @@ export interface AwakeState {
   nextAt: number | null;
 }
 
-/** The background work that keeps the Mac awake: everything but a recurring timer. */
+/** The background work that keeps the Mac awake: everything but a timer. */
 export function keepsAwake(item: BackgroundItem): boolean {
   return item.kind !== 'timer';
 }

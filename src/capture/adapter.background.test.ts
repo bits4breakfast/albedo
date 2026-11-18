@@ -15,6 +15,7 @@ import {
   asyncAgent,
   backgroundShell,
   callLine,
+  cronTimer,
   monitor,
   noticeAttachmentLine,
   noticeUserLine,
@@ -23,6 +24,7 @@ import {
   stopWakeups,
   taskStop,
   taskStopMissing,
+  timerFire,
   wakeup,
 } from './backgroundFixtures';
 
@@ -81,15 +83,43 @@ describe('background lines', () => {
 
   it('reads the calls and what their results say', () => {
     const [shellCall, shellResult] = backgroundShell('t1', 'b1', T);
-    expect(facts(shellCall!)).toEqual([{ fact: 'call', toolUseId: 't1', kind: 'shell', description: 'Poll CI until green' }]);
+    expect(facts(shellCall!)).toEqual([{ fact: 'call', toolUseId: 't1', kind: 'shell', description: 'Poll CI until green', schedule: null }]);
     expect(facts(shellResult!)).toMatchObject([{ fact: 'result', toolUseId: 't1', ok: true, taskId: 'b1', scheduledFor: null }]);
 
     expect(facts(asyncAgent('g1', 'a1', T)[1]!)).toMatchObject([{ fact: 'result', taskId: 'a1' }]);
     expect(facts(monitor('m1', 'bm', T)[1]!)).toMatchObject([{ fact: 'result', taskId: 'bm', timeoutMs: 1_800_000, persistent: false }]);
     expect(facts(wakeup('w1', T, 300)[1]!)).toMatchObject([{ fact: 'result', taskId: null, scheduledFor: T + 300_000 }]);
     expect(facts(wakeup('w1', T, 300)[0]!)).toEqual([
-      { fact: 'call', toolUseId: 'w1', kind: 'wakeup', description: 'Timer: wait 5 minutes before the next check' },
+      { fact: 'call', toolUseId: 'w1', kind: 'wakeup', description: 'Timer: wait 5 minutes before the next check', schedule: null },
     ]);
+  });
+
+  it("reads a timer's cron, whether it runs once, and its first run (#443)", () => {
+    const [call, result] = cronTimer('c1', '4e553b62', T, { cron: '13,43 * * * *', nextFireAt: 1794997055389.233 });
+    expect(facts(call!)).toEqual([
+      {
+        fact: 'call',
+        toolUseId: 'c1',
+        kind: 'timer',
+        description: 'Check the error rate since the deploy',
+        schedule: { cron: '13,43 * * * *', once: false },
+      },
+    ]);
+    expect(facts(result!)).toMatchObject([{ fact: 'result', toolUseId: 'c1', ok: true, jobId: '4e553b62', nextFireAt: 1794997055389.233 }]);
+    const [once] = cronTimer('c2', 'job2', T, { cron: '0 15 18 11 *', nextFireAt: T, recurring: false });
+    expect(facts(once!)).toMatchObject([{ fact: 'call', kind: 'timer', schedule: { cron: '0 15 18 11 *', once: true } }]);
+    // `recurring` left out is recurring; a call with no cron has none.
+    expect(facts(callLine('c3', 'CronCreate', { prompt: 'Check' }, T))).toMatchObject([{ schedule: { cron: null, once: false } }]);
+    // Other results say no first run.
+    expect(facts(backgroundShell('t1', 'b1', T)[1]!)).toMatchObject([{ nextFireAt: null }]);
+  });
+
+  it("reads a timer's run line as its job having run, and a /loop wake-up's as nothing (#443)", () => {
+    expect(facts(timerFire('4e553b62', '13,43 * * * *', T))).toEqual([{ fact: 'timer-fired', jobId: '4e553b62' }]);
+    const wake = { ...timerFire('x', '* * * * *', T), content: 'Claude resuming /loop wakeup (Oct 30 10:14am)' };
+    delete (wake as Record<string, unknown>)['taskId'];
+    expect(facts(wake)).toEqual([]);
+    expect(facts({ ...timerFire('x', '* * * * *', T), isSidechain: true })).toEqual([]);
   });
 
   it('reads TaskStop and a stopped loop as stops, not starts', () => {
