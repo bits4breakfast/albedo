@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { openExternal } from '../lib/openUrl';
+import { hostOf } from '../lib/urls';
 import {
   CONTEXT_FRAME,
   CONTEXT_GIVEN,
@@ -24,7 +25,8 @@ import {
   contextKey,
   gatherContextInput,
   saveContextSettings,
-  useContextSettings,
+  settingsOf,
+  useContextLoad,
   validToolName,
   type ContextModel,
   type ContextSettings,
@@ -56,6 +58,8 @@ function Sources({ sources }: { sources: readonly GuideSource[] }): ReactNode {
             onClick={() => void openExternal(s.url!)}
           >
             {s.name}
+            {/* Where the link goes, beside what it is called (#444 review). */}
+            <span className="gd-context-source-host">{` · ${hostOf(s.url) ?? ''}`}</span>
           </button>
         ) : (
           <span key={s.name} className="gd-context-source">
@@ -137,13 +141,33 @@ export interface GuideContextSheetProps {
   onSaved?: (changed: boolean) => void;
 }
 
-type TryState = { kind: 'running'; startedAt: number } | { kind: 'done'; context: GuideContext } | { kind: 'error'; reason: string };
+type TryState =
+  | { kind: 'running'; startedAt: number }
+  | { kind: 'done'; context: GuideContext; allowed: string[] | null }
+  | { kind: 'error'; reason: string };
+
+/** `mcp__support` rather than `mcp__support__search`: a whole server. */
+export function isServerName(name: string): boolean {
+  return !name.slice('mcp__'.length).includes('__');
+}
+
+/** What allowing a whole server means, in the sheet's words; `count` once a Try has listed it. */
+export function serverWarning(name: string, count: number | null): string {
+  const all = count === null ? 'all the tools of this server' : `all ${count} ${count === 1 ? 'tool' : 'tools'} of this server`;
+  return `${name} allows ${all}, including any that can write; list single tools to be safe.`;
+}
+
+function namesIn(text: string): string[] {
+  return text.split(/[\s,]+/).filter(Boolean);
+}
 
 export function GuideContextSheet({ projectId, projectName, task, base, onClose, onSaved }: GuideContextSheetProps): ReactNode {
-  const saved = useContextSettings(projectId);
+  const saved = useContextLoad(projectId);
   const [draft, setDraft] = useState<ContextSettings | null>(null);
   useEffect(() => {
-    if (draft === null && saved !== undefined) setDraft(saved ?? DEFAULT_CONTEXT);
+    // A file that cannot be read starts from the defaults, with the error
+    // shown above them: never an empty sheet that looks like nothing saved.
+    if (draft === null && saved !== undefined) setDraft(settingsOf(saved) ?? DEFAULT_CONTEXT);
   }, [draft, saved]);
   const [typed, setTyped] = useState('');
   const [toolError, setToolError] = useState<string | null>(null);
@@ -168,7 +192,7 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
 
   const addTyped = (text: string): boolean => {
     if (!draft) return false;
-    const names = text.split(/[\s,]+/).filter(Boolean);
+    const names = namesIn(text);
     if (names.length === 0) return true;
     const bad = names.filter((n) => !validToolName(n));
     if (bad.length > 0) {
@@ -187,19 +211,24 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
     return true;
   };
 
-  const needsTool = draft !== null && draft.instructions.trim() !== '' && draft.tools.length === 0;
-  const canTry = draft !== null && task !== null && contextActive(draft) && trial?.kind !== 'running';
+  // A name still in the box counts, as if Enter had been pressed (#444 review).
+  const typedValid = namesIn(typed).filter(validToolName);
+  const effective = draft ? { ...draft, tools: [...new Set([...draft.tools, ...typedValid])] } : null;
+  const needsTool = effective !== null && effective.instructions.trim() !== '' && effective.tools.length === 0;
+  const canTry = effective !== null && task !== null && contextActive(effective) && trial?.kind !== 'running';
+  const lastAllowed = trial?.kind === 'done' ? trial.allowed : null;
+  const servers = (effective?.tools ?? []).filter(isServerName);
 
   const tryIt = () => {
-    if (!draft || !task || !contextActive(draft)) return;
+    if (!effective || !task || !contextActive(effective)) return;
     const run = ++trialRun.current;
-    const settings = draft;
+    const settings = effective;
     setTrial({ kind: 'running', startedAt: Date.now() });
     void gatherContextInput(task, base)
       .then((input) => writeContext(settings, input))
       .then(
-        (context) => {
-          if (trialRun.current === run) setTrial({ kind: 'done', context });
+        ({ context, allowed }) => {
+          if (trialRun.current === run) setTrial({ kind: 'done', context, allowed });
         },
         (err: unknown) => {
           const e = err instanceof GuideError ? err : new GuideError('failed', err instanceof Error ? err.message : String(err));
@@ -212,11 +241,11 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
     if (!draft || needsTool) return;
     // Whatever is still typed in the tool box counts, as if Enter was pressed.
     if (typed.trim() && !addTyped(typed)) return;
-    const next = typed.trim() ? { ...draft, tools: [...new Set([...draft.tools, ...typed.split(/[\s,]+/).filter(Boolean)])] } : draft;
+    const next = typed.trim() ? { ...draft, tools: [...new Set([...draft.tools, ...namesIn(typed)])] } : draft;
     setBusy(true);
     setSaveError(null);
     try {
-      const before = saved ?? DEFAULT_CONTEXT;
+      const before = settingsOf(saved) ?? DEFAULT_CONTEXT;
       await saveContextSettings(projectId, next);
       onSaved?.(contextKey(before) !== contextKey(next));
       onClose();
@@ -249,6 +278,12 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
             <div className="wt-hint">Reading the settings…</div>
           ) : (
             <>
+              {saved?.kind === 'unreadable' ? (
+                <div className="wt-error" role="alert">
+                  <div className="wt-error-head">The saved settings couldn’t be read. Saving replaces them.</div>
+                  <pre className="wt-error-body">{saved.message}</pre>
+                </div>
+              ) : null}
               <div className="wt-field">
                 <label className="wt-label" htmlFor="gc-instructions">
                   Also look up
@@ -320,6 +355,11 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
                   Only these, read-only ones. A server name (<span className="wt-mono">mcp__support</span>) allows all of its tools. No
                   file, shell or web tools, ever.
                 </div>
+                {servers.map((name) => (
+                  <div key={name} className="wt-hint gc-warn">
+                    {serverWarning(name, lastAllowed === null ? null : lastAllowed.filter((t) => t.startsWith(`${name}__`)).length)}
+                  </div>
+                ))}
                 {needsTool ? <div className="wt-hint gc-error">Add a tool it may use, or leave the instructions empty.</div> : null}
               </div>
 
@@ -410,6 +450,61 @@ export function GuideContextSheet({ projectId, projectName, task, base, onClose,
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// In Projects…
+// ---------------------------------------------------------------------------
+
+/**
+ * The Context step's place among a project's settings (#444 review), beside
+ * the Review Guide's defaults: what it is set to, and Edit… for the sheet.
+ * The sheet saves on its own (its own file), not with the project form.
+ */
+export function GuideContextField({ projectId, projectName, busy }: { projectId: number | null; projectName: string; busy: boolean }): ReactNode {
+  const load = useContextLoad(projectId);
+  const [open, setOpen] = useState(false);
+  const settings = settingsOf(load);
+  const state =
+    projectId === null
+      ? 'Save the project first, then set what its guides also look up.'
+      : load === undefined
+        ? 'Reading…'
+        : load.kind === 'unreadable'
+          ? 'Its settings couldn’t be read.'
+          : contextActive(settings)
+            ? `On · ${settings.tools.length} ${settings.tools.length === 1 ? 'tool' : 'tools'} · Claude ${
+                CONTEXT_MODELS.find((m) => m.id === settings.model)?.label ?? settings.model
+              } · ${CONTEXT_TIMEOUTS.find((t) => t.ms === settings.timeoutMs)?.label ?? ''}`
+            : 'Off';
+  return (
+    <div className="wt-field">
+      <span className="wt-label" id="wt-proj-guide-context">
+        Review Guide: Context <span className="wt-label-optional">Looked up in your own tools first</span>
+      </span>
+      <div className="wt-confirm-actions wt-guide-actions">
+        <span className="wt-modal-sub" aria-labelledby="wt-proj-guide-context">
+          {state}
+        </span>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || projectId === null}
+          aria-label="Edit Review Guide Context"
+          onClick={() => setOpen(true)}
+        >
+          Edit…
+        </button>
+      </div>
+      <div className="wt-hint">
+        Your instructions and the MCP tools they may use, for one extra step before each guide of this project. Saved on its own,
+        not with this form.
+      </div>
+      {open && projectId !== null ? (
+        <GuideContextSheet projectId={projectId} projectName={projectName} task={null} base="" onClose={() => setOpen(false)} />
+      ) : null}
     </div>
   );
 }

@@ -986,3 +986,5 @@
 .gc-trial { margin-bottom: 14px; }
 .gc-trial-running { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); }
 .gc-error { color: var(--danger); }
+.gc-warn { color: var(--text); }
+.gd-context-source-host { color: var(--muted); }

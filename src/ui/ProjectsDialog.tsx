@@ -43,6 +43,7 @@ import { basename, defaultWorktreeRoot, listBranches, repoRootFor } from '../git
 import { PROMPT_PLACEHOLDERS, fillPromptTemplate } from '../lib/issueKey';
 import { nameTask } from '../git/slug';
 import { readHiddenProjectIds, unhideProjectId, writeLastProjectId } from './projectPrefs';
+import { GuideContextField } from '../guide/GuideContext';
 import './worktree.css';
 
 export interface ProjectsDialogProps {
@@ -657,6 +658,9 @@ export function ProjectsDialog({
               </div>
 
               <GuideDefaultsFields draft={draft} busy={busy} onChange={(patch) => setDraft({ ...draft, ...patch })} />
+
+              {/* The Context step (#444): its own file and its own sheet, saved there, not with this form. */}
+              <GuideContextField projectId={draft.id} projectName={draft.name.trim() || 'this project'} busy={busy} />
 
               {saveError && (
                 <div className="wt-error">

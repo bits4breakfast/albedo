@@ -345,6 +345,8 @@ export interface ContextPlan {
   force: boolean;
   /** The guide being rewritten's Context: Rewrite reuses it while the settings are the same. */
   previous: GuideContext | null;
+  /** The project's settings file is there but could not be used: said in the banner, nothing run. */
+  unreadable?: string;
 }
 
 /** Why a Context step did not land, in the failure banner's words (#444). */
@@ -419,6 +421,9 @@ async function runContext(
 ): Promise<{ context: GuideContext | null; failure: { key: string; reason: string } | null }> {
   if (!plan) return { context: null, failure: null };
   const key = contextKey(plan.settings);
+  if (plan.unreadable !== undefined) {
+    return { context: null, failure: { key, reason: `its settings couldn’t be read (${plan.unreadable.replace(/\.$/, '')})` } };
+  }
   if (!plan.force && plan.previous && plan.previous.key === key) return { context: plan.previous, failure: null };
   const startedAt = Date.now();
   writes.set(taskId, { kind: 'writing', progress: null, context: { startedAt, done: false } });
@@ -426,7 +431,7 @@ async function runContext(
   let context: GuideContext | null = null;
   let failure: { key: string; reason: string } | null = null;
   try {
-    context = await writeContext(plan.settings, await plan.input());
+    context = (await writeContext(plan.settings, await plan.input())).context;
   } catch (err) {
     const e = err instanceof GuideError ? err : new GuideError('failed', err instanceof Error ? err.message : String(err));
     console.warn('[guide] context failed', e.kind, e.message);

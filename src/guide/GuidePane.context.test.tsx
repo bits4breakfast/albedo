@@ -120,7 +120,10 @@ describe('the Context step in the guide (#444)', () => {
     expect(contextCalls[0]!.prompt).toContain('Task title: Send the confirmation once');
     expect(groupCalls()[0]!.prompt).toContain('Customers saw the same order confirmation sent twice.');
     expect(within(section).getByText('Customers saw the same order confirmation sent twice.')).toBeTruthy();
-    fireEvent.click(within(section).getByRole('button', { name: 'Ticket SHOP-128' }));
+    const ticket = within(section).getByRole('button', { name: /^Ticket SHOP-128/ });
+    // Where it goes, beside what it is called.
+    expect(ticket.textContent).toBe('Ticket SHOP-128 · tracker.example');
+    fireEvent.click(ticket);
     expect(opened).toEqual(['https://tracker.example/SHOP-128']);
     // A source without a link is text, not a control.
     expect(within(section).queryByRole('button', { name: 'Support conversation · 3' })).toBeNull();
@@ -179,6 +182,46 @@ describe('the Context step in the guide (#444)', () => {
 });
 
 describe('the sheet (#444)', () => {
+  it('says what a whole server allows, with its count once a Try has listed it', async () => {
+    disk.set(1, JSON.stringify({ ...settings, tools: ['mcp__support'] }));
+    setContextRunner(async (req) => {
+      contextCalls.push(req);
+      return { ...result({ summary: 'S.', sources: [] }), allowed: ['mcp__support__search', 'mcp__support__read', 'mcp__support__reply'] };
+    });
+    saveGuide(7, {
+      diffHash: diff.hash, writtenAt: 1, base: 'main', groups: [{ title: 'G', summary: '', blocks: diff.order, notes: {} }],
+      files: { 'src/OrderMailer.php': diff.order }, fallback: null,
+    });
+    pane();
+    fireEvent.click(await screen.findByRole('button', { name: 'More guide actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Review Guide Context…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      await within(dialog).findByText('mcp__support allows all the tools of this server, including any that can write; list single tools to be safe.'),
+    ).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try on the selected task' }));
+    expect(
+      await within(dialog).findByText('mcp__support allows all 3 tools of this server, including any that can write; list single tools to be safe.'),
+    ).toBeTruthy();
+  });
+
+  it('says when the saved settings cannot be read, rather than showing an empty sheet; the guide says so too', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    disk.set(1, '{not json');
+    pane();
+    fireEvent.click(await screen.findByRole('button', { name: 'Review Guide Context…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('alert').textContent).toContain('The saved settings couldn’t be read. Saving replaces them.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Write Guide' }));
+    expect(
+      await screen.findByText(
+        'Context wasn’t added: its settings couldn’t be read (The file is not valid JSON). The guide below is written without it.',
+      ),
+    ).toBeTruthy();
+    expect(contextCalls).toHaveLength(0);
+  });
+
   it('opens from ⋯, takes MCP names only, and saves per project', async () => {
     disk.clear();
     saveGuide(7, {
@@ -209,21 +252,37 @@ describe('the sheet (#444)', () => {
     expect(groupCalls()).toHaveLength(0);
   });
 
-  it('needs a tool for its instructions, and tries them on the selected task without saving', async () => {
+  it('is not offered in the intro of a project with none configured: that screen is as before', async () => {
     disk.clear();
     pane();
-    fireEvent.click(await screen.findByRole('button', { name: 'Review Guide Context…' }));
+    await screen.findByRole('button', { name: 'Write Guide' });
+    expect(screen.queryByRole('button', { name: 'Review Guide Context…' })).toBeNull();
+    expect(document.querySelector('.gd-intro-note')!.textContent).toBe(
+      'Written by Claude Haiku in a separate, one-time run with no tools. This task’s session is not touched.',
+    );
+  });
+
+  it('needs a tool for its instructions -- one still typed counts -- and tries them on the selected task without saving', async () => {
+    disk.set(1, JSON.stringify({ ...settings, instructions: '', tools: [] }));
+    saveGuide(7, {
+      diffHash: diff.hash, writtenAt: 1, base: 'main', groups: [{ title: 'G', summary: '', blocks: diff.order, notes: {} }],
+      files: { 'src/OrderMailer.php': diff.order }, fallback: null,
+    });
+    pane();
+    fireEvent.click(await screen.findByRole('button', { name: 'More guide actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Review Guide Context…' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(await within(dialog).findByLabelText('Also look up'), { target: { value: 'Find the ticket.' } });
     expect(within(dialog).getByText('Add a tool it may use, or leave the instructions empty.')).toBeTruthy();
     expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
     const box = within(dialog).getByLabelText('Tools it may use');
+    // Typed, not yet committed with Enter: it counts.
     fireEvent.change(box, { target: { value: 'mcp__tracker__get_issue' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(within(dialog).queryByText('Add a tool it may use, or leave the instructions empty.')).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Try on the selected task' }));
     expect(await within(dialog).findByText('Customers saw the same order confirmation sent twice.')).toBeTruthy();
     expect(contextCalls[0]).toMatchObject({ tools: ['mcp__tracker__get_issue'], model: 'sonnet' });
-    expect(disk.has(1)).toBe(false);
+    expect(JSON.parse(disk.get(1)!).instructions).toBe('');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });

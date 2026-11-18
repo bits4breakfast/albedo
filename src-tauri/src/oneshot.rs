@@ -38,50 +38,68 @@
 //! one more one-shot before it is written: the user's own instructions, per
 //! project, to pull background (a ticket, the support conversations behind
 //! it) from their own MCP tools. `claude_context_oneshot` is that run, and
-//! the widening is exactly this: it loads the user's MCP servers; it may call
-//! only the tools the user listed (`--allowedTools`, each name checked here
-//! against `^mcp__[A-Za-z0-9_-]+(__[A-Za-z0-9_-]+)?$`, so no built-in can be
-//! named); built-in tools stay off (`--tools ""`); the model is one of
-//! haiku, sonnet, opus; the time limit is 5 minutes at most; it runs in
-//! `~/.albedo/guide`, persists no session, has hooks disabled, and never
-//! touches a task's session. The page chooses only the model, the tool
-//! names, the time limit and the words. `claude_args` above is untouched by
-//! it: the guide's own run is still no tools, Haiku, `--strict-mcp-config`.
+//! the widening is exactly this: it loads the user's MCP servers; built-in
+//! tools stay off (`--tools ""`); the model is one of haiku, sonnet, opus; the
+//! time limit is 5 minutes at most; it runs in `~/.albedo/guide`, persists no
+//! session, has hooks disabled, and never touches a task's session. The page
+//! chooses only the model, the names, the time limit and the words.
+//! `claude_args` above is untouched by it: the guide's own run is still no
+//! tools, Haiku, `--strict-mcp-config`.
 //!
-//! Measured on Claude Code 2.1.327, with a read-only tool of a claude.ai
-//! connector and of a server in `~/.claude.json`:
+//! What is enforced about tools, and nothing more:
+//!
+//! 1. Each name must match `^mcp__[A-Za-z0-9_-]+(__[A-Za-z0-9_-]+)?$`
+//!    (`valid_tool_name`): no built-in can be named.
+//! 2. A listing run, stopped at its first line, names every tool and server
+//!    the run would load. `resolve` turns the user's names into the tools
+//!    present then: a server's name into the tools it has at that moment (one
+//!    it adds later is not allowed). A name that matches nothing is an error;
+//!    so is a server not connected, after listing again (up to 3 times, 3 s
+//!    apart) while it is `pending`. Never quietly dropped: a run without its
+//!    tools would answer "found nothing".
+//! 3. Only those tools go in `--allowedTools`, with `--permission-mode
+//!    dontAsk`; every other tool and every server none of them belong to goes
+//!    in `--disallowedTools` (`deny_list`).
+//! 4. The run's own first line (`init`) must name no tool beyond those and
+//!    `StructuredOutput` (`unexpected_tools`), or it is stopped there and its
+//!    answer is never used; an answer before that line is not used either.
+//!
+//! A server name still allows every tool it had when listed, writing ones
+//! included: the sheet says so. The listing and a run stopped early are asked
+//! to end first (SIGTERM to the group, 1.5 s, then SIGKILL): Claude Code may
+//! be writing a refreshed OAuth token.
+//!
+//! Measured on Claude Code 2.1.327, with read-only tools only (a claude.ai
+//! connector's tool, and a whole read-only connector):
 //!
 //! - Without `--strict-mcp-config`, `-p` loads the user's servers, claude.ai
 //!   connectors included (27 servers, 308 tools here) -- but only with the
 //!   `user` setting source: `--setting-sources ""` or `project` loads none.
-//!   So the run has `--setting-sources user` (no project or local settings).
+//!   So the run has `--setting-sources user`.
 //! - `--tools ""` removes the built-ins only; every MCP tool stays. `--tools`
 //!   with an MCP name changes nothing.
-//! - `--allowedTools` only spares a tool the prompt. With `--permission-mode
-//!   dontAsk` a tool not allowed is denied at once, no prompt (reported in
-//!   `permission_denials`) -- unless a standing allow rule in the user's own
-//!   settings names it: then it ran (verified with a rule passed through
-//!   `--settings`). And all 308 definitions are sent on every request: a
-//!   one-line answer cost ~400k input tokens and $0.40 on Haiku.
-//! - So the run first LISTS: the same flags with `--output-format
-//!   stream-json --verbose`, read up to its first line (`system`/`init`,
-//!   ~2.5 s, which names every tool and every server with its status), then
-//!   stopped. Everything not listed by the user goes into `--disallowedTools`
-//!   (`deny_list`): each other tool, each server none of whose tools were
-//!   listed, and each server not yet connected. A denied tool is gone from
-//!   the run altogether ("isn't available in this session"), a standing allow
-//!   rule no longer reaches it (verified), and its definition is not sent.
-//!   A server name (`mcp__support`) in `--allowedTools` allows all of its
-//!   tools (verified).
-//! - `--json-schema` still works alongside MCP calls: `structured_output` is
-//!   filled after the tool calls (its `StructuredOutput` tool is the one
-//!   non-MCP tool in the listing, and is never denied).
+//! - With `dontAsk`, a tool not in `--allowedTools` is denied at once, no
+//!   prompt -- unless a standing allow rule in the user's own settings names
+//!   it: then it ran (verified with a rule passed through `--settings`). And
+//!   all 308 definitions are sent on every request: a one-line answer cost
+//!   ~400k input tokens and $0.40 on Haiku. With the deny list, a denied tool
+//!   is gone from the run ("isn't available in this session"), a standing
+//!   allow rule no longer reaches it (verified), and its definition is not
+//!   sent. Bash reports as missing.
+//! - The listing's `init` line comes ~2.5-3.8 s in; 0 to 2 claude.ai
+//!   connectors were `pending` per listing, a different count each time, so
+//!   one is listed again. A tool on a `needs-auth` connector fails at once,
+//!   naming it; a misspelt tool fails naming its server. Stopped with SIGTERM,
+//!   the listing ended in ~1 s (exit 143), never needing SIGKILL.
+//! - `--json-schema` still works alongside MCP calls, with `stream-json`:
+//!   the final `result` line carries `structured_output`.
 //! - Cost and time, listing included, one tool call: Haiku ~$0.002 and
-//!   ~12 s, Sonnet ~$0.04 and ~10 s; a tool's own answer can add ~40k
-//!   tokens a request (one tracker listing did).
-//! - Residual, recorded: a tool a connected server adds after the listing,
-//!   on a server the user listed some tools of, is not in the deny list;
-//!   `dontAsk` still denies it unless the user's own settings allow it.
+//!   ~12 s, Sonnet ~$0.04 and ~10 s; a whole read-only connector (14 tools,
+//!   expanded at listing) ~$0.004 and ~19 s on Haiku. A tool's own answer can
+//!   add ~40k tokens a request.
+//! - Not enforced, recorded: `dontAsk` and the listed tools are what keep a
+//!   tool from running; nothing here can tell a reading tool from a writing
+//!   one.
 //!
 //! It goes through the user's login shell, exactly as `pty.rs` does, for the
 //! same two reasons: a Finder-launched app's PATH does not reach `claude`, and
@@ -112,6 +130,10 @@ pub struct OneshotResult {
     stdout: String,
     stderr: String,
     timed_out: bool,
+    /// The Context step's tools as the run was given them (#444): the user's
+    /// names, a server's expanded to its tools. Never set for the guide's run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    allowed: Option<Vec<String>>,
 }
 
 /// The fixed argv after `claude`. The page supplies only the words.
@@ -174,6 +196,13 @@ pub(crate) const CONTEXT_MAX_TIMEOUT_MS: u64 = 5 * 60 * 1000;
 pub(crate) const CONTEXT_MAX_TOOLS: usize = 32;
 /// Claude Code's own tool for `--json-schema`: the only tool that is not MCP.
 const STRUCTURED_OUTPUT_TOOL: &str = "StructuredOutput";
+/// A server still connecting when listed is listed again after this, at most
+/// [`LISTING_ATTEMPTS`] times in all.
+const LISTING_RETRY: Duration = Duration::from_secs(3);
+const LISTING_ATTEMPTS: usize = 3;
+/// Between asking a run to end (SIGTERM) and making it (SIGKILL): room for
+/// Claude Code to finish writing, say, a refreshed OAuth token.
+const STOP_GRACE: Duration = Duration::from_millis(1500);
 
 /// `^mcp__[A-Za-z0-9_-]+(__[A-Za-z0-9_-]+)?$`: an MCP server (`mcp__tracker`)
 /// or one of its tools (`mcp__tracker__get_issue`). Nothing else -- so no
@@ -218,7 +247,8 @@ pub(crate) fn check_context_request(
 /// The flags every Context run has, the listing included: the user's MCP
 /// servers (no `--strict-mcp-config`), no built-in tools, only the user's
 /// settings file, nothing asked (anything not allowed is denied), no session,
-/// no hooks, no slash commands.
+/// no hooks, no slash commands, and a stream whose first line names what the
+/// run loaded.
 fn context_base(model: &str) -> Vec<String> {
     [
         "-p",
@@ -234,6 +264,9 @@ fn context_base(model: &str) -> Vec<String> {
         "--disable-slash-commands",
         "--settings",
         r#"{"disableAllHooks":true}"#,
+        "--output-format",
+        "stream-json",
+        "--verbose",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -241,8 +274,9 @@ fn context_base(model: &str) -> Vec<String> {
 }
 
 /// The fixed argv of the Context run. The page supplies the model (from
-/// [`CONTEXT_MODELS`]), the tool names (checked by [`valid_tool_name`]) and
-/// the words; `denied` is Albedo's own, from [`deny_list`].
+/// [`CONTEXT_MODELS`]) and the words; `allowed` is the user's names as
+/// [`resolve`] found them (single tools, never a server), `denied` is
+/// [`deny_list`]'s.
 pub(crate) fn context_args(
     model: &str,
     allowed: &[String],
@@ -251,7 +285,6 @@ pub(crate) fn context_args(
     json_schema: &str,
 ) -> Vec<String> {
     let mut args = context_base(model);
-    args.extend(["--output-format".into(), "json".into()]);
     args.extend(["--allowedTools".into(), allowed.join(",")]);
     if !denied.is_empty() {
         args.extend(["--disallowedTools".into(), denied.join(",")]);
@@ -273,9 +306,6 @@ fn listing_args() -> Vec<String> {
     let mut args = context_base("haiku");
     args.extend(
         [
-            "--output-format",
-            "stream-json",
-            "--verbose",
             "--max-turns",
             "1",
             "--system-prompt",
@@ -346,19 +376,65 @@ fn under(name: &str, prefix: &str) -> bool {
             .is_some_and(|rest| rest.starts_with("__"))
 }
 
-/// Everything the run must not see: every tool the listing found that the
-/// user did not list, every server none of whose tools they listed, and every
-/// server not connected yet (its tools are unknown, so it is shut out whole).
-/// `--allowedTools` only spares a tool a prompt; denying the rest takes them
-/// out of the run altogether, so a standing allow rule in the user's own
-/// settings cannot reach them, and their definitions are not sent (300 tools
-/// cost ~200k input tokens a request, measured). Errs on a tool whose name
-/// could not be denied exactly.
+/// What the user's names come to in a listing.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Resolution {
+    /// Single tools, each in the listing: a server name is expanded to the
+    /// tools it had then, so a tool it adds later is not allowed.
+    Ready(Vec<String>),
+    /// A server one of the names needs was not connected: its name and status.
+    NotConnected(String, String),
+}
+
+/// The user's names against a listing. A name that matches nothing -- no
+/// server, or a server without that tool -- is an error, never quietly
+/// dropped: a run without its tools would answer "found nothing".
+pub(crate) fn resolve(listed: &[String], listing: &Listing) -> Result<Resolution, String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in listed {
+        let server = listing
+            .servers
+            .iter()
+            .find(|(n, _)| under(name, &server_prefix(n)));
+        if let Some((server, status)) = server {
+            if status != "connected" {
+                return Ok(Resolution::NotConnected(server.clone(), status.clone()));
+            }
+        }
+        if listing
+            .servers
+            .iter()
+            .any(|(n, _)| server_prefix(n) == *name)
+        {
+            let tools: Vec<&String> = listing.tools.iter().filter(|t| under(t, name)).collect();
+            if tools.is_empty() {
+                return Err(format!("the server {name} offers no tools"));
+            }
+            out.extend(tools.into_iter().cloned());
+        } else if listing.tools.contains(name) {
+            out.push(name.clone());
+        } else if let Some((server, _)) = server {
+            return Err(format!("{name} is not a tool of the server \"{server}\""));
+        } else {
+            return Err(format!("no MCP server offers {name}"));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|t| seen.insert(t.clone()));
+    Ok(Resolution::Ready(out))
+}
+
+/// Everything the run must not see, given the single tools it may use: every
+/// other tool in the listing, every server none of them belong to, and every
+/// server not connected. `--allowedTools` only spares a tool a prompt;
+/// denying the rest takes them out of the run altogether, so a standing allow
+/// rule in the user's own settings cannot reach them, and their definitions
+/// are not sent (300 tools cost ~200k input tokens a request, measured). Errs
+/// on a tool whose name could not be denied exactly.
 pub(crate) fn deny_list(allowed: &[String], listing: &Listing) -> Result<Vec<String>, String> {
-    let covered = |tool: &str| allowed.iter().any(|a| under(tool, a));
     let mut out: Vec<String> = Vec::new();
     for tool in &listing.tools {
-        if tool == STRUCTURED_OUTPUT_TOOL || covered(tool) {
+        if tool == STRUCTURED_OUTPUT_TOOL || allowed.contains(tool) {
             continue;
         }
         if !tool
@@ -381,8 +457,19 @@ pub(crate) fn deny_list(allowed: &[String], listing: &Listing) -> Result<Vec<Str
     Ok(out)
 }
 
+/// The tools a run's own `init` line names that it was not given: anything
+/// past these makes the run stop before its first turn.
+pub(crate) fn unexpected_tools(init: &Listing, allowed: &[String]) -> Vec<String> {
+    init.tools
+        .iter()
+        .filter(|t| *t != STRUCTURED_OUTPUT_TOOL && !allowed.contains(t))
+        .cloned()
+        .collect()
+}
+
 /// Run the Context step once (#444): list what the user's MCP servers offer,
-/// then run with only the listed tools. Never a pty, never a session.
+/// then run with only the listed tools, checking what the run itself loaded.
+/// Never a pty, never a session.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn claude_context_oneshot(
@@ -404,27 +491,59 @@ pub async fn claude_context_oneshot(
         .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     let deadline = Instant::now() + timeout;
     tauri::async_runtime::spawn_blocking(move || {
-        let listing = match list_tools(&dir, deadline)? {
-            Listed::Found(l) => l,
-            Listed::Ended(out) => return Ok(out),
-            Listed::TimedOut => {
-                return Ok(OneshotResult {
-                    code: None,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    timed_out: true,
-                })
+        let shell = login_shell();
+        let mut attempt = 0;
+        let (listing, allowed) = loop {
+            attempt += 1;
+            let cmd = build_command(&shell, &dir, listing_args());
+            let listing = match list_tools(cmd, deadline)? {
+                Listed::Found(l) => l,
+                Listed::Ended(out) => return Ok(out),
+                Listed::TimedOut => return Ok(timed_out_result()),
+            };
+            match resolve(&tools, &listing)? {
+                Resolution::Ready(allowed) => break (listing, allowed),
+                Resolution::NotConnected(server, status) => {
+                    // Only a server still connecting is worth waiting for.
+                    let again = status == "pending"
+                        && attempt < LISTING_ATTEMPTS
+                        && Instant::now() + LISTING_RETRY < deadline;
+                    if !again {
+                        return Err(format!(
+                            "the server \"{server}\" was not connected ({status})"
+                        ));
+                    }
+                    thread::sleep(LISTING_RETRY);
+                }
             }
         };
-        let denied = deny_list(&tools, &listing)?;
-        let args = context_args(&model, &tools, &denied, &system_prompt, &json_schema);
-        run(dir, args, prompt, deadline)
+        let denied = deny_list(&allowed, &listing)?;
+        let args = context_args(&model, &allowed, &denied, &system_prompt, &json_schema);
+        let mut out = run_context(
+            build_command(&shell, &dir, args),
+            prompt,
+            deadline,
+            &allowed,
+        )?;
+        out.allowed = Some(allowed);
+        Ok(out)
     })
     .await
     .map_err(|e| format!("one-shot run failed: {e}"))?
 }
 
+fn timed_out_result() -> OneshotResult {
+    OneshotResult {
+        code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+        timed_out: true,
+        allowed: None,
+    }
+}
+
 /// How the listing went.
+#[derive(Debug)]
 enum Listed {
     Found(Listing),
     /// The deadline came first.
@@ -434,83 +553,257 @@ enum Listed {
     Ended(OneshotResult),
 }
 
-/// The listing's `init` line, read and then the run stopped at once.
-fn list_tools(dir: &Path, deadline: Instant) -> Result<Listed, String> {
+/// A spawned run's stdout, a line at a time, on a channel. Never joined: on
+/// macOS a process spawned at the same moment elsewhere in the app can
+/// inherit the pipe's write end, so its end of file may come long after the
+/// run is over. The callers watch the run itself instead.
+fn line_reader(stdout: std::process::ChildStdout) -> std::sync::mpsc::Receiver<String> {
     use std::io::BufRead;
-    use std::sync::mpsc;
-    let shell = login_shell();
-    let mut cmd = build_command(&shell, dir, listing_args());
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    thread::spawn(move || {
+        let mut kept = 0usize;
+        for line in std::io::BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            kept += line.len();
+            // Keep draining past the cap (and once nobody listens), or the
+            // child blocks on a full pipe.
+            if kept <= MAX_OUTPUT_BYTES {
+                let _ = tx.send(line);
+            }
+        }
+    });
+    rx
+}
+
+/// A run's stderr, read in the background, for a failure's message: waited
+/// for briefly, never for good (see [`line_reader`]).
+fn stderr_reader(stderr: std::process::ChildStderr) -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    thread::spawn(move || {
+        let _ = tx.send(read_capped(stderr));
+    });
+    rx
+}
+
+fn stderr_of(rx: &std::sync::mpsc::Receiver<String>) -> String {
+    rx.recv_timeout(Duration::from_millis(500))
+        .unwrap_or_default()
+}
+
+/// The next line of a run, or why there is none: the deadline, or the run
+/// having ended (its output closed, or the process gone and nothing more
+/// written for a moment).
+enum Next {
+    Line(String),
+    Deadline,
+    Ended,
+}
+
+struct Lines {
+    rx: std::sync::mpsc::Receiver<String>,
+    exited_at: Option<Instant>,
+}
+
+impl Lines {
+    fn next(&mut self, child: &mut std::process::Child, deadline: Instant) -> Next {
+        use std::sync::mpsc::RecvTimeoutError;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Next::Deadline;
+            }
+            match self.rx.recv_timeout(left.min(Duration::from_millis(100))) {
+                Ok(line) => return Next::Line(line),
+                Err(RecvTimeoutError::Disconnected) => return Next::Ended,
+                Err(RecvTimeoutError::Timeout) => {
+                    if self.exited_at.is_none() && matches!(child.try_wait(), Ok(Some(_))) {
+                        self.exited_at = Some(Instant::now());
+                    }
+                    if self
+                        .exited_at
+                        .is_some_and(|at| at.elapsed() > Duration::from_millis(300))
+                    {
+                        return Next::Ended;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Ask a process group to end (SIGTERM), give it `grace`, then make it
+/// (SIGKILL). Never signals a group whose leader was already reaped.
+fn stop_group(
+    child: &mut std::process::Child,
+    grace: Duration,
+) -> Option<std::process::ExitStatus> {
+    let pid = child.id();
+    if let Ok(Some(status)) = child.try_wait() {
+        return Some(status);
+    }
+    term_group(pid);
+    let until = Instant::now() + grace;
+    while Instant::now() < until {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(_) => break,
+        }
+    }
+    kill_group(pid);
+    let _ = child.kill();
+    child.wait().ok()
+}
+
+/// The listing's `init` line, read and then the run stopped: asked first
+/// (SIGTERM), since it may be writing a refreshed OAuth token, then made to.
+fn list_tools(mut cmd: Command, deadline: Instant) -> Result<Listed, String> {
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("could not start {shell}: {e}"))?;
-    let pid = child.id();
+        .map_err(|e| format!("could not start the listing: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         // Dropped here, so the prompt ends.
         let _ = stdin.write_all(b".");
     }
     let stdout = child.stdout.take().ok_or("no stdout")?;
-    let stderr = child.stderr.take().ok_or("no stderr")?;
-    let err_reader = thread::spawn(move || read_capped(stderr));
-    let (tx, rx) = mpsc::channel::<Listing>();
-    let reader = thread::spawn(move || {
-        let mut seen = String::new();
-        for line in std::io::BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            if let Some(found) = parse_init(&line) {
-                let _ = tx.send(found);
-                return seen;
-            }
-            if seen.len() < MAX_OUTPUT_BYTES {
-                seen.push_str(&line);
-                seen.push('\n');
-            }
-        }
-        seen
-    });
+    let stderr = stderr_reader(child.stderr.take().ok_or("no stderr")?);
+    let mut lines = Lines {
+        rx: line_reader(stdout),
+        exited_at: None,
+    };
+    let mut seen = String::new();
     let found = loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            break Err(true);
-        }
-        match rx.recv_timeout(left.min(Duration::from_millis(200))) {
-            Ok(l) => break Ok(l),
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break Err(false),
-        }
-    };
-    let mut exited = None;
-    if matches!(found, Err(false)) {
-        // Its output closed: it is ending. A moment for its exit code.
-        let until = Instant::now() + Duration::from_secs(2);
-        while exited.is_none() && Instant::now() < until {
-            match child.try_wait() {
-                Ok(Some(status)) => exited = Some(status),
-                Ok(None) => thread::sleep(Duration::from_millis(50)),
-                Err(_) => break,
-            }
-        }
-    }
-    // Found, out of time, or slow to end: the listing is all it was for. Never
-    // a group already reaped, whose id may belong to someone else by now.
-    let status = match exited {
-        Some(status) => Some(status),
-        None => {
-            kill_group(pid);
-            let _ = child.kill();
-            child.wait().ok()
+        match lines.next(&mut child, deadline) {
+            Next::Line(line) => match parse_init(&line) {
+                Some(l) => break Ok(l),
+                None => {
+                    seen.push_str(&line);
+                    seen.push('\n');
+                }
+            },
+            Next::Deadline => break Err(true),
+            Next::Ended => break Err(false),
         }
     };
-    let stdout = reader.join().unwrap_or_default();
-    let stderr = err_reader.join().unwrap_or_default();
+    let ended = matches!(found, Err(false));
+    let status = stop_group(
+        &mut child,
+        if ended {
+            Duration::from_secs(2)
+        } else {
+            STOP_GRACE
+        },
+    );
     Ok(match found {
         Ok(l) => Listed::Found(l),
         Err(true) => Listed::TimedOut,
         Err(false) => Listed::Ended(OneshotResult {
             code: status.and_then(|s| s.code()),
-            stdout,
-            stderr,
+            stdout: seen,
+            stderr: stderr_of(&stderr),
             timed_out: false,
+            allowed: None,
         }),
+    })
+}
+
+/// The Context run itself, failing closed on what it loaded: its own `init`
+/// line must name no tool past `allowed` (and `StructuredOutput`), or it is
+/// stopped there and this errs. A `result` line before any `init` line errs
+/// too. Hands back the final `result` line as stdout -- the one line the page
+/// reads, as from `--output-format json` -- after any non-JSON lines (a login
+/// profile's), never the stream's own (tool results among them).
+fn run_context(
+    mut cmd: Command,
+    prompt: String,
+    deadline: Instant,
+    allowed: &[String],
+) -> Result<OneshotResult, String> {
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("could not start the run: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+    thread::spawn(move || {
+        // A child that exits early closes the pipe; that is its answer.
+        let _ = stdin.write_all(prompt.as_bytes());
+    });
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = stderr_reader(child.stderr.take().ok_or("no stderr")?);
+    let mut lines = Lines {
+        rx: line_reader(stdout),
+        exited_at: None,
+    };
+
+    let mut checked = false;
+    let mut result: Option<String> = None;
+    let mut other = String::new();
+    let mut refused: Option<String> = None;
+    let mut timed_out = false;
+    loop {
+        let line = match lines.next(&mut child, deadline) {
+            Next::Line(line) => line,
+            Next::Deadline => {
+                timed_out = true;
+                break;
+            }
+            Next::Ended => break,
+        };
+        if let Some(init) = parse_init(&line) {
+            let extra = unexpected_tools(&init, allowed);
+            if !extra.is_empty() {
+                let shown: Vec<_> = extra.iter().take(5).cloned().collect();
+                refused = Some(format!(
+                    "the run loaded tools it was not given ({}{}), so it was stopped",
+                    shown.join(", "),
+                    if extra.len() > 5 { ", …" } else { "" }
+                ));
+                break;
+            }
+            checked = true;
+            continue;
+        }
+        let is_result = serde_json::from_str::<serde_json::Value>(line.trim())
+            .ok()
+            .is_some_and(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"));
+        if is_result {
+            if !checked {
+                refused = Some(
+                    "the run answered before saying which tools it had loaded, so its answer was not used"
+                        .into(),
+                );
+                break;
+            }
+            result = Some(line);
+        } else if !line.trim_start().starts_with('{') && other.len() < 64 * 1024 {
+            other.push_str(&line);
+            other.push('\n');
+        }
+    }
+    let ended = refused.is_none() && !timed_out;
+    let status = stop_group(
+        &mut child,
+        if ended {
+            Duration::from_secs(2)
+        } else {
+            STOP_GRACE
+        },
+    );
+    if let Some(why) = refused {
+        return Err(why);
+    }
+    Ok(OneshotResult {
+        code: if timed_out {
+            None
+        } else {
+            status.and_then(|s| s.code())
+        },
+        stdout: match result {
+            Some(line) => format!("{other}{line}\n"),
+            None => other,
+        },
+        stderr: stderr_of(&stderr),
+        timed_out,
+        allowed: None,
     })
 }
 
@@ -565,6 +858,7 @@ fn run(
         stdout,
         stderr,
         timed_out,
+        allowed: None,
     })
 }
 
@@ -609,6 +903,17 @@ fn kill_group(pid: u32) {
 
 #[cfg(not(unix))]
 fn kill_group(_pid: u32) {}
+
+#[cfg(unix)]
+fn term_group(pid: u32) {
+    if let Ok(pgid) = i32::try_from(pid) {
+        // SAFETY: plain syscall on a group we created; no memory involved.
+        unsafe { libc::killpg(pgid, libc::SIGTERM) };
+    }
+}
+
+#[cfg(not(unix))]
+fn term_group(_pid: u32) {}
 
 fn read_capped(mut r: impl Read) -> String {
     let mut buf = Vec::new();
@@ -692,7 +997,7 @@ mod tests {
         let joined = args.join(" ");
         assert_eq!(args[0], "-p");
         assert!(joined.contains("--model sonnet"));
-        assert!(joined.contains("--output-format json"));
+        assert!(joined.contains("--output-format stream-json --verbose"));
         let at = |flag: &str| {
             args.iter()
                 .position(|a| a == flag)
@@ -817,14 +1122,13 @@ mod tests {
         assert_eq!(server_prefix("support-desk"), "mcp__support-desk");
     }
 
-    #[test]
-    fn everything_not_listed_is_shut_out() {
-        let listing = Listing {
+    fn listing() -> Listing {
+        Listing {
             tools: names(&[
                 "mcp__tracker__get_issue",
                 "mcp__tracker__save_issue",
                 "mcp__support__search",
-                "mcp__support__reply",
+                "mcp__support__read",
                 "mcp__mail__send",
                 "StructuredOutput",
             ]),
@@ -835,23 +1139,73 @@ mod tests {
                 ("calendar".into(), "needs-auth".into()),
                 ("docs".into(), "pending".into()),
             ],
-        };
-        let allowed = names(&["mcp__tracker__get_issue", "mcp__support", "mcp__docs__read"]);
-        let denied = deny_list(&allowed, &listing).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_server_name_becomes_the_tools_it_has_when_listed() {
+        let got = resolve(
+            &names(&["mcp__tracker__get_issue", "mcp__support"]),
+            &listing(),
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            Resolution::Ready(names(&[
+                "mcp__tracker__get_issue",
+                "mcp__support__search",
+                "mcp__support__read",
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_name_that_matches_nothing_is_an_error_never_dropped() {
+        let typo = resolve(&names(&["mcp__tracker__get_isue"]), &listing()).unwrap_err();
+        assert_eq!(
+            typo,
+            r#"mcp__tracker__get_isue is not a tool of the server "tracker""#
+        );
+        let missing = resolve(&names(&["mcp__wiki__read"]), &listing()).unwrap_err();
+        assert_eq!(missing, "no MCP server offers mcp__wiki__read");
+        let missing_server = resolve(&names(&["mcp__wiki"]), &listing()).unwrap_err();
+        assert_eq!(missing_server, "no MCP server offers mcp__wiki");
+    }
+
+    #[test]
+    fn a_listed_tool_on_a_server_not_connected_waits_or_fails_it_is_never_dropped() {
+        assert_eq!(
+            resolve(&names(&["mcp__docs__read"]), &listing()).unwrap(),
+            Resolution::NotConnected("docs".into(), "pending".into())
+        );
+        assert_eq!(
+            resolve(
+                &names(&["mcp__tracker__get_issue", "mcp__calendar"]),
+                &listing()
+            )
+            .unwrap(),
+            Resolution::NotConnected("calendar".into(), "needs-auth".into())
+        );
+    }
+
+    #[test]
+    fn everything_not_given_is_shut_out() {
+        let allowed = names(&[
+            "mcp__tracker__get_issue",
+            "mcp__support__search",
+            "mcp__support__read",
+        ]);
+        let denied = deny_list(&allowed, &listing()).unwrap();
         assert_eq!(
             denied,
             names(&[
                 "mcp__calendar",
-                // Listed, but not connected when listed: its tools are
-                // unknown, so all of it is shut out.
                 "mcp__docs",
                 "mcp__mail",
                 "mcp__mail__send",
                 "mcp__tracker__save_issue",
             ])
         );
-        // A server listed whole keeps all its tools; nothing built in survives.
-        assert!(!denied.iter().any(|d| d.starts_with("mcp__support")));
         let odd = Listing {
             tools: names(&["Bash"]),
             servers: vec![],
@@ -864,35 +1218,252 @@ mod tests {
         assert!(deny_list(&allowed, &unsafe_name).is_err());
     }
 
+    #[test]
+    fn a_tool_the_run_loaded_past_what_it_was_given_is_found() {
+        let init = Listing {
+            tools: names(&[
+                "mcp__tracker__get_issue",
+                "StructuredOutput",
+                "mcp__wiki__read",
+            ]),
+            servers: vec![],
+        };
+        assert_eq!(
+            unexpected_tools(&init, &names(&["mcp__tracker__get_issue"])),
+            names(&["mcp__wiki__read"])
+        );
+        assert!(unexpected_tools(
+            &init,
+            &names(&["mcp__tracker__get_issue", "mcp__wiki__read"])
+        )
+        .is_empty());
+    }
+
+    // --- the runs, with a stand-in for `claude` --------------------------
+
+    #[cfg(unix)]
+    fn fake(script: &str) -> Command {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg(script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd.process_group(0);
+        cmd
+    }
+
+    const INIT: &str = r#"{"type":"system","subtype":"init","tools":["mcp__tracker__get_issue","StructuredOutput"],"mcp_servers":[{"name":"tracker","status":"connected"}]}"#;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_listing_reads_the_init_line_then_stops_the_run() {
+        let started = Instant::now();
+        let script = format!("echo 'Last login: today'; echo '{INIT}'; sleep 30");
+        let got = list_tools(fake(&script), Instant::now() + Duration::from_secs(20)).unwrap();
+        let Listed::Found(l) = got else {
+            panic!("{got:?}")
+        };
+        assert_eq!(
+            l.tools,
+            names(&["mcp__tracker__get_issue", "StructuredOutput"])
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "stopped, not waited out"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_listing_that_ends_without_init_hands_back_its_exit() {
+        let got = list_tools(
+            fake("echo 'claude: command not found' >&2; exit 127"),
+            Instant::now() + Duration::from_secs(20),
+        )
+        .unwrap();
+        let Listed::Ended(out) = got else {
+            panic!("{got:?}")
+        };
+        assert_eq!(out.code, Some(127));
+        assert!(out.stderr.contains("not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_asks_first_then_makes_it_end() {
+        // A run that ignores SIGTERM: it gets the grace, then SIGKILL.
+        let dir = std::env::temp_dir().join(format!("albedo-stop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("term");
+        let _ = std::fs::remove_file(&marker);
+        let script = format!(
+            "trap 'touch {}' TERM; echo ready; while true; do sleep 0.05; done",
+            marker.display()
+        );
+        let mut child = fake(&script).spawn().unwrap();
+        let mut out = child.stdout.take().unwrap();
+        let mut b = [0u8; 6];
+        out.read_exact(&mut b).unwrap();
+        let started = Instant::now();
+        let status = stop_group(&mut child, Duration::from_millis(600)).unwrap();
+        let took = started.elapsed();
+        assert!(marker.exists(), "SIGTERM came first");
+        assert!(
+            took >= Duration::from_millis(550),
+            "the grace was given: {took:?}"
+        );
+        assert!(took < Duration::from_secs(4));
+        assert!(status.code().is_none(), "killed in the end");
+        // One that goes on SIGTERM is not waited for.
+        let mut quick = fake("echo ready; sleep 30").spawn().unwrap();
+        let mut q = quick.stdout.take().unwrap();
+        q.read_exact(&mut b).unwrap();
+        let started = Instant::now();
+        stop_group(&mut quick, Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_run_hands_back_its_result_line_once_its_tools_are_checked() {
+        let script = format!(
+            r#"echo '{INIT}'; echo '{{"type":"assistant","message":{{"content":[]}}}}'; echo '{{"type":"result","is_error":false,"structured_output":{{"summary":"S","sources":[]}}}}'"#
+        );
+        let out = run_context(
+            fake(&script),
+            "prompt".into(),
+            Instant::now() + Duration::from_secs(20),
+            &names(&["mcp__tracker__get_issue"]),
+        )
+        .unwrap();
+        assert_eq!(out.code, Some(0));
+        assert!(!out.timed_out);
+        assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+        assert!(out.stdout.starts_with(r#"{"type":"result""#));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_run_that_loaded_more_than_it_was_given_is_stopped_before_its_answer() {
+        let dir = std::env::temp_dir().join(format!("albedo-init-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("answered");
+        let _ = std::fs::remove_file(&marker);
+        let init = r#"{"type":"system","subtype":"init","tools":["mcp__tracker__get_issue","mcp__wiki__read"],"mcp_servers":[]}"#;
+        let script = format!(
+            "echo '{init}'; sleep 3; touch {}; echo '{{\"type\":\"result\"}}'",
+            marker.display()
+        );
+        let started = Instant::now();
+        let err = run_context(
+            fake(&script),
+            "p".into(),
+            Instant::now() + Duration::from_secs(20),
+            &names(&["mcp__tracker__get_issue"]),
+        )
+        .unwrap_err();
+        assert!(err.contains("mcp__wiki__read"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        thread::sleep(Duration::from_millis(3500));
+        assert!(!marker.exists(), "it never got further");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_result_before_any_init_line_is_not_used() {
+        let err = run_context(
+            fake(r#"echo '{"type":"result","structured_output":{}}'"#),
+            "p".into(),
+            Instant::now() + Duration::from_secs(20),
+            &names(&["mcp__tracker__get_issue"]),
+        )
+        .unwrap_err();
+        assert!(err.contains("before saying which tools"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_run_past_its_deadline_is_stopped_and_says_so() {
+        let script = format!("echo '{INIT}'; sleep 30");
+        let started = Instant::now();
+        let out = run_context(
+            fake(&script),
+            "p".into(),
+            Instant::now() + Duration::from_millis(500),
+            &names(&["mcp__tracker__get_issue"]),
+        )
+        .unwrap();
+        assert!(out.timed_out);
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
     /// The measurement in the module doc, against the real `claude`:
-    /// `ALBEDO_MEASURE_TOOL=mcp__<server>__<a read-only tool> cargo test
-    /// measure_the_context_run -- --ignored --nocapture`. Prints the listing's
-    /// size, the deny list's, and the result's cost, turns and denials --
-    /// never what the tool returned.
+    /// `ALBEDO_MEASURE_TOOLS=mcp__<server>__<a read-only tool>[,...] cargo
+    /// test measure_the_context_run -- --ignored --nocapture`. Runs the same
+    /// path as the command (listing, resolve with its retries, deny list,
+    /// checked run) and prints counts, cost, turns, denials and outcomes --
+    /// never what a tool returned.
     #[test]
     #[ignore]
     fn measure_the_context_run() {
-        let tool = std::env::var("ALBEDO_MEASURE_TOOL").expect("ALBEDO_MEASURE_TOOL");
+        let tools: Vec<String> = std::env::var("ALBEDO_MEASURE_TOOLS")
+            .expect("ALBEDO_MEASURE_TOOLS")
+            .split(',')
+            .map(str::to_string)
+            .collect();
         let model = std::env::var("ALBEDO_MEASURE_MODEL").unwrap_or_else(|_| "haiku".into());
         let dir = std::env::temp_dir().join("albedo-measure-context");
         std::fs::create_dir_all(&dir).unwrap();
+        let shell = login_shell();
         let deadline = Instant::now() + Duration::from_secs(300);
         let started = Instant::now();
-        let Listed::Found(listing) = list_tools(&dir, deadline).unwrap() else {
-            panic!("no listing")
+        let mut attempt = 0;
+        let (listing, allowed) = loop {
+            attempt += 1;
+            let t = Instant::now();
+            let got = list_tools(build_command(&shell, &dir, listing_args()), deadline).unwrap();
+            let Listed::Found(listing) = got else {
+                panic!("{got:?}")
+            };
+            let pending = listing
+                .servers
+                .iter()
+                .filter(|(_, s)| s == "pending")
+                .count();
+            println!(
+                "listing {attempt}: {} tools, {} servers ({pending} pending), {:?}",
+                listing.tools.len(),
+                listing.servers.len(),
+                t.elapsed()
+            );
+            match resolve(&tools, &listing) {
+                Ok(Resolution::Ready(a)) => break (listing, a),
+                Ok(Resolution::NotConnected(s, st)) => {
+                    println!("not connected: {s} ({st})");
+                    if st != "pending" || attempt >= LISTING_ATTEMPTS {
+                        println!("-> fails: the server \"{s}\" was not connected ({st})");
+                        return;
+                    }
+                    thread::sleep(LISTING_RETRY);
+                }
+                Err(e) => {
+                    println!("-> fails: {e}");
+                    return;
+                }
+            }
         };
-        println!(
-            "listing: {} tools, {} servers, {:?}",
-            listing.tools.len(),
-            listing.servers.len(),
-            started.elapsed()
-        );
-        let allowed = vec![tool.clone()];
         let denied = deny_list(&allowed, &listing).unwrap();
-        println!("denied: {} entries", denied.len());
+        println!(
+            "allowed: {} tools, denied: {} entries",
+            allowed.len(),
+            denied.len()
+        );
         let schema = r#"{"type":"object","properties":{"calls":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"outcome":{"type":"string","enum":["ok","denied","missing"]}},"required":["tool","outcome"]}}},"required":["calls"]}"#;
         let prompt = format!(
-            "Call {tool} once. Then try to call any other tool you have, and Bash. Report each call's outcome only: no data."
+            "Call {} once. Then try to call any other tool you have, and Bash. Report each call's outcome only: no data.",
+            allowed[0]
         );
         let args = context_args(
             &model,
@@ -901,23 +1472,32 @@ mod tests {
             "You test which tools you may call.",
             schema,
         );
-        let out = run(dir, args, prompt, deadline).unwrap();
-        let line = out
-            .stdout
-            .lines()
-            .rev()
-            .find(|l| l.starts_with('{'))
-            .unwrap_or("{}");
-        let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
-        println!(
-            "code {:?} total {:?} turns {} cost {} denials {} structured {}",
-            out.code,
-            started.elapsed(),
-            v["num_turns"],
-            v["total_cost_usd"],
-            v["permission_denials"],
-            v["structured_output"]
-        );
+        match run_context(
+            build_command(&shell, &dir, args),
+            prompt,
+            deadline,
+            &allowed,
+        ) {
+            Err(e) => println!("-> refused: {e}"),
+            Ok(out) => {
+                let line = out
+                    .stdout
+                    .lines()
+                    .rev()
+                    .find(|l| l.starts_with('{'))
+                    .unwrap_or("{}");
+                let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+                println!(
+                    "code {:?} total {:?} turns {} cost {} denials {} structured {}",
+                    out.code,
+                    started.elapsed(),
+                    v["num_turns"],
+                    v["total_cost_usd"],
+                    v["permission_denials"],
+                    v["structured_output"]
+                );
+            }
+        }
     }
 
     #[test]

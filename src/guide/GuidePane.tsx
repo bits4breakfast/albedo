@@ -84,7 +84,7 @@ import {
   type SearchScope,
 } from './GuideSearch';
 import { linesOf, type GuideHit } from './search';
-import { CONTEXT_MODELS, contextActive, gatherContextInput, loadContextSettings, useContextSettings, type ContextModel } from './context';
+import { CONTEXT_MODELS, DEFAULT_CONTEXT, contextActive, gatherContextInput, loadContext, settingsOf, useContextLoad, type ContextModel } from './context';
 import { CONTEXT_MENU_LABEL, ContextFailureBanner, ContextSection, GuideContextSheet, useElapsed } from './GuideContext';
 import './guide.css';
 
@@ -242,11 +242,17 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
         // The project's Context step (#444), when it has instructions: read
         // from its file now, so a write never starts on settings not yet read.
         const projectId = task.projectId ?? null;
-        const settings = projectId === null ? null : await loadContextSettings(projectId);
+        const loaded = projectId === null ? null : await loadContext(projectId);
+        const settings = settingsOf(loaded);
         const contextTask = { id, title: task.title, branch: task.branch, worktreePath: task.worktreePath, reviewUrl: task.reviewUrl };
-        const plan = contextActive(settings)
-          ? { settings, input: () => gatherContextInput(contextTask, base), force: freshContext, previous: loadGuide(id)?.context ?? null }
-          : undefined;
+        const input = () => gatherContextInput(contextTask, base);
+        const previous = loadGuide(id)?.context ?? null;
+        const plan =
+          loaded?.kind === 'unreadable'
+            ? { settings: DEFAULT_CONTEXT, input, force: true, previous: null, unreadable: loaded.message }
+            : contextActive(settings)
+              ? { settings, input, force: freshContext, previous }
+              : undefined;
         const run = startWrite(id, d, base, focus, plan);
         startingRef.current = false;
         setStarting(false);
@@ -433,8 +439,9 @@ function GuideIntro({
 }): ReactNode {
   const empty = diff.order.length === 0;
   // The project's Context step (#444), said where the run is described.
-  const projectContext = useContextSettings(task.projectId ?? null);
-  const contextOn = contextActive(projectContext) ? projectContext : null;
+  const projectContext = useContextLoad(task.projectId ?? null);
+  const contextOn = settingsOf(projectContext);
+  const configured = contextActive(contextOn) || projectContext?.kind === 'unreadable';
   // ⇧⌘G with no guide yet (#217): to Write Guide, or the intro itself when
   // there is nothing to write or it is being written.
   const introRef = useRef<HTMLDivElement>(null);
@@ -476,9 +483,9 @@ function GuideIntro({
       <WriteStatus taskId={task.id} write={write} onRetry={onWrite} />
       <p className="gd-intro-note">
         Written by Claude Haiku in a separate, one-time run with no tools
-        {contextOn ? `, after a Context step on Claude ${modelLabel(contextOn.model)} that may use only the tools you listed` : ''}.
+        {contextActive(contextOn) ? `, after a Context step on Claude ${modelLabel(contextOn.model)} that may use only the tools you listed` : ''}.
         This task’s session is not touched.
-        {onOpenContext ? (
+        {onOpenContext && configured ? (
           <>
             {' '}
             <button type="button" className="gd-link gd-intro-link" onClick={onOpenContext}>
@@ -656,6 +663,8 @@ function GuideBody({
 }): ReactNode {
   const { diff, uncommitted } = loaded;
   const [onlyUncommitted, setOnlyUncommitted] = useState(false);
+  // For the Rewrite button's words (#444): the Context step may run on another model.
+  const projectSettings = settingsOf(useContextLoad(task.projectId ?? null));
   const view = useMemo(() => viewGuide(guide, diff), [guide, diff]);
   const groups = useMemo<GroupView[]>(() => {
     if (!onlyUncommitted) return view.groups;
@@ -1206,7 +1215,11 @@ function GuideBody({
           className={view.stale ? 'gd-btn gd-btn-primary' : 'gd-btn'}
           onClick={onRewrite}
           disabled={write?.kind === 'writing'}
-          title="Ask Claude Haiku for a new guide of the branch as it is now"
+          title={
+            contextActive(projectSettings)
+              ? `Ask Claude Haiku for a new guide of the branch as it is now. The Context step (Claude ${modelLabel(projectSettings.model)}) runs again only if its settings changed`
+              : 'Ask Claude Haiku for a new guide of the branch as it is now'
+          }
         >
           {write?.kind === 'writing'
             ? write.context && !write.context.done

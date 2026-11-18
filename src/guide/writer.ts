@@ -74,6 +74,8 @@ export interface OneshotOutput {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** The Context step only (#444): the single tools it was given, a server's expanded. */
+  allowed?: string[];
 }
 
 /** Runs one `claude -p`. Throws only when it could not be started at all. */
@@ -677,7 +679,11 @@ export async function writeChangesExplanation(input: ChangesInput): Promise<{ te
  * cleanContext. Throws a {@link GuideError}; the caller writes the guide
  * without it.
  */
-export async function writeContext(settings: ContextSettings, input: ContextInput, now: () => number = Date.now): Promise<GuideContext> {
+export async function writeContext(
+  settings: ContextSettings,
+  input: ContextInput,
+  now: () => number = Date.now,
+): Promise<{ context: GuideContext; allowed: string[] | null }> {
   let out: OneshotOutput;
   try {
     out = await contextRunner({
@@ -693,5 +699,5 @@ export async function writeContext(settings: ContextSettings, input: ContextInpu
   }
   const clean = cleanContext(replyOf(out, settings.timeoutMs));
   if (clean === null) throw new GuideError('invalid', 'The answer had no summary in it.');
-  return { ...clean, key: contextKey(settings), at: now() };
+  return { context: { ...clean, key: contextKey(settings), at: now() }, allowed: Array.isArray(out.allowed) ? out.allowed : null };
 }

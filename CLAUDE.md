@@ -132,19 +132,27 @@ A widening of the sixth, by the owner's decision (2026-11-18, issue #444): a
 **Context** step, a second one-shot run before a guide is written, with the
 user's own instructions for that project (stored in
 `~/.albedo/guide-context/project-<id>.json`, off when empty). It is fixed
-separately in `oneshot.rs` (`claude_context_oneshot`), and the widening is
-exactly this: it loads the user's MCP servers; it may call only the tools the
-user listed (`--allowedTools`, each name checked in Rust against
-`^mcp__[A-Za-z0-9_-]+(__[A-Za-z0-9_-]+)?$`, and every other tool and server
-the run would load put in `--disallowedTools`); built-in tools stay off; the
-model is one of haiku, sonnet, opus; the time limit is 5 minutes at most; it
-runs in `~/.albedo/guide`, persists no session, has hooks disabled, and never
-touches a task's session. It is given the task's title, branch, PR title and
-description and commit subjects -- no code -- and answers a summary and its
-sources, which the guide shows at the top and passes, as labelled text, to
-the grouping and notes calls; their prompts are otherwise unchanged. A failure
-never blocks the guide. `src/guide/writer.ts` still alone knows the output's
-shape. Nothing else may be built on this run without the same decision.
+separately in `oneshot.rs` (`claude_context_oneshot`): it loads the user's
+MCP servers (user settings only, no project or local settings); built-in
+tools are off; the model is one of haiku, sonnet, opus; the time limit is 5
+minutes at most; it runs in `~/.albedo/guide`, persists no session, has hooks
+disabled, and never touches a task's session. The user's names must match
+`^mcp__[A-Za-z0-9_-]+(__[A-Za-z0-9_-]+)?$` (checked in Rust). What is
+enforced about tools, and nothing more: a listing run (stopped at its first
+line) turns each name into the tools present at that moment -- a server's
+name into its tools then, a name matching nothing or a server not connected
+is an error, never dropped; only those tools go in `--allowedTools`, with
+`--permission-mode dontAsk`, and every other listed tool and server goes in
+`--disallowedTools`; and the run's own first line must name no tool beyond
+those (and Claude Code's `StructuredOutput`), or it is stopped before its
+answer is used. A server name still allows every tool it had when listed,
+writing ones included; the sheet says so. It is given the task's title,
+branch, PR title and description and commit subjects -- no code -- and
+answers a summary and its sources, which the guide shows at the top and
+passes, as labelled text, to the grouping and notes calls; their prompts are
+otherwise unchanged. A failure never blocks the guide. `src/guide/writer.ts`
+still alone knows the output's shape. Nothing else may be built on this run
+without the same decision.
 
 A seventh, by the owner's decision (2026-11-06, issue #272): for Claude
 Code's plan mode only, the waiting prompt derived from a `PermissionRequest`
