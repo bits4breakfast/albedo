@@ -14,6 +14,8 @@ import type { ApiErrorKind, Message, MessageRole, NewTask, ParsedMessage, Task, 
 import {
   backgroundFactsOf,
   backgroundSqlPredicate,
+  timerFireJobSqlExpr,
+  timerFireSqlPredicate,
   contextUsedSqlExpr,
   remoteControlSqlPredicate,
   remoteControlUrlOf,
@@ -21,6 +23,7 @@ import {
   usageSqlExpr,
   USAGE_PRESENCE_JSON_PATH,
 } from '../capture/adapter';
+import { TIMER_RUNS_KEPT } from '../capture/timerRuns';
 
 const DB_URL = 'sqlite:albedo.db';
 
@@ -836,11 +839,12 @@ const BACKGROUND_PAIRS_MAX = 50;
  * pty was spawned: the work dies with the process, so nothing from before it
  * can still run.
  *
- * Two reads. The first takes what `backgroundSqlPredicate` preselects. Some
+ * Three reads. The first takes what `backgroundSqlPredicate` preselects. Some
  * starts show on one half only -- an agent async by default has no flag on
  * its call, a shell moved to the background by its timeout neither -- so the
  * second fetches the other half of every call or result found alone, by its
- * tool-use id.
+ * tool-use id. The third fetches each open timer's latest run lines (#443),
+ * up to TIMER_RUNS_KEPT per job, which its next run is counted from.
  */
 export async function backgroundRowsSince(sessionId: string, sinceTs: number): Promise<Message[]> {
   const db = await getDb();
@@ -872,6 +876,38 @@ export async function backgroundRowsSince(sessionId: string, sinceTs: number): P
     );
     const held = new Set(rows.map((m) => m.id));
     for (const m of (second ?? []).map(toMessage)) if (!held.has(m.id)) rows.push(m);
+  }
+
+  // Each open timer's latest runs (#443): when it runs next is counted from
+  // them. Only the latest few, by job, in one read: a `/loop 5m` writes one
+  // every five minutes. A job a CronDelete ended is not asked for.
+  rows.sort((a, b) => a.ts - b.ts || a.id - b.id);
+  const timerCalls = new Set<string>();
+  const jobs = new Set<string>();
+  for (const m of rows) {
+    for (const f of backgroundFactsOf(m)) {
+      if (f.fact === 'call' && f.kind === 'timer') timerCalls.add(f.toolUseId);
+      else if (f.fact === 'result' && f.jobId !== null && timerCalls.has(f.toolUseId)) jobs.add(f.jobId);
+      else if (f.fact === 'timer-deleted') {
+        if (f.id === null) jobs.clear();
+        else jobs.delete(f.id);
+      }
+    }
+  }
+  const asked = [...jobs].slice(0, BACKGROUND_PAIRS_MAX);
+  if (asked.length > 0) {
+    const job = timerFireJobSqlExpr();
+    const runs = await db.select<MessageRow[]>(
+      `SELECT ${MESSAGE_SELECT} FROM (
+         SELECT ${MESSAGE_SELECT}, ROW_NUMBER() OVER (PARTITION BY ${job} ORDER BY ts DESC, id DESC) AS run_rank
+           FROM messages
+          WHERE session_id = $1 AND ts >= $2 AND +agent_id IS NULL AND ${timerFireSqlPredicate()}
+            AND ${job} IN (${asked.map((_, i) => `$${i + 4}`).join(', ')})
+       ) WHERE run_rank <= $3`,
+      [sessionId, sinceTs, TIMER_RUNS_KEPT, ...asked],
+    );
+    const held = new Set(rows.map((m) => m.id));
+    for (const m of (runs ?? []).map(toMessage)) if (!held.has(m.id)) rows.push(m);
   }
   return rows.sort((a, b) => a.ts - b.ts || a.id - b.id);
 }

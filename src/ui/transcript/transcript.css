@@ -405,6 +405,11 @@
 }
 .tx-background-item:hover { background: var(--panel-hover); }
 .tx-background-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+/* What wakes the task (#443): its time beside the kind, "every 30 min · next
+   14:13", in --text-strong, the line's lead. On --panel 19.43 | 17.20, on
+   --panel-hover 16.89 | 15.36 (light | dark; backgroundContrast.test.ts). */
+.tx-background-item[data-when='true'] { grid-template-columns: 4.5em auto minmax(0, 1fr) auto; }
+.tx-background-when { color: var(--text-strong); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tx-background-kind { color: var(--muted); font-size: var(--fs-xs); }
 .tx-background-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tx-background-time { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }

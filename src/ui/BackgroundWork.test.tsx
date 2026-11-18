@@ -10,7 +10,9 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 
 import type { Message, Task } from '../types';
 import { parseLine } from '../capture/adapter';
-import { asyncAgent, backgroundShell, noticeUserLine, notification, wakeup } from '../capture/backgroundFixtures';
+import type { BackgroundItem } from '../capture/background';
+import { asyncAgent, backgroundShell, cronTimer, noticeUserLine, notification, wakeup } from '../capture/backgroundFixtures';
+import { clockText } from '../reminders/when';
 
 const h = vi.hoisted(() => ({
   liveSince: new Map<number, number>(),
@@ -53,7 +55,9 @@ vi.mock('../capture', async () => ({
   },
 }));
 
-const { BackgroundMark, backgroundShown, backgroundSummary, useBackgroundWork } = await import('./BackgroundWork');
+const { BackgroundMark, MAX_TIMEOUT_MS, backgroundShown, backgroundSummary, runTimeText, scheduleText, soonestWake, useBackgroundWork, wakeText } = await import(
+  './BackgroundWork'
+);
 
 const task = { id: 1, sessionId: 's1' } as Task;
 let SPAWNED = 0;
@@ -122,12 +126,55 @@ describe('BackgroundMark', () => {
     // Due 2 minutes after the spawn, 1 minute from now.
     h.lines.set('s1', wakeup('w1', SPAWNED, 120));
     render(<BackgroundMark task={task} />);
-    await screen.findByText('1 in background');
+    await screen.findByText(`wakes ${runTimeText(SPAWNED + 120_000, Date.now())}`);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });
-    expect(screen.queryByText(/in background/)).toBeNull();
+    expect(screen.queryByText(/wakes|in background/)).toBeNull();
     expect(lookups).toHaveLength(1);
+  });
+
+  it('says when a timer next checks, with a clock, and moves on when it has run, without asking again (#443)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    spawn(1, SPAWNED);
+    // Every minute; first run 2 minutes from now, then each minute after.
+    const first = Math.floor(Date.now() / 60_000) * 60_000 + 2 * 60_000;
+    h.lines.set('s1', [
+      ...cronTimer('c1', 'job1', SPAWNED + 1_000, { cron: '* * * * *', nextFireAt: first }),
+      ...backgroundShell('t1', 'b1', SPAWNED + 2_000),
+    ]);
+    render(<BackgroundMark task={task} />);
+    const mark = await screen.findByText(`next check ${runTimeText(first, Date.now())}`);
+    expect(mark.getAttribute('data-wake')).toBe('true');
+    expect(mark.querySelector('svg')).not.toBeNull();
+    expect(mark.getAttribute('title')).toBe(
+      `Running in the background:\nTimer (every minute · next ${runTimeText(first, Date.now())}): Check the error rate since the deploy\nShell: Poll CI until green`,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(first - Date.now() + 1_000);
+    });
+    expect(screen.getByText(`next check ${runTimeText(first + 60_000, Date.now())}`)).toBeTruthy();
+    expect(lookups).toHaveLength(1);
+  });
+});
+
+describe('BackgroundMark: a run far off (#443)', () => {
+  it('waits for it with a delay setTimeout keeps, not one it fires at once', async () => {
+    const spy = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      spawn(1, SPAWNED);
+      const run = Date.now() + 365 * 24 * 60 * 60_000;
+      h.lines.set('s1', cronTimer('c1', 'job1', SPAWNED + 1_000, { cron: '0 9 1 1 *', nextFireAt: run, recurring: false }));
+      render(<BackgroundMark task={task} />);
+      // A generous wait: under a loaded full run the default 1 s timed out once.
+      await screen.findByText(`check at ${runTimeText(run, Date.now())}`, undefined, { timeout: 5_000 });
+      const delays = spy.mock.calls.map((c) => c[1] ?? 0);
+      expect(delays).toContain(MAX_TIMEOUT_MS);
+      expect(Math.max(...delays)).toBeLessThanOrEqual(MAX_TIMEOUT_MS);
+    } finally {
+      // Restored even on failure, so no later test sees the spy.
+      spy.mockRestore();
+    }
   });
 });
 
@@ -152,15 +199,87 @@ describe('useBackgroundWork', () => {
   });
 });
 
+/** Local noon: the times below fall on the same local day, in any zone. */
+const NOON = new Date(2026, 10, 18, 12, 0).getTime();
+const MIN = 60_000;
+const item = (o: Partial<BackgroundItem> & Pick<BackgroundItem, 'key' | 'kind'>): BackgroundItem => ({
+  description: '',
+  startedAt: 0,
+  until: null,
+  rowId: 1,
+  schedule: null,
+  nextRunAt: null,
+  ...o,
+});
+const recurring = (cron: string, nextRunAt: number) => item({ key: 'c', kind: 'timer', schedule: { cron, once: false, firstRunAt: null, createdAt: 0, firedAt: [] }, nextRunAt });
+
 describe('backgroundShown and backgroundSummary', () => {
-  it('leaves agents out and names each kind', () => {
+  it('leaves agents out and names each kind, with when it wakes the task', () => {
     const items = [
-      { key: 'a', kind: 'agent', description: 'Review', startedAt: 0, until: null, rowId: 1 },
-      { key: 'b', kind: 'wakeup', description: '', startedAt: 0, until: 5, rowId: 2 },
-      { key: 'c', kind: 'monitor', description: 'Watch the build log', startedAt: 0, until: 5, rowId: 3 },
-    ] as const;
+      item({ key: 'a', kind: 'agent', description: 'Review' }),
+      item({ key: 'b', kind: 'wakeup', until: NOON + 6 * MIN, nextRunAt: NOON + 6 * MIN }),
+      item({ key: 'c', kind: 'monitor', description: 'Watch the build log', until: 5 }),
+      { ...recurring('13,43 * * * *', NOON + 21 * MIN), key: 'd', description: 'Check the error rate' },
+    ];
     const shown = backgroundShown(items);
-    expect(shown.map((i) => i.key)).toEqual(['b', 'c']);
-    expect(backgroundSummary(shown)).toBe('Wake-up\nMonitor: Watch the build log');
+    expect(shown.map((i) => i.key)).toEqual(['b', 'c', 'd']);
+    expect(backgroundSummary(shown, NOON)).toBe(
+      `Wake-up (${clockText(NOON + 6 * MIN)})\nMonitor: Watch the build log\nTimer (every 30 min · next ${clockText(NOON + 21 * MIN)}): Check the error rate`,
+    );
+  });
+});
+
+describe('what the row and band say about when the task wakes (#443)', () => {
+  it('runTimeText: the time alone today or under 12 hours ahead, the weekday under 6 days, the date past it', () => {
+    expect(runTimeText(new Date(2026, 10, 18, 14, 13).getTime(), NOON)).toBe('14:13');
+    // By distance, not calendar day: at 23:50, 00:10 is 20 minutes away.
+    const lateNight = new Date(2026, 10, 18, 23, 50).getTime();
+    expect(runTimeText(new Date(2026, 10, 19, 0, 10).getTime(), lateNight)).toBe('00:10');
+    expect(wakeText(item({ key: 'w', kind: 'wakeup', nextRunAt: new Date(2026, 10, 19, 0, 10).getTime() }), lateNight)).toBe('wakes 00:10');
+    expect(runTimeText(new Date(2026, 10, 19, 11, 49).getTime(), lateNight)).toBe('11:49');
+    expect(runTimeText(new Date(2026, 10, 19, 11, 50).getTime(), lateNight)).toBe('Thu 11:50');
+    expect(runTimeText(new Date(2026, 10, 24, 11, 49).getTime(), NOON)).toBe('Tue 11:49');
+    // Later today, though 12 hours or more ahead: still the time alone.
+    const early = new Date(2026, 10, 18, 9, 0).getTime();
+    expect(runTimeText(new Date(2026, 10, 18, 23, 0).getTime(), early)).toBe('23:00');
+    expect(runTimeText(new Date(2026, 10, 19, 9, 0).getTime(), early)).toBe('Thu 09:00');
+    expect(runTimeText(new Date(2026, 10, 24, 12, 0).getTime(), NOON)).toBe('Nov 24 12:00');
+    // Wed 18 Nov 2026 -> Mon 23 Nov.
+    expect(runTimeText(new Date(2026, 10, 23, 9, 0).getTime(), NOON)).toBe('Mon 09:00');
+    expect(runTimeText(new Date(2026, 10, 19, 0, 5).getTime(), NOON)).toBe('Thu 00:05');
+    expect(runTimeText(new Date(2026, 11, 1, 9, 0).getTime(), NOON)).toBe('Dec 1 09:00');
+    expect(runTimeText(new Date(2027, 9, 28, 14, 30).getTime(), NOON)).toBe('Oct 28 2027 14:30');
+  });
+
+  it('wakeText: next check, check at, wakes -- and nothing for other work', () => {
+    const at = new Date(2026, 10, 18, 14, 13).getTime();
+    expect(wakeText(recurring('13,43 * * * *', at), NOON)).toBe('next check 14:13');
+    expect(wakeText(item({ key: 'o', kind: 'timer', schedule: { cron: null, once: true, firstRunAt: at, createdAt: 0, firedAt: [] }, nextRunAt: at }), NOON)).toBe('check at 14:13');
+    expect(wakeText(item({ key: 'w', kind: 'wakeup', nextRunAt: at }), NOON)).toBe('wakes 14:13');
+    expect(wakeText(recurring('0 9 * * 1-5', new Date(2026, 10, 23, 9, 0).getTime()), NOON)).toBe('next check Mon 09:00');
+    expect(wakeText(item({ key: 's', kind: 'shell' }), NOON)).toBeNull();
+    expect(wakeText(item({ key: 't', kind: 'timer', schedule: { cron: 'x', once: false, firstRunAt: null, createdAt: 0, firedAt: [] } }), NOON)).toBeNull();
+  });
+
+  it('scheduleText: every N when even, the next time alone when not, once, a wake-up\'s time', () => {
+    const at = new Date(2026, 10, 18, 14, 13).getTime();
+    expect(scheduleText(recurring('13,43 * * * *', at), NOON)).toBe('every 30 min · next 14:13');
+    expect(scheduleText(recurring('*/15 * * * *', at), NOON)).toBe('every 15 min · next 14:13');
+    expect(scheduleText(recurring('0 */2 * * *', at), NOON)).toBe('every 2 h · next 14:13');
+    expect(scheduleText(recurring('0 9,13,17 * * 1-5', at), NOON)).toBe('next 14:13');
+    expect(scheduleText(recurring('not a cron', at), NOON)).toBe('next 14:13');
+    expect(scheduleText(recurring('0 9 * * 1-5', new Date(2026, 10, 23, 9, 0).getTime()), NOON)).toBe('next Mon 09:00');
+    expect(scheduleText(item({ key: 'o', kind: 'timer', schedule: { cron: '0 15 * * *', once: true, firstRunAt: at, createdAt: 0, firedAt: [] }, nextRunAt: at }), NOON)).toBe(
+      'once · 14:13',
+    );
+    expect(scheduleText(item({ key: 'w', kind: 'wakeup', nextRunAt: at }), NOON)).toBe('14:13');
+    expect(scheduleText(item({ key: 'm', kind: 'monitor', until: at }), NOON)).toBeNull();
+  });
+
+  it('soonestWake: the soonest timer or wake-up wins; shells and monitors never do', () => {
+    const later = recurring('13,43 * * * *', NOON + 21 * MIN);
+    const sooner = item({ key: 'w', kind: 'wakeup', nextRunAt: NOON + 6 * MIN });
+    expect(soonestWake([later, sooner, item({ key: 's', kind: 'shell' })])).toBe(sooner);
+    expect(soonestWake([item({ key: 's', kind: 'shell' }), item({ key: 'm', kind: 'monitor', until: NOON + MIN })])).toBeNull();
   });
 });
