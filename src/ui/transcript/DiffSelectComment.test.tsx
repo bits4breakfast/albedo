@@ -54,6 +54,24 @@ describe('selectedDiffRows', () => {
     expect(rows?.root.getAttribute('data-diff-path')).toBe('src/a.ts');
   });
 
+  it('a triple-clicked row (#449): its range ends at offset 0 of the next row, which it does not mean', () => {
+    const pick = renderWith();
+    const cell = (t: string) => [...document.querySelectorAll('.tx-d-code')].find((c) => c.textContent === t)!;
+    const row = cell('new 2b').closest('.tx-d-row')!;
+    const next = row.nextElementSibling!;
+    expect(next.classList.contains('tx-d-row')).toBe(true);
+    const range = document.createRange();
+    range.setStart(cell('new 2b'), 0);
+    range.setEnd(next, 0);
+    const sel = document.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    act(() => void document.dispatchEvent(new Event('selectionchange')));
+    expect(selectedDiffRows(sel)?.lines).toEqual([{ line: 3, text: 'new 2b' }]);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on Selected Line 3' }));
+    expect(pick).toHaveBeenCalledWith(3, 3, true);
+  });
+
   it('a selection on deleted lines only has nothing to point at', () => {
     renderWith();
     select('old 2', 'old 2');

@@ -36,6 +36,7 @@ import { findEdit, useOpenEdits } from './toSend';
 import { HIGHLIGHT, findPassage, offsetOf, rowContent, setHighlight, squeeze } from './passages';
 import type { TranscriptComment } from './transcriptQuotes';
 import { selectedDiffRows } from './Diff';
+import { trimRange } from './selectionRange';
 import { anchorBlock, fileLines } from '../../lib/anchor';
 import { useReadFile, useWorktreePath } from '../editor/openFile';
 import { addComment as addCodeComment } from '../../db/comments';
@@ -176,16 +177,23 @@ function inContent(scroller: HTMLElement, x: number, y: number): { left: number;
 /**
  * The document's selection, when it lies inside the scroller and holds text:
  * the range, and the one row it is all inside (null when it spans rows).
+ *
+ * The range is trimmed to the text it covers (#449), a copy: a triple click
+ * ends at offset 0 of the next block, which is in the next row. Everything
+ * here reads the trimmed one -- the row, the bar's place, the field's quote
+ * and highlight -- and its text loses the line break the browser added.
  */
 export function selectionIn(scroller: HTMLElement): { range: Range; row: HTMLElement | null; text: string } | null {
   const sel = document.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
-  const range = sel.getRangeAt(0);
+  const { range, cut } = trimRange(sel.getRangeAt(0));
   const start = elementOf(range.startContainer);
   const end = elementOf(range.endContainer);
   if (!start || !end || !scroller.contains(start) || !scroller.contains(end)) return null;
   if (start.closest(OWN) || end.closest(OWN)) return null;
-  const text = sel.toString();
+  // The browser's own text (its line breaks between blocks), less the blank
+  // edge a trim dropped. A drag's text is untouched.
+  const text = cut ? sel.toString().replace(/^\s*\n/, '').replace(/\n\s*$/, '') : sel.toString();
   if (squeeze(text).length === 0) return null;
   const a = start.closest<HTMLElement>(ROW);
   const b = end.closest<HTMLElement>(ROW);
@@ -535,7 +543,8 @@ export function PassageComments({
             className="tx-sel-btn"
             title={picked.messageId === null ? 'Copy (a comment quotes a passage of one message)' : 'Copy'}
             onClick={() => {
-              const t = document.getSelection()?.toString() ?? '';
+              const scroller = scrollRef.current;
+              const t = (scroller ? selectionIn(scroller)?.text : undefined) ?? document.getSelection()?.toString() ?? '';
               void copyText(t).then((ok) => setCopied(ok));
             }}
           >
