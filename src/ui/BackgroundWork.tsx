@@ -12,8 +12,9 @@
  * and nothing counts without one -- as with Remote Control (RemoteMark.tsx).
  *
  * Shown in two places, one per screen: the Background band above the
- * composer for the selected task (transcript/BackgroundStrip.tsx), and "N in
- * background" on every other idle row.
+ * composer for the selected task (transcript/BackgroundStrip.tsx), and on
+ * every other Idle or Done row, when the task will next wake itself ("next
+ * check 14:13", #443) or else "N in background".
  *
  * Not measured: what `/resume` typed inside a session does to work running
  * in it. Albedo follows the session the task is on, so work started in the
@@ -24,7 +25,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { nextChangeAt, onCaptureUpdate, runningInBackground, type BackgroundItem, type BackgroundKind } from '../capture';
 import { backgroundRowsSince } from '../db';
+import { cronEvery, everyText } from '../lib/cron';
+import { clockText, dateText } from '../reminders/when';
 import type { Message, Task } from '../types';
+import { ClockIcon } from './icons';
 import { usePtyLiveSince } from './Terminal';
 
 /** Bursts of capture events for one session are looked up once (as RemoteMark does). */
@@ -114,22 +118,109 @@ export function backgroundShown(items: readonly BackgroundItem[]): BackgroundIte
   return items.filter((i) => i.kind !== 'agent');
 }
 
-/** "Shell: Poll CI until green", one per line, for a tooltip. */
-export function backgroundSummary(items: readonly BackgroundItem[]): string {
-  return items.map((i) => (i.description ? `${BACKGROUND_KIND_LABEL[i.kind]}: ${i.description}` : BACKGROUND_KIND_LABEL[i.kind])).join('\n');
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function startOfDay(ms: number): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Whether `at` falls on `now`'s local day. */
+export function sameDay(at: number, now: number): boolean {
+  return startOfDay(at) === startOfDay(now);
 }
 
 /**
- * "2 in background" in an idle row's caption, so a task that will wake
- * itself does not read as finished. Nothing while nothing runs. The list
- * puts it only on rows that are not selected: the selected task's band says
- * the same, with more.
+ * A run's time, local and 24-hour (`clockText`): "14:13" today, "Mon 09:00"
+ * within the week ahead, "Oct 28 09:00" past it.
+ */
+export function runTimeText(at: number, now: number): string {
+  if (sameDay(at, now)) return clockText(at);
+  const days = Math.round((startOfDay(at) - startOfDay(now)) / 86_400_000);
+  if (days > 0 && days < 7) return `${DAY_NAMES[new Date(at).getDay()]} ${clockText(at)}`;
+  return `${dateText(at, new Date(now))} ${clockText(at)}`;
+}
+
+/**
+ * When an item wakes the task, as the band says it beside its kind: "every
+ * 30 min · next 14:13", "next 17:00" (runs not evenly spaced), "once ·
+ * 15:00", or a wake-up's "13:58". Null when it does not wake the task, or
+ * when is not known.
+ */
+export function scheduleText(item: BackgroundItem, now: number): string | null {
+  if (item.nextRunAt === null) return null;
+  const at = runTimeText(item.nextRunAt, now);
+  if (item.kind === 'wakeup') return at;
+  if (item.kind !== 'timer') return null;
+  if (item.schedule?.once) return `once · ${at}`;
+  const every = item.schedule?.cron ? cronEvery(item.schedule.cron) : null;
+  return every === null ? `next ${at}` : `${everyText(every)} · next ${at}`;
+}
+
+/**
+ * The row's words for when the task next wakes itself: "next check 14:13" (a
+ * recurring timer), "check at 15:00" (a one-shot), "wakes 13:58" (a
+ * wake-up). Null for an item that does not wake it.
+ */
+export function wakeText(item: BackgroundItem, now: number): string | null {
+  if (item.nextRunAt === null) return null;
+  const at = runTimeText(item.nextRunAt, now);
+  if (item.kind === 'wakeup') return `wakes ${at}`;
+  if (item.kind !== 'timer') return null;
+  return item.schedule?.once ? `check at ${at}` : `next check ${at}`;
+}
+
+/** The item that wakes the task soonest, or null when none will. */
+export function soonestWake(items: readonly BackgroundItem[]): BackgroundItem | null {
+  let best: BackgroundItem | null = null;
+  for (const i of items) {
+    if (i.nextRunAt === null || (i.kind !== 'timer' && i.kind !== 'wakeup')) continue;
+    if (best === null || i.nextRunAt < best.nextRunAt!) best = i;
+  }
+  return best;
+}
+
+/**
+ * One per line, for a tooltip: "Shell: Poll CI until green", and with its
+ * time for what wakes the task, "Timer (every 30 min · next 14:13): Check
+ * the error rate".
+ */
+export function backgroundSummary(items: readonly BackgroundItem[], now: number): string {
+  return items
+    .map((i) => {
+      const when = scheduleText(i, now);
+      const head = when === null ? BACKGROUND_KIND_LABEL[i.kind] : `${BACKGROUND_KIND_LABEL[i.kind]} (${when})`;
+      return i.description ? `${head}: ${i.description}` : head;
+    })
+    .join('\n');
+}
+
+/**
+ * In an Idle or Done row's caption, so a task that will wake itself does not
+ * read as finished: when it next does, with a clock ("next check 14:13",
+ * "check at 15:00", "wakes 13:58"; the soonest, when several will), or else
+ * "2 in background". A clock time, not a countdown: it stays true as you
+ * read it, with no ticking row. Nothing while nothing runs. The list puts it
+ * only on rows that are not selected: the selected task's band says the
+ * same, with more.
  */
 export function BackgroundMark({ task }: { task: Pick<Task, 'id' | 'sessionId'> }): ReactNode {
   const shown = backgroundShown(useBackgroundWork(task));
   if (shown.length === 0) return null;
+  const now = Date.now();
+  const title = `Running in the background:\n${backgroundSummary(shown, now)}`;
+  const soonest = soonestWake(shown);
+  const wake = soonest === null ? null : wakeText(soonest, now);
+  if (wake !== null) {
+    return (
+      <span className="task-background" data-wake="true" title={title}>
+        <ClockIcon size={12} />
+        {wake}
+      </span>
+    );
+  }
   return (
-    <span className="task-background" title={`Running in the background:\n${backgroundSummary(shown)}`}>
+    <span className="task-background" title={title}>
       {shown.length} in background
     </span>
   );

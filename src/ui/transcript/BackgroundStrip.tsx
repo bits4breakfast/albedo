@@ -3,9 +3,11 @@
  * outside the turn (#122), between the transcript and the composer, beside
  * the Queued band and drawn like it. Absent while nothing runs.
  *
- * One line each: the kind, the description cut to one line (the whole of it
- * in the tooltip), and how long it has run -- or, for a wake-up, how long
- * until it fires. A click takes the transcript to the call that started it.
+ * One line each: the kind; for what will wake the task, when ("every 30 min
+ * · next 14:13", "once · 15:00", a wake-up's "13:58", #443); the
+ * description cut to one line (the whole of it in the tooltip); and how long
+ * it has run -- or, for what wakes the task, how long until it does. A click
+ * takes the transcript to the call that started it.
  *
  * What counts, and why only since the pty was spawned, is
  * `useBackgroundWork`'s (BackgroundWork.tsx). Agents are left to the Agents
@@ -15,13 +17,18 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { BackgroundItem } from '../../capture';
 import { formatDuration } from '../../lib/duration';
-import { BACKGROUND_KIND_LABEL } from '../BackgroundWork';
+import { BACKGROUND_KIND_LABEL, sameDay, scheduleText } from '../BackgroundWork';
 
 /** The clocks' cadence. Nothing is re-queried; only while the band shows. */
 const CLOCK_MS = 1_000;
 
-/** "3m 12s" running, or "in 4m 20s" for a wake-up still to come. */
+/**
+ * "3m 12s" running, or "in 4m 20s" for what wakes the task -- a wake-up, a
+ * timer -- while its run is today. A run on another day says nothing here:
+ * its day and time beside it say it, and "in 67h 3m" would only be noise.
+ */
 export function backgroundClock(item: BackgroundItem, now: number): string {
+  if (item.nextRunAt !== null) return sameDay(item.nextRunAt, now) ? `in ${formatDuration(item.nextRunAt - now)}` : '';
   if (item.kind === 'wakeup' && item.until !== null) return `in ${formatDuration(item.until - now)}`;
   return formatDuration(now - item.startedAt);
 }
@@ -51,19 +58,24 @@ export function BackgroundStrip({
       <div className="tx-queued-head">
         Background <span className="tx-queued-count">{items.length}</span>
       </div>
-      {items.map((item) => (
-        <button
-          key={item.key}
-          type="button"
-          className="tx-background-item"
-          title={item.description || undefined}
-          onClick={() => onReveal(item.rowId)}
-        >
-          <span className="tx-background-kind">{BACKGROUND_KIND_LABEL[item.kind]}</span>
-          <span className="tx-background-desc">{item.description}</span>
-          <span className="tx-background-time">{backgroundClock(item, now)}</span>
-        </button>
-      ))}
+      {items.map((item) => {
+        const when = scheduleText(item, now);
+        return (
+          <button
+            key={item.key}
+            type="button"
+            className="tx-background-item"
+            data-when={when === null ? undefined : 'true'}
+            title={item.description || undefined}
+            onClick={() => onReveal(item.rowId)}
+          >
+            <span className="tx-background-kind">{BACKGROUND_KIND_LABEL[item.kind]}</span>
+            {when !== null && <span className="tx-background-when">{when}</span>}
+            <span className="tx-background-desc">{item.description}</span>
+            <span className="tx-background-time">{backgroundClock(item, now)}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

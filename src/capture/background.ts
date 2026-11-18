@@ -15,11 +15,14 @@
  *    agent count). Counting both would be the same work twice.
  *
  * Time ends some of it without a row: a wake-up at its `scheduledFor`
- * (fired or not -- see adapter.ts), a monitor at its timeout, a recurring
- * timer after Claude Code's 7 days. `nextChangeAt` says when the answer next
- * changes with no new row, so a caller re-reads then instead of polling.
+ * (fired or not -- see adapter.ts), a monitor at its timeout, a one-shot
+ * timer at its run, a recurring timer after Claude Code's 7 days. And time
+ * moves a recurring timer's next run on (#443). `nextChangeAt` says when the
+ * answer next changes with no new row, so a caller re-reads then instead of
+ * polling.
  */
 
+import { cronNext, cronPrev, parseCron } from '../lib/cron';
 import type { Message } from '../types';
 import { backgroundFactsOf, type BackgroundKind } from './adapter';
 
@@ -33,10 +36,27 @@ export interface BackgroundItem {
   description: string;
   /** When it started: the call's row. */
   startedAt: number;
-  /** When it is due (a wake-up) or expires (a monitor, a timer); null for never. */
+  /** When it is due (a wake-up), runs (a one-shot timer) or expires (a monitor, a recurring timer); null for never. */
   until: number | null;
   /** The starting call's row, to scroll the transcript to. */
   rowId: number;
+  /** A timer's schedule; null for every other kind. */
+  schedule: TimerSchedule | null;
+  /**
+   * When it next wakes the task by itself, as of the `now` it was read at: a
+   * wake-up's due time, a timer's next run. Null for every other kind, and
+   * for a timer whose next run is not known (a cron this cannot read).
+   */
+  nextRunAt: number | null;
+}
+
+export interface TimerSchedule {
+  /** The cron expression, 5 fields, local time; null when the call had none. */
+  cron: string | null;
+  /** Runs once (`recurring: false`), and is over once it has. */
+  once: boolean;
+  /** Its first run, as its result says (`nextFireAt`); null when it does not. */
+  firstRunAt: number | null;
 }
 
 /** A monitor whose result does not say its timeout gets Claude Code's default. */
@@ -52,19 +72,65 @@ type Row = Pick<Message, 'id' | 'role' | 'seq' | 'rawJson' | 'toolName' | 'agent
  * spawned, null with none.
  */
 export function runningInBackground(rows: readonly Row[], since: number | null, now: number): BackgroundItem[] {
-  return foldBackground(rows, since).filter((i) => i.until === null || i.until > now);
+  return foldBackground(rows, since)
+    .filter((i) => i.until === null || i.until > now)
+    .map((i) => ({ ...i, nextRunAt: nextRunOf(i, now) }));
 }
 
 /**
  * When `runningInBackground` next changes with no new row: the earliest
- * deadline still ahead of `now`, or null.
+ * deadline or timer run still ahead of `now`, or null.
  */
 export function nextChangeAt(rows: readonly Row[], since: number | null, now: number): number | null {
   let next: number | null = null;
+  const consider = (at: number | null) => {
+    if (at !== null && at > now && (next === null || at < next)) next = at;
+  };
   for (const i of foldBackground(rows, since)) {
-    if (i.until !== null && i.until > now && (next === null || i.until < next)) next = i.until;
+    consider(i.until);
+    if (i.until === null || i.until > now) consider(nextRunOf(i, now));
   }
   return next;
+}
+
+/**
+ * A recurring job runs a fixed time after each of its cron's slots, the same
+ * for every run of one job (measured, adapter.ts). That offset is its first
+ * run minus the slot the run belongs to: the last slot at or before it, when
+ * that is at most 30 minutes back; else the next slot, when the run is at
+ * most 5 minutes before it (a run early); else none, rather than an offset
+ * taken from a slot days away.
+ */
+const OFFSET_LATE_MAX_MS = 30 * 60_000;
+const OFFSET_EARLY_MAX_MS = 5 * 60_000;
+
+export function timerOffsetMs(cron: string, firstRunAt: number): number {
+  const c = parseCron(cron);
+  if (c === null) return 0;
+  const before = cronPrev(c, firstRunAt);
+  if (before !== null && firstRunAt - before <= OFFSET_LATE_MAX_MS) return firstRunAt - before;
+  const after = cronNext(c, firstRunAt);
+  if (after !== null && after - firstRunAt <= OFFSET_EARLY_MAX_MS) return firstRunAt - after;
+  return 0;
+}
+
+/**
+ * When an item next wakes the task, after `now`: a wake-up when it is due; a
+ * timer at its first run while that is ahead, then -- recurring only -- at
+ * its cron's next slot plus the job's offset, while that is before it
+ * expires. Null for anything else, or when it is not known.
+ */
+export function nextRunOf(item: Pick<BackgroundItem, 'kind' | 'until' | 'schedule'>, now: number): number | null {
+  if (item.kind === 'wakeup') return item.until !== null && item.until > now ? item.until : null;
+  const s = item.schedule;
+  if (item.kind !== 'timer' || s === null) return null;
+  if (s.firstRunAt !== null && s.firstRunAt > now) return s.firstRunAt;
+  if (s.once || s.cron === null) return s.once && item.until !== null && item.until > now ? item.until : null;
+  const offset = s.firstRunAt === null ? 0 : timerOffsetMs(s.cron, s.firstRunAt);
+  const slot = cronNext(s.cron, now - offset);
+  if (slot === null) return null;
+  const at = slot + offset;
+  return item.until !== null && at >= item.until ? null : at;
 }
 
 /** Every start still open by the rows alone, deadlines not yet applied. */
@@ -72,7 +138,10 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
   if (since === null) return [];
   const ordered = rows.filter((r) => r.agentId === null).sort((a, b) => a.ts - b.ts || a.id - b.id);
 
-  const calls = new Map<string, { kind: BackgroundKind; description: string; ts: number; rowId: number }>();
+  const calls = new Map<
+    string,
+    { kind: BackgroundKind; description: string; ts: number; rowId: number; schedule: { cron: string | null; once: boolean } | null }
+  >();
   const running = new Map<string, BackgroundItem & { taskId: string | null }>();
   // What has already ended, by tool-use id and task id. Claude Code can write
   // a shell's end before the result that starts it: one that failed at once
@@ -88,7 +157,9 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
     for (const f of backgroundFactsOf(row)) {
       switch (f.fact) {
         case 'call':
-          if (row.ts >= since) calls.set(f.toolUseId, { kind: f.kind, description: f.description, ts: row.ts, rowId: row.id });
+          if (row.ts >= since) {
+            calls.set(f.toolUseId, { kind: f.kind, description: f.description, ts: row.ts, rowId: row.id, schedule: f.schedule });
+          }
           break;
         case 'result': {
           const call = calls.get(f.toolUseId);
@@ -96,6 +167,7 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
           if (endedUses.has(f.toolUseId) || (f.taskId !== null && endedTasks.has(f.taskId))) break;
           let until: number | null = null;
           let taskId: string | null = f.taskId;
+          let schedule: TimerSchedule | null = null;
           if (call.kind === 'wakeup') {
             if (f.scheduledFor === null) break;
             until = f.scheduledFor;
@@ -103,7 +175,18 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
             endOf((i) => i.kind === 'wakeup');
           } else if (call.kind === 'timer') {
             taskId = f.jobId;
-            until = row.ts + TIMER_MAX_MS;
+            const cron = call.schedule?.cron ?? null;
+            const once = call.schedule?.once === true;
+            schedule = { cron, once, firstRunAt: f.nextFireAt };
+            if (once) {
+              // Over once it has run: at its first run, or its cron's next
+              // slot after the call. Neither known: it could be counting a
+              // job that already ran, so it is not shown.
+              until = f.nextFireAt ?? (cron === null ? null : cronNext(cron, call.ts));
+              if (until === null) break;
+            } else {
+              until = row.ts + TIMER_MAX_MS;
+            }
           } else {
             // A shell, agent or monitor that ran in the foreground has no task id.
             if (f.taskId === null) break;
@@ -116,6 +199,8 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
             startedAt: call.ts,
             until,
             rowId: call.rowId,
+            schedule,
+            nextRunAt: null,
             taskId,
           });
           break;

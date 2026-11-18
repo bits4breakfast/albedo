@@ -248,12 +248,25 @@
   color: var(--accent);
   white-space: nowrap;
 }
-/* Work still running in the background of an idle task (BackgroundWork.tsx):
-   --muted like Draft, on the row's own ground, which for an idle row is one
-   of three. Measured, light | dark: --panel-chrome (at rest) 6.50 | 7.31,
-   --panel-hover 6.22 | 6.91, --panel-raised (selected, menu open) 5.89 |
-   6.50. Never on --row-blocked: a blocked task is not idle. */
+/* Work still running in the background of an Idle or Done task
+   (BackgroundWork.tsx): "2 in background" --muted like Draft, on the row's
+   own ground, which for such a row is one of three. Measured, light | dark:
+   --panel-chrome (at rest) 6.50 | 7.31, --panel-hover 6.22 | 6.91,
+   --panel-raised (selected, menu open) 5.89 | 6.50. Never on --row-blocked:
+   a blocked task is neither.
+   When the task will next wake itself ("next check 14:13", #443): a step up,
+   --text with a clock glyph, so it reads as status. --text measured, light |
+   dark: --panel-chrome 15.09 | 13.81, --panel-hover 14.44 | 13.07,
+   --panel-raised 13.68 | 12.29, --panel-active 12.82 | 14.09, and
+   --row-selected (where it never shows) 13.15 | 11.28
+   (backgroundContrast.test.ts). Never `opacity`. */
 .task-background { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.task-background[data-wake='true'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text);
+}
 /* PR checks that finished unseen (ciNotice.ts): the badge's own tokens, a
    glyph and a word, never colour alone. Measured light | dark on every ground
    the row can have, worst first:

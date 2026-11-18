@@ -97,6 +97,16 @@ export function ChatIcon({ size }: { size?: number }) {
   );
 }
 
+/** A clock face: when a task will next wake itself (#443). Beside the time in words, never alone. */
+export function ClockIcon({ size }: { size?: number }) {
+  return (
+    <Glyph size={size}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 4.75V8l2.25 1.5" />
+    </Glyph>
+  );
+}
+
 /** A closed folder's outline: FolderIcon, and the Project tree's closed folder. */
 export const FOLDER_CLOSED =
   'M1.75 4.25c0-.83.67-1.5 1.5-1.5h3l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v6.25c0 .83-.67 1.5-1.5 1.5h-9.5c-.83 0-1.5-.67-1.5-1.5z';

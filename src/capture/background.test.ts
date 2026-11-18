@@ -8,11 +8,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { Message } from '../types';
 import { parseLine } from './adapter';
-import { MONITOR_DEFAULT_TIMEOUT_MS, nextChangeAt, runningInBackground } from './background';
+import { MONITOR_DEFAULT_TIMEOUT_MS, TIMER_MAX_MS, nextChangeAt, nextRunOf, runningInBackground, timerOffsetMs } from './background';
 import {
   asyncAgent,
   backgroundShell,
   callLine,
+  cronTimer,
   monitor,
   noticeAttachmentLine,
   noticeUserLine,
@@ -49,6 +50,8 @@ describe('runningInBackground', () => {
         startedAt: SPAWNED + 1_000,
         until: null,
         rowId: 1,
+        schedule: null,
+        nextRunAt: null,
       },
     ]);
 
@@ -230,12 +233,10 @@ describe('runningInBackground', () => {
     expect(runningInBackground(r, SPAWNED, NOW)[0]?.description).toBe('sleep 300');
   });
 
-  it('keeps a recurring timer until CronDelete, and never shows a one-shot (not measured)', () => {
+  it('keeps a recurring timer until CronDelete', () => {
     const created = [
       callLine('c1', 'CronCreate', { cron: '*/5 * * * *', prompt: 'Poll CI until green', recurring: true }, SPAWNED + 1_000),
       resultLine('c1', { id: 'job1' }, SPAWNED + 1_050),
-      callLine('c2', 'CronCreate', { cron: '30 14 28 10 *', prompt: 'Remind me', recurring: false }, SPAWNED + 2_000),
-      resultLine('c2', { id: 'job2' }, SPAWNED + 2_050),
     ];
     expect(runningInBackground(rows(created), SPAWNED, NOW).map((i) => [i.kind, i.description])).toEqual([['timer', 'Poll CI until green']]);
     expect(keys(rows([...created, callLine('d1', 'CronDelete', { id: 'job1' }, SPAWNED + 3_000)]))).toEqual([]);
@@ -251,5 +252,109 @@ describe('runningInBackground', () => {
       ['t1', 3],
       ['w1', 1],
     ]);
+  });
+});
+
+// --- when a timer next runs (#443) ------------------------------------------
+
+/** Local time, month 1-12: the cron is local, so the suite holds in any zone. */
+const local = (mo: number, d: number, h: number, mi: number, sec = 0, ms = 0) => new Date(2026, mo - 1, d, h, mi, sec, ms).getTime();
+const MIN = 60_000;
+
+describe('a timer\'s next run (#443)', () => {
+  // Measured: created at 10:50:55, first run 11:17:35.389, then every :17:35
+  // and :47:35 -- the slots 13 and 43 plus 4m35.389s.
+  const created = local(11, 18, 10, 50, 55);
+  const first = local(11, 18, 11, 17, 35, 389);
+  const since = created - MIN;
+  const measured = () => rows(cronTimer('c1', '4e553b62', created, { cron: '13,43 * * * *', nextFireAt: first }));
+
+  it('runs first at nextFireAt, then at each slot plus the same offset', () => {
+    const at = (now: number) => runningInBackground(measured(), since, now)[0]?.nextRunAt;
+    expect(at(local(11, 18, 11, 0))).toBe(first);
+    expect(at(first)).toBe(local(11, 18, 11, 47, 35, 389));
+    expect(at(local(11, 18, 13, 52))).toBe(local(11, 18, 14, 17, 35, 389));
+    // Across midnight.
+    expect(at(local(11, 18, 23, 50))).toBe(local(11, 19, 0, 17, 35, 389));
+    const item = runningInBackground(measured(), since, local(11, 18, 11, 0))[0]!;
+    expect(item.schedule).toEqual({ cron: '13,43 * * * *', once: false, firstRunAt: first });
+    expect(item.until).toBe(created + 50 + TIMER_MAX_MS);
+  });
+
+  it('wakes the reader at the next run, so the time moves on', () => {
+    expect(nextChangeAt(measured(), since, local(11, 18, 11, 0))).toBe(first);
+    expect(nextChangeAt(measured(), since, first)).toBe(local(11, 18, 11, 47, 35, 389));
+  });
+
+  it('has no next run past its 7 days, and is gone then', () => {
+    const until = created + 50 + TIMER_MAX_MS;
+    const last = runningInBackground(measured(), since, until - 10 * MIN)[0];
+    // The slot after the expiry is not a run.
+    expect(last?.nextRunAt === null || last!.nextRunAt! < until).toBe(true);
+    expect(runningInBackground(measured(), since, until)).toEqual([]);
+    expect(nextChangeAt(measured(), since, until)).toBeNull();
+  });
+
+  it('shows a one-shot until its run, and then nothing', () => {
+    const run = local(11, 18, 15, 0);
+    const r = rows(cronTimer('c2', 'job2', created, { cron: '0 15 18 11 *', nextFireAt: run, recurring: false }));
+    const before = runningInBackground(r, since, local(11, 18, 13, 52));
+    expect(before.map((i) => [i.kind, i.nextRunAt, i.until, i.schedule?.once])).toEqual([['timer', run, run, true]]);
+    expect(nextChangeAt(r, since, local(11, 18, 13, 52))).toBe(run);
+    expect(runningInBackground(r, since, run)).toEqual([]);
+  });
+
+  it('takes a one-shot\'s run from its cron when the result does not say', () => {
+    const r = rows([
+      callLine('c3', 'CronCreate', { cron: '0 15 18 11 *', prompt: 'Check once', recurring: false }, created),
+      resultLine('c3', { id: 'job3' }, created + 50),
+    ]);
+    expect(runningInBackground(r, since, local(11, 18, 13, 52))[0]?.nextRunAt).toBe(local(11, 18, 15, 0));
+    expect(runningInBackground(r, since, local(11, 18, 15, 0))).toEqual([]);
+  });
+
+  it('leaves out a one-shot whose run it cannot know', () => {
+    const r = rows([
+      callLine('c4', 'CronCreate', { cron: 'whenever', prompt: 'Check once', recurring: false }, created),
+      resultLine('c4', { id: 'job4' }, created + 50),
+    ]);
+    expect(runningInBackground(r, since, local(11, 18, 13, 52))).toEqual([]);
+  });
+
+  it('keeps a recurring timer whose cron it cannot read, with its first run only', () => {
+    const r = rows(cronTimer('c5', 'job5', created, { cron: '@every-while', nextFireAt: first }));
+    expect(runningInBackground(r, since, local(11, 18, 11, 0))[0]?.nextRunAt).toBe(first);
+    const later = runningInBackground(r, since, local(11, 18, 12, 0));
+    expect(later.map((i) => [i.kind, i.nextRunAt])).toEqual([['timer', null]]);
+  });
+
+  it('gives a wake-up its due time as its next run, and other work none', () => {
+    const r = rows([...wakeup('w1', created, 600), ...backgroundShell('t1', 'b1', created + 1_000)]);
+    const items = runningInBackground(r, since, created + 2_000);
+    expect(items.map((i) => [i.kind, i.nextRunAt])).toEqual([
+      ['wakeup', created + 600_000],
+      ['shell', null],
+    ]);
+  });
+
+  it('nextRunOf: nothing for a timer with no schedule or a wake-up already due', () => {
+    expect(nextRunOf({ kind: 'timer', until: null, schedule: null }, 0)).toBeNull();
+    expect(nextRunOf({ kind: 'wakeup', until: 100, schedule: null }, 100)).toBeNull();
+  });
+});
+
+describe('timerOffsetMs (#443)', () => {
+  it('is how far the first run is past its slot, as measured', () => {
+    expect(timerOffsetMs('13,43 * * * *', local(11, 18, 11, 17, 35, 389))).toBe(4 * MIN + 35_389);
+    expect(timerOffsetMs('3-59/10 * * * *', local(11, 16, 17, 57, 16, 596))).toBe(4 * MIN + 16_596);
+    expect(timerOffsetMs('3-59/10 * * * *', local(11, 16, 19, 3, 29, 472))).toBe(29_472);
+    expect(timerOffsetMs('8 18 17 11 *', local(11, 17, 18, 8))).toBe(0);
+  });
+
+  it('reads a first run just before a slot as early, and anything else as none', () => {
+    expect(timerOffsetMs('0 15 * * *', local(11, 18, 14, 58, 30))).toBe(-90_000);
+    // Hours from any slot: no offset, rather than one taken from yesterday.
+    expect(timerOffsetMs('0 9 * * *', local(11, 18, 13, 0))).toBe(0);
+    expect(timerOffsetMs('not a cron', local(11, 18, 13, 0))).toBe(0);
   });
 });

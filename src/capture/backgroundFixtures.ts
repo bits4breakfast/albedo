@@ -115,6 +115,26 @@ export function wakeup(id: string, ts: number, delaySeconds: number, reason = 'T
   ];
 }
 
+/**
+ * A CronCreate call and its result, in the shape 2.1.325-2.1.327 writes
+ * (#443). `nextFireAt` is the first run, which Claude Code puts a fixed
+ * offset after the cron's slot (adapter.ts).
+ */
+export function cronTimer(
+  id: string,
+  jobId: string,
+  ts: number,
+  o: { cron: string; nextFireAt: number; recurring?: boolean; prompt?: string },
+): Line[] {
+  const recurring = o.recurring !== false;
+  return [
+    callLine(id, 'CronCreate', { cron: o.cron, recurring, prompt: o.prompt ?? 'Check the error rate since the deploy' }, ts),
+    resultLine(id, { id: jobId, humanSchedule: o.cron, recurring, durable: false, nextFireAt: o.nextFireAt }, ts + 50, {
+      text: `Scheduled ${recurring ? 'recurring' : 'one-shot'} job ${jobId} (${o.cron}). Session-only (not written to disk, dies when Claude exits).`,
+    }),
+  ];
+}
+
 export function stopWakeups(id: string, ts: number): Line[] {
   return [
     callLine(id, 'ScheduleWakeup', { stop: true }, ts),

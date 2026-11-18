@@ -981,10 +981,24 @@ export function remoteControlSqlPredicate(column = 'raw_json'): string {
  *      `agentId` -- 63 with `run_in_background`, 334 async by default.
  *    - `Monitor`: `toolUseResult.taskId` and `timeoutMs` (6, all 30 min).
  *    - `ScheduleWakeup`: `toolUseResult.scheduledFor`, epoch ms (23).
- *    - `CronCreate`: no call in any transcript here, so its result is not
- *      measured. Its tool description says jobs are session-only, a
- *      one-shot deletes itself once it fires, and a recurring one runs until
- *      `CronDelete` or 7 days.
+ *    - `CronCreate` (#443, 3 calls in 2 transcripts, Claude Code 2.1.325-2.1.327):
+ *      input `{ cron: "13,43 * * * *", recurring, prompt }`, the cron 5-field
+ *      in LOCAL time; result `{ id, humanSchedule, recurring, durable: false,
+ *      nextFireAt }`, `nextFireAt` epoch ms, fractional. Its text: "Scheduled
+ *      recurring job 4e553b62 (13,43 * * * *). Next run: Nov 18 11:18am.
+ *      Session-only (not written to disk, dies when Claude exits).
+ *      Auto-expires after 7 days. Use CronDelete to cancel sooner."
+ *      `nextFireAt` is NOT on the cron's minute: a recurring job runs a fixed
+ *      offset after each of its slots, the same for every run of that job
+ *      and different between jobs -- `13,43` ran at :17:35 and :47:35 five
+ *      times running (+4m35s), `3-59/10` at :57:16, :07:16, … (+4m16s) and,
+ *      created again, at :03:30 (+29s). A one-shot (`recurring: false`,
+ *      `8 18 17 11 *`) had `nextFireAt` exactly on its minute. A one-shot
+ *      deletes itself once it fires (tool description); a recurring one runs
+ *      until `CronDelete` or 7 days.
+ *      Each run writes a `system` line, subtype `scheduled_task_fire`, and the
+ *      prompt as an `isMeta` user line, within a second of its time -- while
+ *      the Mac is awake; none came for the hours it slept.
  *  - **End.** A `<task-notification>` naming the start's `<tool-use-id>` with
  *    a `<status>`: completed, failed, killed or stopped. Of 662, 415 came ONLY
  *    as a `queued_command` attachment (`commandMode: "task-notification"`),
@@ -1015,8 +1029,18 @@ export type BackgroundKind = 'shell' | 'agent' | 'monitor' | 'wakeup' | 'timer';
 
 /** What one row says about background work. See {@link backgroundFactsOf}. */
 export type BackgroundFact =
-  /** A call that may start background work; its result decides whether it did. */
-  | { fact: 'call'; toolUseId: string; kind: BackgroundKind; description: string }
+  /**
+   * A call that may start background work; its result decides whether it
+   * did. `schedule` is a timer's: its cron expression (null when the call
+   * has none) and whether it runs once.
+   */
+  | {
+      fact: 'call';
+      toolUseId: string;
+      kind: BackgroundKind;
+      description: string;
+      schedule: { cron: string | null; once: boolean } | null;
+    }
   /**
    * A call's result. `taskId` is set only by a result that went to the
    * background (shell, async agent, monitor); `scheduledFor` by a wake-up.
@@ -1030,8 +1054,10 @@ export type BackgroundFact =
       /** A monitor's lifetime, when the result says. */
       timeoutMs: number | null;
       persistent: boolean;
-      /** CronCreate's job id. Its result's shape is not measured: `id`, when it has one. */
+      /** CronCreate's job id (`id`). */
       jobId: string | null;
+      /** CronCreate's first run (`nextFireAt`, epoch ms), when the result says. */
+      nextFireAt: number | null;
     }
   /** A `<task-notification>` with a status: these are over. */
   | { fact: 'end'; toolUseIds: string[]; taskIds: string[] }
@@ -1128,13 +1154,13 @@ function backgroundCallFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): 
   if (toolUseId === null) return [];
   // Stopping the loop is no wake-up; its result says what it cancelled.
   if (kind === 'wakeup' && input['stop'] === true) return [];
-  // A one-shot timer fires at a time only its cron expression says, which is
-  // not read here: shown, it could be counting a job that already ran.
-  if (kind === 'timer' && input['recurring'] === false) return [];
   const keys = kind === 'wakeup' ? ['reason'] : kind === 'timer' ? ['prompt'] : kind === 'agent' ? ['description'] : ['description', 'command'];
   const raw = keys.map((k) => input[k]).find((v): v is string => typeof v === 'string' && v.trim() !== '') ?? '';
   const description = (raw.trim().split('\n')[0] ?? '').replace(/\s+/g, ' ').slice(0, BACKGROUND_DESCRIPTION_MAX);
-  return [{ fact: 'call', toolUseId, kind, description }];
+  // A timer's schedule. `recurring` left out is the tool's default, recurring.
+  const cron = typeof input['cron'] === 'string' && input['cron'].trim() !== '' ? input['cron'].trim() : null;
+  const schedule = kind === 'timer' ? { cron, once: input['recurring'] === false } : null;
+  return [{ fact: 'call', toolUseId, kind, description, schedule }];
 }
 
 function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
@@ -1166,6 +1192,7 @@ function backgroundResultFacts(m: Pick<Message, 'seq' | 'rawJson' | 'toolName'>)
       timeoutMs: positive(r['timeoutMs']),
       persistent: r['persistent'] === true,
       jobId: str(r['id']),
+      nextFireAt: positive(r['nextFireAt']),
     },
   ];
 }
