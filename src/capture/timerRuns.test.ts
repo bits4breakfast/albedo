@@ -34,11 +34,11 @@ describe('waitFractionOf', () => {
 describe('timerRunAfter and timerFinalRun', () => {
   const created = local(11, 18, 10, 50, 55);
   const first = local(11, 18, 11, 17, 35, 389);
-  const facts = { cron: '13,43 * * * *', createdAt: created, firstRunAt: first, lastFiredAt: null };
+  const facts = { cron: '13,43 * * * *', createdAt: created, firstRunAt: first, firedAt: [] };
 
   it('is the reported first run while it is ahead, then counted from the last run', () => {
     expect(timerRunAfter(facts, created)).toBe(first);
-    expect(timerRunAfter({ ...facts, lastFiredAt: local(11, 18, 12, 50) }, local(11, 18, 12, 51))).toBeCloseTo(local(11, 18, 13, 17, 35, 389), 0);
+    expect(timerRunAfter({ ...facts, firedAt: [local(11, 18, 12, 50)] }, local(11, 18, 12, 51))).toBeCloseTo(local(11, 18, 13, 17, 35, 389), 0);
   });
 
   it('counts from creation with no first run reported, waiting nothing after the slot', () => {

@@ -60,8 +60,8 @@ export interface TimerSchedule {
   firstRunAt: number | null;
   /** When it was created: its result's row. */
   createdAt: number;
-  /** When its last run came (`scheduled_task_fire`); null before any. */
-  lastFiredAt: number | null;
+  /** When its runs came (`scheduled_task_fire`), oldest first: the latest few; empty before any. */
+  firedAt: readonly number[];
 }
 
 /** A monitor whose result does not say its timeout gets Claude Code's default. */
@@ -171,7 +171,7 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
               once: call.schedule?.once === true,
               firstRunAt: f.nextFireAt,
               createdAt: row.ts,
-              lastFiredAt: null,
+              firedAt: [],
             };
             // A one-shot whose run is not known could be counting a job that
             // already ran, so it is not shown. `until` is set again once
@@ -217,7 +217,7 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
             // A one-shot deletes itself once it has run; a recurring job
             // aged out, once it has run past its 7 days.
             if (i.schedule.once || row.ts >= i.schedule.createdAt + TIMER_MAX_MS) running.delete(k);
-            else i.schedule = { ...i.schedule, lastFiredAt: row.ts };
+            else i.schedule = { ...i.schedule, firedAt: [...i.schedule.firedAt, row.ts] };
           }
           break;
         }

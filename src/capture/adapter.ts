@@ -1010,10 +1010,11 @@ export function remoteControlSqlPredicate(column = 'raw_json'): string {
  *      description). A recurring one runs until `CronDelete`, or ages out
  *      after 7 days -- deleted only after one last run at or past the mark.
  *      Each run writes a `system` line, subtype `scheduled_task_fire`, with
- *      the job's id as `taskId` and its `cron` (a `/loop` wake-up writes the
- *      same subtype with no `taskId`), and the prompt as an `isMeta` user
- *      line, within a second of its time -- while the Mac is awake; none came
- *      for the hours it slept.
+ *      the job's id as `taskId` and its `cron`, and the prompt as an `isMeta`
+ *      user line, within a second of its time -- while the Mac is awake;
+ *      none came for the hours it slept. A `/loop` wake-up writes the same
+ *      subtype, with a `taskId` too, and `taskKind: "loop"` (11 here,
+ *      2.1.309): no CronCreate job, and not read as one.
  *  - **End.** A `<task-notification>` naming the start's `<tool-use-id>` with
  *    a `<status>`: completed, failed, killed or stopped. Of 662, 415 came ONLY
  *    as a `queued_command` attachment (`commandMode: "task-notification"`),
@@ -1234,30 +1235,35 @@ function tagValues(body: string, tag: string): string[] {
 
 const TIMER_FIRE_SUBTYPE = 'scheduled_task_fire';
 
-/** The job id a timer's run line names, or null for every other row (a `/loop` wake-up's has none). */
+/**
+ * The job id a timer's run line names, or null for every other row. A
+ * `/loop` wake-up's line carries a `taskId` too, with `taskKind: "loop"`: it
+ * is not a CronCreate job's.
+ */
 function timerFiredOf(m: Pick<Message, 'role' | 'rawJson'>): string | null {
   if (m.role !== 'system' || !m.rawJson.includes(TIMER_FIRE_SUBTYPE)) return null;
   const line = rowLine(m.rawJson);
   if (!line || line['type'] !== 'system' || line['subtype'] !== TIMER_FIRE_SUBTYPE || line['isSidechain'] === true) return null;
+  if (line['taskKind'] === 'loop') return null;
   const id = line['taskId'];
   return typeof id === 'string' && id !== '' ? id : null;
 }
 
 /**
- * SQLite predicate for a timer's run lines naming job `$<param>`, over the
- * columns `role` and `raw_json`; the parameter is bound to
- * {@link timerFireNeedle}. Not part of {@link backgroundSqlPredicate}: a
- * `/loop 5m` writes 2,000 of them in a week, which would crowd every start
- * out of that read's newest rows; only the last per job is needed
- * (`backgroundRowsSince`). Confirm a hit with the parser.
+ * SQLite predicate for the run lines of timers, over the columns `role` and
+ * `raw_json`. Not part of {@link backgroundSqlPredicate}: a `/loop 5m` writes
+ * 2,000 of them in a week, which would crowd every start out of that read's
+ * newest rows; only the latest few per job are needed (`backgroundRowsSince`,
+ * which partitions them by {@link timerFireJobSqlExpr}). Confirm a hit with
+ * the parser.
  */
-export function timerFireSqlPredicate(param: string): string {
-  return `role = 'system' AND instr(raw_json, '"subtype":"${TIMER_FIRE_SUBTYPE}"') > 0 AND instr(raw_json, ${param}) > 0`;
+export function timerFireSqlPredicate(): string {
+  return `role = 'system' AND instr(raw_json, '"subtype":"${TIMER_FIRE_SUBTYPE}"') > 0`;
 }
 
-/** The text a timer's run line carries for its job id, bound into {@link timerFireSqlPredicate}. */
-export function timerFireNeedle(jobId: string): string {
-  return `"taskId":"${jobId}"`;
+/** SQLite expression for the job id a run line names, over `raw_json`. */
+export function timerFireJobSqlExpr(): string {
+  return `json_extract(raw_json, '$.taskId')`;
 }
 
 /**

@@ -134,12 +134,19 @@ export function runIsNear(at: number, now: number): boolean {
   return at - now < NEAR_MS;
 }
 
+function sameDay(a: number, b: number): boolean {
+  const x = new Date(a);
+  const y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
 /**
- * A run's time, local and 24-hour (`clockText`): "14:13" under 12 hours
- * ahead, "Mon 09:00" under 6 days, "Oct 28 09:00" past that.
+ * A run's time, local and 24-hour (`clockText`): "14:13" later today or
+ * under 12 hours ahead (00:10 seen at 23:50), "Mon 09:00" under 6 days,
+ * "Oct 28 09:00" past that.
  */
 export function runTimeText(at: number, now: number): string {
-  if (runIsNear(at, now)) return clockText(at);
+  if (runIsNear(at, now) || sameDay(at, now)) return clockText(at);
   if (at - now < 6 * 24 * HOUR_MS) return `${DAY_NAMES[new Date(at).getDay()]} ${clockText(at)}`;
   return `${dateText(at, new Date(now))} ${clockText(at)}`;
 }

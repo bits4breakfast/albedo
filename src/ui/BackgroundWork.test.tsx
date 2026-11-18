@@ -206,7 +206,7 @@ const item = (o: Partial<BackgroundItem> & Pick<BackgroundItem, 'key' | 'kind'>)
   nextRunAt: null,
   ...o,
 });
-const recurring = (cron: string, nextRunAt: number) => item({ key: 'c', kind: 'timer', schedule: { cron, once: false, firstRunAt: null, createdAt: 0, lastFiredAt: null }, nextRunAt });
+const recurring = (cron: string, nextRunAt: number) => item({ key: 'c', kind: 'timer', schedule: { cron, once: false, firstRunAt: null, createdAt: 0, firedAt: [] }, nextRunAt });
 
 describe('backgroundShown and backgroundSummary', () => {
   it('leaves agents out and names each kind, with when it wakes the task', () => {
@@ -225,7 +225,7 @@ describe('backgroundShown and backgroundSummary', () => {
 });
 
 describe('what the row and band say about when the task wakes (#443)', () => {
-  it('runTimeText: the time alone under 12 hours ahead, the weekday under 6 days, the date past it', () => {
+  it('runTimeText: the time alone today or under 12 hours ahead, the weekday under 6 days, the date past it', () => {
     expect(runTimeText(new Date(2026, 10, 18, 14, 13).getTime(), NOON)).toBe('14:13');
     // By distance, not calendar day: at 23:50, 00:10 is 20 minutes away.
     const lateNight = new Date(2026, 10, 18, 23, 50).getTime();
@@ -234,6 +234,10 @@ describe('what the row and band say about when the task wakes (#443)', () => {
     expect(runTimeText(new Date(2026, 10, 19, 11, 49).getTime(), lateNight)).toBe('11:49');
     expect(runTimeText(new Date(2026, 10, 19, 11, 50).getTime(), lateNight)).toBe('Thu 11:50');
     expect(runTimeText(new Date(2026, 10, 24, 11, 49).getTime(), NOON)).toBe('Tue 11:49');
+    // Later today, though 12 hours or more ahead: still the time alone.
+    const early = new Date(2026, 10, 18, 9, 0).getTime();
+    expect(runTimeText(new Date(2026, 10, 18, 23, 0).getTime(), early)).toBe('23:00');
+    expect(runTimeText(new Date(2026, 10, 19, 9, 0).getTime(), early)).toBe('Thu 09:00');
     expect(runTimeText(new Date(2026, 10, 24, 12, 0).getTime(), NOON)).toBe('Nov 24 12:00');
     // Wed 18 Nov 2026 -> Mon 23 Nov.
     expect(runTimeText(new Date(2026, 10, 23, 9, 0).getTime(), NOON)).toBe('Mon 09:00');
@@ -245,11 +249,11 @@ describe('what the row and band say about when the task wakes (#443)', () => {
   it('wakeText: next check, check at, wakes -- and nothing for other work', () => {
     const at = new Date(2026, 10, 18, 14, 13).getTime();
     expect(wakeText(recurring('13,43 * * * *', at), NOON)).toBe('next check 14:13');
-    expect(wakeText(item({ key: 'o', kind: 'timer', schedule: { cron: null, once: true, firstRunAt: at, createdAt: 0, lastFiredAt: null }, nextRunAt: at }), NOON)).toBe('check at 14:13');
+    expect(wakeText(item({ key: 'o', kind: 'timer', schedule: { cron: null, once: true, firstRunAt: at, createdAt: 0, firedAt: [] }, nextRunAt: at }), NOON)).toBe('check at 14:13');
     expect(wakeText(item({ key: 'w', kind: 'wakeup', nextRunAt: at }), NOON)).toBe('wakes 14:13');
     expect(wakeText(recurring('0 9 * * 1-5', new Date(2026, 10, 23, 9, 0).getTime()), NOON)).toBe('next check Mon 09:00');
     expect(wakeText(item({ key: 's', kind: 'shell' }), NOON)).toBeNull();
-    expect(wakeText(item({ key: 't', kind: 'timer', schedule: { cron: 'x', once: false, firstRunAt: null, createdAt: 0, lastFiredAt: null } }), NOON)).toBeNull();
+    expect(wakeText(item({ key: 't', kind: 'timer', schedule: { cron: 'x', once: false, firstRunAt: null, createdAt: 0, firedAt: [] } }), NOON)).toBeNull();
   });
 
   it('scheduleText: every N when even, the next time alone when not, once, a wake-up\'s time', () => {
@@ -260,7 +264,7 @@ describe('what the row and band say about when the task wakes (#443)', () => {
     expect(scheduleText(recurring('0 9,13,17 * * 1-5', at), NOON)).toBe('next 14:13');
     expect(scheduleText(recurring('not a cron', at), NOON)).toBe('next 14:13');
     expect(scheduleText(recurring('0 9 * * 1-5', new Date(2026, 10, 23, 9, 0).getTime()), NOON)).toBe('next Mon 09:00');
-    expect(scheduleText(item({ key: 'o', kind: 'timer', schedule: { cron: '0 15 * * *', once: true, firstRunAt: at, createdAt: 0, lastFiredAt: null }, nextRunAt: at }), NOON)).toBe(
+    expect(scheduleText(item({ key: 'o', kind: 'timer', schedule: { cron: '0 15 * * *', once: true, firstRunAt: at, createdAt: 0, firedAt: [] }, nextRunAt: at }), NOON)).toBe(
       'once · 14:13',
     );
     expect(scheduleText(item({ key: 'w', kind: 'wakeup', nextRunAt: at }), NOON)).toBe('14:13');
