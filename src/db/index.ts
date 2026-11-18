@@ -14,6 +14,8 @@ import type { ApiErrorKind, Message, MessageRole, NewTask, ParsedMessage, Task, 
 import {
   backgroundFactsOf,
   backgroundSqlPredicate,
+  timerFireNeedle,
+  timerFireSqlPredicate,
   contextUsedSqlExpr,
   remoteControlSqlPredicate,
   remoteControlUrlOf,
@@ -836,11 +838,12 @@ const BACKGROUND_PAIRS_MAX = 50;
  * pty was spawned: the work dies with the process, so nothing from before it
  * can still run.
  *
- * Two reads. The first takes what `backgroundSqlPredicate` preselects. Some
+ * Three reads. The first takes what `backgroundSqlPredicate` preselects. Some
  * starts show on one half only -- an agent async by default has no flag on
  * its call, a shell moved to the background by its timeout neither -- so the
  * second fetches the other half of every call or result found alone, by its
- * tool-use id.
+ * tool-use id. The third fetches each timer's last run (#443), one row per
+ * job, which its next run is counted from.
  */
 export async function backgroundRowsSince(sessionId: string, sinceTs: number): Promise<Message[]> {
   const db = await getDb();
@@ -872,6 +875,25 @@ export async function backgroundRowsSince(sessionId: string, sinceTs: number): P
     );
     const held = new Set(rows.map((m) => m.id));
     for (const m of (second ?? []).map(toMessage)) if (!held.has(m.id)) rows.push(m);
+  }
+
+  // Each timer's last run (#443): when it runs next is counted from it.
+  // Only the last, by job: a `/loop 5m` writes one every five minutes.
+  const timerCalls = new Set<string>();
+  const jobs = new Set<string>();
+  for (const m of rows) for (const f of backgroundFactsOf(m)) if (f.fact === 'call' && f.kind === 'timer') timerCalls.add(f.toolUseId);
+  for (const m of rows) {
+    for (const f of backgroundFactsOf(m)) if (f.fact === 'result' && f.jobId !== null && timerCalls.has(f.toolUseId)) jobs.add(f.jobId);
+  }
+  const held = new Set(rows.map((m) => m.id));
+  for (const job of [...jobs].slice(0, BACKGROUND_PAIRS_MAX)) {
+    const last = await db.select<MessageRow[]>(
+      `SELECT ${MESSAGE_SELECT} FROM messages
+        WHERE session_id = $1 AND ts >= $2 AND +agent_id IS NULL AND ${timerFireSqlPredicate('$3')}
+        ORDER BY ts DESC, id DESC LIMIT 1`,
+      [sessionId, sinceTs, timerFireNeedle(job)],
+    );
+    for (const m of (last ?? []).map(toMessage)) if (!held.has(m.id)) rows.push(m);
   }
   return rows.sort((a, b) => a.ts - b.ts || a.id - b.id);
 }

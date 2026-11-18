@@ -6,8 +6,11 @@
  * step (`*` + `/n`, `a-b/n`, `a/n`), or a comma list of those. Months and
  * weekdays also take their three-letter names; day-of-week takes 0-7, both 0
  * and 7 meaning Sunday. Day-of-month and day-of-week follow the usual cron
- * rule: when both are restricted (neither starts with `*`), a day matching
- * EITHER runs; otherwise both must match.
+ * rule: when both are restricted, a day matching EITHER runs; otherwise
+ * both must match. A field restricts when its values are not all of them
+ * (31 days, 7 weekdays) -- whatever it is written as, so `1-31` and `*\/1`
+ * restrict nothing. That is how Claude Code 2.1.327's scheduler reads it,
+ * which is the reader that matters here (vixie cron goes by a leading `*`).
  *
  * Pure, and nothing else: no seconds field, no `@hourly`, no `L`/`W`/`#`.
  * Anything it does not read is `null`, and the caller falls back to what it
@@ -20,9 +23,9 @@ export interface Cron {
   days: ReadonlySet<number>;
   months: ReadonlySet<number>;
   weekdays: ReadonlySet<number>;
-  /** Day-of-month starts with `*`: it does not restrict the day. */
+  /** Day-of-month holds all 31 days: it does not restrict the day. */
   anyDay: boolean;
-  /** Day-of-week starts with `*`: it does not restrict the day. */
+  /** Day-of-week holds all 7 weekdays: it does not restrict the day. */
   anyWeekday: boolean;
 }
 
@@ -88,15 +91,16 @@ export function parseCron(expr: string): Cron | null {
   const months = field(mon, 1, 12, MONTH_NAMES);
   const weekdays = field(dow, 0, 7, DAY_NAMES);
   if (!minutes || !hours || !days || !months || !weekdays) return null;
+  // 7 is Sunday as well as 0.
+  const weekdaySet = new Set(weekdays.map((d) => (d === 7 ? 0 : d)));
   return {
     minutes,
     hours,
     days: new Set(days),
     months: new Set(months),
-    // 7 is Sunday as well as 0.
-    weekdays: new Set(weekdays.map((d) => (d === 7 ? 0 : d))),
-    anyDay: dom.startsWith('*'),
-    anyWeekday: dow.startsWith('*'),
+    weekdays: weekdaySet,
+    anyDay: days.length === 31,
+    anyWeekday: weekdaySet.size === 7,
   };
 }
 
@@ -168,7 +172,6 @@ export function cronEvery(expr: string | Cron): number | null {
   const c = typeof expr === 'string' ? parseCron(expr) : expr;
   if (c === null) return null;
   if (!c.anyDay || !c.anyWeekday || c.months.size !== 12) return null;
-  if (c.days.size !== 31 || c.weekdays.size !== 7) return null;
   const times = c.hours.flatMap((h) => c.minutes.map((m) => h * 60 + m));
   if (times.length < 2) return null;
   const gap = times[1]! - times[0]!;

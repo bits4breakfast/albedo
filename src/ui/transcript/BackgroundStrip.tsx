@@ -17,18 +17,19 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { BackgroundItem } from '../../capture';
 import { formatDuration } from '../../lib/duration';
-import { BACKGROUND_KIND_LABEL, sameDay, scheduleText } from '../BackgroundWork';
+import { BACKGROUND_KIND_LABEL, runIsNear, scheduleText } from '../BackgroundWork';
 
 /** The clocks' cadence. Nothing is re-queried; only while the band shows. */
 const CLOCK_MS = 1_000;
 
 /**
  * "3m 12s" running, or "in 4m 20s" for what wakes the task -- a wake-up, a
- * timer -- while its run is today. A run on another day says nothing here:
+ * timer -- while its run is under 12 hours ahead (by distance: a wake-up at
+ * 00:10 seen at 23:50 is "in 20m 0s"). A run further off says nothing here:
  * its day and time beside it say it, and "in 67h 3m" would only be noise.
  */
 export function backgroundClock(item: BackgroundItem, now: number): string {
-  if (item.nextRunAt !== null) return sameDay(item.nextRunAt, now) ? `in ${formatDuration(item.nextRunAt - now)}` : '';
+  if (item.nextRunAt !== null) return runIsNear(item.nextRunAt, now) ? `in ${formatDuration(item.nextRunAt - now)}` : '';
   if (item.kind === 'wakeup' && item.until !== null) return `in ${formatDuration(item.until - now)}`;
   return formatDuration(now - item.startedAt);
 }

@@ -44,6 +44,8 @@ export const BACKGROUND_KIND_LABEL: Record<BackgroundKind, string> = {
 };
 
 const NO_ROWS: readonly Message[] = [];
+/** The longest delay setTimeout keeps; anything longer fires at once. */
+export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
  * What runs in the background of the task's live session, oldest first.
@@ -101,7 +103,8 @@ export function useBackgroundWork(task: Pick<Task, 'id' | 'sessionId'> | null): 
   const next = useMemo(() => nextChangeAt(rows, since, now), [rows, since, now]);
   useEffect(() => {
     if (next === null) return;
-    const t = setTimeout(() => setNow(Date.now()), Math.max(0, next - Date.now()) + 1);
+    // setTimeout fires at once past 2^31-1 ms (24.8 days): wait at most that.
+    const t = setTimeout(() => setNow(Date.now()), Math.min(Math.max(0, next - Date.now()) + 1, MAX_TIMEOUT_MS));
     return () => clearTimeout(t);
   }, [next]);
 
@@ -119,25 +122,25 @@ export function backgroundShown(items: readonly BackgroundItem[]): BackgroundIte
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const HOUR_MS = 60 * 60_000;
+/** Under this far ahead, a run is read by its time alone, and the band counts down to it. */
+const NEAR_MS = 12 * HOUR_MS;
 
-function startOfDay(ms: number): number {
-  const d = new Date(ms);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
-/** Whether `at` falls on `now`'s local day. */
-export function sameDay(at: number, now: number): boolean {
-  return startOfDay(at) === startOfDay(now);
+/**
+ * Whether a run is near enough to need no day: under 12 hours ahead. By
+ * distance, not by calendar day, so 00:10 seen at 23:50 is "00:10", "in 20m".
+ */
+export function runIsNear(at: number, now: number): boolean {
+  return at - now < NEAR_MS;
 }
 
 /**
- * A run's time, local and 24-hour (`clockText`): "14:13" today, "Mon 09:00"
- * within the week ahead, "Oct 28 09:00" past it.
+ * A run's time, local and 24-hour (`clockText`): "14:13" under 12 hours
+ * ahead, "Mon 09:00" under 6 days, "Oct 28 09:00" past that.
  */
 export function runTimeText(at: number, now: number): string {
-  if (sameDay(at, now)) return clockText(at);
-  const days = Math.round((startOfDay(at) - startOfDay(now)) / 86_400_000);
-  if (days > 0 && days < 7) return `${DAY_NAMES[new Date(at).getDay()]} ${clockText(at)}`;
+  if (runIsNear(at, now)) return clockText(at);
+  if (at - now < 6 * 24 * HOUR_MS) return `${DAY_NAMES[new Date(at).getDay()]} ${clockText(at)}`;
   return `${dateText(at, new Date(now))} ${clockText(at)}`;
 }
 

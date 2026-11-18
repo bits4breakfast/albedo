@@ -77,6 +77,13 @@ describe('cronNext', () => {
     expect(cronNext('0 9 */1 * 1', at(2026, 11, 18))).toBe(at(2026, 11, 23, 9, 0));
     // The 1st only.
     expect(cronNext('0 9 1 * *', at(2026, 11, 18))).toBe(at(2026, 12, 1, 9, 0));
+    // A field holding every value restricts nothing, however it is written
+    // (as Claude Code reads it): Mondays only, not every day.
+    expect(cronNext('0 9 1-31 * 1', at(2026, 11, 18))).toBe(at(2026, 11, 23, 9, 0));
+    // And a weekday field holding all seven leaves the 1st alone.
+    expect(cronNext('0 9 1 * 0-6', at(2026, 11, 18))).toBe(at(2026, 12, 1, 9, 0));
+    // A restricted field written with *: the 1st or any day 1, 3, 5, … (OR).
+    expect(cronNext('0 9 */2 * 1', at(2026, 11, 18))).toBe(at(2026, 11, 19, 9, 0));
   });
 
   it('is null for a date that never comes, and for an unreadable expression', () => {

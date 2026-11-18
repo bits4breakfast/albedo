@@ -18,7 +18,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 import { backgroundRowsSince, insertMessages, resetDb } from './index';
 import { parseLine } from '../capture/adapter';
 import { runningInBackground } from '../capture/background';
-import { asyncAgent, backgroundShell, callLine, noticeAttachmentLine, notification, resultLine, wakeup } from '../capture/backgroundFixtures';
+import { asyncAgent, backgroundShell, callLine, cronTimer, noticeAttachmentLine, notification, resultLine, timerFire, wakeup } from '../capture/backgroundFixtures';
 
 const SPAWNED = Date.parse('2026-10-28T10:00:00.000Z');
 const NOW = SPAWNED + 60_000;
@@ -76,5 +76,22 @@ describe('backgroundRowsSince', () => {
       ['shell', 'Poll CI until green'],
       ['wakeup', 'Timer: wait 5 minutes before the next check'],
     ]);
+  });
+
+  it("fetches each timer's last run line, however many it has written (#443)", async () => {
+    // A `/loop 5m` for four days: 1,150 run lines, more than the first read keeps.
+    const first = SPAWNED + 1_000 + 285_000;
+    const fires = Array.from({ length: 1_150 }, (_, i) => first + i * 285_000);
+    await seed([
+      ...cronTimer('c1', 'job1', SPAWNED + 1_000, { cron: '*/5 * * * *', nextFireAt: first }),
+      ...fires.map((t) => timerFire('job1', '*/5 * * * *', t)),
+      // Another job's line, and a /loop wake-up's (no taskId), are not this one's.
+      timerFire('job2', '*/5 * * * *', fires.at(-1)! + 1_000),
+    ]);
+    const last = fires.at(-1)!;
+    const rows = await backgroundRowsSince('s1', SPAWNED);
+    expect(rows.filter((m) => m.role === 'system')).toHaveLength(1);
+    const items = runningInBackground(rows, SPAWNED, last + 2_000);
+    expect(items.map((i) => [i.kind, i.schedule?.lastFiredAt, i.nextRunAt])).toEqual([['timer', last, last + 285_000]]);
   });
 });

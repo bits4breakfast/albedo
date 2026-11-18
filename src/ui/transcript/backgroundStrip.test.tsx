@@ -48,7 +48,7 @@ const timer: BackgroundItem = {
   startedAt: NOW - 2 * 60 * MIN,
   until: NOW + 6 * 24 * 60 * MIN,
   rowId: 12,
-  schedule: { cron: '13,43 * * * *', once: false, firstRunAt: NOW - 100 * MIN },
+  schedule: { cron: '13,43 * * * *', once: false, firstRunAt: NOW - 100 * MIN, createdAt: 0, lastFiredAt: null },
   nextRunAt: NOW + 21 * MIN,
 };
 
@@ -116,8 +116,8 @@ describe('BackgroundStrip: what wakes the task (#443)', () => {
   it('says "once" for a one-shot, and only the next time for an uneven cron', () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
-    const once = { ...timer, key: 'c2', schedule: { cron: '0 15 * * *', once: true, firstRunAt: NOW + 68 * MIN }, nextRunAt: NOW + 68 * MIN };
-    const uneven = { ...timer, key: 'c3', schedule: { cron: '0 9,13,17 * * 1-5', once: false, firstRunAt: null }, nextRunAt: NOW + 188 * MIN };
+    const once = { ...timer, key: 'c2', schedule: { cron: '0 15 * * *', once: true, firstRunAt: NOW + 68 * MIN, createdAt: 0, lastFiredAt: null }, nextRunAt: NOW + 68 * MIN };
+    const uneven = { ...timer, key: 'c3', schedule: { cron: '0 9,13,17 * * 1-5', once: false, firstRunAt: null, createdAt: 0, lastFiredAt: null }, nextRunAt: NOW + 188 * MIN };
     render(<BackgroundStrip items={[once, uneven]} onReveal={() => {}} />);
     const whens = [...document.querySelectorAll('.tx-background-when')].map((e) => e.textContent);
     expect(whens).toEqual([`once · ${clockText(NOW + 68 * MIN)}`, `next ${clockText(NOW + 188 * MIN)}`]);
@@ -143,5 +143,11 @@ describe('backgroundClock', () => {
     const nextDay = new Date(NOW);
     nextDay.setDate(nextDay.getDate() + 2);
     expect(backgroundClock({ ...timer, nextRunAt: nextDay.getTime() }, NOW)).toBe('');
+    // By distance, not calendar day: a wake-up at 00:10 seen at 23:50.
+    const lateNight = new Date(2026, 9, 28, 23, 50).getTime();
+    const pastMidnight = new Date(2026, 9, 29, 0, 10).getTime();
+    expect(backgroundClock({ ...wake, until: pastMidnight, nextRunAt: pastMidnight }, lateNight)).toBe('in 20m 0s');
+    expect(backgroundClock({ ...timer, nextRunAt: lateNight + 11 * 60 * MIN }, lateNight)).toBe('in 11h 0m');
+    expect(backgroundClock({ ...timer, nextRunAt: lateNight + 12 * 60 * MIN }, lateNight)).toBe('');
   });
 });

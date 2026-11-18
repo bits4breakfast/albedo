@@ -24,6 +24,7 @@ import {
   stopWakeups,
   taskStop,
   taskStopMissing,
+  timerFire,
   wakeup,
 } from './backgroundFixtures';
 
@@ -111,6 +112,14 @@ describe('background lines', () => {
     expect(facts(callLine('c3', 'CronCreate', { prompt: 'Check' }, T))).toMatchObject([{ schedule: { cron: null, once: false } }]);
     // Other results say no first run.
     expect(facts(backgroundShell('t1', 'b1', T)[1]!)).toMatchObject([{ nextFireAt: null }]);
+  });
+
+  it("reads a timer's run line as its job having run, and a /loop wake-up's as nothing (#443)", () => {
+    expect(facts(timerFire('4e553b62', '13,43 * * * *', T))).toEqual([{ fact: 'timer-fired', jobId: '4e553b62' }]);
+    const wake = { ...timerFire('x', '* * * * *', T), content: 'Claude resuming /loop wakeup (Oct 30 10:14am)' };
+    delete (wake as Record<string, unknown>)['taskId'];
+    expect(facts(wake)).toEqual([]);
+    expect(facts({ ...timerFire('x', '* * * * *', T), isSidechain: true })).toEqual([]);
   });
 
   it('reads TaskStop and a stopped loop as stops, not starts', () => {

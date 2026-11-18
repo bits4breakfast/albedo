@@ -135,6 +135,23 @@ export function cronTimer(
   ];
 }
 
+/** The line a timer's run writes (2.1.325-2.1.327): `scheduled_task_fire`, with the job id as `taskId`. */
+export function timerFire(jobId: string, cron: string, ts: number, prompt = 'Check the error rate since the deploy'): Line {
+  return {
+    type: 'system',
+    subtype: 'scheduled_task_fire',
+    sessionId: SESSION,
+    isSidechain: false,
+    isMeta: false,
+    timestamp: iso(ts),
+    uuid: `f-${jobId}-${ts}`,
+    content: 'Running scheduled task',
+    taskId: jobId,
+    cron,
+    prompt,
+  };
+}
+
 export function stopWakeups(id: string, ts: number): Line[] {
   return [
     callLine(id, 'ScheduleWakeup', { stop: true }, ts),

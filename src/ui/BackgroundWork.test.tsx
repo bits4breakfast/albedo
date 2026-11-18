@@ -55,7 +55,7 @@ vi.mock('../capture', async () => ({
   },
 }));
 
-const { BackgroundMark, backgroundShown, backgroundSummary, runTimeText, scheduleText, soonestWake, useBackgroundWork, wakeText } = await import(
+const { BackgroundMark, MAX_TIMEOUT_MS, backgroundShown, backgroundSummary, runTimeText, scheduleText, soonestWake, useBackgroundWork, wakeText } = await import(
   './BackgroundWork'
 );
 
@@ -158,6 +158,21 @@ describe('BackgroundMark', () => {
   });
 });
 
+describe('BackgroundMark: a run far off (#443)', () => {
+  it('waits for it with a delay setTimeout keeps, not one it fires at once', async () => {
+    const spy = vi.spyOn(globalThis, 'setTimeout');
+    spawn(1, SPAWNED);
+    const run = Date.now() + 365 * 24 * 60 * 60_000;
+    h.lines.set('s1', cronTimer('c1', 'job1', SPAWNED + 1_000, { cron: '0 9 1 1 *', nextFireAt: run, recurring: false }));
+    render(<BackgroundMark task={task} />);
+    await screen.findByText(`check at ${runTimeText(run, Date.now())}`);
+    const delays = spy.mock.calls.map((c) => c[1] ?? 0);
+    expect(delays).toContain(MAX_TIMEOUT_MS);
+    expect(Math.max(...delays)).toBeLessThanOrEqual(MAX_TIMEOUT_MS);
+    spy.mockRestore();
+  });
+});
+
 describe('useBackgroundWork', () => {
   it('starts over from nothing for a new pty', async () => {
     spawn(1, SPAWNED);
@@ -191,7 +206,7 @@ const item = (o: Partial<BackgroundItem> & Pick<BackgroundItem, 'key' | 'kind'>)
   nextRunAt: null,
   ...o,
 });
-const recurring = (cron: string, nextRunAt: number) => item({ key: 'c', kind: 'timer', schedule: { cron, once: false, firstRunAt: null }, nextRunAt });
+const recurring = (cron: string, nextRunAt: number) => item({ key: 'c', kind: 'timer', schedule: { cron, once: false, firstRunAt: null, createdAt: 0, lastFiredAt: null }, nextRunAt });
 
 describe('backgroundShown and backgroundSummary', () => {
   it('leaves agents out and names each kind, with when it wakes the task', () => {
@@ -210,8 +225,16 @@ describe('backgroundShown and backgroundSummary', () => {
 });
 
 describe('what the row and band say about when the task wakes (#443)', () => {
-  it('runTimeText: the time today, the weekday within the week, the date past it', () => {
+  it('runTimeText: the time alone under 12 hours ahead, the weekday under 6 days, the date past it', () => {
     expect(runTimeText(new Date(2026, 10, 18, 14, 13).getTime(), NOON)).toBe('14:13');
+    // By distance, not calendar day: at 23:50, 00:10 is 20 minutes away.
+    const lateNight = new Date(2026, 10, 18, 23, 50).getTime();
+    expect(runTimeText(new Date(2026, 10, 19, 0, 10).getTime(), lateNight)).toBe('00:10');
+    expect(wakeText(item({ key: 'w', kind: 'wakeup', nextRunAt: new Date(2026, 10, 19, 0, 10).getTime() }), lateNight)).toBe('wakes 00:10');
+    expect(runTimeText(new Date(2026, 10, 19, 11, 49).getTime(), lateNight)).toBe('11:49');
+    expect(runTimeText(new Date(2026, 10, 19, 11, 50).getTime(), lateNight)).toBe('Thu 11:50');
+    expect(runTimeText(new Date(2026, 10, 24, 11, 49).getTime(), NOON)).toBe('Tue 11:49');
+    expect(runTimeText(new Date(2026, 10, 24, 12, 0).getTime(), NOON)).toBe('Nov 24 12:00');
     // Wed 18 Nov 2026 -> Mon 23 Nov.
     expect(runTimeText(new Date(2026, 10, 23, 9, 0).getTime(), NOON)).toBe('Mon 09:00');
     expect(runTimeText(new Date(2026, 10, 19, 0, 5).getTime(), NOON)).toBe('Thu 00:05');
@@ -222,11 +245,11 @@ describe('what the row and band say about when the task wakes (#443)', () => {
   it('wakeText: next check, check at, wakes -- and nothing for other work', () => {
     const at = new Date(2026, 10, 18, 14, 13).getTime();
     expect(wakeText(recurring('13,43 * * * *', at), NOON)).toBe('next check 14:13');
-    expect(wakeText(item({ key: 'o', kind: 'timer', schedule: { cron: null, once: true, firstRunAt: at }, nextRunAt: at }), NOON)).toBe('check at 14:13');
+    expect(wakeText(item({ key: 'o', kind: 'timer', schedule: { cron: null, once: true, firstRunAt: at, createdAt: 0, lastFiredAt: null }, nextRunAt: at }), NOON)).toBe('check at 14:13');
     expect(wakeText(item({ key: 'w', kind: 'wakeup', nextRunAt: at }), NOON)).toBe('wakes 14:13');
     expect(wakeText(recurring('0 9 * * 1-5', new Date(2026, 10, 23, 9, 0).getTime()), NOON)).toBe('next check Mon 09:00');
     expect(wakeText(item({ key: 's', kind: 'shell' }), NOON)).toBeNull();
-    expect(wakeText(item({ key: 't', kind: 'timer', schedule: { cron: 'x', once: false, firstRunAt: null } }), NOON)).toBeNull();
+    expect(wakeText(item({ key: 't', kind: 'timer', schedule: { cron: 'x', once: false, firstRunAt: null, createdAt: 0, lastFiredAt: null } }), NOON)).toBeNull();
   });
 
   it('scheduleText: every N when even, the next time alone when not, once, a wake-up\'s time', () => {
@@ -237,7 +260,7 @@ describe('what the row and band say about when the task wakes (#443)', () => {
     expect(scheduleText(recurring('0 9,13,17 * * 1-5', at), NOON)).toBe('next 14:13');
     expect(scheduleText(recurring('not a cron', at), NOON)).toBe('next 14:13');
     expect(scheduleText(recurring('0 9 * * 1-5', new Date(2026, 10, 23, 9, 0).getTime()), NOON)).toBe('next Mon 09:00');
-    expect(scheduleText(item({ key: 'o', kind: 'timer', schedule: { cron: '0 15 * * *', once: true, firstRunAt: at }, nextRunAt: at }), NOON)).toBe(
+    expect(scheduleText(item({ key: 'o', kind: 'timer', schedule: { cron: '0 15 * * *', once: true, firstRunAt: at, createdAt: 0, lastFiredAt: null }, nextRunAt: at }), NOON)).toBe(
       'once · 14:13',
     );
     expect(scheduleText(item({ key: 'w', kind: 'wakeup', nextRunAt: at }), NOON)).toBe('14:13');

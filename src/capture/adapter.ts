@@ -988,17 +988,32 @@ export function remoteControlSqlPredicate(column = 'raw_json'): string {
  *      recurring job 4e553b62 (13,43 * * * *). Next run: Nov 18 11:18am.
  *      Session-only (not written to disk, dies when Claude exits).
  *      Auto-expires after 7 days. Use CronDelete to cancel sooner."
- *      `nextFireAt` is NOT on the cron's minute: a recurring job runs a fixed
- *      offset after each of its slots, the same for every run of that job
- *      and different between jobs -- `13,43` ran at :17:35 and :47:35 five
- *      times running (+4m35s), `3-59/10` at :57:16, :07:16, … (+4m16s) and,
- *      created again, at :03:30 (+29s). A one-shot (`recurring: false`,
- *      `8 18 17 11 *`) had `nextFireAt` exactly on its minute. A one-shot
- *      deletes itself once it fires (tool description); a recurring one runs
- *      until `CronDelete` or 7 days.
- *      Each run writes a `system` line, subtype `scheduled_task_fire`, and the
- *      prompt as an `isMeta` user line, within a second of its time -- while
- *      the Mac is awake; none came for the hours it slept.
+ *      `nextFireAt` is NOT on the cron's minute. When each run comes --
+ *      measured on 2.1.327 (the runs above, and its scheduler read by a
+ *      reviewer), and Claude Code may change it -- is computed from `from`,
+ *      the job's creation for the first run and the actual time of the run
+ *      before for every later one:
+ *        - `a` the cron's next slot after `from`, `r` the gap from `a` to the
+ *          slot after it;
+ *        - a `*\/N * * * *` cron whose `r` is 5 minutes (`/loop 5m`): `from
+ *          + r - 15 s`, off the slot grid, so it drifts with each run;
+ *        - any other: `a` plus `min(k * r, 30 min)`, `k` a fraction fixed
+ *          per job (from its id, 0 to 0.5).
+ *      So the offset after the slot is the same on every run only when the
+ *      slots are evenly spaced: `13,43` ran at :17:35 and :47:35 five times
+ *      running (+4m35s), `3-59/10` at :57:16, :07:16, … (+4m16s) and,
+ *      created again, at :03:30 (+29s); `0 9,13,17 * * 1-5` waits longer
+ *      after 17:00 (a 16 h gap) than after 09:00. capture/background.ts
+ *      infers `k` from the first run, never from the id.
+ *      A one-shot (`recurring: false`, `8 18 17 11 *`) had `nextFireAt`
+ *      exactly on its minute, and deletes itself once it fires (tool
+ *      description). A recurring one runs until `CronDelete`, or ages out
+ *      after 7 days -- deleted only after one last run at or past the mark.
+ *      Each run writes a `system` line, subtype `scheduled_task_fire`, with
+ *      the job's id as `taskId` and its `cron` (a `/loop` wake-up writes the
+ *      same subtype with no `taskId`), and the prompt as an `isMeta` user
+ *      line, within a second of its time -- while the Mac is awake; none came
+ *      for the hours it slept.
  *  - **End.** A `<task-notification>` naming the start's `<tool-use-id>` with
  *    a `<status>`: completed, failed, killed or stopped. Of 662, 415 came ONLY
  *    as a `queued_command` attachment (`commandMode: "task-notification"`),
@@ -1066,7 +1081,9 @@ export type BackgroundFact =
   /** `ScheduleWakeup` with `stop: true`: no wake-up is pending any more. */
   | { fact: 'wakeups-stopped' }
   /** A `CronDelete` call; `id` null when its input names none this knows. */
-  | { fact: 'timer-deleted'; id: string | null };
+  | { fact: 'timer-deleted'; id: string | null }
+  /** A timer's job ran (`scheduled_task_fire` with its `taskId`), at the row's time. */
+  | { fact: 'timer-fired'; jobId: string };
 
 /** The tools a background start can come from, by the kind it would be. */
 const BACKGROUND_CALL_KINDS: Readonly<Record<string, BackgroundKind>> = {
@@ -1113,6 +1130,8 @@ export function isBackgroundNotice(rawJson: string): boolean {
 export function backgroundFactsOf(m: Pick<Message, 'role' | 'seq' | 'rawJson' | 'toolName'>): BackgroundFact[] {
   if (m.role === 'tool_use') return backgroundCallFacts(m);
   if (m.role === 'tool_result') return backgroundResultFacts(m);
+  const fired = timerFiredOf(m);
+  if (fired !== null) return [{ fact: 'timer-fired', jobId: fired }];
   const text = notificationTextOf(m);
   if (text === null) return [];
   const out: BackgroundFact[] = [];
@@ -1211,6 +1230,34 @@ function tagValues(body: string, tag: string): string[] {
     if (v !== '') out.push(v);
   }
   return out;
+}
+
+const TIMER_FIRE_SUBTYPE = 'scheduled_task_fire';
+
+/** The job id a timer's run line names, or null for every other row (a `/loop` wake-up's has none). */
+function timerFiredOf(m: Pick<Message, 'role' | 'rawJson'>): string | null {
+  if (m.role !== 'system' || !m.rawJson.includes(TIMER_FIRE_SUBTYPE)) return null;
+  const line = rowLine(m.rawJson);
+  if (!line || line['type'] !== 'system' || line['subtype'] !== TIMER_FIRE_SUBTYPE || line['isSidechain'] === true) return null;
+  const id = line['taskId'];
+  return typeof id === 'string' && id !== '' ? id : null;
+}
+
+/**
+ * SQLite predicate for a timer's run lines naming job `$<param>`, over the
+ * columns `role` and `raw_json`; the parameter is bound to
+ * {@link timerFireNeedle}. Not part of {@link backgroundSqlPredicate}: a
+ * `/loop 5m` writes 2,000 of them in a week, which would crowd every start
+ * out of that read's newest rows; only the last per job is needed
+ * (`backgroundRowsSince`). Confirm a hit with the parser.
+ */
+export function timerFireSqlPredicate(param: string): string {
+  return `role = 'system' AND instr(raw_json, '"subtype":"${TIMER_FIRE_SUBTYPE}"') > 0 AND instr(raw_json, ${param}) > 0`;
+}
+
+/** The text a timer's run line carries for its job id, bound into {@link timerFireSqlPredicate}. */
+export function timerFireNeedle(jobId: string): string {
+  return `"taskId":"${jobId}"`;
 }
 
 /**

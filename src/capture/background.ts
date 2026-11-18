@@ -22,9 +22,10 @@
  * polling.
  */
 
-import { cronNext, cronPrev, parseCron } from '../lib/cron';
+import { cronNext } from '../lib/cron';
 import type { Message } from '../types';
 import { backgroundFactsOf, type BackgroundKind } from './adapter';
+import { TIMER_MAX_MS, timerFinalRun, timerRunAfter } from './timerRuns';
 
 export type { BackgroundKind } from './adapter';
 
@@ -57,12 +58,15 @@ export interface TimerSchedule {
   once: boolean;
   /** Its first run, as its result says (`nextFireAt`); null when it does not. */
   firstRunAt: number | null;
+  /** When it was created: its result's row. */
+  createdAt: number;
+  /** When its last run came (`scheduled_task_fire`); null before any. */
+  lastFiredAt: number | null;
 }
 
 /** A monitor whose result does not say its timeout gets Claude Code's default. */
 export const MONITOR_DEFAULT_TIMEOUT_MS = 30 * 60_000;
-/** A recurring CronCreate job expires after this (its tool description). */
-export const TIMER_MAX_MS = 7 * 24 * 60 * 60_000;
+export { TIMER_MAX_MS } from './timerRuns';
 
 type Row = Pick<Message, 'id' | 'role' | 'seq' | 'rawJson' | 'toolName' | 'agentId' | 'ts'>;
 
@@ -94,43 +98,30 @@ export function nextChangeAt(rows: readonly Row[], since: number | null, now: nu
 }
 
 /**
- * A recurring job runs a fixed time after each of its cron's slots, the same
- * for every run of one job (measured, adapter.ts). That offset is its first
- * run minus the slot the run belongs to: the last slot at or before it, when
- * that is at most 30 minutes back; else the next slot, when the run is at
- * most 5 minutes before it (a run early); else none, rather than an offset
- * taken from a slot days away.
- */
-const OFFSET_LATE_MAX_MS = 30 * 60_000;
-const OFFSET_EARLY_MAX_MS = 5 * 60_000;
-
-export function timerOffsetMs(cron: string, firstRunAt: number): number {
-  const c = parseCron(cron);
-  if (c === null) return 0;
-  const before = cronPrev(c, firstRunAt);
-  if (before !== null && firstRunAt - before <= OFFSET_LATE_MAX_MS) return firstRunAt - before;
-  const after = cronNext(c, firstRunAt);
-  if (after !== null && after - firstRunAt <= OFFSET_EARLY_MAX_MS) return firstRunAt - after;
-  return 0;
-}
-
-/**
  * When an item next wakes the task, after `now`: a wake-up when it is due; a
- * timer at its first run while that is ahead, then -- recurring only -- at
- * its cron's next slot plus the job's offset, while that is before it
- * expires. Null for anything else, or when it is not known.
+ * one-shot timer at its run; a recurring timer at its next run as Claude
+ * Code computes it (timerRuns.ts: measured on 2.1.327, may change), counted
+ * from its last run. Null for anything else, or when it is not known.
  */
 export function nextRunOf(item: Pick<BackgroundItem, 'kind' | 'until' | 'schedule'>, now: number): number | null {
   if (item.kind === 'wakeup') return item.until !== null && item.until > now ? item.until : null;
   const s = item.schedule;
   if (item.kind !== 'timer' || s === null) return null;
-  if (s.firstRunAt !== null && s.firstRunAt > now) return s.firstRunAt;
-  if (s.once || s.cron === null) return s.once && item.until !== null && item.until > now ? item.until : null;
-  const offset = s.firstRunAt === null ? 0 : timerOffsetMs(s.cron, s.firstRunAt);
-  const slot = cronNext(s.cron, now - offset);
-  if (slot === null) return null;
-  const at = slot + offset;
-  return item.until !== null && at >= item.until ? null : at;
+  if (s.once) return item.until !== null && item.until > now ? item.until : null;
+  if (s.cron === null) return s.firstRunAt !== null && s.firstRunAt > now ? s.firstRunAt : null;
+  return timerRunAfter({ ...s, cron: s.cron }, now);
+}
+
+/**
+ * When a timer is over by time alone: a one-shot at its run; a recurring one
+ * after its last run, the first at or past 7 days (Claude Code deletes an
+ * aged-out job only once it has run once more), or at 7 days when that run
+ * is not known.
+ */
+function timerUntil(s: TimerSchedule): number | null {
+  if (s.once) return s.firstRunAt ?? (s.cron === null ? null : cronNext(s.cron, s.createdAt));
+  const final = s.cron === null ? null : timerFinalRun({ ...s, cron: s.cron });
+  return final ?? s.createdAt + TIMER_MAX_MS;
 }
 
 /** Every start still open by the rows alone, deadlines not yet applied. */
@@ -175,18 +166,18 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
             endOf((i) => i.kind === 'wakeup');
           } else if (call.kind === 'timer') {
             taskId = f.jobId;
-            const cron = call.schedule?.cron ?? null;
-            const once = call.schedule?.once === true;
-            schedule = { cron, once, firstRunAt: f.nextFireAt };
-            if (once) {
-              // Over once it has run: at its first run, or its cron's next
-              // slot after the call. Neither known: it could be counting a
-              // job that already ran, so it is not shown.
-              until = f.nextFireAt ?? (cron === null ? null : cronNext(cron, call.ts));
-              if (until === null) break;
-            } else {
-              until = row.ts + TIMER_MAX_MS;
-            }
+            schedule = {
+              cron: call.schedule?.cron ?? null,
+              once: call.schedule?.once === true,
+              firstRunAt: f.nextFireAt,
+              createdAt: row.ts,
+              lastFiredAt: null,
+            };
+            // A one-shot whose run is not known could be counting a job that
+            // already ran, so it is not shown. `until` is set again once
+            // every run line is read, below.
+            until = timerUntil(schedule);
+            if (until === null) break;
           } else {
             // A shell, agent or monitor that ran in the foreground has no task id.
             if (f.taskId === null) break;
@@ -220,6 +211,16 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
         case 'wakeups-stopped':
           endOf((i) => i.kind === 'wakeup');
           break;
+        case 'timer-fired': {
+          for (const [k, i] of running) {
+            if (i.kind !== 'timer' || i.taskId !== f.jobId || i.schedule === null) continue;
+            // A one-shot deletes itself once it has run; a recurring job
+            // aged out, once it has run past its 7 days.
+            if (i.schedule.once || row.ts >= i.schedule.createdAt + TIMER_MAX_MS) running.delete(k);
+            else i.schedule = { ...i.schedule, lastFiredAt: row.ts };
+          }
+          break;
+        }
         case 'timer-deleted': {
           // A delete this cannot pair (an id this does not know) ends every
           // timer: showing one that is gone would be the false thing.
@@ -232,6 +233,6 @@ function foldBackground(rows: readonly Row[], since: number | null): BackgroundI
   }
 
   return [...running.values()]
-    .map(({ taskId: _taskId, ...item }) => item)
+    .map(({ taskId: _taskId, ...item }) => (item.schedule === null ? item : { ...item, until: timerUntil(item.schedule) }))
     .sort((a, b) => a.startedAt - b.startedAt || a.rowId - b.rowId);
 }
