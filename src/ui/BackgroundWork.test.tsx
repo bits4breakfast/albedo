@@ -161,15 +161,20 @@ describe('BackgroundMark', () => {
 describe('BackgroundMark: a run far off (#443)', () => {
   it('waits for it with a delay setTimeout keeps, not one it fires at once', async () => {
     const spy = vi.spyOn(globalThis, 'setTimeout');
-    spawn(1, SPAWNED);
-    const run = Date.now() + 365 * 24 * 60 * 60_000;
-    h.lines.set('s1', cronTimer('c1', 'job1', SPAWNED + 1_000, { cron: '0 9 1 1 *', nextFireAt: run, recurring: false }));
-    render(<BackgroundMark task={task} />);
-    await screen.findByText(`check at ${runTimeText(run, Date.now())}`);
-    const delays = spy.mock.calls.map((c) => c[1] ?? 0);
-    expect(delays).toContain(MAX_TIMEOUT_MS);
-    expect(Math.max(...delays)).toBeLessThanOrEqual(MAX_TIMEOUT_MS);
-    spy.mockRestore();
+    try {
+      spawn(1, SPAWNED);
+      const run = Date.now() + 365 * 24 * 60 * 60_000;
+      h.lines.set('s1', cronTimer('c1', 'job1', SPAWNED + 1_000, { cron: '0 9 1 1 *', nextFireAt: run, recurring: false }));
+      render(<BackgroundMark task={task} />);
+      // A generous wait: under a loaded full run the default 1 s timed out once.
+      await screen.findByText(`check at ${runTimeText(run, Date.now())}`, undefined, { timeout: 5_000 });
+      const delays = spy.mock.calls.map((c) => c[1] ?? 0);
+      expect(delays).toContain(MAX_TIMEOUT_MS);
+      expect(Math.max(...delays)).toBeLessThanOrEqual(MAX_TIMEOUT_MS);
+    } finally {
+      // Restored even on failure, so no later test sees the spy.
+      spy.mockRestore();
+    }
   });
 });
 
