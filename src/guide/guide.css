@@ -872,3 +872,117 @@
 .gd-search-sign { color: var(--del); font-family: var(--font-mono); }
 .gd-search-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; font-family: var(--font-mono); color: var(--text); }
 .gd-search-mark { background: var(--hit); color: var(--on-hit); border-radius: 2px; }
+
+/* --- Context (#444) ----------------------------------------------------------
+   What the project's own instructions found, at the top of a guide: the same
+   card as Since your review, on --subcard, where every tier clears more than
+   on --panel (--text, --muted, --accent there: reviewUpdateContrast.test.ts,
+   and contextContrast.test.ts). Its own scroll, capped, so the groups keep
+   their room. A source is text on the card's own ground; one with a link is
+   --accent. The failure banner is .gd-banner's ground and text, its Try
+   Again a .gd-btn on its own ground. */
+.gd-context-wrap {
+  flex: 0 1 auto;
+  max-height: 40%;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 0;
+}
+.gd-context {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--subcard);
+  color: var(--text);
+}
+.gd-context-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.gd-context-title { margin: 0; font-size: var(--fs-md); font-weight: 600; color: var(--text-strong); }
+.gd-context-by { font-size: var(--fs-xs); color: var(--muted); }
+.gd-context-by .gd-link { font-size: var(--fs-xs); }
+.gd-context-text { margin: 0; max-width: 75ch; font-size: var(--fs-md); line-height: 1.5; color: var(--text); }
+.gd-context-sources { display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-context-source {
+  padding: 0 6px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--subcard);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.gd-context-source-link { color: var(--accent); cursor: pointer; }
+.gd-context-source-link:hover { text-decoration: underline; text-decoration-color: var(--accent-line); }
+.gd-context-source-link:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+
+/* A write with a Context step: its steps, the current one --text-strong, the
+   others --muted, on the status row's own ground. */
+.gd-steps { flex-direction: column; align-items: flex-start; gap: 4px; }
+.gd-step { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.gd-step[data-on] { color: var(--text-strong); }
+.gd-intro-link { font-size: var(--fs-xs); }
+
+/* The sheet (#444): the dialogs' shell (worktree.css) on --panel. The tool
+   box is a .wt-input's ground and edge, with the chips on --panel-raised. */
+.gc-lead { margin: 0 0 14px; font-size: var(--fs-sm); color: var(--muted); }
+.gc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 5px 8px;
+  background-color: var(--panel-inset);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius);
+}
+.gc-tools:focus-within { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: -1px; }
+.gc-tool { display: inline-flex; align-items: center; gap: 4px; color: var(--text); }
+.gc-tool-remove {
+  padding: 0 2px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+.gc-tool-remove:hover { color: var(--text-strong); }
+.gc-tool-input {
+  flex: 1 1 14ch;
+  min-width: 14ch;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.gc-tool-input::placeholder { color: var(--faint); }
+.gc-row { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.gc-inline { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text); }
+.gc-select { width: auto; }
+.gc-fixed {
+  margin-bottom: 14px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.gc-fixed > summary { cursor: pointer; font-size: var(--fs-sm); color: var(--text); }
+.gc-fixed-body {
+  margin: 8px 0 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.gc-trial { margin-bottom: 14px; }
+.gc-trial-running { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); }
+.gc-error { color: var(--danger); }

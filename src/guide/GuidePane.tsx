@@ -84,6 +84,8 @@ import {
   type SearchScope,
 } from './GuideSearch';
 import { linesOf, type GuideHit } from './search';
+import { CONTEXT_MODELS, contextActive, gatherContextInput, loadContextSettings, useContextSettings, type ContextModel } from './context';
+import { CONTEXT_MENU_LABEL, ContextFailureBanner, ContextSection, GuideContextSheet, useElapsed } from './GuideContext';
 import './guide.css';
 
 /**
@@ -153,6 +155,12 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   /** Write or Rewrite was pressed and the branch is being read again first. */
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
+  /**
+   * The project's Review Guide Context sheet (#444). `rewrite`: opened from
+   * the guide's Edit…, so a save that changes the settings writes the guide
+   * again with a fresh Context.
+   */
+  const [sheet, setSheet] = useState<{ rewrite: boolean } | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -213,7 +221,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   }
 
   const { diff } = load.data;
-  const writeNow = (focus: GuideFocus) => {
+  const writeNow = (focus: GuideFocus, freshContext = false) => {
     if (startingRef.current || stored?.kind === 'writing') return;
     startingRef.current = true;
     setStarting(true);
@@ -230,8 +238,16 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
       })
       // The branch cannot be read just now: write for what is on screen.
       .catch(() => diff)
-      .then((d) => {
-        const run = startWrite(id, d, base, focus);
+      .then(async (d) => {
+        // The project's Context step (#444), when it has instructions: read
+        // from its file now, so a write never starts on settings not yet read.
+        const projectId = task.projectId ?? null;
+        const settings = projectId === null ? null : await loadContextSettings(projectId);
+        const contextTask = { id, title: task.title, branch: task.branch, worktreePath: task.worktreePath, reviewUrl: task.reviewUrl };
+        const plan = contextActive(settings)
+          ? { settings, input: () => gatherContextInput(contextTask, base), force: freshContext, previous: loadGuide(id)?.context ?? null }
+          : undefined;
+        const run = startWrite(id, d, base, focus, plan);
         startingRef.current = false;
         setStarting(false);
         return run;
@@ -240,55 +256,81 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
 
   // What the guide was written with; a guide from before #295 rewrites with the project's.
   const guideFocus = guide ? (asFocus(guide.focus) ?? defaults) : defaults;
+  const projectId = task.projectId ?? null;
+  const contextSheet =
+    sheet !== null && projectId !== null ? (
+      <GuideContextSheet
+        projectId={projectId}
+        projectName={project?.name ?? 'this project'}
+        task={task}
+        base={measuredBase}
+        onClose={() => setSheet(null)}
+        onSaved={(changed) => {
+          // Edit… on a guide's Context: what it says now is written again.
+          if (sheet.rewrite && changed) writeNow(guideFocus, true);
+        }}
+      />
+    ) : null;
+  const openContext = projectId === null ? undefined : (rewrite: boolean) => setSheet({ rewrite });
+
   // Rewrite With Other Options… is open (#295): a draft over a written guide.
   // Kept in the store, so a task switch (the pane remounts) comes back to it.
   const editing = guide !== null && focusDraftOf(task.id) !== null;
   if (guide === null || editing) {
     const start = guide === null ? defaults : guideFocus;
     return (
-      <GuideIntro
-        since={since}
-        task={task}
-        diff={diff}
-        write={write}
-        // The draft is kept until the write succeeds (store.startWrite), so
-        // Try Again writes with what was typed.
-        onWrite={() => writeNow(chosenFocus(task.id, start))}
-        onCancel={editing ? () => setFocusDraft(task.id, null) : undefined}
-        active={active}
-        options={
-          <GuideOptions
-            taskId={task.id}
-            diff={diff}
-            start={start}
-            project={project}
-            defaults={defaults}
-            // Read only while writing: the lists are cleared once it succeeds.
-            disabled={write?.kind === 'writing'}
-          />
-        }
-      />
+      <>
+        <GuideIntro
+          since={since}
+          task={task}
+          diff={diff}
+          write={write}
+          // The draft is kept until the write succeeds (store.startWrite), so
+          // Try Again writes with what was typed.
+          onWrite={() => writeNow(chosenFocus(task.id, start))}
+          onCancel={editing ? () => setFocusDraft(task.id, null) : undefined}
+          active={active}
+          options={
+            <GuideOptions
+              taskId={task.id}
+              diff={diff}
+              start={start}
+              project={project}
+              defaults={defaults}
+              // Read only while writing: the lists are cleared once it succeeds.
+              disabled={write?.kind === 'writing'}
+            />
+          }
+          onOpenContext={openContext ? () => openContext(false) : undefined}
+        />
+        {contextSheet}
+      </>
     );
   }
   return (
-    <GuideBody
-      key={`${task.id}:${guide.writtenAt}`}
-      since={since}
-      update={update}
-      sinceChanges={sinceChanges}
-      task={task}
-      guide={guide}
-      loaded={load.data}
-      fresh={load.remembered !== true}
-      baseSettled={measured.settled}
-      write={write}
-      onRewrite={() => writeNow(guideFocus)}
-      onEditOptions={() => {
-        // Never over a draft already typed.
-        if (focusDraftOf(task.id) === null) setFocusDraft(task.id, draftOf(guideFocus));
-      }}
-      active={active}
-    />
+    <>
+      <GuideBody
+        key={`${task.id}:${guide.writtenAt}`}
+        since={since}
+        update={update}
+        sinceChanges={sinceChanges}
+        task={task}
+        guide={guide}
+        loaded={load.data}
+        fresh={load.remembered !== true}
+        baseSettled={measured.settled}
+        write={write}
+        onRewrite={() => writeNow(guideFocus)}
+        onEditOptions={() => {
+          // Never over a draft already typed.
+          if (focusDraftOf(task.id) === null) setFocusDraft(task.id, draftOf(guideFocus));
+        }}
+        onOpenContext={openContext}
+        onRetryContext={() => writeNow(guideFocus, true)}
+        active={active}
+      />
+      {contextSheet}
+    </>
   );
 }
 
@@ -305,6 +347,9 @@ const ERROR_TITLE: Record<Extract<WriteState, { kind: 'error' }>['error'], strin
 
 function WriteStatus({ taskId, write, onRetry }: { taskId: number; write: WriteState | null; onRetry: () => void }): ReactNode {
   if (write === null) return null;
+  if (write.kind === 'writing' && write.context) {
+    return <ContextSteps write={write} />;
+  }
   if (write.kind === 'writing') {
     return (
       <div className="gd-status" role="status" aria-live="polite">
@@ -334,6 +379,33 @@ function WriteStatus({ taskId, write, onRetry }: { taskId: number; write: WriteS
   );
 }
 
+/**
+ * A write with a Context step (#444): its steps, the current one in the
+ * strong tier, with the Context step's seconds while it runs.
+ */
+function ContextSteps({ write }: { write: Extract<WriteState, { kind: 'writing' }> }): ReactNode {
+  const ctx = write.context!;
+  const elapsed = useElapsed(ctx.done ? null : ctx.startedAt);
+  const grouping = write.progress && write.progress.of > 1 ? `${write.progress.label} · step ${write.progress.step} of ${write.progress.of}` : 'Grouping the changes';
+  return (
+    <div className="gd-status gd-steps" role="status" aria-live="polite">
+      <span className="gd-step" data-on={!ctx.done || undefined}>
+        {ctx.done ? null : <span className="gd-spinner" aria-hidden="true" />}
+        Reading context · your instructions{ctx.done ? '' : ` · ${elapsed}s`}
+      </span>
+      <span className="gd-step" data-on={ctx.done || undefined}>
+        {ctx.done ? <span className="gd-spinner" aria-hidden="true" /> : null}
+        {grouping}
+      </span>
+      <span className="gd-step">Writing the notes</span>
+    </div>
+  );
+}
+
+function modelLabel(id: ContextModel): string {
+  return CONTEXT_MODELS.find((m) => m.id === id)?.label ?? id;
+}
+
 function GuideIntro({
   since,
   task,
@@ -343,6 +415,7 @@ function GuideIntro({
   onCancel,
   active,
   options,
+  onOpenContext,
 }: {
   /** "Since your review" (#352), above everything else. */
   since: ReactNode;
@@ -355,8 +428,13 @@ function GuideIntro({
   active: boolean;
   /** The lists to set aside and mark (#295). */
   options: ReactNode;
+  /** The project's Review Guide Context sheet (#444); none without a project. */
+  onOpenContext?: () => void;
 }): ReactNode {
   const empty = diff.order.length === 0;
+  // The project's Context step (#444), said where the run is described.
+  const projectContext = useContextSettings(task.projectId ?? null);
+  const contextOn = contextActive(projectContext) ? projectContext : null;
   // ⇧⌘G with no guide yet (#217): to Write Guide, or the intro itself when
   // there is nothing to write or it is being written.
   const introRef = useRef<HTMLDivElement>(null);
@@ -397,7 +475,17 @@ function GuideIntro({
       ) : null}
       <WriteStatus taskId={task.id} write={write} onRetry={onWrite} />
       <p className="gd-intro-note">
-        Written by Claude Haiku in a separate, one-time run with no tools. This task’s session is not touched.
+        Written by Claude Haiku in a separate, one-time run with no tools
+        {contextOn ? `, after a Context step on Claude ${modelLabel(contextOn.model)} that may use only the tools you listed` : ''}.
+        This task’s session is not touched.
+        {onOpenContext ? (
+          <>
+            {' '}
+            <button type="button" className="gd-link gd-intro-link" onClick={onOpenContext}>
+              {CONTEXT_MENU_LABEL}
+            </button>
+          </>
+        ) : null}
       </p>
     </div>
   );
@@ -540,6 +628,8 @@ function GuideBody({
   write,
   onRewrite,
   onEditOptions,
+  onOpenContext,
+  onRetryContext,
   active,
 }: {
   /** "Since your review" (#352), at the top. */
@@ -558,6 +648,10 @@ function GuideBody({
   onRewrite: () => void;
   /** Rewrite With Other Options… (#295). */
   onEditOptions: () => void;
+  /** The project's Review Guide Context sheet (#444); `rewrite` from the section's Edit…. None without a project. */
+  onOpenContext?: (rewrite: boolean) => void;
+  /** The Context step again, then the guide (#444): the failure banner's Try Again. */
+  onRetryContext: () => void;
   active: boolean;
 }): ReactNode {
   const { diff, uncommitted } = loaded;
@@ -1114,7 +1208,15 @@ function GuideBody({
           disabled={write?.kind === 'writing'}
           title="Ask Claude Haiku for a new guide of the branch as it is now"
         >
-          {write?.kind === 'writing' ? (forPreviousCopy ? 'Updating Guide…' : 'Rewriting…') : forPreviousCopy ? 'Update Guide' : 'Rewrite'}
+          {write?.kind === 'writing'
+            ? write.context && !write.context.done
+              ? 'Reading Context…'
+              : forPreviousCopy
+                ? 'Updating Guide…'
+                : 'Rewriting…'
+            : forPreviousCopy
+              ? 'Update Guide'
+              : 'Rewrite'}
         </button>
         {view.stale ? null : sendButton}
         {/* The rest in ⋯ (#295): Rewrite With Other Options… always; Read ·
@@ -1137,10 +1239,28 @@ function GuideBody({
               title: 'Change what this guide sets aside and marks, then write it again',
               onSelect: onEditOptions,
             },
+            ...(onOpenContext
+              ? [
+                  {
+                    id: 'context',
+                    label: CONTEXT_MENU_LABEL,
+                    title: 'What this project’s guides also look up in your own tools, and which tools they may use',
+                    onSelect: () => onOpenContext(false),
+                  },
+                ]
+              : []),
           ]}
         />
       </div>
       {since ? <div className="gd-since-wrap">{since}</div> : null}
+      {guide.context ? (
+        <div className="gd-context-wrap">
+          <ContextSection context={guide.context} onEdit={onOpenContext ? () => onOpenContext(true) : undefined} />
+        </div>
+      ) : null}
+      {guide.contextFailure && !guide.context ? (
+        <ContextFailureBanner reason={guide.contextFailure.reason} onRetry={onRetryContext} busy={write?.kind === 'writing'} />
+      ) : null}
       {guide.fallback ? <div className="gd-banner">{guide.fallback}</div> : null}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {said}

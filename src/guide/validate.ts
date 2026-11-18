@@ -11,6 +11,7 @@
  * exist, and blocks the guide never saw go to Unsorted.
  */
 
+import { safeHttpUrl } from '../lib/urls';
 import { fnv1a, type BranchDiff, type StatReason } from './blocks';
 import { asFocus, firstMatch, isSetAside, type GuideFocus } from './focus';
 
@@ -71,6 +72,77 @@ export interface Guide {
    * {@link MAX_FLAGS}, for paths it was sent only (cleanFlags).
    */
   flags?: Record<string, string>;
+  /**
+   * The Context step's answer (#444), shown at the top and passed to the
+   * grouping and notes calls. Absent when the project has no instructions,
+   * or the step failed (then {@link contextFailure} says why).
+   */
+  context?: GuideContext;
+  /** The Context step failed or timed out (#444): the guide was written without it. */
+  contextFailure?: { key: string; reason: string };
+}
+
+/** The Context step's answer (#444), cleaned (cleanContext). */
+export interface GuideContext {
+  summary: string;
+  sources: GuideSource[];
+  /** What it was written from (context.ts `contextKey`): Rewrite reuses it while this holds. */
+  key: string;
+  at: number;
+}
+
+export interface GuideSource {
+  name: string;
+  /** http(s) only; anything else is dropped. */
+  url?: string;
+}
+
+/** The Context summary is asked for under 200 words; past this many it is cut (#444). */
+export const CONTEXT_MAX_WORDS = 220;
+/** And past this many characters, whatever the words. */
+export const CONTEXT_MAX_CHARS = 2000;
+export const CONTEXT_MAX_SOURCES = 8;
+export const SOURCE_NAME_MAX_CHARS = 80;
+const SOURCE_URL_MAX_CHARS = 2048;
+
+function cut(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/**
+ * The Context step's reply, held to the rule (#444), as notes are: the
+ * summary on one line, cut at {@link CONTEXT_MAX_WORDS} words and
+ * {@link CONTEXT_MAX_CHARS} characters; at most {@link CONTEXT_MAX_SOURCES}
+ * sources, each a name on one line and an http(s) link or none, the first per
+ * name. Null when there is no summary. Rendered as text only, never markup.
+ */
+export function cleanContext(raw: unknown): { summary: string; sources: GuideSource[] } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { summary, sources } = raw as { summary?: unknown; sources?: unknown };
+  if (typeof summary !== 'string') return null;
+  const words = summary.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const text = cut(words.length > CONTEXT_MAX_WORDS ? `${words.slice(0, CONTEXT_MAX_WORDS).join(' ')}…` : words.join(' '), CONTEXT_MAX_CHARS);
+  if (!text) return null;
+  const out: GuideSource[] = [];
+  for (const s of Array.isArray(sources) ? sources : []) {
+    if (out.length >= CONTEXT_MAX_SOURCES) break;
+    const { name, url } = (typeof s === 'object' && s !== null ? s : {}) as { name?: unknown; url?: unknown };
+    if (typeof name !== 'string') continue;
+    const n = cut(name.replace(/\s+/g, ' ').trim(), SOURCE_NAME_MAX_CHARS);
+    if (!n || out.some((o) => o.name === n)) continue;
+    const link = typeof url === 'string' && url.length <= SOURCE_URL_MAX_CHARS ? safeHttpUrl(url) : null;
+    out.push(link ? { name: n, url: link } : { name: n });
+  }
+  return { summary: text, sources: out };
+}
+
+/** A stored Context (#444), checked as it is read back; null drops it. */
+export function asGuideContext(v: unknown): GuideContext | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const { key, at } = v as { key?: unknown; at?: unknown };
+  const clean = cleanContext(v);
+  if (!clean || typeof key !== 'string' || typeof at !== 'number') return null;
+  return { ...clean, key, at };
 }
 
 /** What the model returned, before anything is trusted. */

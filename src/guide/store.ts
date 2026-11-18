@@ -18,6 +18,9 @@
  *  - **A write in progress**, in memory only: which task it is for, and how
  *    far it got. It belongs to the task that started it -- the result is
  *    saved for that task whatever is on screen when it lands.
+ *  - **The Context step's answer** (#444), inside the guide: what the
+ *    project's instructions found, or why they found nothing. Rewrite reuses
+ *    it while the instructions, tools and model are the same.
  *  - **Notes being written** (#224), in memory only: once the groups are
  *    saved, the notes are asked for a group at a time, the group in view
  *    first, and each lands in the saved guide as it comes. A queue belongs to
@@ -31,8 +34,9 @@ import { KEYS, writePersisted, type Codec } from '../ui/persisted';
 import type { Guide } from './validate';
 import type { BranchDiff } from './blocks';
 import type { LoadedBranchDiff } from './branchDiff';
-import { GuideError, writeGuide, writeNotes, type GroupNotes, type GuideErrorKind, type Progress } from './writer';
-import { notableFiles } from './validate';
+import { GuideError, writeContext, writeGuide, writeNotes, type GroupNotes, type GuideErrorKind, type Progress } from './writer';
+import { asGuideContext, notableFiles, type GuideContext } from './validate';
+import { contextKey, type ContextInput, type ContextSettings } from './context';
 import { asFocus, isSetAside, type GuideFocus } from './focus';
 
 export const MAX_GUIDES = 40;
@@ -65,13 +69,30 @@ function isGuide(v: unknown): v is Guide {
   );
 }
 
+/**
+ * A stored guide's Context (#444) is model-written: read back, it is checked
+ * again, and a malformed one (or failure note) is dropped, not the guide.
+ */
+function withCheckedContext(g: Guide): Guide {
+  const { context, contextFailure, ...rest } = g;
+  const ctx = context === undefined ? null : asGuideContext(context);
+  const failed =
+    typeof contextFailure === 'object' &&
+    contextFailure !== null &&
+    typeof contextFailure.key === 'string' &&
+    typeof contextFailure.reason === 'string'
+      ? { key: contextFailure.key, reason: contextFailure.reason }
+      : null;
+  return { ...rest, ...(ctx ? { context: ctx } : {}), ...(failed ? { contextFailure: failed } : {}) };
+}
+
 /** task id -> guide. A malformed entry is dropped, not fatal. */
 export const guidesCodec: Codec<Record<string, Guide>> = {
   decode: (raw) => {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return null;
     const out: Record<string, Guide> = {};
-    for (const [k, v] of Object.entries(parsed)) if (isGuide(v)) out[k] = v;
+    for (const [k, v] of Object.entries(parsed)) if (isGuide(v)) out[k] = withCheckedContext(v);
     return out;
   },
   encode: (value) => (Object.keys(value).length === 0 ? null : JSON.stringify(value)),
@@ -303,8 +324,44 @@ export function guideProgress(taskIds: readonly number[]): ReadonlyMap<number, G
 // ---------------------------------------------------------------------------
 
 export type WriteState =
-  | { kind: 'writing'; progress: Progress | null }
+  | {
+      kind: 'writing';
+      progress: Progress | null;
+      /**
+       * The Context step (#444), when this write has one: when it started,
+       * and whether it is over. Absent when the project has none, or the
+       * guide's own is reused.
+       */
+      context?: { startedAt: number; done: boolean };
+    }
   | { kind: 'error'; error: GuideErrorKind; message: string };
+
+/** What a write needs for its Context step (#444); none when the project has no instructions. */
+export interface ContextPlan {
+  settings: ContextSettings;
+  /** The task's facts, read when the step runs (context.ts gatherContextInput). */
+  input: () => Promise<ContextInput>;
+  /** Run it even when the guide's own was written from the same settings: Edit…, Try Again. */
+  force: boolean;
+  /** The guide being rewritten's Context: Rewrite reuses it while the settings are the same. */
+  previous: GuideContext | null;
+}
+
+/** Why a Context step did not land, in the failure banner's words (#444). */
+export function contextFailureReason(e: GuideError, timeoutMs: number): string {
+  switch (e.kind) {
+    case 'timeout':
+      return `the step timed out after ${Math.round(timeoutMs / 60_000)} min`;
+    case 'missing':
+      return 'Claude Code wasn’t found';
+    case 'invalid':
+      return 'its answer had no summary in it';
+    default: {
+      const m = e.message.replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+      return `the step failed (${m.length > 160 ? `${m.slice(0, 159)}…` : m})`;
+    }
+  }
+}
 
 const writes = new Map<number, WriteState>();
 
@@ -316,33 +373,68 @@ export function writeStateOf(taskId: number): WriteState | null {
  * Write a guide for `taskId`'s diff, setting aside and marking by `focus`
  * (#295). A second request while one runs is ignored. The result is saved
  * for the task that asked, whatever is on screen.
+ *
+ * With a Context plan (#444), the Context step comes first -- or the guide's
+ * own Context is reused, on a Rewrite with the same settings -- and its
+ * summary goes to the grouping and notes calls. A failure or timeout never
+ * blocks the guide: it is written without, and says so.
  */
-export async function startWrite(taskId: number, diff: BranchDiff, base: string, focus?: GuideFocus): Promise<void> {
+export async function startWrite(taskId: number, diff: BranchDiff, base: string, focus?: GuideFocus, plan?: ContextPlan): Promise<void> {
   if (writes.get(taskId)?.kind === 'writing') return;
   writes.set(taskId, { kind: 'writing', progress: null });
   changed();
   try {
+    const { context, failure } = await runContext(taskId, plan);
+    const step = writes.get(taskId);
+    const stepState = step?.kind === 'writing' ? step.context : undefined;
     const guide = await writeGuide(diff, {
       base,
       focus,
+      context: context?.summary,
       onProgress: (p) => {
-        writes.set(taskId, { kind: 'writing', progress: p });
+        writes.set(taskId, { kind: 'writing', progress: p, ...(stepState ? { context: stepState } : {}) });
         changed();
       },
     });
-    saveGuide(taskId, guide);
+    const saved: Guide = { ...guide, ...(context ? { context } : {}), ...(failure ? { contextFailure: failure } : {}) };
+    saveGuide(taskId, saved);
     writes.delete(taskId);
     // The lists as typed are done with only now (#295 review): a failed write
     // keeps them, so Try Again writes with what was typed, never the defaults.
     focusDrafts.delete(taskId);
     // The guide is on screen from here; its notes follow (#224).
-    ensureNotes(taskId, guide, diff);
+    ensureNotes(taskId, saved, diff);
   } catch (err) {
     const e = err instanceof GuideError ? err : new GuideError('failed', err instanceof Error ? err.message : String(err));
     console.warn('[guide] write failed', e.kind, e.message);
     writes.set(taskId, { kind: 'error', error: e.kind, message: e.message });
   }
   changed();
+}
+
+/** The Context step of a write (#444): reused, run, or failed -- never thrown. */
+async function runContext(
+  taskId: number,
+  plan: ContextPlan | undefined,
+): Promise<{ context: GuideContext | null; failure: { key: string; reason: string } | null }> {
+  if (!plan) return { context: null, failure: null };
+  const key = contextKey(plan.settings);
+  if (!plan.force && plan.previous && plan.previous.key === key) return { context: plan.previous, failure: null };
+  const startedAt = Date.now();
+  writes.set(taskId, { kind: 'writing', progress: null, context: { startedAt, done: false } });
+  changed();
+  let context: GuideContext | null = null;
+  let failure: { key: string; reason: string } | null = null;
+  try {
+    context = await writeContext(plan.settings, await plan.input());
+  } catch (err) {
+    const e = err instanceof GuideError ? err : new GuideError('failed', err instanceof Error ? err.message : String(err));
+    console.warn('[guide] context failed', e.kind, e.message);
+    failure = { key, reason: contextFailureReason(e, plan.settings.timeoutMs) };
+  }
+  writes.set(taskId, { kind: 'writing', progress: null, context: { startedAt, done: true } });
+  changed();
+  return { context, failure };
 }
 
 export function clearWriteError(taskId: number): void {
@@ -451,7 +543,7 @@ async function pump(taskId: number, job: NotesJob): Promise<void> {
     let notes: GroupNotes | null = null;
     let ok = true;
     try {
-      notes = await writeNotes(job.diff, group, { groupTitles: guide.groups.map((g) => g.title) });
+      notes = await writeNotes(job.diff, group, { groupTitles: guide.groups.map((g) => g.title), context: guide.context?.summary });
     } catch (err) {
       ok = false;
       const e = err instanceof Error ? err.message : String(err);

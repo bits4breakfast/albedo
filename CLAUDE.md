@@ -128,6 +128,24 @@ the diff between those two heads, cut to `CHANGES_DIFF_MAX_CHARS` (the model
 and the reader are told when it was cut), never the whole PR. The result is
 kept with the two heads (`src/guide/copyUpdate.ts`).
 
+A widening of the sixth, by the owner's decision (2026-11-18, issue #444): a
+**Context** step, a second one-shot run before a guide is written, with the
+user's own instructions for that project (stored in
+`~/.albedo/guide-context/project-<id>.json`, off when empty). It is fixed
+separately in `oneshot.rs` (`claude_context_oneshot`), and the widening is
+exactly this: it loads the user's MCP servers; it may call only the tools the
+user listed (`--allowedTools`, each name checked in Rust against
+`^mcp__[A-Za-z0-9_-]+(__[A-Za-z0-9_-]+)?$`, and every other tool and server
+the run would load put in `--disallowedTools`); built-in tools stay off; the
+model is one of haiku, sonnet, opus; the time limit is 5 minutes at most; it
+runs in `~/.albedo/guide`, persists no session, has hooks disabled, and never
+touches a task's session. It is given the task's title, branch, PR title and
+description and commit subjects -- no code -- and answers a summary and its
+sources, which the guide shows at the top and passes, as labelled text, to
+the grouping and notes calls; their prompts are otherwise unchanged. A failure
+never blocks the guide. `src/guide/writer.ts` still alone knows the output's
+shape. Nothing else may be built on this run without the same decision.
+
 A seventh, by the owner's decision (2026-11-06, issue #272): for Claude
 Code's plan mode only, the waiting prompt derived from a `PermissionRequest`
 for `ExitPlanMode` keeps its `plan` -- that one field of the tool's input, for
