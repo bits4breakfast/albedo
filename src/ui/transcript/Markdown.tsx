@@ -14,7 +14,7 @@ import { MermaidBlock } from './MermaidBlock';
 import { hostOf, safeHttpUrl, splitUrls } from '../../lib/urls';
 import { bareFileRef, parsePathRef } from '../../lib/paths';
 import { MentionChip } from './MentionChip';
-import { CopyButton } from './CopyButton';
+import { useInlineCodeCopy } from './InlineCodeCopy';
 import type { Mention } from './mentions';
 
 type Block =
@@ -369,10 +369,12 @@ export function parseInline(text: string, depth = 0, mentions: readonly Mention[
     if (codeText !== undefined) {
       const ref = codeSpanRef(codeText);
       const asUrl = safeHttpUrl(codeText);
-      // With a copy icon at its end, always (#242, #244), a sibling so a path
-      // chip or a link keeps its own click.
+      // With a copy icon at its end, always (#242, #244). CSS draws it, and
+      // the button over it lives outside the text (#454, InlineCodeCopy.tsx):
+      // an element here ended the paragraph a triple click selects. It copies
+      // `data-copy`; a path chip or a link keeps its own click.
       out.push(
-        <span key={key++} className="tx-md-code-wrap">
+        <span key={key++} className="tx-md-code-wrap" data-copy={codeText}>
           {asUrl !== null && /^https?:\/\//i.test(codeText.trim()) ? (
             <ExternalLink url={asUrl} className="tx-md-code">
               {codeText}
@@ -384,7 +386,6 @@ export function parseInline(text: string, depth = 0, mentions: readonly Mention[
           ) : (
             <code className="tx-md-code">{codeText}</code>
           )}
-          <CopyButton text={codeText} inline />
         </span>,
       );
     } else if (strongA !== undefined || strongB !== undefined) {
@@ -429,9 +430,17 @@ const NO_MENTIONS: readonly Mention[] = [];
 
 export function Markdown({ text, mentions = NO_MENTIONS }: { text: string; mentions?: readonly Mention[] }): ReactNode {
   const blocks = useMemo(() => parseBlocks(text), [text]);
+  const copy = useInlineCodeCopy();
   if (text.trim().length === 0) return null;
   return (
-    <div className="tx-md">
+    <div
+      className="tx-md"
+      onPointerOver={copy.onPointerOver}
+      onPointerOut={copy.onPointerOut}
+      onMouseDown={copy.onMouseDown}
+      onClick={copy.onClick}
+    >
+      {copy.overlay}
       {blocks.map((b, i) => {
         switch (b.t) {
           case 'code':

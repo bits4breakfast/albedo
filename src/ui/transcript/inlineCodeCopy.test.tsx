@@ -15,9 +15,10 @@
  * paragraph and the code's text is laid out as anything but an inline box.
  */
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { Markdown } from './Markdown';
+import { COPY_GLYPH_PATH, COPY_GLYPH_RECT, TICK_GLYPH_PATH } from './CopyButton';
 
 /** The stylesheets that style a transcript paragraph and a prompt card, in the app's order. */
 const FILES = ['../../styles.css', './transcript.css', './promptCard.css'];
@@ -35,6 +36,7 @@ beforeEach(() => {
 afterEach(() => {
   style.remove();
   cleanup();
+  vi.restoreAllMocks();
 });
 
 /** Every element from the code's text up to (not including) its paragraph, with its computed display. */
@@ -66,12 +68,102 @@ describe('inline code stays inline (#452)', () => {
     });
   }
 
-  it('the copy icon carries no text a selection could pick up', () => {
+  it('the copy button carries no text a selection could pick up', () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 20));
     const { container } = render(<Markdown text={'Run `npm test` first.'} />);
-    const button = container.querySelector('.tx-copy-inline')!;
+    fireEvent.pointerOver(container.querySelector('.tx-md-code')!, { clientX: 10 });
+    const button = document.querySelector('.tx-copy-inline')!;
     expect(button.textContent).toBe('');
     expect(getComputedStyle(button).userSelect).toBe('none');
-    expect(getComputedStyle(container.querySelector('.tx-copy-status')!).userSelect).toBe('none');
+    expect(getComputedStyle(document.querySelector('.tx-copy-status')!).userSelect).toBe('none');
+  });
+});
+
+/**
+ * A triple click selects the whole paragraph (#454). Measured in Chrome and
+ * in WKWebView, a triple click's paragraph ends at any positioned element
+ * inside it: #243's per-chip `<button>` and its `sr-only` status span (both
+ * absolutely positioned) made "Clarification: `<timestamp>` in the request
+ * examples ..." select only up to the first chip. A positioned box is not a
+ * thing jsdom can triple-click, so what is checked is the cause: with the
+ * real stylesheets, nothing inside a block of prose is a button, a live
+ * region, or positioned out of the flow -- before a chip is pointed at, while
+ * its button shows, and after it has copied.
+ */
+describe('nothing in the text ends a triple click’s paragraph (#454)', () => {
+  const TEXT = [
+    'Clarification: `<timestamp>` in the request examples is a placeholder; only `linkType` / `linkId` differ.',
+    '## A heading with `config.json` and `b` inside',
+    '- First item with `config.json` inside.\n- Second `a` `b` item.',
+    'The handler lives in `src/server/handlers/OrderLinkResolverHandler.php` and runs once, see `https://example.com/x`.',
+  ].join('\n\n');
+  const BLOCKS = 'p, li, .tx-md-h';
+
+  function offenders(root: Element): string[] {
+    const out: string[] = [];
+    for (const block of root.querySelectorAll(BLOCKS)) {
+      for (const el of block.querySelectorAll('*')) {
+        const what = `${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''}`;
+        // A path chip or a web address is a span with role=link: inline, and
+        // measured not to split the paragraph. A button or a live region is
+        // what #243 put there.
+        if (el.matches('button, [role="status"], [aria-live]')) out.push(`${what}: a button or live region`);
+        const position = getComputedStyle(el).position;
+        if (position === 'absolute' || position === 'fixed') out.push(`${what}: position ${position}`);
+      }
+    }
+    return out;
+  }
+
+  it('in a paragraph, a heading and a list item, with one chip and with several', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 20));
+    const { container } = render(<Markdown text={TEXT} />);
+    expect(container.querySelectorAll('.tx-md-code-wrap').length).toBeGreaterThan(6);
+    // The real stylesheet reached jsdom: the wrap computes as it does in the app.
+    expect(getComputedStyle(container.querySelector('.tx-md-code-wrap')!).position).toBe('relative');
+    expect(offenders(container)).toEqual([]);
+
+    fireEvent.pointerOver(container.querySelector('.tx-md-code')!, { clientX: 10 });
+    const button = document.querySelector('.tx-copy-inline')!;
+    expect(button).not.toBeNull();
+    // Where it is: outside the Markdown altogether, positioned against the viewport.
+    expect(container.contains(button)).toBe(false);
+    expect(getComputedStyle(button).position).toBe('fixed');
+    expect(offenders(container)).toEqual([]);
+
+    fireEvent.click(button);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(offenders(container)).toEqual([]);
+  });
+
+  it('in a prompt card too', () => {
+    const { container } = render(
+      <div className="tx-prompt">
+        <Markdown text={TEXT} />
+      </div>,
+    );
+    expect(offenders(container)).toEqual([]);
+  });
+});
+
+describe('the strip draws the same glyphs as the button had (#454)', () => {
+  const tx = sheets[1]!;
+  const url = (name: string) => decodeURIComponent(new RegExp(`${name}: url\\("data:image/svg\\+xml,([^"]+)"\\)`).exec(tx)![1]!);
+
+  it('the copy icon: CopyGlyph’s square and path', () => {
+    const svg = url('--tx-copy-glyph');
+    const r = COPY_GLYPH_RECT;
+    expect(svg).toContain(`<rect width='${r.width}' height='${r.height}' x='${r.x}' y='${r.y}' rx='${r.rx}'/>`);
+    expect(svg).toContain(`<path d='${COPY_GLYPH_PATH}'/>`);
+    expect(svg).toContain("viewBox='0 0 24 24'");
+    expect(svg).toContain("stroke-width='2' stroke-linecap='round' stroke-linejoin='round'");
+  });
+
+  it('the tick: TickGlyph’s path', () => {
+    const svg = url('--tx-tick-glyph');
+    expect(svg).toContain(`<path d='${TICK_GLYPH_PATH}'/>`);
+    expect(svg).toContain("viewBox='0 0 16 16'");
+    expect(svg).toContain("stroke-width='1.6'");
   });
 });
 
