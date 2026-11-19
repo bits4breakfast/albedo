@@ -330,7 +330,7 @@ and the context reading turns to "compacts soon" from 90%.
 ### Comment on the conversation, then answer in one go
 
 Select a passage anywhere in the transcript (Claude's reply, your own
-message, a tool's output) and click **Comment**, or press **⌘'**. Comments
+message, a tool's output) and click **Comment**, or press **⇧⌘C**. Comments
 collect above the message box ("3 Comments go with your next message") while
 you read on, together with your comments on the code (below), and **Send**
 sends them all, each quoting its passage, followed by whatever is in the box.
@@ -651,7 +651,7 @@ seconds, so no restart is needed.
 | ⌥F7 | Find Usages (in the editor) |
 | ⌥⌘B | Go to Implementation: implementers, subclasses or trait users (in the editor, PHP) |
 | ⌥⌘M | Comment on the selected lines (in the editor); send them all from the Files panel |
-| ⌘' | Comment on the selected text (in the transcript) |
+| ⇧⌘C | Comment on the selected text (in the transcript; in the editor it copies the full path) |
 | ⌥↑ / ⌥↓ | Previous / next group (in the Review Guide) |
 | ↑ / ↓ | Previous / next file in the group (in the Review Guide) |
 | ⌥↩ | Mark the group Reviewed and go to the next (in the Review Guide) |

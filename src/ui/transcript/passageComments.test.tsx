@@ -4,7 +4,8 @@
  * Commenting on a passage of the transcript (#187), through the pane a
  * person uses: select text, the bar offers Comment (inside one message) and
  * Copy; the field under the passage keeps the comment with the task's draft;
- * ⌘' does what Comment does; a sent quote takes you back to its passage.
+ * ⇧⌘C does what Comment does (#456); a sent quote takes you back to its
+ * passage.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -104,7 +105,17 @@ describe('selecting text in the transcript', () => {
     await renderPane();
     select(1, 'already runs', 1, '8.2.35');
     const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
-    expect(bar.textContent).toBe('CommentCopy');
+    expect(bar.textContent).toBe('Comment ⇧⌘CCopy');
+  });
+
+  it('Comment shows its key, ⇧⌘C, as Add shows ⌘↩ (#456)', async () => {
+    await renderPane();
+    select(1, 'already runs', 1, '8.2.35');
+    const btn = await screen.findByRole('button', { name: 'Comment' });
+    expect(btn.textContent).toBe('Comment ⇧⌘C');
+    expect(btn.querySelector('.tx-cmt-key')?.textContent).toBe('⇧⌘C');
+    expect(btn.title).toBe('Comment on this passage (⇧⌘C)');
+    expect(btn.getAttribute('aria-keyshortcuts')).toBe('Meta+Shift+C');
   });
 
   it('across two messages: Copy only', async () => {
@@ -142,22 +153,91 @@ describe('selecting text in the transcript', () => {
     expect(screen.getByRole('button', { name: /To Send · 1/ })).toBeTruthy();
   });
 
-  it("⌘' opens the field from the keyboard; Esc drops it", async () => {
+  /** A keydown on the window that a test can read back, as the app's listeners see it. */
+  function press(init: KeyboardEventInit & { keyCode?: number }): KeyboardEvent {
+    const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    if (init.keyCode !== undefined) Object.defineProperty(e, 'keyCode', { value: init.keyCode });
+    act(() => void window.dispatchEvent(e));
+    return e;
+  }
+  const COMMENT = { key: 'C', code: 'KeyC', metaKey: true, shiftKey: true };
+  const field = () => screen.queryByRole('textbox', { name: 'Comment on the selected passage' });
+
+  it('⇧⌘C opens the field from the keyboard, and takes the key; Esc drops it', async () => {
     await renderPane();
     select(2, 'base images', 2, '--pull');
-    fireEvent.keyDown(window, { key: "'", code: 'Quote', metaKey: true });
-    const field = screen.getByRole('textbox', { name: 'Comment on the selected passage' });
-    fireEvent.change(field, { target: { value: 'until when?' } });
-    fireEvent.keyDown(field, { key: 'Escape' });
-    expect(screen.queryByRole('textbox', { name: 'Comment on the selected passage' })).toBeNull();
+    const e = press(COMMENT);
+    expect(e.defaultPrevented).toBe(true);
+    fireEvent.change(field()!, { target: { value: 'until when?' } });
+    fireEvent.keyDown(field()!, { key: 'Escape' });
+    expect(field()).toBeNull();
     expect(commentsOf(1)).toEqual([]);
   });
 
-  it("⌘' does nothing for a selection across messages", async () => {
+  it('⇧⌘C on another layout: matched on the physical key, whatever `key` says', async () => {
+    await renderPane();
+    select(2, 'base images', 2, '--pull');
+    // Dvorak puts J where QWERTY has C; a Cyrillic layout gives С.
+    press({ ...COMMENT, key: 'J' });
+    expect(field()).toBeTruthy();
+    fireEvent.keyDown(field()!, { key: 'Escape' });
+    select(2, 'base images', 2, '--pull');
+    press({ ...COMMENT, key: 'С' });
+    expect(field()).toBeTruthy();
+  });
+
+  it('⇧⌘C is not a key that only reads C: ⇧⌘ on another physical key opens nothing', async () => {
+    await renderPane();
+    select(2, 'base images', 2, '--pull');
+    // AZERTY-style: `key` says C, the physical key is elsewhere.
+    expect(press({ ...COMMENT, code: 'KeyJ' }).defaultPrevented).toBe(false);
+    expect(field()).toBeNull();
+  });
+
+  it('refuses Control and Option (⌥⇧⌘C is the Editor’s Copy Path), plain ⌘C and ⇧⌃C', async () => {
+    await renderPane();
+    select(2, 'base images', 2, '--pull');
+    const tries = [
+      { ...COMMENT, ctrlKey: true },
+      { ...COMMENT, altKey: true, key: 'Ç' },
+      { key: 'c', code: 'KeyC', metaKey: true },
+      { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true },
+      { key: 'C', code: 'KeyC', shiftKey: true },
+    ];
+    for (const t of tries) expect(press(t).defaultPrevented, JSON.stringify(t)).toBe(false);
+    expect(field()).toBeNull();
+    // The selection is still there to copy: plain ⌘C stays the native copy.
+    expect(document.getSelection()?.toString()).toBe('base images with --pull');
+  });
+
+  it('leaves the key to an input method mid-composition, and to auto-repeat', async () => {
+    await renderPane();
+    select(2, 'base images', 2, '--pull');
+    expect(press({ ...COMMENT, isComposing: true }).defaultPrevented).toBe(false);
+    expect(press({ ...COMMENT, keyCode: 229 }).defaultPrevented).toBe(false);
+    expect(press({ ...COMMENT, repeat: true }).defaultPrevented).toBe(false);
+    expect(field()).toBeNull();
+  });
+
+  it("⌘' does nothing any more (#456)", async () => {
+    await renderPane();
+    select(2, 'base images', 2, '--pull');
+    expect(press({ key: "'", code: 'Quote', metaKey: true }).defaultPrevented).toBe(false);
+    expect(field()).toBeNull();
+  });
+
+  it('⇧⌘C does nothing for a selection across messages, and does not take the key', async () => {
     await renderPane();
     select(1, 'our own build', 2, 'Keep');
-    fireEvent.keyDown(window, { key: "'", code: 'Quote', metaKey: true });
-    expect(screen.queryByRole('textbox', { name: 'Comment on the selected passage' })).toBeNull();
+    expect(press(COMMENT).defaultPrevented).toBe(false);
+    expect(field()).toBeNull();
+  });
+
+  it('⇧⌘C with nothing selected does nothing, and does not take the key', async () => {
+    await renderPane();
+    document.getSelection()?.removeAllRanges();
+    expect(press(COMMENT).defaultPrevented).toBe(false);
+    expect(field()).toBeNull();
   });
 });
 
@@ -323,7 +403,7 @@ describe('a triple-clicked line (#449)', () => {
         vi.spyOn(document.getSelection()!, 'toString').mockReturnValue(`${line}\n`);
         tripleClick(block, end);
         const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
-        expect(bar.textContent).toBe('CommentCopy');
+        expect(bar.textContent).toBe('Comment ⇧⌘CCopy');
         // Row 1's bottom and the text's end, not row 2's left edge.
         expect(bar.style.top).toBe(`${ROW_RECT[1]! + 6}px`);
         expect(bar.style.left).toBe('400px');
@@ -370,7 +450,7 @@ describe('a triple-clicked line (#449)', () => {
     await renderPane();
     select(1, 'already runs', 1, '8.2.35');
     const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
-    expect(bar.textContent).toBe('CommentCopy');
+    expect(bar.textContent).toBe('Comment ⇧⌘CCopy');
     expect(bar.style.top).toBe(`${ROW_RECT[1]! + 6}px`);
   });
 });

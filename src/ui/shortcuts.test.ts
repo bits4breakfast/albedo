@@ -504,6 +504,22 @@ describe('editor keys', () => {
   });
 });
 
+describe('⇧⌘C: Comment in the transcript, Copy Full Path in the Editor (#456)', () => {
+  it('lists both, each with its scope, and ⌘\' not at all', () => {
+    const c = SHORTCUTS.filter((s) => s.keys === '⇧⌘C');
+    expect(c.map((s) => [s.combo, s.description])).toEqual([
+      ['editor mod+shift+c', 'In the Editor: Copy Full Path'],
+      ['transcript mod+shift+c', 'Transcript: Comment on the Selected Text (inside one message)'],
+    ]);
+    expect(SHORTCUTS.some((s) => s.keys.includes("'"))).toBe(false);
+  });
+
+  it('is no app-wide combo, so only the two panes that own it hear it', () => {
+    expect(comboOf(ev({ key: 'C', code: 'KeyC', metaKey: true, shiftKey: true }))).toBeNull();
+    expect(comboOf(ev({ key: 'J', code: 'KeyC', metaKey: true, shiftKey: true }))).toBeNull();
+  });
+});
+
 describe('⌘F and ⇧⌘F in the Review Guide (#413)', () => {
   it('are documented, ⌘F is free app-wide, and ⇧⌘F stays Find in Files outside the guide', () => {
     expect(SHORTCUTS.find((s) => s.combo === 'guide mod+f')?.keys).toBe('⌘F');
