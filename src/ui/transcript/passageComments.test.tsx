@@ -37,7 +37,8 @@ vi.mock('../../db/comments', async () => ({
 const { TranscriptPane } = await import('./TranscriptPane');
 const { __resetDrafts, addComment, commentsOf } = await import('./drafts');
 const { composeWithComments } = await import('./transcriptQuotes');
-const { findPassage, offsetOf } = await import('./passages');
+const { findPassage, offsetOf, rowContent } = await import('./passages');
+const { installUserSelectCss } = await import('./userSelectSheet.testing');
 
 const T0 = new Date('2026-10-30T10:00:00Z').getTime();
 function msg(id: number, role: Message['role'], body: string): Message {
@@ -224,5 +225,152 @@ describe('finding a passage again', () => {
     expect(offsetOf(root, range)).toBe(10);
     expect(findPassage(root, 'run it again', 0)?.startContainer.parentElement?.tagName).toBe('P');
     expect(findPassage(root, 'not there')).toBeNull();
+  });
+});
+
+/*
+   A triple click selects a whole block, and the browser ends the range at
+   offset 0 of the NEXT block -- here, the following row (#449). The range
+   reaches into that row without covering a character of it.
+*/
+describe('a triple-clicked line (#449)', () => {
+  /** Where each row's text sits, so the bar's place says which range it was read from. */
+  const ROW_RECT = { 1: 100, 2: 200 } as Record<number, number>;
+  let rects: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    rects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects');
+    // A stand-in layout: a range's last rect ends at its end -- the bottom of
+    // that end's row, and at the left edge when the end is at offset 0 of an
+    // element (the empty rect a triple click leaves at the next row's start).
+    Range.prototype.getClientRects = function (this: Range) {
+      const el = this.endContainer instanceof Element ? this.endContainer : this.endContainer.parentElement;
+      const id = Number(el?.closest<HTMLElement>('[data-message-id]')?.dataset.messageId ?? 0);
+      const right = this.endContainer instanceof Element && this.endOffset === 0 ? 20 : 400;
+      return [{ left: 0, top: 0, right, bottom: ROW_RECT[id] ?? 0, width: right, height: 20 }] as unknown as DOMRectList;
+    };
+  });
+  afterEach(() => {
+    if (rects) Object.defineProperty(Range.prototype, 'getClientRects', rects);
+    else delete (Range.prototype as Partial<Range>).getClientRects;
+  });
+
+  /*
+     The app's stylesheet is not loaded in jsdom: its user-select rules are,
+     read from the real files -- the shell's body { none }, the pane's
+     { text }, the gutter's { none } -- so the real computed-style check runs.
+  */
+  let uninstall: (() => void) | null = null;
+  beforeEach(() => {
+    uninstall = installUserSelectCss();
+  });
+  afterEach(() => {
+    uninstall?.();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Where a browser ends a triple click on row 1's last block. Measured in
+   * Blink (WebKit shares the code): at the next row's first SELECTABLE
+   * position -- offset 0 of its first content block, after the "You" gutter.
+   * `{row 2, 0}` is kept too: the plain case, without the gutter.
+   */
+  const ENDS: Array<[string, () => [Node, number]]> = [
+    ["at the next row's first content block, after its \"You\" gutter", () => [rowContent(rowEl(2)).firstElementChild!, 0]],
+    ['at offset 0 of the next row', () => [rowEl(2), 0]],
+  ];
+
+  /** Select all of `block` (the last block of row 1) as a triple click does, ending at `end`. */
+  function tripleClick(block: Element, end: [Node, number]): void {
+    const range = document.createRange();
+    range.setStart(textNode(block, ''), 0);
+    range.setEnd(end[0], end[1]);
+    const sel = document.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    fireEvent.mouseUp(scroller());
+  }
+
+  const cases: Array<[string, string, string, string]> = [
+    ['a paragraph', 'Some intro.\n\nThe last paragraph of it.', 'p:last-of-type', 'The last paragraph of it.'],
+    ['a list item', 'Steps:\n\n- first step\n- the last bullet', 'li:last-of-type', 'the last bullet'],
+    ['a heading', 'Intro.\n\n## A closing heading', '.tx-md-h2', 'A closing heading'],
+    ['a code line', 'Run:\n\n```\nnpm ci\nnpm run build\n```', '.tx-md-pre-line:last-child', 'npm run build'],
+  ];
+
+  it('the fixture is what a browser sees: a "You" gutter the user cannot select, before the content', async () => {
+    rows = [msg(1, 'assistant', FIRST), msg(2, 'user', SECOND)];
+    await renderPane();
+    const gutter = rowEl(2).querySelector(':scope > .tx-gutter')!;
+    expect(gutter.textContent).toBe('You');
+    expect(getComputedStyle(gutter).getPropertyValue('user-select')).toBe('none');
+    // The shell turns selection off app-wide, and the pane turns it back on.
+    expect(getComputedStyle(document.body).getPropertyValue('user-select')).toBe('none');
+    expect(getComputedStyle(document.querySelector('.tx-pane')!).getPropertyValue('user-select')).toBe('text');
+    expect(gutter.compareDocumentPosition(rowContent(rowEl(2))) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  for (const [where, endAt] of ENDS) {
+    for (const [name, body, selector, line] of cases) {
+      it(`${name}, ending ${where}: Comment is offered, the bar sits at the line's end, the quote is the line`, async () => {
+        rows = [msg(1, 'assistant', body), msg(2, 'user', SECOND)];
+        await renderPane();
+        const block = rowEl(1).querySelector(selector)!;
+        expect(block).toBeTruthy();
+        const end = endAt();
+        // jsdom's Selection text is the raw DOM range's (it would take in the
+        // "You" gutter); a browser's leaves out user-select: none and ends a
+        // triple click with the line break.
+        vi.spyOn(document.getSelection()!, 'toString').mockReturnValue(`${line}\n`);
+        tripleClick(block, end);
+        const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
+        expect(bar.textContent).toBe('CommentCopy');
+        // Row 1's bottom and the text's end, not row 2's left edge.
+        expect(bar.style.top).toBe(`${ROW_RECT[1]! + 6}px`);
+        expect(bar.style.left).toBe('400px');
+        // The live selection is the user's, untouched.
+        expect(document.getSelection()!.getRangeAt(0).endContainer).toBe(end[0]);
+        fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+        const field = screen.getByRole('textbox', { name: 'Comment on the selected passage' });
+        fireEvent.change(field, { target: { value: 'why?' } });
+        fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+        expect(commentsOf(1)).toEqual([expect.objectContaining({ messageId: 1, quote: line })]);
+      });
+    }
+  }
+
+  it('Copy copies the line without the line break the triple click added', async () => {
+    const clip = await import('../../lib/clipboard');
+    const spy = vi.spyOn(clip, 'copyText').mockResolvedValue(true);
+    rows = [msg(1, 'assistant', 'Intro.\n\nThe last paragraph.'), msg(2, 'user', SECOND)];
+    await renderPane();
+    const sel = document.getSelection()!;
+    const toString = vi.spyOn(sel, 'toString').mockReturnValue('The last paragraph.\n');
+    tripleClick(rowEl(1).querySelector('p:last-of-type')!, ENDS[0]![1]());
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy' }));
+    expect(spy).toHaveBeenCalledWith('The last paragraph.');
+    toString.mockRestore();
+    spy.mockRestore();
+  });
+
+  it('a selection that really reaches into the next row is still Copy only', async () => {
+    await renderPane();
+    const range = document.createRange();
+    range.setStart(textNode(rowEl(1), 'our own build'), 0);
+    range.setEnd(textNode(rowEl(2), 'Keep'), 1);
+    const sel = document.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    fireEvent.mouseUp(scroller());
+    const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
+    expect(bar.textContent).toBe('Copy');
+    expect(bar.style.top).toBe(`${ROW_RECT[2]! + 6}px`);
+  });
+
+  it('a drag inside one line is read as it always was', async () => {
+    await renderPane();
+    select(1, 'already runs', 1, '8.2.35');
+    const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
+    expect(bar.textContent).toBe('CommentCopy');
+    expect(bar.style.top).toBe(`${ROW_RECT[1]! + 6}px`);
   });
 });

@@ -25,6 +25,7 @@ import { anchorBlock, fileLines, type AnchorFailure } from '../../lib/anchor';
 import { useReadFile } from '../editor/openFile';
 import { Disclosure } from '../Disclosure';
 import { PathLink, useActivate } from './links';
+import { trimRange } from './selectionRange';
 import {
   Code,
   composePieces,
@@ -1265,7 +1266,9 @@ export interface SelectedRows {
  */
 export function selectedDiffRows(sel: Selection | null): SelectedRows | null {
   if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
-  const range = sel.getRangeAt(0);
+  // Trimmed to the text it covers (#449): a triple-clicked row's range ends
+  // at offset 0 of the next row, which it does not mean.
+  const range = trimRange(sel.getRangeAt(0)).range;
   const at = (n: Node | null) => (n instanceof Element ? n : (n?.parentElement ?? null));
   const root = at(range.startContainer)?.closest<HTMLElement>('.tx-d') ?? null;
   if (!root || at(range.endContainer)?.closest('.tx-d') !== root) return null;
@@ -1363,7 +1366,7 @@ function SelectionComment({ rootRef }: { rootRef: RefObject<HTMLDivElement | nul
         setFound(null);
         return;
       }
-      const rect = sel!.getRangeAt(0).getBoundingClientRect?.();
+      const rect = trimRange(sel!.getRangeAt(0)).range.getBoundingClientRect?.();
       const box = root.getBoundingClientRect();
       setFound({ rows, top: rect ? rect.bottom - box.top + 4 : 0, left: rect ? Math.max(0, rect.left - box.left) : 0 });
     };
