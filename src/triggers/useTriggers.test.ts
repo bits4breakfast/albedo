@@ -178,13 +178,18 @@ describe('stale cards go by themselves (#448 review)', () => {
     expect(triggerCardsOf(7).map((c) => c.event)).toEqual(['merged']);
   });
 
-  it('a closed PR leaves no card at all; a card for another PR is not touched', async () => {
+  it('a closed PR leaves no card at all', async () => {
     observeTriggers(TASK, prOf({ lines: [pending('build')] }), 'me', deps);
     observeTriggers(TASK, prOf({ lines: [fail('build')] }), 'me', deps);
     expect(triggerCardsOf(7)).toHaveLength(1);
-    observeTriggers(TASK, prOf({ number: 999, state: 'closed' }), 'me', deps);
-    expect(triggerCardsOf(7)).toHaveLength(1);
     observeTriggers(TASK, prOf({ state: 'closed' }), 'me', deps);
+    expect(triggerCardsOf(7)).toEqual([]);
+  });
+
+  it('a new PR on the branch: the old PR’s cards go too', async () => {
+    observeTriggers(TASK, prOf({ lines: [pending('build')] }), 'me', deps);
+    observeTriggers(TASK, prOf({ lines: [fail('build')] }), 'me', deps);
+    observeTriggers(TASK, prOf({ number: 413 }), 'me', deps);
     expect(triggerCardsOf(7)).toEqual([]);
   });
 
@@ -194,6 +199,48 @@ describe('stale cards go by themselves (#448 review)', () => {
     observeTriggers(TASK, prOf({ reviews: [changesBy('bob')] }), 'me', deps);
     forgetTriggers(7);
     await flush();
+    expect(triggerCardsOf(7)).toEqual([]);
+  });
+});
+
+describe('auto-retire never loses what you typed (#448 re-review)', () => {
+  async function editedCiCard() {
+    observeTriggers(TASK, prOf({ lines: [pending('build')] }), 'me', deps);
+    observeTriggers(TASK, prOf({ lines: [fail('build')] }), 'me', deps);
+    const card = triggerCardsOf(7)[0]!;
+    editTriggerCard(7, card.id, 'my careful words');
+    return card;
+  }
+
+  it('merged or closed elsewhere: an edited card stays, with your text and why', async () => {
+    await editedCiCard();
+    observeTriggers(TASK, prOf({ state: 'merged' }), 'me', deps);
+    expect(triggerCardsOf(7)).toMatchObject([{ text: 'my careful words', stale: 'PR merged meanwhile.' }]);
+    // Asked again: unchanged, nothing rewritten.
+    const before = triggerCardsOf(7);
+    observeTriggers(TASK, prOf({ state: 'merged' }), 'me', deps);
+    expect(triggerCardsOf(7)).toBe(before);
+  });
+
+  it('closed: the same, saying so', async () => {
+    await editedCiCard();
+    observeTriggers(TASK, prOf({ state: 'closed' }), 'me', deps);
+    expect(triggerCardsOf(7)).toMatchObject([{ text: 'my careful words', stale: 'PR closed meanwhile.' }]);
+  });
+
+  it('the queued CI copy went with a message: an edited CI card stays, saying so; an untouched one goes', async () => {
+    const { noteCiFailureSent } = await import('./store');
+    const card = await editedCiCard();
+    noteCiFailureSent(7, card.sha!);
+    expect(triggerCardsOf(7)).toMatchObject([{ text: 'my careful words', stale: 'This failure was already sent with your message.' }]);
+  });
+
+  it('a card folded into the message box goes: its text is there', async () => {
+    const { markTriggerInBox } = await import('./store');
+    observeTriggers(TASK, prOf({ lines: [pending('build')] }), 'me', deps);
+    observeTriggers(TASK, prOf({ lines: [fail('build')] }), 'me', deps);
+    markTriggerInBox(7, triggerCardsOf(7)[0]!.id, 'Fix it.');
+    observeTriggers(TASK, prOf({ state: 'merged' }), 'me', deps);
     expect(triggerCardsOf(7)).toEqual([]);
   });
 });

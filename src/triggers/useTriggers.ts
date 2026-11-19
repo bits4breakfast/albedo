@@ -28,7 +28,7 @@ import { cardFor, newThreads, reviewFacts, widenReview } from './facts';
 import { modeAllowed, onTriggerSettingsChange, triggerSettingsFor } from './settings';
 import {
   addTriggerCard,
-  resolveTriggerCards,
+  retireTriggerCards,
   setTriggerWatch,
   triggerCardsOf,
   triggerGen,
@@ -118,14 +118,23 @@ export function observeTriggers(
 }
 
 /**
- * A card that no longer applies goes by itself, so it never pins a task in
- * Needs You: once the PR is merged or closed -- here or on GitHub -- its CI,
- * review and approval cards are moot. The merge's own card stays: it is the
- * point. Only ever removes a card.
+ * A card that no longer applies goes by itself, so it does not pin a task in
+ * Needs You: once the PR is merged or closed -- here or on GitHub -- or the
+ * branch has another PR now, its CI, review and approval cards are moot. The
+ * merge's own card stays: it is the point. A card you edited is your text and
+ * is never removed for you: it stays, saying why it no longer applies, until
+ * you Send or Skip it (`retireTriggerCards`). Never sends.
  */
 export function retireStale(taskId: number, pr: PrStatus | null): void {
-  if (!pr || (pr.state !== 'merged' && pr.state !== 'closed')) return;
-  resolveTriggerCards(taskId, (c) => c.prNumber === pr.number && c.event !== 'merged');
+  if (!pr) return;
+  // A card about another PR than the branch's now (a new PR replaced it).
+  retireTriggerCards(taskId, (c) => c.prNumber !== pr.number && c.event !== 'merged', `PR #${pr.number} is this branch’s PR now.`);
+  if (pr.state !== 'merged' && pr.state !== 'closed') return;
+  retireTriggerCards(
+    taskId,
+    (c) => c.prNumber === pr.number && c.event !== 'merged',
+    pr.state === 'merged' ? 'PR merged meanwhile.' : 'PR closed meanwhile.',
+  );
 }
 
 /**

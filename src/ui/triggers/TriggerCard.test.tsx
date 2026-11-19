@@ -247,3 +247,27 @@ describe('a CI failure reaches Claude once (#448 review)', () => {
     expect(queuedCiOf(7)).toBeNull();
   });
 });
+
+describe('a card kept because you edited it (#448 re-review)', () => {
+  it('says why it no longer applies; Send still sends your text, and Skip removes it', async () => {
+    const { retireTriggerCards, editTriggerCard } = await import('../../triggers/store');
+    addTriggerCard(7, MERGED);
+    addTriggerCard(8, MERGED);
+    for (const id of [7, 8]) {
+      editTriggerCard(id, MERGED.id, 'my careful words');
+      retireTriggerCards(id, () => true, 'PR closed meanwhile.');
+    }
+    const view = render(<TriggerCards taskId={7} status="idle" />);
+    expect(screen.getByText(/PR closed meanwhile\. Your edit is kept/)).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'The drafted message' }) as HTMLTextAreaElement).value).toBe('my careful words');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Send/ }));
+    });
+    expect(vi.mocked(submitPty).mock.calls).toEqual([[7, 'my careful words']]);
+    expect(triggerCardsOf(7)).toEqual([]);
+    view.unmount();
+    render(<TriggerCards taskId={8} status="idle" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    expect(triggerCardsOf(8)).toEqual([]);
+  });
+});

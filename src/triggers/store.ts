@@ -51,6 +51,11 @@ export interface TriggerCard {
   text?: string;
   /** Moved to the message box (Edit in Message Box): it goes when a message carrying it is sent. */
   inBox?: boolean;
+  /**
+   * It no longer applies, and you had edited it, so it was kept rather than
+   * removed: why, in a few words ("PR merged meanwhile"). Send and Skip still work.
+   */
+  stale?: string;
   /** A line a sent message must carry, whole, to count as this draft (its first line when moved). */
   boxKey?: string;
 }
@@ -125,7 +130,8 @@ function isCard(v: unknown): v is TriggerCard {
     (c.review === undefined || isReview(c.review)) &&
     (c.text === undefined || isStr(c.text)) &&
     (c.inBox === undefined || typeof c.inBox === 'boolean') &&
-    (c.boxKey === undefined || isStr(c.boxKey))
+    (c.boxKey === undefined || isStr(c.boxKey)) &&
+    (c.stale === undefined || isStr(c.stale))
   );
 }
 
@@ -306,7 +312,23 @@ export function resolveTriggerCard(taskId: number, id: string): void {
  * queue's copy): a CI card for that commit has nothing left to say.
  */
 export function noteCiFailureSent(taskId: number, sha: string): void {
-  resolveTriggerCards(taskId, (c) => c.event === 'ciFailed' && c.sha === sha);
+  retireTriggerCards(taskId, (c) => c.event === 'ciFailed' && c.sha === sha, 'This failure was already sent with your message.');
+}
+
+/**
+ * Cards `which` picks no longer apply, by no doing of yours. One as it fired,
+ * or folded with its text already in the message box, goes. One you edited is
+ * your text (REGRESSIONS: defaults that lose work): it stays, with `note` on
+ * it saying why, until you Send or Skip it.
+ */
+export function retireTriggerCards(taskId: number, which: (c: TriggerCard) => boolean, note: string): void {
+  const e = entryOf(taskId);
+  const hit = e.cards.filter(which);
+  if (hit.length === 0) return;
+  const keep = (c: TriggerCard) => !untouched(c) && !c.inBox;
+  if (hit.every((c) => keep(c) && c.stale === note)) return;
+  const cards = e.cards.flatMap((c) => (!which(c) ? [c] : keep(c) ? [{ ...c, stale: note }] : []));
+  put(taskId, { ...e, cards });
 }
 
 /** The cards `which` picks go: an action they offered was taken elsewhere (a merge from the task bar). */

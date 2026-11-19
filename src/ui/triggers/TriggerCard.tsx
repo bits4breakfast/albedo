@@ -179,6 +179,12 @@ export function TriggerCard({ card, taskId, status }: { card: Card; taskId: numb
         </span>
       </div>
       <div className="pc-body">
+        {/* It no longer applies; kept because the text is yours. */}
+        {card.stale ? (
+          <div className="pc-note pc-note-warn" role="status">
+            {card.stale} Your edit is kept: Send it as it is, or Skip.
+          </div>
+        ) : null}
         {card.why ? <div className="tg-why">{card.why}</div> : null}
         {draft && !card.inBox ? (
           <textarea
