@@ -36,16 +36,23 @@ const themes = {
   'dark (chosen)': tokensIn(DARK_ATTR, css.length),
 };
 
+/** The first rule whose whole selector list is `selector` (lists joined with ", "). */
 function rule(selector: string): string {
-  const at = tx.indexOf(`${selector} {`);
-  expect(at, selector).toBeGreaterThanOrEqual(0);
-  return tx.slice(at, tx.indexOf('}', at));
+  const text = tx.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const list = m[1]!.split(',').map((x) => x.trim()).join(', ');
+    if (list === selector) return `${selector} {${m[2]!}`;
+  }
+  expect.fail(`no rule ${selector}`);
 }
 
 describe('the copy button’s colours (#242)', () => {
   it('uses the tokens measured below', () => {
     expect(rule('.tx-copy')).toMatch(/color: var\(--muted\)/);
     expect(tx).toMatch(/\.tx-copy:hover \{ color: var\(--text-strong\); background: var\(--panel-hover\); \}/);
+    // Inline: the strip CSS draws (#454) and the button laid over it.
+    expect(rule('.tx-md-code-wrap::before')).toMatch(/background: var\(--panel-chrome\)/);
+    expect(rule('.tx-md-code-wrap::after')).toMatch(/background: var\(--muted\)/);
     expect(rule('.tx-copy-inline')).toMatch(/background: var\(--panel-chrome\)/);
     expect(tx).not.toMatch(/\.tx-copy[^{]*\{[^}]*opacity/);
   });
@@ -69,8 +76,9 @@ describe('the inline copy icon is always there and reachable (#244)', () => {
   // #243 revealed it on hover, 1px to the right of the code: crossing that
   // pixel ended the hover, so it hid before the pointer got to it.
   it('is never hidden, never offset, never floated away from the code', () => {
-    const inline = rule('.tx-copy-inline');
-    expect(inline).not.toMatch(/visibility|display: none|margin/);
+    // The strip is drawn by CSS on every chip (#454), the segment and its glyph.
+    const strip = rule('.tx-md-code-wrap::before, .tx-md-code-wrap::after');
+    expect(strip).not.toMatch(/visibility|display: none|margin|opacity/);
     expect(tx).not.toMatch(/\.tx-md-code-wrap:hover/);
     // A segment of the chip (#452: inline boxes, no flex): the wrap keeps
     // exactly the icon's width on its right, and the icon fills that strip
@@ -78,6 +86,10 @@ describe('the inline copy icon is always there and reachable (#244)', () => {
     const wrap = rule('.tx-md-code-wrap');
     expect(wrap).toMatch(/position: relative;/);
     expect(wrap).toMatch(/padding-right: 20px;/);
-    expect(inline).toMatch(/position: absolute;\s*top: 0;\s*right: 0;\s*bottom: 0;\s*width: 20px;/);
+    expect(strip).toMatch(/position: absolute;\s*top: 0;\s*right: 0;\s*bottom: 0;\s*width: 20px;/);
+    // The button laid over it is exactly as wide, with no margin to open a gap.
+    const button = rule('.tx-copy-inline');
+    expect(button).toMatch(/width: 20px;/);
+    expect(button).not.toMatch(/visibility|display: none|margin/);
   });
 });

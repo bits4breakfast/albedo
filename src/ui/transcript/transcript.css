@@ -1170,6 +1170,8 @@ ol.tx-md-list { list-style-type: decimal; }
   -webkit-user-select: none;
 }
 .tx-copy:hover { color: var(--text-strong); background: var(--panel-hover); }
+/* The inline button, appeared under a pointer that has not moved yet (#454). */
+.tx-copy-inline[data-hot] { color: var(--text-strong); background: var(--panel-hover); }
 .tx-copy:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
 .tx-copy[data-done='copied'] { color: var(--add); }
 /* Its "Copied" is for a screen reader: never part of a selected passage. */
@@ -1204,7 +1206,13 @@ ol.tx-md-list { list-style-type: decimal; }
    (vertical-align: top) and the wrap's own strut stands in for its first
    line: the code's font, and a line height of the code's 1.3 plus its 1px
    padding and 1px border above and below. The wrap carries no ground, so a
-   path chip's hover edge stays its own. */
+   path chip's hover edge stays its own.
+   No element in the strip (#454): a positioned element inside a paragraph
+   (#243's button and its status span) ends the paragraph a triple click
+   selects, in Blink and WebKit. So the segment and its glyph are generated
+   content -- ::before and ::after, which are not nodes -- and the button you
+   press is laid over the strip from outside the text (InlineCodeCopy.tsx,
+   .tx-copy-inline below). */
 .tx-md-code-wrap {
   display: inline-block;
   position: relative;
@@ -1225,16 +1233,64 @@ ol.tx-md-list { list-style-type: decimal; }
   border-right: 0;
   border-radius: 4px 0 0 4px;
 }
+/* The segment, and the copy glyph centred in it: the same box and the same
+   13px icon as the button laid over it. The glyphs are CopyGlyph's and
+   TickGlyph's shapes (CopyButton.tsx) as masks (inlineCodeCopy.test.tsx
+   checks they agree), filled with --muted on the strip and with the button's
+   own colour (.tx-copy: at rest --muted too) on the button. Both the strip and the button
+   draw them this way, so the button over a strip matches it to the pixel. An
+   inline <svg> sits up to half a pixel apart in WebKit, which rounds its
+   position where a mask keeps the fraction. */
+.tx-md-code-wrap,
 .tx-copy-inline {
+  --tx-copy-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E");
+  --tx-tick-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6'%3E%3Cpath d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E");
+}
+.tx-md-code-wrap::before,
+.tx-md-code-wrap::after {
+  content: '';
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   width: 20px;
-  height: auto;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.tx-md-code-wrap::before {
   background: var(--panel-chrome);
   border: 1px solid var(--border);
   border-radius: 0 4px 4px 0;
+}
+.tx-md-code-wrap::after {
+  background: var(--muted);
+  -webkit-mask: var(--tx-copy-glyph) center / 13px 13px no-repeat;
+  mask: var(--tx-copy-glyph) center / 13px 13px no-repeat;
+}
+/* The button over the strip of the chip the pointer is on, from outside the
+   text (InlineCodeCopy.tsx sets its top, left and height). The segment's
+   ground and border, so at rest it is the strip; .tx-copy's hover and tick. */
+.tx-copy-inline {
+  position: fixed;
+  z-index: 30;
+  width: 20px;
+  background: var(--panel-chrome);
+  border: 1px solid var(--border);
+  border-radius: 0 4px 4px 0;
+}
+.tx-copy-inline::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  -webkit-mask: var(--tx-copy-glyph) center / 13px 13px no-repeat;
+  mask: var(--tx-copy-glyph) center / 13px 13px no-repeat;
+}
+.tx-copy-inline[data-done='copied']::after {
+  -webkit-mask-image: var(--tx-tick-glyph);
+  mask-image: var(--tx-tick-glyph);
+  -webkit-mask-size: 12px 12px;
+  mask-size: 12px 12px;
 }
 
 /* --- preformatted --------------------------------------------------------- */
