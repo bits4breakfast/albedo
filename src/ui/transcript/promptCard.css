@@ -373,7 +373,8 @@
 /* Inline code's copy icon (#242) stays out of the card: a question and a plan
    are read here, and the icons broke every other line of them. ⌘C copies a
    selection as ever; a code block keeps its own. */
-.tx-prompt .tx-copy-inline { display: none; }
+.tx-prompt .tx-md-code-wrap::before,
+.tx-prompt .tx-md-code-wrap::after { content: none; }
 /* Without it, no room is kept for it either (#452). */
 .tx-prompt .tx-md-code-wrap { padding-right: 0; }
 
