@@ -1,18 +1,22 @@
 /**
  * A selection's range, trimmed to the text it actually covers (#449).
  *
- * A triple click selects a whole block, and the browser ends that range at
- * offset 0 of the NEXT block: the range reaches into the following row
- * without covering a character of it. Read as is, its end is in the wrong
- * row (so a comment is refused) and its last client rect is the empty one at
- * the start of that next row (so the bar is drawn there). The same can
- * happen to a start left at the very end of the block before.
+ * A triple click selects a whole block, and the browser (Blink and WebKit
+ * alike) ends that range at the NEXT block's first selectable position:
+ * offset 0 of its first content, AFTER any `user-select: none` text before
+ * it -- a row's "You" gutter, a diff row's line numbers and +/- mark. The
+ * range reaches into the following row without covering a character of it
+ * the user could select. Read as is, its end is in the wrong row (so a
+ * comment is refused) and its last client rect is the empty one at the start
+ * of that next row (so the bar is drawn there). The same can happen to a
+ * start left at the very end of the block before.
  *
  * `trimRange` moves the end back to the end of the last text node holding
- * selected, non-whitespace text, and the start forward to the first such
- * node. An end or start already inside such text -- what a drag leaves --
- * stays where it is. It never touches the range it is given: the user's
- * live selection is left alone.
+ * selected, non-whitespace, selectable text, and the start forward to the
+ * first such node. Text under `user-select: none` is passed over: it is in
+ * the DOM range, never in what the user selected. An end or start already
+ * inside such text -- what a drag leaves -- stays where it is. It never
+ * touches the range it is given: the user's live selection is left alone.
  */
 
 /** Where a boundary of `range` lands in text node `t`, or null when `t` is outside it. */
@@ -29,8 +33,23 @@ function covered(range: Range, t: Text): { s: number; e: number } | null {
   return { s, e };
 }
 
+/**
+ * Whether the user can select `t`: no element from it up has `user-select`
+ * (or `-webkit-user-select`) `none`. The computed value is not inherited as
+ * `none`, so every ancestor is asked.
+ */
+function selectable(t: Text): boolean {
+  const view = t.ownerDocument.defaultView;
+  if (!view) return true;
+  for (let el: Element | null = t.parentElement; el !== null; el = el.parentElement) {
+    const css = view.getComputedStyle(el);
+    if (css.getPropertyValue('user-select') === 'none' || css.getPropertyValue('-webkit-user-select') === 'none') return false;
+  }
+  return true;
+}
+
 function hasText(t: Text, at: { s: number; e: number } | null): at is { s: number; e: number } {
-  return at !== null && at.e > at.s && /\S/.test(t.data.slice(at.s, at.e));
+  return at !== null && at.e > at.s && /\S/.test(t.data.slice(at.s, at.e)) && selectable(t);
 }
 
 function deepestLast(n: Node): Node {

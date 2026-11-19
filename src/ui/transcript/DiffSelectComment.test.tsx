@@ -54,23 +54,46 @@ describe('selectedDiffRows', () => {
     expect(rows?.root.getAttribute('data-diff-path')).toBe('src/a.ts');
   });
 
-  it('a triple-clicked row (#449): its range ends at offset 0 of the next row, which it does not mean', () => {
-    const pick = renderWith();
-    const cell = (t: string) => [...document.querySelectorAll('.tx-d-code')].find((c) => c.textContent === t)!;
-    const row = cell('new 2b').closest('.tx-d-row')!;
-    const next = row.nextElementSibling!;
-    expect(next.classList.contains('tx-d-row')).toBe(true);
-    const range = document.createRange();
-    range.setStart(cell('new 2b'), 0);
-    range.setEnd(next, 0);
-    const sel = document.getSelection()!;
-    sel.removeAllRanges();
-    sel.addRange(range);
-    act(() => void document.dispatchEvent(new Event('selectionchange')));
-    expect(selectedDiffRows(sel)?.lines).toEqual([{ line: 3, text: 'new 2b' }]);
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on Selected Line 3' }));
-    expect(pick).toHaveBeenCalledWith(3, 3, true);
-  });
+  /*
+     A triple click on a row ends in the next row (#449). Measured in Blink
+     (WebKit shares the code): at that row's code cell @0, after its line
+     numbers and +/- mark, which are user-select: none. The app's stylesheet
+     is not loaded in jsdom, so its rule for them is added here and the real
+     computed-style check runs. `{next row, 0}` is kept too.
+  */
+  for (const [where, endOf] of [
+    ["at the next row's code cell, after its line numbers and mark", (next: Element): [Node, number] => [next.querySelector('.tx-d-code')!, 0]],
+    ['at offset 0 of the next row', (next: Element): [Node, number] => [next, 0]],
+  ] as const) {
+    it(`a triple-clicked row (#449), ending ${where}: one line, not the next too`, () => {
+      const sheet = document.createElement('style');
+      sheet.textContent = '.tx-d-n, .tx-d-mark { user-select: none; -webkit-user-select: none; }';
+      document.head.appendChild(sheet);
+      try {
+        const pick = renderWith();
+        const cell = (t: string) => [...document.querySelectorAll('.tx-d-code')].find((c) => c.textContent === t)!;
+        const row = cell('new 2').closest('.tx-d-row')!;
+        const next = row.nextElementSibling!;
+        expect(next.classList.contains('tx-d-row')).toBe(true);
+        // The next row is an added one: its mark is a +, text the trim must pass over.
+        expect(next.querySelector('.tx-d-mark')?.textContent).toBe('+');
+        expect(getComputedStyle(next.querySelector('.tx-d-n')!).getPropertyValue('user-select')).toBe('none');
+        const [node, offset] = endOf(next);
+        const range = document.createRange();
+        range.setStart(cell('new 2'), 0);
+        range.setEnd(node, offset);
+        const sel = document.getSelection()!;
+        sel.removeAllRanges();
+        sel.addRange(range);
+        act(() => void document.dispatchEvent(new Event('selectionchange')));
+        expect(selectedDiffRows(sel)?.lines).toEqual([{ line: 2, text: 'new 2' }]);
+        fireEvent.click(screen.getByRole('button', { name: 'Comment on Selected Line 2' }));
+        expect(pick).toHaveBeenCalledWith(2, 2, true);
+      } finally {
+        sheet.remove();
+      }
+    });
+  }
 
   it('a selection on deleted lines only has nothing to point at', () => {
     renderWith();

@@ -59,6 +59,29 @@ describe('trimRange', () => {
     expect(t.endOffset).toBe(3);
   });
 
+  it('passes over text the user cannot select: a gutter before the next block (#449, as Blink and WebKit end it)', () => {
+    const root = dom(
+      '<div id="a"><div class="g"></div><div><p>the last bullet</p></div></div>' +
+        '<div id="b"><div style="user-select: none; -webkit-user-select: none">You</div><div><p id="next">Keep going.</p></div></div>',
+    );
+    const r = range(text(root, 'the last bullet'), 0, root.querySelector('#next')!, 0);
+    const { range: t, cut } = trimRange(r);
+    expect(cut).toBe(true);
+    expect(t.endContainer).toBe(text(root, 'the last bullet'));
+    expect(t.endOffset).toBe(15);
+  });
+
+  it('passes over a diff row’s line numbers and mark, inside an unselectable ancestor too', () => {
+    const none = 'style="user-select: none; -webkit-user-select: none"';
+    const root = dom(
+      `<div class="row"><span ${none}>2</span><span ${none}><b>+</b></span><span class="code">beta</span></div>` +
+        `<div class="row"><span ${none}>3</span><span ${none}><b>+</b></span><span class="code" id="c">gamma</span></div>`,
+    );
+    const t = trimRange(range(text(root, 'beta'), 0, root.querySelector('#c')!, 0)).range;
+    expect(t.endContainer).toBe(text(root, 'beta'));
+    expect(t.endOffset).toBe(4);
+  });
+
   it('moves a start at the very end of the block before forward', () => {
     const root = dom('<p>one</p><p>two</p>');
     const { range: t, cut } = trimRange(range(text(root, 'one'), 3, text(root, 'two'), 3));

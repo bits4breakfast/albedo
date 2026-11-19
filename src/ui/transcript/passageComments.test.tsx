@@ -37,7 +37,7 @@ vi.mock('../../db/comments', async () => ({
 const { TranscriptPane } = await import('./TranscriptPane');
 const { __resetDrafts, addComment, commentsOf } = await import('./drafts');
 const { composeWithComments } = await import('./transcriptQuotes');
-const { findPassage, offsetOf } = await import('./passages');
+const { findPassage, offsetOf, rowContent } = await import('./passages');
 
 const T0 = new Date('2026-10-30T10:00:00Z').getTime();
 function msg(id: number, role: Message['role'], body: string): Message {
@@ -253,11 +253,38 @@ describe('a triple-clicked line (#449)', () => {
     else delete (Range.prototype as Partial<Range>).getClientRects;
   });
 
-  /** Select all of `block` (the last block of row 1) as a triple click does: to offset 0 of row 2. */
-  function tripleClick(block: Element): void {
+  /*
+     The app's stylesheet is not loaded in jsdom: these are its user-select
+     rules (transcript.css), so the real computed-style check runs.
+  */
+  let sheet: HTMLStyleElement | null = null;
+  beforeEach(() => {
+    sheet = document.createElement('style');
+    sheet.textContent =
+      '.tx-gutter, .tx-md-pre-lang, .tx-copy, .tx-copy-status, .tx-d-n, .tx-d-mark { user-select: none; -webkit-user-select: none; }';
+    document.head.appendChild(sheet);
+  });
+  afterEach(() => {
+    sheet?.remove();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Where a browser ends a triple click on row 1's last block. Measured in
+   * Blink (WebKit shares the code): at the next row's first SELECTABLE
+   * position -- offset 0 of its first content block, after the "You" gutter.
+   * `{row 2, 0}` is kept too: the plain case, without the gutter.
+   */
+  const ENDS: Array<[string, () => [Node, number]]> = [
+    ["at the next row's first content block, after its \"You\" gutter", () => [rowContent(rowEl(2)).firstElementChild!, 0]],
+    ['at offset 0 of the next row', () => [rowEl(2), 0]],
+  ];
+
+  /** Select all of `block` (the last block of row 1) as a triple click does, ending at `end`. */
+  function tripleClick(block: Element, end: [Node, number]): void {
     const range = document.createRange();
     range.setStart(textNode(block, ''), 0);
-    range.setEnd(rowEl(2), 0);
+    range.setEnd(end[0], end[1]);
     const sel = document.getSelection()!;
     sel.removeAllRanges();
     sel.addRange(range);
@@ -271,26 +298,42 @@ describe('a triple-clicked line (#449)', () => {
     ['a code line', 'Run:\n\n```\nnpm ci\nnpm run build\n```', '.tx-md-pre-line:last-child', 'npm run build'],
   ];
 
-  for (const [name, body, selector, line] of cases) {
-    it(`${name}: Comment is offered, the bar sits at the line's end, the quote is the line`, async () => {
-      rows = [msg(1, 'assistant', body), msg(2, 'user', SECOND)];
-      await renderPane();
-      const block = rowEl(1).querySelector(selector)!;
-      expect(block).toBeTruthy();
-      tripleClick(block);
-      const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
-      expect(bar.textContent).toBe('CommentCopy');
-      // Row 1's bottom and the text's end, not row 2's left edge.
-      expect(bar.style.top).toBe(`${ROW_RECT[1]! + 6}px`);
-      expect(bar.style.left).toBe('400px');
-      // The live selection is the user's, untouched.
-      expect(document.getSelection()!.getRangeAt(0).endContainer).toBe(rowEl(2));
-      fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
-      const field = screen.getByRole('textbox', { name: 'Comment on the selected passage' });
-      fireEvent.change(field, { target: { value: 'why?' } });
-      fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
-      expect(commentsOf(1)).toEqual([expect.objectContaining({ messageId: 1, quote: line })]);
-    });
+  it('the fixture is what a browser sees: a "You" gutter the user cannot select, before the content', async () => {
+    rows = [msg(1, 'assistant', FIRST), msg(2, 'user', SECOND)];
+    await renderPane();
+    const gutter = rowEl(2).querySelector(':scope > .tx-gutter')!;
+    expect(gutter.textContent).toBe('You');
+    expect(getComputedStyle(gutter).getPropertyValue('user-select')).toBe('none');
+    expect(gutter.compareDocumentPosition(rowContent(rowEl(2))) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  for (const [where, endAt] of ENDS) {
+    for (const [name, body, selector, line] of cases) {
+      it(`${name}, ending ${where}: Comment is offered, the bar sits at the line's end, the quote is the line`, async () => {
+        rows = [msg(1, 'assistant', body), msg(2, 'user', SECOND)];
+        await renderPane();
+        const block = rowEl(1).querySelector(selector)!;
+        expect(block).toBeTruthy();
+        const end = endAt();
+        // jsdom's Selection text is the raw DOM range's (it would take in the
+        // "You" gutter); a browser's leaves out user-select: none and ends a
+        // triple click with the line break.
+        vi.spyOn(document.getSelection()!, 'toString').mockReturnValue(`${line}\n`);
+        tripleClick(block, end);
+        const bar = await screen.findByRole('toolbar', { name: 'Selected text' });
+        expect(bar.textContent).toBe('CommentCopy');
+        // Row 1's bottom and the text's end, not row 2's left edge.
+        expect(bar.style.top).toBe(`${ROW_RECT[1]! + 6}px`);
+        expect(bar.style.left).toBe('400px');
+        // The live selection is the user's, untouched.
+        expect(document.getSelection()!.getRangeAt(0).endContainer).toBe(end[0]);
+        fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+        const field = screen.getByRole('textbox', { name: 'Comment on the selected passage' });
+        fireEvent.change(field, { target: { value: 'why?' } });
+        fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+        expect(commentsOf(1)).toEqual([expect.objectContaining({ messageId: 1, quote: line })]);
+      });
+    }
   }
 
   it('Copy copies the line without the line break the triple click added', async () => {
@@ -300,7 +343,7 @@ describe('a triple-clicked line (#449)', () => {
     await renderPane();
     const sel = document.getSelection()!;
     const toString = vi.spyOn(sel, 'toString').mockReturnValue('The last paragraph.\n');
-    tripleClick(rowEl(1).querySelector('p:last-of-type')!);
+    tripleClick(rowEl(1).querySelector('p:last-of-type')!, ENDS[0]![1]());
     fireEvent.click(await screen.findByRole('button', { name: 'Copy' }));
     expect(spy).toHaveBeenCalledWith('The last paragraph.');
     toString.mockRestore();
