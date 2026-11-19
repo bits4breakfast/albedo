@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { observeTriggers, type TriggerDeps, type TriggerTask } from './useTriggers';
 import { __resetTriggerStore, editTriggerCard, triggerCardsOf, triggerWatchOf } from './store';
 import { loadTriggerSettings, setTriggerFiles } from './settings';
-import { changesBy, fail, pending, prOf } from './fixtures';
+import { changesBy, fail, pending, prOf, readyPr } from './fixtures';
 import type { ReviewThread } from '../gh/reviewThreads';
 
 const TASK: TriggerTask = { id: 7, projectId: 3, status: 'idle', kind: 'work', reviewUrl: null, worktreePath: '/w', repoPath: '/r' };
@@ -69,8 +69,10 @@ describe('the watch', () => {
   it('fires only what the project turned on', () => {
     observeTriggers(TASK, prOf({ lines: [pending('build')] }), 'me', deps);
     observeTriggers(TASK, prOf({ lines: [fail('build')] }), 'me', deps);
-    observeTriggers(TASK, prOf({ state: 'merged' }), 'me', deps);
     expect(triggerCardsOf(7).map((c) => c.event)).toEqual(['ciFailed']);
+    // Merged: no card (Off), and the CI card no longer applies.
+    observeTriggers(TASK, prOf({ state: 'merged' }), 'me', deps);
+    expect(triggerCardsOf(7)).toEqual([]);
   });
 
   it('decides nothing for a project whose settings are not read yet: the answer waits', async () => {
@@ -153,5 +155,45 @@ describe('a review', () => {
     observeTriggers(TASK, prOf({ threads: 2 }), 'me', deps);
     await flush();
     expect(triggerCardsOf(7).map((c) => c.text ?? c.facts.includes('Second.'))).toEqual(['my words', true]);
+  });
+});
+
+describe('stale cards go by themselves (#448 review)', () => {
+  it('merged or closed outside Albedo: the approval, CI and review cards for that PR go; the merge’s draft stays', async () => {
+    settings = JSON.stringify({
+      merged: { mode: 'draft', template: '' },
+      ciFailed: { mode: 'draft', template: '' },
+      review: { mode: 'draft', template: '' },
+      approved: { mode: 'suggest', template: '' },
+    });
+    setTriggerFiles({ read: async () => settings, write: async () => {} });
+    await loadTriggerSettings(3);
+    observeTriggers(TASK, prOf({ lines: [pending('build')] }), 'me', deps);
+    observeTriggers(TASK, prOf({ lines: [fail('build')], reviews: [changesBy('bob')] }), 'me', deps);
+    await flush();
+    observeTriggers(TASK, readyPr(), 'me', deps);
+    expect(triggerCardsOf(7).map((c) => c.event).sort()).toEqual(['approved', 'ciFailed', 'review']);
+    // Not pinned in Needs You by cards that no longer apply.
+    observeTriggers(TASK, readyPr({ state: 'merged' }), 'me', deps);
+    expect(triggerCardsOf(7).map((c) => c.event)).toEqual(['merged']);
+  });
+
+  it('a closed PR leaves no card at all; a card for another PR is not touched', async () => {
+    observeTriggers(TASK, prOf({ lines: [pending('build')] }), 'me', deps);
+    observeTriggers(TASK, prOf({ lines: [fail('build')] }), 'me', deps);
+    expect(triggerCardsOf(7)).toHaveLength(1);
+    observeTriggers(TASK, prOf({ number: 999, state: 'closed' }), 'me', deps);
+    expect(triggerCardsOf(7)).toHaveLength(1);
+    observeTriggers(TASK, prOf({ state: 'closed' }), 'me', deps);
+    expect(triggerCardsOf(7)).toEqual([]);
+  });
+
+  it('a review’s threads landing after the task was archived add no card', async () => {
+    const { forgetTriggers } = await import('./store');
+    observeTriggers(TASK, prOf(), 'me', deps);
+    observeTriggers(TASK, prOf({ reviews: [changesBy('bob')] }), 'me', deps);
+    forgetTriggers(7);
+    await flush();
+    expect(triggerCardsOf(7)).toEqual([]);
   });
 });

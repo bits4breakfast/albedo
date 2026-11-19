@@ -26,7 +26,15 @@ import { parsePrUrl } from '../git/reviewCheckout';
 import { triggerStep, type TriggerFire } from './detect';
 import { cardFor, newThreads, reviewFacts, widenReview } from './facts';
 import { modeAllowed, onTriggerSettingsChange, triggerSettingsFor } from './settings';
-import { addTriggerCard, setTriggerWatch, triggerCardsOf, triggerWatchOf, untouched } from './store';
+import {
+  addTriggerCard,
+  resolveTriggerCards,
+  setTriggerWatch,
+  triggerCardsOf,
+  triggerGen,
+  triggerWatchOf,
+  untouched,
+} from './store';
 
 export type TriggerTask = Pick<Task, 'id' | 'projectId' | 'status' | 'kind' | 'reviewUrl' | 'worktreePath' | 'repoPath'>;
 
@@ -65,6 +73,7 @@ export function observeTriggers(
   deps: TriggerDeps = productionDeps,
 ): TriggerFire[] {
   if (!watched(task)) return [];
+  retireStale(task.id, pr);
   const settings = triggerSettingsFor(task.projectId);
   if (settings === undefined) return [];
   const now = deps.now();
@@ -85,6 +94,8 @@ export function observeTriggers(
     const fire = widenReview(f, earlier);
     const me = viewer ?? '';
     const cwd = task.worktreePath || task.repoPath;
+    // Archived or deleted while the threads were on their way: no card.
+    const gen = triggerGen(task.id);
     void deps
       .threads(fire.prUrl, cwd)
       .catch((err: unknown) => {
@@ -92,6 +103,7 @@ export function observeTriggers(
         return null;
       })
       .then((threads) => {
+        if (triggerGen(task.id) !== gen) return;
         const fresh = threads === null ? null : newThreads(threads, fire.since, me);
         // Nothing new from anyone else (a thread you opened yourself), and no
         // change request: no card.
@@ -103,6 +115,17 @@ export function observeTriggers(
       });
   }
   return fires;
+}
+
+/**
+ * A card that no longer applies goes by itself, so it never pins a task in
+ * Needs You: once the PR is merged or closed -- here or on GitHub -- its CI,
+ * review and approval cards are moot. The merge's own card stays: it is the
+ * point. Only ever removes a card.
+ */
+export function retireStale(taskId: number, pr: PrStatus | null): void {
+  if (!pr || (pr.state !== 'merged' && pr.state !== 'closed')) return;
+  resolveTriggerCards(taskId, (c) => c.prNumber === pr.number && c.event !== 'merged');
 }
 
 /**

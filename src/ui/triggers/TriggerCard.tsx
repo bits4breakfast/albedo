@@ -79,9 +79,12 @@ export function TriggerCard({ card, taskId, status }: { card: Card; taskId: numb
   const queued = useQueuedCi(taskId);
   usePrStatusVersion();
   const draft = card.mode === 'draft';
-  const text = draftText(card, queued);
+  // Your edit, held here: typing redraws this card only. The store keeps it
+  // too (written soon after, and on the way out), never re-telling the list.
+  const [edited, setEdited] = useState<string | undefined>(card.text);
+  const text = edited ?? draftText(card, queued);
   const fetching =
-    card.event === 'ciFailed' && card.text === undefined && queued !== null && queued.sha === card.sha && queued.details?.state === 'fetching';
+    card.event === 'ciFailed' && edited === undefined && queued !== null && queued.sha === card.sha && queued.details?.state === 'fetching';
 
   /** The CI failure this draft carries is handled: it went, or it is in the box. */
   const handled = () => {
@@ -90,7 +93,7 @@ export function TriggerCard({ card, taskId, status }: { card: Card; taskId: numb
 
   const send = async () => {
     if (busy) return;
-    const body = draftText(card, queuedCiOf(taskId)).trim();
+    const body = (edited ?? draftText(card, queuedCiOf(taskId))).trim();
     if (!body) {
       setNote({ tone: 'error', text: 'There is nothing to send.' });
       return;
@@ -113,7 +116,7 @@ export function TriggerCard({ card, taskId, status }: { card: Card; taskId: numb
   };
 
   const toBox = () => {
-    const body = draftText(card, queuedCiOf(taskId)).trim();
+    const body = (edited ?? draftText(card, queuedCiOf(taskId))).trim();
     const key = body.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
     if (!body || !key) {
       setNote({ tone: 'error', text: 'There is nothing to move.' });
@@ -184,7 +187,10 @@ export function TriggerCard({ card, taskId, status }: { card: Card; taskId: numb
             value={text}
             rows={Math.min(10, text.split('\n').length + 1)}
             disabled={busy}
-            onChange={(e) => editTriggerCard(taskId, card.id, e.target.value)}
+            onChange={(e) => {
+              setEdited(e.target.value);
+              editTriggerCard(taskId, card.id, e.target.value);
+            }}
             onKeyDown={onKey}
           />
         ) : null}

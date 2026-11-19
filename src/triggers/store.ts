@@ -58,6 +58,8 @@ export interface TriggerCard {
 export interface TriggerEntry {
   watch?: TriggerWatch;
   cards: TriggerCard[];
+  /** When it was last written: a prune never drops what is newer than its own read. */
+  savedAt?: number;
 }
 
 type TriggerMap = ReadonlyMap<number, TriggerEntry>;
@@ -140,6 +142,7 @@ export const triggersCodec: Codec<TriggerMap> = {
       const entry: TriggerEntry = {
         ...(isWatch(v.watch) ? { watch: v.watch } : {}),
         cards: Array.isArray(v.cards) ? v.cards.filter(isCard) : [],
+        ...(isNum(v.savedAt) ? { savedAt: v.savedAt } : {}),
       };
       if (entry.watch || entry.cards.length > 0) map.set(id, entry);
     }
@@ -164,6 +167,7 @@ function current(): TriggerMap {
 function commit(next: TriggerMap): void {
   if (next === state) return;
   state = next;
+  cancelEditWrite();
   writePersisted(KEYS.triggers, triggersCodec, next);
   version += 1;
   for (const cb of [...listeners]) cb();
@@ -172,7 +176,7 @@ function commit(next: TriggerMap): void {
 function put(taskId: number, entry: TriggerEntry): void {
   const prev = current();
   const next = new Map(prev);
-  if (entry.watch || entry.cards.length > 0) next.set(taskId, entry);
+  if (entry.watch || entry.cards.length > 0) next.set(taskId, { ...entry, savedAt: Date.now() });
   else if (prev.has(taskId)) next.delete(taskId);
   else return;
   commit(next);
@@ -235,7 +239,42 @@ function updateCard(taskId: number, id: string, patch: (c: TriggerCard) => Trigg
 
 /** The draft as edited on the card. */
 export function editTriggerCard(taskId: number, id: string, text: string): void {
-  updateCard(taskId, id, (c) => ({ ...c, text }));
+  // Typing is not news: held in memory at once (so a newer card never
+  // replaces it, `addTriggerCard`), written soon after, and no one is told --
+  // the task list does not regroup per keystroke. The card keeps its own copy.
+  const e = current().get(taskId);
+  if (!e || !e.cards.some((c) => c.id === id)) return;
+  const next = new Map(current());
+  next.set(taskId, { ...e, cards: e.cards.map((c) => (c.id === id ? { ...c, text } : c)), savedAt: Date.now() });
+  state = next;
+  writeEditSoon();
+}
+
+/** How long typing waits before it is written. */
+export const EDIT_WRITE_MS = 400;
+let editTimer: ReturnType<typeof setTimeout> | null = null;
+let flushHooked = false;
+
+function cancelEditWrite(): void {
+  if (editTimer !== null) clearTimeout(editTimer);
+  editTimer = null;
+}
+
+function writeEditSoon(): void {
+  if (!flushHooked && typeof window !== 'undefined') {
+    // Closing the app while typing: written on the way out.
+    flushHooked = true;
+    window.addEventListener('pagehide', flushTriggerEdits);
+    window.addEventListener('beforeunload', flushTriggerEdits);
+  }
+  if (editTimer === null) editTimer = setTimeout(flushTriggerEdits, EDIT_WRITE_MS);
+}
+
+/** Write an edit still waiting for its timer (leaving the card, closing the app). */
+export function flushTriggerEdits(): void {
+  if (editTimer === null) return;
+  cancelEditWrite();
+  if (state !== null) writePersisted(KEYS.triggers, triggersCodec, state);
 }
 
 /** Edit in Message Box took it: the card waits for a message carrying `boxKey` to be sent. */
@@ -262,6 +301,14 @@ export function resolveTriggerCard(taskId: number, id: string): void {
   put(taskId, { ...e, cards: e.cards.filter((c) => c.id !== id) });
 }
 
+/**
+ * Commit `sha`'s failure went to Claude with an ordinary message (the CI
+ * queue's copy): a CI card for that commit has nothing left to say.
+ */
+export function noteCiFailureSent(taskId: number, sha: string): void {
+  resolveTriggerCards(taskId, (c) => c.event === 'ciFailed' && c.sha === sha);
+}
+
 /** The cards `which` picks go: an action they offered was taken elsewhere (a merge from the task bar). */
 export function resolveTriggerCards(taskId: number, which: (c: TriggerCard) => boolean): void {
   const e = entryOf(taskId);
@@ -271,15 +318,33 @@ export function resolveTriggerCards(taskId: number, which: (c: TriggerCard) => b
 
 /** Everything kept for the task goes: it was archived or deleted. */
 export function forgetTriggers(taskId: number): void {
+  bumpGen(taskId);
   if (current().has(taskId)) put(taskId, { cards: [] });
 }
 
-/** Keep only these tasks' (the live ones). */
-export function keepTriggersFor(taskIds: Iterable<number>): void {
+/**
+ * Keep only these tasks' (the live ones), and whatever was written since
+ * `readStartedAt`: a read of the task list cannot speak for a task newer than
+ * itself (REGRESSIONS: a cleanup judged a task newer than its own read).
+ */
+export function keepTriggersFor(taskIds: Iterable<number>, readStartedAt = Infinity): void {
   const keep = new Set(taskIds);
   const prev = current();
-  const kept = [...prev].filter(([id]) => keep.has(id));
-  if (kept.length !== prev.size) commit(new Map(kept));
+  const kept = [...prev].filter(([id, e]) => keep.has(id) || (e.savedAt ?? 0) >= readStartedAt);
+  if (kept.length === prev.size) return;
+  for (const [id] of prev) if (!kept.some(([k]) => k === id)) bumpGen(id);
+  commit(new Map(kept));
+}
+
+/** Bumped each time a task's triggers are forgotten: work started before it must not write after. */
+const gens = new Map<number, number>();
+function bumpGen(taskId: number): void {
+  gens.set(taskId, (gens.get(taskId) ?? 0) + 1);
+}
+
+/** The task's forget count, for work that lands later (a review's threads). */
+export function triggerGen(taskId: number): number {
+  return gens.get(taskId) ?? 0;
 }
 
 export function onTriggerChange(cb: () => void): () => void {
@@ -333,6 +398,7 @@ export function onTriggerMergeRequest(cb: MergeListener): () => void {
 
 /** Test seam: forget what is in memory, so the next read comes from storage. */
 export function __resetTriggerStore(): void {
+  cancelEditWrite();
   state = null;
   listeners.clear();
   mergeListeners.clear();

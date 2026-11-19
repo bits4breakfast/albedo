@@ -5,7 +5,7 @@
  * kept across a restart, gone with their task; and what a card says.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetTriggerStore,
   addTriggerCard,
@@ -174,5 +174,51 @@ describe('the store', () => {
     expect([...map.keys()]).toEqual([7]);
     expect(map.get(7)!.watch).toBeUndefined();
     expect(map.get(7)!.cards.map((c) => c.id)).toEqual(['ok']);
+  });
+});
+
+describe('typing in a card (#448 review)', () => {
+  it('is held in memory at once, written once soon after, and tells no one -- the list does not regroup per keystroke', async () => {
+    const { EDIT_WRITE_MS, onTriggerChange } = await import('./store');
+    vi.useFakeTimers();
+    try {
+      addTriggerCard(7, cardFor(merged, 'draft', TEMPLATE, 1));
+      const id = triggerCardsOf(7)[0]!.id;
+      const stored = window.localStorage.getItem(KEYS.triggers);
+      let told = 0;
+      const off = onTriggerChange(() => (told += 1));
+      const writes = vi.spyOn(window.localStorage, 'setItem');
+      for (const t of ['m', 'my', 'my w', 'my words']) editTriggerCard(7, id, t);
+      expect(told).toBe(0);
+      expect(writes).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem(KEYS.triggers)).toBe(stored);
+      // Already the card's, for a newer card that would replace an untouched one.
+      expect(triggerCardsOf(7)[0]!.text).toBe('my words');
+      vi.advanceTimersByTime(EDIT_WRITE_MS);
+      expect(writes).toHaveBeenCalledTimes(1);
+      __resetTriggerStore();
+      expect(triggerCardsOf(7)[0]!.text).toBe('my words');
+      off();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('pruning (#448 review)', () => {
+  it('keeps what was written since the task list read began', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_000_000);
+      addTriggerCard(7, cardFor(merged, 'draft', TEMPLATE, 1));
+      const readStartedAt = 1_000_010; // the read of the task list began
+      vi.setSystemTime(1_000_020);
+      addTriggerCard(9, cardFor(merged, 'draft', TEMPLATE, 1)); // a task the read cannot know
+      keepTriggersFor([], readStartedAt);
+      expect(triggerCardsOf(7)).toHaveLength(0);
+      expect(triggerCardsOf(9)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

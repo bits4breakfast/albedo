@@ -399,7 +399,7 @@ export function useTasks(): UseTasksResult {
       putBackWhereNoDraftAtStartup();
       keepRequestsFor(live);
       keepQueuedCiFor(live);
-      keepTriggersFor(live);
+      keepTriggersFor(live, readStartedAt);
       setLoadError(null);
     } catch (err) {
       if (!aliveRef.current) return;

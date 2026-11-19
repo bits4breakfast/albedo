@@ -80,6 +80,8 @@ describe('the draft', () => {
     addTriggerCard(7, MERGED);
     render(<TriggerCards taskId={7} status="idle" />);
     fireEvent.change(screen.getByRole('textbox', { name: 'The drafted message' }), { target: { value: 'my own words' } });
+    // Closing the app right after typing: written on the way out.
+    window.dispatchEvent(new Event('pagehide'));
     __resetTriggerStore();
     expect(triggerCardsOf(7)[0]!.text).toBe('my own words');
     cleanup();
@@ -210,6 +212,38 @@ describe('a CI draft', () => {
     render(<TriggerCards taskId={7} status="idle" />);
     fireEvent.click(screen.getByRole('button', { name: 'Edit in Message Box' }));
     expect(inserts).toHaveLength(1);
+    expect(queuedCiOf(7)).toBeNull();
+  });
+});
+
+describe('a CI failure reaches Claude once (#448 review)', () => {
+  function ciCardFor() {
+    const a = triggerStep(undefined, prOf({ lines: [pending('build')] }), 'me', 1);
+    const fire = triggerStep(a.watch, prOf({ lines: [fail('build')] }), 'me', 2).fires[0]!;
+    return cardFor(fire, 'draft', 'Fix the failing checks.', Date.now());
+  }
+
+  it('the queued copy went with an ordinary message: the card for that commit goes', async () => {
+    const { takeQueuedCi } = await import('../transcript/ciFailure');
+    renderHook(() => useTriggerBoxWatch());
+    observeCiQueue(7, prOf({ lines: [fail('build')] }));
+    addTriggerCard(7, ciCardFor());
+    // Another commit's failure leaves it.
+    act(() => takeQueuedCi(7, 'another-commit'));
+    expect(triggerCardsOf(7)).toHaveLength(1);
+    act(() => takeQueuedCi(7, SHA_A));
+    expect(triggerCardsOf(7)).toEqual([]);
+  });
+
+  it('the card sent it: the queued copy goes, and does not come back', async () => {
+    renderHook(() => useTriggerBoxWatch());
+    observeCiQueue(7, prOf({ lines: [fail('build')] }));
+    addTriggerCard(7, ciCardFor());
+    render(<TriggerCards taskId={7} status="idle" />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Send/ }));
+    });
+    expect(submitPty).toHaveBeenCalledTimes(1);
     expect(queuedCiOf(7)).toBeNull();
   });
 });

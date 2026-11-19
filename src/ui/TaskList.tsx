@@ -891,19 +891,20 @@ function triggerWordOf(taskId: number): string | null {
 /* Stopped on an Error (#338): which error, in words, under the title.
    Claude Code's own text is its tooltip. A mockup waiting for approval
    (#348) says so on the same line: it is why the task is in Needs You. So
-   does a trigger's card (#448): "PR merged · draft ready". */
+   does a trigger's card (#448): "PR merged · draft ready" -- after an API
+   error's label, which outranks it: the session stopped is the more urgent. */
 function rowWhy(task: Task, previewWaiting: boolean, triggerWord: string | null): ReactNode {
   return previewWaiting ? (
     <span className="task-why" data-why="preview" title="A mockup is waiting for your approval in this task">
       Preview to approve
     </span>
-  ) : triggerWord !== null ? (
-    <span className="task-why" data-why="trigger" title="A trigger fired on this task’s PR: its card is waiting on you">
-      {triggerWord}
-    </span>
   ) : stoppedOnError(task) && task.apiError !== null ? (
     <span className="task-why" title={task.apiErrorText ?? undefined}>
       {API_ERROR_LABEL[task.apiError]}
+    </span>
+  ) : triggerWord !== null ? (
+    <span className="task-why" data-why="trigger" title="A trigger fired on this task’s PR: its card is waiting on you">
+      {triggerWord}
     </span>
   ) : null;
 }

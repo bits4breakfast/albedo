@@ -327,6 +327,27 @@ export function removeQueuedCi(taskId: number, sha: string): void {
  */
 export function takeQueuedCi(taskId: number, sha: string): void {
   removeQueuedCi(taskId, sha);
+  for (const cb of [...takenListeners]) {
+    try {
+      cb(taskId, sha);
+    } catch (err) {
+      console.warn('[ci queue] a taken listener failed', err);
+    }
+  }
+}
+
+type TakenListener = (taskId: number, sha: string) => void;
+const takenListeners = new Set<TakenListener>();
+
+/**
+ * Hear commit `sha`'s failure go out with a message (`takeQueuedCi`): a
+ * trigger's CI card for it is then done (#448), or Claude would read it twice.
+ */
+export function onQueuedCiTaken(cb: TakenListener): () => void {
+  takenListeners.add(cb);
+  return () => {
+    takenListeners.delete(cb);
+  };
 }
 
 /** Everything kept for the task goes: it was archived or deleted. */

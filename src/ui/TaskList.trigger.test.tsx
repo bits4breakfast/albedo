@@ -78,3 +78,13 @@ describe('TaskList: a trigger card waiting', () => {
     expect(screen.getByText('PR merged · draft ready')).toBeTruthy();
   });
 });
+
+describe('TaskList: which reason the row says', () => {
+  it('a stopped-on-error label outranks the trigger word', () => {
+    const errored = { ...tasks[0]!, apiError: 'overloaded', apiErrorText: 'Overloaded' } as Task;
+    render(<TaskList tasks={[errored, tasks[1]!]} selectedId={2} onSelect={() => {}} onNew={() => {}} />);
+    act(() => addTriggerCard(1, card));
+    expect(screen.queryByText('PR merged · draft ready')).toBeNull();
+    expect(document.querySelector('[data-task-id="1"] .task-why')!.getAttribute('data-why')).toBeNull();
+  });
+});
