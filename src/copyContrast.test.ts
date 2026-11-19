@@ -70,9 +70,14 @@ describe('the inline copy icon is always there and reachable (#244)', () => {
   // pixel ended the hover, so it hid before the pointer got to it.
   it('is never hidden, never offset, never floated away from the code', () => {
     const inline = rule('.tx-copy-inline');
-    expect(inline).not.toMatch(/visibility|display: none|position: absolute|margin/);
+    expect(inline).not.toMatch(/visibility|display: none|margin/);
     expect(tx).not.toMatch(/\.tx-md-code-wrap:hover/);
-    // A segment of the chip: the wrap lays them side by side, stretched to one height.
-    expect(rule('.tx-md-code-wrap')).toMatch(/display: inline-flex;[\s\S]*align-items: stretch/);
+    // A segment of the chip (#452: inline boxes, no flex): the wrap keeps
+    // exactly the icon's width on its right, and the icon fills that strip
+    // from the wrap's top to its bottom, so it touches the code and is as tall.
+    const wrap = rule('.tx-md-code-wrap');
+    expect(wrap).toMatch(/position: relative;/);
+    expect(wrap).toMatch(/padding-right: 20px;/);
+    expect(inline).toMatch(/position: absolute;\s*top: 0;\s*right: 0;\s*bottom: 0;\s*width: 20px;/);
   });
 });
