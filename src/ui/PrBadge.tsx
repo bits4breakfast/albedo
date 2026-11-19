@@ -22,6 +22,7 @@ import { useMeasuredBase } from './useMeasuredBase';
 import MergeDialog from './MergeDialog';
 import { prAction } from '../gh/prAction';
 import { ciCueFor, takeChecksRequest, useCiVersion } from './ciNotice';
+import { onTriggerMergeRequest, resolveTriggerCards } from '../triggers/store';
 import './pr.css';
 
 export interface PrBadgeProps {
@@ -86,6 +87,18 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
   useEffect(() => {
     if (task && pr && opensChecks(pr) && takeChecksRequest(task.id)) setChecksOpen(true);
   }, [task?.id, pr, ciVersion]);
+  // A trigger's Suggest card asked for Squash and Merge… (#448): this very
+  // dialog, opened as the button beside the badge opens it -- only while that
+  // button is offered. Opening is all; the dialog asks before anything merges.
+  useEffect(
+    () =>
+      onTriggerMergeRequest((id) => {
+        if (!task || id !== task.id || !pr || prAction(pr)?.kind !== 'merge') return false;
+        setMergeOpen(true);
+        return true;
+      }),
+    [task?.id, pr],
+  );
   // `undefined` is "gh has not answered yet": no button that a PR already
   // opened would make wrong. usePrStatus maps both to null, so its snapshot
   // does not change when gh answers "none" -- the version does, and is what
@@ -206,7 +219,15 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
       </button>
       {pr.state === 'open' && <ReviewChip pr={pr} viewer={viewer} />}
       <PrActionControl pr={pr} onMerge={() => setMergeOpen(true)} onResolveConflicts={onResolveConflicts} />
-      {mergeOpen && <MergeDialog task={task} pr={pr} onClose={() => setMergeOpen(false)} />}
+      {mergeOpen && (
+        <MergeDialog
+          task={task}
+          pr={pr}
+          onClose={() => setMergeOpen(false)}
+          // Merged, from here or from a trigger's card: a card that suggested it is done (#448).
+          onMerged={() => resolveTriggerCards(task.id, (c) => c.mode === 'suggest' && c.event === 'approved')}
+        />
+      )}
       <span className="sr-only" role="status">
         {cue ? `Checks ${cue === 'pass' ? 'passed' : 'failed'} on pull request ${pr.number}` : ''}
       </span>

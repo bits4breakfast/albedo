@@ -68,6 +68,8 @@ export const KEYS = {
   composerOutbox: 'albedo.composerOutbox',
   /** A PR's failing checks waiting to go with the next message, per task (ui/transcript/ciFailure.ts owns the shape, #280). */
   queuedCiFailures: 'albedo.composerCiFailures',
+  /** Triggers' watch over each task's PR, and their cards waiting on you (triggers/store.ts owns the shape, #448). */
+  triggers: 'albedo.triggers',
   /** What sessions asked for through Albedo's MCP server (ui/requestQueue.ts owns the shape). */
   requestQueue: 'albedo.requests',
   /** Absent means on. */

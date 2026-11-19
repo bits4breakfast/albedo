@@ -40,6 +40,8 @@ import { useDraftTaskIds } from './transcript/drafts';
 import { useCompacting } from './transcript/commandEcho';
 import { useReminderTaskIds } from './reminders/useReminders';
 import { useTasksWaitingOnPreview } from './preview/usePreviews';
+import { triggerCardsOf, useTriggerVersion } from '../triggers/store';
+import { rowWord } from '../triggers/facts';
 import { ReminderGlyph } from './reminders/ReminderGlyph';
 import TaskTitleEdit from './TaskTitleEdit';
 import TaskRail, { ChevronGlyph, type RailRow } from './TaskRail';
@@ -255,6 +257,8 @@ export default function TaskList({
   const drafts = useDraftTaskIds();
   const reminderIds = useReminderTaskIds();
   const previewWaiting = useTasksWaitingOnPreview();
+  // Trigger cards waiting on you (#448): a fact for the groups, a word on the row.
+  const triggerVersion = useTriggerVersion();
   /**
    * The ‹ or › that was pressed is gone once the list redraws, so focus
    * would fall to the body: hand it to the other one. Only for a press of
@@ -347,12 +351,13 @@ export default function TaskList({
         pr: task.kind === 'chat' ? null : getPrStatus(task.id),
         work: getReviewWork(task.id, finishedAt),
         reviewing: reviewing.has(task.id),
+        trigger: triggerCardsOf(task.id).length > 0,
       });
     }
     return byId;
-    // The versions stand for the caches read through getPrStatus/getReviewWork
-    // and the guide store's Reviewed marks.
-  }, [tasks, signals, prVersion, workVersion, guideVersion]);
+    // The versions stand for the caches read through getPrStatus/getReviewWork,
+    // the guide store's Reviewed marks and the trigger cards.
+  }, [tasks, signals, prVersion, workVersion, guideVersion, triggerVersion]);
 
   // Whether a finish left work on the branch is asked once per unseen finish.
   const probes = useMemo(
@@ -495,7 +500,7 @@ export default function TaskList({
 
   const railRow = (task: Task, group: GroupKey): RailRow => ({
     title: rowTitle(task),
-    why: rowWhy(task, previewWaiting.has(task.id)),
+    why: rowWhy(task, previewWaiting.has(task.id), triggerWordOf(task.id)),
     meta: rowMeta(task, group, {
       selected: task.id === selectedId,
       sig: signals?.get(task.id),
@@ -678,6 +683,7 @@ export default function TaskList({
                   draft={drafts.has(task.id)}
                   reminder={reminderIds.has(task.id)}
                   previewWaiting={previewWaiting.has(task.id)}
+                  triggerWord={triggerWordOf(task.id)}
                   prVersion={prVersion}
                   ciVersion={ciVersion}
                   reviewVersion={reviewVersion}
@@ -875,10 +881,19 @@ function CompactingMark({ taskId }: { taskId: number }): ReactNode {
   );
 }
 
+/** The newest trigger card's word for a task's row (#448), or null for none. */
+function triggerWordOf(taskId: number): string | null {
+  const cards = triggerCardsOf(taskId);
+  const last = cards[cards.length - 1];
+  return last ? rowWord(last) : null;
+}
+
 /* Stopped on an Error (#338): which error, in words, under the title.
    Claude Code's own text is its tooltip. A mockup waiting for approval
-   (#348) says so on the same line: it is why the task is in Needs You. */
-function rowWhy(task: Task, previewWaiting: boolean): ReactNode {
+   (#348) says so on the same line: it is why the task is in Needs You. So
+   does a trigger's card (#448): "PR merged · draft ready" -- after an API
+   error's label, which outranks it: the session stopped is the more urgent. */
+function rowWhy(task: Task, previewWaiting: boolean, triggerWord: string | null): ReactNode {
   return previewWaiting ? (
     <span className="task-why" data-why="preview" title="A mockup is waiting for your approval in this task">
       Preview to approve
@@ -886,6 +901,10 @@ function rowWhy(task: Task, previewWaiting: boolean): ReactNode {
   ) : stoppedOnError(task) && task.apiError !== null ? (
     <span className="task-why" title={task.apiErrorText ?? undefined}>
       {API_ERROR_LABEL[task.apiError]}
+    </span>
+  ) : triggerWord !== null ? (
+    <span className="task-why" data-why="trigger" title="A trigger fired on this task’s PR: its card is waiting on you">
+      {triggerWord}
     </span>
   ) : null;
 }
@@ -915,6 +934,8 @@ interface TaskRowProps extends Omit<RowMetaFacts, 'selected'> {
   hasActions: boolean;
   age: string;
   previewWaiting: boolean;
+  /** A trigger card's word (#448), or null. */
+  triggerWord: string | null;
   /** Not read: they redraw the row when the caches it reads change. */
   prVersion: number;
   ciVersion: number;
@@ -943,6 +964,7 @@ const TaskRow = memo(function TaskRow({
   draft,
   reminder,
   previewWaiting,
+  triggerWord,
   onSelect,
   onOpenMenu,
   onRename,
@@ -997,7 +1019,7 @@ const TaskRow = memo(function TaskRow({
           its own width hid on every row cut titles short. */}
       {shortcut !== null && <span className="task-index kbd">⌘{shortcut}</span>}
       {rowMeta(task, group, { selected, sig, ctx, draft, reminder })}
-      {rowWhy(task, previewWaiting)}
+      {rowWhy(task, previewWaiting, triggerWord)}
       {/* Sends "try again" (#338): only while the session is live. */}
       {stoppedOnError(task) && <TryAgainButton task={task} />}
       <ContextMeter usage={ctx} variant="hairline" />

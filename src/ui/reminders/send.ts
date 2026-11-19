@@ -38,7 +38,11 @@ const defaultDeps: ReminderSendDeps = {
   hold: (taskId, text) => holdMessage(taskId, text) !== null,
 };
 
-/** Where it went: to the session now, or into the outbox. */
+/**
+ * Where it went: to the session now, or into the outbox. A trigger's card
+ * (#448, TriggerCard.tsx) sends its draft through this too: the same rule for
+ * a card's Send, whatever the card is.
+ */
 export async function sendReminderText(
   task: Pick<Task, 'id' | 'status'>,
   text: string,

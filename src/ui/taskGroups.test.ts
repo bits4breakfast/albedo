@@ -365,3 +365,19 @@ describe('Stopped on an Error (#338)', () => {
     expect(groupOf(task(), facts())).toBe('quiet');
   });
 });
+
+describe('a trigger card waiting (#448)', () => {
+  it('is Needs You, above Running, Done and a merged PR -- the merge is often what fired it', () => {
+    expect(groupOf(task(), facts({ trigger: true }))).toBe('blocked');
+    expect(groupOf(task({ status: 'running' }), facts({ trigger: true }))).toBe('blocked');
+    expect(groupOf(task({ status: 'done' }), facts({ trigger: true }))).toBe('blocked');
+    expect(groupOf(task(), facts({ trigger: true, pr: pr('merged', '2026-11-19T14:02:00Z') }))).toBe('blocked');
+    expect(groupOf(task({ status: 'idle', apiError: 'overloaded' }), facts({ trigger: true }))).toBe('blocked');
+  });
+
+  it('is never an archived task’s, and none (or absent) changes nothing', () => {
+    expect(groupOf(task({ status: 'archived' }), facts({ trigger: true }))).toBe('archived');
+    expect(groupOf(task(), facts({ trigger: false, pr: pr('merged', '2026-11-19T14:02:00Z') }))).toBe('done');
+    expect(groupOf(task({ status: 'running' }), facts())).toBe('active');
+  });
+});
