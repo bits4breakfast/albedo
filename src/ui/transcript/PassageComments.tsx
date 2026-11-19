@@ -4,9 +4,10 @@
  *  - A selection inside one message -- yours, Claude's, a tool's output, a
  *    code block -- shows Comment and Copy by its end. A selection across two
  *    messages offers Copy only: a comment quotes one passage of one row.
- *  - Comment, or ⌘', opens a field under the passage, which stays marked
- *    while it is open. Add (⌘↩) keeps the comment with the task's draft
- *    (drafts.ts); nothing is sent. Cancel or Esc drops it.
+ *  - Comment, or ⇧⌘C (#456, `isCommentKey`), opens a field under the
+ *    passage, which stays marked while it is open. Add (⌘↩) keeps the
+ *    comment with the task's draft (drafts.ts); nothing is sent. Cancel or
+ *    Esc drops it.
  *  - Every passage with a comment waiting stays marked, and its row shows how
  *    many it has. A click on a mark shows its comments under the line, to
  *    read, edit or remove (#434, PassagePopover.tsx); the marks are ranges,
@@ -93,6 +94,35 @@ export function codeTarget(
   const found = anchorBlock(fileLines(text), block, lines[0]!.line);
   if (!found.ok) return { kind: 'passage', why: 'These lines are not in the file as it is now, so this comments on the passage.' };
   return { kind: 'code', path, lineStart: found.offset + 1, lineEnd: found.offset + block.length, anchorText: block.join('\n') };
+}
+
+/**
+ * ⇧⌘C, Comment on the selected text (#456): left hand, beside ⇧⌘S (Send To
+ * Send), while the right one is still on the mouse that made the selection.
+ * It replaced ⌘', which needed the right hand.
+ *
+ * Matched on the physical key, `code` `KeyC`, as editorKeys.ts does: Shift
+ * makes `key` "C", and another layout can put a different letter there.
+ * Command and Shift, nothing else: Control is refused (Ctrl+Shift+C is a
+ * terminal's copy off a Mac) and so is Option, because ⌥⇧⌘C is the Editor's
+ * Copy Path. An input method mid-composition keeps the key, as
+ * `taskArrowStandsDown` does, and so does auto-repeat: one field per press.
+ *
+ * Where it lives: only the transcript answers it here. In the Editor ⇧⌘C is
+ * Copy Full Path (PhpStorm's), and FileEditor hears it on the window in the
+ * capture phase and stops it while it is on screen; the Editor and the
+ * Transcript are sibling tabs that App hides in turn, so at most one of them
+ * is on screen, and each also checks that it is. Plain ⌘C is not this key
+ * and stays the native copy (the Edit menu's). Nothing else binds ⇧⌘C: not
+ * the app keymap (`comboOf`), the native menu (Tauri's default, with ⌘Q and
+ * ⌘W), CodeMirror's keymaps, a terminal (xterm sends no Command combo to the
+ * pty) or any other keydown listener. The Review Guide's diffs keep ⌥⌘M.
+ */
+export function isCommentKey(
+  e: Pick<KeyboardEvent, 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'repeat' | 'isComposing' | 'keyCode'>,
+): boolean {
+  if (e.isComposing || e.keyCode === 229 || e.repeat) return false;
+  return e.code === 'KeyC' && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey;
 }
 
 const ROW = '[data-message-id]';
@@ -328,17 +358,23 @@ export function PassageComments({
     return true;
   }, [scrollRef, taskId, readFile, relativeOf]);
 
-  // ⌘': the bar's Comment, from the keyboard. Command only, matched on the
-  // physical key too (`code`), so a layout that puts ' elsewhere still has it.
+  // ⇧⌘C: the bar's Comment, from the keyboard (#456; see `isCommentKey`).
+  // Bubble phase on the window, and only while this transcript is on screen:
+  // a selection left in it behind the Editor, Files or Guide tab is not one
+  // anybody is looking at. The Editor's ⇧⌘C (Copy Full Path) is heard first,
+  // in the capture phase, and stopped there while the editor is on screen.
+  // Prevented only when a field opened: with no usable selection the key
+  // goes on untouched.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.code !== 'Quote' && e.key !== "'") return;
+      if (!isCommentKey(e)) return;
+      const scroller = scrollRef.current;
+      if (!scroller || scroller.closest('[hidden]') !== null) return;
       if (openField()) e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openField]);
+  }, [openField, scrollRef]);
 
   const add = () => {
     if (!field || taskId === null || text.trim().length === 0) return;
@@ -534,8 +570,17 @@ export function PassageComments({
           onMouseDown={(e) => e.preventDefault()}
         >
           {picked.messageId !== null && taskId !== null ? (
-            <button type="button" className="tx-sel-btn" onClick={() => void openField()} title="Comment on this passage (⌘')">
-              Comment
+            <button
+              type="button"
+              className="tx-sel-btn"
+              onClick={() => void openField()}
+              title="Comment on this passage (⇧⌘C)"
+              aria-keyshortcuts="Meta+Shift+C"
+            >
+              Comment{' '}
+              <span className="tx-cmt-key" aria-hidden="true">
+                ⇧⌘C
+              </span>
             </button>
           ) : null}
           <button

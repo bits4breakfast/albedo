@@ -77,7 +77,7 @@ function selectRows(from: string, to: string) {
   sel.addRange(range);
 }
 
-const commentKey = () => fireEvent.keyDown(window, { key: "'", code: 'Quote', metaKey: true });
+const commentKey = () => fireEvent.keyDown(window, { key: 'C', code: 'KeyC', metaKey: true, shiftKey: true });
 
 describe('codeTarget', () => {
   const lines = [

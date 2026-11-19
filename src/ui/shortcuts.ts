@@ -284,7 +284,7 @@ export type Gesture =
   | 'editor mod+alt+m'
   | 'transcript mod+alt+arrowdown'
   | 'transcript arrowup'
-  | "transcript mod+'"
+  | 'transcript mod+shift+c'
   | 'new-task mod+enter'
   | 'guide mod+enter'
   | 'guide alt+arrows'
@@ -370,7 +370,11 @@ export const SHORTCUTS: readonly ShortcutDoc[] = [
     keys: '⌥⌘↓',
     description: 'Transcript: Jump to the Latest Message (not while typing)',
   },
-  { combo: "transcript mod+'", keys: '⌘\'', description: 'Transcript: Comment on the Selected Text (inside one message)' },
+  {
+    combo: 'transcript mod+shift+c',
+    keys: '⇧⌘C',
+    description: 'Transcript: Comment on the Selected Text (inside one message)',
+  },
   { combo: 'guide alt+arrows', keys: '⌥↑ / ⌥↓', description: 'Review Guide: Previous / Next Group' },
   { combo: 'guide arrows', keys: '↑ / ↓', description: 'Review Guide: Previous / Next File in the Group' },
   { combo: 'guide alt+enter', keys: '⌥↩', description: 'Review Guide: Mark the Group Reviewed and Go to the Next' },
