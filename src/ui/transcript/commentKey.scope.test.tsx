@@ -8,7 +8,7 @@
  * a hidden tab (the Files or Review Guide tab on screen).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import type { Task } from '../../types';
 
@@ -155,7 +155,8 @@ function press(init: KeyboardEventInit = {}): KeyboardEvent {
   act(() => void window.dispatchEvent(e));
   return e;
 }
-const field = () => screen.queryByRole('textbox', { name: 'Comment on the selected passage' });
+/** The comment field, on screen or not: `queryByRole` would skip one opened inside a hidden panel. */
+const field = () => document.querySelector('.tx-cmt-field');
 
 describe('⇧⌘C: the transcript comments, the Editor copies the path (#456)', () => {
   it('Transcript tab, text selected in it: opens the comment field and copies nothing', async () => {
