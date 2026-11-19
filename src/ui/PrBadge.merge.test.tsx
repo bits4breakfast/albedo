@@ -180,3 +180,55 @@ describe('approved, but not mergeable yet (#236)', () => {
     expect(container.querySelector('.pr-action, .pr-reason')).toBeNull();
   });
 });
+
+describe('a trigger card’s Squash and Merge… (#448)', () => {
+  it('opens this same dialog, only for its task and only while the PR is ready; nothing merges until it is confirmed', async () => {
+    const { __resetTriggerStore, addTriggerCard, requestTriggerMerge, triggerCardsOf } = await import('../triggers/store');
+    const { cardFor } = await import('../triggers/facts');
+    __resetTriggerStore();
+    const card = cardFor(
+      { event: 'approved', prNumber: 21, prTitle: 'Fix login retry', prUrl: 'https://github.com/example/shop/pull/21', sha: 'aaaaaaa1', approvers: ['alice'], checks: 1 },
+      'suggest',
+      '',
+      1,
+    );
+    addTriggerCard(task.id, card);
+
+    state.pr = pr({ mergeState: 'BLOCKED' });
+    const view = render(<PrBadge task={task} />);
+    expect(requestTriggerMerge(task.id)).toBe(false);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    state.pr = pr();
+    view.rerender(<PrBadge task={task} />);
+    expect(requestTriggerMerge(99)).toBe(false);
+    expect(requestTriggerMerge(task.id)).toBe(true);
+    const dialog = await screen.findByRole('dialog', { name: 'Squash and Merge PR #21?' });
+    expect(mergePr).not.toHaveBeenCalled();
+    expect(triggerCardsOf(task.id)).toHaveLength(1);
+
+    mergePr.mockResolvedValue({ ok: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Squash and Merge' }));
+    await waitFor(() => expect(dialog.isConnected).toBe(false));
+    expect(mergePr).toHaveBeenCalledTimes(1);
+    // Merged: the card that suggested it is done.
+    expect(triggerCardsOf(task.id)).toHaveLength(0);
+  });
+
+  it('a merge GitHub refused leaves the card', async () => {
+    const { __resetTriggerStore, addTriggerCard, triggerCardsOf } = await import('../triggers/store');
+    const { cardFor } = await import('../triggers/facts');
+    __resetTriggerStore();
+    addTriggerCard(
+      task.id,
+      cardFor({ event: 'approved', prNumber: 21, prTitle: 't', prUrl: 'u', sha: 'aaaaaaa1', approvers: [], checks: 1 }, 'suggest', '', 1),
+    );
+    state.pr = pr();
+    mergePr.mockResolvedValue({ ok: false, message: 'Base branch was modified.' });
+    render(<PrBadge task={task} />);
+    fireEvent.click(mergeButton()!);
+    fireEvent.click(screen.getByRole('button', { name: 'Squash and Merge' }));
+    expect(await screen.findByText(/Base branch was modified/)).toBeTruthy();
+    expect(triggerCardsOf(task.id)).toHaveLength(1);
+  });
+});

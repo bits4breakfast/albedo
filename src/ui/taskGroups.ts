@@ -14,6 +14,8 @@
  *
  *   Archived
  *   Needs You        blocked
+ *   Needs You        a trigger's card waits on you (#448): a PR event your
+ *                    project turned on, until you Send, act or Skip
  *   Stopped on an    idle, and its last turn stopped on an API error
  *   Error            (`Task.apiError`, #338): it waits on you too
  *   Running          running
@@ -137,6 +139,11 @@ export interface GroupFacts {
    * Absent reads as not reviewing.
    */
   reviewing?: boolean;
+  /**
+   * A trigger's card waits on you (#448, triggers/store.ts). Absent reads as
+   * none.
+   */
+  trigger?: boolean;
 }
 
 /** A turn ended after the task was last open. Never opened: any finish. */
@@ -212,6 +219,9 @@ export function stoppedOnError(task: Pick<Task, 'status' | 'apiError'>): boolean
 export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt' | 'apiError'>, facts: GroupFacts): GroupKey {
   if (task.status === 'archived') return 'archived';
   if (task.status === 'blocked') return 'blocked';
+  // Above Running and Done: a card is always seen, whatever the session is
+  // doing and even once the PR is merged -- the merge is often what fired it.
+  if (facts.trigger === true) return 'blocked';
   if (stoppedOnError(task)) return 'errored';
   if (task.status === 'running') return 'active';
   if (task.status === 'done' || prMerged(facts.pr)) return 'done';

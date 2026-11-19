@@ -42,6 +42,7 @@ import { formatDuration } from '../../lib/duration';
 import PromptCard from './PromptCard';
 import { PreviewCard } from '../preview/PreviewCard';
 import { DeletionCard } from './DeletionCard';
+import { TriggerCards } from '../triggers/TriggerCard';
 import { PreviewViewerHost } from '../preview/previewViewer';
 import { RemoteMenuNotice } from './RemoteMenuNotice';
 import ReminderCards from '../reminders/ReminderCard';
@@ -650,6 +651,8 @@ export function TranscriptPane({
       {taskId !== null ? <PreviewCard taskId={taskId} onAnswerInTerminal={onAnswerInTerminal} /> : null}
       {/* A comment on GitHub the session asks to delete (#427): its call waits on it. */}
       {taskId !== null ? <DeletionCard taskId={taskId} /> : null}
+      {/* A PR event your project turned on (#448): a draft to send, or an action to take. Nothing runs without its click. */}
+      {taskId !== null ? <TriggerCards taskId={taskId} status={status} /> : null}
       {/* A kept version, opened from its chip: read only, over the pane. */}
       <PreviewViewerHost taskId={taskId} />
       {/* Remote Control's menu, up in the terminal with nothing written (#343). */}

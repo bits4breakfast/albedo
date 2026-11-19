@@ -84,6 +84,8 @@ import { requestChecks, useCiNotices, useCiNotifyEnabled } from './ui/ciNotice';
 import { useKeepAwake, useKeepAwakeEnabled } from './ui/keepAwake';
 import { useGroupToolCalls } from './ui/transcript/groupToolCalls';
 import { useReviewNotices } from './ui/reviewNotice';
+import { useTriggers } from './triggers/useTriggers';
+import { useTriggerBoxWatch } from './ui/triggers/useTriggerBoxWatch';
 import { fetchPrStatus } from './gh/gh';
 import type { PrStatus } from './gh/prStatus';
 import { noteShownTask } from './capture/draftRemovals';
@@ -477,6 +479,10 @@ export default function App() {
   usePendingPrWatch(prTasks);
   useCiNotices(tasks, selectedId);
   useReviewNotices(tasks, selectedId);
+  // Per-project triggers (#448): a PR event your project turned on becomes a
+  // card waiting on you. The same PR answers; nothing is sent or merged here.
+  useTriggers(tasks);
+  useTriggerBoxWatch();
   const [ciNotify, setCiNotify] = useCiNotifyEnabled();
   // No idle sleep and no App Nap while tasks run (#283); the count for the status strip.
   const [keepAwake, setKeepAwake] = useKeepAwakeEnabled();
