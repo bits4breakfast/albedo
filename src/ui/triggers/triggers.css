@@ -1,0 +1,71 @@
+/* A trigger's card (#448, TriggerCard.tsx). The frame is the "waiting on you"
+   card's (.tx-prompt, on --prompt-bg, transcript.css); only the drafted
+   message, the why line and the time are new.
+
+   Measured, light / dark (WCAG 2.x), the dark values the same in both dark
+   blocks:
+     card     --prompt-bg ground:   --text 15.83 / 13.51, --muted 6.82 / 7.15,
+                                    --faint 5.67 / 5.56
+     message  --panel-inset ground: --text-strong 19.92 / 18.16, disabled
+                                    --faint 6.09 / 6.36 (the same ground and
+                                    tokens as .pc-option, promptCard.css)
+   Edges: --border-strong 3.82 / 3.60 against --prompt-bg (non-text, 3:1).
+   No new surface, no tint, no alpha, no opacity. */
+
+.tg-meta {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.tg-why {
+  margin-top: 2px;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.tg-msg {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  color: var(--text-strong);
+  background: var(--panel-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  resize: vertical;
+  /* The body scrolls (.pc-body); the field is not a second scroller until it is long. */
+  max-height: 16em;
+}
+.tg-msg:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.tg-msg[disabled] { color: var(--faint); }
+
+.tg-actions { justify-content: flex-end; }
+.tg-note {
+  margin-right: auto;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+/* --- the sheet in Projects… (TriggersSheet.tsx) -----------------------------
+   On the modal's --panel, light / dark: --text-strong 19.43 / 17.20, --muted
+   7.15 / 7.74, --faint (placeholders) 5.94 / 6.02. The segmented control is
+   the app's own (.seg, styles.css): --muted on --panel-chrome 6.50 / 7.31,
+   --text-strong on --seg-on 19.92 / 14.45. */
+.tg-lead { margin: 0 0 6px; font-size: var(--fs-sm); color: var(--muted); }
+.tg-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.tg-ev { font-weight: 500; color: var(--text-strong); }
+.tg-row > .wt-textarea.tg-template { grid-column: 1 / -1; min-height: 4.5em; }
+.tg-row > .tg-hint { grid-column: 1 / -1; margin-top: 0; }

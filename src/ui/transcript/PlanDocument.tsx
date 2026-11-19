@@ -26,6 +26,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import { findPassage, offsetOf, setHighlight, squeeze } from './passages';
+import { trimRange } from './selectionRange';
 import {
   addPlanComment,
   editPlanComment,
@@ -58,12 +59,23 @@ interface Pin {
   numbers: number[];
 }
 
-/** The selection, when all of it is inside `root` and holds text. */
+/**
+ * The selection, when all of it is inside `root` and holds text.
+ *
+ * Its range is trimmed first (#451, as PassageComments does since #449): a
+ * triple click ends at the next block's first selectable position -- the
+ * next paragraph's start, or past the document altogether for its last
+ * block -- so read as is, the bar sat under the wrong line, or the last
+ * block was refused. The containment test, the bar's position, the quote's
+ * offset, its highlight and the box's position all read the trimmed copy;
+ * the live selection is left alone. A drag inside the text is not moved.
+ */
 function selectionIn(root: HTMLElement): { range: Range; text: string } | null {
   const sel = document.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
-  const range = sel.getRangeAt(0);
+  const { range } = trimRange(sel.getRangeAt(0));
   if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  // The browser's text; the quote drops the line break a triple click adds (openField).
   const text = sel.toString();
   return squeeze(text).length === 0 ? null : { range, text };
 }

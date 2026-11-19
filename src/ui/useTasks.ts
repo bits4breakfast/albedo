@@ -29,6 +29,7 @@ import { noteQuestion, noteStatusChange } from './attention';
 import { keepRequestsFor } from './requestQueue';
 import { dropDraft, keepDraftsFor } from './transcript/drafts';
 import { forgetQueuedCi, keepQueuedCiFor } from './transcript/ciFailure';
+import { forgetTriggers, keepTriggersFor } from '../triggers/store';
 import { keepOutboxFor } from './transcript/outbox';
 import { putBackWhereNoDraftAtStartup } from './transcript/heldInBox';
 import { noteTaskSessions } from './transcript/turn';
@@ -398,6 +399,7 @@ export function useTasks(): UseTasksResult {
       putBackWhereNoDraftAtStartup();
       keepRequestsFor(live);
       keepQueuedCiFor(live);
+      keepTriggersFor(live, readStartedAt);
       setLoadError(null);
     } catch (err) {
       if (!aliveRef.current) return;
@@ -436,6 +438,7 @@ export function useTasks(): UseTasksResult {
       applyTask(id, { status: 'archived', ...NO_API_ERROR });
       dropDraft(id);
       forgetQueuedCi(id);
+      forgetTriggers(id);
       // On failure the overlay is dropped, not the status reverted: archiveTask
       // flips the row before purging, so a failure may or may not have
       // archived, and a reload shows whichever is true.

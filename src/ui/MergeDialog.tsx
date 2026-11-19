@@ -26,9 +26,11 @@ export interface MergeDialogProps {
   task: Task;
   pr: PrStatus;
   onClose: () => void;
+  /** GitHub merged it: called before `onClose`, only on success. */
+  onMerged?: () => void;
 }
 
-export default function MergeDialog({ task, pr: live, onClose }: MergeDialogProps) {
+export default function MergeDialog({ task, pr: live, onClose, onMerged }: MergeDialogProps) {
   // The PR as it was when the dialog opened: what you confirm is what merges.
   // A push that lands meanwhile changes the head, and gh's
   // --match-head-commit then refuses instead of merging unseen commits.
@@ -76,6 +78,7 @@ export default function MergeDialog({ task, pr: live, onClose }: MergeDialogProp
       void refreshPrStatus(task, { force: true });
       if (out.ok) {
         if (out.branchNotDeleted) console.warn('[merge] merged; the branch was not deleted:', out.branchNotDeleted);
+        onMerged?.();
         onClose();
       } else {
         setError(out.message);

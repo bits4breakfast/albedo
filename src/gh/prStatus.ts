@@ -79,6 +79,12 @@ export interface PrStatus {
   headSha: string;
   mergedAt: string | null;
   /**
+   * The commit a merge made on the base (`mergeCommit.oid`), for a merged PR
+   * (#448: a trigger's draft names it). Optional, like `reviews`: only the
+   * GraphQL answer carries it, and a hand-built status need not.
+   */
+  mergeCommit?: string | null;
+  /**
    * GitHub's `reviewDecision`, or -- where no branch rule asks for reviews and
    * GitHub gives none -- what the latest reviews say (see `reviewOf`).
    */
@@ -386,7 +392,7 @@ export const PR_QUERY = `query PrForBranch($owner: String!, $repo: String!, $bra
     pullRequests(headRefName: $branch, first: 10, orderBy: { field: CREATED_AT, direction: DESC }) {
       nodes {
         number url state isDraft title reviewDecision mergedAt headRefName baseRefName headRefOid
-        mergeable mergeStateStatus
+        mergeable mergeStateStatus mergeCommit { oid }
         author { __typename login }
         commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
           __typename
@@ -467,6 +473,7 @@ export function parsePrGraphql(stdout: string, branch: string): PrStatus | null 
     reviewRequests: nodesOf(node.reviewRequests).map((n) => obj(n)?.requestedReviewer),
   });
   if (!pr) return null;
+  if (pr.state === 'merged') pr.mergeCommit = str(obj(node.mergeCommit)?.oid);
   // Threads matter while the PR is up for review; after that, nothing reads them.
   pr.reviewThreads = pr.state === 'open' || pr.state === 'draft' ? threadsOf(node.reviewThreads) : null;
   return pr;

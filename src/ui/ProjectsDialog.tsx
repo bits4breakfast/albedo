@@ -44,6 +44,7 @@ import { PROMPT_PLACEHOLDERS, fillPromptTemplate } from '../lib/issueKey';
 import { nameTask } from '../git/slug';
 import { readHiddenProjectIds, unhideProjectId, writeLastProjectId } from './projectPrefs';
 import { GuideContextField } from '../guide/GuideContext';
+import { TriggersField } from './triggers/TriggersSheet';
 import './worktree.css';
 
 export interface ProjectsDialogProps {
@@ -636,6 +637,9 @@ export function ProjectsDialog({
                 }}
                 onTest={() => void testCommand()}
               />
+
+              {/* Triggers (#448), beside CI Details: their own file and sheet, saved there, not with this form. */}
+              <TriggersField projectId={draft.id} projectName={draft.name.trim() || 'this project'} busy={busy} />
 
               <div className="wt-field">
                 <label className="wt-label" htmlFor="wt-proj-base">
