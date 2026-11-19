@@ -1192,23 +1192,44 @@ ol.tx-md-list { list-style-type: decimal; }
    column on a code block. Nothing hover-revealed and no gap: #243 showed it
    only while the code was hovered, 1px to the right, and that pixel ended the
    hover before the pointer got there, so it could never be clicked.
-   An inline-flex box, so the segment stretches to the chip's height; the
-   wrap itself carries no ground, so a path chip's hover edge stays its own. */
+   Inline boxes only, never flex, grid or block (#452): #243's inline-flex
+   blockified the code, and a copied selection broke a line before and after
+   every inline code span. The wrap and the code are inline-blocks, which a
+   selection's text runs straight through. The wrap keeps 20px on its right
+   for the segment, positioned against it top to bottom, so it is as tall as
+   the chip however many lines a long path wraps to.
+   The wrap sits on the line by the code's FIRST line, as inline-flex did. An
+   inline-block takes its last line's baseline, and WebKit (the app's engine)
+   has no baseline-source, so the code hangs from the wrap's top
+   (vertical-align: top) and the wrap's own strut stands in for its first
+   line: the code's font, and a line height of the code's 1.3 plus its 1px
+   padding and 1px border above and below. The wrap carries no ground, so a
+   path chip's hover edge stays its own. */
 .tx-md-code-wrap {
-  display: inline-flex;
-  align-items: stretch;
+  display: inline-block;
+  position: relative;
   max-width: 100%;
+  padding-right: 20px;
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  line-height: calc(1.3em + 4px);
   vertical-align: baseline;
 }
 .tx-md-code-wrap > .tx-md-code {
-  min-width: 0;
+  display: inline-block;
+  max-width: 100%;
+  font-size: 1em;
   line-height: 1.3;
+  vertical-align: top;
   overflow-wrap: anywhere;
   border-right: 0;
   border-radius: 4px 0 0 4px;
 }
 .tx-copy-inline {
-  flex: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 20px;
   height: auto;
   background: var(--panel-chrome);
