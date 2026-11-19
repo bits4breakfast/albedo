@@ -211,3 +211,91 @@ describe('copy (#242)', () => {
     expect(button.hasAttribute('data-done')).toBe(false);
   });
 });
+
+describe('the inline button stays with its chip, and never over anything else (#454)', () => {
+  const FRAME = 20;
+  let restore: (() => void) | null = null;
+  /** jsdom has no hit-testing: stand one in, and say what is on top. */
+  function hitTest(top: () => Element | null): void {
+    const had = Object.getOwnPropertyDescriptor(document, 'elementFromPoint');
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => top() });
+    restore = () => {
+      if (had) Object.defineProperty(document, 'elementFromPoint', had);
+      else delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+    };
+  }
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  it('goes as soon as something opens over the strip, with no pointer move', () => {
+    vi.useFakeTimers();
+    layOut();
+    const { container } = render(<Markdown text={'run `npm test` now'} />);
+    const code = container.querySelector('.tx-md-code')!;
+    const popover = document.createElement('div');
+    let open = false;
+    // The button is fixed above the page: a hit test sees it first unless it
+    // is let through. Under it: the popover once open, else the chip.
+    hitTest(() => {
+      const b = overlay();
+      if (b && b.style.pointerEvents !== 'none') return b;
+      return open ? popover : code;
+    });
+    fireEvent.pointerOver(code, { clientX: 210 });
+    act(() => vi.advanceTimersByTime(FRAME));
+    expect(overlay()).not.toBeNull();
+    open = true; // e.g. a mention popover or a comment field, pointer still
+    act(() => vi.advanceTimersByTime(FRAME));
+    expect(overlay()).toBeNull();
+    expect(code.closest('p')).not.toBeNull(); // the text is untouched
+  });
+
+  it('goes when its chip leaves the page', () => {
+    vi.useFakeTimers();
+    layOut();
+    const { container, rerender } = render(<Markdown text={'run `npm test` now'} />);
+    fireEvent.pointerOver(container.querySelector('.tx-md-code')!, { clientX: 210 });
+    expect(overlay()).not.toBeNull();
+    rerender(<Markdown text={'no code any more'} />);
+    act(() => vi.advanceTimersByTime(FRAME));
+    expect(overlay()).toBeNull();
+  });
+
+  it('is cut to what a scrolling ancestor shows of the chip', () => {
+    // The pane shows y 0..48; the chip runs 40..60: its last 12px are cut.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this.classList.contains('tx-md-code-wrap')) return new DOMRect(200, 40, 100, 20);
+      if ((this as HTMLElement).dataset?.pane === '') return new DOMRect(0, 0, 1000, 48);
+      return new DOMRect(0, 0, 1000, 800);
+    });
+    const { container } = render(
+      <div data-pane="" style={{ overflowY: 'auto' }}>
+        <Markdown text={'run `npm test` now'} />
+      </div>,
+    );
+    fireEvent.pointerOver(container.querySelector('.tx-md-code')!, { clientX: 210 });
+    const b = overlay()!;
+    expect([b.style.top, b.style.height]).toEqual(['40px', '20px']);
+    expect(b.style.clipPath).toBe('inset(0px 0px 12px 0px)');
+  });
+
+  it('a press on it keeps focus and the reader’s selection, and is no one else’s press', () => {
+    layOut();
+    const onPress = vi.fn();
+    const { container } = render(
+      <div onMouseDown={onPress}>
+        <input aria-label="elsewhere" />
+        <Markdown text={'run `npm test` now'} />
+      </div>,
+    );
+    const input = container.querySelector('input')!;
+    input.focus();
+    fireEvent.pointerOver(container.querySelector('.tx-md-code')!, { clientX: 210 });
+    // false: the default -- focusing the button, moving the selection -- is prevented.
+    expect(fireEvent.mouseDown(overlay()!)).toBe(false);
+    expect(onPress).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(input);
+  });
+});

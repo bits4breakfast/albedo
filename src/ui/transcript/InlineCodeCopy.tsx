@@ -60,9 +60,13 @@ function stripOf(e: { target: EventTarget | null; clientX: number; currentTarget
 
 /**
  * Where the button goes: over the wrap's strip, in viewport coordinates, cut
- * to what every scrolling ancestor shows. Null when none of it is visible.
+ * to what every scrolling ancestor shows. Null when none of it is visible, or
+ * when something else is drawn over it (a sticky header, a popover, a
+ * comment field): the button is fixed above the whole page, so it would
+ * paint over that. `button`, when it is already showing, is let through for
+ * the read (`pointer-events: none`), so what is found is what lies under it.
  */
-export function placeOver(wrap: HTMLElement): Place | null {
+export function placeOver(wrap: HTMLElement, button: HTMLElement | null = null): Place | null {
   const r = wrap.getBoundingClientRect();
   const left = r.right - STRIP_PX;
   let top = r.top;
@@ -79,12 +83,7 @@ export function placeOver(wrap: HTMLElement): Place | null {
     right = Math.min(right, c.right);
   }
   if (bottom <= top || right <= l) return null;
-  // Something drawn over the strip (a sticky header, a popover) keeps it: the
-  // button would land on top of that, so the strip stays as CSS draws it.
-  if (typeof document.elementFromPoint === 'function') {
-    const hit = document.elementFromPoint((l + right) / 2, (top + bottom) / 2);
-    if (hit !== null && !wrap.contains(hit) && !hit.closest('.tx-copy-inline')) return null;
-  }
+  if (covered(wrap, button, (l + right) / 2, (top + bottom) / 2)) return null;
   const cut = [top - r.top, r.right - right, r.bottom - bottom, l - left];
   return {
     top: r.top,
@@ -93,6 +92,22 @@ export function placeOver(wrap: HTMLElement): Place | null {
     clip: cut.some((n) => n > 0) ? `inset(${cut.map((n) => `${Math.max(0, n)}px`).join(' ')})` : undefined,
   };
 }
+
+/** Whether the topmost thing at (x, y), under `button`, is anything but the chip. */
+function covered(wrap: HTMLElement, button: HTMLElement | null, x: number, y: number): boolean {
+  if (typeof document.elementFromPoint !== 'function') return false;
+  const was = button?.style.pointerEvents ?? '';
+  if (button) button.style.pointerEvents = 'none';
+  try {
+    const hit = document.elementFromPoint(x, y);
+    return hit !== null && !wrap.contains(hit);
+  } finally {
+    if (button) button.style.pointerEvents = was;
+  }
+}
+
+const samePlace = (a: Place, b: Place): boolean =>
+  a.top === b.top && a.left === b.left && a.height === b.height && a.clip === b.clip;
 
 export interface InlineCodeCopy {
   /** For the Markdown root: they find the chip the pointer is on. */
@@ -126,7 +141,7 @@ export function useInlineCodeCopy(): InlineCodeCopy {
 
   const show = useCallback(
     (w: HTMLElement, x: number) => {
-      const p = placeOver(w);
+      const p = placeOver(w, buttonRef.current);
       if (p === null) return;
       overRef.current = true;
       if (wrapRef.current !== w) setDone(null);
@@ -215,26 +230,23 @@ export function useInlineCodeCopy(): InlineCodeCopy {
   }, [done, hide]);
 
   // Anything can move the chip while the button is over it -- a scroll, a
-  // resized pane, a streamed reply growing above it -- and not all of them
-  // say so with an event. So while it shows, it checks once a frame: one
-  // rect read, and a new place only when that moved. A chip gone from the
-  // page takes the button with it.
+  // resized pane, a streamed reply growing above it -- or open something over
+  // it -- a comment field, a mention popover -- and not all of them say so
+  // with an event the button would see. So while it shows, it checks once a
+  // frame where the chip is and whether it is still the topmost thing there;
+  // a new place only when that moved. A chip covered, or gone from the page,
+  // takes the button with it.
   useEffect(() => {
     if (wrap === null) return;
-    let last = wrap.getBoundingClientRect();
+    let last: Place | null = null;
     let frame = requestAnimationFrame(function tick() {
-      if (!wrap.isConnected) {
+      const p = wrap.isConnected ? placeOver(wrap, buttonRef.current) : null;
+      if (p === null) {
         hide();
         return;
       }
-      const r = wrap.getBoundingClientRect();
-      if (r.top !== last.top || r.left !== last.left || r.width !== last.width || r.height !== last.height) {
-        last = r;
-        const p = placeOver(wrap);
-        if (p === null) {
-          hide();
-          return;
-        }
+      if (last === null || !samePlace(p, last)) {
+        last = p;
         setPlace(p);
       }
       frame = requestAnimationFrame(tick);
