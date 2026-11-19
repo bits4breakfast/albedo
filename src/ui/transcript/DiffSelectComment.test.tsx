@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Diff, DiffAnnotationsContext, selectedDiffRows, type DiffAnnotations } from './Diff';
 import { diffStrings } from '../../lib/diff';
+import { installUserSelectCss } from './userSelectSheet.testing';
 
 afterEach(() => {
   cleanup();
@@ -18,13 +19,11 @@ afterEach(() => {
 const OLD = ['keep 1', 'old 2', 'keep 3', 'keep 4', 'keep 5'].join('\n');
 const NEW = ['keep 1', 'new 2', 'new 2b', 'keep 3', 'keep 4', 'keep 5'].join('\n');
 
-function renderWith(pick = vi.fn()) {
+/** `pane`: the class of the pane it sits in, as the editor's Diff mode puts it (`ed-diff-scroll`). */
+function renderWith(pick = vi.fn(), pane?: string) {
   const annotate: DiffAnnotations = { after: () => null, picking: null, pick };
-  render(
-    <DiffAnnotationsContext.Provider value={annotate}>
-      <Diff diff={diffStrings(OLD, NEW, 'src/a.ts')} expand={{ oldText: OLD, newText: NEW }} layout="unified" />
-    </DiffAnnotationsContext.Provider>,
-  );
+  const diff = <Diff diff={diffStrings(OLD, NEW, 'src/a.ts')} expand={{ oldText: OLD, newText: NEW }} layout="unified" />;
+  render(<DiffAnnotationsContext.Provider value={annotate}>{pane ? <div className={pane}>{diff}</div> : diff}</DiffAnnotationsContext.Provider>);
   return pick;
 }
 
@@ -58,19 +57,19 @@ describe('selectedDiffRows', () => {
      A triple click on a row ends in the next row (#449). Measured in Blink
      (WebKit shares the code): at that row's code cell @0, after its line
      numbers and +/- mark, which are user-select: none. The app's stylesheet
-     is not loaded in jsdom, so its rule for them is added here and the real
-     computed-style check runs. `{next row, 0}` is kept too.
+     is not loaded in jsdom: its user-select rules are, read from the real
+     files (the shell's body { none }, the diff pane's { text }, the line
+     numbers' { none }), so the real computed-style check runs. `{next row,
+     0}` is kept too.
   */
   for (const [where, endOf] of [
     ["at the next row's code cell, after its line numbers and mark", (next: Element): [Node, number] => [next.querySelector('.tx-d-code')!, 0]],
     ['at offset 0 of the next row', (next: Element): [Node, number] => [next, 0]],
   ] as const) {
     it(`a triple-clicked row (#449), ending ${where}: one line, not the next too`, () => {
-      const sheet = document.createElement('style');
-      sheet.textContent = '.tx-d-n, .tx-d-mark { user-select: none; -webkit-user-select: none; }';
-      document.head.appendChild(sheet);
+      const uninstall = installUserSelectCss();
       try {
-        const pick = renderWith();
+        const pick = renderWith(vi.fn(), 'ed-diff-scroll');
         const cell = (t: string) => [...document.querySelectorAll('.tx-d-code')].find((c) => c.textContent === t)!;
         const row = cell('new 2').closest('.tx-d-row')!;
         const next = row.nextElementSibling!;
@@ -78,6 +77,7 @@ describe('selectedDiffRows', () => {
         // The next row is an added one: its mark is a +, text the trim must pass over.
         expect(next.querySelector('.tx-d-mark')?.textContent).toBe('+');
         expect(getComputedStyle(next.querySelector('.tx-d-n')!).getPropertyValue('user-select')).toBe('none');
+        expect(getComputedStyle(document.body).getPropertyValue('user-select')).toBe('none');
         const [node, offset] = endOf(next);
         const range = document.createRange();
         range.setStart(cell('new 2'), 0);
@@ -90,7 +90,7 @@ describe('selectedDiffRows', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Comment on Selected Line 2' }));
         expect(pick).toHaveBeenCalledWith(2, 2, true);
       } finally {
-        sheet.remove();
+        uninstall();
       }
     });
   }

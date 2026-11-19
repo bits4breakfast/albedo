@@ -34,20 +34,33 @@ function covered(range: Range, t: Text): { s: number; e: number } | null {
 }
 
 /**
- * Whether the user can select `t`: no element from it up has `user-select`
- * (or `-webkit-user-select`) `none`. The computed value is not inherited as
- * `none`, so every ancestor is asked.
+ * Whether the user can select `t`: the nearest element from it up with an
+ * explicit `user-select` (or `-webkit-user-select`) decides -- `none` no,
+ * anything else but `auto` yes. Not "any ancestor is none": the app's shell
+ * sets `body { user-select: none }` and the panes turn it back on
+ * (`.tx-pane { user-select: text }`), so every transcript text has a `none`
+ * above it. A browser computes the pane's value on its descendants and
+ * decides at the parent; jsdom, which computes no inheritance, walks up to
+ * the rule. With no explicit value anywhere, it is selectable.
  */
 function selectable(t: Text): boolean {
   const view = t.ownerDocument.defaultView;
   if (!view) return true;
   for (let el: Element | null = t.parentElement; el !== null; el = el.parentElement) {
     const css = view.getComputedStyle(el);
-    if (css.getPropertyValue('user-select') === 'none' || css.getPropertyValue('-webkit-user-select') === 'none') return false;
+    const vs = [css.getPropertyValue('user-select'), css.getPropertyValue('-webkit-user-select')];
+    if (vs.includes('none')) return false;
+    if (vs.some((v) => v !== '' && v !== 'auto')) return true;
   }
   return true;
 }
 
+/**
+ * Selected, non-blank, selectable text. Blank text is ruled out first, so a
+ * style is read only for a node that could end the walk: the walk stops at
+ * the first one that is selectable, a few nodes from the edge however long
+ * the range is.
+ */
 function hasText(t: Text, at: { s: number; e: number } | null): at is { s: number; e: number } {
   return at !== null && at.e > at.s && /\S/.test(t.data.slice(at.s, at.e)) && selectable(t);
 }

@@ -38,6 +38,7 @@ const { TranscriptPane } = await import('./TranscriptPane');
 const { __resetDrafts, addComment, commentsOf } = await import('./drafts');
 const { composeWithComments } = await import('./transcriptQuotes');
 const { findPassage, offsetOf, rowContent } = await import('./passages');
+const { installUserSelectCss } = await import('./userSelectSheet.testing');
 
 const T0 = new Date('2026-10-30T10:00:00Z').getTime();
 function msg(id: number, role: Message['role'], body: string): Message {
@@ -254,18 +255,16 @@ describe('a triple-clicked line (#449)', () => {
   });
 
   /*
-     The app's stylesheet is not loaded in jsdom: these are its user-select
-     rules (transcript.css), so the real computed-style check runs.
+     The app's stylesheet is not loaded in jsdom: its user-select rules are,
+     read from the real files -- the shell's body { none }, the pane's
+     { text }, the gutter's { none } -- so the real computed-style check runs.
   */
-  let sheet: HTMLStyleElement | null = null;
+  let uninstall: (() => void) | null = null;
   beforeEach(() => {
-    sheet = document.createElement('style');
-    sheet.textContent =
-      '.tx-gutter, .tx-md-pre-lang, .tx-copy, .tx-copy-status, .tx-d-n, .tx-d-mark { user-select: none; -webkit-user-select: none; }';
-    document.head.appendChild(sheet);
+    uninstall = installUserSelectCss();
   });
   afterEach(() => {
-    sheet?.remove();
+    uninstall?.();
     vi.restoreAllMocks();
   });
 
@@ -304,6 +303,9 @@ describe('a triple-clicked line (#449)', () => {
     const gutter = rowEl(2).querySelector(':scope > .tx-gutter')!;
     expect(gutter.textContent).toBe('You');
     expect(getComputedStyle(gutter).getPropertyValue('user-select')).toBe('none');
+    // The shell turns selection off app-wide, and the pane turns it back on.
+    expect(getComputedStyle(document.body).getPropertyValue('user-select')).toBe('none');
+    expect(getComputedStyle(document.querySelector('.tx-pane')!).getPropertyValue('user-select')).toBe('text');
     expect(gutter.compareDocumentPosition(rowContent(rowEl(2))) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

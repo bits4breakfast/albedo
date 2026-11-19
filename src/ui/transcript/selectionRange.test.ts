@@ -5,15 +5,25 @@
  * ends at offset 0 of the next block; a drag is left as it is.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { trimRange } from './selectionRange';
+import { installUserSelectCss } from './userSelectSheet.testing';
 
+// The app's own user-select rules (the shell's body { none }, the pane's { text }).
+let uninstall: () => void = () => {};
+beforeEach(() => {
+  uninstall = installUserSelectCss();
+});
 afterEach(() => {
+  uninstall();
+  vi.restoreAllMocks();
   document.body.innerHTML = '';
 });
 
+/** `html` inside a transcript pane, where the shell's `user-select: none` is turned back on. */
 function dom(html: string): HTMLElement {
   const root = document.createElement('div');
+  root.className = 'tx-pane';
   root.innerHTML = html;
   document.body.appendChild(root);
   return root;
@@ -80,6 +90,33 @@ describe('trimRange', () => {
     const t = trimRange(range(text(root, 'beta'), 0, root.querySelector('#c')!, 0)).range;
     expect(t.endContainer).toBe(text(root, 'beta'));
     expect(t.endOffset).toBe(4);
+  });
+
+  it('reads the nearest explicit user-select: the shell says none, the pane says text, a gutter says none again', () => {
+    expect(getComputedStyle(document.body).getPropertyValue('user-select')).toBe('none');
+    const root = dom('<div class="tx-row"><div class="tx-gutter">You</div><div class="tx-content"><p>one</p></div></div><p id="n">two</p>');
+    expect(getComputedStyle(root).getPropertyValue('user-select')).toBe('text');
+    // "You" is the gutter's: passed over. "one" is the pane's: the end lands there.
+    const t = trimRange(range(text(root, 'one'), 0, root.querySelector('#n')!, 0)).range;
+    expect(t.endContainer).toBe(text(root, 'one'));
+    // Outside any pane nothing is selectable: the range is left as it is.
+    const bare = document.createElement('div');
+    bare.innerHTML = '<p>one</p><p id="m">two</p>';
+    document.body.appendChild(bare);
+    const r = range(text(bare, 'one'), 0, bare.querySelector('#m')!, 0);
+    expect(trimRange(r).cut).toBe(false);
+  });
+
+  it('stops at the first selectable text: a long range costs a few style reads, not one per node', () => {
+    const paragraphs = Array.from({ length: 5000 }, (_, i) => `<p>paragraph ${i}</p>`).join('');
+    const none = 'style="user-select: none; -webkit-user-select: none"';
+    const root = dom(`<div>${paragraphs}</div><div><div ${none}>You</div><p id="next">next</p></div>`);
+    const reads = vi.spyOn(window, 'getComputedStyle');
+    const t = trimRange(range(text(root, 'paragraph 0'), 0, root.querySelector('#next')!, 0)).range;
+    expect(t.endContainer).toBe(text(root, 'paragraph 4999'));
+    expect(t.startContainer).toBe(text(root, 'paragraph 0'));
+    // "You" (its div decides), then "paragraph 4999" and "paragraph 0" (each decided at the pane).
+    expect(reads.mock.calls.length).toBeLessThanOrEqual(8);
   });
 
   it('moves a start at the very end of the block before forward', () => {
