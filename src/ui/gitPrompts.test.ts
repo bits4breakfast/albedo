@@ -47,8 +47,14 @@ describe('createPrPrompt', () => {
   it('targets the base and writes from the whole branch', () => {
     const p = createPrPrompt(task);
     expect(p).toContain('`albedo/fix-retry` into `main`');
-    expect(p).toContain('gh pr create --base main --head albedo/fix-retry');
+    expect(p).toContain('gh pr create --draft --base main --head albedo/fix-retry');
     expect(p).toContain('every commit on the branch');
+  });
+
+  it('asks for a draft, and leaves marking it ready to Albedo (#464)', () => {
+    const p = createPrPrompt(task);
+    expect(p).toContain('Open a draft pull request');
+    expect(p).toContain('Do not mark it ready for review');
   });
 });
 

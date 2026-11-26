@@ -4,7 +4,7 @@
  * Where the PR badge goes, a Create PR button stands in while there is none.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
@@ -31,11 +31,30 @@ vi.mock('./ChecksDialog', () => ({
 const wt = await import('../git/worktree');
 const { openExternal } = await import('../lib/openUrl');
 const { PrBadge, opensChecks } = await import('./PrBadge');
+const { onGuideRequest } = await import('../guide/openGuide');
+const { notePrRequested } = await import('../gh/draftReady');
+const { setReviewGateForTests, resetGateForTests } = await import('../guide/gate');
 const ci = await import('./ciNotice');
 const { __setAttentionBackend } = await import('./attention');
 
+/** A fresh in-memory store per test (REGRESSIONS: never the runtime's localStorage). */
+beforeEach(() => {
+  const data = new Map<string, string>();
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+    },
+  });
+  // Your own review is done (#464), unless a test says otherwise.
+  setReviewGateForTests(() => ({ kind: 'ready', total: 1 }));
+});
+
 afterEach(() => {
   cleanup();
+  resetGateForTests();
   ci.resetCiNoticesForTests();
   __setAttentionBackend(null);
   state.answered = true;
@@ -73,6 +92,55 @@ describe('PrBadge without a PR', () => {
     rerender(<PrBadge task={{ ...task, branch: 'empty' }} onCreatePr={() => {}} />);
     await waitFor(() => expect(wt.commitsOnBranch).toHaveBeenCalledWith('/r', 'main', 'empty'));
     expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
+  });
+});
+
+describe('PrBadge: review before Create PR (#464)', () => {
+  it('stands Review Changes in Create PR’s place, with how far along, and opens the Guide', async () => {
+    setReviewGateForTests(() => ({ kind: 'reviewing', reviewed: 4, total: 6 }));
+    const asked: number[] = [];
+    const off = onGuideRequest((id) => asked.push(id));
+    const onCreatePr = vi.fn();
+    render(<PrBadge task={task} onCreatePr={onCreatePr} />);
+    const review = await screen.findByRole('button', { name: 'Review Changes, 4 of 6' });
+    expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
+    fireEvent.click(review);
+    expect(asked).toEqual([task.id]);
+    expect(onCreatePr).not.toHaveBeenCalled();
+    off();
+  });
+
+  it('says out of date, or no guide', async () => {
+    setReviewGateForTests(() => ({ kind: 'stale', commitsSince: 1 }));
+    render(<PrBadge task={task} onCreatePr={() => {}} />);
+    expect((await screen.findByRole('button', { name: 'Review Changes, out of date' })).title).toMatch(/1 commit since/);
+    cleanup();
+    setReviewGateForTests(() => ({ kind: 'no-guide' }));
+    render(<PrBadge task={task} onCreatePr={() => {}} />);
+    expect(await screen.findByRole('button', { name: 'Review Changes, no guide' })).toBeTruthy();
+  });
+
+  it('a draft Create PR opened says when it opens for review, and nothing once done or failing', () => {
+    const draft = (checks: PrStatus['checks']): PrStatus => ({
+      number: 8, url: 'https://github.com/o/r/pull/8', title: 'x', state: 'draft', headRefName: 'feat', baseRefName: 'main',
+      headSha: 'abc', mergedAt: null, review: null, checks, lines: [],
+    });
+    notePrRequested(task.id, false);
+    state.pr = draft({ kind: 'pending', pending: 2, total: 3 });
+    const { rerender } = render(<PrBadge task={task} />);
+    expect(screen.getByText('Opens for review when checks pass')).toBeTruthy();
+    // The guide went out of date since: it waits on the review again.
+    setReviewGateForTests(() => ({ kind: 'stale', commitsSince: 1 }));
+    rerender(<PrBadge task={{ ...task }} />);
+    expect(screen.getByText('Opens for review once the guide is reviewed again')).toBeTruthy();
+    state.pr = draft({ kind: 'failing', failing: 1, total: 3 });
+    rerender(<PrBadge task={{ ...task }} />);
+    expect(screen.queryByText(/Opens for review/)).toBeNull();
+    // A draft Albedo did not ask for says nothing.
+    window.localStorage.removeItem('albedo.pr.draftReady');
+    state.pr = draft({ kind: 'pending', pending: 2, total: 3 });
+    rerender(<PrBadge task={{ ...task }} />);
+    expect(screen.queryByText(/Opens for review/)).toBeNull();
   });
 });
 

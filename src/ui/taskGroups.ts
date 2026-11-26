@@ -5,10 +5,10 @@
  * status of their own: the derived status (`capture/status.ts`), when the
  * session last handed control back, when the task was last open
  * (`Task.seenAt`), its PR as the PR store last saw it (checks, review
- * decision, review threads), whether a finished turn left work on the branch
- * (`git/reviewWork.ts`), and whether you have started reviewing it in the
- * Review Guide (`guide/store.ts`). No new channel, and nothing read from the
- * terminal.
+ * decision, review threads), whether the branch has work on it after its last
+ * finished turn (`git/reviewWork.ts`), and whether you have started reviewing
+ * it in the Review Guide (`guide/store.ts`). No new channel, and nothing read
+ * from the terminal.
  *
  * Highest first; the first that holds decides (#278):
  *
@@ -26,13 +26,20 @@
  *                    latest reviews: a change request outranks an approval)
  *   In Review        an open PR with changes requested, or with review threads
  *   Awaiting Review  an open PR with neither
- *   My Review        a Reviewed mark in its guide that still matches (#219),
- *                    and no PR up for review (none, a draft, or closed)
- *   Idle             everything else that is live
+ *   My Review        your own changes and no PR up for review (none, a
+ *                    draft, or closed), guide or not (#464): commits
+ *                    against the base or uncommitted changes, or an open
+ *                    draft; or a Reviewed mark in its guide that still
+ *                    matches (#219). It waits on your review and your
+ *                    Create PR; a draft stays here until Albedo marks it
+ *                    ready for review (gh/draftReady.ts)
+ *   Idle             everything else that is live: no changes, a chat
  *
  * "Open" is open and not a draft: once a PR is up for review, GitHub's state
  * decides, whatever the guide marks say. A chat has no branch and no PR, so
- * it never reaches the PR or review groups.
+ * it never reaches the PR or review groups. My Review waits for gh's first
+ * answer (`pr` not undefined), so a task whose PR is up for review is never
+ * shown there first.
  */
 
 import type { Task } from '../types';
@@ -169,13 +176,16 @@ export function hasWorkToReview(task: Pick<Task, 'kind'>, facts: Pick<GroupFacts
 }
 
 /**
- * Whether the list should ask git about this task's branch: an unseen finish
- * on a work task whose PR does not already answer. Asked once per finish.
+ * Whether the list should ask git about this task's branch: a finish on an
+ * idle work task whose PR does not already answer. Asked once per finish --
+ * seen or not since #464, which keeps a branch with changes and no PR in My
+ * Review: Ready to Review needs the answer for an unseen finish, My Review
+ * for every one.
  */
 export function wantsWorkProbe(task: Pick<Task, 'kind' | 'status' | 'seenAt'>, facts: GroupFacts): boolean {
   if (task.kind === 'chat' || task.status !== 'idle') return false;
   if (prOpen(facts.pr) || prMerged(facts.pr)) return false;
-  return unseenFinish(facts.finishedAt, task.seenAt);
+  return facts.finishedAt !== null;
 }
 
 /** Open and not a draft: up for review. */
@@ -233,6 +243,9 @@ export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt' | 'apiErro
   if (task.kind === 'chat') return 'quiet';
   if (prUpForReview(facts.pr)) return reviewStage(facts.pr);
   if (facts.reviewing === true) return 'mine';
+  // Your own changes, no PR up for review, guide or not (#464): your review
+  // and your Create PR are next. Once gh has answered, never before.
+  if (facts.pr !== undefined && hasWorkToReview(task, facts)) return 'mine';
   return 'quiet';
 }
 

@@ -34,7 +34,8 @@ const facts = (over: Partial<TaskMenuFacts> = {}): TaskMenuFacts => ({
 const pr = (state: PrStatus['state']): PrStatus =>
   ({ number: 1, url: 'u', title: 'p', state, headRefName: 'b', baseRefName: 'main', headSha: '', mergedAt: null, review: null, checks: { kind: 'none' }, lines: [] }) as PrStatus;
 
-function allActions(): Required<TaskActions> {
+/** Every action but Create PR without Review… (#464), which has a test of its own. */
+function allActions(): Required<Omit<TaskActions, 'createPrUnreviewed'>> {
   return {
     remind: vi.fn(),
     guide: vi.fn(),
@@ -87,6 +88,24 @@ describe('taskMenuItems', () => {
     expect(item.disabled).toBe(false);
     item.onSelect?.();
     expect(actions.updateReview).toHaveBeenCalledWith(review);
+  });
+
+  it('offers Create PR without Review… after Review Guide only while it applies, never on a chat or review task (#464)', () => {
+    const onUnreviewed = vi.fn();
+    const items = taskMenuItems(task(), facts({ prUnreviewed: true }), { ...allActions(), createPrUnreviewed: onUnreviewed }, () => {});
+    expect(shape(items).startsWith('rename remind guide create-pr-unreviewed / compact')).toBe(true);
+    const item = byId(items, 'create-pr-unreviewed')!;
+    expect(item.label).toBe('Create PR without Review…');
+    item.onSelect?.();
+    expect(onUnreviewed).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }));
+    // Not while the review is done (or there is a PR, or no work), nor without a handler.
+    const all = { ...allActions(), createPrUnreviewed: onUnreviewed };
+    expect(ids(taskMenuItems(task(), facts(), all))).not.toContain('create-pr-unreviewed');
+    expect(ids(taskMenuItems(task(), facts({ prUnreviewed: true }), allActions()))).not.toContain('create-pr-unreviewed');
+    const chat = task({ kind: 'chat', branch: '' });
+    expect(ids(taskMenuItems(chat, facts({ prUnreviewed: true }), all))).not.toContain('create-pr-unreviewed');
+    const review = task({ reviewUrl: 'https://github.com/acme/relay/pull/9' });
+    expect(ids(taskMenuItems(review, facts({ prUnreviewed: true }), all))).not.toContain('create-pr-unreviewed');
   });
 
   it('offers no Review Guide and no Move for a chat', () => {

@@ -129,6 +129,33 @@
 }
 .gd-banner > span { margin-right: auto; }
 
+/* Review before a PR (#464): where your review of your own branch stands,
+   under the toolbar. The review copy band's grounds and tiers (reviewupdate.css,
+   reviewGateContrast.test.ts), light | dark: on --info-band the title is
+   --text-strong 17.54 | 15.84 and the line --muted 6.46 | 7.13; out of date,
+   on --banner-bg, the title is --warn 6.90 | 8.51 and the line --muted
+   6.49 | 6.60. The buttons keep their own grounds: .gd-btn on --panel-raised,
+   the primary on --accent-btn. No opacity, no alpha. */
+.gd-gate {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 12px;
+  background: var(--info-band);
+  border-bottom: 1px solid var(--info-band-border);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.gd-gate[data-tone='warn'] {
+  background: var(--banner-bg);
+  border-bottom-color: var(--banner-border);
+}
+.gd-gate-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gd-gate-title { font-weight: 600; color: var(--text-strong); }
+.gd-gate[data-tone='warn'] .gd-gate-title { color: var(--warn); }
+.gd-gate-sub { color: var(--muted); overflow-wrap: anywhere; }
+
 .gd-message {
   padding: 24px;
   color: var(--muted);

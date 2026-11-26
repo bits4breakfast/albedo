@@ -84,8 +84,8 @@ describe('groupOf', () => {
     expect(groupOf(task(), facts({ ...unseen, pr: pr('open') }))).toBe('review');
   });
 
-  it('is Idle once seen, or when the finish left nothing to review', () => {
-    expect(groupOf(task({ seenAt: 3_000 }), facts({ ...unseen, work: true }))).toBe('quiet');
+  it('is My Review once seen (#464), Idle when the finish left nothing to review', () => {
+    expect(groupOf(task({ seenAt: 3_000 }), facts({ ...unseen, work: true }))).toBe('mine');
     expect(groupOf(task(), facts({ ...unseen, work: false }))).toBe('quiet');
     expect(groupOf(task({ kind: 'chat' }), facts({ ...unseen, work: true }))).toBe('quiet');
   });
@@ -157,15 +157,19 @@ describe('seenUpdate', () => {
 });
 
 describe('wantsWorkProbe', () => {
-  it('asks git about an unseen finish on an idle work task', () => {
+  it('asks git about a finish on an idle work task', () => {
     expect(wantsWorkProbe(task(), facts({ finishedAt: 2_000 }))).toBe(true);
     expect(wantsWorkProbe(task(), facts({ finishedAt: 2_000, pr: undefined }))).toBe(true);
+    // Seen too (#464): My Review needs the answer for every finish.
+    expect(wantsWorkProbe(task({ seenAt: 3_000 }), facts({ finishedAt: 2_000 }))).toBe(true);
+    expect(wantsWorkProbe(task(), facts({ finishedAt: 2_000, pr: pr('closed') }))).toBe(true);
   });
 
-  it('does not ask when the PR already answers, the finish is seen, or it is a chat', () => {
+  it('does not ask when the PR already answers, with no finish, or for a chat', () => {
     expect(wantsWorkProbe(task(), facts({ finishedAt: 2_000, pr: pr('open') }))).toBe(false);
+    expect(wantsWorkProbe(task(), facts({ finishedAt: 2_000, pr: pr('draft') }))).toBe(false);
     expect(wantsWorkProbe(task(), facts({ finishedAt: 2_000, pr: pr('merged') }))).toBe(false);
-    expect(wantsWorkProbe(task({ seenAt: 3_000 }), facts({ finishedAt: 2_000 }))).toBe(false);
+    expect(wantsWorkProbe(task(), facts({ finishedAt: null }))).toBe(false);
     expect(wantsWorkProbe(task({ kind: 'chat' }), facts({ finishedAt: 2_000 }))).toBe(false);
   });
 
@@ -228,6 +232,52 @@ describe('My Review (#219, #278)', () => {
   });
 });
 
+describe('My Review holds your own changes with no PR up for review (#464)', () => {
+  const seen = task({ seenAt: 3_000 });
+  const work = (over: Partial<GroupFacts> = {}) => facts({ finishedAt: 2_000, work: true, ...over });
+
+  it('a branch with changes and no PR, no guide and no marks, at rest', () => {
+    expect(groupOf(seen, work())).toBe('mine');
+    // A closed PR is not one up for review.
+    expect(groupOf(seen, work({ pr: pr('closed') }))).toBe('mine');
+    // A draft is work already, the probe not asked.
+    expect(groupOf(seen, facts({ pr: pr('draft', null, { checks: { kind: 'pending', pending: 1, total: 2 } }) }))).toBe('mine');
+    expect(groupOf(seen, facts({ pr: pr('draft', null, { checks: { kind: 'passing', total: 2 } }) }))).toBe('mine');
+  });
+
+  it('no changes, or not known, is Idle as before', () => {
+    expect(groupOf(seen, work({ work: false }))).toBe('quiet');
+    expect(groupOf(seen, work({ work: null }))).toBe('quiet');
+    expect(groupOf(seen, work({ work: undefined }))).toBe('quiet');
+  });
+
+  it('waits for gh: an unanswered PR is never shown as My Review first', () => {
+    expect(groupOf(seen, work({ pr: undefined }))).toBe('quiet');
+  });
+
+  it('never a chat, whatever git says', () => {
+    expect(groupOf(task({ kind: 'chat', seenAt: 3_000 }), work())).toBe('quiet');
+  });
+
+  it('keeps the groups above it first: Needs You, an error, Running, Done, Ready to Review', () => {
+    expect(groupOf(task({ status: 'blocked', seenAt: 3_000 }), work())).toBe('blocked');
+    expect(groupOf(seen, work({ trigger: true }))).toBe('blocked');
+    expect(groupOf(task({ seenAt: 3_000, apiError: 'overloaded' }), work())).toBe('errored');
+    expect(groupOf(task({ status: 'running', seenAt: 3_000 }), work())).toBe('active');
+    expect(groupOf(task({ status: 'done', seenAt: 3_000 }), work())).toBe('done');
+    expect(groupOf(seen, work({ pr: pr('merged') }))).toBe('done');
+    // A draft's failing checks: Needs You, as any failing PR.
+    const failing = { kind: 'failing', failing: 1, total: 3 } as const;
+    expect(groupOf(seen, facts({ pr: pr('draft', null, { checks: failing }) }))).toBe('blocked');
+    // An unseen finish with work: Ready to Review first.
+    expect(groupOf(task({ seenAt: 1_000 }), work())).toBe('review');
+  });
+
+  it('gives way to the PR once it is up for review', () => {
+    expect(groupOf(seen, work({ pr: pr('open') }))).toBe('awaiting');
+  });
+});
+
 describe('the team\'s review (#278)', () => {
   const open = (over: Partial<PrStatus> = {}) => facts({ pr: pr('open', null, over) });
   const threads = (total: number, unresolved: number) => ({ reviewThreads: { total, unresolved } });
@@ -259,8 +309,8 @@ describe('the team\'s review (#278)', () => {
     expect(groupOf(task(), open({ review: 'changes-requested', reviews: [] }))).toBe('team');
   });
 
-  it('a draft PR is not up for review: My Review with guide marks, else Idle', () => {
-    expect(groupOf(task(), facts({ pr: pr('draft', null, { review: 'approved', ...threads(2, 2) }) }))).toBe('quiet');
+  it('a draft PR is not up for review: My Review, guide marks or not (#464)', () => {
+    expect(groupOf(task(), facts({ pr: pr('draft', null, { review: 'approved', ...threads(2, 2) }) }))).toBe('mine');
     expect(groupOf(task(), facts({ reviewing: true, pr: pr('draft') }))).toBe('mine');
   });
 

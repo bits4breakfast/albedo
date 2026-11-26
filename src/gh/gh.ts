@@ -392,6 +392,26 @@ export async function mergePr(
   return { ok: false, message: 'GitHub CLI (gh) could not be run.' };
 }
 
+/**
+ * `gh pr ready <n>` (#464): the second GitHub write Albedo makes itself, by
+ * the owner's decision, and only from draftReady.ts -- a draft PR that Create
+ * PR opened, its checks passing. Reported, not folded into null, so the log
+ * says why. Runs where the PR lookup does: the worktree, else the main checkout.
+ */
+export async function markPrReady(
+  pr: { number: number },
+  task: Pick<Task, 'worktreePath' | 'repoPath'>,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!Number.isInteger(pr.number) || pr.number <= 0) return { ok: false, message: 'Not a pull request number.' };
+  for (const cwd of [task.worktreePath, task.repoPath]) {
+    if (!cwd) continue;
+    const r = await gh(['pr', 'ready', String(pr.number)], cwd);
+    if (!r) continue; // could not spawn here: the cwd may not exist
+    return r.code === 0 ? { ok: true } : { ok: false, message: ghMessage(r) };
+  }
+  return { ok: false, message: 'GitHub CLI (gh) could not be run.' };
+}
+
 /** gh's own words for a failure, without colour codes; the exit code when it said nothing. */
 export function ghMessage(r: GhResult): string {
   // eslint-disable-next-line no-control-regex

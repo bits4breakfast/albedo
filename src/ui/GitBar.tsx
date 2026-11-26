@@ -16,6 +16,11 @@
  * Nothing here runs git or gh. Push and Create PR send Claude a prompt (see
  * gitPrompts.ts and sendPrompt.ts) and so carry no ellipsis: the click is the
  * whole action. Squash & rebase opens its confirm dialog first, and keeps one.
+ *
+ * Create PR waits for your own review (#464, guide/gate.ts): until the Review
+ * Guide is written for the branch as it is and every group is Reviewed, the
+ * main action is Review Changes, which opens the Guide tab, and ⋯ holds
+ * "Create PR without Review…" behind a confirmation.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -27,6 +32,10 @@ import { getPrStatus, usePrStatus } from '../gh/prStore';
 import { prLookupBranch } from '../gh/gh';
 import MoreGlyph from './MoreGlyph';
 import { canSquashRebase, createPrPrompt, nextStep, pushPrompt } from './gitPrompts';
+import { gatePasses, gateProgressText, gateReason, useReviewGate } from '../guide/gate';
+import { requestGuide } from '../guide/openGuide';
+import { notePrRequested } from '../gh/draftReady';
+import UnreviewedPrDialog from './UnreviewedPrDialog';
 import './pr.css';
 
 export interface GitBarProps {
@@ -113,7 +122,32 @@ export default function GitBar({
   const main = step === 'open-pr' ? 'none' : step;
 
   const push = () => onAsk(pushPrompt(task));
-  const createPr = () => onAsk(createPrPrompt(task));
+  // Remembered first (#464): its draft is marked ready once its checks pass.
+  const createPr = (escape = false) => {
+    notePrRequested(task.id, escape);
+    onAsk(createPrPrompt(task));
+  };
+  // Your own review first (#464). Read again when the counts above change: a
+  // commit or a save is a branch the guide may not have seen.
+  const gate = useReviewGate(task, { refresh: `${commits}:${dirty}` });
+  const held = !gatePasses(gate);
+  const [askUnreviewed, setAskUnreviewed] = useState(false);
+  const dialog = askUnreviewed ? (
+    <UnreviewedPrDialog
+      task={task}
+      gate={gate}
+      base={task.baseBranch}
+      onConfirm={() => createPr(true)}
+      onClose={() => setAskUnreviewed(false)}
+    />
+  ) : null;
+  const unreviewedItem: MenuItem = {
+    key: 'pr-unreviewed',
+    label: 'Create PR without Review…',
+    hint: 'Asks once more, then the same draft-first PR',
+    run: () => setAskUnreviewed(true),
+    group: true,
+  };
 
   const items: MenuItem[] = [];
   if (actionable && main !== 'push' && (dirty > 0 || unpushed > 0)) {
@@ -123,7 +157,9 @@ export default function GitBar({
   // then commits and pushes. Waiting for a commit hid it on a branch Claude
   // had only edited -- which is most of them.
   if (actionable && main !== 'create-pr' && prKnown && pr === null && prable && (commits > 0 || dirty > 0)) {
-    items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: createPr });
+    items.push(
+      held ? unreviewedItem : { key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: () => createPr() },
+    );
   }
   if (actionable && canSquashRebase(task) && commits > 0) {
     items.push({
@@ -133,6 +169,8 @@ export default function GitBar({
       run: onSquash,
     });
   }
+  // The way past the review, last and set apart: never the first thing seen.
+  if (main === 'create-pr' && held) items.push(unreviewedItem);
   // The head holds the view toggle, and ⋯ only when there is an action for
   // it: a menu of view options alone was a click to reach one of two states.
   // This bar appears only when there is a main action (Push, Create PR).
@@ -145,7 +183,15 @@ export default function GitBar({
     </>
   );
   const placed = menuSlot ? createPortal(menu, menuSlot) : null;
-  if (main !== 'push' && main !== 'create-pr' && menuSlot) return placed;
+  if (main !== 'push' && main !== 'create-pr' && menuSlot) {
+    return (
+      <>
+        {placed}
+        {dialog}
+      </>
+    );
+  }
+  const progress = gate ? gateProgressText(gate) : null;
 
   const action =
         main === 'push' ? (
@@ -162,12 +208,22 @@ export default function GitBar({
                 reason to press it, and it needs no line of its own. */}
             Push{unpushed > 0 ? ` ↑${unpushed}` : ''}
           </button>
+        ) : main === 'create-pr' && held ? (
+          <button
+            type="button"
+            className="tf-btn tf-btn-primary"
+            onClick={() => requestGuide(task.id)}
+            title={`${gate ? gateReason(gate) : ''} Create PR comes back once every group in the Review Guide is Reviewed for the branch as it is now. Click to open the Guide.`.trim()}
+          >
+            {/* How far along rides on the action, as Push's count does. */}
+            {progress ? `Review Changes · ${progress}` : 'Review Changes'}
+          </button>
         ) : main === 'create-pr' ? (
           <button
             type="button"
             className="tf-btn tf-btn-primary"
-            onClick={createPr}
-            title={`Ask Claude to open a pull request into ${task.baseBranch}. Sent at once (held until the turn ends if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
+            onClick={() => createPr()}
+            title={`Ask Claude to open a draft pull request into ${task.baseBranch}; Albedo marks it ready for review when its checks pass. Sent at once (held until the turn ends if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
           >
             Create PR
           </button>
@@ -178,6 +234,7 @@ export default function GitBar({
       <>
         {placed}
         {createPortal(action, actionSlot)}
+        {dialog}
       </>
     );
   }
@@ -185,6 +242,7 @@ export default function GitBar({
   return (
     <>
     {placed}
+    {dialog}
     <div className="tf-git">
       <div className="tf-git-actions">
         {action}

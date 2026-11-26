@@ -8,6 +8,11 @@
  * One action rides on it (#236), chosen by `prAction`: Squash and Merge…,
  * which Albedo runs through gh after a confirm (MergeDialog), or ⚠ Conflicts,
  * which hands Claude the rebase. Nothing when neither applies.
+ *
+ * With no PR yet, Create PR stands in -- once your own review is done (#464,
+ * guide/gate.ts). Until then it is Review Changes, with how far along, and it
+ * opens the Guide. A draft Create PR opened says it opens for review when its
+ * checks pass (gh/draftReady.ts).
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -23,6 +28,9 @@ import MergeDialog from './MergeDialog';
 import { prAction } from '../gh/prAction';
 import { ciCueFor, takeChecksRequest, useCiVersion } from './ciNotice';
 import { onTriggerMergeRequest, resolveTriggerCards } from '../triggers/store';
+import { gatePasses, gateProgressText, gateReason, useReviewGate } from '../guide/gate';
+import { requestGuide } from '../guide/openGuide';
+import { draftHint, draftRecordOf } from '../gh/draftReady';
 import './pr.css';
 
 export interface PrBadgeProps {
@@ -176,13 +184,33 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
     [],
   );
 
+  // Your own review first (#464): the branch is read again as the session works.
+  const gate = useReviewGate(task);
+  if (task && !pr && askable && own !== null && own > 0 && !gatePasses(gate)) {
+    const progress = gate ? gateProgressText(gate) : null;
+    return (
+      <span className="pr-badge-wrap">
+        <button
+          type="button"
+          className="pr-badge"
+          data-gate={gate?.kind}
+          aria-label={progress ? `Review Changes, ${progress}` : 'Review Changes'}
+          title={`${gate ? gateReason(gate) : ''} Create PR comes back once every group in the Review Guide is Reviewed for the branch as it is now. Click to open the Guide. Task ⋯ has Create PR without Review….`.trim()}
+          onClick={() => requestGuide(task.id)}
+        >
+          Review Changes
+          {progress ? <span className="pr-gate-count">{progress}</span> : null}
+        </button>
+      </span>
+    );
+  }
   if (task && !pr && askable && own !== null && own > 0) {
     return (
       <span className="pr-badge-wrap">
         <button
           type="button"
           className="pr-badge"
-          title={`No pull request yet. Ask Claude to open one into ${task.baseBranch} (${own} commit${own === 1 ? '' : 's'}). Sent at once (held until the turn ends if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
+          title={`No pull request yet. Ask Claude to open one into ${task.baseBranch} (${own} commit${own === 1 ? '' : 's'}), as a draft: Albedo marks it ready for review when its checks pass. Sent at once (held until the turn ends if Claude is working); while it waits on a permission prompt, it waits in the message box.`}
           onClick={onCreatePr}
         >
           Create PR
@@ -196,6 +224,8 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
   // Checks finished while this task was open: a brief ring, and words for a
   // screen reader (ciNotice.ts). The badge itself already shows the result.
   const cue = ciCueFor(task.id);
+  // A draft Create PR opened (#464): when Albedo will open it for review.
+  const hint = pr.state === 'draft' ? draftHint(draftRecordOf(task.id), pr, gate) : null;
   return (
     <span className="pr-badge-wrap">
       <button
@@ -218,6 +248,11 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
         <span>{label.text}</span>
       </button>
       {pr.state === 'open' && <ReviewChip pr={pr} viewer={viewer} />}
+      {hint && (
+        <span className="pr-reason" title="Albedo marks this draft ready for review once, when every check passes (gh pr ready)">
+          {hint}
+        </span>
+      )}
       <PrActionControl pr={pr} onMerge={() => setMergeOpen(true)} onResolveConflicts={onResolveConflicts} />
       {mergeOpen && (
         <MergeDialog

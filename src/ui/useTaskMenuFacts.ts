@@ -8,6 +8,7 @@ import { usePtyLiveSince } from './Terminal';
 import { useSendsWait } from './transcript/send';
 import { useCompacting } from './transcript/commandEcho';
 import type { TaskMenuFacts } from './taskMenuItems';
+import { useUnreviewedPrOffered } from './unreviewedPr';
 
 /**
  * What the task's ⋯ items read about `task` (#331), kept current: for the
@@ -24,6 +25,7 @@ export function useTaskMenuFacts(task: Task | null, shown: boolean): TaskMenuFac
   const pendingReminders = usePendingReminders(id).length;
   const sendsWait = useSendsWait(id);
   const compacting = useCompacting(id);
+  const prUnreviewed = useUnreviewedPrOffered(task);
   return {
     compactBlocker,
     live,
@@ -34,5 +36,6 @@ export function useTaskMenuFacts(task: Task | null, shown: boolean): TaskMenuFac
     shown,
     sendsWait,
     compacting,
+    prUnreviewed,
   };
 }

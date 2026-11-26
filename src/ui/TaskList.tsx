@@ -33,6 +33,7 @@ import {
   type GroupKey,
 } from './taskGroups';
 import { reviewingTaskIds, useGuideStoreVersion } from '../guide/store';
+import { gateOf, gateRowText, useGateReads, useGateVersion } from '../guide/gate';
 import { ChatIcon } from './icons';
 import RemoteMark from './RemoteMark';
 import { BackgroundMark } from './BackgroundWork';
@@ -370,6 +371,7 @@ export default function TaskList({
   );
   useReviewWorkProbes(probes);
 
+
   const sections = useMemo(() => {
     const none: GroupFacts = { finishedAt: null, pr: undefined, work: undefined };
     const factsOf = (t: Task) => facts.get(t.id) ?? none;
@@ -383,6 +385,15 @@ export default function TaskList({
       (g) => g.tasks.length > 0,
     );
   }, [tasks, facts]);
+
+  // My Review's rows say what is left of your own review (#464): a guide's
+  // branch is read once per finish, so "guide out of date" needs no visit.
+  const gateVersion = useGateVersion();
+  const mineTasks = useMemo(() => sections.find((g) => g.key === 'mine')?.tasks ?? [], [sections]);
+  useGateReads(mineTasks);
+  // Read through the gate's cache; `gateVersion` and `guideVersion` redraw.
+  void gateVersion;
+  const mineGate = (task: Task): string => gateRowText(gateOf(task.id), getPrStatus(task.id)?.state);
 
   /** Render order — the order arrow keys and ⌘1..9 walk. */
   const ordered = useMemo(() => sections.flatMap((g) => g.tasks), [sections]);
@@ -507,6 +518,7 @@ export default function TaskList({
       ctx: contextOf(task),
       draft: drafts.has(task.id),
       reminder: reminderIds.has(task.id),
+      gate: group === 'mine' ? mineGate(task) : null,
     }),
     age: relativeTime(task.lastActivityAt, now),
     tooltip: rowTooltip(task, contextOf(task)),
@@ -682,6 +694,7 @@ export default function TaskList({
                   sig={signals?.get(task.id)}
                   draft={drafts.has(task.id)}
                   reminder={reminderIds.has(task.id)}
+                  gate={group.key === 'mine' ? mineGate(task) : null}
                   previewWaiting={previewWaiting.has(task.id)}
                   triggerWord={triggerWordOf(task.id)}
                   prVersion={prVersion}
@@ -762,10 +775,12 @@ interface RowMetaFacts {
   draft: boolean;
   /** A reminder's card is back on it. */
   reminder: boolean;
+  /** On a My Review row (#464): what is left before the PR, or null. */
+  gate?: string | null;
 }
 
 /** The row's caption and marks: the list's rows and the rail's popover (#266) both draw this. */
-function rowMeta(task: Task, group: GroupKey, { selected, sig, ctx, draft, reminder }: RowMetaFacts): ReactNode {
+function rowMeta(task: Task, group: GroupKey, { selected, sig, ctx, draft, reminder, gate }: RowMetaFacts): ReactNode {
   const pr = task.kind === 'chat' ? null : getPrStatus(task.id);
   // In Needs You for its checks, not for a prompt (taskGroups.ts): the row
   // says why, and the checks' news mark would say it twice.
@@ -804,6 +819,14 @@ function rowMeta(task: Task, group: GroupKey, { selected, sig, ctx, draft, remin
             and a change request, on In Review rows -- and the threads
             still open on an Approved one. */}
         {(group === 'team' || group === 'approved') && pr && <ThreadsChip pr={pr} />}
+        {/* Your own review before the PR (#464): what is left, on a My
+            Review row -- "no guide yet", "4 of 6 reviewed", "guide out of
+            date", "reviewed · Create PR". State, in --muted. */}
+        {group === 'mine' && gate && (
+          <span className="task-gate" title="Your own review of this branch, in its Review Guide, before Create PR">
+            {gate}
+          </span>
+        )}
         {/* An unsent message waiting in this task's composer, so a
             forgotten one can be found. Not on the selected row:
             its draft is in the box right below. */}
@@ -963,6 +986,7 @@ const TaskRow = memo(function TaskRow({
   sig,
   draft,
   reminder,
+  gate,
   previewWaiting,
   triggerWord,
   onSelect,
@@ -1018,7 +1042,7 @@ const TaskRow = memo(function TaskRow({
       {/* Shares the age's spot and swaps in on hover: reserving
           its own width hid on every row cut titles short. */}
       {shortcut !== null && <span className="task-index kbd">⌘{shortcut}</span>}
-      {rowMeta(task, group, { selected, sig, ctx, draft, reminder })}
+      {rowMeta(task, group, { selected, sig, ctx, draft, reminder, gate })}
       {rowWhy(task, previewWaiting, triggerWord)}
       {/* Sends "try again" (#338): only while the session is live. */}
       {stoppedOnError(task) && <TryAgainButton task={task} />}
