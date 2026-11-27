@@ -53,15 +53,19 @@ export function squashRebasePrompt(task: GitTask, opts: SquashOptions): string {
   ].join('\n'));
 }
 
-/** Open a pull request for the branch, written from everything on it. */
+/**
+ * Open a pull request for the branch, written from everything on it. As a
+ * draft (#464): CI runs first, and Albedo marks it ready for review once its
+ * checks pass (gh/draftReady.ts), so nobody is asked to review a red PR.
+ */
 export function createPrPrompt(task: GitTask): string {
   return wrapAction('create-pr', [
-    `Open a pull request for \`${task.branch}\` into \`${task.baseBranch}\`.`,
+    `Open a draft pull request for \`${task.branch}\` into \`${task.baseBranch}\`.`,
     '',
     '- If there are uncommitted changes, ask me whether they belong in it before you commit anything.',
     '- Push the branch first if the remote does not have all of it (set the upstream if it has none).',
     `- Write the title and description from every commit on the branch and the diff against \`${task.baseBranch}\`, not just the latest commit: what changed and why, and how it was checked. Follow the repository's PR template if it has one.`,
-    `- Create it with \`gh pr create --base ${task.baseBranch} --head ${task.branch}\`, and give me the URL.`,
+    `- Create it as a draft with \`gh pr create --draft --base ${task.baseBranch} --head ${task.branch}\`, and give me the URL. Do not mark it ready for review: Albedo does that once its checks pass.`,
   ].join('\n'));
 }
 

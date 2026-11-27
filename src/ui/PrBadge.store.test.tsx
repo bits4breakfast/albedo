@@ -6,7 +6,7 @@
  * so a test with a mocked store could not see that it never re-rendered.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { Task } from '../types';
 import { setPrFetcherForTests } from '../gh/prStore';
@@ -14,8 +14,14 @@ import { setPrFetcherForTests } from '../gh/prStore';
 vi.mock('../git/worktree', () => ({ commitsOnBranch: vi.fn(async () => 2) }));
 
 const { PrBadge } = await import('./PrBadge');
+const { setReviewGateForTests, resetGateForTests } = await import('../guide/gate');
 
-afterEach(cleanup);
+// Your own review is done (#464): this is about the store's answer.
+beforeEach(() => setReviewGateForTests(() => ({ kind: 'ready', total: 1 })));
+afterEach(() => {
+  resetGateForTests();
+  cleanup();
+});
 
 const task = {
   id: 41, title: 't', repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/w',

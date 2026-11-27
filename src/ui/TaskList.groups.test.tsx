@@ -31,6 +31,7 @@ Element.prototype.scrollIntoView = () => {};
 
 const { default: TaskList } = await import('./TaskList');
 const { setWorkProbeForTests } = await import('../git/reviewWork');
+const { notePrUnknown } = await import('../gh/prFailures');
 
 const probed: number[] = [];
 beforeEach(() => {
@@ -99,9 +100,37 @@ describe('task list groups', () => {
     ]);
   });
 
-  it('asks git only about unseen finishes the PR does not answer', async () => {
+  it('asks git about every idle finish the PR does not answer, seen or not (#464)', async () => {
     await renderList();
-    expect(probed.sort()).toEqual([7, 8]);
+    expect(probed.sort()).toEqual([4, 7, 8]);
+  });
+
+  it('keeps a seen branch with changes and no PR in My Review, saying what is left (#464)', async () => {
+    // Task 4 is seen; its branch has changes now.
+    setWorkProbeForTests(async (t) => t.id === 4 || t.id === 7);
+    const { container } = await renderList();
+    expect(groups(container)).toEqual([
+      ['Needs You', ['1']],
+      ['Running', ['2']],
+      ['Ready to Review', ['7', '3']],
+      ['My Review', ['4']],
+      ['Idle', ['8']],
+      ['Done', ['6', '5']],
+    ]);
+    // No guide written for it yet.
+    expect(container.querySelector('[data-task-id="4"] .task-gate')?.textContent).toBe('no guide yet');
+  });
+
+  it('a gh failure is not "no PR": the task waits in Idle, not My Review (#464 review)', async () => {
+    setWorkProbeForTests(async (t) => t.id === 4 || t.id === 7);
+    notePrUnknown(4, true);
+    try {
+      const { container } = await renderList();
+      expect(groups(container).find(([g]) => g === 'My Review')).toBeUndefined();
+      expect(groups(container).find(([g]) => g === 'Idle')?.[1]).toContain('4');
+    } finally {
+      notePrUnknown(4, false);
+    }
   });
 
   it('draws the icon on each group header, and none on a row (#278)', async () => {
@@ -236,11 +265,13 @@ describe('the PR groups (#278), rendered', () => {
     const { container } = await renderPrs();
     expect(groups(container)).toEqual([
       ['Needs You', ['17']],
+      // A draft is not up for review: your own review and its checks are next (#464).
+      ['My Review', ['18']],
       ['In Review', ['19', '14', '13', '12']],
       ['Awaiting Review', ['11']],
       ['Approved', ['16', '15']],
-      ['Idle', ['18']],
     ]);
+    expect(container.querySelector('[data-task-id="18"] .task-gate')?.textContent).toBe('draft PR');
   });
 
   it('In Review rows show the unresolved threads, and a change request', async () => {

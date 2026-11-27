@@ -381,7 +381,15 @@ export function writeStateOf(taskId: number): WriteState | null {
  * summary goes to the grouping and notes calls. A failure or timeout never
  * blocks the guide: it is written without, and says so.
  */
-export async function startWrite(taskId: number, diff: BranchDiff, base: string, focus?: GuideFocus, plan?: ContextPlan): Promise<void> {
+export async function startWrite(
+  taskId: number,
+  diff: BranchDiff,
+  base: string,
+  focus?: GuideFocus,
+  plan?: ContextPlan,
+  /** The commit HEAD was on when `diff` was read (#464), kept with the guide. */
+  head?: string | null,
+): Promise<void> {
   if (writes.get(taskId)?.kind === 'writing') return;
   writes.set(taskId, { kind: 'writing', progress: null });
   changed();
@@ -398,7 +406,12 @@ export async function startWrite(taskId: number, diff: BranchDiff, base: string,
         changed();
       },
     });
-    const saved: Guide = { ...guide, ...(context ? { context } : {}), ...(failure ? { contextFailure: failure } : {}) };
+    const saved: Guide = {
+      ...guide,
+      ...(context ? { context } : {}),
+      ...(failure ? { contextFailure: failure } : {}),
+      ...(head ? { head } : {}),
+    };
     saveGuide(taskId, saved);
     writes.delete(taskId);
     // The lists as typed are done with only now (#295 review): a failed write
@@ -665,6 +678,27 @@ export function keepLastRead(taskId: number, data: LoadedBranchDiff): void {
     const oldest = lastReads.keys().next().value as number;
     lastReads.delete(oldest);
   }
+  // The read's hash outlives the read (#464): whether a guide is still for
+  // the branch as it is, for every task read this run, at a string each.
+  const was = lastHashes.get(taskId);
+  lastHashes.set(taskId, data.diff.hash);
+  if (was !== data.diff.hash) changed();
+}
+
+/**
+ * The hash of the branch's change as last read this run, by the Guide pane or
+ * the review gate (gate.ts), or null when it has not been read (#464). Kept
+ * after the read itself is let go: it is what says a guide is out of date.
+ */
+const lastHashes = new Map<number, string>();
+
+export function lastHashOf(taskId: number): string | null {
+  return lastHashes.get(taskId) ?? null;
+}
+
+/** Changes on any write to guides, marks, writes or reads (#464: the gate caches on it). */
+export function guideStoreVersion(): number {
+  return version;
 }
 
 /** Tests only. */
@@ -672,6 +706,7 @@ export function resetGuideStoreForTests(): void {
   decoded.clear();
   places.clear();
   lastReads.clear();
+  lastHashes.clear();
   writes.clear();
   notesJobs.clear();
   focusDrafts.clear();

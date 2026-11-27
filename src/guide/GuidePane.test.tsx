@@ -31,6 +31,8 @@ const { default: GuidePane, nextToReview, resetGuideViewsForTests } = await impo
 const { resetGuideStoreForTests, saveGuide } = await import('./store');
 const { setOneshotRunner } = await import('./writer');
 const queuedCi = await import('../ui/transcript/ciFailure');
+// gh answers "no PR" (#464): a failed ask would be "not known", and no banner.
+const { setPrFetcherForTests } = await import('../gh/prStore');
 
 const task = {
   id: 5, title: 't', projectId: 1, repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/wt',
@@ -63,6 +65,7 @@ beforeEach(() => {
   resetGuideStoreForTests();
   resetGuideViewsForTests();
   queuedCi.__resetQueuedCi();
+  setPrFetcherForTests(async () => null);
   waitingCode = [];
   sendAsked.length = 0;
   diff = makeDiff();
@@ -194,9 +197,14 @@ describe('GuidePane', () => {
     expect(within(notice).queryByRole('button')).toBeNull();
     const marks = within(screen.getByRole('navigation', { name: 'Groups' })).getAllByRole('button');
     expect(marks.map((m) => m.getAttribute('aria-label'))).toEqual(['01 Everything']);
-    // One Rewrite, in the one row that says the guide is out of date (#197).
-    expect(screen.getAllByRole('button', { name: 'Rewrite' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Rewrite' }).className).toContain('gd-btn-primary');
+    // One Rewrite (#197): on your own branch with no PR, in the banner that
+    // says a PR waits on it (#464), and none left in the row.
+    const banner = await screen.findByRole('region', { name: 'Review before a PR' });
+    expect(banner.getAttribute('data-tone')).toBe('warn');
+    expect(within(banner).getByText('The branch changed since this guide was written')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Rewrite' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Rewrite Guide' })).toHaveLength(1);
+    expect(within(banner).getByRole('button', { name: 'Rewrite Guide' }).className).toContain('gd-btn-primary');
   });
 
   it('a reviewed group with a file changed since goes back to unreviewed, the file tagged (#248)', async () => {
@@ -387,7 +395,9 @@ describe('GuidePane', () => {
       pane();
       await screen.findByRole('heading', { name: 'Everything' });
       expect(screen.getByRole('button', { name: 'Send 1' }).className).not.toContain('gd-btn-primary');
-      expect(screen.getByRole('button', { name: 'Rewrite' }).className).toContain('gd-btn-primary');
+      // The one Rewrite is the banner's, the primary (#464).
+      const banner = await screen.findByRole('region', { name: 'Review before a PR' });
+      expect(within(banner).getByRole('button', { name: 'Rewrite Guide' }).className).toContain('gd-btn-primary');
     });
   });
 

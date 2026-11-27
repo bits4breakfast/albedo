@@ -99,6 +99,12 @@ export const KEYS = {
   reviewSeen: 'albedo.reviews.seen',
   /** Squash and Merge's "Delete the branch on GitHub" choice (ui/MergeDialog.tsx, #236). Absent means on. */
   mergeDeleteBranch: 'albedo.pr.mergeDeleteBranch',
+  /**
+   * Create PR's draft-first PRs (#464): which tasks asked for one, whether
+   * through "Create PR without Review…", and which PRs Albedo has already
+   * marked ready for review (gh/draftReady.ts owns the shape).
+   */
+  prDraftReady: 'albedo.pr.draftReady',
   /** One per task: the model its session is launched on. */
   taskModel: (taskId: number) => `albedo.taskModel.${taskId}`,
 } as const;

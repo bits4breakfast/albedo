@@ -100,6 +100,12 @@ export interface PrStatus {
   /** The PR author's login. Empty when gh did not say. */
   author?: string;
   /**
+   * The head is in another repository (a fork with the same branch name,
+   * #464 review). Undefined when gh did not say: only the GraphQL answer
+   * carries it.
+   */
+  crossRepository?: boolean;
+  /**
    * `mergeable` and `mergeStateStatus` (#236). Optional, like `reviews`, so a
    * hand-built status (tests) need not spell them out; `parsePrView` always
    * sets them, `unknown` when gh did not say.
@@ -347,6 +353,7 @@ function prFromRecord(d: Record<string, unknown>): PrStatus | null {
     reviews,
     reviewRequests: requestsOf(d.reviewRequests),
     author: loginOf(d.author) ?? '',
+    ...(typeof d.isCrossRepository === 'boolean' ? { crossRepository: d.isCrossRepository } : {}),
     mergeable: mergeableOf(d.mergeable),
     mergeState: mergeStateOf(d.mergeStateStatus),
     checks: summarizeChecks(lines),
@@ -391,7 +398,7 @@ export const PR_QUERY = `query PrForBranch($owner: String!, $repo: String!, $bra
   repository(owner: $owner, name: $repo) {
     pullRequests(headRefName: $branch, first: 10, orderBy: { field: CREATED_AT, direction: DESC }) {
       nodes {
-        number url state isDraft title reviewDecision mergedAt headRefName baseRefName headRefOid
+        number url state isDraft title reviewDecision mergedAt headRefName baseRefName headRefOid isCrossRepository
         mergeable mergeStateStatus mergeCommit { oid }
         author { __typename login }
         commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {

@@ -138,6 +138,9 @@
 .pr-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* Approved but not mergeable yet: GitHub's reason in words, quiet. */
 .pr-reason { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
+/* Review Changes' progress (#464), in Create PR's place: "4 of 6", "out of
+   date", "no guide". --text, the PR number's tier, on the bar's ground. */
+.pr-gate-count { color: var(--text); font-variant-numeric: tabular-nums; }
 
 /* A glyph in a badge (#317, GitHub's mark): centred on the badge, not sat on
    the text's baseline as a flex item there would be. */

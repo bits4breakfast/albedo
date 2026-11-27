@@ -80,6 +80,12 @@ export interface Guide {
   context?: GuideContext;
   /** The Context step failed or timed out (#444): the guide was written without it. */
   contextFailure?: { key: string; reason: string };
+  /**
+   * The commit HEAD was on when the branch was read for this guide (#464):
+   * what "N commits since this guide was written" counts from. Absent on
+   * guides from before it, or when git could not say.
+   */
+  head?: string;
 }
 
 /** The Context step's answer (#444), cleaned (cleanContext). */

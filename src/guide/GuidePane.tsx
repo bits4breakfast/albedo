@@ -28,6 +28,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { FileDiff, Task } from '../types';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
+import { readWorkingFile } from './readWorking';
 import type { BranchDiff, GuideFile } from './blocks';
 import { commentMarks, groupComments, NO_COMMENTS, tallyTotal, type CommentTally } from './commentMarks';
 import { sendWaitingComments } from '../ui/transcript/composerBridge';
@@ -72,6 +73,9 @@ import GuideMap from './GuideMap';
 import SinceReview from './SinceReview';
 import { updateRecordOf, useSinceChanges, useSinceReviewVersion, type ChangesLoad, type UpdateRecord } from './copyUpdate';
 import OverflowMenu from '../ui/OverflowMenu';
+import { commitsText, gatedTask, useReviewGate } from './gate';
+import { getPrStatus, usePrStatus } from '../gh/prStore';
+import { prUnknown } from '../gh/prFailures';
 import { NO_SEARCH, searchDiff } from '../ui/transcript/Diff';
 import {
   AllGuideFiles,
@@ -101,18 +105,6 @@ const views = new Map<number, PaneView>();
 
 export function resetGuideViewsForTests(): void {
   views.clear();
-}
-
-/** The working-tree side of one file; null when it does not exist. */
-async function readWorking(worktreePath: string, rel: string): Promise<string | null> {
-  const fs = await import('@tauri-apps/plugin-fs');
-  const absolute = `${worktreePath.replace(/\/+$/, '')}/${rel}`;
-  try {
-    return await fs.readTextFile(absolute);
-  } catch (err) {
-    if (!(await fs.exists(absolute).catch(() => true))) return null;
-    throw err;
-  }
 }
 
 /** The read of the branch, for the task it was read for. */
@@ -167,7 +159,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     let live = true;
     const id = task.id;
     setLoad((prev) => (prev.kind === 'ready' && prev.taskId === id ? prev : { kind: 'loading' }));
-    loadBranchDiff(task.worktreePath, measuredBase, (rel) => readWorking(task.worktreePath, rel))
+    loadBranchDiff(task.worktreePath, measuredBase, (rel) => readWorkingFile(task.worktreePath, rel))
       .then((data) => {
         if (!live) return;
         keepLastRead(id, data);
@@ -221,6 +213,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
   }
 
   const { diff } = load.data;
+  const shownHead = load.data.head ?? null;
   const writeNow = (focus: GuideFocus, freshContext = false) => {
     if (startingRef.current || stored?.kind === 'writing') return;
     startingRef.current = true;
@@ -230,15 +223,15 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
     // saved for this task even if another is on screen when it lands.
     const id = task.id;
     const base = measuredBase;
-    void loadBranchDiff(task.worktreePath, base, (rel) => readWorking(task.worktreePath, rel))
+    void loadBranchDiff(task.worktreePath, base, (rel) => readWorkingFile(task.worktreePath, rel))
       .then((fresh) => {
         keepLastRead(id, fresh);
         setLoad({ kind: 'ready', data: fresh, taskId: id });
-        return fresh.diff;
+        return { d: fresh.diff, head: fresh.head ?? null };
       })
       // The branch cannot be read just now: write for what is on screen.
-      .catch(() => diff)
-      .then(async (d) => {
+      .catch(() => ({ d: diff, head: shownHead }))
+      .then(async ({ d, head }) => {
         // The project's Context step (#444), when it has instructions: read
         // from its file now, so a write never starts on settings not yet read.
         const projectId = task.projectId ?? null;
@@ -253,7 +246,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
             : contextActive(settings)
               ? { settings, input, force: freshContext, previous }
               : undefined;
-        const run = startWrite(id, d, base, focus, plan);
+        const run = startWrite(id, d, base, focus, plan, head);
         startingRef.current = false;
         setStarting(false);
         return run;
@@ -327,6 +320,7 @@ export default function GuidePane({ task, active }: GuidePaneProps): ReactNode {
         baseSettled={measured.settled}
         write={write}
         onRewrite={() => writeNow(guideFocus)}
+        prBase={measuredBase}
         onEditOptions={() => {
           // Never over a draft already typed.
           if (focusDraftOf(task.id) === null) setFocusDraft(task.id, draftOf(guideFocus));
@@ -634,6 +628,7 @@ function GuideBody({
   baseSettled,
   write,
   onRewrite,
+  prBase,
   onEditOptions,
   onOpenContext,
   onRetryContext,
@@ -653,6 +648,8 @@ function GuideBody({
   baseSettled: boolean;
   write: WriteState | null;
   onRewrite: () => void;
+  /** The base the header shows the branch merging into (#237): where the banner's Create PR goes. */
+  prBase: string;
   /** Rewrite With Other Options… (#295). */
   onEditOptions: () => void;
   /** The project's Review Guide Context sheet (#444); `rewrite` from the section's Edit…. None without a project. */
@@ -800,6 +797,29 @@ function GuideBody({
     setPlace((p) => ({ ...p, picked: { ...p.picked, [g]: path } }));
   }, [shownKey]);
   const reviewedCount = led.filter(isGroupReviewed).length;
+
+  // Review before Create PR (#464, gate.ts): the banner under the row says
+  // where your review of your own branch stands -- only on your own work with
+  // no PR yet. Counted on every group, whatever Uncommitted Only shows.
+  // gh's answer for the PR: none (null) is when Create PR is the next step.
+  // The pane redraws with the store's answers through usePrStatus.
+  usePrStatus(task);
+  const own = gatedTask(task);
+  const gate = useReviewGate(own ? task : null, { passive: true });
+  const allLed = view.groups.filter((g) => !g.setAside);
+  const allReviewed = allLed.filter(isGroupReviewed).length;
+  const gateBanner: 'stale' | 'todo' | 'ready' | null =
+    !own || forPreviousCopy || getPrStatus(task.id) !== null || prUnknown(task.id)
+      ? null
+      : view.stale
+        ? 'stale'
+        : allReviewed >= allLed.length
+          ? // Not while a turn runs: the branch may be moving under the read (#464 review).
+            task.status === 'running'
+            ? null
+            : 'ready'
+          : 'todo';
+  const commitsSince = gate?.kind === 'stale' ? gate.commitsSince : null;
 
   // The notes come after the groups, a call per group (#224): queue the
   // groups still without them -- after a restart too -- and keep the one in
@@ -1209,6 +1229,9 @@ function GuideBody({
         {/* Out of date, Rewrite leads and Send N sits beside it; otherwise
             anything To Send makes Send N the row's action (#254, #404). */}
         {view.stale ? sendButton : null}
+        {/* Out of date on your own branch, the banner below carries the one
+            Rewrite (#197, #464): it says why a PR waits on it. */}
+        {gateBanner === 'stale' ? null : (
         <button
           type="button"
           // The one thing to do about an out-of-date guide: the primary action then.
@@ -1231,6 +1254,7 @@ function GuideBody({
               ? 'Update Guide'
               : 'Rewrite'}
         </button>
+        )}
         {view.stale ? null : sendButton}
         {/* The rest in ⋯ (#295): Rewrite With Other Options… always; Read ·
             Map and the filter too once the row has given way (#288). */}
@@ -1265,6 +1289,21 @@ function GuideBody({
           ]}
         />
       </div>
+      {gateBanner ? (
+        <ReviewGateBanner
+          kind={gateBanner}
+          left={allLed.length - allReviewed}
+          setAside={view.groups.some((g) => g.setAside)}
+          commitsSince={commitsSince}
+          writing={write?.kind === 'writing'}
+          onRewrite={onRewrite}
+          onNext={() => {
+            const i = nextToReview(groups, at, (g) => g.setAside || isGroupReviewed(g));
+            if (i !== null) goTo(i);
+          }}
+          onCreatePr={() => void import('../ui/createPr').then((m) => m.askCreatePr(task, prBase, { escape: false }))}
+        />
+      ) : null}
       {since ? <div className="gd-since-wrap">{since}</div> : null}
       {guide.context ? (
         <div className="gd-context-wrap">
@@ -1623,6 +1662,90 @@ function CarefulHead({ files, onPick }: { files: readonly GroupFile[]; onPick: (
         ))}
       </span>
     </p>
+  );
+}
+
+/**
+ * Where your own review stands, before a PR (#464): groups still to review,
+ * with Next Unreviewed; a guide the branch moved on from, with the one
+ * Rewrite; or every group Reviewed, with Create PR. Info's ground for the
+ * first and last, the banner's warning ground when out of date (guide.css).
+ */
+function ReviewGateBanner({
+  kind,
+  left,
+  setAside,
+  commitsSince,
+  writing,
+  onRewrite,
+  onNext,
+  onCreatePr,
+}: {
+  kind: 'stale' | 'todo' | 'ready';
+  /** Groups still to review. */
+  left: number;
+  /** The guide has a Set Aside group: said, since it does not count. */
+  setAside: boolean;
+  commitsSince: number | null;
+  writing: boolean;
+  onRewrite: () => void;
+  onNext: () => void;
+  onCreatePr: () => void;
+}): ReactNode {
+  if (kind === 'stale') {
+    return (
+      <div className="gd-gate" data-tone="warn" role="region" aria-label="Review before a PR">
+        <div className="gd-gate-text">
+          <span className="gd-gate-title">
+            {commitsSince !== null && commitsSince > 0
+              ? `${commitsText(commitsSince)} since this guide was written`
+              : 'The branch changed since this guide was written'}
+          </span>
+          <span className="gd-gate-sub">Rewrite it to open a PR. Groups whose code didn’t change stay Reviewed.</span>
+        </div>
+        <button
+          type="button"
+          className="gd-btn gd-btn-primary"
+          onClick={onRewrite}
+          disabled={writing}
+          title="Ask Claude Haiku for a new guide of the branch as it is now"
+        >
+          {writing ? 'Rewriting…' : 'Rewrite Guide'}
+        </button>
+      </div>
+    );
+  }
+  if (kind === 'ready') {
+    return (
+      <div className="gd-gate" role="region" aria-label="Review before a PR">
+        <div className="gd-gate-text">
+          <span className="gd-gate-title">Reviewed: ready for a PR</span>
+          <span className="gd-gate-sub">Every group is Reviewed against the branch as it is now. A new commit asks for another look.</span>
+        </div>
+        <button
+          type="button"
+          className="gd-btn gd-btn-primary"
+          onClick={onCreatePr}
+          title="Ask Claude to open a draft pull request; Albedo marks it ready for review when its checks pass. Sent at once (held until the turn ends if Claude is working)."
+        >
+          Create PR
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="gd-gate" role="region" aria-label="Review before a PR">
+      <div className="gd-gate-text">
+        <span className="gd-gate-title">Review your changes before opening a PR</span>
+        <span className="gd-gate-sub">
+          Mark the {left === 1 ? 'remaining group' : `${left} remaining groups`} Reviewed and Create PR comes back.
+          {setAside ? ' Set Aside files don’t count.' : ''}
+        </span>
+      </div>
+      <button type="button" className="gd-btn" onClick={onNext} title="Go to the next group not marked Reviewed">
+        Next Unreviewed ›
+      </button>
+    </div>
   );
 }
 

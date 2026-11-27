@@ -79,6 +79,8 @@ import {
   freeFollowUpTitle,
 } from './ui/followUp';
 import { useMergeNotices } from './ui/mergeNotice';
+import { useDraftReady } from './gh/draftReady';
+import UnreviewedPrConfirm from './ui/UnreviewedPrConfirm';
 import { getPrStatus, usePendingPrWatch } from './gh/prStore';
 import { requestChecks, useCiNotices, useCiNotifyEnabled } from './ui/ciNotice';
 import { useKeepAwake, useKeepAwakeEnabled } from './ui/keepAwake';
@@ -470,6 +472,8 @@ export default function App() {
     [select],
   );
   useMergeNotices(tasks);
+  // Create PR's drafts, marked ready for review once their checks pass (#464).
+  useDraftReady(tasks);
   // What the message box's `@` list offers (#154).
   const mentionSource = useMemo<MentionSource>(() => ({ tasks, projects }), [tasks, projects]);
   // Checks finishing is news wherever the task is: every task's running checks
@@ -877,6 +881,10 @@ export default function App() {
     setNewTaskOpen(true);
   }, []);
 
+  // "Create PR without Review…" (#464): the task it was asked for, while its
+  // confirmation is open. From either ⋯ menu, for the task the menu is about.
+  const [unreviewedPr, setUnreviewedPr] = useState<Task | null>(null);
+
   const taskActions = useMemo<TaskActions>(
     () => ({
       remind: (task) => setRemindFor(task),
@@ -897,6 +905,12 @@ export default function App() {
       delete: (task) => {
         setEndIntent('delete');
         setArchiveTarget(task);
+      },
+      // Selected first, like Review Guide (#464 review): the prompt may be
+      // left in the message box, and only the task on screen has one.
+      createPrUnreviewed: (task) => {
+        select(task.id);
+        setUnreviewedPr(task);
       },
     }),
     [select, setMoveTarget, setDone, openFollowUp, openFork, setEndIntent, setArchiveTarget],
@@ -1417,6 +1431,14 @@ export default function App() {
       <PaneErrorBoundary label="Usage">
         <StatusBar awake={awakeCount} />
       </PaneErrorBoundary>
+
+      {unreviewedPr && (
+        <UnreviewedPrConfirm
+          // The task as it is now, should it have changed since the menu.
+          task={tasks.find((t) => t.id === unreviewedPr.id) ?? unreviewedPr}
+          onClose={() => setUnreviewedPr(null)}
+        />
+      )}
 
       <AppDialogs
         dialogs={dialogs}

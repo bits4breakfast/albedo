@@ -62,6 +62,12 @@ export interface LoadedBranchDiff {
   fromMergeBase: boolean;
   /** Files with changes not yet committed: the "Uncommitted only" filter. */
   uncommitted: ReadonlySet<string>;
+  /**
+   * The commit HEAD was on when the branch was read (#464): kept with a guide
+   * written from this read, so "N commits since this guide was written" can
+   * be counted. Null or absent when git could not say.
+   */
+  head?: string | null;
 }
 
 /** Run `fn` over `items`, at most `limit` at once, keeping their order. */
@@ -127,10 +133,11 @@ export async function loadBranchDiff(
 ): Promise<LoadedBranchDiff> {
   const merge = await taskBase(worktreePath, baseBranch);
   const base = merge ?? 'HEAD';
-  const [tracked, loose, dirty] = await Promise.all([
+  const [tracked, loose, dirty, head] = await Promise.all([
     changedSince(base, worktreePath),
     untracked(worktreePath),
     changedSince('HEAD', worktreePath),
+    headCommit(worktreePath),
   ]);
   const all = [...new Set([...tracked, ...loose])];
   const changed: ChangedFile[] = await pool(all, 6, async (path) => {
@@ -142,5 +149,17 @@ export async function loadBranchDiff(
     base,
     fromMergeBase: merge !== null,
     uncommitted: new Set([...dirty, ...loose]),
+    head,
   };
+}
+
+/** The commit HEAD is on, or null when git cannot say (never throws). */
+async function headCommit(cwd: string): Promise<string | null> {
+  try {
+    const r = await git(['rev-parse', '--verify', '-q', 'HEAD'], cwd);
+    const sha = r.code === 0 ? r.stdout.trim() : '';
+    return /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
 }

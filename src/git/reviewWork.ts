@@ -1,13 +1,14 @@
 /**
  * Whether a finished turn left work on a task's branch: commits against its
  * base, or uncommitted changes. One of the two facts behind Ready to Review
- * (`ui/taskGroups.ts`); an open PR, the other way to have work, comes from the
- * PR store and needs nothing here.
+ * and My Review (`ui/taskGroups.ts`); an open PR, the other way to have work,
+ * comes from the PR store and needs nothing here.
  *
  * Asked once per finished turn, never on a timer: work only appears while
- * Claude works, and a turn's end is when to look. Only for a finish the user
- * has not seen -- the list asks (`wantsWorkProbe`) -- so a launch costs one
- * look per task with news, not one per task. The count is the Create PR
+ * Claude works, and a turn's end is when to look. For every idle work task
+ * with no open PR -- the list asks (`wantsWorkProbe`) -- since #464 keeps a
+ * branch with changes and no PR in My Review, seen or not: a launch costs one
+ * look per such task, one at a time (the chain below). The count is the Create PR
  * badge's (`commitsOnBranch`, through `baseOrUpstream`), and the changes are
  * the Files pane's (`uncommittedChanges`); nothing here counts on its own.
  *
@@ -67,6 +68,15 @@ async function gitProbe(task: WorkTask): Promise<boolean | null> {
 }
 
 let probe: (task: WorkTask) => Promise<boolean | null> = gitProbe;
+
+/**
+ * Whether the branch has work now (#464): the same look, asked directly, for
+ * the task bar's "Create PR without Review…". Through the test seam, like the
+ * list's. Never rejects; a failure reads as "cannot say".
+ */
+export function branchWorkNow(task: WorkTask): Promise<boolean | null> {
+  return probe(task).catch(() => null);
+}
 
 /** Test seam: swap the git probe; clears the cache. */
 export function setWorkProbeForTests(next: (task: WorkTask) => Promise<boolean | null>): void {

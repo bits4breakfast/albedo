@@ -233,6 +233,9 @@
 /* An unsent draft in the composer: a word in the caption, --muted (cleared
    against --panel-raised). */
 .task-draft { color: var(--muted); }
+/* What is left of your own review on a My Review row (#464): state, in
+   --muted, as Draft: cleared on every row ground (styles.css). */
+.task-gate { color: var(--muted); white-space: nowrap; }
 /* A /compact Albedo sent is running (#384): the word in Running's colour,
    --status-running, which the token block clears on every row ground
    (5.15+ light, 9.24+ dark). */

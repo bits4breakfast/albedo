@@ -7,7 +7,7 @@
  * screen between counts.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import type { Task } from '../types';
 
@@ -24,8 +24,13 @@ vi.mock('../git/stackBase', () => ({ detectStackBase: async () => null }));
 
 const wt = await import('../git/worktree');
 const { PrBadge, RECOUNT_MIN_MS } = await import('./PrBadge');
+const { setReviewGateForTests, resetGateForTests } = await import('../guide/gate');
+
+// Your own review is done (#464): these are about the count behind Create PR.
+beforeEach(() => setReviewGateForTests(() => ({ kind: 'ready', total: 1 })));
 
 afterEach(() => {
+  resetGateForTests();
   cleanup();
   vi.useRealTimers();
   vi.clearAllMocks();
@@ -34,7 +39,8 @@ afterEach(() => {
 
 const base = {
   id: 1, title: 't', repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/w',
-  sessionId: null, status: 'running', createdAt: 1, lastActivityAt: 1000, projectId: null,
+  // Idle (#464 review): while a turn runs Create PR is not offered at all.
+  sessionId: null, status: 'idle', createdAt: 1, lastActivityAt: 1000, projectId: null,
   ownsWorktree: true, createdBranch: true, kind: 'work',
 } as unknown as Task;
 

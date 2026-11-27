@@ -47,6 +47,8 @@ export interface TaskActions {
   archive?: (task: Task) => void;
   /** Opens the delete dialog. */
   delete?: (task: Task) => void;
+  /** Opens "Create PR without Review…" (#464), the way past the review gate. */
+  createPrUnreviewed?: (task: Task) => void;
 }
 
 /** What the items read about the task, kept current by `useTaskMenuFacts`. */
@@ -72,6 +74,11 @@ export interface TaskMenuFacts {
   sendsWait: boolean;
   /** A `/compact` Albedo sent is running (commandEcho.ts). */
   compacting?: boolean;
+  /**
+   * Create PR waits on the task's own review, and the branch has work and no
+   * PR (#464, unreviewedPr.ts): "Create PR without Review…" applies.
+   */
+  prUnreviewed?: boolean;
 }
 
 /** Why Make Available Remotely cannot go from here, or null when it can. */
@@ -101,7 +108,7 @@ export function taskMenuItems(
   rename?: () => void,
 ): OverflowItem[] {
   const chat = task.kind === 'chat';
-  const { remind, guide, updateReview, fork, move, setDone, followUp, archive, delete: del } = actions;
+  const { remind, guide, updateReview, fork, move, setDone, followUp, archive, delete: del, createPrUnreviewed } = actions;
 
   const remote = remoteControlItem(task, facts.live, facts.remoteUrl);
   const remoteWhy = remote ? remoteBlocker(task, facts) : null;
@@ -120,6 +127,16 @@ export function taskMenuItems(
           aside: '⇧⌘G',
           title: 'This branch’s changes against its base, grouped by what they do',
           onSelect: () => guide(task),
+        },
+      // The way past the review gate (#464), after the guide it skips.
+      !chat &&
+        !task.reviewUrl &&
+        facts.prUnreviewed === true &&
+        createPrUnreviewed && {
+          id: 'create-pr-unreviewed',
+          label: 'Create PR without Review…',
+          title: 'Asks once more, then the same draft-first PR, without waiting for every group in the Review Guide to be Reviewed',
+          onSelect: () => createPrUnreviewed(task),
         },
       // A review copy, brought up to its PR (#352). Always offered on a
       // review task, behind or not: git says whether there was anything.

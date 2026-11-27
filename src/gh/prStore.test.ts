@@ -110,3 +110,24 @@ describe('review threads not known (#278)', () => {
     expect(keepThreads(null, prev)).toBeNull();
   });
 });
+
+describe('a failure with no answer before it is not "no PR" (#464 review)', () => {
+  const t = { id: 77, branch: 'feat', baseBranch: 'main', worktreePath: '/w', repoPath: '/r', status: 'idle' as const };
+
+  it('is unknown until gh answers, and stays known once it has', async () => {
+    const { prUnknown } = await import('./prFailures');
+    const { PR_FETCH_FAILED } = await import('./gh');
+    let answer: unknown = PR_FETCH_FAILED;
+    setPrFetcherForTests(async () => answer as never);
+    await refreshPrStatus(t, { force: true });
+    expect(getPrStatus(t.id)).toBeNull();
+    expect(prUnknown(t.id)).toBe(true);
+    answer = null;
+    await refreshPrStatus(t, { force: true });
+    expect(prUnknown(t.id)).toBe(false);
+    // A real "none" before it: a failure keeps that answer, and it is known.
+    answer = PR_FETCH_FAILED;
+    await refreshPrStatus(t, { force: true });
+    expect(prUnknown(t.id)).toBe(false);
+  });
+});

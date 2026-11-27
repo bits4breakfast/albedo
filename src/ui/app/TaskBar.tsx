@@ -12,7 +12,7 @@ import SpunFromChip from '../SpunFromChip';
 import TaskTitleEdit from '../TaskTitleEdit';
 import { RemoteLink, type useRemotePending } from '../RemoteMark';
 import { ChatIcon, FolderIcon, PtyLayoutIcon, SplitLayoutIcon, TranscriptLayoutIcon, homeRelative } from '../icons';
-import { createPrPrompt, resolveConflictsPrompt } from '../gitPrompts';
+import { resolveConflictsPrompt } from '../gitPrompts';
 import { sendPrompt } from '../sendPrompt';
 import { taskMenuItems, type TaskActions } from '../taskMenuItems';
 import { RENAME_KEYS } from '../taskRename';
@@ -22,6 +22,7 @@ import type { useMeasuredBase } from '../useMeasuredBase';
 import type useTasks from '../useTasks';
 import type useEditorRequests from './useEditorRequests';
 import type useLayout from './useLayout';
+import { askCreatePr } from '../createPr';
 
 type Layout = ReturnType<typeof useLayout>;
 type Renaming = { id: number; by: 'key' | 'pointer' } | null;
@@ -228,7 +229,8 @@ export default function TaskBar({
                 setArchiveTarget(selected);
               }}
               onFollowUp={(pr) => void openFollowUp(selected, pr)}
-              onCreatePr={() => void sendPrompt(selected, createPrPrompt(selectedBase.base !== '' ? { ...selected, baseBranch: selectedBase.base } : selected))}
+              // A draft (#464, createPr.ts), into the base the header shows (#237).
+              onCreatePr={() => void askCreatePr(selected, selectedBase.base, { escape: false })}
               onResolveConflicts={(pr) => void sendPrompt(selected, resolveConflictsPrompt(selected, pr))}
               onOpenFile={openFile}
             />
