@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { Task } from '../types';
 import { getPrStatus } from '../gh/prStore';
-import { prLookupBranch } from '../gh/gh';
+import { prUnknown } from '../gh/prFailures';
 import { branchWorkNow } from '../git/reviewWork';
 import { gateOf, gatePasses, gatedTask, useGateVersion } from '../guide/gate';
 import { useGuideStoreVersion } from '../guide/store';
@@ -20,8 +20,9 @@ export function useUnreviewedPrOffered(task: Task | null): boolean {
     !!task &&
     gatedTask(task) &&
     task.status !== 'archived' &&
-    prLookupBranch(task) !== null &&
     getPrStatus(task.id) === null &&
+    // gh failing is not "no PR" (#464 review): the PR may well exist.
+    !prUnknown(task.id) &&
     !gatePasses(gateOf(task.id));
   return useBranchWork(held ? task : null) === true;
 }

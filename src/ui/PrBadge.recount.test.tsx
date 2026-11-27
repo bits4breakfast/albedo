@@ -39,7 +39,8 @@ afterEach(() => {
 
 const base = {
   id: 1, title: 't', repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/w',
-  sessionId: null, status: 'running', createdAt: 1, lastActivityAt: 1000, projectId: null,
+  // Idle (#464 review): while a turn runs Create PR is not offered at all.
+  sessionId: null, status: 'idle', createdAt: 1, lastActivityAt: 1000, projectId: null,
   ownsWorktree: true, createdBranch: true, kind: 'work',
 } as unknown as Task;
 

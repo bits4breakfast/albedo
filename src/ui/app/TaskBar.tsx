@@ -230,7 +230,7 @@ export default function TaskBar({
               }}
               onFollowUp={(pr) => void openFollowUp(selected, pr)}
               // A draft (#464, createPr.ts), into the base the header shows (#237).
-              onCreatePr={() => askCreatePr(selected, selectedBase.base, { escape: false })}
+              onCreatePr={() => void askCreatePr(selected, selectedBase.base, { escape: false })}
               onResolveConflicts={(pr) => void sendPrompt(selected, resolveConflictsPrompt(selected, pr))}
               onOpenFile={openFile}
             />

@@ -26,6 +26,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
 import { git } from '../git/worktree';
 import { getPrStatus } from '../gh/prStore';
+import { prLookupBranch } from '../gh/prBranch';
 import { measuredBase } from '../ui/mergeTarget';
 import { useMeasuredBase } from '../ui/useMeasuredBase';
 import { loadBranchDiff, type LoadedBranchDiff } from './branchDiff';
@@ -87,6 +88,7 @@ export function gateReason(gate: ReviewGate): string {
         ? `The Review Guide is out of date: ${commitsText(gate.commitsSince)} since it was written.`
         : 'The Review Guide is out of date: the branch changed since it was written.';
     case 'checking':
+      return 'The branch has not been read as it is now yet (it is read once Claude’s turn ends).';
     case 'reviewing': {
       const left = gate.total - gate.reviewed;
       return `${left} of ${gate.total} ${gate.total === 1 ? 'group is' : 'groups are'} not marked Reviewed yet.`;
@@ -185,9 +187,13 @@ function subscribe(cb: () => void): () => void {
   };
 }
 
-/** A task Create PR is about: your own work on a branch. A chat and a review task have none. */
-export function gatedTask(task: Pick<Task, 'kind' | 'reviewUrl'> | null): boolean {
-  return !!task && task.kind !== 'chat' && !task.reviewUrl;
+/**
+ * A task Create PR is about: your own work on a branch that can have a PR. A
+ * chat, a review task, and a task on its base branch itself or detached
+ * (`prLookupBranch`) have none.
+ */
+export function gatedTask(task: Pick<Task, 'kind' | 'reviewUrl' | 'branch' | 'baseBranch'> | null): boolean {
+  return !!task && task.kind !== 'chat' && !task.reviewUrl && prLookupBranch(task) !== null;
 }
 
 /**
@@ -307,6 +313,22 @@ function gateNow(taskId: number): ReviewGate {
   return gate;
 }
 
+/** Bumped when the window regains focus, while anything listens. */
+let focusVersion = 0;
+const focusListeners = new Set<() => void>();
+function onWindowFocus(): void {
+  focusVersion++;
+  for (const l of [...focusListeners]) l();
+}
+function subscribeFocus(cb: () => void): () => void {
+  if (focusListeners.size === 0) window.addEventListener('focus', onWindowFocus);
+  focusListeners.add(cb);
+  return () => {
+    focusListeners.delete(cb);
+    if (focusListeners.size === 0) window.removeEventListener('focus', onWindowFocus);
+  };
+}
+
 /** The branch state a read was for, per task: two readers on screen read it once. */
 const readFor = new Map<number, string>();
 
@@ -331,18 +353,24 @@ export function useReviewGate(
     gated && task && guide && !forTests && !running && !opts.passive
       ? `${task.id}\n${task.worktreePath}\n${base}\n${task.lastActivityAt ?? ''}\n${guide.writtenAt}`
       : '';
-  const refresh = String(opts.refresh ?? '');
+  // Back to the window: commits made outside Albedo are read too (#464 review).
+  const focused = useSyncExternalStore(subscribeFocus, () => focusVersion);
+  // Not yet known (a count still on its way) is not a change: only a known
+  // value replaced by another is, so a reader's first count is not a second read.
+  const given = opts.refresh === undefined || opts.refresh === null ? null : String(opts.refresh);
+  const refresh = `${given ?? ''}\n${focused}`;
   const taskRef = useRef(task);
   taskRef.current = task;
-  const seen = useRef({ core: '', refresh: '' });
+  const seen = useRef<{ core: string; given: string | null; focused: number }>({ core: '', given: null, focused });
   useEffect(() => {
     const t = taskRef.current;
     const was = seen.current;
-    seen.current = { core, refresh };
+    seen.current = { core, given: given ?? was.given, focused };
     if (core === '' || !t) return;
     // A new state of the branch is read once, by whichever reader gets to it
     // first; a refresh only by the reader it changed for.
-    const refreshed = was.core === core && was.refresh !== refresh;
+    const refreshed =
+      was.core === core && (was.focused !== focused || (was.given !== null && given !== null && was.given !== given));
     if (was.core === core && !refreshed) return;
     const go = () => {
       const now = taskRef.current;
@@ -362,7 +390,11 @@ export function useReviewGate(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [core, refresh]);
 
-  const gate = gated && task ? gateNow(task.id) : null;
+  const now = gated && task ? gateNow(task.id) : null;
+  // While a turn runs the branch is not read, so the last read may be behind
+  // it: never Create PR then (#464 review). It comes back when the turn ends.
+  const gate: ReviewGate | null =
+    now?.kind === 'ready' && running ? { kind: 'checking', reviewed: now.total, total: now.total } : now;
   // Out of date: how many commits since (the banner's and the button's words).
   const hash = gated && task ? lastHashOf(task.id) : null;
   useEffect(() => {

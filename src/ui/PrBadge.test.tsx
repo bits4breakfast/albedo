@@ -123,7 +123,7 @@ describe('PrBadge: review before Create PR (#464)', () => {
   it('a draft Create PR opened says when it opens for review, and nothing once done or failing', () => {
     const draft = (checks: PrStatus['checks']): PrStatus => ({
       number: 8, url: 'https://github.com/o/r/pull/8', title: 'x', state: 'draft', headRefName: 'feat', baseRefName: 'main',
-      headSha: 'abc', mergedAt: null, review: null, checks, lines: [],
+      headSha: 'abc', mergedAt: null, review: null, checks, lines: [], author: 'me', crossRepository: false,
     });
     notePrRequested(task.id, false);
     state.pr = draft({ kind: 'pending', pending: 2, total: 3 });

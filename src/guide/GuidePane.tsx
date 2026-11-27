@@ -75,6 +75,7 @@ import { updateRecordOf, useSinceChanges, useSinceReviewVersion, type ChangesLoa
 import OverflowMenu from '../ui/OverflowMenu';
 import { commitsText, gatedTask, useReviewGate } from './gate';
 import { getPrStatus, usePrStatus } from '../gh/prStore';
+import { prUnknown } from '../gh/prFailures';
 import { NO_SEARCH, searchDiff } from '../ui/transcript/Diff';
 import {
   AllGuideFiles,
@@ -808,12 +809,15 @@ function GuideBody({
   const allLed = view.groups.filter((g) => !g.setAside);
   const allReviewed = allLed.filter(isGroupReviewed).length;
   const gateBanner: 'stale' | 'todo' | 'ready' | null =
-    !own || forPreviousCopy || getPrStatus(task.id) !== null
+    !own || forPreviousCopy || getPrStatus(task.id) !== null || prUnknown(task.id)
       ? null
       : view.stale
         ? 'stale'
         : allReviewed >= allLed.length
-          ? 'ready'
+          ? // Not while a turn runs: the branch may be moving under the read (#464 review).
+            task.status === 'running'
+            ? null
+            : 'ready'
           : 'todo';
   const commitsSince = gate?.kind === 'stale' ? gate.commitsSince : null;
 

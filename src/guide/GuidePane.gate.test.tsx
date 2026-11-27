@@ -31,7 +31,7 @@ vi.mock('../ui/createPr', () => ({
 }));
 
 const { default: GuidePane, resetGuideViewsForTests } = await import('./GuidePane');
-const { resetGuideStoreForTests, saveGuide } = await import('./store');
+const { resetGuideStoreForTests, saveGuide, setReviewed } = await import('./store');
 const { resetGateForTests, setGateReaderForTests } = await import('./gate');
 const { getPrStatus, refreshPrStatus, setPrFetcherForTests } = await import('../gh/prStore');
 
@@ -126,6 +126,34 @@ describe('the Guide’s banner before a PR (#464)', () => {
     await waitFor(() => expect(within(b).getByText('2 commits since this guide was written')).toBeTruthy());
     expect(within(b).getByText(/Rewrite it to open a PR\. Groups whose code didn’t change stay Reviewed\./)).toBeTruthy();
     expect(screen.getAllByRole('button', { name: /^Rewrite/ })).toHaveLength(1);
+  });
+
+  it('none while gh could not say whether there is a PR (#464 review)', async () => {
+    const diff = diffOf();
+    loaded = { diff, base: 'b', fromMergeBase: true, uncommitted: new Set() };
+    saveGuide(task.id, guideFor(diff));
+    setPrFetcherForTests(async () => 'failed' as never);
+    await refreshPrStatus(task, { force: true });
+    pane();
+    await screen.findByRole('heading', { name: 'Alpha and beta' });
+    expect(screen.queryByRole('region', { name: 'Review before a PR' })).toBeNull();
+  });
+
+  it('no Create PR while a turn runs, all reviewed or not (#464 review)', async () => {
+    const diff = diffOf();
+    loaded = { diff, base: 'b', fromMergeBase: true, uncommitted: new Set() };
+    const g = guideFor(diff);
+    saveGuide(task.id, g);
+    // Every group ticked.
+    const [a, b, c] = diff.order as [string, string, string];
+    setReviewed(task.id, ['src/a.ts#' + a, 'src/b.ts#' + b, 'src/c.ts#' + c], true);
+    await refreshPrStatus(task, { force: true });
+    pane({ ...task, status: 'running' } as Task);
+    await screen.findByRole('heading', { name: 'Alpha and beta' });
+    expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
+    cleanup();
+    pane();
+    expect(within(await banner()).getByRole('button', { name: 'Create PR' })).toBeTruthy();
   });
 
   it('none once there is a PR, nor on a chat or a review task', async () => {

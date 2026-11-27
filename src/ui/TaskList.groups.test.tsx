@@ -31,6 +31,7 @@ Element.prototype.scrollIntoView = () => {};
 
 const { default: TaskList } = await import('./TaskList');
 const { setWorkProbeForTests } = await import('../git/reviewWork');
+const { notePrUnknown } = await import('../gh/prFailures');
 
 const probed: number[] = [];
 beforeEach(() => {
@@ -118,6 +119,18 @@ describe('task list groups', () => {
     ]);
     // No guide written for it yet.
     expect(container.querySelector('[data-task-id="4"] .task-gate')?.textContent).toBe('no guide yet');
+  });
+
+  it('a gh failure is not "no PR": the task waits in Idle, not My Review (#464 review)', async () => {
+    setWorkProbeForTests(async (t) => t.id === 4 || t.id === 7);
+    notePrUnknown(4, true);
+    try {
+      const { container } = await renderList();
+      expect(groups(container).find(([g]) => g === 'My Review')).toBeUndefined();
+      expect(groups(container).find(([g]) => g === 'Idle')?.[1]).toContain('4');
+    } finally {
+      notePrUnknown(4, false);
+    }
   });
 
   it('draws the icon on each group header, and none on a row (#278)', async () => {

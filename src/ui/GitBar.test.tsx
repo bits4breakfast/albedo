@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Task } from '../types';
 
 // null: gh answered, no PR. undefined: gh has not answered yet.
@@ -16,6 +16,7 @@ const { default: GitBar } = await import('./GitBar');
 const { setReviewGateForTests, resetGateForTests } = await import('../guide/gate');
 const { onGuideRequest } = await import('../guide/openGuide');
 const { draftRecordOf } = await import('../gh/draftReady');
+const { notePrUnknown } = await import('../gh/prFailures');
 
 /** A fresh in-memory store per test (REGRESSIONS: never the runtime's localStorage). */
 beforeEach(() => {
@@ -116,18 +117,18 @@ describe('GitBar: review before Create PR (#464)', () => {
     expect(screen.getByRole('button', { name: 'Review Changes · no guide' })).toBeTruthy();
   });
 
-  it('Create PR comes back once reviewed, asks for a draft and remembers it', () => {
+  it('Create PR comes back once reviewed, asks for a draft and remembers it', async () => {
     const onAsk = vi.fn();
     render(bar({ ...branch, onAsk }));
     fireEvent.click(screen.getByRole('button', { name: 'Create PR' }));
     expect(onAsk).toHaveBeenCalledWith(expect.stringContaining('gh pr create --draft'));
-    expect(draftRecordOf(task.id)).toMatchObject({ escape: false, done: [] });
+    await waitFor(() => expect(draftRecordOf(task.id)).toMatchObject({ escape: false, done: [] }));
     // Nothing in ⋯ to skip the review: there is none to skip.
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     expect(screen.queryByText('Create PR without Review…')).toBeNull();
   });
 
-  it('Create PR without Review… in ⋯ asks first; Cancel sends nothing, Create PR sends the same draft PR', () => {
+  it('Create PR without Review… in ⋯ asks first; Cancel sends nothing, Create PR sends the same draft PR', async () => {
     setReviewGateForTests(() => ({ kind: 'reviewing', reviewed: 1, total: 3 }));
     const onAsk = vi.fn();
     render(bar({ ...branch, onAsk }));
@@ -147,8 +148,33 @@ describe('GitBar: review before Create PR (#464)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create PR' }));
     expect(onAsk).toHaveBeenCalledTimes(1);
     expect(onAsk.mock.calls[0]![0]).toContain('gh pr create --draft');
-    expect(draftRecordOf(task.id)).toMatchObject({ escape: true });
+    await waitFor(() => expect(draftRecordOf(task.id)).toMatchObject({ escape: true }));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('remembers nothing when the prompt went nowhere (#464 review)', async () => {
+    const onAsk = vi.fn(async () => 'failed' as const);
+    render(bar({ ...branch, onAsk }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create PR' }));
+    await waitFor(() => expect(onAsk).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(draftRecordOf(task.id)).toBeNull();
+  });
+
+  it('never Create PR while a turn runs: the branch may be moving under the read (#464 review)', () => {
+    render(bar({ ...branch, task: { ...task, status: 'running' } as Task }));
+    expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Review Changes · 2 of 2' }).title).toMatch(/not been read as it is now/);
+  });
+
+  it('offers no way past the review while gh’s "none" is a failure (#464 review)', () => {
+    setReviewGateForTests(() => ({ kind: 'no-guide' }));
+    notePrUnknown(task.id, true);
+    render(bar(branch));
+    expect(screen.getByRole('button', { name: 'Review Changes · no guide' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.queryByText('Create PR without Review…')).toBeNull();
+    notePrUnknown(task.id, false);
   });
 
   it('Escape closes the confirmation without sending', () => {

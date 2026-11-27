@@ -31,6 +31,8 @@ const { default: GuidePane, nextToReview, resetGuideViewsForTests } = await impo
 const { resetGuideStoreForTests, saveGuide } = await import('./store');
 const { setOneshotRunner } = await import('./writer');
 const queuedCi = await import('../ui/transcript/ciFailure');
+// gh answers "no PR" (#464): a failed ask would be "not known", and no banner.
+const { setPrFetcherForTests } = await import('../gh/prStore');
 
 const task = {
   id: 5, title: 't', projectId: 1, repoPath: '/r', baseBranch: 'main', branch: 'feat', worktreePath: '/wt',
@@ -63,6 +65,7 @@ beforeEach(() => {
   resetGuideStoreForTests();
   resetGuideViewsForTests();
   queuedCi.__resetQueuedCi();
+  setPrFetcherForTests(async () => null);
   waitingCode = [];
   sendAsked.length = 0;
   diff = makeDiff();

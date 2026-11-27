@@ -906,7 +906,12 @@ export default function App() {
         setEndIntent('delete');
         setArchiveTarget(task);
       },
-      createPrUnreviewed: (task) => setUnreviewedPr(task),
+      // Selected first, like Review Guide (#464 review): the prompt may be
+      // left in the message box, and only the task on screen has one.
+      createPrUnreviewed: (task) => {
+        select(task.id);
+        setUnreviewedPr(task);
+      },
     }),
     [select, setMoveTarget, setDone, openFollowUp, openFork, setEndIntent, setArchiveTarget],
   );

@@ -251,6 +251,16 @@ describe('My Review holds your own changes with no PR up for review (#464)', () 
     expect(groupOf(seen, work({ work: undefined }))).toBe('quiet');
   });
 
+  it('only on a branch that can have a PR: the base itself, detached or none stays Idle (#464 review)', () => {
+    expect(groupOf(task({ seenAt: 3_000, branch: 'main' }), work())).toBe('quiet');
+    expect(groupOf(task({ seenAt: 3_000, branch: 'HEAD' }), work())).toBe('quiet');
+    expect(groupOf(task({ seenAt: 3_000, branch: '' }), work())).toBe('quiet');
+    // A seen finish on the base is not asked about at all; an unseen one still is, for Ready to Review.
+    expect(wantsWorkProbe(task({ seenAt: 3_000, branch: 'main' }), facts({ finishedAt: 2_000 }))).toBe(false);
+    expect(wantsWorkProbe(task({ seenAt: 1_000, branch: 'main' }), facts({ finishedAt: 2_000 }))).toBe(true);
+    expect(groupOf(task({ seenAt: 1_000, branch: 'main' }), work())).toBe('review');
+  });
+
   it('waits for gh: an unanswered PR is never shown as My Review first', () => {
     expect(groupOf(seen, work({ pr: undefined }))).toBe('quiet');
   });

@@ -148,6 +148,8 @@ const { KEYS } = await import('./ui/persisted');
 const { default: App } = await import('./App');
 const { requestGuide } = await import('./guide/openGuide');
 const reviewStore = await import('./gh/reviewStore');
+const { setPrFetcherForTests } = await import('./gh/prStore');
+const { draftRecordOf, notePrRequested, setDraftReadyForTests } = await import('./gh/draftReady');
 
 function project(id: number, name: string): Project {
   return {
@@ -397,6 +399,60 @@ describe('the task’s two ⋯ menus (#331)', () => {
     expect(screen.getByRole('menu').querySelector('.row-menu-head')?.textContent).toBe('Fix the login retry');
     expect(fromRow).toEqual(fromBar);
     expect(fromRow.length).toBeGreaterThan(5);
+  });
+
+  it('Create PR without Review… from another task’s row selects it, asks first, and remembers nothing that went nowhere (#464)', async () => {
+    // gh says: no PR, for either.
+    setPrFetcherForTests(async () => null);
+    h.tasks = [task(10, 1, 'Fix the login retry'), task(11, 1, 'Speed up the build')];
+    store.set(KEYS.activeProject, 'p1');
+    store.set(KEYS.selectedTask, '10');
+    render(<App />);
+    await settle();
+    await settle();
+    rowMenu('Speed up the build');
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Create PR without Review…/ }));
+    await settle();
+    // Selected first: the prompt may be left in its message box.
+    expect(row('Speed up the build').getAttribute('aria-selected')).toBe('true');
+    const dialog = screen.getByRole('dialog', { name: 'Create PR Without Review?' });
+    expect(dialog.textContent).toMatch(/No Review Guide has been written/);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    rowMenu('Speed up the build');
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Create PR without Review…/ }));
+    await settle();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create PR' }));
+    await settle();
+    // No session and no message box here: nothing went, so nothing is remembered.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(draftRecordOf(11)).toBeNull();
+  });
+
+  it('marks Create PR’s draft ready once its checks pass, from the App (#464)', async () => {
+    const marked: number[] = [];
+    setDraftReadyForTests(async (p) => (marked.push(p.number), { ok: true }), async () => ({ kind: 'ready', total: 1 }), {
+      head: () => 'abc',
+      viewer: async () => 'me',
+    });
+    notePrRequested(10, true);
+    setPrFetcherForTests(async () => ({
+      number: 31, url: 'https://github.com/o/r/pull/31', title: 'x', state: 'draft', headRefName: 'feature-10', baseRefName: 'main',
+      headSha: 'abc', mergedAt: null, review: null, checks: { kind: 'passing', total: 2 }, lines: [], author: 'me', crossRepository: false,
+    }));
+    try {
+      store.set(KEYS.activeProject, 'p1');
+      store.set(KEYS.selectedTask, '10');
+      render(<App />);
+      await settle();
+      await settle();
+      await settle();
+      expect(marked).toEqual([31]);
+      expect(draftRecordOf(10)).toMatchObject({ pr: 31, done: [31] });
+    } finally {
+      setDraftReadyForTests();
+    }
   });
 
   it('Review Guide from another task’s row selects that task and shows its Guide', async () => {

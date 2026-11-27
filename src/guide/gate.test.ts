@@ -21,6 +21,7 @@ import {
   gateProgressText,
   gateReason,
   gateRowText,
+  gatedTask,
   resetGateForTests,
   reviewCount,
   setGateReaderForTests,
@@ -132,6 +133,17 @@ describe('gateFrom', () => {
     const marks = new Set([reviewedKey('src/a.ts', [a]), reviewedKey('src/b.ts', [b])]);
     expect(reviewCount(focused, diff, marks)).toEqual({ reviewed: 1, total: 1 });
     expect(gateFrom(focused, loaded(diff), diff.hash, marks, null, null).kind).toBe('ready');
+  });
+});
+
+describe('gatedTask', () => {
+  it('is your own work on a branch that can have a PR (#464 review)', () => {
+    expect(gatedTask(task)).toBe(true);
+    expect(gatedTask({ ...task, branch: 'main' })).toBe(false);
+    expect(gatedTask({ ...task, branch: '' })).toBe(false);
+    expect(gatedTask({ ...task, kind: 'chat' })).toBe(false);
+    expect(gatedTask({ ...task, reviewUrl: 'https://github.com/o/r/pull/1' })).toBe(false);
+    expect(gatedTask(null)).toBe(false);
   });
 });
 

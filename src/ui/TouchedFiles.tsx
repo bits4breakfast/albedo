@@ -28,7 +28,7 @@ import {
 } from '../git/worktree';
 import { useMeasuredBase } from './useMeasuredBase';
 import { setTouchedOrder } from './touchedOrder';
-import { sendPrompt } from './sendPrompt';
+import { sendPrompt, type SendOutcome } from './sendPrompt';
 import GitBar from './GitBar';
 import ProjectTree from './ProjectTree';
 import { Disclosure } from './Disclosure';
@@ -387,8 +387,9 @@ export default function TouchedFiles({
     setSquashOpen(false);
   }, [task.id]);
   const askingRef = useRef(false);
-  const askClaude = async (text: string) => {
-    if (askingRef.current) return; // a double click must not send twice
+  const askClaude = async (text: string): Promise<SendOutcome> => {
+    // A double click must not send twice: the second went nowhere.
+    if (askingRef.current) return 'failed';
     askingRef.current = true;
     try {
       const outcome = await sendPrompt(task, text);
@@ -399,6 +400,7 @@ export default function TouchedFiles({
             ? 'Could not reach the session. Nothing was sent.'
             : 'Open the task’s transcript to get its message box, then try again.',
       );
+      return outcome;
     } finally {
       askingRef.current = false;
     }
@@ -576,7 +578,7 @@ export default function TouchedFiles({
           commits={commits.length}
           dirty={view.uncommitted.length}
           remote={remote}
-          onAsk={(text) => void askClaude(text)}
+          onAsk={(text) => askClaude(text)}
           onSquash={() => setSquashOpen(true)}
           mode={mode}
           onMode={(m) => setMode(writeMode(m))}

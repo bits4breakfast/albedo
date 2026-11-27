@@ -184,9 +184,10 @@ export function PrBadge({ task, onEnd, onFollowUp, onCreatePr, onOpenFile, onRes
     [],
   );
 
-  // Your own review first (#464): the branch is read again as the session works.
-  const gate = useReviewGate(task);
-  if (task && !pr && askable && own !== null && own > 0 && !gatePasses(gate)) {
+  // Your own review first (#464): the branch is read again as the session
+  // works, and when the commit count changes.
+  const gate = useReviewGate(task, { refresh: own });
+  if (task && !pr && askable && own !== null && own > 0 && gate !== null && !gatePasses(gate)) {
     const progress = gate ? gateProgressText(gate) : null;
     return (
       <span className="pr-badge-wrap">

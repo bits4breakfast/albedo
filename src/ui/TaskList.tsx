@@ -34,6 +34,7 @@ import {
 } from './taskGroups';
 import { reviewingTaskIds, useGuideStoreVersion } from '../guide/store';
 import { gateOf, gateRowText, useGateReads, useGateVersion } from '../guide/gate';
+import { prUnknown } from '../gh/prFailures';
 import { ChatIcon } from './icons';
 import RemoteMark from './RemoteMark';
 import { BackgroundMark } from './BackgroundWork';
@@ -349,7 +350,8 @@ export default function TaskList({
       const finishedAt = signals?.get(task.id)?.finishedAt ?? null;
       byId.set(task.id, {
         finishedAt,
-        pr: task.kind === 'chat' ? null : getPrStatus(task.id),
+        // A gh failure with no answer before it is not "no PR" (#464 review).
+        pr: task.kind === 'chat' ? null : prUnknown(task.id) ? undefined : getPrStatus(task.id),
         work: getReviewWork(task.id, finishedAt),
         reviewing: reviewing.has(task.id),
         trigger: triggerCardsOf(task.id).length > 0,

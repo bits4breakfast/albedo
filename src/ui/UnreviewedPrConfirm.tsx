@@ -16,7 +16,7 @@ export default function UnreviewedPrConfirm({ task, onClose }: { task: Task; onC
       task={task}
       gate={gateOf(task.id)}
       base={base}
-      onConfirm={() => askCreatePr(task, base, { escape: true })}
+      onConfirm={() => void askCreatePr(task, base, { escape: true })}
       onClose={onClose}
     />
   );

@@ -38,12 +38,15 @@
  * "Open" is open and not a draft: once a PR is up for review, GitHub's state
  * decides, whatever the guide marks say. A chat has no branch and no PR, so
  * it never reaches the PR or review groups. My Review waits for gh's first
- * answer (`pr` not undefined), so a task whose PR is up for review is never
- * shown there first.
+ * answer (`pr` not undefined; a failure with no answer before it is not one,
+ * gh/prFailures.ts), so a task whose PR is up for review is never shown there
+ * first; and it needs a branch that can have a PR (`prLookupBranch`): a task
+ * on the base branch itself, or detached, stays Idle.
  */
 
 import type { Task } from '../types';
 import type { PrStatus } from '../gh/prStatus';
+import { prLookupBranch } from '../gh/prBranch';
 
 export type GroupKey =
   | 'blocked'
@@ -182,10 +185,16 @@ export function hasWorkToReview(task: Pick<Task, 'kind'>, facts: Pick<GroupFacts
  * Review: Ready to Review needs the answer for an unseen finish, My Review
  * for every one.
  */
-export function wantsWorkProbe(task: Pick<Task, 'kind' | 'status' | 'seenAt'>, facts: GroupFacts): boolean {
+export function wantsWorkProbe(
+  task: Pick<Task, 'kind' | 'status' | 'seenAt' | 'branch' | 'baseBranch'>,
+  facts: GroupFacts,
+): boolean {
   if (task.kind === 'chat' || task.status !== 'idle') return false;
   if (prOpen(facts.pr) || prMerged(facts.pr)) return false;
-  return facts.finishedAt !== null;
+  if (unseenFinish(facts.finishedAt, task.seenAt)) return true;
+  // A seen finish matters to My Review only, which needs a branch that can
+  // have a PR (#464 review): not the base itself, not detached.
+  return facts.finishedAt !== null && prLookupBranch(task) !== null;
 }
 
 /** Open and not a draft: up for review. */
@@ -226,7 +235,10 @@ export function stoppedOnError(task: Pick<Task, 'status' | 'apiError'>): boolean
 }
 
 /** Highest first: a prompt waiting on you outranks everything else. See the table above. */
-export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt' | 'apiError'>, facts: GroupFacts): GroupKey {
+export function groupOf(
+  task: Pick<Task, 'kind' | 'status' | 'seenAt' | 'apiError' | 'branch' | 'baseBranch'>,
+  facts: GroupFacts,
+): GroupKey {
   if (task.status === 'archived') return 'archived';
   if (task.status === 'blocked') return 'blocked';
   // Above Running and Done: a card is always seen, whatever the session is
@@ -244,8 +256,9 @@ export function groupOf(task: Pick<Task, 'kind' | 'status' | 'seenAt' | 'apiErro
   if (prUpForReview(facts.pr)) return reviewStage(facts.pr);
   if (facts.reviewing === true) return 'mine';
   // Your own changes, no PR up for review, guide or not (#464): your review
-  // and your Create PR are next. Once gh has answered, never before.
-  if (facts.pr !== undefined && hasWorkToReview(task, facts)) return 'mine';
+  // and your Create PR are next. Once gh has answered, never before, and only
+  // on a branch that can have a PR -- not the base itself, not detached.
+  if (facts.pr !== undefined && prLookupBranch(task) !== null && hasWorkToReview(task, facts)) return 'mine';
   return 'quiet';
 }
 

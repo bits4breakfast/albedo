@@ -35,7 +35,9 @@ import { canSquashRebase, createPrPrompt, nextStep, pushPrompt } from './gitProm
 import { gatePasses, gateProgressText, gateReason, useReviewGate } from '../guide/gate';
 import { requestGuide } from '../guide/openGuide';
 import { notePrRequested } from '../gh/draftReady';
+import { prUnknown } from '../gh/prFailures';
 import UnreviewedPrDialog from './UnreviewedPrDialog';
+import type { SendOutcome } from './sendPrompt';
 import './pr.css';
 
 export interface GitBarProps {
@@ -46,8 +48,11 @@ export interface GitBarProps {
   dirty: number;
   /** Against the upstream; null when git could not say. */
   remote: UnmergedCommits | null;
-  /** Send a prompt to the task's session (see sendPrompt.ts). */
-  onAsk: (text: string) => void;
+  /**
+   * Send a prompt to the task's session (see sendPrompt.ts). Where it went,
+   * when the host says: Create PR is remembered only if it went somewhere.
+   */
+  onAsk: (text: string) => void | Promise<SendOutcome | undefined>;
   onSquash: () => void;
   /** How the list below groups its files. */
   mode: 'branch' | 'commit';
@@ -122,15 +127,19 @@ export default function GitBar({
   const main = step === 'open-pr' ? 'none' : step;
 
   const push = () => onAsk(pushPrompt(task));
-  // Remembered first (#464): its draft is marked ready once its checks pass.
+  // Remembered once it went somewhere (#464): its draft is marked ready once
+  // its checks pass. A host that does not say is taken at its word.
   const createPr = (escape = false) => {
-    notePrRequested(task.id, escape);
-    onAsk(createPrPrompt(task));
+    const id = task.id;
+    void Promise.resolve(onAsk(createPrPrompt(task))).then((outcome) => {
+      if (outcome !== 'failed') notePrRequested(id, escape);
+    });
   };
   // Your own review first (#464). Read again when the counts above change: a
   // commit or a save is a branch the guide may not have seen.
   const gate = useReviewGate(task, { refresh: `${commits}:${dirty}` });
-  const held = !gatePasses(gate);
+  // A chat or a review task has no gate (null): nothing to hold.
+  const held = gate !== null && !gatePasses(gate);
   const [askUnreviewed, setAskUnreviewed] = useState(false);
   const dialog = askUnreviewed ? (
     <UnreviewedPrDialog
@@ -157,9 +166,9 @@ export default function GitBar({
   // then commits and pushes. Waiting for a commit hid it on a branch Claude
   // had only edited -- which is most of them.
   if (actionable && main !== 'create-pr' && prKnown && pr === null && prable && (commits > 0 || dirty > 0)) {
-    items.push(
-      held ? unreviewedItem : { key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: () => createPr() },
-    );
+    if (!held) items.push({ key: 'pr', label: 'Create PR', hint: `Open a pull request into ${task.baseBranch}`, run: () => createPr() });
+    // Not while gh's "none" is a failure (#464 review): the PR may exist.
+    else if (!prUnknown(task.id)) items.push(unreviewedItem);
   }
   if (actionable && canSquashRebase(task) && commits > 0) {
     items.push({
@@ -170,7 +179,8 @@ export default function GitBar({
     });
   }
   // The way past the review, last and set apart: never the first thing seen.
-  if (main === 'create-pr' && held) items.push(unreviewedItem);
+  // Not while gh's "none" is a failure (#464 review): the PR may exist.
+  if (main === 'create-pr' && held && !prUnknown(task.id)) items.push(unreviewedItem);
   // The head holds the view toggle, and ⋯ only when there is an action for
   // it: a menu of view options alone was a click to reach one of two states.
   // This bar appears only when there is a main action (Push, Create PR).

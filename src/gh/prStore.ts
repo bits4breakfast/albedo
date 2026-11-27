@@ -24,6 +24,7 @@
  * review threads too (#278): the unresolved counts cost no call of their own.
  */
 
+import { clearPrUnknown, notePrUnknown } from './prFailures';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Task } from '../types';
 import { fetchPrAnswer, loadViewerLogin, PR_FETCH_FAILED, viewerLogin } from './gh';
@@ -139,6 +140,7 @@ export function setPrFetcherForTests(
   fetcher = next;
   if (clock) now = clock;
   cache.clear();
+  clearPrUnknown();
   inflight.clear();
   queue.length = 0;
   running = 0;
@@ -211,15 +213,18 @@ export function refreshPrStatus(task: PrTask, opts: { force?: boolean } = {}): P
         // minute. With none to keep, "none", as it always read.
         if (same) {
           cache.set(task.id, { ...same, fetchedAt: now(), askedAt, failed: true });
+          notePrUnknown(task.id, same.pr === null && same.streak === 0);
           return;
         }
         cache.set(task.id, { pr: null, branch: task.branch, fetchedAt: now(), askedAt, failed: true, streak: 0 });
+        notePrUnknown(task.id, true);
         emit();
         return;
       }
       const pr = keepThreads(fetched, same ? same.pr : null);
       const streak = same && same.streak > 0 && kindOf(same.pr) === kindOf(pr) ? same.streak + 1 : 1;
       cache.set(task.id, { pr, branch: task.branch, fetchedAt: now(), askedAt, failed: false, streak });
+      notePrUnknown(task.id, false);
       emit();
     })
     .catch((err) => {
@@ -248,6 +253,7 @@ export function keepThreads(next: PrStatus | null, prev: PrStatus | null | undef
 
 /** Drop a task's entry, e.g. after it is deleted. */
 export function forgetPrStatus(taskId: number): void {
+  notePrUnknown(taskId, false);
   if (cache.delete(taskId)) emit();
 }
 
